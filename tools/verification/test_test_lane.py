@@ -24,6 +24,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _ecosystems import CARGO
 from _ecosystems import test_argv
 from _ecosystems import valid_target
+from _manifest import ManifestError  # noqa: E402
+from _manifest import _validate_test_features  # noqa: E402
 from _load_tool import load_tool  # noqa: E402
 
 # The lane is an extensionless script, so it is loaded by path rather than imported.
@@ -197,6 +199,53 @@ def test_targets_are_selected_by_their_own_cargo_flag():
     assert not valid_target(CARGO, "")
 
 
+def test_a_declared_feature_set_reaches_the_runner():
+    """A control behind `#[cfg(feature = ...)]` does not exist in the default crate, so a
+    unit whose claim is about feature-gated code and whose battery runs without the feature
+    measures only the unconditional part of its own claim. The features are the ecosystem
+    adapter's to apply, and a unit that declares none must produce the command it produced
+    before."""
+    argv = test_argv(CARGO, "p", "lib", ["a"], ["b_feature", "a_feature"])
+    assert argv[:7] == ["cargo", "test", "-p", "p", "--features", "a_feature,b_feature", "--lib"]
+    doc_argv = test_argv(CARGO, "p", "doc", ["a"], ["a_feature"])
+    assert doc_argv[:7] == ["cargo", "test", "-p", "p", "--features", "a_feature", "--doc"]
+    assert test_argv(CARGO, "p", "lib", ["a"], []) == test_argv(CARGO, "p", "lib", ["a"])
+
+
+def test_a_test_feature_set_that_measures_nothing_is_refused():
+    """Three ways the field could state something it does not mean, and each is a refusal
+    rather than a silently dropped value: a feature set for a battery that does not exist,
+    one on an ecosystem whose runner cannot apply it — which would enter the fingerprint
+    while measuring nothing — and one naming the specification feature, which is off in
+    every production build, so a battery under it measures a crate that does not ship."""
+    base = {
+        "id": "u",
+        "class": "V0",
+        "paths": ["mcp-re-proxy/src/outbound_fetch/mod.rs"],
+        "evidence": ["test://x/y"],
+        "tested_symbols": ["lib#outbound_fetch::tests::t"],
+    }
+    for unit, expected in (
+        ({**base, "evidence": [], "tested_symbols": [], "test_features": ["f"]}, "no test://"),
+        (
+            {
+                **base,
+                "paths": ["sdk/python/src/mcp_re_sdk/__init__.py"],
+                "tested_symbols": ["pytest#tests/t.py::t"],
+                "test_features": ["f"],
+            },
+            "Cargo concept",
+        ),
+        ({**base, "features": ["verify"], "test_features": ["verify"]}, "specification feature"),
+    ):
+        try:
+            _validate_test_features("where", unit)
+        except ManifestError as exc:
+            assert expected in str(exc), exc
+        else:
+            raise AssertionError(f"expected a refusal mentioning {expected!r}")
+
+
 def test_a_battery_spanning_two_targets_is_two_selections():
     """One filter across two targets would let a name that exists in only one of them
     look satisfied by the other."""
@@ -316,7 +365,7 @@ def test_a_symbol_with_no_result_line_is_rerun_alone_before_the_lane_concludes()
     lane.subprocess.run = fake_run
     try:
         recovered = lane._rerun_unread(
-            CARGO, "crate", "lib", ["a::tests::readable", "a::tests::broken"]
+            CARGO, "crate", "lib", ["a::tests::readable", "a::tests::broken"], []
         )
     finally:
         lane.subprocess.run = original

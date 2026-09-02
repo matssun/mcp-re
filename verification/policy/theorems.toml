@@ -4136,10 +4136,16 @@ constructor needs.
 security_consequence = """
 The pod's projected service-account token, the live workload-identity bearer token, and the
 `getPublicKey` response that BECOMES this replica's root verify key each have exactly one
-destination, and it is the one the validated configuration selected. R9's only Critical was
-this class: an endpoint that re-points that traffic sends a replayable credential to an
-attacker and lets a substituted authority supply a root signing key every local fail-closed
-check then passes against, self-consistently.
+destination: the authority embodied by the vetted capability the request was built through.
+Neither caller-controlled addressing nor a responder's redirect can move it. R9's only
+Critical was this class: an endpoint that re-points that traffic sends a replayable
+credential to an attacker and lets a substituted authority supply a root signing key every
+local fail-closed check then passes against, self-consistently.
+
+WHAT THIS LEAF DOES NOT SAY is that the capability corresponds to the posture the validated
+deployment configuration selected. That is a composition over this claim and the
+configuration owner's, and it is stated at THM-0077, which consumes this one. Read here it
+would be a claim about configuration made by an owner that reads none.
 
 The previous shape failed the deletion test rather than the threat model. Each key source
 called the endpoint rule and DISCARDED its answer, then built a bare HTTP client and
@@ -4160,16 +4166,18 @@ key custody or exportability (THM-0064, THM-0082), and nothing about the metadat
 own trustworthiness — on every production path that endpoint is a constant, and the
 parameter that varies it exists for tests.
 
-EVIDENCE AND LANES, stated because they differ. The addressing conjunct is pure and its
-controls run in the default `cargo test -p mcp-re-proxy --lib` lane that this unit's
-`test://` evidence resolves in. The redirect conjunct and the single-producer structure are
-compiled only under the `online_ocsp`, `aws_kms_keysource` and `gcp_kms_keysource` features,
-so their controls —
-`outbound_fetch::binding::tests::an_agent_does_not_follow_a_redirect_and_never_reaches_the_second_authority`
-and `kms_endpoint_policy::endpoint::tests::an_endpoint_the_rule_refuses_yields_no_egress` —
-are measured by the Bazel `:mcp_re_proxy_ext` flavor and by the per-feature cargo lanes, and
-are NOT cited by the unit. A build with none of those features compiles no credential egress
-at all, so there is nothing for the claim to be about there.
+EVERY CONJUNCT IS INSIDE THE SUPPORTING UNIT'S EVIDENCE CLOSURE, and the reason it needs
+saying is that they are not all compiled by the same crate. The addressing conjunct is
+pure. The redirect conjunct and the capability's absence of a second addressing surface are
+behind `online_ocsp`, `aws_kms_keysource` and `gcp_kms_keysource`, so
+`unit://proxy.outbound_destination` declares those features and its battery is selected in
+the crate where the controls exist. The single-producer conjunct is THM-0089's — the fact
+that a KMS or STS destination is obtainable only from `KmsEndpoint` belongs to the endpoint
+owner, is measured by `unit://proxy.kms_endpoint_authority` under the two backend features,
+and reaches this claim through the dependency rather than being re-derived here.
+
+A build with none of those features compiles no credential egress at all, so there is
+nothing for the claim to be about there.
 """
 owner = "proxy.outbound_destination"
 review_requirement = "Owner security-specification review"

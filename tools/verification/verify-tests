@@ -32,6 +32,15 @@ The unit's `features` are NOT passed to Cargo. They name the specification featu
 the prover's text (`verify`), which is off in every production build and pulls in vstd;
 running the battery under it would measure a different crate than the one that ships.
 
+`test_features` is the other field and the opposite case: the SHIPPING features a unit's
+controls are compiled by. A credential-egress control behind `#[cfg(feature =
+"aws_kms_keysource")]` does not exist in the default lane, so a unit whose claim is about
+credential egress and whose battery runs without the feature is measuring the part of its
+own claim that happens to be unconditional. Declaring the features runs the battery where
+the controls exist; the fingerprint carries them, so dropping one is a change of what was
+measured rather than a quiet reduction of it. `_manifest` refuses the two fields to
+overlap.
+
 Like the Verus lane, the fingerprint is taken BEFORE the tests run and travels with the
 record, so the issuer can tell "these tests passed over this source" from "these tests
 passed over some source".
@@ -123,7 +132,9 @@ def group_by_target(eco, symbols: list[str]) -> tuple[dict[str, list[str]], list
     return dict(grouped), malformed
 
 
-def _rerun_unread(eco, crate: str, target: str, names: list[str]) -> set[str]:
+def _rerun_unread(
+    eco, crate: str, target: str, names: list[str], features: list[str]
+) -> set[str]:
     """Re-run `names` ONE AT A TIME and return those that reported `ok` on their own.
 
     One at a time on purpose: a batch re-run can interleave the same way the first run did,
@@ -138,7 +149,7 @@ def _rerun_unread(eco, crate: str, target: str, names: list[str]) -> set[str]:
     recovered: set[str] = set()
     for name in names:
         again = subprocess.run(
-            test_argv(eco, crate, target, [name]),
+            test_argv(eco, crate, target, [name], features),
             cwd=REPO_ROOT if eco is CARGO else REPO_ROOT / crate,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -154,7 +165,9 @@ def _rerun_unread(eco, crate: str, target: str, names: list[str]) -> set[str]:
     return recovered
 
 
-def run_selection(eco, crate: str, target: str, paths: list[str]) -> tuple[bool, str]:
+def run_selection(
+    eco, crate: str, target: str, paths: list[str], features: list[str] | None = None
+) -> tuple[bool, str]:
     """Run exactly `paths` in one target and say whether all of them passed.
 
     `check=False` and the runner's own per-test status: piping the run through anything
@@ -163,7 +176,8 @@ def run_selection(eco, crate: str, target: str, paths: list[str]) -> tuple[bool,
     result is this lane's and is one rule — a declared symbol that did not report success
     is a failure, whether it failed, was skipped, or never ran.
     """
-    argv = test_argv(eco, crate, target, paths)
+    features = list(features or [])
+    argv = test_argv(eco, crate, target, paths, features)
     proc = subprocess.run(
         argv,
         # Cargo is driven from the workspace root with `-p`; a pytest or vitest selection is
@@ -219,7 +233,7 @@ def run_selection(eco, crate: str, target: str, paths: list[str]) -> tuple[bool,
         # something about interleaved output and nothing about the property.
         unread = [name for name in missing if name not in observed]
         if unread:
-            recovered = _rerun_unread(eco, crate, target, unread)
+            recovered = _rerun_unread(eco, crate, target, unread, features)
             passed |= recovered
             observed |= {name: "ok" for name in recovered}
             missing = sorted(set(paths) - passed)
@@ -256,11 +270,13 @@ def measure_unit(unit: dict) -> tuple[bool, str]:
             f"({', '.join(malformed)})"
         )
 
+    features = sorted(unit.get("test_features", []))
     details: list[str] = []
     failed = False
     for target in sorted(grouped):
-        print(f"    {crate} {target}: {len(grouped[target])} test(s)")
-        ok, detail = run_selection(eco, crate, target, grouped[target])
+        suffix = f" (--features {','.join(features)})" if features else ""
+        print(f"    {crate} {target}: {len(grouped[target])} test(s){suffix}")
+        ok, detail = run_selection(eco, crate, target, grouped[target], features)
         details.append(detail)
         failed = failed or not ok
     return not failed, "; ".join(details)
