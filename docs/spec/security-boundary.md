@@ -136,7 +136,7 @@ them is the point: an unstated gap is the failure mode this document exists to p
 | area | disposition | placement |
 |---|---|---|
 | **Replay** store durability | in scope; **written, unreviewed** — THM-0086 and THM-0092 | under THM-0077 — the selected tier materializes honestly — and THM-0074: a replay state the request requires and the store cannot establish must prevent dispatch. The second rests on ASM-0040 / ASM-0041, per mechanism |
-| **Continuation** correlation durability | in scope, and **not the same shape**; **written, unreviewed** — THM-0087 and THM-0093 | the capability is OPPORTUNISTIC, so absence is permitted and silent weakening is not. Under THM-0077: an available capability is what the runtime advertises and holds, and an unavailable one is an explicit absence with no weaker or node-local substitute installed. Under THM-0074: a leg that requires correlation fails closed rather than proceeding unbound when the capability or state is absent |
+| **Continuation** correlation durability | in scope, and **not the same shape**; **written and owner-reviewed** — THM-0087 and THM-0093, with THM-0096 the materialization leaf | the capability is OPTIONAL, selected with `--continuation-control-redis-url`: an omitted flag is a legitimate OFF that installs no store and no node-local substitute, and a SELECTED capability that cannot be established refuses startup. Under THM-0077, via THM-0096: the runtime installs exactly the capability the deployment selected. Under THM-0074, via THM-0093: a leg that requires correlation fails closed rather than proceeding unbound, and an absent capability reaches it as a deployment fact rather than as the caller's forged continuation |
 | Retained-evidence correspondence | in scope, **NOT CURRENTLY CLAIMED** — THM-0042 branch reopened | the corrected `submitted_commitment` proposition must be independently reviewed and established against genuine retained-evidence correspondence evidence before it returns to §2. The theorem is not to be weakened to make it green |
 | Retained-evidence reservation fidelity | in scope | retained-evidence family; a pending marker may exist only under the execution threshold its owner defines |
 | Outbound credential acquisition (KMS / STS / metadata / remote signer) | in scope; **written, unreviewed** — THM-0089 and THM-0090 | under THM-0077 / materialization; a credential-bearing outbound call reaches only the authority selected and validated for that capability. THM-0090 ends at the authority NAMED — the address a name resolves to is not closed |
@@ -169,6 +169,36 @@ in scope and not yet done. A §4 row corrected toward what the code actually doe
 document working, and leaving the two shapes conflated would have made the eventual claim
 easier to state than to earn.
 
+### 4.2 Amendment — 2026-09-03
+
+**Owner ruling, 2026-09-03 (D1b′).** The continuation row above said the capability is
+*opportunistic*. That word was accurate when `serving_capabilities::mrtr_continuation_store`
+had no flag of its own and appeared when a shared Redis happened to be configured for
+replay. It is no longer: the capability has a dedicated selector,
+`--continuation-control-redis-url`, so supplying it IS an explicit request and the
+opportunistic rule must not be applied to it.
+
+Two behaviours were corrected in the tree rather than in the prose:
+
+- a build without the `redis_replay` backend previously ignored a non-empty plan and
+  announced OFF. It now refuses startup and names the missing build capability. A selected
+  security capability is never silently downgraded.
+- an answer leg needing correlation in a deployment that holds none previously produced no
+  retained bases and was refused downstream as `continuation_binding_failed` — a statement
+  about the CALLER. It is now refused where the capability is missing, with the same
+  deployment-side classification an outage earns.
+
+The "single-replica MRTR" reading is also withdrawn. It described a fallback the shipped
+composition root does not have: with no locator, `app.rs` installs no correlation store at
+all, `InMemoryContinuationStore` is a test double and not a production tier, and the open leg
+refuses rather than returning an elicitation nothing was kept for. No node-local tier was
+installed to make the old sentence true; a node-local tier would be a separate capability
+requiring its own explicit selection, and none is offered.
+
+**This corrects a §4 branch that is not yet established, and adds one claim rather than
+weakening any.** §4.1 stands as the record of the 2026-09-01 ruling it was correct under;
+this supersedes it on the point of *opportunistic*, and nothing in §2 moves.
+
 ## 5. Where the boundary is currently weaker than it reads
 
 Stated plainly, because a claim surface that hides its own open edges is worse than one that
@@ -194,11 +224,18 @@ has none.
   stays in §2 rather than being moved out, because moving it would report a weakened claim
   where the fact is an unrenewed signature — but a reader must know the difference, which
   is why it is here. Root completeness: 7 of 9.
-- **THM-0087 is registered and unreviewed, by ruling.** It states an actor-scoped,
-  non-consuming continuation lookup. It was briefly attached to THM-0077 as if it were the
-  continuation posture claim; it is not, and the edge was removed on 2026-09-01. Its
-  measured position is under THM-0074, and that edge is deliberately not written while the
-  theorem is unreviewed — see the design packet.
+- **THM-0087 is registered and owner-reviewed** (Batch 5C, 2026-09-03). It states an
+  actor-scoped, non-consuming continuation lookup. It was briefly attached to THM-0077 as if
+  it were the continuation posture claim; it is not, and that edge was removed on
+  2026-09-01. Its position is under THM-0074 reached through THM-0093
+  (THM-0051 → THM-0087 → THM-0093 → THM-0074), which is written. There is no direct
+  THM-0087 → THM-0074 edge. The posture claim THM-0077 needs is THM-0096, not this.
+  **Its scope paragraph is stale and needs an owner amendment**: it says an unavailable
+  shared tier does not refuse startup and that an answer leg fails closed at the binding,
+  and after the 2026-09-03 continuation-capability campaign a SELECTED tier that cannot be
+  established refuses startup and an absent capability is refused before the binding. The
+  claim the paragraph excludes is still correctly excluded; the reason given for excluding
+  it is no longer the tree's behaviour.
 - **Surviving Round-9 findings.** 131 cluster dispositions are recorded in
   `verification/reviews/r9-dispositions.json`. A finding mapping to a theorem is not thereby
   closed.

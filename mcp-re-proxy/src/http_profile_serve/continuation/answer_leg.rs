@@ -7,6 +7,9 @@
 //! * the read is a `peek`. It has no side effect, which is what lets a request that is
 //!   about to be refused leave a live approval intact — the refusals before the retirement
 //!   are free, and they stay free only because nothing above spent anything.
+//! * a deployment that holds no correlation capability refuses a leg that needs one,
+//!   rather than letting the missing capability surface downstream as the caller's
+//!   unbindable continuation.
 //! * the spend is the store's atomic `consume`. Of two concurrent answer legs that both
 //!   bound successfully, exactly one proceeds.
 //! * the spend has FOUR outcomes rather than two, because the store's `Err` is not its
@@ -38,12 +41,19 @@ impl ContinuationPlane {
     /// Keyed by the actor the VERIFIER resolved, never by anything the request asserts, so
     /// one peer cannot name another's continuation at all.
     ///
-    /// A store MISS and a store OUTAGE are refused differently. A miss — never opened,
-    /// expired, already answered — leaves no bases, and the binding then fails closed
-    /// `continuation_binding_failed`, which is a statement about the CALLER. An outage is a
-    /// statement about this DEPLOYMENT, so it is named as one: flattening the two reports a
-    /// forged continuation every time the shared tier blips, and hides a genuine splice
-    /// attempt inside an outage.
+    /// Three absences, and only ONE of them is about the caller.
+    ///
+    /// * this deployment holds no correlation capability. A DEPLOYMENT fact, and the leg
+    ///   that needs correlation is refused as one — see [`capability_absent`].
+    /// * the store did not answer. Also a deployment fact, refused as one.
+    /// * the store answered and there was no live entry — never opened, expired, already
+    ///   answered — or the request carries no usable continuation state. Those leave no
+    ///   bases, and the binding then fails closed `continuation_binding_failed`, which is
+    ///   a statement about the CALLER.
+    ///
+    /// Flattening the first two into the third reports a forged continuation every time
+    /// the shared tier blips or a deployment runs without the capability, and hides a
+    /// genuine splice attempt inside both.
     pub(in crate::http_profile_serve) async fn prepare(
         &self,
         ex: &Exchange<'_>,
@@ -60,6 +70,11 @@ impl ContinuationPlane {
             .map(|state| continuation_key(audience_id, ex.actor_id, state.as_bytes()));
         let retained = match (&self.store, &answer_key) {
             (Some(store), Some(key)) => peeked_or_refusal(store.peek(key).await)?,
+            // A key exists, so this leg NEEDS correlation, and this deployment holds no
+            // capability to correlate with. Refused here rather than left to produce no
+            // bases: the binding downstream would report the caller's continuation as
+            // unbindable, which is a claim about the caller this deployment cannot make.
+            (None, Some(_)) => return Err(capability_absent()),
             _ => None,
         };
         Ok(Established::new(
@@ -70,33 +85,6 @@ impl ContinuationPlane {
             },
             ExchangeEvent::ContinuationPrepared,
         ))
-    }
-
-    /// CONTINUATION-RETIRED — spend the approval, exactly once.
-    ///
-    /// ```text
-    /// ensures   what the shared tier reported, as a [`Retirement`]
-    /// forbids   running the backend
-    /// refusal   minted by the CALLER — see [`Retirement`]
-    /// ```
-    ///
-    /// The three non-proceeding outcomes are not the same fact, so this reports what
-    /// happened and the caller — which holds the continuation machine — decides both the
-    /// refusal and what the exchange may claim about the approval. A stage cannot do the
-    /// second, and a stage that refused without it would be stating a retry contract it
-    /// cannot know.
-    pub(in crate::http_profile_serve) async fn retire(
-        &self,
-        answer_key: Option<&String>,
-    ) -> Retirement {
-        let (Some(store), Some(key)) = (&self.store, answer_key) else {
-            return Retirement::NotInvolved;
-        };
-        match store.consume(key).await {
-            Ok(true) => Retirement::Retired,
-            Ok(false) => Retirement::AlreadyAnswered,
-            Err(_) => Retirement::Indeterminate,
-        }
     }
 }
 
@@ -116,6 +104,22 @@ fn peeked_or_refusal(
     peeked.map_err(|_| Refusal::before_admission(McpReError::ReplayCacheUnavailable, 503))
 }
 
+/// The refusal for a leg that needs correlation in a deployment that holds no correlation
+/// capability.
+///
+/// The SAME classification an outage earns, and deliberately so: from the caller's side
+/// "the tier this deployment would have consulted is not there" and "it did not answer" are
+/// one fact — the deployment cannot decide this continuation — and they carry the same
+/// retry meaning. What matters is that neither is reported as the caller's forged
+/// continuation. A distinct wire code would split a caller-visible distinction out of two
+/// deployment states the caller can do nothing differently about, and the frozen taxonomy
+/// already expresses the one that matters.
+///
+/// Free, like every refusal above the retirement: nothing was peeked and nothing spent.
+fn capability_absent() -> Refusal {
+    Refusal::before_admission(McpReError::ReplayCacheUnavailable, 503)
+}
+
 /// What CONTINUATION-PREPARED recovered.
 ///
 /// The owned `retained` and `answer_state` outlive the borrowed [`RetainedContinuation`]
@@ -133,10 +137,14 @@ pub(in crate::http_profile_serve) struct ContinuationPrep {
 impl ContinuationPrep {
     /// The binding to check the answer leg against, when there is one to check.
     ///
-    /// `None` covers every way the bases can be absent — no store, no `requestState`, a
-    /// store miss, an expired or already-answered entry, a store outage — because the
-    /// dispatcher must fail closed on `continuation_binding_failed` in all of them. A
-    /// continuation that was signed but cannot be bound is never admitted.
+    /// `None` covers the CALLER-SIDE absences — no `requestState`, a store miss, an
+    /// expired or already-answered entry — because the dispatcher must fail closed on
+    /// `continuation_binding_failed` in all of them. A continuation that was signed but
+    /// cannot be bound is never admitted.
+    ///
+    /// The deployment-side absences do not reach here at all: an outage and a missing
+    /// capability are refused in [`ContinuationPlane::prepare`], so this `None` no longer
+    /// stands for two kinds of fact at once.
     pub(in crate::http_profile_serve) fn binding(&self) -> Option<RetainedContinuation<'_>> {
         match (&self.retained, &self.answer_state) {
             (Some(bases), Some(state)) => Some(RetainedContinuation {
@@ -164,121 +172,74 @@ impl ContinuationPrep {
     }
 }
 
-/// What the shared tier reported when this exchange tried to retire the approval it
-/// answers.
-///
-/// Four values, because the store's `Err` is not the store's `Ok(false)`. A `DEL` whose
-/// reply was never read may well have executed, so "there was definitely nothing to
-/// retire" and "the entry may or may not be gone" are different facts about a human's
-/// approval: they warrant different wire codes, and — the load-bearing part — different
-/// claims about whether an ordinary retry can still succeed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::http_profile_serve) enum Retirement {
-    /// This deployment runs no store, or this request answers nothing. No approval is at
-    /// stake.
-    NotInvolved,
-    /// THIS call removed the live entry. **The approval is spent.**
-    Retired,
-    /// The store ANSWERED, and there was no live entry to remove: already answered,
-    /// expired, or a splice. A statement about the caller.
-    AlreadyAnswered,
-    /// The store did not answer. The entry may or may not be gone, and nothing downstream
-    /// can find out — the answer leg is the only thing that would have consumed it.
-    Indeterminate,
-}
-
 #[cfg(test)]
 pub(in crate::http_profile_serve) mod tests {
     use super::*;
     use crate::continuation_store::AsyncContinuationStore;
     use std::sync::Arc;
 
+    /// D1b′ / SLICE B: a deployment holding NO correlation capability refuses an answer
+    /// leg that needs one, as a fact about the deployment.
+    ///
+    /// The dangerous alternative is the one that was here: no store means no retained
+    /// bases, the binding downstream is absent, and the caller is told
+    /// `continuation_binding_failed` — a statement that its continuation was forged. It
+    /// fails closed either way; what it did not do is fail closed HONESTLY. Every
+    /// legitimate answer leg reaching a deployment without the capability was reported as
+    /// an attack.
     #[tokio::test]
-    async fn a_deployment_with_no_store_retires_nothing() {
-        // `NotInvolved` is not "the retirement failed". No approval was ever at stake, so
-        // the exchange may claim nothing was spent — which is what the assembly records.
-        let plane = ContinuationPlane::disabled();
-        assert_eq!(plane.retire(None).await, Retirement::NotInvolved);
+    async fn an_absent_capability_is_the_deployments_fact_and_not_the_callers() {
+        let verified = verified_as("did:example:host-a", "key-1");
+        let actor_id = verified.resolved_actor().actor_id();
+        let http_req = http_request(br#"{"params":{"requestState":"s-1"}}"#);
+        let ex = Exchange {
+            http_req: &http_req,
+            verified: &verified,
+            actor_id: &actor_id,
+            now: 1,
+            key: None,
+        };
+
+        let Err(refusal) = ContinuationPlane::disabled().prepare(&ex, "aud").await else {
+            panic!("a leg needing correlation in a deployment with none must be refused");
+        };
+        assert_eq!(refusal.status, 503, "a deployment-side unavailability");
         assert_eq!(
-            plane.retire(Some(&"k".to_owned())).await,
-            Retirement::NotInvolved,
-            "a key with nowhere to retire it against is still nothing at stake"
+            refusal.cause,
+            crate::refusal::RefusalCause::from(McpReError::ReplayCacheUnavailable),
+            "the same classification an outage earns, and never a binding failure"
         );
     }
 
+    /// The negative half, which is what keeps the control above from being satisfied by a
+    /// plane that refuses everything.
+    ///
+    /// A store-less deployment serving a request that needs NO correlation is ordinary and
+    /// must proceed. The refusal is scoped to legs that actually need the capability.
     #[tokio::test]
-    async fn the_second_answer_leg_is_told_the_approval_was_already_spent() {
-        // One-shot, and the two non-proceeding outcomes are not the same fact. The first
-        // leg spends the approval; the second gets `AlreadyAnswered` — a statement about
-        // the CALLER — rather than the `Indeterminate` reserved for a tier that did not
-        // answer at all.
-        let store = Arc::new(crate::continuation_store::InMemoryContinuationStore::new());
-        let plane = ContinuationPlane::wired(store.clone(), 300);
-        let key = continuation_key("aud", "actor-1", b"s-1");
-        store
-            .store(
-                &key,
-                &RetainedBases {
-                    previous_request_base: b"req".to_vec(),
-                    input_required_response_base: b"resp".to_vec(),
-                },
-                300,
-            )
+    async fn a_store_less_deployment_still_serves_a_leg_that_needs_no_correlation() {
+        let mut verified = verified_as("did:example:host-a", "key-1");
+        verified.request_block.continuation = None;
+        let actor_id = verified.resolved_actor().actor_id();
+        let http_req = http_request(br#"{"params":{"requestState":"s-1"}}"#);
+        let ex = Exchange {
+            http_req: &http_req,
+            verified: &verified,
+            actor_id: &actor_id,
+            now: 1,
+            key: None,
+        };
+
+        let established = ContinuationPlane::disabled()
+            .prepare(&ex, "aud")
             .await
-            .expect("the in-memory tier accepts an open leg");
-
-        assert_eq!(plane.retire(Some(&key)).await, Retirement::Retired);
-        assert_eq!(plane.retire(Some(&key)).await, Retirement::AlreadyAnswered);
-    }
-
-    /// A tier that does not answer the SPEND. Its own case, and it has to be reachable.
-    ///
-    /// The in-memory store cannot produce it — it never fails — so the fourth outcome has
-    /// no control without a store that errors on `consume`.
-    struct UnansweringStore;
-
-    impl AsyncContinuationStore for UnansweringStore {
-        fn store<'a>(
-            &'a self,
-            _key: &'a str,
-            _bases: &'a RetainedBases,
-            _ttl_secs: i64,
-        ) -> crate::continuation_store::ContinuationFuture<'a, ()> {
-            Box::pin(async { Ok(()) })
-        }
-
-        fn peek<'a>(
-            &'a self,
-            _key: &'a str,
-        ) -> crate::continuation_store::ContinuationFuture<'a, Option<RetainedBases>> {
-            Box::pin(async { Ok(None) })
-        }
-
-        fn consume<'a>(
-            &'a self,
-            _key: &'a str,
-        ) -> crate::continuation_store::ContinuationFuture<'a, bool> {
-            Box::pin(async {
-                Err(ContinuationStoreError::Unavailable {
-                    details: "the shared tier did not answer the spend".into(),
-                })
-            })
-        }
-    }
-
-    /// The fourth outcome is carried, not collapsed into one of the other three.
-    ///
-    /// Nothing downstream can find out whether the entry was consumed. Reporting
-    /// `AlreadyAnswered` would tell the caller its approval was spent by someone; reporting
-    /// `Retired` would claim this call spent it; reporting `NotInvolved` would say nothing
-    /// was ever at stake. All three are statements the proxy cannot make here, and each
-    /// gives a person's approval a fate the deployment did not observe.
-    #[tokio::test]
-    async fn a_tier_that_does_not_answer_the_spend_is_its_own_outcome() {
-        let plane = ContinuationPlane::wired(Arc::new(UnansweringStore), 300);
-        assert_eq!(
-            plane.retire(Some(&"k-1".to_owned())).await,
-            Retirement::Indeterminate
+            .expect("a leg carrying no continuation is not this owner's to refuse");
+        let prep = crate::exchange_state::ExchangeProgress::new().establish(established);
+        assert_eq!(prep.answer_key(), None);
+        assert!(prep.binding().is_none());
+        assert!(
+            !prep.was_peeked(),
+            "nothing was read, so nothing is at stake"
         );
     }
 
@@ -386,10 +347,14 @@ pub(in crate::http_profile_serve) mod tests {
             key: None,
         };
 
-        let established = ContinuationPlane::disabled()
+        // A store that answers a MISS and records what it was asked for. The plane must be
+        // wired: a deployment holding no capability now refuses this leg outright, and the
+        // fact under test is which key a deployment that CAN look one up asks with.
+        let store = Arc::new(PeekRecordingStore::default());
+        let established = ContinuationPlane::wired(store.clone(), 300)
             .prepare(&ex, "aud")
             .await
-            .expect("a disabled plane reads nothing and refuses nothing");
+            .expect("a store miss is the caller's fact, not a refusal");
         let prep = crate::exchange_state::ExchangeProgress::new().establish(established);
 
         let carried = continuation_key("aud", &verified.resolved_actor().actor_id(), b"s-1");
@@ -400,6 +365,49 @@ pub(in crate::http_profile_serve) mod tests {
         );
         assert_ne!(carried, asserted, "the two identities must differ at all");
         assert_eq!(prep.answer_key(), Some(&carried));
+        // The key the STORE was asked with, not only the one the prep reports. A leg that
+        // computed the carried key and looked up the asserted one would satisfy the
+        // assertion above; this is what probe M88 has to move.
+        assert_eq!(store.keys(), vec![carried]);
+    }
+
+    /// A store that misses every read and remembers the keys it was asked for.
+    #[derive(Default)]
+    struct PeekRecordingStore(std::sync::Mutex<Vec<String>>);
+
+    impl PeekRecordingStore {
+        fn keys(&self) -> Vec<String> {
+            self.0.lock().expect("no test thread panics here").clone()
+        }
+    }
+
+    impl AsyncContinuationStore for PeekRecordingStore {
+        fn store<'a>(
+            &'a self,
+            _key: &'a str,
+            _bases: &'a RetainedBases,
+            _ttl_secs: i64,
+        ) -> crate::continuation_store::ContinuationFuture<'a, ()> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn peek<'a>(
+            &'a self,
+            key: &'a str,
+        ) -> crate::continuation_store::ContinuationFuture<'a, Option<RetainedBases>> {
+            self.0
+                .lock()
+                .expect("no test thread panics here")
+                .push(key.to_owned());
+            Box::pin(async { Ok(None) })
+        }
+
+        fn consume<'a>(
+            &'a self,
+            _key: &'a str,
+        ) -> crate::continuation_store::ContinuationFuture<'a, bool> {
+            Box::pin(async { Ok(false) })
+        }
     }
 
     #[test]

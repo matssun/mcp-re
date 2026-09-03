@@ -25,17 +25,21 @@ fn poisoned<T>(_: std::sync::PoisonError<T>) -> ContinuationStoreError {
     }
 }
 
-/// A single-process in-memory continuation store — for unit tests and single-replica
-/// runs ONLY. It cannot carry a continuation across replicas (each process has its
-/// own map), so a fleet MUST wire the Redis store; this exists so the serving path
-/// has a non-`None` store in tests without a Redis dependency.
+/// A single-process in-memory continuation store — for TESTS ONLY.
+///
+/// It is not a shipped tier and not a fallback: no composition root installs it, and a
+/// deployment that selected no shared store installs nothing rather than this. It cannot
+/// carry a continuation across replicas (each process has its own map), so wiring it into
+/// a serving binary would hold a capability the deployment model does not offer and the
+/// posture line does not describe. It exists so the serving path has a non-`None` store in
+/// tests without a Redis dependency.
 #[derive(Default)]
 pub struct InMemoryContinuationStore {
     /// Entry plus its expiry instant. The TTL is part of the trait contract — RF-07
     /// requires a completed or abandoned continuation chain to leave no correlation
     /// state — and binding it as `_ttl_secs` meant an unanswered continuation lived for
-    /// the whole process lifetime, so a long-running single-replica proxy accumulated
-    /// retained signature bases that nothing would ever consume. The Redis twin sets a
+    /// the whole process lifetime, so a long-running harness accumulated retained
+    /// signature bases that nothing would ever consume. The Redis twin sets a
     /// real key TTL; this is the same bound, enforced on read.
     entries: std::sync::Mutex<std::collections::HashMap<String, (RetainedBases, i64)>>,
 }

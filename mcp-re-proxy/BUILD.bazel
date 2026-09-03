@@ -357,6 +357,9 @@ _PROXY_LIB_SRCS = [
     "src/http_profile_serve/continuation/mod.rs",
     "src/http_profile_serve/continuation/answer_leg.rs",
     "src/http_profile_serve/continuation/open_leg.rs",
+    # The retirement authority, split out of `answer_leg.rs` on 2026-09-03: the read
+    # decides what a leg may proceed on, this decides what may be said about an approval.
+    "src/http_profile_serve/continuation/retirement.rs",
     "src/http_profile_serve/inner_plane.rs",
     "src/http_profile_serve/reply.rs",
     "src/http_profile_serve/request_admission.rs",
@@ -398,6 +401,9 @@ _PROXY_LIB_SRCS = [
     # operation producing what to attach and the posture line describing it.
     # Crate-internal.
     "src/serving_capabilities.rs",
+    # ADR-MCPS-047 / #744 D1b′: the continuation capability's own seam. Its own module
+    # because its OFF branch is a fact about an operator's SELECTION, not about the build.
+    "src/serving_capabilities/continuation.rs",
     # ADR-MCPRE-056 §5.2: what startup INTENDS to build, decided from validated
     # configuration alone — no I/O, no environment, no clock. Crate-internal.
     "src/startup_plan.rs",

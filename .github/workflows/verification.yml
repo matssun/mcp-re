@@ -47,6 +47,13 @@ on:
       - "mcp-re-proxy/src/replay_plane/**"
       - "mcp-re-proxy/src/continuation_store/**"
       - "mcp-re-proxy/src/redis_continuation_store.rs"
+      # Issue #744, D1b′: the continuation MATERIALIZATION owners — which capability the
+      # runtime installs for the plan it was given, and the composition root's half of it.
+      # `startup_posture` is here because the declaration conjunct is part of that claim.
+      - "mcp-re-proxy/src/serving_capabilities/**"
+      - "mcp-re-proxy/src/config_state/continuation_control.rs"
+      - "mcp-re-proxy/src/startup_posture.rs"
+      - "mcp-re-proxy/src/startup_posture/**"
       # Issue #742: the two outbound authorities. Registered as units because R9's only
       # Critical was a credential-bearing egress reaching an authority the configuration
       # did not select, and both modules were fixed while neither was declared — a fix
@@ -224,6 +231,13 @@ on:
       - "mcp-re-proxy/src/replay_plane/**"
       - "mcp-re-proxy/src/continuation_store/**"
       - "mcp-re-proxy/src/redis_continuation_store.rs"
+      # Issue #744, D1b′: the continuation MATERIALIZATION owners — which capability the
+      # runtime installs for the plan it was given, and the composition root's half of it.
+      # `startup_posture` is here because the declaration conjunct is part of that claim.
+      - "mcp-re-proxy/src/serving_capabilities/**"
+      - "mcp-re-proxy/src/config_state/continuation_control.rs"
+      - "mcp-re-proxy/src/startup_posture.rs"
+      - "mcp-re-proxy/src/startup_posture/**"
       # Issue #742: the two outbound authorities. Registered as units because R9's only
       # Critical was a credential-bearing egress reaching an authority the configuration
       # did not select, and both modules were fixed while neither was declared — a fix
