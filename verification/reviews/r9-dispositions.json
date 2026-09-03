@@ -149,7 +149,12 @@
       "node": "no THM",
       "area": "sdk-client-exchange",
       "reason": "Same defect, same lines.",
-      "tracking_issue": 746
+      "tracking_issue": 746,
+      "merged_closure": {
+        "pr": 792,
+        "commit": "fdc154a82d75615bbbc4a9110583a47b9a77e590",
+        "note": "the same defect as R9-C010 and closed by the same change: `_read_bounded` takes the body with `read1`, so no new underlying read begins once the aggregate deadline has passed, and the per-recv timeout bounds the one already in progress. Measured against a real HTTPResponse fed by a real trickling socket. The rows reporting the TEST STUB (R9-C019, R9-C020) are closed by the same commit, which deleted the fake whose short-read semantics `http.client` lacks and replaced it with that peer"
+      }
     },
     {
       "cluster": "R9-C012",
@@ -256,7 +261,12 @@
       "node": "no THM",
       "area": "sdk-client-exchange",
       "reason": "Unchanged.",
-      "tracking_issue": 746
+      "tracking_issue": 746,
+      "merged_closure": {
+        "pr": 792,
+        "commit": "fdc154a82d75615bbbc4a9110583a47b9a77e590",
+        "note": "the same defect as R9-C010 and closed by the same change: `_read_bounded` takes the body with `read1`, so no new underlying read begins once the aggregate deadline has passed, and the per-recv timeout bounds the one already in progress. Measured against a real HTTPResponse fed by a real trickling socket. The rows reporting the TEST STUB (R9-C019, R9-C020) are closed by the same commit, which deleted the fake whose short-read semantics `http.client` lacks and replaced it with that peer"
+      }
     },
     {
       "cluster": "R9-C020",
@@ -267,7 +277,12 @@
       "node": "no THM",
       "area": "sdk-client-exchange",
       "reason": "Unchanged; the TypeScript twin is still bounded and Python is not.",
-      "tracking_issue": 746
+      "tracking_issue": 746,
+      "merged_closure": {
+        "pr": 792,
+        "commit": "fdc154a82d75615bbbc4a9110583a47b9a77e590",
+        "note": "the same defect as R9-C010 and closed by the same change: `_read_bounded` takes the body with `read1`, so no new underlying read begins once the aggregate deadline has passed, and the per-recv timeout bounds the one already in progress. Measured against a real HTTPResponse fed by a real trickling socket. The rows reporting the TEST STUB (R9-C019, R9-C020) are closed by the same commit, which deleted the fake whose short-read semantics `http.client` lacks and replaced it with that peer"
+      }
     },
     {
       "cluster": "R9-C021",
@@ -621,7 +636,12 @@
       "node": "no THM",
       "area": "sdk-client-exchange",
       "reason": "Unchanged.",
-      "tracking_issue": 746
+      "tracking_issue": 746,
+      "merged_closure": {
+        "pr": 792,
+        "commit": "fdc154a82d75615bbbc4a9110583a47b9a77e590",
+        "note": "the same defect as R9-C010 and closed by the same change: `_read_bounded` takes the body with `read1`, so no new underlying read begins once the aggregate deadline has passed, and the per-recv timeout bounds the one already in progress. Measured against a real HTTPResponse fed by a real trickling socket. The rows reporting the TEST STUB (R9-C019, R9-C020) are closed by the same commit, which deleted the fake whose short-read semantics `http.client` lacks and replaced it with that peer"
+      }
     },
     {
       "cluster": "R9-C050",
