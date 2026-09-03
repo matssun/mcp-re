@@ -9,6 +9,9 @@ STATUS:  RATIFIED — the current canonical MCP-RE security-claim boundary
          AMENDED by the owner on 2026-09-01: §4.1, the replay/continuation split.
          The amendment is recorded in place rather than folded silently into the
          ratified text — see §4.1 for what changed and why it is not a §2 weakening.
+         AMENDED by the owner on 2026-09-03: THM-0042 moved §4 -> §2, by the route
+         §7 reserves — established and independently reviewed — not by declaration.
+         See §7.1.
 ```
 
 This document states what MCP-RE protects, and — with equal weight — what it does **not**.
@@ -77,6 +80,7 @@ it. A claim with no root in this table is not a claim this document makes.
 | A runtime that never bound a listener cannot be recorded as a clean drained shutdown. | **THM-0012** — the lifecycle record |
 | An auditor cannot be shown a receipt from a log the deployment's pin does not describe, where verification runs through a pin-projected resolver. | **THM-0072** — pinned-service receipt |
 | An exchange-owned refusal cannot disappear through projection or ordinary queue loss without that loss itself being represented, within the modeled in-process audit path. | **THM-0071** — typed refusal provenance reaches the record |
+| An auditor cannot be shown retained evidence other than the evidence a Signed Statement was made about: the reconstruction a statement commits to is the one presented, the `ChainLabel` inside the commitment is that reconstruction's own, and a record whose submission the statement does not identify is refused rather than reported as bound on the strength of its verified prefix. | **THM-0042** — retained evidence is the evidence the statement was made about |
 
 The full graph — every subordinate theorem, its owner unit, its evidence and its premises —
 is `verification/policy/theorems.toml` and the views generated from it. This table is the
@@ -91,9 +95,9 @@ otherwise reasonably infer it from a claim in §2.
 sandbox. It does not constrain what the inner server does once a request is dispatched to
 it, does not isolate it, and does not bound its side effects.
 
-**Confidentiality of retained evidence.** No confidentiality is claimed, and none would be
-claimed even if retained-evidence correspondence were established: the THM-0042 branch is
-about correspondence, not secrecy. A receipt does not carry the retained call bytes, and
+**Confidentiality of retained evidence.** No confidentiality is claimed, and none follows
+from retained-evidence correspondence now that THM-0042 is established: that root is about
+correspondence, not secrecy. A receipt does not carry the retained call bytes, and
 that is all — it is not unlinkability, not resistance to inference from digests, and not
 resistance to guessing a low-entropy reconstruction and confirming it against the
 commitment.
@@ -137,7 +141,6 @@ them is the point: an unstated gap is the failure mode this document exists to p
 |---|---|---|
 | **Replay** store durability | in scope; **written, unreviewed** — THM-0086 and THM-0092 | under THM-0077 — the selected tier materializes honestly — and THM-0074: a replay state the request requires and the store cannot establish must prevent dispatch. The second rests on ASM-0040 / ASM-0041, per mechanism |
 | **Continuation** correlation durability | in scope, and **not the same shape**; **written and owner-reviewed** — THM-0087 and THM-0093, with THM-0096 the materialization leaf | the capability is OPTIONAL, selected with `--continuation-control-redis-url`: an omitted flag is a legitimate OFF that installs no store and no node-local substitute, and a SELECTED capability that cannot be established refuses startup. Under THM-0077: the runtime installs exactly the capability its `ContinuationControlPlan` names (THM-0096), composed there with the parent fact that the plan represents the validated configuration — which THM-0096 does not itself establish. Under THM-0074, via THM-0093: a leg that requires correlation fails closed rather than proceeding unbound, and an absent capability reaches it as a deployment fact rather than as the caller's forged continuation |
-| Retained-evidence correspondence | in scope, **NOT CURRENTLY CLAIMED** — THM-0042 branch reopened | the corrected `submitted_commitment` proposition must be independently reviewed and established against genuine retained-evidence correspondence evidence before it returns to §2. The theorem is not to be weakened to make it green |
 | Retained-evidence reservation fidelity | in scope | retained-evidence family; a pending marker may exist only under the execution threshold its owner defines |
 | Outbound credential acquisition (KMS / STS / metadata / remote signer) | in scope; **written, unreviewed** — THM-0089 and THM-0090 | under THM-0077 / materialization; a credential-bearing outbound call reaches only the authority selected and validated for that capability. THM-0090 ends at the authority NAMED — the address a name resolves to is not closed |
 | Client sidecar local ingress | in scope, **its own client-side root**; **declared, unreviewed** — THM-0091 | not folded into THM-0076; an unrelated browser origin or DNS-rebinding attacker must not cause a security-bearing outbound exchange |
@@ -204,14 +207,16 @@ this supersedes it on the point of *opportunistic*, and nothing in §2 moves.
 Stated plainly, because a claim surface that hides its own open edges is worse than one that
 has none.
 
-- **THM-0042 is reopened.** Its statement now names `submitted_commitment` and refuses a
-  statement that identifies no submission, and its specification review is consequently
-  `STALE_CLAIM`. The claim is not established until that review is redone.
 - **The `s01` SCITT interop corpus does not evidence retained-evidence correspondence.** Its
   retained artefact records handles rather than the submitted messages, so the submission
   digest is not reproducible from it. The vector is demoted in place: it evidences receipt,
-  statement and key-pin interoperation and nothing more. Closing this needs a corpus produced
-  by a real signed multi-hop exchange.
+  statement and key-pin interoperation and nothing more, and it is deliberately NOT
+  regenerated — that no MCP-RE code produced it is the whole value of that vector. The
+  corpus that evidences the claim is `conformance.retained_corpus`, a signed multi-hop
+  exchange this implementation produced. THM-0042 is no longer listed here: it was reopened
+  when #736 replaced a curated field list with a closed canonical representation, and it
+  returned to §2 on 2026-09-03 once the corrected statement was owner-reviewed and
+  `review --root-completeness` reported it established. It was not weakened to get there.
 - **Assurance-platform false-green classes are open.** Until they are closed, the word
   ESTABLISHED carries less than it appears to. The list and its priority order are in the
   ruling record.
@@ -260,8 +265,10 @@ ruling C of 2026-08-31.
 
 Ratification is an event, not an inference: no conditional, no agreement in principle, and
 no signature written on the owner's behalf. This record was written after the event, and the
-text ratified is the text at `23a727ac` — the same text this file carries, with this section
-and the status banner recording what happened to it.
+text ratified is the text at `23a727ac`. This file has since MOVED, and §7.1 records every
+move — the ratification is not restated over the current text and does not reach it. A
+document that said "the same text this file carries" while the file had changed would be
+inheriting a signature the way §1 says this document refuses to.
 
 The ratification states exactly this:
 
@@ -276,6 +283,24 @@ The ratification states exactly this:
 That last clause is the load-bearing one. Ratifying a boundary that honestly says a branch is
 unestablished does not establish it; it ratifies the honesty. A §4 row moves to §2 only by
 being established and independently reviewed, never by this section having been signed.
+
+### 7.1 Moves since ratification
+
+Each row is a change to the ratified text, with the event that authorized it. Recorded here
+rather than folded in, for the reason §4.1 gives: an amendment absorbed silently makes the
+ratification read as covering text the owner never saw.
+
+| date | change | authority |
+|---|---|---|
+| 2026-09-01 | §4.1, the replay/continuation split | owner amendment, recorded in §4.1 |
+| 2026-09-03 | **THM-0042 moved §4 → §2**, its §5 open edge closed, and the §3 confidentiality non-claim restated over an established root | owner specification review of 2026-09-03 at merged main `09b5913a`, over theorem fingerprint `sha256:9d769c2c…69d03c6f`; `review --root-completeness` reported it established |
+
+The 2026-09-03 move is exactly the route the clause above reserves. THM-0042 was reopened —
+not newly declared — when #736 replaced a curated field list that omitted `signature-input`
+with a closed canonical representation; the statement changed, the prior review went
+`STALE_CLAIM`, and the row sat in §4 until the corrected statement was reviewed on its own
+terms. **The theorem was not weakened to get there**, which §4's row had required in as many
+words. The `s01` non-evidence remains disclosed in §5.
 
 Equally, this signature is not permission to weaken an existing claim. A §2 row whose
 evidence stops holding leaves §2; it is not rewritten until it fits what remains.
