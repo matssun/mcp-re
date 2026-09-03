@@ -66,7 +66,6 @@ use mcp_re_proxy::async_inner::AsyncInnerServer;
 use mcp_re_proxy::continuation_store::continuation_key;
 use mcp_re_proxy::continuation_store::AsyncContinuationStore;
 use mcp_re_proxy::continuation_store::InMemoryContinuationStore;
-use mcp_re_proxy::continuation_store::ResolvedActorId;
 use mcp_re_proxy::continuation_store::RetainedBases;
 use mcp_re_proxy::http_inner::HttpInnerPool;
 use mcp_re_proxy::http_profile_dispatch::dispatch_request_with_tier_gate;
@@ -271,7 +270,7 @@ async fn handle(
     let answer_key = answer_state.as_ref().map(|state| {
         continuation_key(
             &expected_audience.audience_id,
-            &ResolvedActorId::of(verified.resolved_actor()),
+            &verified.resolved_actor().actor_id(),
             state.as_bytes(),
         )
     });
@@ -417,7 +416,7 @@ async fn handle(
                 };
                 let key = continuation_key(
                     &expected_audience.audience_id,
-                    &ResolvedActorId::of(verified.resolved_actor()),
+                    &verified.resolved_actor().actor_id(),
                     request_state.as_bytes(),
                 );
                 if state

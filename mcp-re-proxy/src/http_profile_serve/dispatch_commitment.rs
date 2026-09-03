@@ -50,7 +50,7 @@ impl HttpProfileProxy {
         )
         .map_err(|e| Refusal::after_admission(e, 500))?;
         Ok(Established::new(
-            forwarded.into_bytes_for_inner(ex.actor_id.as_str()),
+            forwarded.into_bytes_for_inner(ex.actor_id),
             ExchangeEvent::ForwardBodyPrepared,
         ))
     }
