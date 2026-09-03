@@ -1276,6 +1276,11 @@
       "node": "THM-0042 (root)",
       "area": "scitt-retained-evidence",
       "reason": "`corresponds_to` still refuses outright when either side has no verified hop, before the submission comparison — so the field that exists to identify such a record is unreachable for it.",
+      "merged_closure": {
+        "pr": 763,
+        "commit": "0bd14469a8bd8db9125bc99d0af5627de3a5c587",
+        "note": "`attest_chain` runs `verify_retained_evidence` on EVERY record, zero-verified-hop ones included, and returns the resulting `RetainedCorrespondence` beside the statement — so the one field that is call-specific on such a record, `submitted_commitment`, is exercised on exactly the records an auditor investigates"
+      },
       "tracking_issue": 740
     },
     {
@@ -1568,6 +1573,11 @@
       "node": "THM-0042 (root)",
       "area": "scitt-retained-evidence",
       "reason": "Same short-circuit as C103, reached from the issuance side.",
+      "merged_closure": {
+        "pr": 763,
+        "commit": "0bd14469a8bd8db9125bc99d0af5627de3a5c587",
+        "note": "same change: the self-check is no longer skipped for a zero-verified-hop record, and the verdict carried back says WHICH binding was established rather than reporting only success"
+      },
       "tracking_issue": 740
     },
     {
