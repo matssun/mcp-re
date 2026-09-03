@@ -528,6 +528,11 @@
       "node": "assurance platform",
       "area": "assurance-platform",
       "reason": "`_build_configuration` still digests only `WORKSPACE_BUILD_INPUTS` plus the unit's own crates' `Cargo.toml`; the proof-dependency closure's manifests participate in no component.",
+      "merged_closure": {
+        "pr": 771,
+        "commit": "0758ae28fdb7107219cfaab3a97ca333b93cb847",
+        "note": "`_build_configuration` takes a `formal_closure` argument and extends the digested patterns with each closure project's Cargo manifest inputs, so a manifest change anywhere the prover compiles moves the fingerprint"
+      },
       "tracking_issue": 739
     },
     {
@@ -539,6 +544,11 @@
       "node": "assurance platform",
       "area": "assurance-platform",
       "reason": "Same measurement.",
+      "merged_closure": {
+        "pr": 771,
+        "commit": "0758ae28fdb7107219cfaab3a97ca333b93cb847",
+        "note": "same change: the proof-dependency closure's manifests are digested components, covered by test_measured_inputs.py"
+      },
       "tracking_issue": 739
     },
     {
@@ -1395,6 +1405,11 @@
       "node": "assurance platform",
       "area": "assurance-platform",
       "reason": "`verify:209` still sets FAIL from `returncode != 0` before reading the lane's own `VERDICT:` line, so UNAVAILABLE remains unreachable from the Verus lane.",
+      "merged_closure": {
+        "pr": 771,
+        "commit": "0758ae28fdb7107219cfaab3a97ca333b93cb847",
+        "note": "`_lane_verdict` reads the declared verdict first and lets a lane stay the authority on WHICH non-measuring state it is in, so UNAVAILABLE/SKIPPED survive a non-zero exit while a declared PASS on one does not"
+      },
       "tracking_issue": 739
     },
     {
@@ -1461,6 +1476,11 @@
       "node": "assurance platform",
       "area": "assurance-platform",
       "reason": "`scan_paths` still gives undeclared `verification/` files an empty owner set, `is_registered` still answers false for it, and the FAIL text still names a remedy that does not exist for them.",
+      "merged_closure": {
+        "pr": 771,
+        "commit": "0758ae28fdb7107219cfaab3a97ca333b93cb847",
+        "note": "`check-assumptions` splits unregistered sites into owned and unowned and names declaring the file as the first move for a site no `[[unit]]` declares, so the FAIL no longer names an impossible remedy"
+      },
       "tracking_issue": 739
     },
     {
