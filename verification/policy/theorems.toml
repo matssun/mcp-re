@@ -3434,8 +3434,16 @@ depends_on = [
   # dependency closure claim support it does not have. Owner ruling of 2026-09-01.
   "THM-0086",
   # ADR-MCPRE-059 §28 / #744: the continuation materialization leaf, D1b′ — the claim
-  # THM-0087 was mistaken for. The sibling of THM-0086 and the same shape: a configuration
-  # projection over which capability the serving path holds. Owner ruling of 2026-09-03.
+  # THM-0087 was mistaken for. The sibling of THM-0086 and the same shape: PLAN → RUNTIME,
+  # that the serving path holds exactly the capability its `ContinuationControlPlan` names.
+  #
+  # THE COMPOSITION HAPPENS HERE, and it is the reason the edge exists. THM-0096 does not
+  # establish that the plan represents validated deployment configuration, and may not: it is
+  # a premise of this root, so it cannot obtain that proposition downward from it. THIS claim
+  # combines the parent composition fact — the plan is derived from validated owner state —
+  # with THM-0096's plan → runtime materialization proposition, and the conjunction is what
+  # yields "no deployment serves a continuation posture nobody selected".
+  # Owner rulings of 2026-09-03.
   "THM-0096",
   # ADR-MCPRE-059 §28 / #742 (D5). A runtime that fetched its root key from an endpoint whose
   # text named one authority and whose parse named another holds a capability derived from
@@ -4417,19 +4425,26 @@ depends_on = ["THM-0051"]
 
 # ADR-MCPRE-059 §28 / issue #744, D1b′ — the sibling of THM-0086 and the same shape.
 #
-# Both are CONFIGURATION PROJECTIONS: the capability the serving path holds is the one the
-# deployment selected. Neither carries a premise about what a backend's acknowledgement
-# establishes; that is an external per-mechanism fact registered only where a root consumes
-# it, and giving a projection claim a backend-behaviour assumption would widen a blast
-# radius the claim does not use.
+# Both are PLAN → RUNTIME MATERIALIZATION claims: what the serving path holds is what the plan
+# handed to materialization names. Neither carries a premise about what a backend's
+# acknowledgement establishes; that is an external per-mechanism fact registered only where a
+# root consumes it, and giving a materialization claim a backend-behaviour assumption would
+# widen a blast radius the claim does not use.
+#
+# THE ALTITUDE IS THE PLAN, NOT THE OPERATOR — owner ruling of 2026-09-03. This leaf does not
+# establish that the plan corresponds to validated deployment configuration; that is a parent
+# composition fact, and THM-0096 is a PREMISE of THM-0077 rather than a consumer of it, so the
+# missing proposition cannot be obtained downward from the root that composes it. A wording
+# that said "the capability the deployment selected" would claim a proposition this leaf's own
+# scope correctly disclaims, and no dependency may be added merely to preserve such a wording.
 #
 # WHERE IT DIFFERS FROM THM-0086, and why one theorem could not cover both: replay has no
-# legitimate OFF. A replay tier is always required, so THM-0086's only outcomes are the
-# selected tier or a refusal. Continuation correlation has a legitimate OFF — an operator who
-# omits `--continuation-control-redis-url` selected nothing and gets nothing — so this claim
-# has a third outcome, and the whole difficulty is keeping that outcome from absorbing the
-# refusal. A single theorem over both would have had to state "the selected tier, or OFF",
-# which is exactly the sentence a silently-downgraded deployment also satisfies.
+# legitimate OFF. A replay tier is always required, so THM-0086's only outcomes are the plan's
+# tier or a refusal. Continuation correlation has a legitimate OFF — a plan naming no store
+# yields no capability — so this claim has a third outcome, and the whole difficulty is keeping
+# that outcome from absorbing the refusal. A single theorem over both would have had to state
+# "the named tier, or OFF", which is exactly the sentence a silently-downgraded deployment also
+# satisfies.
 #
 # HISTORY OF THE MEASUREMENT. #744's D1b was first recorded as a property of
 # `proxy.continuation_correlation_store` and corrected off it: that unit measures a running
@@ -4439,39 +4454,48 @@ depends_on = ["THM-0051"]
 # misplaced one.
 [[theorem]]
 id = "THM-0096"
-title = "The runtime installs exactly the continuation capability the deployment selected"
+title = "The runtime installs exactly the continuation capability its plan names"
 statement = """
-The MRTR continuation correlation capability the serving runtime holds is the one the
-validated continuation-control state selected. A deployment that selected no store installs
-NO correlation store — not a node-local or in-process substitute — and declares that absence
-explicitly. A deployment that selected one holds exactly that store and declares it ON. A
-selected store that cannot be established, including one this build carries no backend for,
-refuses startup and names what is missing; it is never announced as OFF.
+For the `ContinuationControlPlan` presented to continuation materialization, a plan naming NO
+store produces no correlation store — not a node-local or in-process substitute — and an
+explicit OFF posture. A plan naming a shared store materializes and installs exactly that
+store and declares the capability ON. A named store that cannot be provided by this build, or
+that cannot be established, refuses startup and names what is missing; it is never announced
+as OFF.
 """
 security_consequence = """
-An operator cannot end up with a deployment that reports a security capability's posture
-differently from the one it holds. A named store that fails to materialize cannot be reduced
-to the posture of an operator who named none, so cross-replica human-approval flows cannot
-silently become uncorrelated; and an absent capability cannot be widened into a node-local
-tier whose scope — one process, no replica switch — is not the one that was selected.
+Continuation materialization cannot silently weaken or widen the plan it receives. A named
+shared store cannot become OFF, and cannot become another store or a node-local one whose
+scope — one process, no replica switch — is not the scope the plan names; so cross-replica
+human-approval flows cannot silently become uncorrelated. A plan naming no store cannot
+acquire a fallback capability. The posture the runtime reports is the posture it holds.
 """
 scope = """
-CONFIGURATION PROJECTION ONLY. It establishes which capability the serving path holds and
-what the transcript says about it, not what a request may do with one. That a leg needing
-correlation fails closed, and that an absent capability reaches it as a deployment fact, is
-THM-0093's; that a running store is reachable only by the actor the verifier resolved is
-THM-0087's. Neither is restated here and neither is a premise of this.
+PLAN → RUNTIME ONLY. It establishes which capability the serving path holds for the plan it
+was handed, and what the transcript says about it, not what a request may do with one. That a
+leg needing correlation fails closed, and that an absent capability reaches it as a deployment
+fact, is THM-0093's; that a running store is reachable only by the actor the verifier resolved
+is THM-0087's. Neither is restated here and neither is a premise of this.
+
+IT DOES NOT ESTABLISH WHERE THE PLAN CAME FROM. THM-0096 says nothing about the origin of the
+`ContinuationControlPlan` and does not establish that the plan faithfully represents validated
+deployment configuration. That is a parent composition/configuration fact. This leaf therefore
+does not say that the OPERATOR or the VALIDATED DEPLOYMENT selected what the runtime installs;
+it says only that the runtime installs what its plan names.
+
+The direction is one way, and this claim never reaches its premise downward through its own
+consumer: validated configuration -> (parent composition facts) -> `ContinuationControlPlan`
+-> (THM-0096) -> runtime capability and posture -> (composed by) THM-0077's root claim.
+THM-0077 combines the parent composition fact with THM-0096's plan → runtime materialization
+proposition; THM-0096 is a premise of THM-0077 and obtains nothing from it.
 
 It says nothing about what an acknowledged write to the established store durably
 establishes. That is a per-mechanism external fact with its own premise, and this claim does
 not use it.
 
-It is not a liveness claim. A selected capability that cannot be established refuses startup,
-which is inside the claim rather than a violation of it, and nothing here says a deployment
-that selected the capability will keep it.
-
-That the plan is a faithful projection of the validated configuration is the planner's fact,
-reached through THM-0077 rather than asserted here.
+It is not a liveness claim. A named store that cannot be established refuses startup, which is
+inside the claim rather than a violation of it, and nothing here says a runtime that installed
+the capability will keep it.
 
 THE DECLARATION CONJUNCT IS CLAIMED AT THE STRENGTH ITS EVIDENCE HAS, which is less than
 it first appears. `PostureLog::assert_complete` proves that every executed startup states
