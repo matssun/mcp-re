@@ -16,6 +16,7 @@ import tomllib
 from collections.abc import Iterable
 from pathlib import Path
 
+from _seams import files_with_seams
 from _ecosystems import CARGO
 from _ecosystems import test_project_for
 from _ecosystems import valid_target
@@ -583,6 +584,113 @@ def expand_paths(patterns) -> set[str]:
     return out
 
 
+#: The classes whose evidence comes from a whole-crate prover run rather than from a battery
+#: over declared symbols. Defined here rather than in the fingerprint because the fingerprint
+#: and the boundary rule must agree about what a unit's evidence covers.
+FORMAL_CLASSES = {"V1", "V3"}
+
+
+def path_dependency_closure(project: str, seen: set[str]) -> set[str]:
+    """Workspace projects reachable from `project` by path dependency, transitively.
+
+    The `verify` feature travels down this closure — `mcp-re-http-profile/verify` turns on
+    `mcp-re-core/verify` — so the prover compiles and checks these projects as part of the
+    run whose result the unit claims.
+    """
+    manifest = REPO_ROOT / project / "Cargo.toml"
+    if project in seen or not manifest.is_file():
+        return seen
+    seen.add(project)
+    with manifest.open("rb") as handle:
+        doc = tomllib.load(handle)
+    for spec in doc.get("dependencies", {}).values():
+        if not isinstance(spec, dict) or "path" not in spec:
+            continue
+        resolved = (manifest.parent / spec["path"]).resolve()
+        try:
+            path_dependency_closure(resolved.relative_to(REPO_ROOT).as_posix(), seen)
+        except ValueError:
+            continue
+    return seen
+
+
+def evidence_cone(unit: dict) -> set[str]:
+    """INVALIDATION REACHABILITY: every source file whose change must stale this evidence.
+
+    For a formal unit that is the whole crate plus the projects the `verify` feature reaches
+    through, because `verify-verus` runs `cargo verus verify -p <crate>` and the prover
+    checks all of it. For a V0 unit it is the declared paths, which is what its battery
+    measures.
+
+    This is the FIRST of the two graphs R9-C022 turned out to be about, and it is
+    deliberately generous: a file in here changing invalidates the evidence even if it
+    contributes no premise to any proof. Over-invalidation is safe. It is NOT a statement
+    that the proof depends on anything in here semantically — see `semantic_boundary_crossings`.
+    """
+    declared = expand_paths(unit["paths"])
+    if unit["class"] not in FORMAL_CLASSES:
+        return declared
+    projects: set[str] = set()
+    for project in unit_projects(unit):
+        path_dependency_closure(project, projects)
+    cone = set(declared)
+    for project in sorted(projects):
+        cone |= expand_paths([f"{project}/src/**/*.rs"])
+    return cone
+
+
+def semantic_boundary_crossings(unit: dict, boundaries: dict) -> dict[str, list[str]]:
+    """TRUSTED-PREMISE REACHABILITY: boundaries whose files this proof actually TRUSTS.
+
+    The second graph, and the one the class cap belongs to. A boundary is crossed
+    SEMANTICALLY when a file it declares carries a TRUSTED SEAM — an `uninterp`, an
+    `external_body`, an `assume_specification` — that lies inside this unit's evidence cone.
+    A seam is the only place a proof stops proving and starts trusting, so it is the only
+    place an unproved proposition can enter one.
+
+    R9-C022, and the owner ruling of 2026-09-03 that closed it. The rule compared a
+    boundary's files against the unit's DECLARED paths, which was too narrow; widening it to
+    the evidence cone made all six V1 units "cross" `boundary.crypto_primitives`, which is
+    too wide in a way that is worse. Neither `mcp-re-core/src/crypto.rs` nor `hash.rs`
+    contains a single seam: the six proofs are COMPILED alongside the primitives and consume
+    no proposition from them. Requiring six crypto assumptions there would have invented
+    premises to satisfy a source-level overlap — assumptions nobody could justify, in a
+    registry whose value is that every entry names something real.
+
+        proof consumes an unproved proposition beyond the boundary
+            -> explicit registered assumption required
+
+        proof merely shares the compilation/invalidation cone
+            -> fingerprint is conservatively invalidated, and NO premise is invented
+
+    Returns `{boundary id: [seam file, ...]}` so a refusal can name the seam it found rather
+    than the overlap it computed.
+
+    WHAT THIS DOES NOT CATCH, stated because a control's blind spot is part of what it
+    establishes. A seam is attributed to a boundary by LOCATION: it must sit in a file the
+    boundary declares. A premise that MODELS a boundary's semantics from somewhere else is
+    invisible here — `verus_std_specs.rs` holds `uninterp spec fn labeled_digest`, which is
+    the digest as an uninterpreted function, while `boundary.crypto_primitives` declares
+    only `crypto.rs` and `hash.rs`. ASM-0037 bridges exactly that gap by naming
+    `boundary://boundary.crypto_primitives` in its own scope, which is the declared half of
+    the relation and is why `scope` accepts a boundary at all.
+
+    So the mechanism is a FLOOR with a declared complement, not a decision procedure:
+    `check-assumptions` already refuses any unregistered seam, so no seam goes unaccounted
+    for; what is not forced is that a seam's assumption also names the boundary it crosses.
+    Closing that would mean requiring a boundary's `paths` to cover the files where its
+    premises are modelled, which is a change to what a boundary declaration MEANS and is not
+    made here.
+    """
+    cone = evidence_cone(unit)
+    crossings: dict[str, list[str]] = {}
+    for boundary in boundaries.get("boundary", []):
+        seams = sorted(files_with_seams(REPO_ROOT, expand_paths(boundary["paths"]) & cone))
+        if seams:
+            crossings[boundary["id"]] = seams
+    return crossings
+
+
 def boundary_class_violations(
     verification: dict, boundaries: dict, assumptions: dict
 ) -> list[str]:
@@ -608,28 +716,31 @@ def boundary_class_violations(
             for boundary_id in crossed:
                 covered.add((unit_id, boundary_id))
 
+    caps = {
+        boundary["id"]: boundary["max_class_without_assumption"]
+        for boundary in boundaries.get("boundary", [])
+        if boundary.get("max_class_without_assumption") is not None
+    }
     violations: list[str] = []
-    for boundary in boundaries.get("boundary", []):
-        cap = boundary.get("max_class_without_assumption")
-        if cap is None:
-            continue
-        boundary_files = expand_paths(boundary["paths"])
-        for unit in verification.get("unit", []):
-            if CLASS_ORDER[unit["class"]] <= CLASS_ORDER[cap]:
+    # Once per unit: the crossings are a property of the unit's proof, not of the boundary
+    # being asked about, and computing them inside the boundary loop rescanned every seam
+    # file once per boundary.
+    for unit in verification.get("unit", []):
+        for boundary_id, seams in semantic_boundary_crossings(unit, boundaries).items():
+            cap = caps.get(boundary_id)
+            if cap is None or CLASS_ORDER[unit["class"]] <= CLASS_ORDER[cap]:
                 continue
-            crossing = sorted(expand_paths(unit["paths"]) & boundary_files)
-            if not crossing:
-                continue
-            if (unit["id"], boundary["id"]) in covered:
+            if (unit["id"], boundary_id) in covered:
                 continue
             violations.append(
-                f"unit {unit['id']} is class {unit['class']} but its paths cross "
-                f"{boundary['id']} ({', '.join(crossing)}), which permits at most "
-                f"{cap} without a registered assumption covering the crossing. Register "
-                f"one in assumptions.toml with `boundary://{boundary['id']}` in its "
-                f"scope, or lower the unit's class."
+                f"unit {unit['id']} is class {unit['class']} and its proof TRUSTS a seam "
+                f"beyond {boundary_id} ({', '.join(seams)}), which permits at most {cap} "
+                f"without a registered assumption covering the crossing. The seam is an "
+                f"unproved proposition the proof consumes, not a file it is compiled "
+                f"beside. Register an assumption in assumptions.toml with "
+                f"`boundary://{boundary_id}` in its scope, or lower the unit's class."
             )
-    return violations
+    return sorted(violations)
 
 
 def unit_assumptions(unit_id: str, assumptions: dict) -> list[str]:
