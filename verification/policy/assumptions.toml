@@ -1092,15 +1092,33 @@ premise registered what the foreign runtime does; R9-C010 recorded the defect an
 recorded that the control pinning the bound used a fake whose short-read semantics
 `http.client` does not have, so it could not fail.
 
-DISCHARGED RATHER THAN RENEWED, by owner ruling of 2026-09-03. The foreign fact is real
-and unchanged — `read(n)` still fills to `n` — but the security-relevant obligation, that
-MCP-RE enforces the aggregate deadline it advertises, is LOCAL and was repairable. A local
-enforcement defect does not become trusted computing base because the mechanism underneath
-it is foreign. `_read_bounded` now takes the body with `read1`, which returns what one
-underlying read produced, and narrows the socket's own timeout to the time remaining before
-the deadline, so no recv can outlive it. Both halves are measured against a real
-`HTTPResponse` fed by a real trickling socket, and each was shown load-bearing by removing
-it. The aggregate-deadline property is EVIDENCE now, not trust.
+DISCHARGED RATHER THAN RENEWED, by owner ruling of 2026-09-03. THE FOREIGN FACT IS STILL
+TRUE: `HTTPResponse.read(n)` still fills to `n`, and nothing here claims otherwise. What
+changed is that MCP-RE stopped RESTING ITS OWN AGGREGATE BOUND on it. The security-relevant
+obligation — that the deadline this SDK advertises is the deadline it enforces — is LOCAL
+and was repairable, and a local enforcement defect does not become trusted computing base
+because the mechanism underneath it is foreign.
+
+What survived, and it is what the tree holds rather than the first attempt:
+
+    HTTPResponse.read1     at most ONE underlying read per loop iteration
+    aggregate deadline     checked between those underlying reads, so no NEW underlying
+                           read is begun once it has passed
+    per-recv socket        bounds the one underlying read already in progress if the peer
+    timeout                stops producing data
+    worst case             the aggregate deadline plus at most one per-recv stall — with
+                           the single deployed `timeout` value, at most 2 * timeout
+
+Narrowing the socket's own timeout to the time remaining WAS implemented and withdrawn on
+measurement: this transport frames with `Connection: close`, so `http.client` hands the
+connection to the response and closes the socket object during `getresponse()`, leaving
+only a private attribute of the response's file object. A bound reaching through a foreign
+object's internals would be a new premise, which is the thing this discharge exists to
+avoid; the composed bound above needs none.
+
+Both surviving halves are measured against a real `HTTPResponse` fed by a real socket, both
+while trickling and while silent, and each was shown load-bearing by removing it. The
+aggregate-deadline property is EVIDENCE now, not trust.
 
 The id is retired rather than reused: `scope` is empty, so no unit trusts it, and no second
 assumption describes the repaired code — there is nothing left to assume.

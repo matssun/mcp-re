@@ -210,25 +210,28 @@ def _read_bounded(response, options: MtlsOptions) -> bytes:
     caps total read time at the same value (MCPS-093 ``read_response_bounded``); this is
     that cap.
 
-    **``read1``, never ``read``, is what makes the cap real.**
+    **``read1``, never ``read``, is what keeps the check reachable.**
     ``HTTPResponse.read(n)`` fills to ``n``, so one call absorbs an unbounded number of
     underlying reads and the loop below does not run again until it returns — which is
     exactly how a bound written this way came to be advertised and not enforced.
     ``read1(n)`` returns what ONE underlying read produced, chunked-framing decode
-    included, so every byte the peer feeds returns control here and the deadline is
-    consulted between reads. A peer that keeps sending cannot outlast it.
+    included, so the deadline is consulted between underlying reads and, once it has
+    passed, **no NEW underlying read is begun**.
 
-    **What bounds a peer that stops sending is the per-recv timeout**, which
-    ``http.client`` already carries from ``options.timeout``. The two compose into a real
-    bound with a stated worst case: this read ends no later than the aggregate deadline
-    plus one per-recv stall, so at most ``2 * options.timeout``. That is the honest number.
-    Narrowing the socket's own timeout to the time remaining would tighten it to exactly
-    the deadline, and it is deliberately NOT done: with ``Connection: close`` — the
-    framing this transport sends — ``http.client`` hands the connection to the response and
-    closes the socket object, so the only handle left is a private attribute of the
-    response's file object. A bound that reaches through a foreign object's internals is
-    the kind of dependency this SDK registers as a premise, and the composed bound above
-    needs no premise at all.
+    **The read already in progress is bounded by the per-recv timeout**, which
+    ``http.client`` already carries from ``options.timeout``. One underlying read may
+    straddle the deadline — a peer that goes silent mid-read is not observable from a check
+    made between reads — and that final stall is what the per-recv bound ends.
+
+    So the cap is the aggregate deadline PLUS AT MOST ONE per-recv timeout: at most
+    ``2 * options.timeout`` under the single value a deployment sets. It is not an exact
+    wall-clock bound and is not documented as one. Narrowing the socket's own timeout to
+    the time remaining would tighten it to exactly the deadline, and it is deliberately NOT
+    done: with ``Connection: close`` — the framing this transport sends — ``http.client``
+    hands the connection to the response and closes the socket object, so the only handle
+    left is a private attribute of the response's file object. A bound that reaches through
+    a foreign object's internals is the kind of dependency this SDK would have to register
+    as a premise, and the composed bound above needs none.
 
     ``timeout is None`` disables the per-recv bound, and disables this one too — that knob
     means "no bound", and honouring it on one of the two would be a different setting
