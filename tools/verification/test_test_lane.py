@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _ecosystems import CARGO
 from _ecosystems import PYTHON
+from _ecosystems import TYPESCRIPT
 from _ecosystems import test_argv
 from _ecosystems import valid_target
 from _manifest import ManifestError  # noqa: E402
@@ -385,6 +386,48 @@ def test_a_symbol_with_no_result_line_is_rerun_alone_before_the_lane_concludes()
 # case below is a way that could come back.
 
 
+def test_a_typescript_battery_names_the_runtime_it_runs_on():
+    """The Node half of the same property. `npx vitest` resolved whatever node was on PATH,
+    so the battery's result described an unnamed runtime (#747)."""
+    try:
+        test_argv(TYPESCRIPT, "sdk/typescript", "vitest", ["test/x.test.ts > a"])
+    except ValueError as exc:
+        assert "runtime" in str(exc), exc
+    else:
+        raise AssertionError("a TypeScript selection without a runtime must be refused")
+
+
+def test_the_typescript_command_runs_the_pinned_node_and_not_npx():
+    argv = test_argv(
+        TYPESCRIPT, "sdk/typescript", "vitest", ["test/x.test.ts > a"], None, "22.23.2"
+    )
+    assert argv[0] == ".node-v22/node_modules/node/bin/node", argv
+    assert "npx" not in argv, "npx would resolve a node of its own"
+    assert argv[1].endswith("vitest.mjs"), argv
+    assert "--reporter=json" in argv, "the lane must not read a human-facing rendering"
+
+
+def test_each_ecosystem_names_its_own_runtime():
+    """`cpython-26.8.1` on a Node battery describes a runtime that does not exist, and the
+    evidence record carries this label."""
+    assert PYTHON.runtime_label == "cpython"
+    assert TYPESCRIPT.runtime_label == "node"
+    assert CARGO.runtime_label is None, "Cargo has no runtime dimension to label"
+
+
+def test_a_runtime_is_asked_its_version_in_every_ecosystem_that_has_one():
+    """A directory called `.node-v20` holding Node 22 is the substitution the pin exists to
+    refuse, so every ecosystem with a runtime dimension must have a probe."""
+    from _ecosystems import RUNTIME_PROBES
+
+    for eco in (PYTHON, TYPESCRIPT):
+        assert eco.name in RUNTIME_PROBES, eco.name
+        relative, argv = RUNTIME_PROBES[eco.name]
+        assert argv, f"{eco.name}: a probe with no command asks nothing"
+        assert relative("20.20.2") or relative("3.12.13")
+    assert CARGO.name not in RUNTIME_PROBES
+
+
 def test_a_python_battery_names_the_interpreter_it_runs_on():
     """No runtime, no command. A default would reintroduce the unpinned interpreter."""
     try:
@@ -443,9 +486,13 @@ def test_every_pinned_interpreter_is_measured():
 
 
 def test_a_missing_prepared_environment_fails_rather_than_skipping():
-    ok, detail = lane.runtime_identity(PYTHON, "sdk/python", "3.99.0")
-    assert not ok
-    assert "no prepared environment" in detail, detail
+    for eco, project, runtime in (
+        (PYTHON, "sdk/python", "3.99.0"),
+        (TYPESCRIPT, "sdk/typescript", "99.0.0"),
+    ):
+        ok, detail = lane.runtime_identity(eco, project, runtime)
+        assert not ok, eco.name
+        assert "no prepared environment" in detail, detail
 
 
 def test_an_environment_holding_another_interpreter_is_refused():

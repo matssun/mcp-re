@@ -754,8 +754,9 @@ export class McpReHttpTransport implements Transport {
         // Re-checked AFTER the queue wait, and raced against close(), for the same
         // reason a request is (#421): a notification that waited for a slot must not
         // reach the server after the caller tore the transport down, and an aborted one
-        // must fail rather than wait out a poster nobody is listening for.
-        if (this.#abort.signal.aborted) throw this.#abort.signal.reason;
+        // must fail rather than wait out a poster nobody is listening for. From this
+        // transport's own state, for the reason the request path gives.
+        this.#refuseIfClosed();
         const aborted = this.#aborted();
         releaseAbortListener = aborted.release;
         await Promise.race([this.#notify(message.method, params), aborted.promise]);
@@ -782,7 +783,14 @@ export class McpReHttpTransport implements Transport {
       // whether the request reaches the server. A queued request is not
       // already-dispatched work, so emitting it after close() would hand the server
       // a valid, fresh, correctly-signed request the caller believes it cancelled.
-      if (this.#abort.signal.aborted) throw this.#abort.signal.reason;
+      //
+      // READ FROM THIS TRANSPORT'S OWN STATE, not from `AbortSignal.aborted`. Both are
+      // set by `close()`, but only one of them is ours: relying on the signal made the
+      // guard rest on a RUNTIME semantic — that an already-aborted signal is observable
+      // without yielding — which had to be registered as a trusted premise (ASM-0043).
+      // `#state` is an ordinary field this class assigns before it aborts anything, so
+      // the guard rests on nothing but this file (#747).
+      this.#refuseIfClosed();
       // Race the exchange against close(): an aborted exchange fails its request with
       // ConnectionClosed rather than waiting out a poster the caller no longer wants.
       const aborted = this.#aborted();
@@ -833,6 +841,21 @@ export class McpReHttpTransport implements Transport {
    * one is an exchange that completes normally, leaving the listener registered on a
    * signal that lives as long as the transport.
    */
+  /**
+   * Refuse, right now, if this transport is no longer open.
+   *
+   * The guard a queued unit of work runs before it is signed and sent. It reads `#state`
+   * — assigned synchronously by `close()` before anything is aborted — rather than
+   * `AbortSignal.aborted`, so what stops a signed request from leaving a closed transport
+   * is a field this class owns and not a runtime semantic taken on trust. The reason
+   * lives in the two call sites; this is one function so the two cannot drift apart.
+   */
+  #refuseIfClosed(): void {
+    if (this.#state !== TransportState.Open) {
+      throw new ConnectionClosed("the transport was closed");
+    }
+  }
+
   #aborted(): { promise: Promise<never>; release: () => void } {
     const signal = this.#abort.signal;
     let release = () => {};

@@ -91,4 +91,4 @@ not an omission to hide.
 | proxy.trust_configuration_state | V0 | THM-0035, THM-0036 | 0 |
 | proxy.trust_plan | V0 | THM-0037 | 0 |
 | sdk_python.exchange_path | V0 | THM-0094 | 0 |
-| sdk_typescript.exchange_path | V0 | THM-0095 | 1 |
+| sdk_typescript.exchange_path | V0 | THM-0095 | 0 |

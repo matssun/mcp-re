@@ -11,6 +11,11 @@ dist/
 node_modules/
 npm-debug.log*
 
+# The pinned per-major runtimes `scripts/prepare_node_matrix.sh` installs. Prepared per
+# machine like a virtualenv, never committed; their identities live in
+# `verification/policy/toolchains.lock.toml` `[typescript].interpreters`, which IS committed.
+.node-v*/
+
 # Coverage artifacts (the 90% gate reports; never committed).
 coverage/
 lcov.info

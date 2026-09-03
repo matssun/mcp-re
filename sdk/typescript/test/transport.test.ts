@@ -10,6 +10,9 @@
 // a hang is a worse failure mode than a raise.
 import { createHash } from "node:crypto";
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 import type { JSONRPCMessage } from "@modelcontextprotocol/client";
 
@@ -222,6 +225,38 @@ describe("McpReHttpTransport lifecycle", () => {
     release();
     await new Promise((r) => setTimeout(r, 20));
     expect(events).toEqual(["poster-hit", "onclose"]);
+  });
+
+  it("says nothing about execution when close() aborts an in-flight exchange", async () => {
+    // WHERE THE ABORT MEETS EXECUTION HONESTY, and the reason ASM-0043's second half is
+    // not needed: nothing local can know whether a request already on the wire reached the
+    // server, and this transport does not pretend to. `ConnectionClosed` is a LOCAL
+    // outcome — no `mcp-re.*` wire code the peer never sent, and no execution or retry
+    // verdict — so a caller cannot read a teardown as "it did not run" and repeat a side
+    // effect the server may already have performed. A premise is needed to CLAIM
+    // something; asserting nothing needs none (#747).
+    const transport = new McpReHttpTransport(minimalConfig(), async () => {
+      await new Promise((r) => setTimeout(r, 10_000));
+      throw new Error("the poster must never settle in this test");
+    });
+    await transport.start();
+    const inFlight = transport.send(REQUEST);
+    await new Promise((r) => setTimeout(r, 20));
+    await transport.close();
+
+    const raised = await inFlight.catch((e: unknown) => e);
+    expect(raised, "an aborted exchange must fail its caller").toBeInstanceOf(ConnectionClosed);
+    const rendered = JSON.stringify({
+      message: (raised as Error).message,
+      ...Object.fromEntries(
+        Object.entries(raised as object).map(([k, v]) => [k, v as unknown]),
+      ),
+    });
+    for (const forbidden of ["mcp-re.", "not_executed", "notExecuted", "executionStatus", "retrySafety", "retry_safe"]) {
+      expect(rendered.includes(forbidden), `a local teardown must not state ${forbidden}`).toBe(
+        false,
+      );
+    }
   });
 
   it("does not sign or POST a request still queued at the semaphore when close() lands", async () => {
@@ -911,6 +946,47 @@ describe("McpReHttpTransport rejection receipt binding", () => {
 
   it("reports a request-bound receipt as request-bound", async () => {
     expect((await rejectionError(true)).data).toEqual({ requestBound: true });
+  });
+});
+
+// The members every forced verdict in this file is built from. Declared once, and checked
+// against the binding's OWN declared contract by the control below: four separately written
+// object literals could not track a rename in the core, so each would keep passing while the
+// transport read `undefined` in production. That is R9-C094's shape one level over — a
+// control that cannot fail for the reason that matters (#747).
+const FORCED_VERDICT_MEMBERS = [
+  "outcome",
+  "wireCode",
+  "bound",
+  "requestState",
+  "executionStatus",
+  "retrySafety",
+  "respEvidenceDigestAlg",
+  "respEvidenceDigestValue",
+] as const;
+
+describe("the forced verdicts are the core's own shape", () => {
+  it("declares no member the binding does not", () => {
+    // `native/binding.d.ts` is GENERATED from the Rust type by napi, so a renamed field
+    // regenerates it and takes this control red. Read as text rather than imported,
+    // because a type-only import is erased at runtime and would assert nothing.
+    const declaration = readFileSync(
+      resolve(__dirname, "..", "native", "binding.d.ts"),
+      "utf8",
+    );
+    const start = declaration.indexOf("export interface VerifyResultJs {");
+    expect(start, "the binding no longer declares VerifyResultJs").toBeGreaterThanOrEqual(0);
+    const body = declaration.slice(start, declaration.indexOf("\n}", start));
+    const declared = new Set(
+      [...body.matchAll(/^\s{2}(\w+)\??:/gm)].map((match) => match[1]),
+    );
+    expect(declared.size, "no members parsed out of VerifyResultJs").toBeGreaterThan(0);
+    const missing = FORCED_VERDICT_MEMBERS.filter((member) => !declared.has(member));
+    expect(
+      missing,
+      `forced verdicts declare ${missing.join(", ")}, which VerifyResultJs does not — the ` +
+        `transport would read undefined there in production while these controls stayed green`,
+    ).toEqual([]);
   });
 });
 

@@ -1162,31 +1162,36 @@ tool_specific_mechanism = "foreign-dependency"
 
 [[assumption]]
 id = "ASM-0043"
-description = "An `AbortController` signal that is already aborted is observable synchronously before the request is issued, and aborting an in-flight exchange settles the caller's promise without cancelling what the server already received."
+description = "WITHDRAWN — discharged by unit://sdk_typescript.exchange_path."
 justification = """
-The TypeScript member races every exchange against its own abort signal, and the whole
-correctness of `close()` rests on which of the two facts the race decides. It decides WHICH
-RESULT THE CALLER SEES. It does not decide whether the request reached the server: a request
-already handed to the poster is on the wire, and an abort cannot recall it.
+Was: the TypeScript member's post-queue guard read `AbortSignal.aborted`, so the property
+that a request still waiting for a concurrency slot is not signed and sent after `close()`
+rested on a RUNTIME semantic — that an already-aborted signal is observable without
+yielding. The premise also carried a second half: that aborting an in-flight exchange
+settles the caller's promise without recalling what the server already received.
 
-Both halves are the premise. The synchronous check before dispatch is what keeps a QUEUED
-request from being signed and sent after `close()` — a fresh, correctly signed request the
-caller believes it cancelled — and it is only sound if an aborted signal is observable
-without yielding. The second half is what stops `ConnectionClosed` from being read as "it
-did not run": the SDK reports a local transport outcome and asserts nothing about execution,
-which is exactly the distinction THM-0094 and THM-0095 are about.
+DISCHARGED RATHER THAN RENEWED, by the reasoning the owner ruled for ASM-0042 on
+2026-09-03. Both halves went for different reasons, and the difference is worth keeping:
 
-Registered rather than proved because both are runtime semantics: nothing in this SDK can
-establish that `AbortSignal.aborted` is synchronous, or that a socket the runtime tore down
-had not already delivered its bytes.
+FIRST HALF — LOCAL, AND REPAIRED. `close()` assigns `#state = Closing` synchronously before
+it aborts anything, so the guard now reads `#state` through `#refuseIfClosed()`: an ordinary
+field this class owns, not a runtime behaviour taken on trust. The registered control
+`does not sign or POST a request still queued at the semaphore when close() lands` measures
+it, on every pinned Node runtime.
 
-It stops being acceptable if the SDK ever derives an EXECUTION claim from an abort — if
-`ConnectionClosed` acquires a retry-safety meaning — or if the pre-dispatch check is moved
-after an await, where a signal raised in between would no longer be seen.
+SECOND HALF — TRUE, AND NOT USED. Nothing local can know whether a request already on the
+wire reached the server, and this SDK does not pretend to: a teardown surfaces as
+`ConnectionClosed`, a LOCAL outcome carrying no wire code and no execution or retry verdict.
+A premise is needed to CLAIM something; asserting nothing needs none. The registered control
+`says nothing about execution when close() aborts an in-flight exchange` measures exactly
+that, and it is the point at which the premise would have become load-bearing again.
+
+The id is retired rather than reused: `scope` is empty, so no unit trusts it, and no second
+assumption describes the repaired code.
 """
-scope = ["unit://sdk_typescript.exchange_path"]
+scope = []
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 §28 / issue #746 (D8)"
-review_requirement = "Owner review; any change to the abort race, to the pre-dispatch signal check, or to what `ConnectionClosed` claims."
+review_requirement = "Withdrawn; nothing trusts it. Any future re-registration is a NEW id."
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"

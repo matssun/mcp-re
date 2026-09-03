@@ -57,8 +57,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _ecosystems import CARGO  # noqa: E402
-from _ecosystems import PYTHON  # noqa: E402
-from _ecosystems import python_runtime_venv  # noqa: E402
+from _ecosystems import RUNTIME_PROBES  # noqa: E402
 from _ecosystems import ReportUnreadable  # noqa: E402
 from _ecosystems import parse_results  # noqa: E402
 from _ecosystems import test_argv  # noqa: E402
@@ -291,37 +290,39 @@ def pinned_runtimes(eco, toolchains: dict) -> tuple[list[str], str | None]:
 
 
 def runtime_identity(eco, crate: str, runtime: str) -> tuple[bool, str]:
-    """Whether the prepared environment for `runtime` holds exactly that interpreter.
+    """Whether the prepared environment for `runtime` holds exactly that runtime.
 
     The pin names an EXACT patch version, and this is what makes that more than a comment:
-    an environment built on a different interpreter is refused before a single test runs.
-    Without the check the lane would report the pinned identity while measuring whatever
-    the machine had — the same substitution the pin exists to prevent, one level down.
+    an environment built on a different one is refused before a single test runs. Without
+    the check the lane would report the pinned identity while measuring whatever the machine
+    had — the same substitution the pin exists to prevent, one level down.
 
-    A missing environment is a FAILURE, never a skip. `scripts/prepare_python_matrix.sh`
-    builds them, and a lane that quietly measured four of five runtimes would report a
-    green describing a supported set it never touched.
+    A missing environment is a FAILURE, never a skip. `scripts/prepare_python_matrix.sh` and
+    `scripts/prepare_node_matrix.sh` build them, and a lane that quietly measured four of
+    five runtimes would report a green describing a supported set it never touched.
+
+    ASKED, never derived from the directory name: a directory called `.node-v20` holding
+    Node 22 is exactly the substitution this refuses, so the runtime states its own version
+    and the pin is compared against what it said.
     """
-    if eco is not PYTHON:
+    probe = RUNTIME_PROBES.get(eco.name)
+    if probe is None:
         return True, runtime
-    venv = REPO_ROOT / crate / python_runtime_venv(runtime)
-    interpreter = venv / "bin" / "python"
-    if not interpreter.is_file():
+    relative, argv = probe
+    binary = REPO_ROOT / crate / relative(runtime)
+    if not binary.is_file():
         return False, (
-            f"{runtime}: no prepared environment at {venv.relative_to(REPO_ROOT)} — run "
-            f"scripts/prepare_python_matrix.sh"
+            f"{runtime}: no prepared environment at "
+            f"{binary.parent.relative_to(REPO_ROOT)} — run the matrix preparation script"
         )
     proc = subprocess.run(
-        [str(interpreter), "-c", "import sys;print('%d.%d.%d' % sys.version_info[:3])"],
-        capture_output=True,
-        text=True,
-        check=False,
+        [str(binary), *argv], capture_output=True, text=True, check=False
     )
     reported = proc.stdout.strip()
     if proc.returncode != 0 or reported != runtime:
         return False, (
             f"{runtime}: the prepared environment reports {reported or 'nothing'!r}, so the "
-            f"battery would be measured on an interpreter the pin does not name"
+            f"battery would be measured on a runtime the pin does not name"
         )
     return True, runtime
 
@@ -368,10 +369,10 @@ def measure_unit(unit: dict, toolchains: dict) -> tuple[bool, str]:
                 continue
         for target in sorted(grouped):
             suffix = f" (--features {','.join(features)})" if features else ""
-            where = f" on cpython-{runtime}" if runtime is not None else ""
+            where = f" on {eco.runtime_label}-{runtime}" if runtime is not None else ""
             print(f"    {crate} {target}: {len(grouped[target])} test(s){suffix}{where}")
             ok, detail = run_selection(eco, crate, target, grouped[target], features, runtime)
-            prefix = f"cpython-{runtime} " if runtime is not None else ""
+            prefix = f"{eco.runtime_label}-{runtime} " if runtime is not None else ""
             details.append(f"{prefix}{detail}")
             failed = failed or not ok
     return not failed, "; ".join(details)

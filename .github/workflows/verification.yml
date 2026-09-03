@@ -114,10 +114,13 @@ on:
       # unit while `project_inputs` claimed it did. The matrix environments are built from
       # it, so a re-resolution changes what the batteries ran under (#746).
       - "sdk/python/uv.lock"
-      # The matrix preparation and the support-claim gate decide WHICH runtimes the Python
-      # evidence covers, so a change to either changes what this lane measures (#746).
+      # The matrix preparation and the support-claim gates decide WHICH runtimes the SDK
+      # evidence covers, so a change to any of them changes what this lane measures
+      # (#746 for Python, #747 for Node).
       - "scripts/prepare_python_matrix.sh"
       - "scripts/python_runtime_gate.py"
+      - "scripts/prepare_node_matrix.sh"
+      - "scripts/node_runtime_gate.py"
       - "sdk/typescript/src/**"
       - "sdk/typescript/test/**"
       - "sdk/typescript/package.json"
@@ -307,10 +310,13 @@ on:
       # unit while `project_inputs` claimed it did. The matrix environments are built from
       # it, so a re-resolution changes what the batteries ran under (#746).
       - "sdk/python/uv.lock"
-      # The matrix preparation and the support-claim gate decide WHICH runtimes the Python
-      # evidence covers, so a change to either changes what this lane measures (#746).
+      # The matrix preparation and the support-claim gates decide WHICH runtimes the SDK
+      # evidence covers, so a change to any of them changes what this lane measures
+      # (#746 for Python, #747 for Node).
       - "scripts/prepare_python_matrix.sh"
       - "scripts/python_runtime_gate.py"
+      - "scripts/prepare_node_matrix.sh"
+      - "scripts/node_runtime_gate.py"
       - "sdk/typescript/src/**"
       - "sdk/typescript/test/**"
       - "sdk/typescript/package.json"
@@ -507,7 +513,11 @@ jobs:
             ./scripts/prepare_python_matrix.sh
           fi
           if grep -q '^id = "sdk_typescript\.' verification/policy/verification.toml; then
-            (cd sdk/typescript && npm ci && npm run build)
+            # ONE RUNTIME PER PINNED NODE, for the reason the Python side has one per
+            # interpreter: `npx vitest` ran under whatever node the runner offered, and the
+            # package declared no `engines` at all — so the battery's green described an
+            # unnamed runtime and an unstated support claim (#747).
+            ./scripts/prepare_node_matrix.sh
           fi
 
       - name: Verification platform gate

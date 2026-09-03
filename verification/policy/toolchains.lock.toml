@@ -209,6 +209,44 @@ batteries.
 """
 
 # ---------------------------------------------------------------------------
+# The Node RUNTIME set — ADR-MCPRE-059 §28 / issue #747
+# ---------------------------------------------------------------------------
+#
+# The Python entry's sibling, and it exists for the same measured reason: the TypeScript
+# battery ran under `npx vitest`, which resolves whatever node is on PATH, so the result
+# described an unnamed runtime. `package.json` declared no `engines` at all, so that SDK
+# made no runtime support claim for a gate to compare against — a claim of NOTHING is not
+# narrower than the evidence, it is unreadable, and an unreadable claim cannot be exceeded
+# or satisfied.
+#
+# ECOSYSTEM-SCOPED, like `[python]`: this identity enters TypeScript units' fingerprints
+# only.
+#
+# BY MAJOR LINE, because that is how Node support is expressed. `engines.node` admits
+# `^20 || ^22 || ^24 || ^26`, so one pin per major answers exactly one question; two pins
+# inside one major would be two answers, and `scripts/node_runtime_gate.py` refuses it.
+# The odd-numbered lines are deliberately absent: they are never LTS, and a range spelling
+# like `>=20 <27` would claim them while nothing measures them.
+#
+# THE FLOOR IS NOT A PREFERENCE. `@modelcontextprotocol/client` and `…/core` both declare
+# `node >= 20`, and vitest admits `^20 || ^22 || >=24`; 20 is the oldest line the shipped
+# dependencies themselves support.
+[typescript]
+state = "resolved"
+ecosystem = "typescript"
+interpreters = ["20.20.2", "22.23.2", "24.20.0", "26.8.1"]
+source = "sdk/typescript/package.json engines.node; installed by scripts/prepare_node_matrix.sh"
+note = """
+`interpreters` rather than a Node-specific key name: it is the same fact the Python entry
+records — the exact runtime a battery is measured on — and one concept with two key names
+is how two lanes come to disagree about what a pin means.
+
+The versions are what the registry's `node@<major>` tags resolved to at the pin date.
+Bumping one is a security-relevant evidence change: it moves every TypeScript unit's
+fingerprint, drops the standing test attestations, and reruns the battery.
+"""
+
+# ---------------------------------------------------------------------------
 # The verification schema itself
 # ---------------------------------------------------------------------------
 

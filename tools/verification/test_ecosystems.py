@@ -269,8 +269,15 @@ def test_each_ecosystem_selects_exactly_the_declared_symbols():
         "sdk/typescript",
         "vitest",
         ["test/x.test.ts > a probe", "test/x.test.ts > another", "test/y.test.ts > third"],
+        None,
+        "22.23.2",
     )
-    assert ts[:4] == ["npx", "vitest", "run", "--reporter=json"]
+    assert ts[:4] == [
+        ".node-v22/node_modules/node/bin/node",
+        "node_modules/vitest/vitest.mjs",
+        "run",
+        "--reporter=json",
+    ]
     assert ts[4:] == ["test/x.test.ts", "test/y.test.ts"]
 
 
