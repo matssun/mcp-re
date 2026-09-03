@@ -321,6 +321,64 @@ def test_a_site_no_unit_declares_is_told_to_declare_the_file_first():
     assert not gate.is_registered("external_body", frozenset(), {"u": {"external_body"}})
 
 
+# ---------------------------------------------------------------------------
+# The census — R9-C037 / R9-C067 / R9-C068, and what makes it a census
+# ---------------------------------------------------------------------------
+
+
+def test_prose_mentioning_a_mechanism_is_not_a_site():
+    """Four real lines on `main` counted as escape hatches because the production mechanism
+    list matched whole lines. Kind-level registration hid it completely: the kind was
+    registered, so a comment and a real seam both read `[registered]`."""
+    from _seams import code_of
+
+    for prose in (
+        "        // Class B, and it matters most here: `external_body` means Verus checks",
+        "//! seal is `external_body`, which makes the type OPAQUE",
+        "    * an uninterp note in a block comment",
+    ):
+        assert code_of(prose).strip() == "", prose
+    assert "external_body" in gate.code_of("#[verifier::external_body]")
+    assert gate.code_of("let x = 1; // uninterp").strip() == "let x = 1;"
+
+
+def test_no_seam_hides_in_a_file_no_unit_declares():
+    """THE CENSUS PROPERTY, and the one the site count depends on.
+
+    `scan_paths` scans `verification/` plus the files units DECLARE. A seam in a production
+    file no unit declares is therefore not scanned at all — not reported unregistered,
+    simply invisible — so "every mechanism is registered" would be a statement about a set
+    that quietly excluded it.
+
+    Asserted as a property rather than a count: a hard-coded number goes stale on the next
+    legitimate seam, and a census that people re-baseline without reading is not one."""
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    _sys.path.insert(0, str(_Path(__file__).resolve().parent))
+    from _seams import seam_lines
+    from _manifest import REPO_ROOT, load_verification
+
+    declared = set()
+    for unit in load_verification()["unit"]:
+        for pattern in unit["paths"]:
+            declared.update(p.resolve() for p in REPO_ROOT.glob(pattern) if p.is_file())
+
+    hidden = []
+    for source in REPO_ROOT.rglob("*.rs"):
+        rel = source.relative_to(REPO_ROOT).as_posix()
+        if rel.startswith(("target/", "verification/", ".git/")) or "/target/" in rel:
+            continue
+        if source.resolve() in declared:
+            continue
+        if seam_lines(source):
+            hidden.append(rel)
+    assert not hidden, (
+        "escape hatches in files no [[unit]] declares — invisible to check-assumptions, "
+        f"so its PASS is over a set that excludes them: {sorted(hidden)}"
+    )
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

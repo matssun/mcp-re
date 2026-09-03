@@ -112,6 +112,43 @@ def production_lines(text: str) -> list[tuple[int, str]]:
 
 
 
+#: A line comment's tail, and a whole-line block-comment body. Removed before a line is
+#: searched for a mechanism.
+_COMMENT_TAIL = re.compile(r"//.*$")
+
+
+def code_of(line: str) -> str:
+    """`line` with its comment removed — what the compiler would see.
+
+    R9-C037 / R9-C067 / R9-C068 surfaced this: the production mechanism list matches
+    `\bexternal_body\b` against whole lines, so PROSE mentioning a mechanism counted as an
+    escape hatch. Two real examples on `main`:
+
+        // Class B, and it matters most here: `external_body` means Verus checks this
+        //! seal is `external_body`, which makes the type OPAQUE and its postconditions …
+
+    Under kind-level registration this was invisible — the kind was registered, so a comment
+    and a real seam both read `[registered]` and were indistinguishable. It matters twice
+    over now: a site census that counts comments is not a census of seams, and
+    `semantic_boundary_crossings` would read a boundary file that merely DISCUSSES a
+    mechanism as one the proof trusts.
+
+    `_definition_sites` in `check-assumptions` has stripped comments for exactly this reason
+    since the deleted-specification repair — *"a comment cannot supply an escape-hatch
+    mechanism either"*. That reasoning was applied to attribute blocks and not to the line
+    scan; this is the same rule in the one place both consumers read.
+
+    Leading `*` continuation lines of a block comment are dropped too. A `/* */` opening on
+    its own line leaves nothing to match, and a mechanism written inside a multi-line block
+    comment beside code on the same line is not a construction the language admits.
+    """
+    stripped = _COMMENT_TAIL.sub("", line)
+    body = stripped.strip()
+    if body.startswith(("*", "/*")):
+        return ""
+    return stripped
+
+
 def seam_lines(path: Path) -> list[tuple[int, str]]:
     """Every PRODUCTION line of `path` that carries a trusted seam, with its line number.
 
@@ -124,7 +161,8 @@ def seam_lines(path: Path) -> list[tuple[int, str]]:
         return []
     out: list[tuple[int, str]] = []
     for lineno, line in production_lines(text):
-        if any(re.search(pattern, line) for pattern in PRODUCTION_MECHANISMS.values()):
+        code = code_of(line)
+        if any(re.search(pattern, code) for pattern in PRODUCTION_MECHANISMS.values()):
             out.append((lineno, line.strip()))
     return out
 

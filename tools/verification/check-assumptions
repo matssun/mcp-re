@@ -59,6 +59,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _seams import (  # noqa: E402
     MECHANISMS,
     PRODUCTION_MECHANISMS,
+    code_of,
     production_lines,
 )
 from _manifest import (  # noqa: E402
@@ -195,8 +196,13 @@ def scan() -> list[tuple[Path, int, str, str, frozenset[str]]]:
             else list(enumerate(text.splitlines(), start=1))
         )
         for lineno, line in numbered:
+            # Comments are not code. Prose mentioning a mechanism counted as an escape-hatch
+            # site, and kind-level registration hid it: the kind was registered, so a comment
+            # and a real seam both read `[registered]`. One rule, in `_seams`, for both the
+            # census here and the boundary rule that asks which seams a proof trusts.
+            code = code_of(line)
             for name, pattern in mechanisms.items():
-                if re.search(pattern, line):
+                if re.search(pattern, code):
                     hits.append(
                         (path.relative_to(REPO_ROOT), lineno, name, line.strip(), owners)
                     )
