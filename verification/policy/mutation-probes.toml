@@ -2493,7 +2493,7 @@ expect_red = [
 id = "M89-off-does-not-install-a-local-tier"
 unit = "proxy.continuation_materialization"
 theorem = "THM-0096"
-conjunct = "A deployment that selected no continuation store installs no store at all, and never a node-local substitute"
+conjunct = "A plan naming no continuation store installs no store at all, and never a node-local substitute"
 # THE DANGEROUS WEAKENING. It looks like a strict improvement — a deployment that would have
 # had nothing now has something, single-replica flows start working, and no refusal appears
 # anywhere. What it actually does is give the transcript's OFF line a scope it does not
@@ -2526,7 +2526,7 @@ expect_red = [
 id = "M90-a-selected-capability-is-never-announced-off"
 unit = "proxy.continuation_materialization"
 theorem = "THM-0096"
-conjunct = "A selected continuation store this build cannot carry refuses startup rather than announcing OFF"
+conjunct = "A named continuation store this build cannot carry refuses startup rather than announcing OFF"
 # The weakening restores the behaviour the ruling removed, and it is worth being precise
 # about why it was ever written: `Established::off` here makes a binary without the backend
 # startable with any configuration, which reads as robustness. The cost is that an operator
