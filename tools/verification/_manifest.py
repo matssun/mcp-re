@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import sys
 import tomllib
+from collections.abc import Iterable
 from pathlib import Path
 
 from _ecosystems import CARGO
@@ -730,6 +731,39 @@ def unresolved_pins(toolchains: dict) -> list[str]:
             if isinstance(sub, dict) and sub.get("state") == "unresolved":
                 out.append(f"{name}.{sub_name}")
     return sorted(out)
+
+
+def unpinned_identities(toolchains: dict, required: Iterable[str]) -> dict[str, str]:
+    """Each required identity that is not resolved, mapped to WHY it is not.
+
+    R9-C069. `unresolved_pins` answers over the tables the lock CONTAINS, so it can only
+    report an identity someone wrote down and marked `unresolved`. Deleting the table
+    instead removed the identity from its answer entirely, and a lane computing
+    `REQUIRED & unresolved_pins(...)` then found nothing missing and ran — with `[rust]` or
+    `[verus.z3]` gone from the lock, against whatever the environment supplied. The
+    strongest way to unpin a tool was to stop mentioning it.
+
+    Absence and `state = "unresolved"` are the same fact about the tool — its identity is
+    unknown, and unknown is dirty — so both are returned and both are disqualifying. They
+    are returned with their reason rather than as one list because the REMEDY differs and
+    naming the wrong one sends the reader nowhere: an unresolved pin is resolved by
+    installing the tool and recording what was installed, while an absent one is a lock
+    that does not know the tool exists and is repaired by declaring it. Collapsing them
+    would trade one unreadable message for another.
+
+    `required` names dotted paths exactly as `unresolved_pins` reports them, so
+    `verus.z3` asks about the sub-table and `verus` about its parent.
+    """
+    out: dict[str, str] = {}
+    unresolved = set(unresolved_pins(toolchains))
+    for name in required:
+        head, _, tail = name.partition(".")
+        entry = toolchains.get(head)
+        if not isinstance(entry, dict) or (tail and not isinstance(entry.get(tail), dict)):
+            out[name] = "absent"
+        elif name in unresolved:
+            out[name] = "unresolved"
+    return dict(sorted(out.items()))
 
 
 def fail(message: str) -> None:

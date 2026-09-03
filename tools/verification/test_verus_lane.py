@@ -18,7 +18,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from _load_tool import load_tool  # noqa: E402
+from _manifest import load_toolchains, unpinned_identities  # noqa: E402
 from _verus_results import evaluate_unit, parse_reports  # noqa: E402
+
+LANE = load_tool("verify-verus")
 
 PIN = "92f466f247f45128c630d1c843fd6e27d2115587"
 
@@ -179,6 +183,123 @@ def test_hyphenated_package_names_match_underscored_symbols():
     would report "no report for this crate" for every unit that actually passed."""
     ok, _ = evaluate_unit(parse_reports(report([CORE], verified=5)), "mcp-re-core", [], PIN)
     assert ok
+
+
+# ---------------------------------------------------------------------------
+# Prover identity — R9-C069, R9-C070, R9-C083
+# ---------------------------------------------------------------------------
+#
+# The cases above ask whether the lane believed a REPORT it should not have. These ask the
+# question one level down: whether it believed the PROVER. A lane that correctly refuses
+# every bad report still reports a pass it did not earn if the thing producing the reports
+# is not the thing the lock names.
+
+
+def _lock_without(*paths: str) -> dict:
+    """The real lock with entries removed, so a control is tested against the real shape."""
+    import copy
+
+    doc = copy.deepcopy(load_toolchains())
+    for path in paths:
+        head, _, tail = path.partition(".")
+        if tail:
+            doc.get(head, {}).pop(tail, None)
+        else:
+            doc.pop(head, None)
+    return doc
+
+
+def test_a_deleted_toolchain_table_is_not_a_satisfied_requirement():
+    """R9-C069. The strongest way to unpin a tool was to stop mentioning it.
+
+    `unresolved_pins` answers over the tables the lock CONTAINS, so a deleted `[verus.z3]`
+    left `REQUIRED & unresolved_pins(...)` empty and the lane ran — against whatever the
+    environment supplied — while every message it printed said the toolchain was pinned.
+    """
+    gone = _lock_without("verus.z3", "rust")
+    assert unpinned_identities(gone, LANE.REQUIRED) == {
+        "rust": "absent",
+        "verus.z3": "absent",
+    }
+
+
+def test_absent_and_unresolved_are_both_disqualifying_and_stay_distinguishable():
+    """One decision, two remedies. Collapsing them would trade one bad message for another:
+    an unresolved pin is repaired by installing the tool and recording it, an absent one by
+    declaring that the tool exists at all."""
+    doc = _lock_without()
+    doc["verus"]["z3"]["state"] = "unresolved"
+    del doc["rust"]
+    reasons = unpinned_identities(doc, LANE.REQUIRED)
+    assert set(reasons) == {"verus.z3", "rust"}
+    assert reasons["verus.z3"] == "unresolved"
+    assert reasons["rust"] == "absent"
+    detail = LANE._unpinned_detail(reasons)
+    assert "verus.z3 (unresolved)" in detail and "rust (absent)" in detail
+
+
+def test_the_lock_identifies_the_prover_binaries_and_the_solver_by_digest():
+    """R9-C070 / R9-C083. `libvstd.rlib` was recorded in a `note` — the one field the
+    fingerprint strips — and the solver's `identity` was the sentence "bundled in the
+    pinned Verus release archive", which is a claim about provenance that can be compared
+    with nothing. A solver answering `unsat` to everything discharges every proof in the
+    repository."""
+    pinned = LANE._pinned_files(load_toolchains())
+    assert {"libvstd.rlib", "z3", "verus", "rust_verify", "cargo-verus"} <= set(pinned)
+    for name, digest in pinned.items():
+        assert digest.startswith("sha256:"), f"{name} is identified by {digest!r}"
+
+
+def test_a_prose_identity_is_refused_rather_than_skipped(tmp_path=None):
+    """An identity that cannot be compared with the bytes on disk is not an identity, and
+    it must FAIL rather than pass over — skipping it is how the sentence stood for a year
+    while the lock read as fully pinned."""
+    doc = _lock_without()
+    doc["verus"]["z3"]["identity"] = "bundled in the pinned Verus release archive"
+    detail = LANE._pinned_file_mismatch(doc, Path("/nonexistent"))
+    assert detail is not None and "not a digest" in detail
+
+
+def test_a_substituted_prover_binary_is_a_mismatch():
+    """The whole of R9-C083: `vstd.vir` plus a truthful `version.json` established that the
+    pinned SPECIFICATION LIBRARY was installed, and that was read as establishing that the
+    pinned PROVER was."""
+    doc = _lock_without()
+    doc["verus"]["binaries"]["rust_verify"] = "sha256:" + "0" * 64
+    root = Path(load_toolchains()["verus"]["install_root"])
+    if not (root / "rust_verify").is_file():
+        return  # the prover is not installed on this host; nothing to compare against
+    detail = LANE._pinned_file_mismatch(doc, root)
+    assert detail is not None and "rust_verify identity mismatch" in detail
+
+
+def test_the_installed_prover_matches_every_digest_the_lock_records():
+    """The positive control, and the one that makes the negatives mean something: a lock
+    whose digests match nothing on disk would pass every mismatch test above."""
+    toolchains = load_toolchains()
+    root = Path(toolchains["verus"]["install_root"])
+    if not (root / "vstd.vir").is_file():
+        return  # the prover is not installed on this host
+    assert LANE._pinned_file_mismatch(toolchains, root) is None
+
+
+def test_the_lane_names_its_solver_instead_of_inheriting_it():
+    """R9-C070. The lane built its environment as `{**os.environ, …}`, so an exported
+    `VERUS_Z3_PATH` reached the prover and the pinned lock stayed silent about it. Unsetting
+    it would not be the repair either: the prover would then resolve the solver beside
+    itself, which is resolution BY LAYOUT — the same unstated identity one directory down.
+    """
+    import os
+
+    toolchains = load_toolchains()
+    root = Path(toolchains["verus"]["install_root"])
+    hostile = "/tmp/a-solver-that-answers-unsat"
+    os.environ["VERUS_Z3_PATH"] = hostile
+    try:
+        env = LANE._lane_env(toolchains, root)
+    finally:
+        del os.environ["VERUS_Z3_PATH"]
+    assert env["VERUS_Z3_PATH"] == str(root / "z3") != hostile
 
 
 if __name__ == "__main__":
