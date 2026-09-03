@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:e7ebc31ab68b5309d121aa126347e30d83d2d4f2ead04b008c9b02710bd72104",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0095",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner specification-review ruling of 2026-09-03, recorded at merged main 09b5913a. The first review record for this theorem. APPROVED, and the approval names its own boundaries: independent TypeScript root-family membership; the Node support set `^20 || ^22 || ^24 || ^26`; the exact runtime identities carried in the assurance toolchain (`toolchains.lock.toml` `[typescript]`, ecosystem-scoped into this unit's fingerprint) with the registered battery executed on every supported major; the local/ambiguous abort and timeout semantics; that no execution or retry verdict is synthesized; the ASM-0043 discharge; that no active assumption remains scoped to the unit; and the 33-control V0 evidence architecture. The owner named the expected fingerprint sha256:c84264536f3bb061904e87c25064663d4cce4dc1c00c10e149e8df6c0c9206c7 and required recomputation immediately before recording; it was recomputed at 09b5913a and is exact, claim digest included. R9-C095 stays open and is NOT closed by this approval: `timeoutMs` remains both the inactivity bound and the aggregate wall clock, which the scope records rather than hides — what this root establishes is that the abort surfaces as a local outcome carrying no execution assertion, not that the two bounds are separable. Packet: verification/reviews/packets/thm-0095-typescript-root-2026-09-03.md.",
+  "reviewed_fingerprint": "sha256:c84264536f3bb061904e87c25064663d4cce4dc1c00c10e149e8df6c0c9206c7",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0095"
+}

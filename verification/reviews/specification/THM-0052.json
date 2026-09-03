@@ -6,14 +6,14 @@
     "theorem_dependencies": {
       "THM-0039": "sha256:37c800ce3d350ee3ab08049b866f1e5c4bb6c5a8e3627ab7837085fb16b48eed",
       "THM-0040": "sha256:18d589f65510888649c2a3bb384d884766159dd85e245f4da0cc4edf75df8143",
-      "THM-0045": "sha256:482f12733c6594c6a4ce6a6919f623816869db48dcc671a79e186e0e834d5366",
+      "THM-0045": "sha256:34dbfebef87ef6f49f563fde542fb7f971b3d2359181f2ffa891f5d6404a6005",
       "THM-0056": "sha256:37b272c083815f344cc9eac54febabeae92258d64165b382e604f775aaea176b"
     },
     "theorem_id": "THM-0052",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner specification-review ruling of 2026-08-31, given over verification/reviews/packets/owner-specification-review-2026-08-31.md. The ruling declared the consolidated review COMPLETE and approved every packet theorem not named in its bounded correction set at its current fingerprint. This theorem was not named, and its statement, security consequence and scope are unchanged from the packet the owner read.",
-  "reviewed_fingerprint": "sha256:a196b4f13628969faba72c851a41eaa2345c7a26e15127519967ee88039abf63",
+  "notes": "Owner specification-review ruling of 2026-08-31, given over verification/reviews/packets/owner-specification-review-2026-08-31.md. The ruling declared the consolidated review COMPLETE and approved every packet theorem not named in its bounded correction set at its current fingerprint. This theorem was not named, and its statement, security consequence and scope are unchanged from the packet the owner read.\n\n--- RE-AFFIRMED 2026-09-03, DEPENDENCY-ONLY, at merged main 09b5913a ---\n\nThe approval above stands unchanged. Re-affirmed under the THM-0074 ruling of 2026-09-03,\nbecause THM-0052 is not a system root: it is the one intermediate node inside THM-0074's\nclosure whose own review had gone stale, and it was the exact remaining mechanical cause of\nthat root reading as not established. Re-affirming the root while leaving this node stale\nwould have left the root unestablished for a reason the ruling had already disposed of.\n\nIts case is the ruling's case without remainder: the theorem claim digest is UNCHANGED, NO\ndependency was added or removed, and the sole movement is THM-0045's corrected claim — the\nchange the ruling names as already owner-reviewed. The statement, security consequence and\nscope were not reconsidered.",
+  "reviewed_fingerprint": "sha256:e0feb4cb3953dd8a1713ae69f5b093a6d519e1793b3f9c9588d4dc69337c5693",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0052"
 }
