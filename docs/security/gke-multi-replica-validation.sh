@@ -16,12 +16,30 @@
 #   Proof 4 — ZERO-DROP rolling update: a rolling Deployment update with graceful
 #             SIGTERM drain completes with no in-flight request abandoned
 #             (ADR-MCPRE-051 §6 / drainGracePeriodSeconds).
+#   Proof 5 — a STALE request fails closed: a validly-signed request whose freshness
+#             window closed an hour ago is refused (mcp-re.expired_request).
+#   Proof 6 — a MISBOUND request fails closed: bound to a different audience it is
+#             refused as mcp-re.invalid_audience; bound to a different @target-uri —
+#             a signature-base component — as mcp-re.invalid_signature, one layer
+#             earlier. Both codes are asserted, because which layer refuses is part
+#             of the claim.
+#   Proof 7 — CONTAINMENT: a refused request never reaches the inner backend, with an
+#             accepted request in the same run as the positive control for the counter.
 #
-# These four are already proven IN-PROCESS by the repo's tests
+# Proofs 1-4 are all COHERENCE proofs — that replicas agree. Every request they send is a
+# valid one, and the only rejections they assert are ones the harness itself caused: a
+# spent nonce, a bumped epoch. A fleet that accepted everything would still pass Proof 1's
+# second leg by accident of the replay store. Proofs 5-7 are the hostile half: is a bad
+# request refused at all, and is it refused BEFORE the backend is invoked.
+#
+# Proofs 1-4 are already proven IN-PROCESS by the repo's tests
 # (replay_race_harness_test, trust-epoch flush tests, async_drain_test); this
 # harness RE-PROVES them on live cloud infrastructure, which is the MCPS-90
 # release gate ADR-MCPS-049 clause and the single-node non-claim retirement
-# (MCPS-91) depend on.
+# (MCPS-91) depend on. Proofs 5-7 have in-process twins too, and the reason to
+# re-prove them here is the same: the in-process refusal runs inside one address
+# space with no TLS terminator, no Service, no sidecar and no real backend between
+# the check and the thing it protects.
 #
 # This is a TEMPLATE. It contains no secrets. Fill in the substrate's targets below
 # (or export them), authenticate to that cloud, and provide the fleet's TLS + trust
@@ -47,7 +65,7 @@
 # PROVIDER=kind runs the IDENTICAL proofs against the same image + chart on a local
 # kind cluster — the pre-cloud gate. A green kind run is the same test as GKE or EKS,
 # run for free; only the cluster substrate and the cloud-credential source differ (see
-# PROVIDER). Exit 0 == all four proofs pass.
+# PROVIDER). Exit 0 == all seven proofs pass.
 #
 # EKS prerequisites beyond the GKE list: eksctl + the aws CLI, an ECR_REGISTRY holding
 # this VERSION's images, and one run of docs/security/eks-kms-irsa-setup.sh to create
@@ -242,9 +260,18 @@ else
   kind get clusters 2>/dev/null | grep -qx "$KIND_CLUSTER" \
     || kind create cluster --name "$KIND_CLUSTER"
   kubectl config use-context "kind-${KIND_CLUSTER}" >/dev/null
-  for img_spec in "proxy:$PROXY_IMAGE:deploy/docker/Dockerfile" \
-                  "inner:$INNER_IMAGE:deploy/docker/Dockerfile.inner" \
-                  "loadgen:$LOADGEN_IMAGE:deploy/docker/Dockerfile.loadgen"; do
+  # The loadgen image is built only when Proof 4 will use it. It was built
+  # unconditionally, so an image SIX of the seven proofs never touch could take the whole
+  # lane down before a single proof ran — and did: `rust:1.94.1-slim-bookworm`, the wheel
+  # stage's base, failed `apt-get update` with "at least one invalid signature" on a host
+  # where `debian:bookworm-slim` and the proxy's own runtime stage both succeeded. An
+  # environmental fault in one image's base is not evidence about replay coherence,
+  # freshness, audience binding or containment, and it must not be able to look like it.
+  IMAGE_SPECS=("proxy:$PROXY_IMAGE:deploy/docker/Dockerfile"
+               "inner:$INNER_IMAGE:deploy/docker/Dockerfile.inner")
+  [[ -n "${MCP_RE_SKIP_ROLLING:-}" ]] \
+    || IMAGE_SPECS+=("loadgen:$LOADGEN_IMAGE:deploy/docker/Dockerfile.loadgen")
+  for img_spec in "${IMAGE_SPECS[@]}"; do
     tgt="${img_spec%%:*}"; rest="${img_spec#*:}"; img="${rest%:*}"; dfile="${rest##*:}"
     # Rebuild when the image does not match the SOURCE, not merely when it is absent.
     #
@@ -557,6 +584,12 @@ helm -n "$NAMESPACE" upgrade --install "$RELEASE" "$CHART_DIR" \
   --set identity.allowExampleFixtures=true `# identity is pinned by emit_mtls_fixtures (did:example:server-1 / example.com), which trust.json encodes in the actor id` \
   --set replay.redisUrl="redis://mcp-re-redis:6379" \
   --set revocation.trustEpochRedisUrl="redis://mcp-re-redis:6379" \
+  `# Proof 3 opens a multi-round-trip leg on one replica and answers it on another, which` \
+  `# needs the SHARED correlation store. Without it the proxy refuses the open leg at the` \
+  `# point it would be opened — the fail-closed direction, and its startup line says so —` \
+  `# and Proof 3 fails with mcp-re.replay_cache_unavailable, naming the wrong store. The` \
+  `# chart could not render this flag at all until the value below existed.` \
+  --set continuationControl.redisUrl="redis://mcp-re-redis:6379" \
   --set replay.allowPlaintextRedis=true `# the in-cluster redis:7 this harness brings up serves no TLS; the opt-out is explicit because the chart refuses plaintext under fleet by default` \
   "${KMS_SETS[@]}" \
   --wait --timeout 8m
@@ -565,6 +598,14 @@ helm -n "$NAMESPACE" upgrade --install "$RELEASE" "$CHART_DIR" \
 DEPLOY="$(kubectl -n "$NAMESPACE" get deploy -l app.kubernetes.io/name=mcp-re-proxy \
   -o jsonpath='{.items[0].metadata.name}')"
 [[ -n "$DEPLOY" ]] || fail "could not resolve the proxy deployment name"
+# The inner backend's deployment. Resolved the same way and for the same reason the proxy's
+# is: Proof 7 reads its log to count backend invocations, and a name that has drifted from
+# the manifest would make that count silently zero — which is the answer Proof 7's negative
+# leg is looking for, so it must never be reachable by a lookup failure. Its positive
+# control is what catches it.
+INNER_DEPLOY="$(kubectl -n "$NAMESPACE" get deploy -l app.kubernetes.io/name=mcp-re-inner-fastmcp \
+  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)"
+INNER_DEPLOY="${INNER_DEPLOY:-mcp-re-inner-fastmcp}"
 # The proxy reads its TLS/trust + KMS-token material ONCE at startup. When this
 # harness is re-run, the fleet's Secret is re-applied with FRESH material (a new CA,
 # a new short-lived client cert, a refreshed KMS token), but a spec-unchanged `helm
@@ -982,4 +1023,74 @@ done; echo \"loadgen: \$n requests, \$drops drop(s)\""
   echo "  OK: rolling update completed with zero drops across $reqs requests (load via the Service)."
 fi
 
-log "ALL FOUR LIVE PROOFS PASSED"
+# --- Proof 5: a stale request fails closed -----------------------------------
+#
+# The four proofs above are all about COHERENCE — that replicas agree. None of them asks
+# whether a hostile request is refused at all, because every request they send is a valid
+# one and the only rejections they assert are ones the harness itself caused (a spent
+# nonce, a bumped epoch). A fleet that accepted everything would still pass Proof 1's
+# second leg only by accident of the replay store.
+#
+# `--created-offset` signs a freshness window that closed an hour ago. The signature is
+# VALID and the identity is the real one: the freshness check is the only thing that can
+# refuse it, which is what makes this a test of that check rather than of parsing.
+log "Proof 5 — a stale request fails closed"
+inner_posts() {  # POST lines the inner backend has logged, i.e. times a request reached it
+  kubectl -n "$NAMESPACE" logs "deploy/$INNER_DEPLOY" 2>/dev/null | grep -c '"POST ' || true
+}
+INNER_BEFORE="$(inner_posts)"
+prove "replica A accepted a request whose freshness window closed an hour ago" -- \
+  --remote-addr "$REPLICA_A" --created-offset -3600 --expect rejected:mcp-re.expired_request
+echo "  OK: a stale request is refused."
+
+# --- Proof 6: a misbound request fails closed --------------------------------
+#
+# Signed for a DIFFERENT audience tuple while the transport still carries the real one.
+# `--sign-audience` moves only what is signed; `--audience` — what the response verifier
+# is told to expect — stays put. Moving both would make this a valid request to a
+# different proxy and would test nothing.
+# THE TWO LEGS REFUSE AT DIFFERENT LAYERS, and the expectations say which. Both fail
+# closed; asserting one code for both would have hidden that, and asserting merely "some
+# rejection" would pass for a proxy that refused everything.
+#
+#   audience id   — not an RFC 9421 signature-base component, so the signature VERIFIES
+#                   and the audience check is what refuses: `mcp-re.invalid_audience`.
+#   @target-uri   — IS a signature-base component, so the base the proxy reconstructs
+#                   differs from the one the client signed and verification fails first:
+#                   `mcp-re.invalid_signature`, before any audience check runs.
+#
+# Measured, not assumed: the target-uri leg was written expecting `invalid_audience` and
+# the fleet answered `invalid_signature`. The property held; the expectation was wrong.
+log "Proof 6 — a request bound elsewhere fails closed"
+prove "replica A did not refuse a request signed for another audience with mcp-re.invalid_audience" -- \
+  --remote-addr "$REPLICA_A" --sign-audience "did:example:not-this-server" \
+  --expect rejected:mcp-re.invalid_audience
+prove "replica A did not refuse a request signed for another target URI with mcp-re.invalid_signature" -- \
+  --remote-addr "$REPLICA_A" --sign-target-uri "https://elsewhere.invalid/mcp" \
+  --expect rejected:mcp-re.invalid_signature
+echo "  OK: a request bound elsewhere is refused — at the audience check, and at the signature base."
+
+# --- Proof 7: a refused request never reaches the inner backend ---------------
+#
+# The distinction the four coherence proofs cannot draw: whether the proxy refuses BEFORE
+# it forwards, or forwards and then declines to sign the answer. Only the first is
+# containment, and the difference is invisible from the client — both look like a
+# rejection.
+#
+# THE POSITIVE CONTROL IS THE POINT. "The counter did not move" is what a broken counter
+# says too: uvicorn access logging off, a renamed inner deployment, a log rotation. So the
+# same counter must be shown to MOVE for a request that is accepted, in the same run,
+# against the same pod. Without that leg this proof passes on a fleet with no backend at
+# all.
+log "Proof 7 — a refused request does not invoke the inner backend"
+INNER_AFTER_REFUSALS="$(inner_posts)"
+[[ "$INNER_AFTER_REFUSALS" == "$INNER_BEFORE" ]] \
+  || fail "the inner backend was invoked by a refused request: POST count went $INNER_BEFORE -> $INNER_AFTER_REFUSALS across Proofs 5-6"
+prove "replica A did not accept a well-formed request (positive control for the counter)" -- \
+  --remote-addr "$REPLICA_A" --expect accepted
+INNER_AFTER_ACCEPTED="$(inner_posts)"
+(( INNER_AFTER_ACCEPTED > INNER_AFTER_REFUSALS )) \
+  || fail "the inner POST counter did not move for an ACCEPTED request ($INNER_AFTER_REFUSALS -> $INNER_AFTER_ACCEPTED). The counter measures nothing, so Proof 7's negative leg is not evidence — check that the inner deployment is $INNER_DEPLOY and that its access log is on."
+echo "  OK: three refused requests reached the backend 0 times; an accepted one reached it."
+
+log "ALL SEVEN LIVE PROOFS PASSED"

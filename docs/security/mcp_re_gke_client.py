@@ -153,6 +153,19 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--server-ca", required=True)
     p.add_argument("--on-behalf-of", default="did:example:user-1")
     p.add_argument("--nonce")                               # pin the nonce (coherence proof)
+    # Move the signed `created`/`expires` pair by this many seconds, so the harness can
+    # present a request that is STALE rather than merely wrong. -3600 signs a window that
+    # closed an hour ago; the signature is valid and the freshness check is what refuses
+    # it. Without this the acceptance lane could only exercise rejections that a malformed
+    # or unsigned request also produces, which do not test the freshness window at all.
+    p.add_argument("--created-offset", type=int, default=0, metavar="SECONDS")
+    # Sign for THIS audience tuple while the transport still carries the real one, so the
+    # harness can present a correctly-signed request bound to somewhere else. Default: the
+    # tuple actually used. Separate from --audience/--target-uri because those are also the
+    # values `verify_response` is told to expect, and moving both would test nothing: the
+    # request would simply be a valid request to a different proxy.
+    p.add_argument("--sign-audience", metavar="ID")
+    p.add_argument("--sign-target-uri", metavar="URI")
     p.add_argument("--expect")                              # accepted|replay|revoked|rejected:*
     p.add_argument("--save-cont")                           # record MRT binding to <file>
     p.add_argument("--load-cont")                           # sign the answer leg bound to <file>
@@ -262,7 +275,10 @@ def main(argv: "list[str] | None" = None) -> int:
         with open(args.load_cont, "r", encoding="utf-8") as fh:
             cont = json.load(fh)
 
-    now = int(time.time())
+    # `created_at` is what the request CLAIMS; `time.time()` stays the clock for response
+    # verification below. They are deliberately separate: a stale request must be signed in
+    # the past and then judged against the real now, which is the whole shape of the check.
+    now = int(time.time()) + args.created_offset
     # Sign the RFC 9421 + RFC 9530 request (with the MRTR continuation on the answer leg).
     signed = mcp_re_sdk.sign_request(
         seed,
@@ -270,8 +286,8 @@ def main(argv: "list[str] | None" = None) -> int:
         json.dumps(rid),
         method,
         json.dumps(params),
-        args.target_uri,
-        args.audience,
+        args.sign_target_uri or args.target_uri,
+        args.sign_audience or args.audience,
         args.route,
         args.dpop_token,
         args.nonce or secrets.token_urlsafe(16),
@@ -304,8 +320,14 @@ def main(argv: "list[str] | None" = None) -> int:
             signed.target_uri,
             signed.headers,
             signed.body(),
-            signed.evidence_digest_alg,
-            signed.evidence_digest_value,
+            # The request EVIDENCE HANDLE is not passed. It used to be — as
+            # `signed.evidence_digest_alg` / `.evidence_digest_value` beside the request
+            # itself — and #719 removed both parameters deliberately: two request-shaped
+            # operands with nothing relating them let a caller pass request A and handle B,
+            # so a success established binding to A and equality with B and never that the
+            # two were one exchange. The verifier derives the handle from the request at the
+            # boundary now. This client kept passing them and had been unable to reach a
+            # verdict since, which took the whole live fleet lane with it.
             args.server_key_id,      # root issuer kid
             server_pub,              # root issuer pubkey (b64url)
             "server",
