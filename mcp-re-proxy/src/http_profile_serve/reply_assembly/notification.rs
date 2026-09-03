@@ -128,7 +128,7 @@ impl HttpProfileProxy {
             window,
             ex.now,
             ex.verified,
-            ex.actor_id.as_str().to_owned(),
+            ex.actor_id.to_owned(),
             retention,
             Self::disposition(progress, None),
         )

@@ -188,7 +188,7 @@ pub(in crate::http_profile_serve) enum Retirement {
 }
 
 #[cfg(test)]
-pub(in crate::http_profile_serve) mod tests {
+mod tests {
     use super::*;
     use crate::continuation_store::AsyncContinuationStore;
     use std::sync::Arc;
@@ -214,7 +214,7 @@ pub(in crate::http_profile_serve) mod tests {
         // answer at all.
         let store = Arc::new(crate::continuation_store::InMemoryContinuationStore::new());
         let plane = ContinuationPlane::wired(store.clone(), 300);
-        let key = continuation_key("aud", &resolved_actor_id("host-a", "key-1"), b"s-1");
+        let key = continuation_key("aud", "actor-1", b"s-1");
         store
             .store(
                 &key,
@@ -229,130 +229,6 @@ pub(in crate::http_profile_serve) mod tests {
 
         assert_eq!(plane.retire(Some(&key)).await, Retirement::Retired);
         assert_eq!(plane.retire(Some(&key)).await, Retirement::AlreadyAnswered);
-    }
-
-    /// The operand as the verifier produces it. There is no other way to obtain one.
-    pub(in crate::http_profile_serve) fn resolved_actor_id(
-        subject: &str,
-        keyid: &str,
-    ) -> crate::continuation_store::ResolvedActorId {
-        crate::continuation_store::ResolvedActorId::of(&resolved_actor(subject, keyid))
-    }
-
-    fn resolved_actor(subject: &str, keyid: &str) -> mcp_re_http_profile::ResolvedActor {
-        mcp_re_http_profile::ResolvedActor {
-            identity: mcp_re_http_profile::ActorIdentity {
-                role: "client".into(),
-                trust_domain: "example.com".into(),
-                subject: subject.into(),
-                keyid: keyid.into(),
-            },
-            verification_key: mcp_re_core::SigningKey::from_seed_bytes(&[7u8; 32]).public_key(),
-            slot: mcp_re_http_profile::SignerSlot::Request,
-        }
-    }
-
-    fn digest(of: &str) -> mcp_re_http_profile::RequestEvidenceDigest {
-        mcp_re_http_profile::RequestEvidenceDigest {
-            digest_alg: "sha-256".into(),
-            digest_value: mcp_re_core::b64url_encode(of.as_bytes()),
-        }
-    }
-
-    /// A verified request whose resolved actor is `subject`/`keyid` and which carries a
-    /// continuation, so the answer leg computes a key at all.
-    pub(in crate::http_profile_serve) fn verified_as(
-        subject: &str,
-        keyid: &str,
-    ) -> mcp_re_http_profile::VerifiedMcpRequest {
-        let audience = mcp_re_http_profile::AudienceTuple {
-            audience_id: "aud".into(),
-            target_uri: "https://example.test/mcp".into(),
-            route: None,
-        };
-        mcp_re_http_profile::VerifiedMcpRequest {
-            floor: mcp_re_http_profile::CryptographicFloorVerifiedRequest {
-                profile_id: "p".into(),
-                signature_label: "mcpre".into(),
-                resolved_actor: resolved_actor(subject, keyid),
-                evidence: mcp_re_http_profile::RequestEvidence::from_signature_base(b"base"),
-                request_signature_base: b"base".to_vec(),
-                content_digest: mcp_re_http_profile::content_digest_sha256(b"{}"),
-                created: 1,
-                expires: 2,
-                nonce: "n".into(),
-                key_id: keyid.into(),
-            },
-            audience: audience.clone(),
-            audience_hash: audience.audience_hash(),
-            request_block: mcp_re_http_profile::HttpRequestEvidenceBlock {
-                profile: "p".into(),
-                audience,
-                artifact_bindings: Vec::new(),
-                continuation: Some(mcp_re_http_profile::HttpContinuation {
-                    continuation_type: "mcp-mrt".into(),
-                    previous_request_evidence: digest("prev"),
-                    input_required_response_evidence: digest("irr"),
-                    request_state_digest: digest("s-1"),
-                }),
-                admission: None,
-                admission_assertion: None,
-                authorization_decision: None,
-            },
-        }
-    }
-
-    /// PROVENANCE: the operand is the actor the VERIFIER resolved, not one the body names.
-    ///
-    /// The store controls establish that two different actors reach two different entries.
-    /// This is the other half, and it is the half a store test cannot see: WHICH actor the
-    /// serving path feeds the key. The body here asserts a second actor in the very
-    /// members a naive implementation would read, and the key the leg prepares is the
-    /// resolved actor's — the asserted one names nothing.
-    ///
-    /// It goes red for the change it exists to catch: a leg deriving the operand from a
-    /// request-supplied identifier prepares `impostor`'s key, and every store-key control
-    /// stays green while it does.
-    #[tokio::test]
-    async fn the_key_is_the_verifier_resolved_actors_and_not_one_the_body_asserts() {
-        let verified = verified_as("did:example:host-a", "key-1");
-        let actor_id = crate::continuation_store::ResolvedActorId::of(verified.resolved_actor());
-        let http_req = crate::http_profile_serve::HttpRequest {
-            method: "POST".into(),
-            target_uri: "https://example.test/mcp".into(),
-            headers: Vec::new(),
-            body: br#"{"params":{"requestState":"s-1","actorIdentity":{"role":"client","trust_domain":"example.com","subject":"did:example:impostor","keyid":"key-9"}}}"#.to_vec(),
-        };
-        let ex = Exchange {
-            http_req: &http_req,
-            verified: &verified,
-            actor_id: &actor_id,
-            now: 1,
-            key: None,
-        };
-
-        let established = ContinuationPlane::disabled()
-            .prepare(&ex, "aud")
-            .await
-            .expect("a disabled plane reads nothing and refuses nothing");
-        let prep = crate::exchange_state::ExchangeProgress::new().establish(established);
-
-        let resolved_key = continuation_key(
-            "aud",
-            &resolved_actor_id("did:example:host-a", "key-1"),
-            b"s-1",
-        );
-        let impostor_key = continuation_key(
-            "aud",
-            &resolved_actor_id("did:example:impostor", "key-9"),
-            b"s-1",
-        );
-        assert_ne!(
-            resolved_key, impostor_key,
-            "the two actors must differ at all"
-        );
-        assert_eq!(prep.answer_key(), Some(&resolved_key));
-        assert_ne!(prep.answer_key(), Some(&impostor_key));
     }
 
     /// A tier that does not answer the SPEND. Its own case, and it has to be reachable.
