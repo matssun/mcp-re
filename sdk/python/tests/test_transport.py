@@ -41,6 +41,7 @@ from mcp_re_sdk import (  # noqa: E402
     SigningDevice,
     mcp_re_http_transport,
 )
+from mcp_re_sdk.mtls import MtlsTransportError  # noqa: E402
 from mcp_re_sdk.transport import _binding_context
 from mcp_re_sdk.transport import _authz_binding_digest, _bindings_json, _pump  # noqa: E402
 
@@ -428,6 +429,72 @@ async def test_one_exchanges_network_error_does_not_take_down_the_session():
     assert delivered[1].startswith("mcp-re-sdk: ConnectionResetError:")
     assert delivered[2] == "mcp-re.replay_detected"
     assert delivered[3] == "mcp-re.replay_detected"
+
+
+@pytest.mark.anyio
+async def test_a_transport_deadline_does_not_synthesize_what_the_peer_never_said():
+    """The aggregate response deadline reaches the application as a LOCAL failure.
+
+    The composition this control exists for is `transport deadline → local transport
+    failure → application-facing correlated outcome`, and it is the one a low-level
+    `_read_bounded` test cannot reach. A future implementation could bound the read
+    correctly and still lie about the remote side: report a `mcp-re.*` token nobody sent,
+    or fill in `executionStatus: not_executed` / `retrySafety: retry_safe` for an exchange
+    whose fate it does not know. Either would turn a timeout — the one condition under
+    which the SDK knows LEAST about whether the call ran — into a licence to retry a tool
+    call that already executed.
+
+    So what is asserted is not only that the deadline fails the exchange, but everything
+    the SDK must NOT say about it, and that the failure stays confined to its own
+    correlated exchange.
+    """
+    store = CorrelationStore()
+
+    async def poster(method, target_uri, headers, body) -> HttpReply:
+        if json.loads(body)["id"] == 1:
+            # Exactly what `mtls._read_bounded` raises when the aggregate bound expires.
+            raise MtlsTransportError(
+                "the aggregate response read exceeded 0.5s (slow-loris trickle)"
+            )
+        raise McpReError("mcp-re.replay_detected")
+
+    read_writer, read_stream = anyio.create_memory_object_stream(8)
+    write_stream, write_reader = anyio.create_memory_object_stream(8)
+    for rid in (1, 2):
+        await write_stream.send(SessionMessage(_request(id=rid)))
+    await write_stream.aclose()
+    await _pump(_config(), poster, write_reader, read_writer, store)
+
+    out = []
+    while True:
+        try:
+            out.append(read_stream.receive_nowait())
+        except (anyio.WouldBlock, anyio.EndOfStream):
+            break
+
+    delivered = {m.message.id: m.message.error for m in out}
+    timed_out = delivered[1]
+
+    # 1. The affected exchange fails, correlated to its own id. A dropped outcome would
+    #    leave `ClientSession` awaiting a reply that never comes.
+    assert timed_out is not None
+    # 2. No peer verdict is claimed. The peer said nothing; a `mcp-re.*` token here would
+    #    be the SDK speaking in the peer's voice.
+    assert timed_out.message.startswith("mcp-re-sdk:")
+    assert not timed_out.message.startswith("mcp-re.")
+    # Delivered as the transport's own words under the local prefix — a `McpReSdkError`
+    # is reported by message, so what arrives is the bound that fired, not a peer verdict.
+    assert "aggregate response read" in timed_out.message
+    # 3/4. No execution or retry fact is invented. These members exist only when a VERIFIED
+    #      receipt carried them; a local timeout carries nothing, so the honest answer is
+    #      their absence, not a value.
+    rendered = json.dumps(timed_out.model_dump(mode="json"))
+    for forbidden in ("not_executed", "notExecuted", "executionStatus", "retrySafety", "retry_safe"):
+        assert forbidden not in rendered, f"a local timeout must not state {forbidden!r}"
+    # 5. Unrelated exchanges are undisturbed, and nothing is left outstanding: a deadline
+    #    that leaked its correlation entry would be a remotely triggerable growth lever.
+    assert delivered[2].message == "mcp-re.replay_detected"
+    assert len(store) == 0, "the timed-out exchange left its correlation entry outstanding"
 
 
 # --- shutdown (#421) -------------------------------------------------------------

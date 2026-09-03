@@ -3995,20 +3995,26 @@ one. A notification is delivered only against a signed acknowledgement. An elici
 a call rather than ending it, so a reply that is not terminal — including one whose result
 type this SDK does not recognise — is refused rather than surfacing as the call's answer.
 A verified reply that is not an answer to this request — one carrying a method, or one with
-neither result nor error — is refused rather than dispatched. What the application is told
-about execution is what the receipt said: whether the receipt was bound to THIS transmission,
-the execution and retry contract a post-dispatch rejection stated, no member the receipt did
-not carry, and a local failure under the SDK's own prefix rather than a wire code the peer
-never sent.
+neither result nor error — is refused rather than dispatched.
+
+What the application is told about execution is what the receipt said, and nothing else. A
+verified receipt carrying execution and retry fields is reported with exactly those fields;
+a member the receipt did not carry is not invented for it. A LOCAL failure — a transport
+deadline, a cancellation, a local I/O or signing failure — is reported as a local and
+ambiguous failure under the SDK's own prefix: never as `not_executed`, never as retry-safe,
+and never as a wire code the peer did not send.
 """
 security_consequence = """
 An application driving MCP through this SDK cannot be handed another exchange's answer, an
 answer from a signer this deployment does not trust, or a refusal that verified only unbound
 — and cannot be told that an operation did not run when the SDK does not know that.
 
-The last is the one a byte-level fixture cannot reach. Parity fixtures pin what this SDK
-EMITS; whether it invents `not_executed` for a receipt that stated nothing is behaviour, and
-the two SDKs have diverged there before.
+The last is the one a byte-level fixture cannot reach, and the timeout is where it bites: a
+response deadline is the condition under which this SDK knows LEAST about whether the call
+ran, so a synthesized `not_executed` or retry-safe verdict there is exactly what makes a
+caller repeat a tool call that already executed. Parity fixtures pin what this SDK EMITS;
+whether it invents an execution fact for a receipt that stated nothing is behaviour, and the
+two SDKs have diverged there before.
 """
 scope = """
 It is one MEMBER of a root family, not the family. THM-0076 is the Rust member and THM-0095
@@ -4021,16 +4027,25 @@ difference from the TypeScript member there changes nothing about authenticity, 
 or execution. Deadline behaviour enters only where a timeout changes the client's conclusion
 about whether the remote side may have executed.
 
-One such deadline is REGISTERED RATHER THAN CLAIMED. The aggregate read bound is evaluated
-between completed `read(n)` calls, and `http.client` fills to `n` — so a trickling peer keeps
-one call outstanding and the bound is not consulted while it does (ASM-0042, R9-C010). The
-consequence stated here is exactly what follows and no more: the SDK reports NOTHING for such
-an exchange rather than reporting that it did not execute. The looseness reaches this claim
-only if a caller's own outer timeout produces a retry whose execution status the SDK never
-determined, and that condition is stated rather than assumed away.
+THE RESPONSE DEADLINE IS ENFORCED, AND ITS WORST CASE IS STATED RATHER THAN ROUNDED OFF.
+`read1` prevents a fill-to read from suppressing the aggregate-deadline check across
+multiple underlying reads: once the deadline has passed, no NEW underlying read is begun.
+An underlying read already in progress may straddle the deadline, and the existing per-recv
+timeout bounds that final stall. So the claimed cap is the aggregate deadline plus at most
+one per-recv timeout — at most twice `timeout` under the single value a deployment sets —
+and NOT an exact wall-clock bound. It is measured against a real `http.client.HTTPResponse`
+fed by a real socket, both while trickling and while silent, never against a fake with
+short-read semantics the production reader lacks. What this claim takes from the bound is
+not availability but honesty: the deadline fails the exchange as a LOCAL condition, and no
+execution or retry fact is manufactured for it.
 
-It says nothing about the transport below it beyond what ASM-0042 names, nothing about the
-proxy's own guarantees, and nothing about an application that bypasses this adapter.
+WHAT A CALLER DOES NEXT IS OUTSIDE THIS ROOT. This claim says nothing about an application's
+own retry policy, its outer timeouts, or what it concludes from a local failure; it says only
+that the SDK does not hand it a peer verdict or an execution fact the peer never gave. Retry
+policy outside this adapter is not this adapter's proposition.
+
+It says nothing about the transport below it, nothing about the proxy's own guarantees, and
+nothing about an application that bypasses this adapter.
 """
 owner = "sdk_python.exchange_path"
 review_requirement = "Owner security-specification review"

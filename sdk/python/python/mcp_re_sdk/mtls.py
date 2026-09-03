@@ -193,24 +193,49 @@ class _MtlsConnection(http.client.HTTPSConnection):
         self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
 
 
-#: How much of the response is taken per read while the aggregate deadline is checked.
-#: A whole-response read cannot be interrupted, so the body is taken in pieces.
+#: The most this reader will take from one underlying read. An upper bound on a `read1`,
+#: never a fill-to size: `read1` returns what one read produced, which is what lets the
+#: deadline be consulted between reads rather than after the whole body.
 _READ_CHUNK_BYTES = 64 * 1024
 
 
 def _read_bounded(response, options: MtlsOptions) -> bytes:
     """Read the response body under BOTH bounds: the byte ceiling and a wall clock.
 
-    ``options.timeout`` on the socket is a PER-RECV bound: every byte that arrives
-    re-arms it, so a peer trickling just under it extends the total read without limit.
-    Each stalled exchange also holds a ``CapacityLimiter`` slot, so
-    ``max_concurrent_exchanges`` of them wedge the whole client session with no error and
-    no timeout. The Rust client leg this module mirrors caps total read time at the same
-    value (MCPS-093 ``read_response_bounded``); this is that cap.
+    ``options.timeout`` on the socket is a PER-RECV bound, and a per-recv bound bounds
+    nothing on its own: every byte that arrives re-arms it, so a peer trickling just under
+    it extends the total read without limit. Each stalled exchange also holds a
+    ``CapacityLimiter`` slot, so ``max_concurrent_exchanges`` of them wedge the whole
+    client session with no error and no timeout. The Rust client leg this module mirrors
+    caps total read time at the same value (MCPS-093 ``read_response_bounded``); this is
+    that cap.
 
-    ``timeout is None`` disables the per-recv bound, and disables this one too — that
-    knob means "no bound", and honouring it on one of the two would be a different
-    setting wearing the same name.
+    **``read1``, never ``read``, is what keeps the check reachable.**
+    ``HTTPResponse.read(n)`` fills to ``n``, so one call absorbs an unbounded number of
+    underlying reads and the loop below does not run again until it returns — which is
+    exactly how a bound written this way came to be advertised and not enforced.
+    ``read1(n)`` returns what ONE underlying read produced, chunked-framing decode
+    included, so the deadline is consulted between underlying reads and, once it has
+    passed, **no NEW underlying read is begun**.
+
+    **The read already in progress is bounded by the per-recv timeout**, which
+    ``http.client`` already carries from ``options.timeout``. One underlying read may
+    straddle the deadline — a peer that goes silent mid-read is not observable from a check
+    made between reads — and that final stall is what the per-recv bound ends.
+
+    So the cap is the aggregate deadline PLUS AT MOST ONE per-recv timeout: at most
+    ``2 * options.timeout`` under the single value a deployment sets. It is not an exact
+    wall-clock bound and is not documented as one. Narrowing the socket's own timeout to
+    the time remaining would tighten it to exactly the deadline, and it is deliberately NOT
+    done: with ``Connection: close`` — the framing this transport sends — ``http.client``
+    hands the connection to the response and closes the socket object, so the only handle
+    left is a private attribute of the response's file object. A bound that reaches through
+    a foreign object's internals is the kind of dependency this SDK would have to register
+    as a premise, and the composed bound above needs none.
+
+    ``timeout is None`` disables the per-recv bound, and disables this one too — that knob
+    means "no bound", and honouring it on one of the two would be a different setting
+    wearing the same name.
 
     One byte past ``max_response_bytes`` is enough to know the ceiling was exceeded, and
     stops a hostile length from being allocated to find out.
@@ -226,7 +251,7 @@ def _read_bounded(response, options: MtlsOptions) -> bytes:
                 f"(slow-loris trickle)"
             )
         want = min(_READ_CHUNK_BYTES, ceiling + 1 - size)
-        chunk = response.read(want)
+        chunk = response.read1(want)
         if not chunk:
             break
         chunks.append(chunk)

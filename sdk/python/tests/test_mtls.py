@@ -20,13 +20,16 @@ every test here dials loopback while requiring `mcp-re-proxy.test`.
 
 Mirrors ``sdk/typescript/test/mtls.test.ts`` — same generated material, same assertions.
 """
+import http.client
 import http.server
 import socket
 import ssl
 import sys
 import threading
+import time
 from pathlib import Path
 
+import anyio
 import pytest
 
 pytest.importorskip("mcp", reason="the mtls helper builds on the transport adapter")
@@ -37,7 +40,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tools"))
 from gen_mtls_test_material import SERVER_NAME, generate  # noqa: E402
 
 from mcp_re_sdk import McpReConfig, McpReSdkError, Signer  # noqa: E402
-from mcp_re_sdk.mtls import MtlsOptions, MtlsTransportError, mtls_poster  # noqa: E402
+from mcp_re_sdk.mtls import (  # noqa: E402
+    MtlsOptions,
+    MtlsTransportError,
+    _read_bounded,
+    mtls_poster,
+)
 
 CLIENT_SEED = bytes([11]) * 32
 
@@ -293,92 +301,335 @@ def test_an_empty_ca_bundle_is_refused(material, tmp_path):
 
 
 # --- the aggregate response-read bound --------------------------------------------
+#
+# MEASURED AGAINST A REAL PEER, and the reason is the defect this section replaces. The
+# control here used to drive `_read_bounded` with a fake whose `read(n)` returned ONE byte
+# per call. Production `http.client.HTTPResponse.read(n)` fills to `n`, so the fake had the
+# short-read semantics the real object lacks: in the test the loop's deadline check was
+# reached after every byte, and against a real peer it was not reached at all until the
+# whole body had arrived. The control could not fail (R9-C094) and the property it claimed
+# was false (R9-C010).
+#
+# So the peer below is a real socket speaking real HTTP, read through a real
+# `HTTPResponse`. It trickles: a valid response head, then body bytes frequently enough
+# never to trip an ordinary per-recv inactivity bound, for longer than the aggregate bound
+# under test. Its trickle budget is finite so a regression fails loudly instead of hanging,
+# and the assertions distinguish "the deadline fired" from "the peer stopped on its own".
 
 
-def test_the_response_read_is_bounded_in_wall_clock_not_only_per_recv():
-    """``timeout`` on the socket is a PER-RECV bound, and per-recv bounds nothing.
+class _TricklingPeer:
+    """A real HTTP peer that answers correctly, then feeds the body one byte at a time.
 
-    Every byte that arrives re-arms it, so a peer trickling just under it extends the
-    total read without limit while holding a ``CapacityLimiter`` slot;
-    ``max_concurrent_exchanges`` such responses wedge the whole client session with no
-    error and no timeout. The Rust client leg this module mirrors caps total read time
-    (MCPS-093 ``read_response_bounded``); this is that cap.
-
-    Driven against ``_read_bounded`` directly rather than a live trickling TLS server:
-    the property is the deadline, and a real socket adds only scheduling noise to it.
+    Not a fake response object: a socket, a status line, headers, and a body that arrives
+    slowly enough to outlive any aggregate bound worth testing while staying far busier
+    than any per-recv inactivity bound. A fake cannot be wrong in the way the old one was,
+    which is precisely why the evidence has to come from here.
     """
-    import time as _time
 
-    from mcp_re_sdk.mtls import _read_bounded
+    def __init__(self, *, pause=0.01, budget=8.0, content_length=1_000_000, context=None):
+        self.pause = pause
+        self.budget = budget
+        self.content_length = content_length
+        self.context = context
+        #: Body bytes actually written. `sent < content_length` when the client leaves is
+        #: the evidence that the read ended on the deadline, not on the peer finishing.
+        self.sent = 0
+        self.completed = False
+        self._listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._listener.bind(("127.0.0.1", 0))
+        self._listener.listen(1)
+        self.port = self._listener.getsockname()[1]
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+        self._thread.start()
 
-    class _Trickle:
-        """One byte per read, slower than a real peer but never idle."""
+    def _serve(self):
+        conn = None
+        try:
+            conn, _ = self._listener.accept()
+            if self.context is not None:
+                conn = self.context.wrap_socket(conn, server_side=True)
+            head = b""
+            while b"\r\n\r\n" not in head:
+                data = conn.recv(4096)
+                if not data:
+                    return
+                head += data
+            declared = 0
+            for line in head.split(b"\r\n"):
+                if line.lower().startswith(b"content-length:"):
+                    declared = int(line.split(b":", 1)[1])
+            body = head.split(b"\r\n\r\n", 1)[1]
+            while len(body) < declared:
+                data = conn.recv(4096)
+                if not data:
+                    break
+                body += data
+            conn.sendall(
+                b"HTTP/1.1 200 OK\r\n"
+                b"content-type: application/json\r\n"
+                b"content-length: " + str(self.content_length).encode() + b"\r\n"
+                b"\r\n"
+            )
+            end = time.monotonic() + self.budget
+            while self.sent < self.content_length and time.monotonic() < end:
+                conn.sendall(b"x")
+                self.sent += 1
+                time.sleep(self.pause)
+            self.completed = self.sent >= self.content_length
+        except OSError:
+            # The client hung up mid-trickle, which is the outcome under test.
+            pass
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except OSError:
+                    pass
 
-        def __init__(self) -> None:
-            self.reads = 0
+    def close(self):
+        self._listener.close()
 
-        def read(self, _amount: int) -> bytes:
-            self.reads += 1
-            _time.sleep(0.02)
-            return b"x"
 
+class _PromptPeer(_TricklingPeer):
+    """The same real peer, answering a whole body at once. The positive mirror.
+
+    Without it every assertion above is satisfied by a reader that refuses everything,
+    and a bound that refuses ordinary responses is not a bound.
+    """
+
+    def __init__(self, *, payload=b"y" * 4096, context=None):
+        self.payload = payload
+        super().__init__(pause=0, budget=0, content_length=len(payload), context=context)
+
+    def _serve(self):
+        conn = None
+        try:
+            conn, _ = self._listener.accept()
+            if self.context is not None:
+                conn = self.context.wrap_socket(conn, server_side=True)
+            head = b""
+            while b"\r\n\r\n" not in head:
+                data = conn.recv(4096)
+                if not data:
+                    return
+                head += data
+            declared = 0
+            for line in head.split(b"\r\n"):
+                if line.lower().startswith(b"content-length:"):
+                    declared = int(line.split(b":", 1)[1])
+            body = head.split(b"\r\n\r\n", 1)[1]
+            while len(body) < declared:
+                data = conn.recv(4096)
+                if not data:
+                    break
+                body += data
+            conn.sendall(
+                b"HTTP/1.1 200 OK\r\n"
+                b"content-type: application/json\r\n"
+                b"content-length: " + str(len(self.payload)).encode() + b"\r\n"
+                b"\r\n" + self.payload
+            )
+            self.sent = len(self.payload)
+            self.completed = True
+        except OSError:
+            pass
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+
+
+def _real_response(peer, *, socket_timeout):
+    """A real `http.client.HTTPResponse` from `peer`, with its connection.
+
+    The connection's own timeout is the PER-RECV bound. Every test below sets it far
+    larger than the aggregate bound under test, so nothing here can pass because the
+    per-recv bound fired: what terminates the read is the aggregate deadline or nothing.
+    """
+    connection = http.client.HTTPConnection("127.0.0.1", peer.port, timeout=socket_timeout)
+    connection.request("POST", "/mcp", body=b"{}", headers={"content-length": "2"})
+    return connection, connection.getresponse()
+
+
+def test_the_aggregate_read_deadline_holds_against_a_real_trickling_peer():
+    """The aggregate bound terminates a trickle the per-recv bound never notices.
+
+    The peer sends a byte every 10ms against a 5s per-recv bound, so the socket is never
+    idle long enough to time out; the only thing that can end this read is the aggregate
+    deadline. Remove that enforcement and the read runs for the peer's whole budget and
+    this test goes red — which is the property the fake it replaced could not have.
+    """
+    peer = _TricklingPeer(pause=0.01, budget=8.0)
+    connection, response = _real_response(peer, socket_timeout=5.0)
     options = MtlsOptions(
-        server_ca=b"unused",
-        client_cert="unused",
-        timeout=0.2,
-        max_response_bytes=1024 * 1024,
+        server_ca=b"unused", client_cert="unused", timeout=0.5, max_response_bytes=1024 * 1024
     )
-    peer = _Trickle()
-    started = _time.monotonic()
-    with pytest.raises(MtlsTransportError) as raised:
-        _read_bounded(peer, options)
-    elapsed = _time.monotonic() - started
+    started = time.monotonic()
+    try:
+        with pytest.raises(MtlsTransportError) as raised:
+            _read_bounded(response, options)
+        elapsed = time.monotonic() - started
+    finally:
+        connection.close()
+        peer.close()
+
     assert "aggregate response read" in str(raised.value)
-    assert elapsed < 5.0, f"the deadline did not bound the read ({elapsed:.1f}s)"
-    assert peer.reads > 1, "the reader must have been making progress, not stalled"
+    # It fired ON the deadline: not before it, and nowhere near the peer's 8s budget. An
+    # exchange that ended because the peer stopped would land at the budget, not here.
+    assert 0.4 <= elapsed < 3.0, f"the aggregate deadline did not bound the read ({elapsed:.2f}s)"
+    assert not peer.completed, "the peer finished its body; this measured nothing"
+    assert peer.sent > 1, "the peer never trickled; the read stalled rather than progressing"
+
+
+def test_the_full_mtls_path_bounds_a_trickling_peer(material):
+    """The same property through the shipped poster, over real TLS.
+
+    `_read_bounded` is reached from exactly one place, and it is this one. Here the
+    aggregate and per-recv bounds are the single `options.timeout` a deployment sets, so
+    what is measured is the configuration a caller actually writes.
+    """
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(str(material / "server.crt"), str(material / "server.key"))
+    context.verify_mode = ssl.CERT_REQUIRED
+    context.load_verify_locations(str(material / "ca.crt"))
+    peer = _TricklingPeer(pause=0.01, budget=8.0, context=context)
+
+    poster = mtls_poster(
+        _config(peer.port),
+        _options(material, timeout=0.6, connect_address=("127.0.0.1", peer.port)),
+    )
+    started = time.monotonic()
+    try:
+        with pytest.raises(MtlsTransportError) as raised:
+            anyio.run(poster, "POST", f"https://{SERVER_NAME}:{peer.port}/mcp", [], b"{}")
+        elapsed = time.monotonic() - started
+    finally:
+        peer.close()
+
+    assert "aggregate response read" in str(raised.value)
+    assert elapsed < 4.0, f"the shipped path did not bound the read ({elapsed:.2f}s)"
+    assert not peer.completed, "the peer finished its body; this measured nothing"
+
+
+class _SilentPeer(_TricklingPeer):
+    """A peer that answers, sends a few bytes, and then stops without closing.
+
+    The other half of the composed bound. `read1` returns control to the deadline check
+    after every byte a peer sends — so a peer that sends NOTHING is the one case the loop
+    cannot observe, and what ends it is the per-recv timeout `http.client` already
+    carries. Left unmeasured, that case is where "the read is bounded" quietly becomes
+    "the read is bounded while the peer keeps talking".
+    """
+
+    def __init__(self, *, hold=30.0, context=None):
+        self.hold = hold
+        super().__init__(pause=0, budget=0, content_length=1_000_000, context=context)
+
+    def _serve(self):
+        conn = None
+        try:
+            conn, _ = self._listener.accept()
+            if self.context is not None:
+                conn = self.context.wrap_socket(conn, server_side=True)
+            head = b""
+            while b"\r\n\r\n" not in head:
+                data = conn.recv(4096)
+                if not data:
+                    return
+                head += data
+            conn.sendall(
+                b"HTTP/1.1 200 OK\r\n"
+                b"content-type: application/json\r\n"
+                b"content-length: " + str(self.content_length).encode() + b"\r\n"
+                b"\r\nxxx"
+            )
+            self.sent = 3
+            # Held open and silent. Closing would give the reader an EOF to act on, which
+            # is the case that is NOT under test.
+            time.sleep(self.hold)
+        except OSError:
+            pass
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+
+
+def test_a_peer_that_goes_silent_is_ended_by_the_per_recv_bound():
+    """The composed bound's worst case, measured rather than asserted.
+
+    A silent peer is invisible to a deadline checked between reads, so this is the half
+    the per-recv timeout owns. The whole read still ends within the stated worst case —
+    the aggregate deadline plus one per-recv stall — instead of holding an exchange and
+    its concurrency slot until the peer feels like closing.
+    """
+    peer = _SilentPeer(hold=30.0)
+    connection, response = _real_response(peer, socket_timeout=0.5)
+    options = MtlsOptions(
+        server_ca=b"unused", client_cert="unused", timeout=0.5, max_response_bytes=1024 * 1024
+    )
+    started = time.monotonic()
+    try:
+        with pytest.raises((MtlsTransportError, TimeoutError, OSError)):
+            _read_bounded(response, options)
+        elapsed = time.monotonic() - started
+    finally:
+        connection.close()
+        peer.close()
+
+    # Bounded by `2 * timeout` in the worst case, and nowhere near the peer's 30s hold.
+    assert elapsed < 2.0, f"a silent peer held the read open ({elapsed:.2f}s)"
 
 
 def test_a_response_inside_both_bounds_still_reads_whole():
-    """The bound refuses a trickle, not an ordinary reply delivered in chunks."""
-
-    class _Chunked:
-        def __init__(self, payload: bytes) -> None:
-            self.rest = payload
-
-        def read(self, amount: int) -> bytes:
-            chunk, self.rest = self.rest[:amount], self.rest[amount:]
-            return chunk
-
-    from mcp_re_sdk.mtls import _read_bounded
-
+    """The bound refuses a trickle, not an ordinary reply — measured on the same peer."""
+    peer = _PromptPeer(payload=b"hello world")
+    connection, response = _real_response(peer, socket_timeout=5.0)
     options = MtlsOptions(
         server_ca=b"unused", client_cert="unused", timeout=30.0, max_response_bytes=64
     )
-    assert _read_bounded(_Chunked(b"hello world"), options) == b"hello world"
+    try:
+        assert _read_bounded(response, options) == b"hello world"
+    finally:
+        connection.close()
+        peer.close()
 
-    # And the byte ceiling still fails closed, one byte past it.
-    with pytest.raises(MtlsTransportError) as raised:
-        _read_bounded(_Chunked(b"y" * 65), options)
+
+def test_the_byte_ceiling_still_fails_closed_one_byte_past_it():
+    """The two bounds are independent: the ceiling holds with the clock nowhere near."""
+    peer = _PromptPeer(payload=b"y" * 65)
+    connection, response = _real_response(peer, socket_timeout=5.0)
+    options = MtlsOptions(
+        server_ca=b"unused", client_cert="unused", timeout=30.0, max_response_bytes=64
+    )
+    try:
+        with pytest.raises(MtlsTransportError) as raised:
+            _read_bounded(response, options)
+    finally:
+        connection.close()
+        peer.close()
     assert "max_response_bytes" in str(raised.value)
 
 
 def test_no_timeout_means_no_aggregate_bound_either():
     """``timeout=None`` is the documented "no bound" knob. Honouring it on one of the two
-    bounds and not the other would be a different setting wearing the same name."""
+    bounds and not the other would be a different setting wearing the same name.
 
-    class _Short:
-        def __init__(self) -> None:
-            self.done = False
-
-        def read(self, _amount: int) -> bytes:
-            if self.done:
-                return b""
-            self.done = True
-            return b"ok"
-
-    from mcp_re_sdk.mtls import _read_bounded
-
+    Measured on the prompt peer: with no deadline the read still completes, and nothing
+    narrows the socket's own timeout — there is no remaining time to narrow it to.
+    """
+    peer = _PromptPeer(payload=b"ok")
+    connection, response = _real_response(peer, socket_timeout=5.0)
     options = MtlsOptions(
         server_ca=b"unused", client_cert="unused", timeout=None, max_response_bytes=64
     )
-    assert _read_bounded(_Short(), options) == b"ok"
+    try:
+        assert _read_bounded(response, options) == b"ok"
+    finally:
+        connection.close()
+        peer.close()

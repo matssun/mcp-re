@@ -55,7 +55,7 @@ independent results, and this view exists so it cannot read as the latter.
 | ASM-0039 | A `RawEd25519TlsSigner` reports, as `tls_public_key_spki_der`, the SubjectPublicKeyInfo of the very key `sign_tls_ed25519` signs with. | proxy.delegated_resolver_materialization | THM-0027 |
 | ASM-0040 | A Redis `WAIT n t` reply of at least `n` means `n` replicas acknowledged the preceding `SET NX PX`, and the tier's declared quorum is the number that survives the failures ADR-MCPS-020 admits for REDIS_WAIT_QUORUM. | proxy.replay_admission_gate | THM-0092 |
 | ASM-0041 | An etcd `POST /v3/kv/txn` that succeeds under `compare { target: CREATE, create_revision: 0 }` means the key did not exist at a linearization point and now does, cluster-wide, for the granted lease's TTL. | proxy.replay_admission_gate | THM-0092 |
-| ASM-0042 | `http.client.HTTPResponse.read(n)` returns when it has n bytes or the body ends, and raises rather than returning short on a socket error — so a wall-clock bound checked between calls is checked between COMPLETED chunks, never during one. | sdk_python.exchange_path | THM-0094 |
+| ASM-0042 | WITHDRAWN — discharged by unit://sdk_python.exchange_path. | _no unit_ | _no theorem_ |
 | ASM-0043 | An `AbortController` signal that is already aborted is observable synchronously before the request is issued, and aborting an in-flight exchange settles the caller's promise without cancelling what the server already received. | sdk_typescript.exchange_path | THM-0095 |
 
 16 assumption(s) are reached by more than one theorem.

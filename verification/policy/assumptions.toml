@@ -1083,33 +1083,50 @@ tool_specific_mechanism = "foreign-dependency"
 
 [[assumption]]
 id = "ASM-0042"
-description = "`http.client.HTTPResponse.read(n)` returns when it has n bytes or the body ends, and raises rather than returning short on a socket error — so a wall-clock bound checked between calls is checked between COMPLETED chunks, never during one."
+description = "WITHDRAWN — discharged by unit://sdk_python.exchange_path."
 justification = """
-The Python member reads a response under two bounds: a byte ceiling and a wall clock. The
-wall clock is evaluated between `read(want)` calls, which bounds the total read only if a
-call returns in bounded time. `http.client` fills to `amt`, so a peer trickling under the
-per-recv socket timeout keeps ONE call outstanding and the aggregate deadline is not
-consulted while it does.
+Was: the Python member's aggregate read bound was evaluated between `response.read(want)`
+calls while `http.client` fills to `amt`, so a peer trickling under the per-recv socket
+timeout kept one call outstanding and the aggregate deadline was never consulted. The
+premise registered what the foreign runtime does; R9-C010 recorded the defect and R9-C094
+recorded that the control pinning the bound used a fake whose short-read semantics
+`http.client` does not have, so it could not fail.
 
-The premise is registered rather than the behaviour changed, and the root states the
-consequence rather than hiding it: an inert deadline yields NO conclusion, not a wrong one.
-The SDK does not report such an exchange as having failed to execute; it does not report
-anything, and the caller's own outer timeout is what ends the wait. That is the condition
-under which the looseness would reach the root — a caller whose outer timeout produces a
-retry whose execution status the SDK never determined — and THM-0094 states it as a
-condition rather than assuming it does not happen.
+DISCHARGED RATHER THAN RENEWED, by owner ruling of 2026-09-03. THE FOREIGN FACT IS STILL
+TRUE: `HTTPResponse.read(n)` still fills to `n`, and nothing here claims otherwise. What
+changed is that MCP-RE stopped RESTING ITS OWN AGGREGATE BOUND on it. The security-relevant
+obligation — that the deadline this SDK advertises is the deadline it enforces — is LOCAL
+and was repairable, and a local enforcement defect does not become trusted computing base
+because the mechanism underneath it is foreign.
 
-It stops being acceptable if the SDK begins to REPORT an outcome for a read the deadline
-did not actually bound, or if `http.client` gains short-read semantics, at which point the
-bound becomes real and this entry should be discharged rather than renewed. R9-C010 /
-R9-C094 record the measurement; R9-C094 also records that the test pinning the bound uses a
-fake whose short-read semantics `http.client` does not have, so that control cannot fail —
-an evidence defect this premise does not repair.
+What survived, and it is what the tree holds rather than the first attempt:
+
+    HTTPResponse.read1     at most ONE underlying read per loop iteration
+    aggregate deadline     checked between those underlying reads, so no NEW underlying
+                           read is begun once it has passed
+    per-recv socket        bounds the one underlying read already in progress if the peer
+    timeout                stops producing data
+    worst case             the aggregate deadline plus at most one per-recv stall — with
+                           the single deployed `timeout` value, at most 2 * timeout
+
+Narrowing the socket's own timeout to the time remaining WAS implemented and withdrawn on
+measurement: this transport frames with `Connection: close`, so `http.client` hands the
+connection to the response and closes the socket object during `getresponse()`, leaving
+only a private attribute of the response's file object. A bound reaching through a foreign
+object's internals would be a new premise, which is the thing this discharge exists to
+avoid; the composed bound above needs none.
+
+Both surviving halves are measured against a real `HTTPResponse` fed by a real socket, both
+while trickling and while silent, and each was shown load-bearing by removing it. The
+aggregate-deadline property is EVIDENCE now, not trust.
+
+The id is retired rather than reused: `scope` is empty, so no unit trusts it, and no second
+assumption describes the repaired code — there is nothing left to assume.
 """
-scope = ["unit://sdk_python.exchange_path"]
+scope = []
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 §28 / issue #746 (D7)"
-review_requirement = "Owner review; any change to `_read_bounded`, to the bounds it is given, or to what the SDK reports for a read that ended on the caller's clock."
+review_requirement = "Withdrawn; nothing trusts it. Any future re-registration is a NEW id."
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
 
