@@ -4027,13 +4027,15 @@ difference from the TypeScript member there changes nothing about authenticity, 
 or execution. Deadline behaviour enters only where a timeout changes the client's conclusion
 about whether the remote side may have executed.
 
-THE RESPONSE DEADLINE IS ENFORCED, AND ITS ROLE HERE IS BOUNDED. The aggregate read bound
-is real: the body is taken one underlying read at a time and the socket's own timeout is
-narrowed to the time remaining, so a peer trickling under the per-recv bound cannot extend
-the read — measured against a real `http.client.HTTPResponse` fed by a real trickling
-socket, not against a fake with short-read semantics the production reader lacks. What this
-claim takes from that is not availability but honesty: the deadline fails the exchange as a
-LOCAL condition, and no execution or retry fact is manufactured for it.
+THE RESPONSE DEADLINE IS ENFORCED, AND ITS WORST CASE IS STATED. The body is taken one
+underlying read at a time, so a peer that keeps sending returns control to the deadline
+after every read and cannot extend the response read at all; a peer that stops sending is
+ended by the per-recv bound the same `timeout` sets. The two compose into a real cap with
+a stated worst case — the deadline plus at most one per-recv stall — and it is measured
+against a real `http.client.HTTPResponse` fed by a real socket, both while trickling and
+while silent, never against a fake with short-read semantics the production reader lacks.
+What this claim takes from the bound is not availability but honesty: the deadline fails
+the exchange as a LOCAL condition, and no execution or retry fact is manufactured for it.
 
 WHAT A CALLER DOES NEXT IS OUTSIDE THIS ROOT. This claim says nothing about an application's
 own retry policy, its outer timeouts, or what it concludes from a local failure; it says only

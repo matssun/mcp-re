@@ -2462,6 +2462,11 @@ tested_symbols = [
   # The same property through the shipped poster over real TLS — the only path that
   # reaches `_read_bounded` in production, with the single `timeout` a deployment sets.
   "pytest#tests/test_mtls.py::test_the_full_mtls_path_bounds_a_trickling_peer",
+  # The composed bound's other half. `read1` returns control to the deadline check after
+  # every byte a peer SENDS, so a peer that sends nothing is the one case the loop cannot
+  # observe; the per-recv timeout owns it, and unmeasured that case is where "the read is
+  # bounded" quietly becomes "bounded while the peer keeps talking".
+  "pytest#tests/test_mtls.py::test_a_peer_that_goes_silent_is_ended_by_the_per_recv_bound",
   # The positive mirrors. A bound that refuses ordinary responses is not a bound, and the
   # byte ceiling and the `timeout=None` knob are independent of the clock.
   "pytest#tests/test_mtls.py::test_a_response_inside_both_bounds_still_reads_whole",

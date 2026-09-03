@@ -199,38 +199,40 @@ class _MtlsConnection(http.client.HTTPSConnection):
 _READ_CHUNK_BYTES = 64 * 1024
 
 
-def _read_bounded(response, options: MtlsOptions, sock=None) -> bytes:
+def _read_bounded(response, options: MtlsOptions) -> bytes:
     """Read the response body under BOTH bounds: the byte ceiling and a wall clock.
 
     ``options.timeout`` on the socket is a PER-RECV bound, and a per-recv bound bounds
-    nothing: every byte that arrives re-arms it, so a peer trickling just under it
-    extends the total read without limit. Each stalled exchange also holds a
+    nothing on its own: every byte that arrives re-arms it, so a peer trickling just under
+    it extends the total read without limit. Each stalled exchange also holds a
     ``CapacityLimiter`` slot, so ``max_concurrent_exchanges`` of them wedge the whole
     client session with no error and no timeout. The Rust client leg this module mirrors
     caps total read time at the same value (MCPS-093 ``read_response_bounded``); this is
-    that cap, and it is enforced by two mechanisms that hold under the real
-    ``http.client.HTTPResponse``:
+    that cap.
 
-    * **``read1``, never ``read``.** ``HTTPResponse.read(n)`` fills to ``n``, so one call
-      can absorb an unbounded number of underlying reads and the loop below would not run
-      again until it returned. ``read1(n)`` returns what ONE underlying read produced —
-      including chunked-framing decode — so control returns here after every read the
-      peer feeds, and the deadline is consulted between them.
-    * **the socket's own timeout is shrunk to the time left.** ``read1`` still blocks
-      inside a single recv, and bounding that by ``options.timeout`` would let a peer
-      that stops entirely overshoot the aggregate deadline by a whole per-recv bound. The
-      socket is given the REMAINING time instead, so no recv can outlive the deadline;
-      the socket timeout it raises is reported as the aggregate bound, because that is
-      what it is. The connection is closed after the exchange, so the narrowed timeout is
-      never inherited by anything.
+    **``read1``, never ``read``, is what makes the cap real.**
+    ``HTTPResponse.read(n)`` fills to ``n``, so one call absorbs an unbounded number of
+    underlying reads and the loop below does not run again until it returns — which is
+    exactly how a bound written this way came to be advertised and not enforced.
+    ``read1(n)`` returns what ONE underlying read produced, chunked-framing decode
+    included, so every byte the peer feeds returns control here and the deadline is
+    consulted between reads. A peer that keeps sending cannot outlast it.
 
-    ``sock`` is optional only so the reader can be exercised against a response object
-    with no socket behind it. Production always passes one — a reader whose bound depends
-    on an argument a caller may omit is a bound nobody enforces.
+    **What bounds a peer that stops sending is the per-recv timeout**, which
+    ``http.client`` already carries from ``options.timeout``. The two compose into a real
+    bound with a stated worst case: this read ends no later than the aggregate deadline
+    plus one per-recv stall, so at most ``2 * options.timeout``. That is the honest number.
+    Narrowing the socket's own timeout to the time remaining would tighten it to exactly
+    the deadline, and it is deliberately NOT done: with ``Connection: close`` — the
+    framing this transport sends — ``http.client`` hands the connection to the response and
+    closes the socket object, so the only handle left is a private attribute of the
+    response's file object. A bound that reaches through a foreign object's internals is
+    the kind of dependency this SDK registers as a premise, and the composed bound above
+    needs no premise at all.
 
-    ``timeout is None`` disables the per-recv bound, and disables this one too — that
-    knob means "no bound", and honouring it on one of the two would be a different
-    setting wearing the same name.
+    ``timeout is None`` disables the per-recv bound, and disables this one too — that knob
+    means "no bound", and honouring it on one of the two would be a different setting
+    wearing the same name.
 
     One byte past ``max_response_bytes`` is enough to know the ceiling was exceeded, and
     stops a hostile length from being allocated to find out.
@@ -240,26 +242,13 @@ def _read_bounded(response, options: MtlsOptions, sock=None) -> bytes:
     chunks: list[bytes] = []
     size = 0
     while size <= ceiling:
-        if deadline is not None:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise MtlsTransportError(
-                    f"the aggregate response read exceeded {options.timeout}s "
-                    f"(slow-loris trickle)"
-                )
-            if sock is not None:
-                sock.settimeout(remaining)
-        want = min(_READ_CHUNK_BYTES, ceiling + 1 - size)
-        try:
-            chunk = response.read1(want)
-        except (socket.timeout, TimeoutError) as e:
-            # Reachable only with a deadline set, and the socket timeout was narrowed to
-            # the time remaining before it — so a recv that timed out is the aggregate
-            # bound expiring, not an ordinary per-recv stall.
+        if deadline is not None and time.monotonic() >= deadline:
             raise MtlsTransportError(
                 f"the aggregate response read exceeded {options.timeout}s "
                 f"(slow-loris trickle)"
-            ) from e
+            )
+        want = min(_READ_CHUNK_BYTES, ceiling + 1 - size)
+        chunk = response.read1(want)
         if not chunk:
             break
         chunks.append(chunk)
@@ -303,7 +292,7 @@ def _exchange(
         connection.endheaders(body)
 
         response = connection.getresponse()
-        payload = _read_bounded(response, options, connection.sock)
+        payload = _read_bounded(response, options)
         # Lowercased and in wire order: the profile matches header names
         # case-insensitively, and the signature base is built from what arrived.
         return HttpReply(

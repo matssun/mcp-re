@@ -470,7 +470,7 @@ def test_the_aggregate_read_deadline_holds_against_a_real_trickling_peer():
     started = time.monotonic()
     try:
         with pytest.raises(MtlsTransportError) as raised:
-            _read_bounded(response, options, connection.sock)
+            _read_bounded(response, options)
         elapsed = time.monotonic() - started
     finally:
         connection.close()
@@ -514,6 +514,78 @@ def test_the_full_mtls_path_bounds_a_trickling_peer(material):
     assert not peer.completed, "the peer finished its body; this measured nothing"
 
 
+class _SilentPeer(_TricklingPeer):
+    """A peer that answers, sends a few bytes, and then stops without closing.
+
+    The other half of the composed bound. `read1` returns control to the deadline check
+    after every byte a peer sends — so a peer that sends NOTHING is the one case the loop
+    cannot observe, and what ends it is the per-recv timeout `http.client` already
+    carries. Left unmeasured, that case is where "the read is bounded" quietly becomes
+    "the read is bounded while the peer keeps talking".
+    """
+
+    def __init__(self, *, hold=30.0, context=None):
+        self.hold = hold
+        super().__init__(pause=0, budget=0, content_length=1_000_000, context=context)
+
+    def _serve(self):
+        conn = None
+        try:
+            conn, _ = self._listener.accept()
+            if self.context is not None:
+                conn = self.context.wrap_socket(conn, server_side=True)
+            head = b""
+            while b"\r\n\r\n" not in head:
+                data = conn.recv(4096)
+                if not data:
+                    return
+                head += data
+            conn.sendall(
+                b"HTTP/1.1 200 OK\r\n"
+                b"content-type: application/json\r\n"
+                b"content-length: " + str(self.content_length).encode() + b"\r\n"
+                b"\r\nxxx"
+            )
+            self.sent = 3
+            # Held open and silent. Closing would give the reader an EOF to act on, which
+            # is the case that is NOT under test.
+            time.sleep(self.hold)
+        except OSError:
+            pass
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+
+
+def test_a_peer_that_goes_silent_is_ended_by_the_per_recv_bound():
+    """The composed bound's worst case, measured rather than asserted.
+
+    A silent peer is invisible to a deadline checked between reads, so this is the half
+    the per-recv timeout owns. The whole read still ends within the stated worst case —
+    the aggregate deadline plus one per-recv stall — instead of holding an exchange and
+    its concurrency slot until the peer feels like closing.
+    """
+    peer = _SilentPeer(hold=30.0)
+    connection, response = _real_response(peer, socket_timeout=0.5)
+    options = MtlsOptions(
+        server_ca=b"unused", client_cert="unused", timeout=0.5, max_response_bytes=1024 * 1024
+    )
+    started = time.monotonic()
+    try:
+        with pytest.raises((MtlsTransportError, TimeoutError, OSError)):
+            _read_bounded(response, options)
+        elapsed = time.monotonic() - started
+    finally:
+        connection.close()
+        peer.close()
+
+    # Bounded by `2 * timeout` in the worst case, and nowhere near the peer's 30s hold.
+    assert elapsed < 2.0, f"a silent peer held the read open ({elapsed:.2f}s)"
+
+
 def test_a_response_inside_both_bounds_still_reads_whole():
     """The bound refuses a trickle, not an ordinary reply — measured on the same peer."""
     peer = _PromptPeer(payload=b"hello world")
@@ -522,7 +594,7 @@ def test_a_response_inside_both_bounds_still_reads_whole():
         server_ca=b"unused", client_cert="unused", timeout=30.0, max_response_bytes=64
     )
     try:
-        assert _read_bounded(response, options, connection.sock) == b"hello world"
+        assert _read_bounded(response, options) == b"hello world"
     finally:
         connection.close()
         peer.close()
@@ -537,7 +609,7 @@ def test_the_byte_ceiling_still_fails_closed_one_byte_past_it():
     )
     try:
         with pytest.raises(MtlsTransportError) as raised:
-            _read_bounded(response, options, connection.sock)
+            _read_bounded(response, options)
     finally:
         connection.close()
         peer.close()
@@ -557,8 +629,7 @@ def test_no_timeout_means_no_aggregate_bound_either():
         server_ca=b"unused", client_cert="unused", timeout=None, max_response_bytes=64
     )
     try:
-        assert _read_bounded(response, options, connection.sock) == b"ok"
-        assert connection.sock.gettimeout() == 5.0, "the socket bound was altered without a deadline"
+        assert _read_bounded(response, options) == b"ok"
     finally:
         connection.close()
         peer.close()
