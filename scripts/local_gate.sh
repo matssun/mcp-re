@@ -8,7 +8,7 @@
 #
 #   scripts/local_gate.sh                # stages 1-4 (the default: everything free)
 #   scripts/local_gate.sh --fast         # stages 1-2 only (static + unit/feature suites)
-#   scripts/local_gate.sh --with-kind    # also stage 5: the seven fleet proofs on kind
+#   scripts/local_gate.sh --with-kind    # also stage 5: the eight fleet proofs on kind
 #   scripts/local_gate.sh --from 3       # resume at a stage (after fixing a failure)
 #
 # Env: SKIP_BAZEL=1 to skip the Bazel parity stage; SLO_REPS=N for stage 4 reps.
@@ -351,7 +351,7 @@ stage_kind() {
   # aborts the whole shell — the stage would not fail, it would take the gate down.
   local client_cmd="${MCP_RE_CLIENT:-python3 $PWD/docs/security/mcp_re_gke_client.py}"
   if ! $client_cmd --help >/dev/null 2>&1; then
-    printf 'the seven-proof client cannot start:\n  %s --help\nexited non-zero. MCP_RE_CLIENT must be the FULL command (interpreter AND script),\ne.g. "/path/to/venv/bin/python3 %s/docs/security/mcp_re_gke_client.py", and that\ninterpreter needs the SDK: <interpreter> -m pip install %s/sdk/python\n' \
+    printf 'the eight-proof client cannot start:\n  %s --help\nexited non-zero. MCP_RE_CLIENT must be the FULL command (interpreter AND script),\ne.g. "/path/to/venv/bin/python3 %s/docs/security/mcp_re_gke_client.py", and that\ninterpreter needs the SDK: <interpreter> -m pip install %s/sdk/python\n' \
       "$client_cmd" "$PWD" "$PWD" >&2
     return 1
   fi
