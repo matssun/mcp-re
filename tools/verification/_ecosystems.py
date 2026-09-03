@@ -295,12 +295,26 @@ def valid_target(eco: Ecosystem, target: str) -> bool:
     return eco.selector_targets is not None and target in eco.selector_targets
 
 
+#: Where a prepared per-interpreter environment lives, relative to the Python project.
+#: One directory per pinned runtime, named by the interpreter it holds, because a battery
+#: measured on 3.10 and one measured on 3.14 are two measurements and must not share a
+#: place to be measured in.
+PYTHON_RUNTIME_VENV = ".venv-cp{major}{minor}"
+
+
+def python_runtime_venv(runtime: str) -> str:
+    """The environment directory a pinned interpreter version is prepared into."""
+    major, minor = runtime.split(".")[:2]
+    return PYTHON_RUNTIME_VENV.format(major=major, minor=minor)
+
+
 def test_argv(
     eco: Ecosystem,
     project: str,
     target: str,
     selectors: list[str],
     features: list[str] | None = None,
+    runtime: str | None = None,
 ) -> list[str]:
     """The command that runs exactly `selectors` of `target` in `project`.
 
@@ -336,17 +350,20 @@ def test_argv(
             *selectors,
         ]
     if eco is PYTHON:
-        # `uv run` rather than a bare interpreter: the project's environment is the one its
-        # lockfile pins, and that lockfile is a fingerprint input. A battery run against
-        # whatever happens to be importable is a battery whose result the fingerprint does
-        # not describe. `-p no:randomly` for the same reason one step further in — a battery
-        # whose order varies is not reproducible from the record that measured it. Selection
-        # is by exact node id, which pytest supports natively.
+        # A PREPARED environment, named by the pinned interpreter, and never `uv run`.
+        # `uv run` resolves and syncs, so the lane would be building the thing it measures
+        # — and it would pick whatever interpreter the machine offered, which is exactly the
+        # gap the `[python]` runtime pin closes: the battery ran on one unpinned CPython and
+        # the result was recorded as if it described the supported set. The environments are
+        # prepared by `scripts/prepare_python_matrix.sh`; this runs in them.
+        #
+        # `-p no:randomly` because a battery whose order varies is not reproducible from the
+        # record that measured it. Selection is by exact node id, which pytest supports
+        # natively.
+        if runtime is None:
+            raise ValueError("a Python battery names the interpreter it is measured on")
         return [
-            "uv",
-            "run",
-            "--quiet",
-            "python",
+            f"{python_runtime_venv(runtime)}/bin/python",
             "-m",
             "pytest",
             "-p",

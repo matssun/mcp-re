@@ -21,7 +21,7 @@ before any verification toolchain exists — which is exactly the state they are
 | `verify` | umbrella; runs the lanes in the ADR's CI order and reports one verdict | works, report-only |
 | `verify --gate` | authoritative mode: a failing lane fails the build | works |
 | `verify --manifests` | validate the policy files and stop | works |
-| `verify-tests` | runs each unit's declared test battery, by target | works |
+| `verify-tests` | runs each unit's declared test battery, by target — and once per pinned runtime where its ecosystem has one | works |
 | `check-assumptions` | the proof escape-hatch gate | works |
 | `fingerprint` | deterministic `ReviewFingerprint` per unit | works, partial components |
 | `evidence-graph` | declared units and typed edges | works; freshness is Phase 4 |
@@ -32,6 +32,19 @@ before any verification toolchain exists — which is exactly the state they are
 | `generate-views` | renders `verification/generated/` from the three catalogues | works |
 | `review-frontier` | minimum review obligation | Phase 4; falls back to everything-dirty |
 | `review` | theorem fingerprints, review state, the establishment conjunction, and root completeness | works |
+
+**A battery's result includes the RUNTIME it ran on**, where the ecosystem has one. An
+ecosystem-scoped table in `toolchains.lock.toml` — `[python]`, carrying
+`ecosystem = "python"` — names the exact interpreter versions the batteries must be measured
+on, and `verify-tests` runs the declared selection once per version in a prepared
+environment named after it, refusing an environment whose interpreter does not report
+exactly the pin. Ecosystem-scoped is deliberate: the interpreter decides the outcome of the
+Python batteries and of nothing else, so a global entry would make a CPython patch bump
+dirty all 76 units including every Rust one. Preparation is
+`scripts/prepare_python_matrix.sh` and lives outside the lane, because a lane that builds
+what it measures can report a battery it has just made pass. The reason the dimension exists
+at all is measured: THM-0094's read bound rests on stdlib `HTTPResponse.read1` behaviour, and
+the battery had been running on one unpinned interpreter while the package claimed `>=3.10`.
 
 `_manifest.py` is the shared loader. Its validation is strict: an unknown key is a
 failure, not an ignored field, because a mistyped security declaration must not read as an

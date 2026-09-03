@@ -303,6 +303,11 @@ jobs:
         run: |
           python3 scripts/verification_trigger_gate.py --selftest
           python3 scripts/verification_trigger_gate.py
+          # The Python support claim may not exceed the Python evidence — #746. Here as
+          # well as in the local gate, because a control that lives only in local_gate.sh
+          # is a control enforced by remembering to run it.
+          python3 scripts/python_runtime_gate.py --selftest
+          python3 scripts/python_runtime_gate.py
 
       # R9 linkage. `verification/reviews/r9-dispositions.json` is the authoritative
       # per-row ownership map for the 2026-08-31 audit, and the appendix in the packet is a

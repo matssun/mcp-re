@@ -171,6 +171,44 @@ theorem proved with a different mathlib is a theorem proved in a different envir
 """
 
 # ---------------------------------------------------------------------------
+# The Python RUNTIME set — ADR-MCPRE-059 §28 / issue #746
+# ---------------------------------------------------------------------------
+#
+# ECOSYSTEM-SCOPED, unlike every table above it. `ecosystem = "python"` means this identity
+# enters the fingerprint of Python units ONLY. A global entry would make a CPython patch
+# bump dirty all 76 units including every Rust one, which states a blast radius that did
+# not happen; the interpreter decides the outcome of the Python batteries and nothing else.
+#
+# WHY THE RUNTIME IS A TOOLCHAIN AT ALL. THM-0094's repaired aggregate read bound rests on
+# production `http.client.HTTPResponse.read1` behaviour — stdlib behaviour, which is a
+# per-minor fact. Until this entry existed the battery ran on whatever CPython `uv` found
+# on the runner, and that interpreter was not a fingerprint input: a runner upgraded from
+# 3.14 to 3.15 would have changed the runtime under every control while the unit
+# fingerprint stayed put and no review went stale. Measured on 2026-09-03 and recorded in
+# packet 6B §9.
+#
+# EXACT PATCH VERSIONS, not minors. A minor list would let two runs on 3.12.9 and 3.12.20
+# record the same identity, which is the "resolved by PATH" failure one level down. The
+# lane refuses to run a battery in an environment whose interpreter does not report exactly
+# one of these.
+#
+# THE SET IS THE SUPPORTED SET. `sdk/python/pyproject.toml` declares
+# `requires-python = ">=3.10,<3.15"`, and every minor in that range is measured here. If
+# they diverge the support claim is wider than the evidence, which is the defect this entry
+# exists to stop; `scripts/python_runtime_gate.py` fails the build on divergence.
+[python]
+state = "resolved"
+ecosystem = "python"
+interpreters = ["3.10.20", "3.11.15", "3.12.13", "3.13.15", "3.14.7"]
+source = "sdk/python/pyproject.toml requires-python; installed by scripts/prepare_python_matrix.sh"
+note = """
+Patch versions are the ones `uv python install` resolves for these minors at the pin date.
+Bumping one is a security-relevant evidence change exactly like a Rust channel bump: it
+moves every Python unit's fingerprint, drops the standing test attestations, and reruns the
+batteries.
+"""
+
+# ---------------------------------------------------------------------------
 # The verification schema itself
 # ---------------------------------------------------------------------------
 

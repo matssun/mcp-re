@@ -109,6 +109,15 @@ on:
       - "sdk/python/python/**"
       - "sdk/python/tests/**"
       - "sdk/python/pyproject.toml"
+      # TRACKED, and therefore in the fingerprint at last: the lock was `.gitignore`d as a
+      # maturin by-product, so the Python dependency resolution contributed nothing to any
+      # unit while `project_inputs` claimed it did. The matrix environments are built from
+      # it, so a re-resolution changes what the batteries ran under (#746).
+      - "sdk/python/uv.lock"
+      # The matrix preparation and the support-claim gate decide WHICH runtimes the Python
+      # evidence covers, so a change to either changes what this lane measures (#746).
+      - "scripts/prepare_python_matrix.sh"
+      - "scripts/python_runtime_gate.py"
       - "sdk/typescript/src/**"
       - "sdk/typescript/test/**"
       - "sdk/typescript/package.json"
@@ -293,6 +302,15 @@ on:
       - "sdk/python/python/**"
       - "sdk/python/tests/**"
       - "sdk/python/pyproject.toml"
+      # TRACKED, and therefore in the fingerprint at last: the lock was `.gitignore`d as a
+      # maturin by-product, so the Python dependency resolution contributed nothing to any
+      # unit while `project_inputs` claimed it did. The matrix environments are built from
+      # it, so a re-resolution changes what the batteries ran under (#746).
+      - "sdk/python/uv.lock"
+      # The matrix preparation and the support-claim gate decide WHICH runtimes the Python
+      # evidence covers, so a change to either changes what this lane measures (#746).
+      - "scripts/prepare_python_matrix.sh"
+      - "scripts/python_runtime_gate.py"
       - "sdk/typescript/src/**"
       - "sdk/typescript/test/**"
       - "sdk/typescript/package.json"
@@ -479,11 +497,14 @@ jobs:
         run: |
           set -euo pipefail
           if grep -q '^id = "sdk_python\.' verification/policy/verification.toml; then
-            # `--extra dev` is load-bearing: the battery runs under pytest, and the runner
-            # pins it with `anyio` and `mcp` in that extra. A bare `uv sync` resolves the
-            # RUNTIME closure only, which installs no test runner at all — and the lane
-            # would then refuse for want of a battery rather than for want of the property.
-            (cd sdk/python && uv sync --extra dev && uv run maturin develop)
+            # ONE ENVIRONMENT PER PINNED INTERPRETER, and the script owns which ones: the
+            # supported CPython minors are `[python].interpreters` in the toolchain lock,
+            # and the lane refuses an environment whose interpreter is not exactly one of
+            # them. The previous form — `uv sync --extra dev && uv run maturin develop` —
+            # prepared ONE environment on whatever CPython the runner happened to offer,
+            # and the battery's green was then read as evidence for the whole supported
+            # range (#746, packet 6B §9).
+            ./scripts/prepare_python_matrix.sh
           fi
           if grep -q '^id = "sdk_typescript\.' verification/policy/verification.toml; then
             (cd sdk/typescript && npm ci && npm run build)

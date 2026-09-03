@@ -95,6 +95,7 @@ from functools import lru_cache
 from _ecosystems import build_configuration_patterns
 from _ecosystems import CARGO
 from _ecosystems import formal_source_patterns
+from _ecosystems import unit_ecosystem
 from _ecosystems import unit_projects
 from _manifest import (
     claims_mutation_evidence,
@@ -192,11 +193,18 @@ def _tracked_files() -> frozenset[str]:
     """Every path git tracks, as repo-relative POSIX strings.
 
     A fingerprint describes the COMMITTED tree, and every explicitly declared input already
-    is one. The glob-driven inputs are not: `sdk/python/uv.lock` is `.gitignore`d as a
-    maturin by-product, so a developer who has run the import hook has a file on disk that a
-    CI checkout does not — and digesting it would make the same commit fingerprint two ways
-    depending on whose machine looked. That is not a stricter measurement; it is a
-    measurement of something nobody reviewed.
+    is one. The glob-driven inputs are not, and an untracked file among them makes the same
+    commit fingerprint two ways depending on whose machine looked — a measurement of
+    something nobody reviewed rather than a stricter measurement.
+
+    The instance this rule was written for has since been repaired rather than tolerated:
+    `sdk/python/uv.lock` was `.gitignore`d as a maturin by-product, so the Python dependency
+    resolution sat in `project_inputs` and contributed NOTHING to any fingerprint. It is
+    tracked now, and `scripts/prepare_python_matrix.sh` builds every runtime environment
+    from it — so the resolution the batteries ran under is the one the fingerprint carries
+    (issue #746). The filter stays, because it is what keeps that repair honest: a lock that
+    goes back to being ignored silently leaves the closure again, and the filter is what
+    makes that a measured absence rather than a machine-dependent digest.
 
     Git is already a platform premise here — `render-r9-dispositions --check` establishes
     merge ancestry the same way — and the call is made once per process.
@@ -246,11 +254,25 @@ def _build_configuration(unit: dict, formal_closure: list[str]) -> dict[str, str
     return _digest_tracked(patterns)
 
 
-def _toolchain_identity(toolchains: dict) -> dict:
-    """Every pinned identity, plus every unresolved one named as such."""
+def _toolchain_identity(toolchains: dict, ecosystem: str | None = None) -> dict:
+    """Every pinned identity governing this unit, plus every unresolved one named as such.
+
+    ECOSYSTEM-SCOPED ENTRIES are the exception, and they exist because a runtime is a
+    toolchain that governs one family of units. A table declaring `ecosystem = "python"`
+    enters the fingerprint of Python units only: the interpreter decides the outcome of the
+    Python batteries and of nothing else, so making a CPython patch bump dirty all 76 units
+    — every Rust one included — would state a blast radius that did not happen, and a blast
+    radius nobody believes is one people learn to re-baseline past.
+
+    An entry with no `ecosystem` key governs everything, which is what every pin above the
+    runtime does: the Rust channel, the provers, the extraction container, the schema.
+    """
     identity: dict[str, object] = {}
     for name, entry in sorted(toolchains.items()):
         if name == "schema_version" or not isinstance(entry, dict):
+            continue
+        scope = entry.get("ecosystem")
+        if scope is not None and scope != ecosystem:
             continue
         scalars = {
             key: value
@@ -508,7 +530,9 @@ def fingerprint_unit(
         "governing_boundaries": _governing_boundaries(
             unit, load_trust_boundaries() if boundaries is None else boundaries
         ),
-        "toolchain_identity": _toolchain_identity(toolchains),
+        "toolchain_identity": _toolchain_identity(
+            toolchains, eco.name if (eco := unit_ecosystem(unit)) is not None else None
+        ),
         "formal_model_revision": doc.get("formal_model_revision"),
         "threat_model_revision": doc.get("threat_model_revision"),
         "review_policy_revision": doc["policy_revision"],
