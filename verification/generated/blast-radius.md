@@ -241,4 +241,4 @@ attestations this view cannot see.
 | ASM-0040 | description, justification, scope or mechanism | proxy.replay_admission_gate | assumption review |
 | ASM-0041 | description, justification, scope or mechanism | proxy.replay_admission_gate | assumption review |
 | ASM-0042 | description, justification, scope or mechanism | _no unit_ | assumption review |
-| ASM-0043 | description, justification, scope or mechanism | sdk_typescript.exchange_path | assumption review |
+| ASM-0043 | description, justification, scope or mechanism | _no unit_ | assumption review |

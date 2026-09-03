@@ -56,6 +56,6 @@ independent results, and this view exists so it cannot read as the latter.
 | ASM-0040 | A Redis `WAIT n t` reply of at least `n` means `n` replicas acknowledged the preceding `SET NX PX`, and the tier's declared quorum is the number that survives the failures ADR-MCPS-020 admits for REDIS_WAIT_QUORUM. | proxy.replay_admission_gate | THM-0092 |
 | ASM-0041 | An etcd `POST /v3/kv/txn` that succeeds under `compare { target: CREATE, create_revision: 0 }` means the key did not exist at a linearization point and now does, cluster-wide, for the granted lease's TTL. | proxy.replay_admission_gate | THM-0092 |
 | ASM-0042 | WITHDRAWN — discharged by unit://sdk_python.exchange_path. | _no unit_ | _no theorem_ |
-| ASM-0043 | An `AbortController` signal that is already aborted is observable synchronously before the request is issued, and aborting an in-flight exchange settles the caller's promise without cancelling what the server already received. | sdk_typescript.exchange_path | THM-0095 |
+| ASM-0043 | WITHDRAWN — discharged by unit://sdk_typescript.exchange_path. | _no unit_ | _no theorem_ |
 
 16 assumption(s) are reached by more than one theorem.

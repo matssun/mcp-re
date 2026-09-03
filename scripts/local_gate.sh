@@ -122,6 +122,10 @@ stage_static() {
     `# the pinned interpreter set are two facts in two files, and they had drifted.` \
     && python3 scripts/python_runtime_gate.py --selftest \
     && python3 scripts/python_runtime_gate.py \
+    `# The same rule for the Node side: engines.node and the pinned runtimes are two` \
+    `# facts in two files, and engines was ABSENT — an unstated claim nothing can bound.` \
+    && python3 scripts/node_runtime_gate.py --selftest \
+    && python3 scripts/node_runtime_gate.py \
     && python3 scripts/cargo_test_target_gate.py --selftest \
     && python3 scripts/cargo_test_target_gate.py \
     && python3 scripts/lifecycle_purity_gate.py --selftest \

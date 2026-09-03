@@ -94,6 +94,12 @@ class Ecosystem:
     #: `tested_symbols` entry. `None` means any target is accepted (Rust's `tests/<name>`
     #: family is open-ended).
     selector_targets: frozenset[str] | None = field(default=None)
+    #: What this ecosystem's RUNTIME is called, for the evidence record and the lane's
+    #: output. `None` where the ecosystem has no runtime dimension. Named rather than
+    #: derived from `name`, because "python" is the ecosystem and "cpython" is the thing a
+    #: version number identifies — and a record saying `cpython-26.8.1` about a Node battery
+    #: describes a runtime that does not exist.
+    runtime_label: str | None = field(default=None)
 
 
 #: `lib#` and `doc#` execute code inside the crate's own sources; `tests/<name>#` names an
@@ -117,6 +123,7 @@ PYTHON = Ecosystem(
     workspace_inputs=(),
     project_inputs=("pyproject.toml", "uv.lock", "poetry.lock", "requirements.txt"),
     selector_targets=frozenset({"pytest"}),
+    runtime_label="cpython",
 )
 
 TYPESCRIPT = Ecosystem(
@@ -132,6 +139,7 @@ TYPESCRIPT = Ecosystem(
         "tsconfig.json",
     ),
     selector_targets=frozenset({"vitest"}),
+    runtime_label="node",
 )
 
 #: Ordered, and the order is not significant — the suffix sets are disjoint, which is what
@@ -295,17 +303,45 @@ def valid_target(eco: Ecosystem, target: str) -> bool:
     return eco.selector_targets is not None and target in eco.selector_targets
 
 
-#: Where a prepared per-interpreter environment lives, relative to the Python project.
-#: One directory per pinned runtime, named by the interpreter it holds, because a battery
-#: measured on 3.10 and one measured on 3.14 are two measurements and must not share a
-#: place to be measured in.
+#: Where a prepared per-runtime environment lives, relative to its own project. One
+#: directory per pinned runtime, named for what it holds, because a battery measured on 3.10
+#: and one measured on 3.14 are two measurements and must not share a place to be measured
+#: in. The same rule for Node: the shape differs because the projects differ, not because
+#: the property does.
 PYTHON_RUNTIME_VENV = ".venv-cp{major}{minor}"
+NODE_RUNTIME_DIR = ".node-v{major}"
 
 
 def python_runtime_venv(runtime: str) -> str:
     """The environment directory a pinned interpreter version is prepared into."""
     major, minor = runtime.split(".")[:2]
     return PYTHON_RUNTIME_VENV.format(major=major, minor=minor)
+
+
+def node_runtime_dir(runtime: str) -> str:
+    """The directory a pinned Node version is installed into.
+
+    By MAJOR, because Node's support lines are majors: `engines.node` admits `^20 || ^22`,
+    never a minor range, so two pins inside one major would be two answers to one question.
+    `scripts/node_runtime_gate.py` refuses that, and this naming would collide if it did
+    not — which is the intended relationship between the two.
+    """
+    return NODE_RUNTIME_DIR.format(major=runtime.split(".")[0])
+
+
+#: How each ecosystem's prepared runtime is reached and asked its own version. One table
+#: rather than a chain of `if eco is …`: adding an ecosystem's runtime dimension should be
+#: a row, and a lane that cannot ask a runtime its version cannot enforce a pin.
+RUNTIME_PROBES = {
+    "python": (
+        lambda runtime: f"{python_runtime_venv(runtime)}/bin/python",
+        ["-c", "import sys;print('%d.%d.%d' % sys.version_info[:3])"],
+    ),
+    "typescript": (
+        lambda runtime: f"{node_runtime_dir(runtime)}/node_modules/node/bin/node",
+        ["-p", "process.versions.node"],
+    ),
+}
 
 
 def test_argv(
@@ -373,6 +409,12 @@ def test_argv(
             *selectors,
         ]
     if eco is TYPESCRIPT:
+        # The PINNED Node, and never a bare `npx`. `npx vitest` runs under whatever node is
+        # on PATH, so the battery's result described an unnamed runtime — the same gap the
+        # Python side had, and the reason `[typescript].interpreters` exists. The binary
+        # comes from `scripts/prepare_node_matrix.sh`; vitest is invoked through its own
+        # entry point rather than through `npx`, which would resolve a node of its own.
+        #
         # vitest selects by FILE; `-t` matches a name by substring, which is not selection.
         # So the files are selected here and the exact names are compared by the lane, which
         # is where the both-directions rule already lives: a declared name that did not
@@ -383,8 +425,16 @@ def test_argv(
         # controls came back `never ran` from a suite that had actually passed. A lane must
         # not read a human-facing rendering — the machine-readable report is the same run
         # said in a form that does not depend on what the process is attached to.
+        if runtime is None:
+            raise ValueError("a TypeScript battery names the runtime it is measured on")
         files = sorted({selector.split(" > ", 1)[0] for selector in selectors})
-        return ["npx", "vitest", "run", "--reporter=json", *files]
+        return [
+            f"{node_runtime_dir(runtime)}/node_modules/node/bin/node",
+            "node_modules/vitest/vitest.mjs",
+            "run",
+            "--reporter=json",
+            *files,
+        ]
     raise ValueError(f"no test command for ecosystem {eco.name!r}")
 
 

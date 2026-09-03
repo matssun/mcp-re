@@ -308,6 +308,9 @@ jobs:
           # is a control enforced by remembering to run it.
           python3 scripts/python_runtime_gate.py --selftest
           python3 scripts/python_runtime_gate.py
+          # The Node half of the same rule — #747.
+          python3 scripts/node_runtime_gate.py --selftest
+          python3 scripts/node_runtime_gate.py
 
       # R9 linkage. `verification/reviews/r9-dispositions.json` is the authoritative
       # per-row ownership map for the 2026-08-31 audit, and the appendix in the packet is a

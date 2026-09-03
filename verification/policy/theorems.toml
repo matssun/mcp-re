@@ -4109,9 +4109,22 @@ as a LOCAL transport outcome carrying no execution assertion, not as a clean fai
 could read as "it did not run". The aggregate bound itself is deliberate: the inactivity
 bound alone bounds nothing, because every byte re-arms it.
 
-ASM-0043 carries what the abort race rests on: that an already-aborted signal is observable
-before dispatch, and that aborting an in-flight exchange settles the caller's promise without
-recalling what the server already received.
+THE ABORT RESTS ON NOTHING TRUSTED, and ASM-0043 is discharged rather than renewed. The
+guard that stops a request still queued at the concurrency semaphore from being signed and
+sent after `close()` reads this transport's own state — assigned synchronously by `close()`
+before anything is aborted — rather than `AbortSignal.aborted`, so it depends on this file
+and not on a runtime semantic. The premise's other half, that an abort cannot recall what the
+server already received, is TRUE AND UNUSED: a teardown surfaces as a local outcome carrying
+no wire code and no execution or retry verdict, and asserting nothing needs no premise.
+
+THE SUPPORTED RUNTIME SET IS PART OF THE CLAIM. "The shipped TypeScript SDK" means the
+package as it runs on the runtimes it declares support for: `engines.node` admits
+`^20 || ^22 || ^24 || ^26`, and the battery runs on every one of those major lines at the
+exact versions `toolchains.lock.toml` `[typescript].interpreters` pins. The runtime identity
+is inside this unit's fingerprint, so changing a runtime drops the standing evidence instead
+of silently carrying it; a line outside the set is outside this claim; and
+`scripts/node_runtime_gate.py` refuses a support claim wider than the measured set — or, as
+this package once had, no support claim at all.
 """
 owner = "sdk_typescript.exchange_path"
 review_requirement = "Owner security-specification review"

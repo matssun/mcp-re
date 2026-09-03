@@ -2547,6 +2547,24 @@ tested_symbols = [
   "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > accepts a signer that satisfies the policy",
   "vitest#test/transport.test.ts > McpReHttpTransport signing inputs > signs the request body the caller's message described",
   "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > still delivers an ordinary verified reply",
+  # THE ANTI-VACUITY CONTROL FOR THE FORCED VERDICTS. Several controls above override the
+  # native binding's verdict, which is the right seam — the property is what the TRANSPORT
+  # does with a verdict, and against a recorded receipt nothing distinguishes reading
+  # `bound` from hard-coding it. What separately written object literals cannot do is track
+  # the core's shape: a renamed member would leave every one of them green while the
+  # transport read `undefined` in production. The members are declared once and checked
+  # against `native/binding.d.ts`, which napi GENERATES from the Rust type, so a rename in
+  # the core takes this red (#747, the sibling of the Python root's stub-shape control).
+  "vitest#test/transport.test.ts > the forced verdicts are the core's own shape > declares no member the binding does not",
+  # THE TWO CONTROLS THAT LET ASM-0043 BE DISCHARGED, and they are registered here because
+  # the premise they replace was in this unit's closure. The first is the guard itself: a
+  # request still queued at the concurrency semaphore when `close()` lands must not be
+  # signed and POSTed — the property that used to rest on `AbortSignal.aborted` being
+  # observable without yielding, and now rests on this transport's own `#state`. The second
+  # is why the premise's other half is not needed: a teardown states NOTHING about
+  # execution, and asserting nothing requires no premise about what the server received.
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > does not sign or POST a request still queued at the semaphore when close() lands",
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > says nothing about execution when close() aborts an in-flight exchange",
 ]
 
 [[unit]]
