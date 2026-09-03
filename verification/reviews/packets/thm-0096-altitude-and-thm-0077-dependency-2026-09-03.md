@@ -215,3 +215,10 @@ re-affirm over is `sha256:2164f33aae3c49b1ac183ef0559f9b1ad7601ca440e92ca36d1a2b
 The record stays `STALE_DEPENDENCY_CLAIM` until the owner names that value; recording it on the
 strength of an approval given over a different digest is precisely the transfer the
 remeasurement condition exists to refuse.
+
+### Closure of the addendum
+
+Recorded at merged main `85d5582e`: the owner re-affirmed THM-0077 at
+`sha256:2164f33aae3c49b1ac183ef0559f9b1ad7601ca440e92ca36d1a2b40387ded2a`, ruling the earlier
+non-transfer fingerprint bookkeeping only, and the dependency-only re-affirmation is recorded
+over the 20-member closure. Both subjects of this packet are now closed.
