@@ -308,6 +308,11 @@
       "node": "assurance platform",
       "area": "assurance-platform",
       "reason": "`boundary_class_violations` still decides on `expand_paths(unit['paths'])` while the measured cone is the crate plus its path-dependency closure.",
+      "merged_closure": {
+        "pr": 805,
+        "commit": "6d8e4bd9bb5d177daaa79e4c6e5ec88aeff468fe",
+        "note": "`boundary_class_violations` now fires on a SEMANTIC crossing — a trusted seam (`uninterp`, `external_body`, `assume_specification`) inside the unit's evidence cone and inside a file the boundary declares — rather than on source overlap with the declared paths. `evidence_cone` and `semantic_boundary_crossings` separate invalidation reachability from trusted-premise reachability, which is the distinction the owner ruling of 2026-09-03 required; `_seams.py` makes the escape-hatch gate and the boundary rule share one definition of a seam. The four required negative controls are tests, one of them over the live tree"
+      },
       "tracking_issue": 739
     },
     {
