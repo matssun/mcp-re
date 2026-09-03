@@ -1209,10 +1209,6 @@ nt_rust_test(
     deps = [
         ":mcp_re_proxy_ext",
         "//mcp-re-core:mcp_re_core",
-        # The continuation key's actor operand is `ResolvedActorId`, whose only
-        # constructor takes a verifier-resolved `ResolvedActor`. A test that keys an
-        # entry needs the type the serving path uses, not a string it spells itself.
-        "//mcp-re-http-profile:mcp_re_http_profile",
         "@crates_mcp_re//:base64",
         "@crates_mcp_re//:rcgen",
         "@crates_mcp_re//:redis",

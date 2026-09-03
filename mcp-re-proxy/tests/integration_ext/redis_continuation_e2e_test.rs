@@ -25,36 +25,14 @@
 
 use mcp_re_proxy::continuation_store::continuation_key;
 use mcp_re_proxy::continuation_store::AsyncContinuationStore;
-use mcp_re_proxy::continuation_store::ResolvedActorId;
 use mcp_re_proxy::continuation_store::RetainedBases;
 use mcp_re_proxy::redis_continuation_store::RedisContinuationStore;
 
 /// The dispatch boundary the continuation key is scoped to; a second deployment on
 /// the same shared Redis has a different one, and therefore a different namespace.
 const AUD: &str = "did:example:server-1";
-/// An actor as the verifier resolves one. The key's operand has no other source: a
-/// `&str` cannot be made into a [`ResolvedActorId`], which is what keeps the scope the
-/// resolved actor's rather than whichever identifier a call site had to hand.
-fn resolved(subject: &str, keyid: &str) -> mcp_re_http_profile::ResolvedActor {
-    mcp_re_http_profile::ResolvedActor {
-        identity: mcp_re_http_profile::ActorIdentity {
-            role: "client".into(),
-            trust_domain: "example.com".into(),
-            subject: subject.into(),
-            keyid: keyid.into(),
-        },
-        verification_key: mcp_re_core::SigningKey::from_seed_bytes(&[7u8; 32]).public_key(),
-        slot: mcp_re_http_profile::SignerSlot::Request,
-    }
-}
-
-fn actor_a() -> ResolvedActorId {
-    ResolvedActorId::of(&resolved("did:example:host-a", "client-key-1"))
-}
-
-fn actor_b() -> ResolvedActorId {
-    ResolvedActorId::of(&resolved("did:example:host-b", "client-key-2"))
-}
+const ACTOR_A: &str = "client:example.com:did:example:host-a:client-key-1";
+const ACTOR_B: &str = "client:example.com:did:example:host-b:client-key-2";
 
 /// A per-run suffix so each run targets a key space of its own: entries live for
 /// their TTL, and these tests assert a first `peek` finds what this run stored.
@@ -111,7 +89,7 @@ async fn peek_is_non_destructive_and_consume_is_one_shot_across_replicas() {
     };
     let (a, b) = two_replicas(&url).await;
     let state = format!("state-{}", run_id());
-    let key = continuation_key(AUD, &actor_a(), state.as_bytes());
+    let key = continuation_key(AUD, ACTOR_A, state.as_bytes());
     let expected = bases("one-shot");
 
     // OPEN on A.
@@ -160,8 +138,8 @@ async fn one_actors_continuation_is_not_reachable_by_another() {
     };
     let (a, b) = two_replicas(&url).await;
     let state = format!("state-{}", run_id());
-    let a_key = continuation_key(AUD, &actor_a(), state.as_bytes());
-    let b_key = continuation_key(AUD, &actor_b(), state.as_bytes());
+    let a_key = continuation_key(AUD, ACTOR_A, state.as_bytes());
+    let b_key = continuation_key(AUD, ACTOR_B, state.as_bytes());
     assert_ne!(
         a_key, b_key,
         "the same requestState under two actors is two keys"
@@ -198,7 +176,7 @@ async fn a_recorded_continuation_carries_a_bounded_ttl() {
         .await
         .expect("connects to Redis");
     let state = format!("state-{}", run_id());
-    let key = continuation_key(AUD, &actor_a(), state.as_bytes());
+    let key = continuation_key(AUD, ACTOR_A, state.as_bytes());
 
     store
         .store(&key, &bases("ttl"), 1)
