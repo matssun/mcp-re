@@ -178,8 +178,6 @@ pub(in crate::http_profile_serve) mod tests {
     use crate::continuation_store::AsyncContinuationStore;
     use std::sync::Arc;
 
-
-
     /// D1b′ / SLICE B: a deployment holding NO correlation capability refuses an answer
     /// leg that needs one, as a fact about the deployment.
     ///
@@ -239,7 +237,10 @@ pub(in crate::http_profile_serve) mod tests {
         let prep = crate::exchange_state::ExchangeProgress::new().establish(established);
         assert_eq!(prep.answer_key(), None);
         assert!(prep.binding().is_none());
-        assert!(!prep.was_peeked(), "nothing was read, so nothing is at stake");
+        assert!(
+            !prep.was_peeked(),
+            "nothing was read, so nothing is at stake"
+        );
     }
 
     fn digest(of: &str) -> mcp_re_http_profile::RequestEvidenceDigest {

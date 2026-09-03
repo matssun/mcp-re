@@ -83,10 +83,10 @@ pub(in crate::http_profile_serve) enum Retirement {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::continuation_store::continuation_key;
     use crate::continuation_store::AsyncContinuationStore;
     use crate::continuation_store::ContinuationStoreError;
     use crate::continuation_store::RetainedBases;
-    use crate::continuation_store::continuation_key;
     use std::sync::Arc;
 
     #[tokio::test]

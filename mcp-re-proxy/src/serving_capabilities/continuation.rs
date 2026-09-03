@@ -129,7 +129,8 @@ mod tests {
 
     fn selected() -> crate::startup_plan::ContinuationControlPlan {
         plan_for(|c| {
-            c.continuation_control.shared = Some(SharedStoreRequest::redis("redis://127.0.0.1:6379"))
+            c.continuation_control.shared =
+                Some(SharedStoreRequest::redis("redis://127.0.0.1:6379"))
         })
     }
 
