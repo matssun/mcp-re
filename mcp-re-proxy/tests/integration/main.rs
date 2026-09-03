@@ -36,6 +36,7 @@ mod client_verifier_posture_test;
 mod composition_raw_read_test;
 mod config_legality_characterization_test;
 mod config_refusal_precedence_test;
+mod continuation_installation_test;
 mod documented_cli_test;
 mod exchange_transition_ownership_test;
 mod http_profile_dispatch_test;

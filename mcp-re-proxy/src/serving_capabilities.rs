@@ -18,8 +18,9 @@
 //! # No `Capability` trait
 //!
 //! The blocks look alike; they are not alike. Retention opens a directory and refuses
-//! startup if it cannot. The continuation store connects to Redis and ANNOUNCES its
-//! absence instead of refusing. Admission connects to Redis and refuses. The transport
+//! startup if it cannot. The continuation store announces a capability nobody selected as
+//! OFF, and refuses startup for one that was selected and cannot be established. The
+//! transport
 //! contract has no effect at all beyond a policy field. A trait over these would have to
 //! be wide enough to say nothing, and ADR-MCPRE-058 §7.2 asks for a common LIFECYCLE
 //! vocabulary, not a common interface. [`Established`] is that vocabulary: a data type,
@@ -248,79 +249,15 @@ pub(crate) fn verified_context_carrier(
     }
 }
 
-/// The OFF line for the continuation store in a build without the backend.
-#[cfg(not(feature = "redis_replay"))]
-const CONTINUATION_STORE_NO_BACKEND: &str =
-    "MRTR continuation store = OFF: this build lacks the `redis_replay` feature, so \
-     multi-round-trip flows are SINGLE-REPLICA only regardless of configuration. A \
-     client that receives an `input_required` reply from one replica and answers on \
-     another is refused (mcp-re.continuation_binding_failed).";
-
-/// The posture line for a build that HAS the shared-store backend but was not given a
-/// URL for it. The feature-absent case says something different, because there the flag
-/// this line recommends would not help.
+/// ADR-MCPS-047 — the MRTR continuation correlation capability, established as selected.
 ///
-/// Stated rather than left silent because an operator on the CP/linearizable replay
-/// tier — the tier the claim matrix presents as strongest — otherwise loses every
-/// human-approval / multi-round-trip flow with no indication why. The failure is closed,
-/// but on the wire it reads as a client or attack signal.
-#[cfg(feature = "redis_replay")]
-const CONTINUATION_STORE_OFF: &str = "MRTR continuation store = OFF (no --replay-redis-url): \
-     multi-round-trip flows are SINGLE-REPLICA only. A client that receives an \
-     `input_required` reply from one replica and answers on another is refused \
-     (mcp-re.continuation_binding_failed). Set --replay-redis-url for the shared store.";
-
-/// ADR-MCPS-047 — the shared store that makes multi-round-trip flows cross-replica.
-///
-/// # Why absence is announced here and REFUSED for admission
-///
-/// The two look inconsistent until the difference is named. Admission is an EXPLICITLY
-/// REQUESTED capability: a build that cannot provide it must fail closed rather than
-/// serve a proxy that quietly does not enforce it. Cross-replica MRTR is OPPORTUNISTIC —
-/// no flag asks for it; it appears when a shared Redis happens to be configured.
-/// Refusing startup for its absence would make every single-store deployment
-/// unstartable, and it is safe not to, because the dependent leg fails closed on its
-/// own: an answer without a correlated continuation is rejected at the binding
-/// (`mcp-re.continuation_binding_failed`), not admitted unbound.
-///
-/// The rule, for the next capability that has to choose: explicitly requested and
-/// unavailable => refuse startup; opportunistic and unavailable => announce the absence,
-/// and verify the dependent leg still fails closed without it.
-#[cfg(feature = "redis_replay")]
-pub(crate) fn mrtr_continuation_store(
-    plan: &crate::startup_plan::ContinuationControlPlan,
-    control: Option<&crate::control_runtime::ControlRuntime>,
-) -> Result<Established<Arc<dyn crate::continuation_store::AsyncContinuationStore>>, String> {
-    let Some(url) = plan.shared_store() else {
-        return Ok(Established::off(CONTINUATION_STORE_OFF));
-    };
-    let handle = control
-        .ok_or(
-            "internal error: the plan declared the continuation store needs the control runtime",
-        )?
-        .handle();
-    let store = handle
-        .block_on(crate::redis_continuation_store::RedisContinuationStore::connect(url))
-        .map_err(|e| format!("connect redis continuation store: {e}"))?;
-    Ok(Established::on(
-        Arc::new(store) as Arc<dyn crate::continuation_store::AsyncContinuationStore>,
-        format!(
-            "MRTR continuation store = shared (async Redis backend, TTL {}s)",
-            crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS
-        ),
-    ))
-}
-
-/// The same seam in a build without the backend. A build that cannot be talked into the
-/// shared store must not be told to set the flag that would enable it, so this arm names
-/// the missing feature instead of the flag.
-#[cfg(not(feature = "redis_replay"))]
-pub(crate) fn mrtr_continuation_store(
-    _plan: &crate::startup_plan::ContinuationControlPlan,
-    _control: Option<&crate::control_runtime::ControlRuntime>,
-) -> Result<Established<Arc<dyn crate::continuation_store::AsyncContinuationStore>>, String> {
-    Ok(Established::off(CONTINUATION_STORE_NO_BACKEND))
-}
+/// Its own module because the ruling of 2026-09-03 gave it its own authority: it is the
+/// only seam here whose OFF branch is a fact about an operator's SELECTION rather than
+/// about this build, and its two arms differ in whether they can honour one. The other
+/// capabilities read a value and attach a thing; this one answers "did the deployment ask
+/// for this, and did it get exactly that".
+mod continuation;
+pub(crate) use continuation::mrtr_continuation_store;
 
 /// The OFF line when the operator did not ask for the gate. Only the arm that CAN
 /// enforce it says "pass --admission"; the build without the backend says something
@@ -524,16 +461,13 @@ mod tests {
             ("OCSP_OFF", OCSP_OFF),
             #[cfg(feature = "redis_replay")]
             ("ADMISSION_OFF", ADMISSION_OFF),
-            #[cfg(feature = "redis_replay")]
-            ("CONTINUATION_STORE_OFF", CONTINUATION_STORE_OFF),
             #[cfg(not(feature = "redis_replay"))]
             ("ADMISSION_NO_BACKEND", ADMISSION_NO_BACKEND),
-            #[cfg(not(feature = "redis_replay"))]
-            (
-                "CONTINUATION_STORE_NO_BACKEND",
-                CONTINUATION_STORE_NO_BACKEND,
-            ),
         ];
+        // The continuation lines are checked by their own module, which asserts more than
+        // this rule: that the OFF line names the flag AND promises no tier the deployment
+        // does not have. Restating the weaker rule here would leave two places to keep in
+        // agreement about one constant.
         for (name, line) in lines {
             assert!(
                 line.contains("--") || line.contains("feature"),

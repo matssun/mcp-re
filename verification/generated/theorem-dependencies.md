@@ -104,6 +104,7 @@ graph BT
     THM_0090["THM-0090<br/>A credential leaves this proxy only to the endpoint its rule admitted"]
     THM_0092["THM-0092<br/>A request whose replay state was not established does not dispatch"]
     THM_0093["THM-0093<br/>An answer leg that needs a continuation does not proceed unbound"]
+    THM_0096["THM-0096<br/>The runtime installs exactly the continuation capability the deployment selected"]
     THM_0007 --> THM_0008
     THM_0010 --> THM_0009
     THM_0001 --> THM_0014
@@ -208,6 +209,7 @@ graph BT
     THM_0086 --> THM_0077
     THM_0089 --> THM_0077
     THM_0090 --> THM_0077
+    THM_0096 --> THM_0077
     THM_0043 --> THM_0078
     THM_0044 --> THM_0078
     THM_0045 --> THM_0078

@@ -5,9 +5,10 @@ use super::SharedStoreRequest;
 
 /// The continuation store this deployment asks for.
 ///
-/// `None` is a POSTURE and not missing configuration: cross-replica MRTR is opportunistic,
-/// its absence is announced, and an answer arriving at a replica with no correlated
-/// continuation is refused rather than guessed.
+/// `None` is a POSTURE and not missing configuration: MRTR continuation correlation is an
+/// OPTIONAL capability, `None` says it was not selected, and a deployment in that state
+/// installs no correlation store at all. A store that IS named and cannot be established
+/// refuses startup rather than falling back to this.
 ///
 /// Its own type rather than a second use of replay's, because it is a different fact.
 /// The two may name the same Redis — that is then an operator's deployment choice, and it
@@ -22,7 +23,7 @@ pub struct ContinuationStoreRequest {
 mod tests {
     use super::*;
 
-    /// Absent is the single-replica posture, and it is the default.
+    /// Absent is the capability-not-selected posture, and it is the default.
     #[test]
     fn no_shared_store_is_the_default_posture() {
         assert_eq!(ContinuationStoreRequest::default().shared, None);

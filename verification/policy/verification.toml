@@ -3096,6 +3096,100 @@ tested_symbols = [
   "lib#replay_plane::tests::a_build_with_no_replay_backend_can_reach_no_replay_state",
 ]
 
+# ADR-MCPRE-059 §28 / issue #744, D1b'. The materialization leaf the continuation family was
+# missing: which capability the RUNTIME holds for the plan it was given. Two units, because
+# the seam and the composition root are two authorities and the second is where the seam's
+# coupling ends — `Established<T>` binds artifact and posture until `into_parts` splits them,
+# and everything after the split is `app.rs`'s. A single unit would let one owner's
+# fingerprint stand for both, and a defect in the installation step falsifies the claim while
+# every local `Established<T>` control stays green.
+
+[[unit]]
+id = "proxy.continuation_materialization"
+class = "V0"
+description = "What the continuation-control plan yields: an unselected capability is OFF and produces no artifact, a selected one is established exactly as selected, and a selected one that cannot be established — including in a build without the backend — refuses startup rather than announcing OFF."
+paths = [
+  "mcp-re-proxy/src/serving_capabilities/continuation.rs",
+  "mcp-re-proxy/src/config_state/continuation_control.rs",
+  "mcp-re-proxy/src/startup_posture.rs",
+  "mcp-re-proxy/src/startup_posture/seam.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/continuation_materialization/selected_capability_is_installed"]
+# THE DECLARATION CONJUNCT, and where its evidence actually is.
+#
+# `PostureLog::assert_complete` is the strong check and is NEVER REACHED hermetically: the
+# posture phase sits after the replay tier is established, and every tier validation accepts
+# needs a live Redis or etcd. So in `cargo test --workspace` and `bazel test //...` it
+# measures nothing about a real startup, and the controls below measure it over a
+# constructed log instead — which is honest, and weaker than it looks.
+#
+# `scripts/seam_posture_gate.py` is what fires in every lane, and it is DELIBERATELY NOT a
+# `script://` evidence URI here. No lane produces a `script` record, `_evidence.required_lanes`
+# reads every scheme, and a declared evidence class nothing resolves refuses attestation
+# forever — a URI that looks like registration while measuring nothing is the exact shape
+# this project's own "configured but enforces nothing" rule forbids. The gate's conjunct for
+# THIS theorem — the continuation seam is declared exactly once in `app.rs` — is measured
+# directly, in registered `test://` evidence, by `proxy.continuation_installation`. The gate
+# remains the repo-wide backstop for the other seven seams, which is not this claim's subject.
+#
+# WHAT IS NOT HERE. Not the shared store's runtime behaviour — its key scope and its
+# peek/consume split are `proxy.continuation_correlation_store`'s and are true whoever
+# established it. Not what an acknowledged write durably establishes, which is a
+# per-mechanism external fact this projection claim does not use.
+tested_symbols = [
+  # OFF installs NOTHING. The half no type enforces: `Established` makes an ON posture over
+  # nothing unrepresentable and says nothing about an OFF posture carrying an artifact.
+  "lib#serving_capabilities::continuation::tests::an_unselected_capability_is_off_and_installs_no_store",
+  # The operator-facing half of the same claim. A line promising "single-replica MRTR" or an
+  # in-memory tier is evidence a fallback came back.
+  "lib#serving_capabilities::continuation::tests::the_off_line_promises_no_local_fallback",
+  # A SELECTED capability that cannot be established refuses. Two controls because the two
+  # build profiles fail for different reasons and only one of them can have each defect.
+  "lib#serving_capabilities::continuation::tests::a_selected_capability_this_build_cannot_carry_refuses_startup",
+  "lib#serving_capabilities::continuation::tests::a_selected_capability_that_cannot_be_established_refuses_startup",
+  # The input is the OWNER's projection. Without it the controls above could be satisfied by
+  # a seam reading some other value, and none of them would be about the SELECTION.
+  "lib#serving_capabilities::continuation::tests::the_seam_reads_the_owners_projection_and_not_a_locator_of_its_own",
+  # The declaration conjunct, measured where it can be: a seam nothing declares, and a seam
+  # declared twice, are both refused.
+  "lib#startup_posture::tests::a_seam_that_is_never_declared_is_refused",
+  "lib#startup_posture::tests::a_seam_declared_twice_is_refused",
+  "lib#startup_posture::tests::declaring_every_seam_exactly_once_passes",
+  "lib#startup_posture::tests::completeness_is_enforced_independently_of_debug_assertions",
+  # `Seam::ALL` is what `assert_complete` checks membership against, so a seam missing from
+  # it is a capability a deployment can install without the transcript mentioning it.
+  "lib#startup_posture::seam::tests::every_seam_is_in_the_set_the_transcript_is_checked_against",
+]
+
+[[unit]]
+id = "proxy.continuation_installation"
+class = "V0"
+description = "The composition root's half of the same fact: the store it attaches is the one the seam established and is attached only when the seam established one, the seam is declared exactly once, and no production path installs a node-local continuation tier."
+paths = ["mcp-re-proxy/src/app.rs"]
+exported_contracts = []
+evidence = ["test://proxy/continuation_installation/root_installs_what_was_established"]
+# A SOURCE INVENTORY, and the reason is a lane fact rather than a preference: no hermetic
+# configuration reaches the posture phase, so a test that starts the proxy measures nothing
+# here. The installation is three lines of straight-line code and what a reader checks by
+# eye is what is pinned.
+#
+# The negative control is the load-bearing one. `InMemoryContinuationStore` is a `pub` item
+# of this crate, so the only thing stopping a future composition root from installing it
+# when OFF looks inconvenient is PLACEMENT — which is therefore what is checked, over the
+# whole crate rather than over `app.rs` alone.
+#
+# `app.rs` is in this closure for the continuation installation step and nothing else. The
+# root's other authority — that it reads only ordinary validated parameters — is
+# `proxy.trust_composition_root`'s, and neither unit claims the other's fact.
+tested_symbols = [
+  "tests/integration#continuation_installation_test::the_root_installs_only_the_store_the_seam_established",
+  "tests/integration#continuation_installation_test::no_production_path_installs_a_node_local_continuation_tier",
+  # The rules would catch what they exist for. Without it all three are satisfied by a
+  # search that finds nothing — a renamed guard or an empty `production_half` reads as a pass.
+  "tests/integration#continuation_installation_test::the_rules_would_catch_each_regression",
+]
+
 [[unit]]
 id = "proxy.continuation_correlation_store"
 class = "V0"
@@ -3112,13 +3206,13 @@ exported_contracts = []
 evidence = [
   "test://proxy/continuation_correlation_store/actor_scoped_correlation",
 ]
-# WHAT THIS UNIT DOES NOT CLAIM. Not that the shared tier was established: the continuation
-# store is OPPORTUNISTIC — `serving_capabilities::mrtr_continuation_store` announces its
-# absence and starts, because refusing startup would make every single-store deployment
-# unstartable — and the dependent leg fails closed at the continuation binding instead. So
-# there is no "prevents startup" conjunct here, and #744's D1b is corrected to the claim
-# the code actually carries. Not the durability of an acknowledged write either; that is
-# D2b, and it needs a mechanism premise this claim does not use.
+# WHAT THIS UNIT DOES NOT CLAIM. Not that the shared tier was established. Which capability
+# the runtime installs for the plan it was given is a materialization fact with its own
+# owner — `proxy.continuation_materialization`, under THM-0077 — and this unit measures a
+# running store's key scope and its peek/consume split, which are true whoever established
+# it. So there is no "prevents startup" conjunct here. Not the durability of an
+# acknowledged write either; that is D2b, and it needs a mechanism premise this claim does
+# not use.
 tested_symbols = [
   # The key is derived from the actor the VERIFIER resolved, never from anything the
   # request asserts. Without it a second verified actor who knows the public digests
@@ -3244,29 +3338,44 @@ paths = [
   "mcp-re-proxy/src/http_profile_serve/continuation/mod.rs",
   "mcp-re-proxy/src/http_profile_serve/continuation/answer_leg.rs",
   "mcp-re-proxy/src/http_profile_serve/continuation/open_leg.rs",
+  # The retirement authority left `answer_leg.rs` on 2026-09-03: the read decides what a leg
+  # may proceed on and how an absence is attributed, the retirement decides what may be SAID
+  # about a person's approval. Both are this unit's, which is why the split moved a file
+  # boundary and not an owner.
+  "mcp-re-proxy/src/http_profile_serve/continuation/retirement.rs",
 ]
 exported_contracts = []
 evidence = ["test://proxy/continuation_leg/no_unbound_answer"]
-# The continuation store is OPPORTUNISTIC — its absence does not refuse startup, which is
-# `proxy.continuation_correlation_store`'s scope — so everything that protects a signed
-# continuation from being answered unbound is here, at the leg. That is why this unit exists
-# separately from the store's: one owns what the deployment HAS, the other what a request
-# may proceed on.
+# Which capability the deployment HOLDS is `proxy.continuation_materialization`'s, and how a
+# running store separates actors is `proxy.continuation_correlation_store`'s. Everything that
+# protects a signed continuation from being answered unbound is here, at the leg — including
+# the classification of the two deployment-side absences, an unavailable store and a
+# capability this deployment never selected, which must not reach a caller as its own forged
+# continuation. That is why this unit exists separately: those own what the deployment has,
+# this owns what a request may proceed on and how request-time absence is attributed.
 tested_symbols = [
   # Neither absence proceeds unbound, and the two are not the same fact.
   "lib#http_profile_serve::continuation::answer_leg::tests::a_store_outage_is_refused_before_admission_and_is_not_a_miss",
   "lib#http_profile_serve::continuation::answer_leg::tests::a_prep_with_no_retained_bases_offers_no_binding",
+  # THE THIRD ABSENCE, and the one that was being reported as the caller's. A deployment
+  # holding no correlation capability refuses a leg that needs one, with the classification
+  # an outage earns — never `continuation_binding_failed`.
+  "lib#http_profile_serve::continuation::answer_leg::tests::an_absent_capability_is_the_deployments_fact_and_not_the_callers",
+  # Its negative half. Without it the control above is satisfied by a plane that refuses
+  # every store-less leg, which would refuse ordinary traffic in every single-store
+  # deployment: the refusal is scoped to legs that actually need correlation.
+  "lib#http_profile_serve::continuation::answer_leg::tests::a_store_less_deployment_still_serves_a_leg_that_needs_no_correlation",
   # One-shot, and the second leg is told which fact it hit.
-  "lib#http_profile_serve::continuation::answer_leg::tests::the_second_answer_leg_is_told_the_approval_was_already_spent",
+  "lib#http_profile_serve::continuation::retirement::tests::the_second_answer_leg_is_told_the_approval_was_already_spent",
   # A deployment with no store has nothing at stake, which is not the same as a failed
   # retirement — the exchange must be able to say nothing was spent.
-  "lib#http_profile_serve::continuation::answer_leg::tests::a_deployment_with_no_store_retires_nothing",
+  "lib#http_profile_serve::continuation::retirement::tests::a_request_that_answers_nothing_retires_nothing",
   # The fourth outcome. `Indeterminate` is the one the other three cannot stand in for:
   # nothing downstream can find out whether the entry was consumed, so each of `Retired`,
   # `AlreadyAnswered` and `NotInvolved` would give a person's approval a fate the
   # deployment did not observe. Without this control the retirement is measured as
   # three-valued while the claim is four-valued.
-  "lib#http_profile_serve::continuation::answer_leg::tests::a_tier_that_does_not_answer_the_spend_is_its_own_outcome",
+  "lib#http_profile_serve::continuation::retirement::tests::a_tier_that_does_not_answer_the_spend_is_its_own_outcome",
 ]
 
 [[unit]]

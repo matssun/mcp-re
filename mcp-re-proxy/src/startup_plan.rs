@@ -325,9 +325,10 @@ impl ChannelEstablishmentPlan {
 ///
 /// Owned by the continuation-control machine and re-exported here: the plan is that
 /// machine's projection of its own validated state, not a value planning rebuilds from
-/// the state's locator. `Disabled` is a posture, not an absence — a deployment without a
-/// shared store is one whose multi-round-trip flows are single-replica and whose
-/// cross-replica answers fail closed at the binding.
+/// the state's locator. `Disabled` is a posture, not an absence — a deployment that
+/// selected no shared store installs no correlation store at all, so it cannot complete a
+/// continuation-dependent leg and says so on both legs. A `Shared` plan the runtime cannot
+/// establish refuses startup rather than degrading to `Disabled`.
 pub use crate::config_state::continuation_control::ContinuationControlPlan;
 
 /// Whether the §7 admission-currency gate will be wired (MCPRE-493).

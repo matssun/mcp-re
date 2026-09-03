@@ -787,10 +787,11 @@ fn run_validated(
 
     // ADR-MCPS-047: the shared MRTR continuation correlation store, and MCPRE-493 §7:
     // the admission-currency gate. Both connect over the SAME shared control runtime the
-    // fleet uses, and both are established in `serving_capabilities`, which is also where
-    // the rule they DIFFER on is written down: absence is announced for the continuation
-    // store and refuses startup for admission, because one is opportunistic and the other
-    // was explicitly requested.
+    // fleet uses, and both are established in `serving_capabilities`, which is where each
+    // one's own rule is written down. Both refuse startup for a capability that was
+    // SELECTED and cannot be established; they differ in what an omitted flag means.
+    // `into_parts` is consuming, so the artifact installed below and the posture declared
+    // after it come from one value: no store under an OFF line, no ON line over nothing.
     let (continuation_store, continuation_state) =
         crate::serving_capabilities::mrtr_continuation_store(
             &config.state().continuation_control().continuation_plan(),

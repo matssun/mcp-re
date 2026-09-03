@@ -20,10 +20,12 @@
 //!
 //! # What this owner keeps from being collapsed
 //!
-//! * a store MISS and a store OUTAGE are different facts. A miss is a statement about the
-//!   caller (never opened, expired, already answered); an outage is a statement about this
-//!   deployment. Flattening them reports a forged continuation every time the shared tier
-//!   blips, and hides a genuine splice attempt inside an outage.
+//! * a store MISS, a store OUTAGE and an ABSENT CAPABILITY are different facts. A miss is
+//!   a statement about the caller (never opened, expired, already answered); an outage and
+//!   a deployment that selected no correlation store are statements about this deployment.
+//!   Flattening them reports a forged continuation every time the shared tier blips — or
+//!   for every legitimate answer leg reaching a deployment without the capability — and
+//!   hides a genuine splice attempt inside both.
 //! * the read is a `peek`, never a `consume`, so a request that is about to be refused
 //!   leaves a live approval intact.
 //! * retirement has FOUR outcomes, because the store's `Err` is not its `Ok(false)`.
@@ -40,8 +42,10 @@ use crate::continuation_store::AsyncContinuationStore;
 mod answer_leg;
 /// Recording a new approval so any replica can answer it — the leg that OPENS one.
 mod open_leg;
+/// Spending a read approval exactly once, and reporting what the tier said — RETIREMENT.
+mod retirement;
 
-pub(in crate::http_profile_serve) use answer_leg::Retirement;
+pub(in crate::http_profile_serve) use retirement::Retirement;
 
 /// The deployment's continuation plane: the shared correlation tier, and the bounded
 /// lifetime every entry it writes runs under.
@@ -52,9 +56,11 @@ pub(in crate::http_profile_serve) use answer_leg::Retirement;
 /// the two fields as children of this one — the store is never handed out.
 pub(in crate::http_profile_serve) struct ContinuationPlane {
     /// The fleet-shared tier that carries a multi-round-trip continuation across a replica
-    /// switch. `None` disables MRTR: an `InputRequiredResult` is still returned, but a
-    /// later answer leg carrying a continuation fails closed (no retained bases). A fleet
-    /// wires the Redis store; single-replica runs may wire the in-memory one.
+    /// switch, when the deployment selected one. `None` means MRTR continuation
+    /// correlation is unavailable in this deployment — no store is installed and none is
+    /// substituted — so the open leg refuses rather than returning an elicitation nothing
+    /// was kept for, and an answer leg that needs correlation is refused as a fact about
+    /// this deployment rather than as the caller's forged continuation.
     store: Option<Arc<dyn AsyncContinuationStore>>,
     /// Lifetime of a recorded continuation (seconds).
     ttl_secs: i64,

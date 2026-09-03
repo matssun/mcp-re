@@ -2483,3 +2483,86 @@ weakening = """
 expect_red = [
   "lib#http_profile_serve::continuation::answer_leg::tests::the_operand_is_the_carried_products_actor_and_not_one_the_body_asserts",
 ]
+
+# ADR-MCPRE-059 §28 / issue #744, D1b′ — the two weakenings the owner ruling of 2026-09-03
+# named by name. Both are the shape a future edit takes when OFF looks inconvenient or when
+# a refusal looks like an availability regression, and each leaves the OTHER family's
+# controls green.
+
+[[probe]]
+id = "M89-off-does-not-install-a-local-tier"
+unit = "proxy.continuation_materialization"
+theorem = "THM-0096"
+conjunct = "A deployment that selected no continuation store installs no store at all, and never a node-local substitute"
+# THE DANGEROUS WEAKENING. It looks like a strict improvement — a deployment that would have
+# had nothing now has something, single-replica flows start working, and no refusal appears
+# anywhere. What it actually does is give the transcript's OFF line a scope it does not
+# describe and hand the answer leg a store whose correlation cannot survive a replica switch,
+# so a fleet answer lands on a replica whose map is empty and reads as a splice. Every leg
+# control stays green under it: they measure what a plane does with the store it was given.
+# ANCHORED ON THE `not(redis_replay)` ARM, and the choice is a lane fact rather than a
+# preference: the mutation lane builds the DEFAULT feature set, so a weakening inside the
+# `redis_replay` arm compiles to nothing and reads as "the controls held" while having
+# measured nothing at all. Both arms reach the same OFF branch and the same control covers
+# both; this is the one the lane can actually make the change in.
+path = "mcp-re-proxy/src/serving_capabilities/continuation.rs"
+anchor = """
+    Ok(Established::off(CONTINUATION_STORE_OFF))
+}
+"""
+weakening = """
+    Ok(Established::on(
+        Arc::new(crate::continuation_store::InMemoryContinuationStore::new())
+            as Arc<dyn crate::continuation_store::AsyncContinuationStore>,
+        "MRTR continuation store = node-local",
+    ))
+}
+"""
+expect_red = [
+  "lib#serving_capabilities::continuation::tests::an_unselected_capability_is_off_and_installs_no_store",
+]
+
+[[probe]]
+id = "M90-a-selected-capability-is-never-announced-off"
+unit = "proxy.continuation_materialization"
+theorem = "THM-0096"
+conjunct = "A selected continuation store this build cannot establish refuses startup rather than announcing OFF"
+# The weakening restores the behaviour the ruling removed, and it is worth being precise
+# about why it was ever written: `Established::off` here makes a binary without the backend
+# startable with any configuration, which reads as robustness. The cost is that an operator
+# who set `--continuation-control-redis-url` and an operator who never heard of it get
+# BYTE-IDENTICAL transcripts, so the one who asked for cross-replica continuation has no way
+# to learn they did not get it.
+path = "mcp-re-proxy/src/serving_capabilities/continuation.rs"
+anchor = """
+    if plan.shared_store().is_some() {
+        return Err(CONTINUATION_STORE_NO_BACKEND.to_string());
+    }
+"""
+weakening = """
+    let _ = plan.shared_store();
+"""
+expect_red = [
+  "lib#serving_capabilities::continuation::tests::a_selected_capability_this_build_cannot_carry_refuses_startup",
+]
+
+[[probe]]
+id = "M91-an-absent-capability-is-not-the-callers-forgery"
+unit = "proxy.continuation_leg_binding"
+theorem = "THM-0093"
+conjunct = "A deployment holding no correlation capability refuses a leg that needs one as a deployment fact"
+# The weakening is the code as it stood before 2026-09-03, and it is the reason this probe
+# exists rather than a review note: it still FAILS CLOSED. No unbound continuation is
+# admitted, THM-0093's original conjunct holds, and every other control in both continuation
+# units stays green — the leg simply tells the caller its continuation could not be bound,
+# which is a claim about the caller this deployment is in no position to make.
+path = "mcp-re-proxy/src/http_profile_serve/continuation/answer_leg.rs"
+anchor = """
+            (None, Some(_)) => return Err(capability_absent()),
+"""
+weakening = """
+            (None, Some(_)) => None,
+"""
+expect_red = [
+  "lib#http_profile_serve::continuation::answer_leg::tests::an_absent_capability_is_the_deployments_fact_and_not_the_callers",
+]

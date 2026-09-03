@@ -3431,10 +3431,12 @@ depends_on = [
   # capability a runtime holds is the one the validated configuration selected — while
   # THM-0087 states an actor-scoped, non-consuming lookup relation over a running store.
   # Those are different propositions, and an edge between them would make the root's
-  # dependency closure claim support it does not have. Owner ruling of 2026-09-01. The
-  # continuation posture claim THM-0077 actually needs is D1b′, which is not yet written:
-  # see the design packet.
+  # dependency closure claim support it does not have. Owner ruling of 2026-09-01.
   "THM-0086",
+  # ADR-MCPRE-059 §28 / #744: the continuation materialization leaf, D1b′ — the claim
+  # THM-0087 was mistaken for. The sibling of THM-0086 and the same shape: a configuration
+  # projection over which capability the serving path holds. Owner ruling of 2026-09-03.
+  "THM-0096",
   # ADR-MCPRE-059 §28 / #742 (D5). A runtime that fetched its root key from an endpoint whose
   # text named one authority and whose parse named another holds a capability derived from
   # something the validated configuration did not select — which is this claim's subject.
@@ -3904,11 +3906,14 @@ id = "THM-0093"
 title = "An answer leg that needs a continuation does not proceed unbound"
 statement = """
 Where a request carries a continuation, the retained open-leg bases are read WITHOUT being
-spent, and every way they can be absent — this deployment runs no store, the request names no
-`requestState`, the entry was never opened, has expired, or was already answered — yields no
-binding, so the dispatcher fails closed rather than admitting an unbound continuation. A store
-that does not ANSWER is refused before admission and named as a deployment fact, not reported
-as the caller's forged continuation.
+spent, and no way they can be absent yields a binding: the dispatcher fails closed rather than
+admitting an unbound continuation.
+
+The absences are ATTRIBUTED, not merely detected. A store that does not ANSWER, and a
+deployment that holds no correlation capability while this leg needs one, are refused before
+admission and named as facts about the DEPLOYMENT. Only the caller-side absences — the request
+names no `requestState`, or the store answered and the entry was never opened, has expired, or
+was already answered — leave no binding and let the leg be refused as the caller's.
 
 The spend is the store's atomic consume and has four outcomes, because the store's error is
 not its negative answer: nothing was at stake, this call spent the approval, the store
@@ -3922,6 +3927,12 @@ a continuation the deployment cannot check. The read is free, so a request about
 for an unrelated reason leaves a live approval intact — the refusals above the retirement stay
 free only because nothing above them spent anything.
 
+A deployment's own missing capability is never reported as the caller's forgery. Without that
+conjunct the fail-closed behaviour is still safe and its diagnosis is false: every legitimate
+answer leg reaching a deployment that selected no correlation store reads on the wire as a
+splice attempt, and a genuine splice attempt is indistinguishable from an ordinary deployment
+posture. An operator cannot act on either, and a defender cannot tell them apart.
+
 The four-valued retirement preserves the observed fate of the approval without inventing
 certainty: no approval was involved, this exchange spent it, the store answered and there was
 nothing live to spend, or its fate is indeterminate. These are four different facts about a
@@ -3931,9 +3942,12 @@ retry will succeed; what it establishes is that the four facts reach that author
 rather than collapsed into one another.
 """
 scope = """
-It is about what a leg may PROCEED on, not about what the deployment has. That the shared
-continuation tier is opportunistic — its absence announces itself and starts, rather than
-refusing startup — is THM-0087's scope and is deliberately not restated here.
+It is about what a leg may PROCEED on and how a request-time absence is ATTRIBUTED — never
+about what the deployment was built or configured with. Which capability the runtime installs
+for the plan it was given, and what the startup transcript says about it, is THM-0096's and is
+deliberately not restated here. This claim observes its own `ContinuationPlane` state and
+consumes no proposition from THM-0096, which is why no edge to it exists: both discuss
+absence, and they establish different things.
 
 It says nothing about the continuation binding check itself, which is
 `mcp-re-http-profile`'s and is where a bound-but-wrong continuation is caught, and nothing
@@ -4341,15 +4355,18 @@ depends_on = []
 #     handles WOULD match the presented inputs, THM-0010 would hold, and actor B would
 #     dispatch on actor A's establishment.
 #
-# So the edge belongs under THM-0074 and it is not written here yet. THM-0087 is
-# UNREVIEWED, and attaching an unreviewed premise to a ratified root would make THM-0074
-# unestablished — leaving `docs/spec/security-boundary.md` §2 claiming a root that does
-# not establish, which the same ruling forbids. The edge is owed once this theorem carries
-# an owner specification review; recording the measurement here is what keeps it from
-# being lost in the meantime.
+# ROUTED, owner ruling of 2026-09-03 (Batch 5C). The edge belongs under THM-0074 and it is
+# written — reached through THM-0093, not attached directly:
 #
-# It is NOT D1b. That proposition is D1b′ (continuation capability materialization is
-# honest), it belongs under THM-0077, and it is not written yet — see the design packet.
+#     THM-0051 -> THM-0087 -> THM-0093 -> THM-0074
+#
+# THM-0093 is the claim the root's pre-dispatch quantification actually needs, and rooting
+# THM-0087 by a direct edge would have made the root depend on a proposition one step wider
+# than the one it consumes. There is no direct THM-0087 -> THM-0074 edge, and one must not
+# be added to "keep it rooted".
+#
+# It is NOT D1b. That proposition is D1b′ — the continuation capability the runtime installs
+# is the one the deployment selected — and it is THM-0096, under THM-0077.
 [[theorem]]
 id = "THM-0087"
 title = "A continuation entry is reachable only by the actor the verifier resolved"
@@ -4397,3 +4414,78 @@ supported_by = [
   "unit://proxy.continuation_key_provenance",
 ]
 depends_on = ["THM-0051"]
+
+# ADR-MCPRE-059 §28 / issue #744, D1b′ — the sibling of THM-0086 and the same shape.
+#
+# Both are CONFIGURATION PROJECTIONS: the capability the serving path holds is the one the
+# deployment selected. Neither carries a premise about what a backend's acknowledgement
+# establishes; that is an external per-mechanism fact registered only where a root consumes
+# it, and giving a projection claim a backend-behaviour assumption would widen a blast
+# radius the claim does not use.
+#
+# WHERE IT DIFFERS FROM THM-0086, and why one theorem could not cover both: replay has no
+# legitimate OFF. A replay tier is always required, so THM-0086's only outcomes are the
+# selected tier or a refusal. Continuation correlation has a legitimate OFF — an operator who
+# omits `--continuation-control-redis-url` selected nothing and gets nothing — so this claim
+# has a third outcome, and the whole difficulty is keeping that outcome from absorbing the
+# refusal. A single theorem over both would have had to state "the selected tier, or OFF",
+# which is exactly the sentence a silently-downgraded deployment also satisfies.
+#
+# HISTORY OF THE MEASUREMENT. #744's D1b was first recorded as a property of
+# `proxy.continuation_correlation_store` and corrected off it: that unit measures a running
+# store's key scope, which is true whoever established the store. The owner's D1b′ check of
+# 2026-09-03 then measured that NO unit in the tree covered `serving_capabilities` or
+# `app.rs`'s installation step at all, so the proposition had no owner rather than a
+# misplaced one.
+[[theorem]]
+id = "THM-0096"
+title = "The runtime installs exactly the continuation capability the deployment selected"
+statement = """
+The MRTR continuation correlation capability the serving runtime holds is the one the
+validated continuation-control state selected. A deployment that selected no store installs
+NO correlation store — not a node-local or in-process substitute — and declares that absence
+explicitly. A deployment that selected one holds exactly that store and declares it ON. A
+selected store that cannot be established, including one this build carries no backend for,
+refuses startup and names what is missing; it is never announced as OFF.
+"""
+security_consequence = """
+An operator cannot end up with a deployment that reports a security capability's posture
+differently from the one it holds. A named store that fails to materialize cannot be reduced
+to the posture of an operator who named none, so cross-replica human-approval flows cannot
+silently become uncorrelated; and an absent capability cannot be widened into a node-local
+tier whose scope — one process, no replica switch — is not the one that was selected.
+"""
+scope = """
+CONFIGURATION PROJECTION ONLY. It establishes which capability the serving path holds and
+what the transcript says about it, not what a request may do with one. That a leg needing
+correlation fails closed, and that an absent capability reaches it as a deployment fact, is
+THM-0093's; that a running store is reachable only by the actor the verifier resolved is
+THM-0087's. Neither is restated here and neither is a premise of this.
+
+It says nothing about what an acknowledged write to the established store durably
+establishes. That is a per-mechanism external fact with its own premise, and this claim does
+not use it.
+
+It is not a liveness claim. A selected capability that cannot be established refuses startup,
+which is inside the claim rather than a violation of it, and nothing here says a deployment
+that selected the capability will keep it.
+
+That the plan is a faithful projection of the validated configuration is the planner's fact,
+reached through THM-0077 rather than asserted here.
+
+THE DECLARATION CONJUNCT IS CLAIMED AT THE STRENGTH ITS EVIDENCE HAS, which is less than
+it first appears. `PostureLog::assert_complete` proves that every executed startup states
+each seam exactly once, and it is NEVER REACHED hermetically — the posture phase sits after
+the replay tier is established, and every tier validation accepts needs a live Redis or etcd.
+What the registered evidence establishes is therefore two weaker facts: that the completeness
+check refuses an undeclared or doubly-declared seam when it is run, and that the continuation
+seam is declared exactly once in the composition root's SOURCE. "The path actually taken
+reached exactly one declaration" is not claimed by this theorem in any hermetic lane.
+"""
+owner = "proxy.continuation_materialization"
+review_requirement = "Owner security-specification review"
+supported_by = [
+  "unit://proxy.continuation_materialization",
+  "unit://proxy.continuation_installation",
+]
+depends_on = []
