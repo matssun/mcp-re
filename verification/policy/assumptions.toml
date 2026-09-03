@@ -1083,33 +1083,32 @@ tool_specific_mechanism = "foreign-dependency"
 
 [[assumption]]
 id = "ASM-0042"
-description = "`http.client.HTTPResponse.read(n)` returns when it has n bytes or the body ends, and raises rather than returning short on a socket error — so a wall-clock bound checked between calls is checked between COMPLETED chunks, never during one."
+description = "WITHDRAWN — discharged by unit://sdk_python.exchange_path."
 justification = """
-The Python member reads a response under two bounds: a byte ceiling and a wall clock. The
-wall clock is evaluated between `read(want)` calls, which bounds the total read only if a
-call returns in bounded time. `http.client` fills to `amt`, so a peer trickling under the
-per-recv socket timeout keeps ONE call outstanding and the aggregate deadline is not
-consulted while it does.
+Was: the Python member's aggregate read bound was evaluated between `response.read(want)`
+calls while `http.client` fills to `amt`, so a peer trickling under the per-recv socket
+timeout kept one call outstanding and the aggregate deadline was never consulted. The
+premise registered what the foreign runtime does; R9-C010 recorded the defect and R9-C094
+recorded that the control pinning the bound used a fake whose short-read semantics
+`http.client` does not have, so it could not fail.
 
-The premise is registered rather than the behaviour changed, and the root states the
-consequence rather than hiding it: an inert deadline yields NO conclusion, not a wrong one.
-The SDK does not report such an exchange as having failed to execute; it does not report
-anything, and the caller's own outer timeout is what ends the wait. That is the condition
-under which the looseness would reach the root — a caller whose outer timeout produces a
-retry whose execution status the SDK never determined — and THM-0094 states it as a
-condition rather than assuming it does not happen.
+DISCHARGED RATHER THAN RENEWED, by owner ruling of 2026-09-03. The foreign fact is real
+and unchanged — `read(n)` still fills to `n` — but the security-relevant obligation, that
+MCP-RE enforces the aggregate deadline it advertises, is LOCAL and was repairable. A local
+enforcement defect does not become trusted computing base because the mechanism underneath
+it is foreign. `_read_bounded` now takes the body with `read1`, which returns what one
+underlying read produced, and narrows the socket's own timeout to the time remaining before
+the deadline, so no recv can outlive it. Both halves are measured against a real
+`HTTPResponse` fed by a real trickling socket, and each was shown load-bearing by removing
+it. The aggregate-deadline property is EVIDENCE now, not trust.
 
-It stops being acceptable if the SDK begins to REPORT an outcome for a read the deadline
-did not actually bound, or if `http.client` gains short-read semantics, at which point the
-bound becomes real and this entry should be discharged rather than renewed. R9-C010 /
-R9-C094 record the measurement; R9-C094 also records that the test pinning the bound uses a
-fake whose short-read semantics `http.client` does not have, so that control cannot fail —
-an evidence defect this premise does not repair.
+The id is retired rather than reused: `scope` is empty, so no unit trusts it, and no second
+assumption describes the repaired code — there is nothing left to assume.
 """
-scope = ["unit://sdk_python.exchange_path"]
+scope = []
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 §28 / issue #746 (D7)"
-review_requirement = "Owner review; any change to `_read_bounded`, to the bounds it is given, or to what the SDK reports for a read that ended on the caller's clock."
+review_requirement = "Withdrawn; nothing trusts it. Any future re-registration is a NEW id."
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
 
