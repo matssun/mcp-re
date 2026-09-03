@@ -1,0 +1,22 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:8c6eec21b6fa3ebcbf38bd51d7d1af273275feb24e6f23d950eae55aedb31328",
+    "theorem_dependencies": {
+      "THM-0001": "sha256:b067364dff3ea3ee94ba4bc44f3eaa6b7d73dfd0a7f83fce66f6b974683c2868",
+      "THM-0007": "sha256:474119e67bd5170a9e3647750fbb9d1e8a7308425d93ccfd4245998d38a24889",
+      "THM-0008": "sha256:c96f8b510168654a9a3d9d2f4032ce357f9022b1981ba45a1d9f5e0d3cb88dcb",
+      "THM-0014": "sha256:12bf99bc5ab9ceaa91e4c6b791e6dfe846b7b7c55af98f5c902206f5dc89776f",
+      "THM-0015": "sha256:c54f383311f5c8347262ac5c712e9246e5e249727587255dcfa2364448c2a961",
+      "THM-0047": "sha256:9b77e3660176bc1bfb2d09da1184c1a684f823b581c1c6c5762c8700133edd96",
+      "THM-0051": "sha256:0631a9c33148bba5a12d006e99ae805d7541b3b4c695e28650cadc4897f62c5a"
+    },
+    "theorem_id": "THM-0087",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner specification-review ruling of 2026-09-03, given as BATCH 5C over the theorem as it stands at merged main b82b3ccf. Approved: the statement, the security consequence, the rewritten scope, `depends_on = [\"THM-0051\"]`, support by BOTH `unit://proxy.continuation_correlation_store` and `unit://proxy.continuation_key_provenance`, and the absence of registered assumptions. TITLE AND STATEMENT ALTITUDE, ruled explicitly. The wording \"the actor the VERIFIER resolved\" is KEPT. The owner declined to narrow the theorem to \"the actor projection of the verified product this exchange carries\", and rules that the theorem states the durable semantic security proposition rather than describing its lowest-level evidence unit. A theorem may not be renamed to resemble the local implementation step that measures it. COMPOSED PROPOSITION, approved as the intended shape. A supporting unit need not locally establish every premise named in the final proposition: THM-0051 supplies the already-established provenance of the verification product this exchange carries, and its reviewed dependency closure carries the trust-seam resolution proposition (THM-0014); `proxy.continuation_key_provenance` measures only the remaining continuation-specific hop, that both legs supply that product's actor projection to the key and nothing else. Logical premise plus local evidence equals composed theorem, and that is the approved architecture. THE BATCH 5B CORRECTION IS PRESERVED AND REQUIRED. No type is claimed to prove verifier provenance; `ResolvedActor` remains deliberately unsealed and legitimately constructible through the resolver seam; verifier provenance is earned through the theorem and dependency chain, not by a constructor's argument type; and probe M88 establishes that the final serving-to-key hop is independently load-bearing. SCOPE. Runtime correlation and reachability only. Deployment posture is excluded by construction \u2014 whether the shared tier this deployment holds is the one its configuration selected is THM-0077's claim and is deliberately not restated here. The store is OPPORTUNISTIC, which is why no \"prevents startup\" conjunct appears; an answer leg that needs a correlated continuation fails closed at the binding, which is THM-0093's claim. It says nothing about what an acknowledged write durably establishes, and nothing about the continuation binding itself, which is `mcp-re-http-profile`'s. The approval was made conditional on immediate remeasurement; the fingerprint was recomputed at b82b3ccf before this record was written and equals the value the owner named, sha256:237293f9109745dbb2caa9174c99d4541c66a743135e3eb32ae29063a31956c4.",
+  "reviewed_fingerprint": "sha256:237293f9109745dbb2caa9174c99d4541c66a743135e3eb32ae29063a31956c4",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0087"
+}
