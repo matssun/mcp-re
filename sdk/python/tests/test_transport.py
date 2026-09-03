@@ -869,6 +869,57 @@ async def test_a_notifications_wire_code_is_the_bare_token_too():
     assert re.fullmatch(r"mcp-re\.[a-z0-9_]+", seen[0][1].wire_code), seen[0][1].wire_code
 
 
+# --- the core's verdict, stubbed at ONE shape -------------------------------------
+#
+# Four controls below stub `_core.verify_response`, and the seam is the right one: the
+# property under test is what the ADAPTER does with a verdict, and against a recorded
+# receipt a control cannot distinguish reading `verified.bound` from hard-coding `True`.
+#
+# What a duck-typed stub cannot do on its own is track the core's SHAPE. Four separately
+# written stub classes would let the core rename a member — `execution_status`, say — and
+# leave every one of them green while the adapter read `None` in production. So the shape
+# is declared once, here, and `test_the_stubbed_verdict_shape_is_the_cores_own` checks it
+# against `_core.PyVerifyResult` itself. That check is what makes these stubs evidence
+# rather than four copies of an assumption (#746).
+
+#: Every member the adapter reads off a verified response, with the value a verdict that
+#: states nothing would carry. A stub overrides what its own control is about.
+_VERDICT_MEMBERS = {
+    "outcome": "success",
+    "wire_code": None,
+    "bound": True,
+    "request_state": None,
+    "execution_status": None,
+    "retry_safety": None,
+    "continuation_status": None,
+    "retention_status": None,
+}
+
+
+def _stub_verdict(**over):
+    """A stand-in for one `_core.verify_response` result, at the shape declared above."""
+    unknown = set(over) - set(_VERDICT_MEMBERS)
+    assert not unknown, f"not members of a verified response: {sorted(unknown)}"
+    return type("_StubVerdict", (), {**_VERDICT_MEMBERS, **over})()
+
+
+def test_the_stubbed_verdict_shape_is_the_cores_own():
+    """The stubs' members are the CORE's members, checked against the core's own type.
+
+    This is the anti-vacuity control for the four stubbed ones. R9-C094 was a fake whose
+    behaviour production could not have; a duck-typed stub of an internal seam is the same
+    hazard one level over — it keeps passing after the thing it stands for has moved.
+    """
+    import mcp_re_sdk.transport as t
+
+    real = {name for name in dir(t._core.PyVerifyResult) if not name.startswith("_")}
+    missing = sorted(set(_VERDICT_MEMBERS) - real)
+    assert not missing, (
+        f"the stubs declare {missing}, which PyVerifyResult does not expose — the adapter "
+        f"would read nothing there in production while these controls stayed green"
+    )
+
+
 # --- the rejection receipt's binding fact ----------------------------------------
 #
 # `test_a_verified_rejection_receipt_is_delivered_as_an_error_not_a_result` in
@@ -891,19 +942,13 @@ async def test_an_unbound_rejection_receipt_is_reported_as_not_request_bound(mon
     """
     import mcp_re_sdk.transport as t
 
-    class _Unbound:
-        outcome = "rejection"
-        wire_code = "mcp-re.authorization_binding_missing"
-        bound = False
-        request_state = None
-        # A preflight refusal that never reached dispatch states no disposition. The
-        # transport must emit no member for it rather than inventing one.
-        execution_status = None
-        retry_safety = None
-        continuation_status = None
-        retention_status = None
-
-    monkeypatch.setattr(t._core, "verify_response", lambda *a, **k: _Unbound())
+    # A preflight refusal that never reached dispatch states no disposition, so every
+    # execution member keeps the shared shape's `None`: the transport must emit no member
+    # for it rather than inventing one.
+    unbound = _stub_verdict(
+        outcome="rejection", wire_code="mcp-re.authorization_binding_missing", bound=False
+    )
+    monkeypatch.setattr(t._core, "verify_response", lambda *a, **k: unbound)
 
     async def rejecting(method, target_uri, headers, body):
         return HttpReply(status=409, headers=[], body=b"{}")
@@ -930,17 +975,14 @@ async def test_a_post_dispatch_rejection_reports_its_execution_and_retry_contrac
     """
     import mcp_re_sdk.transport as t
 
-    class _PostDispatch:
-        outcome = "rejection"
-        wire_code = "mcp-re.upstream_unavailable"
-        bound = True
-        request_state = None
-        execution_status = "possibly_executed"
-        retry_safety = "unsafe_without_reconciliation"
-        continuation_status = "consumed"
-        retention_status = None
-
-    monkeypatch.setattr(t._core, "verify_response", lambda *a, **k: _PostDispatch())
+    post_dispatch = _stub_verdict(
+        outcome="rejection",
+        wire_code="mcp-re.upstream_unavailable",
+        execution_status="possibly_executed",
+        retry_safety="unsafe_without_reconciliation",
+        continuation_status="consumed",
+    )
+    monkeypatch.setattr(t._core, "verify_response", lambda *a, **k: post_dispatch)
 
     async def rejecting(method, target_uri, headers, body):
         return HttpReply(status=503, headers=[], body=b"{}")
@@ -976,17 +1018,7 @@ async def test_a_verified_reply_carrying_a_method_is_refused_not_dispatched(monk
     """
     import mcp_re_sdk.transport as t
 
-    class _Ok:
-        outcome = "success"
-        wire_code = None
-        bound = True
-        request_state = None
-        execution_status = None
-        retry_safety = None
-        continuation_status = None
-        retention_status = None
-
-    monkeypatch.setattr(t._core, "verify_response", lambda *a, **k: _Ok())
+    monkeypatch.setattr(t._core, "verify_response", lambda *a, **k: _stub_verdict())
 
     hostile = (
         b'{"jsonrpc":"2.0","id":1,"result":{"ok":true},'
@@ -1024,17 +1056,7 @@ async def test_a_verified_reply_with_neither_result_nor_error_is_refused(monkeyp
     """
     import mcp_re_sdk.transport as t
 
-    class _Ok:
-        outcome = "success"
-        wire_code = None
-        bound = True
-        request_state = None
-        execution_status = None
-        retry_safety = None
-        continuation_status = None
-        retention_status = None
-
-    monkeypatch.setattr(t._core, "verify_response", lambda *a, **k: _Ok())
+    monkeypatch.setattr(t._core, "verify_response", lambda *a, **k: _stub_verdict())
 
     for body in (
         b'{"jsonrpc":"2.0","id":1}',

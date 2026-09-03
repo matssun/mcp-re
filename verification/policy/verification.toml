@@ -2486,6 +2486,14 @@ tested_symbols = [
   # ran, so a synthesized `not_executed` or `retry_safe` there is what makes a caller
   # repeat a tool call that already executed.
   "pytest#tests/test_transport.py::test_a_transport_deadline_does_not_synthesize_what_the_peer_never_said",
+  # THE ANTI-VACUITY CONTROL FOR THE STUBBED VERDICTS. Four controls above stub
+  # `_core.verify_response`, which is the right seam — the property is what the ADAPTER
+  # does with a verdict, and against a recorded receipt nothing distinguishes reading
+  # `verified.bound` from hard-coding it. What a duck-typed stub cannot do is track the
+  # core's shape: a renamed member would leave all four green while the adapter read
+  # `None` in production. The shape is declared once and checked against
+  # `_core.PyVerifyResult` itself, which is the R9-C094 hazard one level over.
+  "pytest#tests/test_transport.py::test_the_stubbed_verdict_shape_is_the_cores_own",
 ]
 
 [[unit]]
