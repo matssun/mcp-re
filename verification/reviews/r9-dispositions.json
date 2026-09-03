@@ -873,6 +873,11 @@
       "node": "assurance platform",
       "area": "assurance-platform",
       "reason": "`REQUIRED & set(unresolved_pins(...))` still detects only entries that exist with `state = \"unresolved\"`; `unresolved_pins` iterates existing tables, so a deleted one is never reported.",
+      "merged_closure": {
+        "pr": 799,
+        "commit": "b5bb673d3c7c38a8c7de2bc875f4f1b46b07d630",
+        "note": "`unpinned_identities` answers over the identities the LANE REQUIRES rather than over the tables the lock contains, so a deleted `[verus.z3]` or `[rust]` is disqualifying exactly as `state = \"unresolved\"` is; the two keep separate reasons in the message because the remedies are opposite"
+      },
       "tracking_issue": 739
     },
     {
@@ -884,6 +889,11 @@
       "node": "assurance platform",
       "area": "assurance-platform",
       "reason": "`installed_identity` still digests only `vstd.vir` and `version.json`, and the lane still runs with `{**os.environ}`, so `VERUS_Z3_PATH` selects the solver undetected.",
+      "merged_closure": {
+        "pr": 799,
+        "commit": "b5bb673d3c7c38a8c7de2bc875f4f1b46b07d630",
+        "note": "`[verus.z3].identity` is the solver binary's digest instead of the sentence \"bundled in the pinned Verus release archive\", it is compared before any verdict, and the lane sets `VERUS_Z3_PATH` from the lock rather than inheriting it from the environment"
+      },
       "tracking_issue": 739
     },
     {
@@ -1051,6 +1061,11 @@
       "node": "assurance platform",
       "area": "assurance-platform",
       "reason": "`rust_verify`, `z3`, `cargo-verus` and `libvstd.rlib` are still undigested, and `_toolchain_identity` still drops every `note` key, where the recorded rlib digest lives.",
+      "merged_closure": {
+        "pr": 799,
+        "commit": "b5bb673d3c7c38a8c7de2bc875f4f1b46b07d630",
+        "note": "`[verus.binaries]` names `verus`, `rust_verify` and `cargo-verus` by digest and `_pinned_file_mismatch` compares them; the `libvstd.rlib` digest moved out of `note` — the one field the fingerprint strips — into `verus.vstd.rlib_identity`"
+      },
       "tracking_issue": 739
     },
     {
