@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:033bf43215d5609849ab29b30e6d84cd709306a05495236471d9dd7a6adb1b13",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0096",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Owner specification-review ruling of 2026-09-03, given over the CORRECTED THM-0096 in the packet `verification/reviews/packets/thm-0096-altitude-and-thm-0077-dependency-2026-09-03.md` and recorded at merged main 7d7a923a. The theorem's first review record: the pre-correction claim was never approved, and was withheld for THEOREM ALTITUDE alone while its implementation and evidence were accepted. APPROVED: the corrected title, the statement, the security consequence, the PLAN \u2192 RUNTIME scope, `depends_on = []`, the three supporting units \u2014 `proxy.continuation_materialization`, `proxy.continuation_materialization_shared`, `proxy.continuation_installation` \u2014 probes M89 and M90, and the absence of registered assumptions. THE ALTITUDE IS THE PLAN, ruled explicitly. THM-0096 establishes only `ContinuationControlPlan` \u2192 materialization \u2192 runtime capability and posture. It does NOT establish who selected the plan, that the OPERATOR selected it, or that it faithfully represents validated deployment configuration; those are parent composition/configuration facts. The direction is one way \u2014 validated configuration \u2192 (parent composition) \u2192 the plan \u2192 (THM-0096) \u2192 runtime capability/posture \u2192 (composed by) THM-0077 \u2014 and THM-0096 obtains no premise downward from THM-0077, which is why the earlier wording claiming the deployment's selection was refused rather than repaired with a dependency edge. The previous scope sentence reaching the planner's fact THROUGH THM-0077 was deleted, not relocated. THE EVIDENCE ARCHITECTURE IS ACCEPTED UNCHANGED: three units because the seam's two build profiles are mutually exclusive at compile time and no single lane runs both, and because `Established<T>`'s coupling ends at `into_parts` \u2014 everything after the split is the composition root's. The declaration conjunct remains claimed at the strength its evidence has: `assert_complete` is never reached hermetically, so what is established is that the completeness check refuses an undeclared or doubly-declared seam when run, and that the continuation seam is declared exactly once in the composition root's SOURCE. The approval was made conditional on remeasurement at merged main; the fingerprint was recomputed at 7d7a923a before this record was written and equals the value the owner named, sha256:97fb6e966903e09f0e9fedf634f46a536bafa48384318a88200955a692e4ad4a.",
+  "reviewed_fingerprint": "sha256:97fb6e966903e09f0e9fedf634f46a536bafa48384318a88200955a692e4ad4a",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0096"
+}

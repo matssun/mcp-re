@@ -174,3 +174,44 @@ re-affirmed by this packet; the record stays stale until the owner rules on the 
 SDK roots and THM-0042 are deliberately not here. THM-0093 is already recorded, at
 `sha256:d6ef239d78010f4f37f3b51c976f17b643e0f740cc14c425ed72da76cbc28370`, the value the
 ruling named and remeasured before the record was written.
+
+---
+
+## 4. Addendum — the THM-0077 fingerprint in §2 was measured one edit early
+
+Recorded at merged main `7d7a923a`, after the ruling of 2026-09-03 approved both subjects
+conditional on remeasurement.
+
+**THM-0096 remeasured exactly**, `sha256:97fb6e966903e09f0e9fedf634f46a536bafa48384318a88200955a692e4ad4a`,
+and its owner specification review is recorded.
+
+**THM-0077 did not**, and the approval is therefore NOT transferred:
+
+```
+named in §2 (branch state)  sha256:fa01e636e65ae3f0c005033819ef3d80b913e7b6bf180720a478d8de15eb5aef
+at merged main 7d7a923a     sha256:2164f33aae3c49b1ac183ef0559f9b1ad7601ca440e92ca36d1a2b40387ded2a
+```
+
+**The changed component is `theorem_dependencies["THM-0096"]`, and nothing else.** The defect
+is in this packet, not in the tree: §2's fingerprint was taken from the branch before the last
+two wording passes over THM-0096's scope — the ASCII direction diagram was replaced by an
+arrow chain that survives the generated view's line flattening, and one liveness-paragraph
+sentence was made plan-relative. §1's THM-0096 fingerprint WAS updated for both; §2's THM-0077
+fingerprint was not, so the packet quoted a root digest computed over a claim digest the same
+packet no longer named.
+
+What that means for the review, stated rather than assumed:
+
+* `theorem_claim` is `sha256:c37c7e0bbf738372218737fd9687e7d808198485c7ba74d1ea2652d40e35315d`
+  at merged main — identical to the reviewed record and to §2. The claim text still did not move.
+* The closure is still 20 members: +THM-0089, +THM-0090, +THM-0096, none removed.
+* Nineteen of the twenty dependency digests are byte-identical to the values §2 was computed
+  over. The twentieth, THM-0096, now carries
+  `sha256:033bf43215d5609849ab29b30e6d84cd709306a05495236471d9dd7a6adb1b13` — which is the claim
+  digest inside the THM-0096 fingerprint the ruling named and approved.
+
+So the delta is the approved correction arriving in the root's closure, and the value to
+re-affirm over is `sha256:2164f33aae3c49b1ac183ef0559f9b1ad7601ca440e92ca36d1a2b40387ded2a`.
+The record stays `STALE_DEPENDENCY_CLAIM` until the owner names that value; recording it on the
+strength of an approval given over a different digest is precisely the transfer the
+remeasurement condition exists to refuse.
