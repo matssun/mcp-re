@@ -80,6 +80,76 @@ impl ContinuationPlane {
 mod tests {
     use super::*;
 
+    /// The open leg's half of the same hop: the entry is RECORDED under the carried
+    /// product's actor, so the answer leg's scoping has something to be true about. A leg
+    /// that opened under a body-asserted identity would be answerable by whoever asserted
+    /// it, and the answer leg's control alone cannot see that.
+    ///
+    /// A capturing double rather than a real tier, because the fact under test is the KEY
+    /// and not the write.
+    #[tokio::test]
+    async fn the_leg_is_recorded_under_the_carried_products_actor() {
+        use super::super::answer_leg::tests as fixtures;
+        use std::sync::Mutex;
+
+        struct CapturingStore(Mutex<Vec<String>>);
+
+        impl crate::continuation_store::AsyncContinuationStore for CapturingStore {
+            fn store<'a>(
+                &'a self,
+                key: &'a str,
+                _bases: &'a RetainedBases,
+                _ttl_secs: i64,
+            ) -> crate::continuation_store::ContinuationFuture<'a, ()> {
+                self.0.lock().expect("keys").push(key.to_owned());
+                Box::pin(async { Ok(()) })
+            }
+
+            fn peek<'a>(
+                &'a self,
+                _key: &'a str,
+            ) -> crate::continuation_store::ContinuationFuture<'a, Option<RetainedBases>>
+            {
+                Box::pin(async { Ok(None) })
+            }
+
+            fn consume<'a>(
+                &'a self,
+                _key: &'a str,
+            ) -> crate::continuation_store::ContinuationFuture<'a, bool> {
+                Box::pin(async { Ok(false) })
+            }
+        }
+
+        let store = std::sync::Arc::new(CapturingStore(Mutex::new(Vec::new())));
+        let plane = ContinuationPlane::wired(store.clone(), 300);
+        let verified = fixtures::verified_as("did:example:host-a", "key-1");
+        let actor_id = verified.resolved_actor().actor_id();
+        let http_req = fixtures::http_request(fixtures::BODY_ASSERTING_ANOTHER_ACTOR);
+        let ex = Exchange {
+            http_req: &http_req,
+            verified: &verified,
+            actor_id: &actor_id,
+            now: 1,
+            key: None,
+        };
+
+        let established = plane
+            .record_open_leg(&ex, "aud", "s-1", b"irr".to_vec())
+            .await
+            .expect("the capturing tier accepts the write");
+        crate::exchange_state::ExchangeProgress::new().establish(established);
+
+        assert_eq!(
+            store.0.lock().expect("keys").clone(),
+            vec![continuation_key(
+                "aud",
+                &verified.resolved_actor().actor_id(),
+                b"s-1"
+            )]
+        );
+    }
+
     #[test]
     fn the_record_budget_is_bounded_and_small() {
         // The bound is the point: past the execution threshold an unbounded retry would

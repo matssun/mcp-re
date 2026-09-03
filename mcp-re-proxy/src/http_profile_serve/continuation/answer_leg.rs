@@ -188,7 +188,7 @@ pub(in crate::http_profile_serve) enum Retirement {
 }
 
 #[cfg(test)]
-mod tests {
+pub(in crate::http_profile_serve) mod tests {
     use super::*;
     use crate::continuation_store::AsyncContinuationStore;
     use std::sync::Arc;
@@ -280,6 +280,126 @@ mod tests {
             plane.retire(Some(&"k-1".to_owned())).await,
             Retirement::Indeterminate
         );
+    }
+
+    fn digest(of: &str) -> mcp_re_http_profile::RequestEvidenceDigest {
+        mcp_re_http_profile::RequestEvidenceDigest {
+            digest_alg: "sha-256".into(),
+            digest_value: mcp_re_core::b64url_encode(of.as_bytes()),
+        }
+    }
+
+    /// A verified request whose resolved actor is `subject`/`keyid`, carrying a
+    /// continuation so the answer leg computes a key at all.
+    ///
+    /// The value stands in for a verification product because what is under test is the
+    /// hop AFTER verification. That the product the serving path holds is the one THIS
+    /// exchange's verification returned is THM-0051's, and is not re-derived here.
+    pub(in crate::http_profile_serve) fn verified_as(
+        subject: &str,
+        keyid: &str,
+    ) -> mcp_re_http_profile::VerifiedMcpRequest {
+        let audience = mcp_re_http_profile::AudienceTuple {
+            audience_id: "aud".into(),
+            target_uri: "https://example.test/mcp".into(),
+            route: None,
+        };
+        mcp_re_http_profile::VerifiedMcpRequest {
+            floor: mcp_re_http_profile::CryptographicFloorVerifiedRequest {
+                profile_id: "p".into(),
+                signature_label: "mcpre".into(),
+                resolved_actor: mcp_re_http_profile::ResolvedActor {
+                    identity: mcp_re_http_profile::ActorIdentity {
+                        role: "client".into(),
+                        trust_domain: "example.com".into(),
+                        subject: subject.into(),
+                        keyid: keyid.into(),
+                    },
+                    verification_key: mcp_re_core::SigningKey::from_seed_bytes(&[7u8; 32])
+                        .public_key(),
+                    slot: mcp_re_http_profile::SignerSlot::Request,
+                },
+                evidence: mcp_re_http_profile::RequestEvidence::from_signature_base(b"base"),
+                request_signature_base: b"base".to_vec(),
+                content_digest: mcp_re_http_profile::content_digest_sha256(b"{}"),
+                created: 1,
+                expires: 2,
+                nonce: "n".into(),
+                key_id: keyid.into(),
+            },
+            audience: audience.clone(),
+            audience_hash: audience.audience_hash(),
+            request_block: mcp_re_http_profile::HttpRequestEvidenceBlock {
+                profile: "p".into(),
+                audience,
+                artifact_bindings: Vec::new(),
+                continuation: Some(mcp_re_http_profile::HttpContinuation {
+                    continuation_type: "mcp-mrt".into(),
+                    previous_request_evidence: digest("prev"),
+                    input_required_response_evidence: digest("irr"),
+                    request_state_digest: digest("s-1"),
+                }),
+                admission: None,
+                admission_assertion: None,
+                authorization_decision: None,
+            },
+        }
+    }
+
+    /// A body that names a second identity in the members a leg reading the request would
+    /// read. Nothing admits it; it is here so the controls can show it names nothing.
+    pub(in crate::http_profile_serve) const BODY_ASSERTING_ANOTHER_ACTOR: &[u8] = br#"{"params":{"requestState":"s-1","actorIdentity":{"role":"client","trust_domain":"example.com","subject":"did:example:impostor","keyid":"key-9"}}}"#;
+
+    pub(in crate::http_profile_serve) fn http_request(
+        body: &[u8],
+    ) -> crate::http_profile_serve::HttpRequest {
+        crate::http_profile_serve::HttpRequest {
+            method: "POST".into(),
+            target_uri: "https://example.test/mcp".into(),
+            headers: Vec::new(),
+            body: body.to_vec(),
+        }
+    }
+
+    /// THE FINAL HOP: the operand is the actor projection of the verified product THIS
+    /// exchange carries, and not an identity the request asserts.
+    ///
+    /// What this does NOT establish, because it is already established: that the product
+    /// the exchange carries is the one this exchange's verification returned (THM-0051),
+    /// or that the actor in it was resolved through the trust seam (THM-0014, in
+    /// THM-0051's own closure). Those are premises here, not conjuncts. This control is
+    /// about the one step between them and the key.
+    ///
+    /// It goes red for the change it exists to catch: a leg deriving the operand from a
+    /// request-supplied identifier prepares the impostor's key, and every store-side
+    /// separation control stays green while it does (probe M88).
+    #[tokio::test]
+    async fn the_operand_is_the_carried_products_actor_and_not_one_the_body_asserts() {
+        let verified = verified_as("did:example:host-a", "key-1");
+        let actor_id = verified.resolved_actor().actor_id();
+        let http_req = http_request(BODY_ASSERTING_ANOTHER_ACTOR);
+        let ex = Exchange {
+            http_req: &http_req,
+            verified: &verified,
+            actor_id: &actor_id,
+            now: 1,
+            key: None,
+        };
+
+        let established = ContinuationPlane::disabled()
+            .prepare(&ex, "aud")
+            .await
+            .expect("a disabled plane reads nothing and refuses nothing");
+        let prep = crate::exchange_state::ExchangeProgress::new().establish(established);
+
+        let carried = continuation_key("aud", &verified.resolved_actor().actor_id(), b"s-1");
+        let asserted = continuation_key(
+            "aud",
+            "client:example.com:did:example:impostor:key-9",
+            b"s-1",
+        );
+        assert_ne!(carried, asserted, "the two identities must differ at all");
+        assert_eq!(prep.answer_key(), Some(&carried));
     }
 
     #[test]
