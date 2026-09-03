@@ -26,7 +26,6 @@ import socket
 import subprocess
 import sys
 import time
-import tomllib
 from pathlib import Path
 
 import pytest
@@ -34,6 +33,14 @@ import pytest
 pytest.importorskip("mcp", reason="the transport adapter needs the upstream MCP SDK")
 pytest.importorskip("httpx")
 pytest.importorskip("cryptography")
+# `tomllib` is 3.11+, and this file reads the port registry with it. A bare module-level
+# import made the whole file a COLLECTION ERROR on CPython 3.10 — a supported minor — which
+# is a red that says nothing about the SDK and, in a directory-wide run, takes every other
+# file's result with it. Declared here with the same mechanism as the other environmental
+# requirements, so 3.10 SKIPS this live-proxy lane and reports why (#746).
+tomllib = pytest.importorskip(
+    "tomllib", reason="the port registry is read with tomllib, which is 3.11+"
+)
 
 import httpx  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey  # noqa: E402

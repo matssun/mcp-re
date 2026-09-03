@@ -6,8 +6,13 @@ build-backend = "maturin"
 name = "mcp-re-sdk"
 version = "0.1.0"
 description = "MCP-RE Python SDK — runtime-evidence security (signed requests, verified responses) for the MCP Python SDK, via a transport adapter over the audited mcp-re-client-core."
-# mcp (the upstream SDK) requires >=3.10; match its floor.
-requires-python = ">=3.10"
+# BOUNDED AT BOTH ENDS, and the ceiling is not caution — it is the support claim matching
+# the evidence. The floor is the upstream MCP SDK's (>=3.10); the ceiling says 3.14 is the
+# last minor whose battery is actually measured. `verification/policy/toolchains.lock.toml`
+# `[python].interpreters` names the exact patch versions the authoritative lane runs, and
+# `scripts/python_runtime_gate.py` fails the build if this range and that set diverge — so
+# claiming a minor is claiming evidence for it (ADR-MCPRE-059 §28 / issue #746).
+requires-python = ">=3.10,<3.15"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Mats Sundvall" }]
 readme = "README.md"

@@ -2394,6 +2394,14 @@ paths = [
 ]
 exported_contracts = []
 evidence = ["test://sdk_python/exchange_path/root_battery"]
+# MEASURED ON EVERY SUPPORTED INTERPRETER, not on whichever one the runner offers. The
+# battery is selected by node id and run once per version in `toolchains.lock.toml`
+# `[python].interpreters` — CPython 3.10 through 3.14 — in environments
+# `scripts/prepare_python_matrix.sh` prepares from a single abi3 wheel. The runtime identity
+# is ecosystem-scoped into this unit's fingerprint, so an interpreter bump drops the standing
+# attestation rather than being inherited by it. The `downloader — Python maturin wheel` CI
+# job remains INDEPENDENT evidence over the installed artifact on a second OS; it selects by
+# directory, so it is not this battery and cannot answer for a control dropped from here.
 # The replay battery is the substance: a RECORDED delegated session, verified by the shipped
 # adapter, with one appended byte, an untrusted root, a wrong epoch, a wrong audience and a
 # revoked key each refused against the same recording. A battery of constructed positives
@@ -2478,6 +2486,14 @@ tested_symbols = [
   # ran, so a synthesized `not_executed` or `retry_safe` there is what makes a caller
   # repeat a tool call that already executed.
   "pytest#tests/test_transport.py::test_a_transport_deadline_does_not_synthesize_what_the_peer_never_said",
+  # THE ANTI-VACUITY CONTROL FOR THE STUBBED VERDICTS. Four controls above stub
+  # `_core.verify_response`, which is the right seam — the property is what the ADAPTER
+  # does with a verdict, and against a recorded receipt nothing distinguishes reading
+  # `verified.bound` from hard-coding it. What a duck-typed stub cannot do is track the
+  # core's shape: a renamed member would leave all four green while the adapter read
+  # `None` in production. The shape is declared once and checked against
+  # `_core.PyVerifyResult` itself, which is the R9-C094 hazard one level over.
+  "pytest#tests/test_transport.py::test_the_stubbed_verdict_shape_is_the_cores_own",
 ]
 
 [[unit]]

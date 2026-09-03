@@ -118,6 +118,10 @@ stage_static() {
     && python3 scripts/conformance_claims_gate.py \
     && python3 scripts/verification_trigger_gate.py --selftest \
     && python3 scripts/verification_trigger_gate.py \
+    `# The Python support claim may not exceed the Python evidence: requires-python and` \
+    `# the pinned interpreter set are two facts in two files, and they had drifted.` \
+    && python3 scripts/python_runtime_gate.py --selftest \
+    && python3 scripts/python_runtime_gate.py \
     && python3 scripts/cargo_test_target_gate.py --selftest \
     && python3 scripts/cargo_test_target_gate.py \
     && python3 scripts/lifecycle_purity_gate.py --selftest \

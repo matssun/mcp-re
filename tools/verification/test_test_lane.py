@@ -22,6 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _ecosystems import CARGO
+from _ecosystems import PYTHON
 from _ecosystems import test_argv
 from _ecosystems import valid_target
 from _manifest import ManifestError  # noqa: E402
@@ -374,6 +375,120 @@ def test_a_symbol_with_no_result_line_is_rerun_alone_before_the_lane_concludes()
     assert len(calls) == 2, "each unread symbol is run ALONE, not as a batch"
     assert calls[0][-1] == "a::tests::readable"
     assert "--exact" in calls[0], "the re-run selects exactly the one symbol"
+
+
+# --- the RUNTIME dimension (issue #746) -------------------------------------------
+#
+# A Python battery's result is a claim about the interpreter it ran on. Until the `[python]`
+# pin existed the lane ran `uv run`, which resolved whatever CPython the machine offered,
+# and one interpreter's green was recorded as evidence for a `>=3.10` support claim. Each
+# case below is a way that could come back.
+
+
+def test_a_python_battery_names_the_interpreter_it_runs_on():
+    """No runtime, no command. A default would reintroduce the unpinned interpreter."""
+    try:
+        test_argv(PYTHON, "sdk/python", "pytest", ["tests/test_x.py::test_y"])
+    except ValueError as exc:
+        assert "interpreter" in str(exc), exc
+    else:
+        raise AssertionError("a Python selection without a runtime must be refused")
+
+
+def test_the_python_command_runs_the_prepared_environment_for_that_runtime():
+    argv = test_argv(
+        PYTHON, "sdk/python", "pytest", ["tests/test_x.py::test_y"], None, "3.11.15"
+    )
+    assert argv[0] == ".venv-cp311/bin/python", argv
+    assert "uv" not in argv, "the lane must not resolve or sync its own environment"
+    assert argv[-1] == "tests/test_x.py::test_y"
+    assert "no:randomly" in argv, "order must be reproducible from the record"
+
+
+def test_two_runtimes_are_two_environments():
+    """A shared environment would make the second measurement the first one again."""
+    first = test_argv(PYTHON, "p", "pytest", ["t::a"], None, "3.10.20")[0]
+    second = test_argv(PYTHON, "p", "pytest", ["t::a"], None, "3.14.7")[0]
+    assert first != second, (first, second)
+
+
+def test_an_ecosystem_with_no_runtime_pin_is_measured_once():
+    runtimes, refusal = lane.pinned_runtimes(CARGO, {"schema_version": 1})
+    assert refusal is None, refusal
+    assert runtimes == [None], runtimes
+
+
+def test_an_unresolved_runtime_pin_refuses_rather_than_running():
+    runtimes, refusal = lane.pinned_runtimes(PYTHON, {"python": {"state": "unresolved"}})
+    assert runtimes == [], runtimes
+    assert refusal is not None and "unresolved" in refusal, refusal
+
+
+def test_a_resolved_pin_naming_no_interpreter_is_not_a_runtime_set():
+    """The same failure wearing a resolved label: an empty set selects no environment."""
+    runtimes, refusal = lane.pinned_runtimes(
+        PYTHON, {"python": {"state": "resolved", "interpreters": []}}
+    )
+    assert runtimes == [], runtimes
+    assert refusal is not None and "empty" in refusal, refusal
+
+
+def test_every_pinned_interpreter_is_measured():
+    runtimes, refusal = lane.pinned_runtimes(
+        PYTHON,
+        {"python": {"state": "resolved", "interpreters": ["3.12.13", "3.10.20"]}},
+    )
+    assert refusal is None, refusal
+    assert runtimes == ["3.10.20", "3.12.13"], runtimes
+
+
+def test_a_missing_prepared_environment_fails_rather_than_skipping():
+    ok, detail = lane.runtime_identity(PYTHON, "sdk/python", "3.99.0")
+    assert not ok
+    assert "no prepared environment" in detail, detail
+
+
+def test_an_environment_holding_another_interpreter_is_refused():
+    """The pin names an exact patch version, and this is what makes that more than prose."""
+    calls = []
+
+    class Result:
+        def __init__(self, returncode, stdout):
+            self.returncode = returncode
+            self.stdout = stdout
+
+    original_run = lane.subprocess.run
+    original_isfile = lane.Path.is_file
+    lane.subprocess.run = lambda argv, **_k: (calls.append(argv), Result(0, "3.12.13\n"))[1]
+    lane.Path.is_file = lambda self: True
+    try:
+        ok, detail = lane.runtime_identity(PYTHON, "sdk/python", "3.11.15")
+    finally:
+        lane.subprocess.run = original_run
+        lane.Path.is_file = original_isfile
+
+    assert not ok
+    assert "3.12.13" in detail and "3.11.15" in detail, detail
+    assert calls, "the interpreter must be asked its version, not assumed"
+
+
+def test_the_matching_interpreter_is_accepted():
+    """The positive case: a gate that refuses everything measures nothing."""
+
+    class Result:
+        returncode = 0
+        stdout = "3.11.15\n"
+
+    original_run = lane.subprocess.run
+    original_isfile = lane.Path.is_file
+    lane.subprocess.run = lambda argv, **_k: Result()
+    lane.Path.is_file = lambda self: True
+    try:
+        ok, detail = lane.runtime_identity(PYTHON, "sdk/python", "3.11.15")
+    finally:
+        lane.subprocess.run = original_run
+        lane.Path.is_file = original_isfile
+    assert ok, detail
 
 
 if __name__ == "__main__":

@@ -4044,6 +4044,17 @@ own retry policy, its outer timeouts, or what it concludes from a local failure;
 that the SDK does not hand it a peer verdict or an execution fact the peer never gave. Retry
 policy outside this adapter is not this adapter's proposition.
 
+THE SUPPORTED RUNTIME SET IS PART OF THE CLAIM. "The shipped Python SDK" means the package
+as it runs on the interpreters it declares support for, and that is now a measured set
+rather than an inference from one machine: `requires-python = ">=3.10,<3.15"`, and the
+battery runs on every minor in that range at the exact patch versions
+`toolchains.lock.toml` `[python].interpreters` pins. The runtime identity is inside this
+unit's fingerprint, so changing an interpreter drops the standing evidence instead of
+silently carrying it; a minor outside the range is outside this claim; and
+`scripts/python_runtime_gate.py` refuses a support claim wider than the measured set. It
+matters here specifically because the read bound above rests on stdlib `read1` behaviour,
+which is a per-minor fact.
+
 It says nothing about the transport below it, nothing about the proxy's own guarantees, and
 nothing about an application that bypasses this adapter.
 """

@@ -57,6 +57,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _ecosystems import CARGO  # noqa: E402
+from _ecosystems import PYTHON  # noqa: E402
+from _ecosystems import python_runtime_venv  # noqa: E402
 from _ecosystems import ReportUnreadable  # noqa: E402
 from _ecosystems import parse_results  # noqa: E402
 from _ecosystems import test_argv  # noqa: E402
@@ -133,7 +135,8 @@ def group_by_target(eco, symbols: list[str]) -> tuple[dict[str, list[str]], list
 
 
 def _rerun_unread(
-    eco, crate: str, target: str, names: list[str], features: list[str]
+    eco, crate: str, target: str, names: list[str], features: list[str],
+    runtime: str | None = None,
 ) -> set[str]:
     """Re-run `names` ONE AT A TIME and return those that reported `ok` on their own.
 
@@ -149,7 +152,7 @@ def _rerun_unread(
     recovered: set[str] = set()
     for name in names:
         again = subprocess.run(
-            test_argv(eco, crate, target, [name], features),
+            test_argv(eco, crate, target, [name], features, runtime),
             cwd=REPO_ROOT if eco is CARGO else REPO_ROOT / crate,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -166,7 +169,12 @@ def _rerun_unread(
 
 
 def run_selection(
-    eco, crate: str, target: str, paths: list[str], features: list[str] | None = None
+    eco,
+    crate: str,
+    target: str,
+    paths: list[str],
+    features: list[str] | None = None,
+    runtime: str | None = None,
 ) -> tuple[bool, str]:
     """Run exactly `paths` in one target and say whether all of them passed.
 
@@ -177,7 +185,7 @@ def run_selection(
     is a failure, whether it failed, was skipped, or never ran.
     """
     features = list(features or [])
-    argv = test_argv(eco, crate, target, paths, features)
+    argv = test_argv(eco, crate, target, paths, features, runtime)
     proc = subprocess.run(
         argv,
         # Cargo is driven from the workspace root with `-p`; a pytest or vitest selection is
@@ -233,7 +241,7 @@ def run_selection(
         # something about interleaved output and nothing about the property.
         unread = [name for name in missing if name not in observed]
         if unread:
-            recovered = _rerun_unread(eco, crate, target, unread, features)
+            recovered = _rerun_unread(eco, crate, target, unread, features, runtime)
             passed |= recovered
             observed |= {name: "ok" for name in recovered}
             missing = sorted(set(paths) - passed)
@@ -251,8 +259,82 @@ def run_selection(
     return True, f"{target}: {len(paths)} passed"
 
 
-def measure_unit(unit: dict) -> tuple[bool, str]:
-    """Whether this unit's whole declared battery passed, and what to record about it."""
+def pinned_runtimes(eco, toolchains: dict) -> tuple[list[str], str | None]:
+    """The interpreter versions this ecosystem's batteries must be measured on.
+
+    `([None], None)` for an ecosystem with no runtime pin: the battery is measured once, as
+    it always was, and the returned `None` is the "no runtime named" the command builders
+    already understand.
+
+    An ecosystem whose pin exists but is UNRESOLVED gets a refusal rather than a run,
+    because that is the whole meaning of an unresolved pin: the identity of the thing that
+    decides the outcome is unknown, and unknown is dirty. A pin that is resolved but names
+    no interpreter is the same failure wearing a resolved label, so it is refused too — a
+    battery measured on an empty runtime set is a battery nobody ran.
+    """
+    entry = toolchains.get(eco.name)
+    if not isinstance(entry, dict):
+        return [None], None
+    if entry.get("state") != "resolved":
+        return [], (
+            f"the [{eco.name}] runtime pin is unresolved, so the identity of the runtime "
+            f"that decides this battery's outcome is unknown. A lane that ran anyway would "
+            f"record a result describing no named runtime"
+        )
+    runtimes = [str(v) for v in entry.get("interpreters", [])]
+    if not runtimes:
+        return [], (
+            f"the [{eco.name}] runtime pin is resolved and names no interpreter. An empty "
+            f"runtime set selects no environment, so the battery would report on nothing"
+        )
+    return sorted(runtimes), None
+
+
+def runtime_identity(eco, crate: str, runtime: str) -> tuple[bool, str]:
+    """Whether the prepared environment for `runtime` holds exactly that interpreter.
+
+    The pin names an EXACT patch version, and this is what makes that more than a comment:
+    an environment built on a different interpreter is refused before a single test runs.
+    Without the check the lane would report the pinned identity while measuring whatever
+    the machine had — the same substitution the pin exists to prevent, one level down.
+
+    A missing environment is a FAILURE, never a skip. `scripts/prepare_python_matrix.sh`
+    builds them, and a lane that quietly measured four of five runtimes would report a
+    green describing a supported set it never touched.
+    """
+    if eco is not PYTHON:
+        return True, runtime
+    venv = REPO_ROOT / crate / python_runtime_venv(runtime)
+    interpreter = venv / "bin" / "python"
+    if not interpreter.is_file():
+        return False, (
+            f"{runtime}: no prepared environment at {venv.relative_to(REPO_ROOT)} — run "
+            f"scripts/prepare_python_matrix.sh"
+        )
+    proc = subprocess.run(
+        [str(interpreter), "-c", "import sys;print('%d.%d.%d' % sys.version_info[:3])"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    reported = proc.stdout.strip()
+    if proc.returncode != 0 or reported != runtime:
+        return False, (
+            f"{runtime}: the prepared environment reports {reported or 'nothing'!r}, so the "
+            f"battery would be measured on an interpreter the pin does not name"
+        )
+    return True, runtime
+
+
+def measure_unit(unit: dict, toolchains: dict) -> tuple[bool, str]:
+    """Whether this unit's whole declared battery passed, and what to record about it.
+
+    ONCE PER PINNED RUNTIME, and every one of them must pass. A unit whose ecosystem
+    carries a runtime pin makes a claim about a SET of runtimes — for `sdk_python` the
+    supported CPython minors — and one interpreter's green is not evidence about the others.
+    The detail names each runtime measured, so the record says which set was covered rather
+    than leaving a reader to assume the declared one.
+    """
     eco = unit_ecosystem(unit)
     crate = unit_crate(unit)
     if eco is None or crate is None:
@@ -270,15 +352,28 @@ def measure_unit(unit: dict) -> tuple[bool, str]:
             f"({', '.join(malformed)})"
         )
 
+    runtimes, refusal = pinned_runtimes(eco, toolchains)
+    if refusal is not None:
+        return False, refusal
+
     features = sorted(unit.get("test_features", []))
     details: list[str] = []
     failed = False
-    for target in sorted(grouped):
-        suffix = f" (--features {','.join(features)})" if features else ""
-        print(f"    {crate} {target}: {len(grouped[target])} test(s){suffix}")
-        ok, detail = run_selection(eco, crate, target, grouped[target], features)
-        details.append(detail)
-        failed = failed or not ok
+    for runtime in runtimes:
+        if runtime is not None:
+            ok, identity = runtime_identity(eco, crate, runtime)
+            if not ok:
+                details.append(identity)
+                failed = True
+                continue
+        for target in sorted(grouped):
+            suffix = f" (--features {','.join(features)})" if features else ""
+            where = f" on cpython-{runtime}" if runtime is not None else ""
+            print(f"    {crate} {target}: {len(grouped[target])} test(s){suffix}{where}")
+            ok, detail = run_selection(eco, crate, target, grouped[target], features, runtime)
+            prefix = f"cpython-{runtime} " if runtime is not None else ""
+            details.append(f"{prefix}{detail}")
+            failed = failed or not ok
     return not failed, "; ".join(details)
 
 
@@ -305,7 +400,7 @@ def main() -> int:
         # which source exists when someone later reads it.
         measured_at = fingerprint_unit(unit, doc, toolchains, assumptions)["fingerprint"]
         print(f"verify-tests: {unit['id']}")
-        ok, detail = measure_unit(unit)
+        ok, detail = measure_unit(unit, toolchains)
         write_record(
             EVIDENCE_STORE,
             EvidenceRecord(

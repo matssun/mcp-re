@@ -133,7 +133,12 @@
       "node": "no THM (SDK unrooted)",
       "area": "sdk-client-exchange",
       "reason": "`_read_bounded` checks the deadline only between `response.read(want)` calls with `want` up to 64 KiB; `http.client` fills to `amt`. The docstring's cap claim is still false.",
-      "tracking_issue": 746
+      "tracking_issue": 746,
+      "merged_closure": {
+        "pr": 792,
+        "commit": "fdc154a82d75615bbbc4a9110583a47b9a77e590",
+        "note": "the aggregate read bound is enforced rather than registered: `_read_bounded` takes the body with `read1`, so no new underlying read begins after the deadline, and the per-recv timeout bounds the one already in progress — worst case the deadline plus one stall. Measured against a real HTTPResponse fed by a real trickling socket, and both halves shown load-bearing by removing them. ASM-0042, which registered the foreign `read(n)` fact as a premise, is withdrawn with an empty scope"
+      }
     },
     {
       "cluster": "R9-C011",
@@ -1133,7 +1138,12 @@
       "node": "no THM",
       "area": "sdk-client-exchange",
       "reason": "The fake's short-read semantics still differ from `http.client`, so the test passes over a property the production path lacks.",
-      "tracking_issue": 746
+      "tracking_issue": 746,
+      "merged_closure": {
+        "pr": 792,
+        "commit": "fdc154a82d75615bbbc4a9110583a47b9a77e590",
+        "note": "the fake with short-read semantics `http.client` lacks is deleted, and the property is measured on a real socket peer instead. Measured while closing it: the bogus control was NOT a declared `tested_symbol` of `sdk_python.exchange_path`, so it contaminated the repository's apparent coverage rather than the declared 31-control battery; the declared battery's actual defect was having no deadline control at all, and it is now 38 controls"
+      }
     },
     {
       "cluster": "R9-C095",
