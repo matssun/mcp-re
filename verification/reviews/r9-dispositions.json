@@ -15,11 +15,6 @@
       "node": "THM-0074 / kms_endpoint_policy",
       "area": "credential-acquisition",
       "reason": "`kms_endpoint_policy::kms_endpoint_authority` is now the single decision, applied at GCP (`gcp_kms_keysource.rs:611`), AWS-KMS, STS and the config boundary. The three-flag asymmetry is gone.",
-      "merged_closure": {
-        "pr": 765,
-        "commit": "aa1d82cae93cdef0ed79ec0850db3591b098d127",
-        "note": "`kms_endpoint_policy::kms_endpoint_authority` is a single owner for the rule and its ANSWER is now used: the constructors take the validated authority rather than calling the check and interpolating the raw endpoint back into a URL, so deleting the call no longer leaves a constructor that still reaches the endpoint. `--gcp-kms-endpoint` reaches it through `config_state::kms_endpoint::validated_kms_endpoint`"
-      },
       "tracking_issue": 742
     },
     {
@@ -244,11 +239,6 @@
       "node": "THM-0074 / kms_endpoint_policy",
       "area": "credential-acquisition",
       "reason": "One authority, three flags.",
-      "merged_closure": {
-        "pr": 765,
-        "commit": "aa1d82cae93cdef0ed79ec0850db3591b098d127",
-        "note": "the same rule covers all three flags — `--aws-kms-endpoint`, `--aws-sts-endpoint` and `--gcp-kms-endpoint` — through `kms_endpoint_refusals`, so the userinfo re-point is closed for STS and GCP and not only for AWS KMS"
-      },
       "tracking_issue": 742
     },
     {
@@ -260,11 +250,6 @@
       "node": "kms_endpoint_policy",
       "area": "credential-acquisition",
       "reason": "`kms_endpoint_policy/mod.rs:97` refuses userinfo explicitly, before any loopback reading.",
-      "merged_closure": {
-        "pr": 765,
-        "commit": "aa1d82cae93cdef0ed79ec0850db3591b098d127",
-        "note": "the loopback decision is made inside `kms_endpoint_authority` after userinfo is stripped, and the GCP path routes through the same function rather than having none"
-      },
       "tracking_issue": 742
     },
     {
@@ -444,11 +429,6 @@
       "node": "kms_endpoint_policy",
       "area": "credential-acquisition",
       "reason": "`aws_sts.rs:258/461` now call the shared authority.",
-      "merged_closure": {
-        "pr": 765,
-        "commit": "aa1d82cae93cdef0ed79ec0850db3591b098d127",
-        "note": "`aws_sts.rs:260` applies `kms_endpoint_authority` at construction as well as at the CLI, so the STS endpoint that receives the pod's projected token is held to the same authority rule"
-      },
       "tracking_issue": 742
     },
     {
@@ -1182,11 +1162,6 @@
       "node": "kms_endpoint_policy",
       "area": "credential-acquisition",
       "reason": "See C001.",
-      "merged_closure": {
-        "pr": 765,
-        "commit": "aa1d82cae93cdef0ed79ec0850db3591b098d127",
-        "note": "the refusal is no longer the KMS client's alone: `kms_endpoint_refusals` enumerates every endpoint flag the selected signing source exposes and validates each"
-      },
       "tracking_issue": 742
     },
     {
