@@ -25,6 +25,15 @@
 #             of the claim.
 #   Proof 7 — CONTAINMENT: a refused request never reaches the inner backend, with an
 #             accepted request in the same run as the positive control for the counter.
+#   Proof 8 — STARTUP POSTURE: a SELECTED security dependency that is unavailable makes
+#             the replica refuse to serve and say which dependency, and serving is
+#             restored once it returns — the recovery leg being the positive control,
+#             because "not ready" is also what a broken image looks like.
+#
+# EXECUTION ORDER IS 1, 2, 3, 5, 6, 7, 4, 8 — not the numbering. Proof 4 replaces every pod
+# the port-forwards are attached to, so every request-level proof runs before it and the
+# disruptive one runs last. The numbers are the order the proofs were ADDED and are kept
+# because they are what the release gate and its evidence refer to.
 #
 # Proofs 1-4 are all COHERENCE proofs — that replicas agree. Every request they send is a
 # valid one, and the only rejections they assert are ones the harness itself caused: a
@@ -65,7 +74,7 @@
 # PROVIDER=kind runs the IDENTICAL proofs against the same image + chart on a local
 # kind cluster — the pre-cloud gate. A green kind run is the same test as GKE or EKS,
 # run for free; only the cluster substrate and the cloud-credential source differ (see
-# PROVIDER). Exit 0 == all seven proofs pass.
+# PROVIDER). Exit 0 == all eight proofs pass.
 #
 # EKS prerequisites beyond the GKE list: eksctl + the aws CLI, an ECR_REGISTRY holding
 # this VERSION's images, and one run of docs/security/eks-kms-irsa-setup.sh to create
@@ -964,65 +973,12 @@ the wait quorum before looking at the inner backend."
   echo "  OK: continuation opened on A honoured on B."
 fi
 
-# --- Proof 4: zero-drop rolling update ---------------------------------------
-log "Proof 4 — zero-drop rolling update with drain"
-if [[ -z "$LOADGEN_POD" ]]; then
-  echo "  SKIP: MCP_RE_SKIP_ROLLING set (no in-cluster load generator)."
-else
-  PROXY_SVC="$(kubectl -n "$NAMESPACE" get svc -l app.kubernetes.io/name=mcp-re-proxy \
-    -o jsonpath='{.items[0].metadata.name}')"
-  [[ -n "$PROXY_SVC" ]] || fail "could not resolve the proxy Service"
-  # The Service ClusterIP DNS — kube-proxy load-balances across Ready endpoints and
-  # drops a draining pod (preStop) BEFORE it stops accepting, so new connections avoid
-  # it while in-flight requests on it complete. mTLS SNI/scheme still come from the
-  # client's --server-name / --server-ca; --remote-addr is host:port.
-  TARGET_ADDR="${PROXY_SVC}.${NAMESPACE}.svc.cluster.local:${BIND_PORT}"
-  # In-pod client flags: identity IDENTICAL to CLIENT_COMMON; file paths are the mounted
-  # loadgen Secret. No value contains a space, so a space-joined command line is safe.
-  LG="--server-name $MCP_RE_SERVER_NAME --signer-id $MCP_RE_SIGNER_ID --key-id $MCP_RE_KEY_ID"
-  LG="$LG --signing-key-seed @/etc/mcp-re-client/client-signing-seed"
-  LG="$LG --server-signer $MCP_RE_SERVER_SIGNER --server-key-id $MCP_RE_SERVER_KEY_ID"
-  # The in-cluster load generator needs the SAME resolved "<base>#<counter>" label the
-  # proxy is minting; the bare base is never minted when a trust-epoch source is wired.
-  LG="$LG --server-pubkey @/etc/mcp-re-client/server-pubkey --trust-epoch $(epoch_label)"
-  LG="$LG --audience $MCP_RE_AUDIENCE --target-uri $MCP_RE_TARGET_URI --trust-domain $TRUST_DOMAIN"
-  LG="$LG --tls-cert /etc/mcp-re-client/client-cert --tls-key /etc/mcp-re-client/client-key --server-ca /etc/mcp-re-client/server-ca"
-  # Time-bounded so the load spans the WHOLE rollout (a fixed request count can finish
-  # before the roll does and miss the tail). Counts drops over the window.
-  SECS="${MCP_RE_ROLLING_SECS:-75}"
-  # A drop is recorded WITH the client's stderr, not just as a tally. The two things
-  # that end a request here are not the same finding and must not look the same: a
-  # connection-level failure (the kube-proxy endpoint-propagation race this proof is
-  # actually about) versus a `verdict mismatch` (the proxy answered, and answered
-  # something other than accepted — a fail-closed regression). Discarding stderr made
-  # both print the bare word DROP, so a security regression during a rollout was
-  # indistinguishable from a load-balancer timing artefact and neither could be triaged
-  # after the fact. stdout is still discarded; only the diagnosis is kept.
-  REMOTE="end=\$(( \$(date +%s) + $SECS )); n=0; drops=0; \
-while [ \$(date +%s) -lt \$end ]; do \
-  why=\$(printf '%s\\n' '$REQ' | python /app/mcp_re_gke_client.py $LG --remote-addr $TARGET_ADDR --expect accepted 2>&1 >/dev/null) \
-    || { echo \"DROP \$(echo \$why | tr '\\n' ' ')\"; drops=\$((drops+1)); }; \
-  n=\$((n+1)); \
-done; echo \"loadgen: \$n requests, \$drops drop(s)\""
-  kubectl -n "$NAMESPACE" exec "$LOADGEN_POD" -- sh -c "$REMOTE" > /tmp/mcps90.load 2>&1 & LOAD=$!
-  sleep 2  # let the load loop establish steady traffic before the rollout starts
-  kubectl -n "$NAMESPACE" set env deploy/"$DEPLOY" ROLLOUT_NONCE="$(date +%s)"
-  kubectl -n "$NAMESPACE" rollout status deploy/"$DEPLOY" --timeout=300s
-  wait $LOAD || true
-  tail -1 /tmp/mcps90.load || true
-  # HONESTY GUARD: the loop MUST have run to completion (it prints a `loadgen:` summary
-  # with its request count). A killed/empty exec proves nothing — treat a missing
-  # summary or a zero request count as FAILURE, never a silent pass.
-  grep -q '^loadgen: ' /tmp/mcps90.load \
-    || fail "load generator did not complete (no summary; exec killed?) — cannot confirm zero-drop"
-  reqs="$(sed -n 's/^loadgen: \([0-9]*\) requests.*/\1/p' /tmp/mcps90.load)"
-  [[ "${reqs:-0}" -gt 20 ]] \
-    || fail "load generator ran only ${reqs:-0} requests — too few to span the rollout"
-  ! grep -q DROP /tmp/mcps90.load \
-    || fail "rolling update dropped in-flight requests ($(grep -c DROP /tmp/mcps90.load) of $reqs)"
-  echo "  OK: rolling update completed with zero drops across $reqs requests (load via the Service)."
-fi
-
+# Proofs 5-7 run BEFORE Proof 4, and the order is load-bearing rather than tidy.
+# Proof 4 performs a rolling update: every pod the port-forwards are attached to is
+# replaced, so a request-level proof after it opens a TLS connection to a dead tunnel and
+# dies with `SSLEOFError` — which the `prove` guard correctly refuses to read as evidence
+# about a security property, and reports as a HARNESS failure. Measured: appended after
+# Proof 4, Proof 5 failed exactly that way. The disruptive proof goes last.
 # --- Proof 5: a stale request fails closed -----------------------------------
 #
 # The four proofs above are all about COHERENCE — that replicas agree. None of them asks
@@ -1093,4 +1049,125 @@ INNER_AFTER_ACCEPTED="$(inner_posts)"
   || fail "the inner POST counter did not move for an ACCEPTED request ($INNER_AFTER_REFUSALS -> $INNER_AFTER_ACCEPTED). The counter measures nothing, so Proof 7's negative leg is not evidence — check that the inner deployment is $INNER_DEPLOY and that its access log is on."
 echo "  OK: three refused requests reached the backend 0 times; an accepted one reached it."
 
-log "ALL SEVEN LIVE PROOFS PASSED"
+# --- Proof 4: zero-drop rolling update ---------------------------------------
+log "Proof 4 — zero-drop rolling update with drain"
+if [[ -z "$LOADGEN_POD" ]]; then
+  echo "  SKIP: MCP_RE_SKIP_ROLLING set (no in-cluster load generator)."
+else
+  PROXY_SVC="$(kubectl -n "$NAMESPACE" get svc -l app.kubernetes.io/name=mcp-re-proxy \
+    -o jsonpath='{.items[0].metadata.name}')"
+  [[ -n "$PROXY_SVC" ]] || fail "could not resolve the proxy Service"
+  # The Service ClusterIP DNS — kube-proxy load-balances across Ready endpoints and
+  # drops a draining pod (preStop) BEFORE it stops accepting, so new connections avoid
+  # it while in-flight requests on it complete. mTLS SNI/scheme still come from the
+  # client's --server-name / --server-ca; --remote-addr is host:port.
+  TARGET_ADDR="${PROXY_SVC}.${NAMESPACE}.svc.cluster.local:${BIND_PORT}"
+  # In-pod client flags: identity IDENTICAL to CLIENT_COMMON; file paths are the mounted
+  # loadgen Secret. No value contains a space, so a space-joined command line is safe.
+  LG="--server-name $MCP_RE_SERVER_NAME --signer-id $MCP_RE_SIGNER_ID --key-id $MCP_RE_KEY_ID"
+  LG="$LG --signing-key-seed @/etc/mcp-re-client/client-signing-seed"
+  LG="$LG --server-signer $MCP_RE_SERVER_SIGNER --server-key-id $MCP_RE_SERVER_KEY_ID"
+  # The in-cluster load generator needs the SAME resolved "<base>#<counter>" label the
+  # proxy is minting; the bare base is never minted when a trust-epoch source is wired.
+  LG="$LG --server-pubkey @/etc/mcp-re-client/server-pubkey --trust-epoch $(epoch_label)"
+  LG="$LG --audience $MCP_RE_AUDIENCE --target-uri $MCP_RE_TARGET_URI --trust-domain $TRUST_DOMAIN"
+  LG="$LG --tls-cert /etc/mcp-re-client/client-cert --tls-key /etc/mcp-re-client/client-key --server-ca /etc/mcp-re-client/server-ca"
+  # Time-bounded so the load spans the WHOLE rollout (a fixed request count can finish
+  # before the roll does and miss the tail). Counts drops over the window.
+  SECS="${MCP_RE_ROLLING_SECS:-75}"
+  # A drop is recorded WITH the client's stderr, not just as a tally. The two things
+  # that end a request here are not the same finding and must not look the same: a
+  # connection-level failure (the kube-proxy endpoint-propagation race this proof is
+  # actually about) versus a `verdict mismatch` (the proxy answered, and answered
+  # something other than accepted — a fail-closed regression). Discarding stderr made
+  # both print the bare word DROP, so a security regression during a rollout was
+  # indistinguishable from a load-balancer timing artefact and neither could be triaged
+  # after the fact. stdout is still discarded; only the diagnosis is kept.
+  REMOTE="end=\$(( \$(date +%s) + $SECS )); n=0; drops=0; \
+while [ \$(date +%s) -lt \$end ]; do \
+  why=\$(printf '%s\\n' '$REQ' | python /app/mcp_re_gke_client.py $LG --remote-addr $TARGET_ADDR --expect accepted 2>&1 >/dev/null) \
+    || { echo \"DROP \$(echo \$why | tr '\\n' ' ')\"; drops=\$((drops+1)); }; \
+  n=\$((n+1)); \
+done; echo \"loadgen: \$n requests, \$drops drop(s)\""
+  kubectl -n "$NAMESPACE" exec "$LOADGEN_POD" -- sh -c "$REMOTE" > /tmp/mcps90.load 2>&1 & LOAD=$!
+  sleep 2  # let the load loop establish steady traffic before the rollout starts
+  kubectl -n "$NAMESPACE" set env deploy/"$DEPLOY" ROLLOUT_NONCE="$(date +%s)"
+  kubectl -n "$NAMESPACE" rollout status deploy/"$DEPLOY" --timeout=300s
+  wait $LOAD || true
+  tail -1 /tmp/mcps90.load || true
+  # HONESTY GUARD: the loop MUST have run to completion (it prints a `loadgen:` summary
+  # with its request count). A killed/empty exec proves nothing — treat a missing
+  # summary or a zero request count as FAILURE, never a silent pass.
+  grep -q '^loadgen: ' /tmp/mcps90.load \
+    || fail "load generator did not complete (no summary; exec killed?) — cannot confirm zero-drop"
+  reqs="$(sed -n 's/^loadgen: \([0-9]*\) requests.*/\1/p' /tmp/mcps90.load)"
+  [[ "${reqs:-0}" -gt 20 ]] \
+    || fail "load generator ran only ${reqs:-0} requests — too few to span the rollout"
+  ! grep -q DROP /tmp/mcps90.load \
+    || fail "rolling update dropped in-flight requests ($(grep -c DROP /tmp/mcps90.load) of $reqs)"
+  echo "  OK: rolling update completed with zero drops across $reqs requests (load via the Service)."
+fi
+
+# --- Proof 8: an unavailable security dependency refuses to serve -------------
+#
+# The startup-posture half. Every proof above runs against a fleet whose selected security
+# dependencies are all present; none of them asks what happens when one is not. The
+# fail-closed direction is the whole product claim here, and "the proxy refuses" is a
+# sentence in a startup log until something removes the dependency and watches.
+#
+# The trust-epoch counter is the dependency chosen because its absence is UNAMBIGUOUS: an
+# absent key is not epoch 0. It is indistinguishable from a counter that was never created,
+# was deleted, or was lost to a restore, and reading it as a baseline would leave the push
+# kill switch inert or let a restarted replica mint under a rolled-back epoch. The proxy
+# says exactly that and exits.
+#
+# RUNS LAST, after the rolling update, because it deliberately breaks a replica.
+log "Proof 8 — an unavailable security dependency refuses to serve"
+EPOCH_SAVED="$(kubectl -n "$NAMESPACE" exec deploy/mcp-re-redis -- \
+  redis-cli GET mcp-re:trust:epoch 2>/dev/null | tr -d '\r')"
+[[ -n "$EPOCH_SAVED" ]] || fail "could not read the trust-epoch counter before removing it"
+
+restore_epoch() {  # always, even on failure: the fleet must not be left broken
+  kubectl -n "$NAMESPACE" exec deploy/mcp-re-redis -- \
+    redis-cli SET mcp-re:trust:epoch "$EPOCH_SAVED" >/dev/null 2>&1 || true
+}
+trap restore_epoch EXIT
+
+kubectl -n "$NAMESPACE" exec deploy/mcp-re-redis -- redis-cli DEL mcp-re:trust:epoch >/dev/null
+VICTIM="$(kubectl -n "$NAMESPACE" get pod -l app.kubernetes.io/name=mcp-re-proxy \
+  -o jsonpath='{.items[0].metadata.name}')"
+[[ -n "$VICTIM" ]] || fail "could not resolve a replica to restart"
+kubectl -n "$NAMESPACE" delete pod "$VICTIM" --wait=false >/dev/null
+
+# It must NOT come up. Waiting for a NEGATIVE needs a bound: 90s is far longer than a
+# healthy start, which the proofs above have already demonstrated repeatedly.
+refused=""
+for _ in $(seq 1 30); do
+  if kubectl -n "$NAMESPACE" logs -l app.kubernetes.io/name=mcp-re-proxy --tail=40 2>/dev/null \
+       | grep -q 'trust-epoch key .* does not exist'; then
+    refused=1; break
+  fi
+  sleep 3
+done
+[[ -n "$refused" ]] \
+  || fail "no replica reported the absent trust-epoch dependency; a security dependency was removed and nothing refused"
+
+ready_now="$(kubectl -n "$NAMESPACE" get pods -l app.kubernetes.io/name=mcp-re-proxy \
+  -o jsonpath='{range .items[*]}{.status.containerStatuses[0].ready}{"\n"}{end}' | grep -c true || true)"
+(( ready_now < REPLICAS )) \
+  || fail "every replica is Ready with the trust-epoch dependency ABSENT — it did not fail closed"
+echo "  OK: the dependency was removed and the replica refused to serve, naming it."
+
+# THE POSITIVE CONTROL. "Not ready" is also what a broken image, a bad Secret or an
+# unschedulable node look like, so the same replica must RECOVER once the dependency comes
+# back — and recover without a rollback, which is the other half of the posture claim.
+restore_epoch
+kubectl -n "$NAMESPACE" delete pod -l app.kubernetes.io/name=mcp-re-proxy --wait=false >/dev/null
+kubectl -n "$NAMESPACE" rollout status deploy/"$DEPLOY" --timeout=300s >/dev/null \
+  || fail "the fleet did not recover after the security dependency was restored — 'not ready' above cannot be attributed to the dependency"
+trap - EXIT
+printf '%s\n' "$REQ" | client --remote-addr "$REPLICA_A" --expect accepted >/dev/null 2>&1 \
+  || echo "  note: replica A's port-forward did not survive the restart; recovery is established by the rollout above"
+echo "  OK: serving restored once the dependency returned, with no rollback."
+
+log "ALL EIGHT LIVE PROOFS PASSED"
