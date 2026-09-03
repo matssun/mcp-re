@@ -6,6 +6,8 @@ node_modules/
 **/node_modules/
 .venv*/
 **/.venv*/
+sdk/typescript/.node-v*/
+**/__pycache__/
 sdk/**/dist/
 sdk/**/native/
 *.log

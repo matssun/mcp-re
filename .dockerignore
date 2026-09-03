@@ -41,3 +41,25 @@ work/
 .aws/
 .gcloud/
 .kube/
+
+# LOCAL RUNTIME TREES. Every Dockerfile here does `COPY . .`, so these are copied into
+# the build context, into the builder layer, and — for the CodeBuild path — into the
+# uploaded source.zip. They are none of them inputs to any image.
+#
+# They are also LARGE, and that is not a tidiness point: the four Node lines the
+# TypeScript runtime matrix installs (~780 MB) plus the seven Python venvs (~550 MB) plus
+# `node_modules` (~155 MB) took the proxy build's context from ~90 MB to 1.62 GB, and the
+# Docker VM ran out of disk mid-`COPY` — which fails the fleet lane at image build, before
+# a single security proof runs. A build context that grows with the local toolchain matrix
+# makes the acceptance gate depend on how many runtimes the developer happens to have
+# installed.
+#
+# The matrices themselves are correct and stay: `scripts/prepare_node_matrix.sh` and
+# `scripts/prepare_python_matrix.sh` install them so a battery is measured on every
+# supported runtime. They belong beside the SDK sources and not inside an image.
+node_modules/
+**/node_modules/
+.venv*/
+**/.venv*/
+sdk/typescript/.node-v*/
+**/__pycache__/

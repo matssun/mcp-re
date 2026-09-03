@@ -67,6 +67,23 @@ replay:
   # namespace, a service mesh terminating TLS transparently).
   allowPlaintextRedis: false
 
+# MRTR continuation correlation (ADR-MCPS-047). The shared store that lets a
+# multi-round-trip answer leg be honoured by a DIFFERENT replica than the one that
+# opened it. Empty is OFF and is a legitimate posture: with no store the proxy refuses a
+# continuation-dependent leg at the point it would be opened, so an `input_required`
+# reply is never returned unanswerable.
+#
+# Off was also the only posture the chart could express. The proxy has taken
+# `--continuation-control-redis-url` since ADR-MCPS-047 and this chart never rendered it,
+# so multi-round-trip elicitation was unreachable on every Helm-deployed fleet — including
+# the one the live multi-replica harness proves Proof 3 against.
+#
+# Same scheme rule as replay.redisUrl, governed by the same `replay.allowPlaintextRedis`
+# escape hatch: the correlation record binds an answer leg to the request that opened it,
+# so an unauthenticated peer who can write it can redirect a continuation.
+continuationControl:
+  redisUrl: ""
+
 # Trust revocation (ADR-MCPS-021 / MCPS-84). The push tier + a trust-epoch Redis
 # source gives near-zero cross-replica revocation lag (bounded T on outage). Set
 # trustEpochRedisUrl to "" to run the push tier inert (bounded-T only).

@@ -30,6 +30,9 @@ claimed the guard held "at any replica count" and the chart did not.
 {{- fail "admissionCurrency.allowDegraded=true requires a positive admissionCurrency.degradedBoundSecs: degraded serving is a BOUNDED window measured from the last successful authority read, and an unbounded or zero one is not a policy." -}}
 {{- end -}}
 {{- else -}}
+{{- if and .Values.continuationControl.redisUrl (not .Values.replay.allowPlaintextRedis) (hasPrefix "redis://" .Values.continuationControl.redisUrl) -}}
+{{- fail "continuationControl.redisUrl is plaintext redis:// — the correlation record is what binds an answer leg to the request that opened it, so an unauthenticated peer who can write it can redirect a continuation. Use rediss:// with credentials, or set replay.allowPlaintextRedis=true to accept the risk deliberately." -}}
+{{- end -}}
 {{- if or .Values.admissionCurrency.authorityKid .Values.admissionCurrency.redisUrl -}}
 {{- fail "admissionCurrency.authorityKid / admissionCurrency.redisUrl are set but admissionCurrency.mode is off — the rendered args would read as 'admission control is configured' to anyone auditing them while nothing is enforced. Set mode to optional|required, or clear them." -}}
 {{- end -}}
@@ -146,6 +149,16 @@ spec:
             - {{ .Values.revocation.trustEpochRedisUrl | quote }}
             - "--trust-epoch-key"
             - {{ .Values.revocation.trustEpochKey | quote }}
+            {{- end }}
+            {{- if .Values.continuationControl.redisUrl }}
+            # MRTR continuation correlation (ADR-MCPS-047). OPTIONAL, and the chart
+            # could not express it at all: with no correlation store the proxy refuses a
+            # continuation-dependent leg at the point it would be OPENED — the fail-closed
+            # direction, and a loud startup line says so — but a Helm-deployed fleet had no
+            # way to turn it on, so multi-round-trip elicitation was unreachable on every
+            # chart deployment and the live harness's Proof 3 could not pass.
+            - "--continuation-control-redis-url"
+            - {{ .Values.continuationControl.redisUrl | quote }}
             {{- end }}
             - "--max-client-cert-lifetime"
             - "{{ .Values.maxClientCertLifetimeSeconds }}"
