@@ -2438,3 +2438,48 @@ weakening = """
 expect_red = [
   "lib#http_profile_serve::continuation::answer_leg::tests::a_store_outage_is_refused_before_admission_and_is_not_a_miss",
 ]
+
+[[probe]]
+id = "M88-the-key-operand-is-the-carried-products-actor"
+unit = "proxy.continuation_key_provenance"
+theorem = "THM-0087"
+conjunct = "The operand supplied to the continuation key is the actor projection of the verified product this exchange carries"
+# The weakening keeps the carried product's key material and swaps only the identity for the
+# one the body names, which is what the regression would look like: a leg trusting a caller's
+# own account of who it is because the caller stated it in members the leg was already
+# parsing. Every store-side control stays green under it — they compare two actors supplied
+# the same way — so this probe is the only thing between that change and a green battery.
+path = "mcp-re-proxy/src/http_profile_serve/continuation/answer_leg.rs"
+anchor = """
+            .map(|state| continuation_key(audience_id, ex.actor_id, state.as_bytes()));
+"""
+weakening = """
+            .map(|state| {
+                let asserted = serde_json::from_slice::<serde_json::Value>(&ex.http_req.body)
+                    .ok()
+                    .and_then(|v| {
+                        let named = v.get("params")?.get("actorIdentity")?.clone();
+                        let field = |k: &str| {
+                            named
+                                .get(k)
+                                .and_then(|x| x.as_str())
+                                .unwrap_or_default()
+                                .to_owned()
+                        };
+                        Some(
+                            mcp_re_http_profile::ActorIdentity {
+                                role: field("role"),
+                                trust_domain: field("trust_domain"),
+                                subject: field("subject"),
+                                keyid: field("keyid"),
+                            }
+                            .actor_id(),
+                        )
+                    });
+                let actor_id = asserted.unwrap_or_else(|| ex.actor_id.to_owned());
+                continuation_key(audience_id, &actor_id, state.as_bytes())
+            });
+"""
+expect_red = [
+  "lib#http_profile_serve::continuation::answer_leg::tests::the_operand_is_the_carried_products_actor_and_not_one_the_body_asserts",
+]

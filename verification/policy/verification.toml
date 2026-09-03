@@ -3155,6 +3155,45 @@ tested_symbols = [
 # the claim is about the store, and half the store does not exist in the default crate.
 test_features = ["redis_replay"]
 
+# ADR-MCPRE-059 §28 / issue #744. The final hop of the continuation-correlation claim, and a
+# separate unit because it is a separate authority: the store owns what a KEY separates, this
+# owns which actor the serving path supplies to it. Not a widened store unit — the store's
+# files decide neither question, and a store unit reaching into `http_profile_serve` would own
+# two independently describable authorities.
+
+[[unit]]
+id = "proxy.continuation_key_provenance"
+class = "V0"
+description = "The actor projection belonging to the verified product this exchange carries is the operand supplied to the continuation key, on the open leg and the answer leg alike."
+paths = [
+  "mcp-re-proxy/src/http_profile_serve/continuation/answer_leg.rs",
+  "mcp-re-proxy/src/http_profile_serve/continuation/open_leg.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://proxy/continuation_key/carried_product_operand",
+  "mutation://proxy/continuation_key/carried_product_operand",
+]
+# WHAT IS A PREMISE HERE RATHER THAN A CONJUNCT. That the product the exchange carries is the
+# one THIS exchange's verification returned is THM-0051's, and that the actor inside it was
+# resolved through the trust seam is THM-0014's, reached through THM-0051's own closure.
+# Neither is re-derived, and neither could be measured from these two files: they are reached
+# by an edge, not by a control.
+#
+# What IS measured is the step between those premises and the key — that both legs supply the
+# carried product's actor projection and nothing else. Two controls, because the answer leg's
+# scoping is only worth having if the open leg recorded under the same actor.
+#
+# The mutation URI is not optional. Both controls are positive assertions, and a positive
+# assertion is also satisfied by an implementation that reads the request and happens to
+# agree. Probe M88 substitutes a body-derived identity for the operand: the answer-leg control
+# goes red and every store-side separation control stays green, which is the only thing
+# distinguishing this evidence from a battery that would pass on the defect.
+tested_symbols = [
+  "lib#http_profile_serve::continuation::answer_leg::tests::the_operand_is_the_carried_products_actor_and_not_one_the_body_asserts",
+  "lib#http_profile_serve::continuation::open_leg::tests::the_leg_is_recorded_under_the_carried_products_actor",
+]
+
 # ADR-MCPRE-059 §28 / issue #744, D2a and D2b. The other half of the pair whose D1 leaves
 # sit above: D1 says the tier the serving path holds is the one the configuration selected,
 # and these say what happens when that tier cannot establish the state a request requires.
