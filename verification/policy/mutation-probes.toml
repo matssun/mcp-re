@@ -2526,7 +2526,7 @@ expect_red = [
 id = "M90-a-selected-capability-is-never-announced-off"
 unit = "proxy.continuation_materialization"
 theorem = "THM-0096"
-conjunct = "A selected continuation store this build cannot establish refuses startup rather than announcing OFF"
+conjunct = "A selected continuation store this build cannot carry refuses startup rather than announcing OFF"
 # The weakening restores the behaviour the ruling removed, and it is worth being precise
 # about why it was ever written: `Established::off` here makes a binary without the backend
 # startable with any configuration, which reads as robustness. The cost is that an operator

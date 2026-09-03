@@ -132,7 +132,7 @@ any of them is closed.
 | THM-0093 | An answer leg that needs a continuation does not proceed unbound | proxy.continuation_leg_binding | unit://proxy.continuation_leg_binding | live |
 | THM-0094 | The shipped Python SDK accepts only an answer to its own request | sdk_python.exchange_path | unit://sdk_python.exchange_path | live |
 | THM-0095 | The shipped TypeScript SDK accepts only an answer to its own request | sdk_typescript.exchange_path | unit://sdk_typescript.exchange_path | live |
-| THM-0096 | The runtime installs exactly the continuation capability the deployment selected | proxy.continuation_materialization | unit://proxy.continuation_installation, unit://proxy.continuation_materialization | live |
+| THM-0096 | The runtime installs exactly the continuation capability the deployment selected | proxy.continuation_materialization | unit://proxy.continuation_installation, unit://proxy.continuation_materialization, unit://proxy.continuation_materialization_shared | live |
 
 ## Claims in full
 

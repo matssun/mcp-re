@@ -4486,6 +4486,9 @@ owner = "proxy.continuation_materialization"
 review_requirement = "Owner security-specification review"
 supported_by = [
   "unit://proxy.continuation_materialization",
+  # The same seam's other build profile. Two units because the two arms are mutually
+  # exclusive at compile time and no single lane runs both — see the units' own notes.
+  "unit://proxy.continuation_materialization_shared",
   "unit://proxy.continuation_installation",
 ]
 depends_on = []

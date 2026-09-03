@@ -59,6 +59,7 @@ attestations this view cannot see.
 | unit://proxy.continuation_key_provenance | source, contracts or evidence | THM-0087 | _no consumer_ |
 | unit://proxy.continuation_leg_binding | source, contracts or evidence | THM-0093 | _no consumer_ |
 | unit://proxy.continuation_materialization | source, contracts or evidence | THM-0096 | _no consumer_ |
+| unit://proxy.continuation_materialization_shared | source, contracts or evidence | THM-0096 | _no consumer_ |
 | unit://proxy.credential_currency | source, contracts or evidence | THM-0032 | proxy.current_authenticated_peer (CONTRACT_CONSUMES) |
 | unit://proxy.credential_key_correspondence | source, contracts or evidence | THM-0026 | proxy.delegated_resolver_materialization (CONTRACT_CONSUMES) |
 | unit://proxy.cross_machine_legality | source, contracts or evidence | THM-0049, THM-0077 | _no consumer_ |

@@ -3116,6 +3116,16 @@ paths = [
 ]
 exported_contracts = []
 evidence = ["test://proxy/continuation_materialization/selected_capability_is_installed"]
+# THE DEFAULT LANE'S HALF, and why the shared arm is a separate unit rather than a
+# `test_features` on this one. `mrtr_continuation_store` has TWO bodies selected by `cfg`,
+# and each can only have the other's defect: the `not(redis_replay)` arm can announce OFF
+# for a store it cannot carry, and the `redis_replay` arm can announce OFF for a store it
+# failed to reach. A control for one is compiled to NOTHING in the other's lane — the
+# platform's test lane caught exactly that and reported "never ran", which is the correct
+# refusal — and a unit cannot declare both, because no single lane runs both. So the claim
+# is measured by two units, one per build profile, and the theorem composes them. That
+# split is the honest statement of a property that genuinely differs by build.
+#
 # THE DECLARATION CONJUNCT, and where its evidence actually is.
 #
 # `PostureLog::assert_complete` is the strong check and is NEVER REACHED hermetically: the
@@ -3144,10 +3154,9 @@ tested_symbols = [
   # The operator-facing half of the same claim. A line promising "single-replica MRTR" or an
   # in-memory tier is evidence a fallback came back.
   "lib#serving_capabilities::continuation::tests::the_off_line_promises_no_local_fallback",
-  # A SELECTED capability that cannot be established refuses. Two controls because the two
-  # build profiles fail for different reasons and only one of them can have each defect.
+  # A SELECTED capability this BUILD cannot carry refuses. The default lane's arm; the
+  # feature lane's arm is a separate unit, for the reason written above this one.
   "lib#serving_capabilities::continuation::tests::a_selected_capability_this_build_cannot_carry_refuses_startup",
-  "lib#serving_capabilities::continuation::tests::a_selected_capability_that_cannot_be_established_refuses_startup",
   # The input is the OWNER's projection. Without it the controls above could be satisfied by
   # a seam reading some other value, and none of them would be about the SELECTION.
   "lib#serving_capabilities::continuation::tests::the_seam_reads_the_owners_projection_and_not_a_locator_of_its_own",
@@ -3161,6 +3170,32 @@ tested_symbols = [
   # it is a capability a deployment can install without the transcript mentioning it.
   "lib#startup_posture::seam::tests::every_seam_is_in_the_set_the_transcript_is_checked_against",
 ]
+
+# The other build profile's arm of the SAME claim. A separate unit and not a
+# `test_features` on the one above, because the two arms are mutually exclusive at compile
+# time: whichever lane runs, the other unit's control does not exist. `test_features` here
+# selects the lane this arm lives in, which is what makes its battery measurable at all.
+[[unit]]
+id = "proxy.continuation_materialization_shared"
+class = "V0"
+description = "The shared arm of the same seam: in a build that CARRIES the backend, a selected continuation store that cannot be established refuses startup rather than announcing OFF."
+paths = ["mcp-re-proxy/src/serving_capabilities/continuation.rs"]
+exported_contracts = []
+evidence = ["test://proxy/continuation_materialization/shared_arm_refuses_an_unestablishable_store"]
+# ONE control, deliberately. Everything the two arms share — OFF installs nothing, the OFF
+# line promises no fallback, the input is the owner's projection — is already measured by
+# `proxy.continuation_materialization` with controls that are not `cfg`-gated and therefore
+# run in this lane too. Restating them here would put one fact under two owners.
+#
+# What is measured is only the DIRECTION this arm can get wrong: an establishment that does
+# not happen is an error, never an OFF posture.
+tested_symbols = [
+  "lib#serving_capabilities::continuation::tests::a_selected_capability_that_cannot_be_established_refuses_startup",
+]
+# The feature this arm is compiled by. Declared rather than left to another lane: half the
+# seam does not exist in the default crate, and a lane that compiles it to zero tests would
+# report green having measured nothing.
+test_features = ["redis_replay"]
 
 [[unit]]
 id = "proxy.continuation_installation"
