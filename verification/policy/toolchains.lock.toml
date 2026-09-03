@@ -66,16 +66,64 @@ runner resolves a different source_url/sha256 for the same release, and that lan
 identity must be recorded separately before it may report a PASS.
 """
 
+[verus.binaries]
+state = "resolved"
+verus = "sha256:72b8b03b8341580500306e9b422360a7361c5a61ffde282874f960e58ed99550"
+rust_verify = "sha256:51b413e6160f06d44d6b1fcb05e1f36386f9d0e30c57e2af16d4eff0954e4966"
+cargo-verus = "sha256:b9204f01a05d06bbe73fb02af4a76b41c8afa938ac822d044299e9f37a9410a0"
+note = """
+R9-C083. Every key is a file name under `verus.install_root`, digested. Nothing identified
+these before: the lane checked `vstd.vir` and the commit `version.json` DECLARES, and a
+substituted `rust_verify` that shipped the pinned vstd beside a truthful version.json
+passed both. The two checks established that the pinned SPECIFICATION LIBRARY was present,
+which was read as establishing that the pinned PROVER was — and it is the prover that
+decides whether an obligation is discharged.
+
+version.json remains checked and is not made redundant by these. A digest says which bytes
+are on disk; the declared commit says what those bytes claim to be, and a mismatch between
+the two is a different defect from a mismatch with the lock.
+
+Platform-specific, exactly as `verus.install_root` and `verus.source_url` already are: a
+Linux runner installs a different build of the same release and must record its identity
+here separately before that lane may report a PASS. This is the divergence the [verus]
+note already anticipates, now with a second host-dependent value rather than one.
+"""
+
 [verus.vstd]
 state = "resolved"
 identity = "sha256:0970f728e2f537def9a465410df665ea7071c7de0f66d86022390d2876c6df22"
-note = "sha256 of vstd.vir as shipped in the pinned release; libvstd.rlib is 0221751f5a0d2fa91a31a580eea35282b59bff970a6be0eeb19836c716aab3a0."
+rlib_identity = "sha256:0221751f5a0d2fa91a31a580eea35282b59bff970a6be0eeb19836c716aab3a0"
+note = """
+`identity` is vstd.vir — the specification library the proofs are STATED against.
+`rlib_identity` is libvstd.rlib, the compiled library they LINK against, and the two can
+differ: a .vir matching the pin while the .rlib beside it does not is an installation
+assembled from two releases.
+
+The rlib digest was recorded in this note (R9-C083) and nowhere else. `note` is the one
+field `_toolchain_identity` strips from the fingerprint, so a digest written there is
+stripped from every identity that quotes it — a value present for a human reader and
+absent from every check and every attestation. A digest belongs in a key, and a key is
+what it is now.
+"""
 
 [verus.z3]
 state = "resolved"
 version = "4.16.0"
-identity = "bundled in the pinned Verus release archive"
-note = "As packaged or required by the pinned Verus release, not whatever Z3 is on PATH."
+path = "z3"
+identity = "sha256:edae32f9e37ea4b5bb35310d72f0e352d0dc07626cac4e9e30bc1ea9a5bc8efb"
+note = """
+`identity` was the sentence "bundled in the pinned Verus release archive" (R9-C070). That
+is a claim about where the solver comes from, not a statement of which bytes answered the
+queries: it could not be compared with anything, and the solver is the component that
+DECIDES each proof obligation. A solver that answers `unsat` to everything discharges every
+proof in the repository, and a lock that identifies it by provenance prose cannot tell that
+one from this one.
+
+`path` is relative to `verus.install_root`. It is recorded rather than assumed because the
+lane now sets `VERUS_Z3_PATH` to exactly this file: the process previously inherited that
+variable from the environment, so the pinned prover ran with whichever solver the caller
+named while the lock read as fully pinned.
+"""
 
 # ---------------------------------------------------------------------------
 # Aeneas / Lean lane — required before any V2 unit exists

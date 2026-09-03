@@ -13,18 +13,30 @@ prover of unknown identity is not evidence, and reporting it as a pass would be 
 the "stale or mismatched cache accepted as proof" threat the ADR names.
 
 The install root is a path outside the repository, on a persistent runner, so agreeing on
-the path establishes nothing about the bytes there. Two independent identity checks run
-before any verdict is recorded, and the lane refuses if either is absent:
+the path establishes nothing about the bytes there. Every identity the lock records is
+compared before any verdict, and the lane refuses if one is absent:
 
-  * the installed `vstd.vir` must digest to the `verus.vstd` identity the lock records —
-    the prover's specification library is what the proofs are stated against, and it is the
-    one large artifact the lock names by content;
+  * every file `verification/policy/toolchains.lock.toml` names by digest must digest to
+    it — `vstd.vir` and `libvstd.rlib`, the `verus.binaries` executables, and the pinned
+    solver. The set comes from the lock, so pinning one more artefact is an edit there;
   * the release's `version.json` must declare the pinned commit, checked before the run
     rather than taken from the run's own report.
 
-Neither is a signature, and a substituted binary that ships the pinned vstd still passes
-them. They close the case the lock previously only appeared to close: a recorded hash that
-nothing ever compared.
+That set used to be `vstd.vir` and the commit alone, which established that the pinned
+SPECIFICATION LIBRARY was installed and was read as establishing that the pinned PROVER
+was. It does not: a substituted `rust_verify` shipping the pinned vstd beside a truthful
+version.json passed both, and the solver — the component that decides each obligation —
+was identified by a sentence about where it came from rather than by its bytes.
+
+None of this is a signature. What it closes is the weaker and more common case: a digest
+recorded in the lock and compared against nothing, which has exactly the standing of no
+check while the repository believes otherwise.
+
+The lane also NAMES its solver. It built its subprocess environment from `os.environ`, so
+`VERUS_Z3_PATH` passed through and the pinned prover ran against whichever solver the
+caller had exported — with every check above it still reading as fully pinned. It is now
+set from the lock, so the file this lane digested and the file the prover executes are the
+same path, stated once.
 
 A lane with no V1/V3 unit to check is NOT_REQUIRED, whether or not the toolchain is
 pinned: the manifest asks nothing of it, which is a legitimately empty lane rather than a
@@ -51,11 +63,11 @@ from _manifest import (  # noqa: E402
     load_assumptions,
     load_toolchains,
     load_verification,
-    unresolved_pins,
+    unpinned_identities,
 )
 from _verus_results import evaluate_unit, parse_reports  # noqa: E402
 
-REQUIRED = {"verus", "verus.vstd", "verus.z3", "rust"}
+REQUIRED = {"verus", "verus.binaries", "verus.vstd", "verus.z3", "rust"}
 
 #: The lane builds into its own target directory. The `verify` feature pulls in vstd and
 #: switches on a nightly feature gate, so sharing `target/` with ordinary builds would
@@ -84,6 +96,105 @@ def unit_target(unit: dict) -> tuple[str | None, list[str]]:
     return crates.pop(), list(unit.get("features", []))
 
 
+def _lane_env(toolchains: dict, install_root: Path) -> dict[str, str]:
+    """The environment the prover runs in, with its solver NAMED rather than inherited.
+
+    R9-C070. The lane built its environment as `{**os.environ, …}`, so `VERUS_Z3_PATH`
+    passed straight through: the pinned prover ran against whichever solver the caller had
+    exported, and every check above it — the lock's `state = "resolved"`, the vstd digest,
+    the declared commit — kept reading as fully pinned. The docstring's promise that the
+    lane "never falls back to whatever `verus`/`z3` happen to be on PATH" was true of PATH
+    and silent about the variable that outranks it.
+
+    Setting it is the repair rather than deleting it. Unset, the prover resolves the solver
+    beside itself, which is the right file today and is resolution BY LAYOUT — the same
+    class of unstated identity, one directory down. Set from the lock, the file the lane
+    digested and the file the prover executes are the same path, stated once.
+    """
+    return {
+        **os.environ,
+        "CARGO_TARGET_DIR": str(LANE_TARGET_DIR),
+        "VERUS_Z3_PATH": str(
+            install_root / str(toolchains["verus"].get("z3", {}).get("path", "z3"))
+        ),
+    }
+
+
+def _pinned_files(toolchains: dict) -> dict[str, str]:
+    """Every file under the install root the lock names by digest, path -> `sha256:…`.
+
+    Assembled from the lock rather than listed here, so pinning one more artefact is an
+    edit to `toolchains.lock.toml` and to nothing else. A hard-coded list would be a second
+    place that decides what the prover IS, and the two would diverge the first time only
+    one was updated.
+    """
+    verus = toolchains["verus"]
+    pinned = {
+        name: str(digest)
+        for name, digest in verus.get("binaries", {}).items()
+        if name != "state" and not isinstance(digest, dict) and name != "note"
+    }
+    rlib = str(verus.get("vstd", {}).get("rlib_identity", ""))
+    if rlib:
+        pinned["libvstd.rlib"] = rlib
+    solver = verus.get("z3", {})
+    solver_identity = str(solver.get("identity", ""))
+    if solver_identity:
+        pinned[str(solver.get("path", "z3"))] = solver_identity
+    return pinned
+
+
+def _pinned_file_mismatch(toolchains: dict, install_root: Path) -> str | None:
+    """Why the files under `install_root` are not the pinned ones, or None.
+
+    R9-C070 / R9-C083. `vstd.vir` and the declared commit established that the pinned
+    SPECIFICATION LIBRARY was installed, and that was read as establishing that the pinned
+    PROVER was. It does not: a substituted `rust_verify` shipping the pinned vstd beside a
+    truthful `version.json` passed both checks, and the solver — the component that decides
+    each obligation — was identified by a sentence about where it came from.
+
+    A digest recorded in the lock and compared against nothing is not a weaker check than
+    this one. It is the same standing as no check, with the repository believing otherwise,
+    which is why the `libvstd.rlib` digest sitting unread in a `note` field counted as a
+    finding rather than as documentation.
+    """
+    pinned_files = _pinned_files(toolchains)
+    # EVERY identity's SHAPE first, before any file is looked at. A lock recording prose
+    # where a digest belongs is a defect in the lock, and it is one whether or not the
+    # prover is installed — so it must not be reachable only after every file above it
+    # alphabetically happens to be present. Interleaving the two checks let an absent
+    # `cargo-verus` mask the solver's unusable `identity`, which is the finding hiding
+    # behind an unrelated symptom.
+    for name, pinned in sorted(pinned_files.items()):
+        if not pinned.startswith("sha256:"):
+            return (
+                f"the lock identifies {name} as {pinned!r}, which is not a digest. An "
+                f"identity that cannot be compared with the bytes on disk is not an "
+                f"identity."
+            )
+    for name, pinned in sorted(pinned_files.items()):
+        path = install_root / name
+        if not path.is_file():
+            return f"the pinned prover is incomplete: {path} is missing"
+        digest = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+        if digest != pinned:
+            return (
+                f"{name} identity mismatch: {path} digests to {digest[:23]}, the lock "
+                f"records {pinned[:23]}. The installation is not the pinned release."
+            )
+    return None
+
+
+def _unpinned_detail(unpinned: dict[str, str]) -> str:
+    """Each unpinned identity with its reason, so the message names the right remedy.
+
+    `verus.z3 absent` and `verus.z3 unresolved` are the same disqualification and different
+    repairs: the first is a lock that does not know the solver exists, the second a lock
+    that knows and has no identity to record yet.
+    """
+    return ", ".join(f"{name} ({reason})" for name, reason in sorted(unpinned.items()))
+
+
 def installed_identity(toolchains: dict, install_root: Path) -> str | None:
     """Why the installation at `install_root` is NOT the pinned prover, or None.
 
@@ -106,6 +217,10 @@ def installed_identity(toolchains: dict, install_root: Path) -> str | None:
             f"vstd identity mismatch: {vstd} digests to {digest[:23]}, the lock records "
             f"{pinned_vstd[:23]}. The installation is not the pinned release."
         )
+
+    mismatch = _pinned_file_mismatch(toolchains, install_root)
+    if mismatch is not None:
+        return mismatch
 
     pinned_commit = str(toolchains["verus"].get("commit", ""))
     version_file = install_root / "version.json"
@@ -132,7 +247,14 @@ def main() -> int:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
 
-    missing = sorted(REQUIRED & set(unresolved_pins(toolchains)))
+    # R9-C069. Absence and `state = "unresolved"` are one fact — the tool's identity is
+    # unknown — and both disqualify the lane. `REQUIRED & unresolved_pins(...)` could only
+    # see an identity someone had written down and marked unresolved, so DELETING
+    # `[verus.z3]` or `[rust]` left this set empty and the lane ran against whatever the
+    # environment supplied. The reasons are kept apart in the message because the remedies
+    # are opposite, and never in the decision.
+    unpinned = unpinned_identities(toolchains, REQUIRED)
+    missing = sorted(unpinned)
     verus_units = [unit for unit in doc.get("unit", []) if unit["class"] in {"V1", "V3"}]
 
     if not verus_units:
@@ -143,7 +265,7 @@ def main() -> int:
         print(f"verify-verus: NOT_REQUIRED — no V1/V3 unit declared ({state})")
         print("VERDICT: NOT_REQUIRED")
         if missing:
-            print(f"  unresolved: {', '.join(missing)}")
+            print(f"  unpinned: {_unpinned_detail(unpinned)}")
             print(
                 "  pin these in verification/policy/toolchains.lock.toml to enable this lane"
             )
@@ -152,7 +274,7 @@ def main() -> int:
     if missing:
         print(
             "FAIL: units are declared V1/V3 but the Verus toolchain is unpinned "
-            f"({', '.join(missing)}).\n"
+            f"({_unpinned_detail(unpinned)}).\n"
             "A unit cannot claim Verus evidence that no pinned prover produced.",
             file=sys.stderr,
         )
@@ -237,7 +359,7 @@ def main() -> int:
         # crate carrying no proofs at all. Discarding the crate's own artifacts (not its
         # dependencies') makes every run a real check. Found by the guard, which is what
         # the guard is for.
-        env = {**os.environ, "CARGO_TARGET_DIR": str(LANE_TARGET_DIR)}
+        env = _lane_env(toolchains, install_root)
         subprocess.run(
             ["cargo", "clean", "-p", crate],
             cwd=REPO_ROOT,
