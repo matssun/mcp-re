@@ -1152,8 +1152,28 @@ done
 [[ -n "$refused" ]] \
   || fail "no replica reported the absent trust-epoch dependency; a security dependency was removed and nothing refused"
 
-ready_now="$(kubectl -n "$NAMESPACE" get pods -l app.kubernetes.io/name=mcp-re-proxy \
-  -o jsonpath='{range .items[*]}{.status.containerStatuses[0].ready}{"\n"}{end}' | grep -c true || true)"
+# WAIT for the ready count to drop; do not sample it once.
+#
+# The refusal log appears as soon as the REPLACEMENT crashes, but the pod that was
+# deleted to force that replacement is still draining at that instant — it spends
+# drainPreStopSeconds still serving and Ready, by design, and the kubelet's grace clock
+# runs to drainGracePeriodSeconds. So a single sample taken the moment the log line
+# shows up counts the draining victim among the Ready and reads REPLICAS, which is not
+# "it did not fail closed" — it is "the old pod has not finished leaving yet". Measured:
+# at t=15s ready=3 with the refusal already logged, at t=30s ready=2 with the
+# replacement in CrashLoopBackOff. Sampling once turned a passing property into a
+# failure whose message named the wrong cause.
+#
+# The bound must therefore exceed the drain budget rather than assume a fixed one, so
+# this stays correct if the chart's drain values move again.
+ready_deadline=$(( $(date +%s) + 180 ))
+ready_now="$REPLICAS"
+while (( $(date +%s) < ready_deadline )); do
+  ready_now="$(kubectl -n "$NAMESPACE" get pods -l app.kubernetes.io/name=mcp-re-proxy \
+    -o jsonpath='{range .items[*]}{.status.containerStatuses[0].ready}{"\n"}{end}' | grep -c true || true)"
+  (( ready_now < REPLICAS )) && break
+  sleep 5
+done
 (( ready_now < REPLICAS )) \
   || fail "every replica is Ready with the trust-epoch dependency ABSENT — it did not fail closed"
 echo "  OK: the dependency was removed and the replica refused to serve, naming it."
