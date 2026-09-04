@@ -217,6 +217,21 @@ fn note(slot: &Arc<std::sync::Mutex<Option<String>>>, msg: String) {
     }
 }
 
+/// Whether a 2xx reply must additionally prove it came from the inner backend.
+///
+/// Set by the rig's `--smoke` liveness mode only. A measured run leaves it off, so the
+/// hot path is byte-for-byte what it was and the quantity being measured is unchanged.
+///
+/// This replaces an earlier `backend_cpu > 0` assertion in the rig, which read
+/// `ps -o time=`: macOS reports centiseconds (`0:00.01`) and Linux whole seconds
+/// (`00:00:00`), so a healthy sub-second backend measured 0.00 on Linux and failed a
+/// gate that passed locally. Dispatch is a semantic fact; it should not be inferred from
+/// a host's CPU-clock granularity.
+fn require_backend_echo() -> bool {
+    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("MCP_RE_SAT_REQUIRE_ECHO").is_ok())
+}
+
 async fn read_response(
     stream: &mut (impl AsyncReadExt + Unpin),
     buf: &mut Vec<u8>,
@@ -296,6 +311,21 @@ async fn read_response(
             return Err("eof mid-body".into());
         }
         buf.extend_from_slice(&tmp[..n]);
+    }
+    if require_backend_echo() {
+        // Liveness only, and never on a measured run: prove the reply came FROM the inner
+        // backend rather than from the proxy alone. The backend echoes the request's
+        // JSON-RPC method into `result.echo`, so its presence is dispatch evidence that
+        // does not depend on any host's CPU accounting.
+        let end = buf.len().min(head_end + len);
+        let body = String::from_utf8_lossy(&buf[head_end..end]);
+        if !body.contains("\"echo\"") {
+            return Err(format!(
+                "2xx reply carries no backend echo — nothing was dispatched to the inner \
+                 server; body={}",
+                &body[..body.len().min(512)]
+            ));
+        }
     }
     Ok(())
 }

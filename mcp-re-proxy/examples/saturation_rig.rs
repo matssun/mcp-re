@@ -486,10 +486,10 @@ const SMOKE_REQUESTS: usize = 2000;
 /// Prove the instrument can still construct a request this proxy admits, and that a
 /// positive request reaches the backend. Returns the process exit status.
 ///
-/// The three assertions are independent, and each one alone has been the whole failure:
-/// a refused corpus shows up as failures, a generator that never started shows up as a
-/// zero rate, and a reply the proxy produced without dispatching would show up as an
-/// unmoved backend clock.
+/// The assertions are independent, and each has been the whole failure on its own: a
+/// refused corpus shows up as failures, a generator that never started shows up as a zero
+/// rate, and a reply the proxy produced WITHOUT dispatching shows up as a missing backend
+/// echo — every 2xx in this mode must carry the inner server's echo of the request method.
 fn run_smoke(
     proxy_cli: &str,
     gen_exe: &str,
@@ -511,6 +511,9 @@ fn run_smoke(
         headroom,
     );
     std::thread::sleep(Duration::from_millis(300));
+    // Every generator this mode spawns must PROVE the reply came from the inner backend,
+    // not merely that it was a 2xx. Inherited by the children; never set on a measured run.
+    std::env::set_var("MCP_RE_SAT_REQUIRE_ECHO", "1");
     let b0 = cpu_secs(backend_pid);
     let (rps, _p50, _p99, failed, _gcpu) = run_generators(
         gen_exe,
@@ -525,25 +528,23 @@ fn run_smoke(
     drop(proxy);
 
     let backend_cpu = b1 - b0;
+    // backend_cpu is REPORTED, never asserted on: `ps -o time=` resolves centiseconds on
+    // macOS and whole seconds on Linux, so a healthy sub-second backend reads 0.00 there.
+    // Dispatch is proven by the backend's echo in every reply instead.
     println!(
-        "smoke: attempted={SMOKE_REQUESTS} failures={failed} rate={rps:.0}/s backend_cpu={backend_cpu:.2}s"
+        "smoke: attempted={SMOKE_REQUESTS} failures={failed} rate={rps:.0}/s \
+         backend_cpu={backend_cpu:.2}s (reported, not asserted)"
     );
     let mut bad = Vec::new();
     if failed > 0 {
         bad.push(format!(
-            "{failed}/{SMOKE_REQUESTS} requests were refused — the reason is printed \
-             above as `generator error:` and carries the proxy's wire code"
+            "{failed}/{SMOKE_REQUESTS} requests were refused, or answered without the \
+             inner backend's echo — the reason is printed above as `generator error:` \
+             and carries the proxy's wire code"
         ));
     }
     if rps <= 0.0 {
         bad.push("no request completed at all".to_string());
-    }
-    if backend_cpu <= 0.0 {
-        bad.push(
-            "the backend's CPU clock did not move — nothing was dispatched to it, so \
-             whatever the proxy replied did not come from the inner server"
-                .to_string(),
-        );
     }
     if bad.is_empty() {
         println!("smoke: PASS — the saturation instrument constructs a request this proxy serves.");

@@ -311,7 +311,71 @@ counterfactual — building an index that admits unknown status is no longer exp
 contract now rests on the type rather than on a value production remembered to set.
 
 
-## [0.16.0] — 2026-08-10
+## [0.16.0] — 2026-09-04
+
+### Performance — measured, accepted, and sorted by measurement class
+
+v0.16 performance is **accepted at the measured GKE release-build figures**, under the
+standardized ADR-MCPRE-051 §7 envelope (cold TLS1.3-mTLS, concurrency 128, 8000 requests,
+`redis-wait-quorum:2:2000`, delegated-required signing, no KMS on the request path):
+
+| class | capacity | p50 | p99 | p999 | successes |
+|---|---|---|---|---|---|
+| e2-standard-8 | **4,064.3 rps** | 27,176 µs | 98,930 µs | 137,511 µs | 8000 / 8000 |
+| c3-standard-8 | **4,950.8 rps** | 21,814 µs | 94,564 µs | 111,981 µs | 8000 / 8000 |
+
+Against the previous comparable **release-build** GKE measurements (4,390.0 and 5,228.5
+rps), the candidate retains **92.6%** and **94.7%** of throughput. Zero failures across
+the round: 48,000 / 48,000.
+
+Per-core scaling measured at **e2 0.377** and **c3 0.333** (`WORKERS_PER_SHARD=1`, 1 core
+1,491.3 / 1,997.6 rps → 8 cores 4,498.5 / 5,328.5 rps). No like-for-like release-build
+predecessor exists for that experiment, so these are measurements and **not** evidence of
+a regression against the older 0.703 / 0.671 debug-build factors.
+
+Resolved runtime topology of the capacity lane, measured rather than assumed: **8 runtime
+shards × 8 worker threads per shard = 64 serving threads.**
+
+Figures that are **not** comparable to the above, and why:
+
+- the local Apple M4 Pro §7 anchor, ≈**15,454.9 rps** — different hardware and a different
+  resolved topology (**1 runtime shard × 8 worker threads**);
+- the ≈**30,000–46,000 rps** historical figures — the *keepalive* saturation rig, a
+  different protocol with connection reuse and a multi-generator topology, not §7 cold-mTLS;
+- the EKS round on `t4g.small` (890.9 / 927.8 rps) — 2 vCPU, arm64, burstable; recorded as
+  a plumbing/compatibility result only, never a baseline.
+
+Three facts are kept distinct: the v0.16 GKE release-build measurements are **accepted**;
+the old production SLO declaration remains **invalidated-pending-remeasurement**; and **no
+new production SLO threshold set was declared** by this campaign. `slo_gate.py` skips the
+capacity and scaling checks accordingly.
+
+Full provenance, including every invalidated round: [`docs/bench/v016-performance-rounds.md`](docs/bench/v016-performance-rounds.md).
+
+### Fixed — two measurement instruments that produced confident output while measuring something else
+
+- **Mutable image tags permitted heterogeneous binaries across replicas.** `image.tag`
+  with `pullPolicy: IfNotPresent` served whatever each node had cached; one fleet run was
+  observed with three replicas on three different digests, and reported eight passing
+  proofs. It was discarded and re-run digest-pinned.
+- **The saturation rig's client SAN went stale.** After ADR-MCPRE-064 Slice 4 moved the
+  channel↔request binding operand to the request *subject*, the rig kept minting a leaf
+  carrying the composed actor id, so every request it sent was refused
+  `mcp-re.transport_binding_failed` before backend dispatch — 100% refused for eleven days
+  with every ordinary gate green.
+
+  A `--smoke` liveness mode now runs on the merge path (`scripts/saturation_liveness.sh`),
+  asserting that the instrument still constructs a request the proxy admits and that each
+  reply carries the inner backend's echo. It reports no throughput number and is not a
+  measurement.
+
+### Fixed — benchmark provenance metadata described a replay tier the harness cannot run
+
+The envelope and every emitted report recorded `replay_backend: "memory"` while the §7
+harness passed `--replay-durability-tier redis-wait-quorum:2:2000`. The per-core async
+plane refuses node-local replay outright, so the field named a posture that cannot execute.
+The tier the harness passes and the value it reports are now one constant.
+
 
 ### Added — the exchange lifecycle is a value, and refusals derive their retry contract from it (ADR-MCPRE-057, ADR-MCPRE-058)
 
