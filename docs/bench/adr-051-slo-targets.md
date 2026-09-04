@@ -2,14 +2,35 @@
 
 # ADR-MCPRE-051 §7 — SLO Target Declaration (MCPRE-110)
 
-> **✅ Production GKE floors are DECLARED under the v2 envelope (re-measured
-> 2026-07-13, v0.12).** The earlier 2026-07-10 numbers (object/JCS carrier, lighter
-> v1 envelope — concurrency 64 / 2000 requests) were **superseded and have now been
-> re-measured** on the current RFC 9421 + RFC 9530 serving path (ADR-MCPRE-050) under
-> the canonical **v2 envelope (concurrency 128 / 8000 requests)** — the SAME for local
-> and GKE. The local-regression baseline is also on RFC 9421 (see
-> [`adr-051-baseline-local.json`](adr-051-baseline-local.json)). Run the local baseline
-> green before any GKE re-run.
+> **⛔ `production_slo` is INVALIDATED — pending re-measurement.** The machine-readable
+> authority [`adr-051-slo-targets.json`](adr-051-slo-targets.json) carries
+> `status: invalidated-pending-remeasurement`, and it is the authority: `slo_gate.py`
+> reads it, SKIPS the capacity and scaling checks, and says so. A green exit from that
+> gate establishes nothing about capacity.
+>
+> The declaration was invalidated because the numbers it derives from were measured on a
+> **debug build** — the Job and `Dockerfile.bench` both ran `cargo test` without
+> `--release`. Re-declaring requires a deliberate run on the class being declared.
+>
+> **This is not the same as having no measurements.** The v0.16 GKE release-build
+> performance figures are measured and ACCEPTED; they are simply not a declared SLO. The
+> three facts, kept distinct:
+>
+> | fact | state |
+> |---|---|
+> | v0.16 GKE release-build performance measurements | **accepted** — see [`v016-performance-rounds.md`](v016-performance-rounds.md) |
+> | the old production SLO declaration | **invalidated** |
+> | a new production SLO threshold set | **not declared** by that campaign |
+>
+> The envelope itself is unchanged and current: RFC 9421 + RFC 9530 serving path
+> (ADR-MCPRE-050) under the canonical **v2 envelope (concurrency 128 / 8000 requests)** —
+> the SAME for local and GKE. The local-regression baseline is also on RFC 9421 (see
+> [`adr-051-baseline-local.json`](adr-051-baseline-local.json)) and remains ACTIVE. Run
+> the local baseline green before any GKE re-run.
+
+> **v0.16 measurement rounds:** which rounds are release evidence, which are invalid, and
+> why the Mac, GKE and saturation-rig figures are not comparable —
+> [`v016-performance-rounds.md`](v016-performance-rounds.md).
 
 Companion to the measurement envelope
 ([`adr-051-load-harness-envelope.md`](adr-051-load-harness-envelope.md) /
@@ -24,13 +45,14 @@ split into three blocks with **two complementary gates**:
 - **`local_regression`** (active) — a hardware-independent day-to-day gate: a fresh
   run vs the committed dev-box anchor [`adr-051-baseline-local.json`](adr-051-baseline-local.json),
   enforced by [`scripts/adr051_slo_gate.py`](../../scripts/adr051_slo_gate.py) (MCPRE-110).
-- **`production_slo`** (declared) — the absolute per-hardware SLO measured on the
-  declared GKE class, enforced by [`scripts/slo_gate.py`](../../scripts/slo_gate.py)
-  (MCPRE-123 + the MCPRE-110 production half). This is the baseline below.
+- **`production_slo`** (**invalidated-pending-remeasurement**) — the absolute
+  per-hardware SLO, to be measured on the declared GKE class and enforced by
+  [`scripts/slo_gate.py`](../../scripts/slo_gate.py) (MCPRE-123 + the MCPRE-110
+  production half). Its targets are currently null and the gate skips them.
 - **`absolute_gates`** (active) — always-on correctness gates (replay-race,
   bounded-drain) enforced by their own tests.
 
-## Status: production_slo DECLARED (baseline re-measured on GKE, 2026-07-13, v2 envelope)
+## Status: production_slo INVALIDATED — pending re-measurement
 
 ADR-MCPRE-051 §7 is deliberate: *"the SLO numbers live with the harness and the
 release profile, not in this ADR,"* and *"capacity claims without a pinned
@@ -40,28 +62,31 @@ harness spawning the actual `mcp-re-proxy` async fleet at 1 and 8 cores under th
 **v2 canonical envelope (RFC 9421 + RFC 9530, cold TLS1.3-mTLS, concurrency 128,
 8000 requests/run)**.
 
-**Measured baseline — v2, 2026-07-13** (`MCP_RE_LOADGEN_CORES` 1 → 8; verified
-responses/sec; added latency µs; 8000/8000 success on every run):
+**⛔ The figures below are DEBUG-BUILD measurements and are INVALID as release
+evidence.** They are preserved for provenance — the now-invalidated declaration was
+derived from them — and must not be used as a floor, a comparator or a scaling
+reference. Both the Job and `Dockerfile.bench` ran `cargo test` without `--release`;
+release-build re-measurement on the same cluster and envelope produced figures roughly
+**12.3× higher**.
 
 | class | 1-core rps | 8-core rps | 8-core p50 / p99 / p999 | per-core linear factor |
 |---|---|---|---|---|
-| **e2-standard-8** (declared floor) | 71.5 | 402.1 | 237 / 1383 / 1789 ms | 0.703 |
-| **c3-standard-8** (faster ref) | 93.0 | 499.4 | 212 / 966 / 1233 ms | 0.671 |
+| e2-standard-8 *(debug — invalid)* | 71.5 | 402.1 | 237 / 1383 / 1789 ms | 0.703 |
+| c3-standard-8 *(debug — invalid)* | 93.0 | 499.4 | 212 / 966 / 1233 ms | 0.671 |
 
-The **declared floor hardware is the weaker class (e2-standard-8)**: the release
-floors/ceilings in the targets JSON are derived from it (throughput floor 250 rps,
-p50/p99/p999 ceilings 360 / 2100 / 2350 ms, per-core factor ≥ 0.60), so a run on that
-class *or better* clears them — and c3-standard-8 (measured faster) does too. Both
-classes pass `slo_gate` in `declared` mode. The tail ceilings are wider than the
-superseded v1 (64/2000) figures because the v2 envelope doubles concurrency and 4×'s
-the request count — these are **cold-connection envelope** numbers (keepalive_reuse=0)
-for regression detection on declared hardware, not steady-state user latency. `status`
-is `declared`; `hardware_class`/`measured_on`/`measurements` record the provenance.
+Because those numbers are invalid, so is everything derived from them: the former
+throughput floor, the former p50/p99/p999 ceilings and the former per-core factor are
+withdrawn, and `production_slo.targets` is null. `slo_gate.py` skips the capacity and
+scaling checks rather than passing against a floor measured on the wrong binary.
 
-**v0.11 shipped the mechanism + correctness floors and first declared the SLO on the
-v1 envelope; v0.12 re-declares it on the v2 envelope** with fresh GKE numbers. CI
-runs `slo_gate --selftest` only — shared runners are not release-representative, so
-the capacity/scaling enforcement runs on the declared hardware, as here.
+The 0.703 / 0.671 scaling factors in particular are **not** a predecessor for any
+release-build scaling measurement: no release-build single-core figure was ever recorded
+under this envelope, so there is nothing like-for-like to compare against. See
+[`v016-performance-rounds.md`](v016-performance-rounds.md).
+
+CI runs `slo_gate --selftest` only — shared runners are not release-representative, so
+capacity/scaling enforcement must run on declared hardware whenever a declaration is
+made again.
 
 Two classes of target, treated differently by the gate:
 
@@ -127,7 +152,7 @@ is in place now; only the representative numbers need a real run.
 | --- | --- | --- | --- |
 | Request-failure = 0 (correctness) | run `results.failures` | `slo_gate.py` | ✅ yes |
 | Local-regression throughput/latency | `local_regression.tolerances.*` | `adr051_slo_gate.py` | ✅ yes |
-| Aggregate throughput floor | `production_slo.targets.aggregate_throughput_rps_min` | `slo_gate.py` | ✅ declared |
-| Added latency p50/p99/p999 ceilings | `production_slo.targets.{p50,p99,p999}_added_us_max` | `slo_gate.py` | ✅ declared |
-| Per-core 1→N linear scaling | `production_slo.per_core_scaling.linear_tolerance_min` | `slo_gate.py` | ✅ declared |
+| Aggregate throughput floor | `production_slo.targets.aggregate_throughput_rps_min` | `slo_gate.py` | ⛔ invalidated — target null, gate skips |
+| Added latency p50/p99/p999 ceilings | `production_slo.targets.{p50,p99,p999}_added_us_max` | `slo_gate.py` | ⛔ invalidated — target null, gate skips |
+| Per-core 1→N linear scaling | `production_slo.per_core_scaling.linear_tolerance_min` | `slo_gate.py` | ⛔ invalidated — target null, gate skips |
 | replay-race / bounded-drain | `absolute_gates.*` | dedicated tests | ✅ yes |

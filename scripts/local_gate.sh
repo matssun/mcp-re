@@ -216,7 +216,18 @@ stage_suites() {
     && cargo build --workspace --all-targets --features "$FEATURES" \
     && cargo test -p mcp-re-proxy --features "$FEATURES" \
     && stage_demo \
+    && stage_sat_liveness \
     && stage_sdk
+}
+
+# The standardized capacity instrument builds its own fixtures and signs its own corpus,
+# so a serving-path change that moves an admission operand leaves it 100% refused while
+# every suite above stays green. It happened: eleven days of an instrument that measured
+# nothing. This is NOT the sweep — one core, one generator, 2000 requests, no throughput
+# number — it asserts only that the rig still constructs a request this proxy admits and
+# that a positive request reaches the backend.
+stage_sat_liveness() {
+  bash scripts/saturation_liveness.sh
 }
 
 # The two downloader artefacts. `cargo test --workspace` cannot reach them: both SDKs

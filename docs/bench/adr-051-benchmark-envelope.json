@@ -14,7 +14,7 @@
     "tls_mode": { "value": "TLS1.3 mTLS", "provider": "rustls-ring", "client_auth": "required (trusted URI-SAN leaf carrying the RFC 9421 actor_id)" },
     "signature_suite": { "handshake": "rustls 1.3 defaults", "evidence": "RFC 9421 HTTP Message Signatures (Ed25519) over covered components incl. RFC 9530 Content-Digest; response signed response-only and bound to the request via ;req. Signature rides in HTTP headers, not a body _meta object." },
     "connection_mode": { "source": "MCP_RE_LOADGEN_MODE", "values": ["cold", "keepalive"], "default": "cold", "note": "current wire is Connection: close (one request per connection); keepalive realised-reuse fraction is ~0 until Phase-2 keep-alive/H2" },
-    "replay_backend": { "value": "in-memory reference (--replay-cache memory)" },
+    "replay_backend": { "value": "redis-wait-quorum:2:2000 (shared Redis, WAIT 2 acknowledgements)", "source": "mcp-re-proxy/tests/tls_load_harness_bench.rs::REPLAY_DURABILITY_TIER", "topology": "primary + 2 replicas at MCP_RE_LOADGEN_REDIS_URL; native sidecars in the K8s Job, Docker locally", "note": "The ADR-MCPRE-051 \u00a71 per-core async serving plane REFUSES node-local replay (memory and file), so a shared store is the only tier this harness can run. This field previously named an in-memory reference the harness cannot execute; the tier recorded here and the flag the harness passes are now one constant." },
     "inner_backend_latency": { "value": "echo inner, ~0 added latency" },
     "concurrency": { "source": "MCP_RE_LOADGEN_CONCURRENCY", "default": 128 },
     "total_requests": { "source": "MCP_RE_LOADGEN_REQUESTS", "default": 8000 }

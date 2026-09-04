@@ -25,6 +25,16 @@
 //! where adding load does not add throughput is reported as the proxy's. This is the check
 //! whose absence made every previous number unsafe, so it is not optional here.
 //!
+//! # Liveness (`--smoke`)
+//!
+//! `--smoke` is not a measurement and never prints a throughput number. It stands the same
+//! three tiers up with the same fixtures, the same admission posture and the same replay
+//! tier, sends a tiny fixed load, and asserts that the requests were SERVED: zero failures,
+//! a non-zero rate, and backend CPU that moved. It exists because the instrument once sat
+//! for eleven days constructing a request the serving path refused at the channel-binding
+//! stage — 100% refused, no backend dispatch, and every ordinary gate green, because
+//! nothing on the merge path ever asked the rig to send one request.
+//!
 //! # Honest limits
 //!
 //! macOS has no usable CPU affinity for user processes, so tiers share the machine's
@@ -64,7 +74,13 @@ const TRUST_DOMAIN: &str = "example.org";
 const SUBJECT_A: &str = "did:example:agent-1";
 const SIGNER_A_KEY_ID: &str = "key-a";
 const TARGET_URI: &str = "https://localhost/";
-const CLIENT_ACTOR_ID: &str = "client:example.org:did%3Aexample%3Aagent-1:key-a";
+/// The client leaf's URI SAN. It is the request actor's SUBJECT, because that is the
+/// operand the serving path binds the channel to: `bind_request_to_peer` compares the
+/// peer identity extracted from the leaf against `VerifiedRequestSubject`, which is
+/// `ResolvedActor::identity.subject` and nothing else. Any other encoding of the actor
+/// is refused `mcp-re.transport_binding_failed` before the request reaches the backend,
+/// and the rig then measures nothing at all — which is what `--smoke` exists to catch.
+const CLIENT_ACTOR_ID: &str = SUBJECT_A;
 const MAX_CLIENT_CERT_LIFETIME_SECS: u64 = 3600;
 
 fn tmp(name: &str) -> PathBuf {
@@ -462,6 +478,92 @@ fn run_generators(
     (rps, p50, p99, failed, gen_cpu)
 }
 
+/// The liveness parameters. Small enough to run on every pull request, large enough that
+/// the backend's CPU is measurable rather than rounded away by `ps`.
+const SMOKE_CONNECTIONS: usize = 8;
+const SMOKE_REQUESTS: usize = 2000;
+
+/// Prove the instrument can still construct a request this proxy admits, and that a
+/// positive request reaches the backend. Returns the process exit status.
+///
+/// The assertions are independent, and each has been the whole failure on its own: a
+/// refused corpus shows up as failures, a generator that never started shows up as a zero
+/// rate, and a reply the proxy produced WITHOUT dispatching shows up as a missing backend
+/// echo — every 2xx in this mode must carry the inner server's echo of the request method.
+fn run_smoke(
+    proxy_cli: &str,
+    gen_exe: &str,
+    m: &Material,
+    redis: &str,
+    backend_addr: &str,
+    backend_pid: u32,
+    tier: &str,
+) -> i32 {
+    let headroom = (SMOKE_CONNECTIONS * 4).max(64);
+    let (proxy, target) = spawn_proxy(
+        proxy_cli,
+        m,
+        1,
+        redis,
+        backend_addr,
+        tier,
+        headroom,
+        headroom,
+    );
+    std::thread::sleep(Duration::from_millis(300));
+    // Every generator this mode spawns must PROVE the reply came from the inner backend,
+    // not merely that it was a 2xx. Inherited by the children; never set on a measured run.
+    std::env::set_var("MCP_RE_SAT_REQUIRE_ECHO", "1");
+    let b0 = cpu_secs(backend_pid);
+    let (rps, _p50, _p99, failed, _gcpu) = run_generators(
+        gen_exe,
+        m,
+        &target,
+        1,
+        SMOKE_CONNECTIONS,
+        SMOKE_REQUESTS,
+        "keepalive",
+    );
+    let b1 = cpu_secs(backend_pid);
+    drop(proxy);
+
+    let backend_cpu = b1 - b0;
+    // backend_cpu is REPORTED, never asserted on: `ps -o time=` resolves centiseconds on
+    // macOS and whole seconds on Linux, so a healthy sub-second backend reads 0.00 there.
+    // Dispatch is proven by the backend's echo in every reply instead.
+    println!(
+        "smoke: attempted={SMOKE_REQUESTS} failures={failed} rate={rps:.0}/s \
+         backend_cpu={backend_cpu:.2}s (reported, not asserted)"
+    );
+    let mut bad = Vec::new();
+    if failed > 0 {
+        bad.push(format!(
+            "{failed}/{SMOKE_REQUESTS} requests were refused, or answered without the \
+             inner backend's echo — the reason is printed above as `generator error:` \
+             and carries the proxy's wire code"
+        ));
+    }
+    if rps <= 0.0 {
+        bad.push("no request completed at all".to_string());
+    }
+    if bad.is_empty() {
+        println!("smoke: PASS — the saturation instrument constructs a request this proxy serves.");
+        return 0;
+    }
+    eprintln!("\nsaturation rig LIVENESS FAILED:");
+    for b in &bad {
+        eprintln!("  * {b}");
+    }
+    eprintln!(
+        "\nThe instrument, not necessarily the proxy, is what this proves broken: the rig \n\
+         builds its own fixtures and signs its own corpus, so a serving-path change that \n\
+         moves an admission operand leaves it refused at 100% while every other lane stays \n\
+         green. Fix the rig to match the production request, never the proxy to accept the \n\
+         rig's."
+    );
+    1
+}
+
 fn main() {
     let mut cores_sweep = vec![1usize, 2, 4, 8];
     let mut generators = 2usize;
@@ -477,6 +579,9 @@ fn main() {
     // the core sweep stops being a curve. `--fixed-generators` pins every point to one
     // count; the M/M+1 probe still runs so a row that is client-bound is still flagged.
     let mut fixed_generators: Option<usize> = None;
+    // The liveness mode. Not a measurement: it asserts that the instrument still works
+    // and reports no throughput, so it can run on the merge path without claiming one.
+    let mut smoke = false;
     // Must match the replica count actually running: `redis-wait-quorum` requires a
     // POSITIVE quorum, so a lone Redis cannot serve this rig at all. The default matches
     // the §7 lane, so the admission path measured here is the one the gate runs.
@@ -505,6 +610,7 @@ fn main() {
             "--fixed-generators" => {
                 fixed_generators = Some(val().parse().expect("fixed generators"))
             }
+            "--smoke" => smoke = true,
             other => panic!("unknown flag {other}"),
         }
     }
@@ -528,6 +634,19 @@ fn main() {
     let backend_pid = backend.0.id();
 
     println!("replay tier {tier}");
+    if smoke {
+        let rc = run_smoke(
+            &proxy_cli,
+            &gen_exe,
+            &m,
+            &redis,
+            &backend_addr,
+            backend_pid,
+            &tier,
+        );
+        drop(backend);
+        std::process::exit(rc);
+    }
     println!("saturation rig — mode={mode} connections/gen={connections} requests/gen={requests}");
     println!("backend on {backend_addr} ({backend_workers} workers)\n");
     println!(
