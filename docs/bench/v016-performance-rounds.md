@@ -394,22 +394,34 @@ No threshold is declared or re-declared by this document. `production_slo` remai
 continue to skip, and a green exit from that gate on these reports establishes nothing
 about capacity.
 
-## Open items — recorded, not actioned
+## Metadata corrections made before release
 
-Neither is a release blocker, and both are deliberately left for after the freeze.
+Both were provenance defects found while writing this record: documentation and emitted
+metadata that misdescribed what the measurement actually did. Neither changes any
+measurement, and both were corrected before release rather than left to mislead the next
+reader.
 
-1. **Two documents misdescribe the replay tier the §7 harness actually uses.**
-   `adr-051-benchmark-envelope.json` records
+1. **The replay tier is now recorded as the tier actually exercised.**
+   `adr-051-benchmark-envelope.json` read
    `replay_backend: "in-memory reference (--replay-cache memory)"`, and every emitted
-   report repeats `"replay_backend": "memory"` from a hardcoded literal at
-   `tls_load_harness_bench.rs:1303`. The harness unconditionally passes
-   `--replay-durability-tier redis-wait-quorum:2:2000`, and the async per-core plane
-   refuses node-local replay outright — 48,000/48,000 successes are impossible under a
-   memory tier. The runs used the Redis WAIT-2 tier; the documentation is wrong, not the
-   runs.
+   report repeated `"replay_backend": "memory"` from a hardcoded literal — while the
+   harness passed `--replay-durability-tier redis-wait-quorum:2:2000`. The ADR-MCPRE-051
+   §1 per-core async plane refuses node-local replay outright, so `memory` was not merely
+   stale: it named a posture the harness cannot run, and the 48,000/48,000 successes of
+   Round 6 are impossible under it.
 
-2. **`adr-051-slo-targets.md` still reads "production_slo DECLARED"** while the
-   machine-readable [`adr-051-slo-targets.json`](adr-051-slo-targets.json) it documents
-   carries `status: invalidated-pending-remeasurement`. The JSON is the authority and the
-   gate reads it; the prose is stale. Correcting it is a status change and was therefore
-   left for review rather than made during a freeze.
+   The envelope now records `redis-wait-quorum:2:2000`, and the harness reads **one
+   constant**, `REPLAY_DURABILITY_TIER`, for both the flag it passes and the value it
+   reports — so the emitted provenance cannot drift from the tier exercised again. The
+   replay implementation, durability tier, benchmark topology and measurement protocol
+   are unchanged; this is metadata only, and the Round 6 figures stand exactly as measured.
+
+2. **The SLO status prose now agrees with its machine-readable authority.**
+   `adr-051-slo-targets.md` announced "Production GKE floors are DECLARED" while
+   `adr-051-slo-targets.json` carried `status: invalidated-pending-remeasurement`. The
+   JSON is the authority — `slo_gate.py` reads it and skips the capacity and scaling
+   checks — so the prose was simply wrong. It now states the invalidation, marks the
+   debug-build figures it preserves as invalid, and keeps the three facts distinct:
+   the v0.16 GKE release-build measurements are **accepted**; the old production SLO
+   declaration remains **invalidated**; and **no new production SLO threshold set has
+   been declared** by this campaign. No threshold was restored, derived or declared.

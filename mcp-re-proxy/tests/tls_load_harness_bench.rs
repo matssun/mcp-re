@@ -137,6 +137,13 @@ use serde_json::json;
 use serde_json::Map;
 use serde_json::Value;
 
+/// The replay durability tier the harness runs the proxy under, and the value its report
+/// records. ONE constant for both: the report used to carry the literal `"memory"` while
+/// the flag passed this tier, so every emitted report misdescribed the admission path it
+/// had just measured. The per-core async plane refuses node-local replay outright, so
+/// `memory` was not merely stale — it named a posture this harness cannot run.
+const REPLAY_DURABILITY_TIER: &str = "redis-wait-quorum:2:2000";
+
 const SERVER: &str = "did:example:server-1";
 const SERVER_KEY_ID: &str = "server-key-1";
 const AUDIENCE: &str = "did:example:server-1";
@@ -660,7 +667,7 @@ fn spawn_proxy(
             "--replay-redis-url",
             redis_url,
             "--replay-durability-tier",
-            "redis-wait-quorum:2:2000",
+            REPLAY_DURABILITY_TIER,
             "--cores",
             &cores_str,
             "--workers-per-shard",
@@ -1300,7 +1307,7 @@ fn maybe_write_json(cfg: &LoadConfig, report: &Report) {
             "connection_mode": cfg.mode.as_str(),
             "concurrency": cfg.concurrency,
             "requests": cfg.requests,
-            "replay_backend": "memory",
+            "replay_backend": REPLAY_DURABILITY_TIER,
             "tls_mode": "TLS1.3-mTLS",
         },
         "results": {
