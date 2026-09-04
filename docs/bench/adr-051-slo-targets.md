@@ -11,6 +11,10 @@
 > [`adr-051-baseline-local.json`](adr-051-baseline-local.json)). Run the local baseline
 > green before any GKE re-run.
 
+> **v0.16 measurement rounds:** which rounds are release evidence, which are invalid, and
+> why the Mac, GKE and saturation-rig figures are not comparable —
+> [`v016-performance-rounds.md`](v016-performance-rounds.md).
+
 Companion to the measurement envelope
 ([`adr-051-load-harness-envelope.md`](adr-051-load-harness-envelope.md) /
 [`adr-051-benchmark-envelope.json`](adr-051-benchmark-envelope.json)). The
