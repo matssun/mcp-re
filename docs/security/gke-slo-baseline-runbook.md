@@ -155,7 +155,7 @@ helm upgrade --install mcp-re-proxy deploy/helm/mcp-re-proxy -n mcp-re \
   --set 'inner.httpUrls={http://mcp-re-inner-fastmcp:8620/mcp/}' \
   --set replay.redisUrl=redis://mcp-re-redis:6379 \
   --set revocation.trustEpochRedisUrl=redis://mcp-re-redis:6379 \
-  --set drainPreStopSeconds=6 --wait --timeout 4m
+  --wait --timeout 4m
 ```
 
 The four-proof harness reads the gke-client identity from env — set them to the
