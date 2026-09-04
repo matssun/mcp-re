@@ -23,52 +23,11 @@ cd "$(dirname "$0")/.."
 # A benchmark built by a different compiler than CI is not comparable to anything.
 . scripts/use_pinned_toolchain.sh
 
-REDIS_URL="${MCP_RE_SAT_REDIS_URL:-}"
-STARTED_REDIS=0
-NET="mcp-re-sat-net"
-PRIMARY="mcp-re-sat-redis-primary"
-REPLICAS=("mcp-re-sat-redis-r1" "mcp-re-sat-redis-r2")
-
-cleanup() {
-  if (( STARTED_REDIS )); then
-    docker rm -f "$PRIMARY" "${REPLICAS[@]}" >/dev/null 2>&1 || true
-    docker network rm "$NET" >/dev/null 2>&1 || true
-  fi
-}
-trap cleanup EXIT
-
-if [[ -z "$REDIS_URL" ]]; then
-  # The per-core serving plane REFUSES node-local replay, and `redis-wait-quorum`
-  # requires a POSITIVE quorum — so a lone Redis cannot serve this rig. A primary plus
-  # two replicas is the same replay posture the ADR-MCPRE-051 §7 lane uses, which keeps
-  # the admission path being measured here the one that runs in the gate.
-  if ! command -v docker >/dev/null 2>&1; then
-    echo "saturation rig: need Docker for the replay fleet, or set MCP_RE_SAT_REDIS_URL" >&2
-    exit 2
-  fi
-  docker rm -f "$PRIMARY" "${REPLICAS[@]}" >/dev/null 2>&1 || true
-  docker network rm "$NET" >/dev/null 2>&1 || true
-  docker network create "$NET" >/dev/null
-  STARTED_REDIS=1
-  docker run -d --name "$PRIMARY" --network "$NET" -p 0:6379 redis:7-alpine >/dev/null
-  for r in "${REPLICAS[@]}"; do
-    docker run -d --name "$r" --network "$NET" redis:7-alpine \
-      redis-server --replicaof "$PRIMARY" 6379 >/dev/null
-  done
-  PORT="$(docker port "$PRIMARY" 6379/tcp | head -1 | sed 's/.*://')"
-  REDIS_URL="redis://127.0.0.1:${PORT}"
-
-  # Wait for BOTH replicas to be online, otherwise the first quorum write blocks for its
-  # full timeout and the first sweep point measures replication lag, not the proxy.
-  for _ in $(seq 1 100); do
-    connected="$(docker exec "$PRIMARY" redis-cli info replication 2>/dev/null \
-      | sed -n 's/^connected_slaves:\([0-9]*\).*/\1/p' | tr -d '\r')"
-    [[ "${connected:-0}" -ge 2 ]] && break
-    sleep 0.2
-  done
-  echo "saturation rig: redis primary + ${connected:-0} replica(s) up"
-fi
-export MCP_RE_SAT_REDIS_URL="$REDIS_URL"
+# The replay fleet the rig requires, shared with the liveness lane so the two cannot
+# drift into measuring different admission postures.
+. scripts/lib/sat_replay_fleet.sh
+trap sat_fleet_down EXIT
+sat_fleet_up || exit 2
 
 echo "saturation rig: building release binaries (proxy + rig)"
 cargo build --release -p mcp-re-proxy --features async_serve,redis_replay --bins --examples
@@ -91,4 +50,6 @@ if awk -v l="$LOAD" -v c="$CORES" 'BEGIN{exit !(l > c*0.3)}'; then
   echo "saturation rig: proceeding at load ${LOAD}"
 fi
 
-exec target/release/examples/saturation_rig "$@"
+# Not `exec`: replacing the shell discards the EXIT trap, which would leave the replay
+# fleet running after every measurement.
+target/release/examples/saturation_rig "$@"

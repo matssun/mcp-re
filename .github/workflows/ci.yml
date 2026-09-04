@@ -746,6 +746,22 @@ jobs:
       - name: Release gate — SLO gate mechanism (self-test)
         run: python3 scripts/slo_gate.py --selftest
 
+      # LIVENESS of the standardized capacity instrument, not a measurement.
+      #
+      # The saturation rig is a cargo example driven by a script, so no test target
+      # reaches it and no gate above can see it. When ADR-MCPRE-064 Slice 4 moved the
+      # channel-binding operand to the request SUBJECT, the rig kept minting a client
+      # leaf naming the composed actor id: every request it sent was refused
+      # `mcp-re.transport_binding_failed` before backend dispatch, for eleven days, with
+      # every check on every PR green. Nothing anywhere asked the instrument to send one
+      # request.
+      #
+      # This asks. One core, one generator, 2000 requests, and NO throughput number — it
+      # asserts zero failures, a non-zero rate and a backend CPU clock that moved. The
+      # full sweep needs a quiet box and stays out of CI.
+      - name: Release gate — saturation instrument liveness
+        run: scripts/saturation_liveness.sh
+
   bazel:
     name: bazel semantic-drift gate + test parity
     runs-on: ubuntu-latest
