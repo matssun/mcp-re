@@ -64,7 +64,16 @@ const TRUST_DOMAIN: &str = "example.org";
 const SUBJECT_A: &str = "did:example:agent-1";
 const SIGNER_A_KEY_ID: &str = "key-a";
 const TARGET_URI: &str = "https://localhost/";
-const CLIENT_ACTOR_ID: &str = "client:example.org:did%3Aexample%3Aagent-1:key-a";
+/// The client leaf's URI SAN. It is the request actor's SUBJECT, because that is the
+/// operand the serving path binds the channel to: `bind_request_to_peer` compares the
+/// peer identity extracted from the leaf against `VerifiedRequestSubject`, which is
+/// `ResolvedActor::identity.subject` and nothing else.
+///
+/// It was the composed actor id `role:trust_domain:subject:keyid`, which the binding
+/// stage never compares against, so every request the rig sent was refused
+/// `mcp-re.transport_binding_failed` before reaching the backend and the rig measured
+/// nothing at all.
+const CLIENT_ACTOR_ID: &str = SUBJECT_A;
 const MAX_CLIENT_CERT_LIFETIME_SECS: u64 = 3600;
 
 fn tmp(name: &str) -> PathBuf {
