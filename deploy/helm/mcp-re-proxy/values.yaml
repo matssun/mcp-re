@@ -447,14 +447,27 @@ tls:
 #
 # proxyDrainGraceSeconds must also be >= the proxy's request deadline (30s), so an
 # admitted request can finish inside the window.
-drainGracePeriodSeconds: 45
+drainGracePeriodSeconds: 60
 proxyDrainGraceSeconds: 30
 
 # preStop delay (seconds) before the proxy is sent SIGTERM on pod deletion. Keeps
-# the pod serving while an L4 LoadBalancer removes it from rotation, closing the
-# endpoint-propagation race that can drop a single new connection at the instant a
-# rolling update terminates a replica. 0 = off.
-drainPreStopSeconds: 6
+# the pod serving while the endpoint removal propagates to every node's kube-proxy,
+# closing the race that otherwise drops a new connection at the instant a rolling
+# update terminates a replica. 0 = off.
+#
+# The window has to cover propagation on a MULTI-NODE cluster, which is slower than
+# a single-node one by the number of nodes that must update their rules: a value
+# tuned on a one-node substrate reads as green there and still drops connections on
+# a real fleet. Measured on a 3-node GKE Standard cluster, a rolling replacement
+# under continuous load drops ~0.2-0.4% of new connections at 6s and none at 20s.
+#
+# The drop is a CONNECTION-establishment failure (connect timeout / handshake EOF),
+# never an admitted request refused, so it costs availability rather than the §6
+# zero-abandoned property — and it is bounded by sampling, not proven: this value
+# buys margin over an unbounded propagation delay, it does not make the race
+# impossible. A deployment that needs the property rather than the margin has to
+# gate the removal on readiness rather than outwait it.
+drainPreStopSeconds: 20
 
 # Container resources. A memory LIMIT is security-relevant, not just capacity
 # planning: every admitted request buffers up to --max-body-bytes before the verify
