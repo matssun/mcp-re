@@ -1,11 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# ADR-MCPRE-059 verification platform — REPORT-ONLY (Phase 1 deliverable 7).
+# ADR-MCPRE-059 verification platform — AUTHORITATIVE.
 #
-# This workflow reports verification-infrastructure health. It does not gate merges and
-# must not, until the platform has been measured and the pilots exist (Phases 2-3). The
-# report-only posture is deliberate: a gate that blocks before it is calibrated teaches
-# people to bypass it.
+# This workflow GATES. The host job runs `./tools/verification/verify --gate`, so a lane
+# that fails, or that could not run and says so, fails the build.
+#
+# This header read "REPORT-ONLY ... It does not gate merges and must not, until the
+# platform has been measured and the pilots exist" long after the pilots landed and the
+# step was changed to `--gate`. The posture it described was right for Phase 1 — a gate
+# that blocks before it is calibrated teaches people to bypass it — and wrong about the
+# tree for as long as it stood. Corrected in the v0.17 Slice B sweep, and recorded rather
+# than silently replaced: a workflow whose prose understates what it enforces costs a
+# reader the same trust as one that overstates it.
 #
 # Host split (§19). The two lanes do not run in the same place:
 #

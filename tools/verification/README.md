@@ -18,18 +18,18 @@ before any verification toolchain exists — which is exactly the state they are
 
 | Command | Does | Today |
 |---|---|---|
-| `verify` | umbrella; runs the lanes in the ADR's CI order and reports one verdict | works, report-only |
+| `verify` | umbrella; runs the lanes in the ADR's CI order and reports one verdict | works; a FAIL exits non-zero in BOTH modes |
 | `verify --gate` | authoritative mode: a failing lane fails the build | works |
 | `verify --manifests` | validate the policy files and stop | works |
 | `verify-tests` | runs each unit's declared test battery, by target — and once per pinned runtime where its ecosystem has one | works |
 | `check-assumptions` | the proof escape-hatch gate | works |
 | `fingerprint` | deterministic `ReviewFingerprint` per unit | works, partial components |
 | `evidence-graph` | declared units and typed edges | works; freshness is Phase 4 |
-| `verify-verus` | full `cargo verus verify` for the declared scope | refuses — Verus unpinned |
-| `verify-lean` | lake build and theorem check | refuses — pipeline unpinned |
-| `regenerate-lean` | Charon → LLBC → Aeneas → Lean extraction | refuses — pipeline unpinned |
+| `verify-verus` | full `cargo verus verify` for the declared scope | works; Verus is pinned and resolved |
+| `verify-lean` | lake build and theorem check | reports NOT_REQUIRED — pinned, but no V2/V3 unit is declared |
+| `regenerate-lean` | Charon → LLBC → Aeneas → Lean extraction | refuses — pipeline pinned, regeneration not implemented |
 | `check-generated` | drift gate for BOTH generated artifacts: the Lean model and the assurance views | works for the views; Lean reports "nothing to drift" |
-| `generate-views` | renders `verification/generated/` from the three catalogues | works |
+| `generate-views` | renders `verification/generated/` from the four catalogues | works |
 | `review-frontier` | minimum review obligation | Phase 4; falls back to everything-dirty |
 | `review` | theorem fingerprints, review state, the establishment conjunction, and root completeness | works |
 

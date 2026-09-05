@@ -542,7 +542,41 @@ def load_assumptions() -> dict:
                     f"`boundary://<id>`. A scope the tooling cannot resolve trusts the "
                     f"assumption nowhere while reading as a registration."
                 )
+        _require_boundary_edge(awhere, entry)
     return doc
+
+
+def _require_boundary_edge(where: str, entry: dict) -> None:
+    """Every live assumption names the boundary it crosses — the v0.17 TCB slice.
+
+    `scope` is the ONE canonical direction of this relation, and it always accepted a
+    `boundary://` target. What it did not do was require one, and the consequence was
+    measured rather than supposed: of forty-one registered premises, exactly ONE named a
+    boundary. `boundary_class_violations` therefore consulted a relation that was almost
+    entirely unpopulated, so the cap could not fire for any boundary nobody had happened to
+    write down — an enforcement that was live, correct, and reaching almost nothing.
+
+    An unpopulated relation is worse than an absent one. Absent, a reader asks where the
+    trust inventory is; unpopulated, the tooling answers the question with silence that
+    reads like a clean result.
+
+    A TOMBSTONE is the one exemption, and it is exempt by having an EMPTY scope rather than
+    by being named in a list here. A withdrawn assumption trusts nothing — that is what
+    withdrawing it meant — so giving it a boundary edge would make a retired premise read as
+    a live one, which is the same defect pointed the other way.
+    """
+    scope = [str(target) for target in entry.get("scope", [])]
+    if not scope:
+        return
+    if any(target.startswith("boundary://") for target in scope):
+        return
+    raise ManifestError(
+        f"{where}: assumption {entry['id']} names no `boundary://<id>` in its scope. Every "
+        f"live premise crosses something — foreign code, a service, the language runtime, "
+        f"or this repository's own behaviour where the lane stops at it — and the boundary "
+        f"is what tells a reader how far the claim above it reaches. Name the boundary it "
+        f"crosses, or empty the scope if the premise is withdrawn."
+    )
 
 
 def load_trust_boundaries() -> dict:

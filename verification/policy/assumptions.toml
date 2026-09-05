@@ -80,7 +80,7 @@ parser uses. It stops being acceptable if `parse_fixed_digits` is ever called wi
 which its precondition refuses, or if attribute-style loop invariants become available —
 at which point this entry should be discharged rather than renewed.
 """
-scope = ["unit://core.time_rfc3339"]
+scope = ["unit://core.time_rfc3339", "boundary://boundary.unmodelled_own_behaviour"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; any change to parse_fixed_digits or its callers."
@@ -95,7 +95,7 @@ The Rust standard library's documented behaviour, which vstd does not currently 
 A wrong specification here would let a non-digit byte through the parser's digit test, so
 it is stated as the exact code-point range rather than as an opaque boolean.
 """
-scope = ["unit://core.time_rfc3339"]
+scope = ["unit://core.time_rfc3339", "boundary://boundary.rust_std"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; discharge if vstd gains a specification for it."
@@ -109,7 +109,7 @@ justification = """
 Totality only. The proofs use split_last for control flow and claim nothing about what it
 returns, so no theorem here could be weakened by a wrong specification of its value.
 """
-scope = ["unit://core.time_rfc3339"]
+scope = ["unit://core.time_rfc3339", "boundary://boundary.rust_std"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; strengthen if a proof ever depends on its result."
@@ -125,7 +125,7 @@ mention which error a refusal returns, and the `thiserror`-derived formatting tr
 the type but is outside the proof. If a future theorem ever claims something about the
 rendered wire token, this entry must be replaced by a proof about that rendering.
 """
-scope = ["unit://core.time_rfc3339"]
+scope = ["unit://core.time_rfc3339", "boundary://boundary.unmodelled_own_behaviour"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; replace with a proof if a theorem ever concerns Display output."
@@ -146,7 +146,7 @@ compare against `now` at the extremes, and a wrapping implementation would let a
 `created` near i64::MIN wrap past the comparison. Stated as the exact clamp rather than as
 an opaque result so a wrong specification would be visible rather than convenient.
 """
-scope = ["unit://http_profile.freshness_window"]
+scope = ["unit://http_profile.freshness_window", "boundary://boundary.rust_std"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; discharge if vstd gains signed saturating specifications."
@@ -157,7 +157,7 @@ tool_specific_mechanism = "verus:assume_specification"
 id = "ASM-0006"
 description = "`i64::saturating_add` clamps at i64::MAX rather than wrapping."
 justification = "As ASM-0005, for the upper end of the window."
-scope = ["unit://http_profile.freshness_window"]
+scope = ["unit://http_profile.freshness_window", "boundary://boundary.rust_std"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; discharge if vstd gains signed saturating specifications."
@@ -174,7 +174,7 @@ configures, so it assumes only that repeated reads of the same policy agree. Ver
 body instead would require making VerifierPolicy transparent, which drags its algorithm
 registry and transport policy into the proof for no gain.
 """
-scope = ["unit://http_profile.freshness_window"]
+scope = ["unit://http_profile.freshness_window", "boundary://boundary.unmodelled_own_behaviour"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; any change that makes the getter more than a field read."
@@ -185,7 +185,7 @@ tool_specific_mechanism = "verus:external_body"
 id = "ASM-0008"
 description = "`VerifierPolicy::max_signature_validity` returns this policy's configured window bound."
 justification = "As ASM-0007, for the width bound."
-scope = ["unit://http_profile.freshness_window"]
+scope = ["unit://http_profile.freshness_window", "boundary://boundary.unmodelled_own_behaviour"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; any change that makes the getter more than a field read."
@@ -200,7 +200,7 @@ Body unchecked. Algorithm acceptance is orthogonal to the freshness theorem, whi
 nothing about which algorithm was resolved — only that admission implies a fresh window.
 It must be replaced by a proof before any theorem about algorithm agility is claimed.
 """
-scope = ["unit://http_profile.freshness_window"]
+scope = ["unit://http_profile.freshness_window", "boundary://boundary.unmodelled_own_behaviour"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; MUST be discharged before any algorithm-agility theorem."
@@ -214,7 +214,7 @@ justification = """
 Totality only, exactly as ASM-0003. The freshness theorem does not depend on what the tag
 or algorithm token turns out to be.
 """
-scope = ["unit://http_profile.freshness_window"]
+scope = ["unit://http_profile.freshness_window", "boundary://boundary.rust_std"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; strengthen if a proof ever depends on its result."
@@ -236,7 +236,7 @@ separate property, and stating an `ensures` here would import a hash claim into 
 that does not need one. Taken as an opaque decision procedure — its refusal path is still
 on the theorem's control flow, its verdict simply carries no meaning.
 """
-scope = ["unit://http_profile.admission_currency"]
+scope = ["unit://http_profile.admission_currency", "boundary://boundary.unmodelled_own_behaviour"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review; MUST be discharged before any theorem claiming the binding commits to the assertion's admitted state."
@@ -260,7 +260,7 @@ limit what that theorem says. What it costs is stated plainly: `check_admission`
 `Ok` does NOT, by this proof, mean the assertion was validly signed or fresh. Those remain
 test-and-review properties until their own unit exists.
 """
-scope = ["unit://http_profile.admission_currency"]
+scope = ["unit://http_profile.admission_currency", "boundary://boundary.unmodelled_own_behaviour"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review; a separate unit for assertion validity is the discharge, not an ensures added here."
@@ -277,7 +277,7 @@ than diagnosing a closure whose signature mentions a type it has no specificatio
 Declaring the type opaque is what makes the parameter modellable; nothing is assumed about
 keys, and no clause of the theorem mentions one.
 """
-scope = ["unit://http_profile.admission_currency"]
+scope = ["unit://http_profile.admission_currency", "boundary://boundary.unmodelled_own_behaviour"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review; revisit if a theorem ever needs to say something about a key."
@@ -295,7 +295,7 @@ narrow and checkable by reading three lines of the enum — that a hand-written 
 was substituted for the derive, which the type's own definition forbids by carrying
 `#[derive(PartialEq, Eq)]`.
 """
-scope = ["unit://http_profile.admission_currency"]
+scope = ["unit://http_profile.admission_currency", "boundary://boundary.rust_std"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review; re-examine if AdmissionStatus ever gains a hand-written PartialEq or a payload-carrying variant."
@@ -332,7 +332,7 @@ artifact_type/binding_type pair may leave the verifier as Ok — a control-flow 
 that holds whatever the comparison decides. Stating an ensures here would import a
 preimage-resistance claim into a theorem that does not need one.
 """
-scope = ["unit://http_profile.artifact_typing"]
+scope = ["unit://http_profile.artifact_typing", "boundary://boundary.unmodelled_own_behaviour"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review; MUST be discharged before any theorem claiming a binding commits to the presented credential."
@@ -347,7 +347,7 @@ Structural validation — digest token shape and the reference-field all-or-none
 a separate property from artifact typing. The theorem's Ok-path facts are established by
 the comparison ahead of the call, so this contributes no postcondition.
 """
-scope = ["unit://http_profile.artifact_typing"]
+scope = ["unit://http_profile.artifact_typing", "boundary://boundary.unmodelled_own_behaviour"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review; a validate() contract is its own unit, not an ensures added here."
@@ -358,7 +358,7 @@ tool_specific_mechanism = "verus:external_body"
 id = "ASM-0020"
 description = "`#[derive(PartialEq)]` on the fieldless enums `ArtifactType` and `BindingType` is structural equality."
 justification = "As ASM-0014, for the artifact-type and binding-form tags."
-scope = ["unit://http_profile.artifact_typing"]
+scope = ["unit://http_profile.artifact_typing", "boundary://boundary.rust_std"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review; re-examine if either enum gains a hand-written PartialEq or a payload-carrying variant."
@@ -402,7 +402,7 @@ Standing, therefore, and explicit — which is what an honest verification resul
 when the security value of a claim and the prover's current reach do not coincide. Revisit
 on a prover release that lifts either ceiling.
 """
-scope = ["unit://http_profile.continuation_unbypassability"]
+scope = ["unit://http_profile.continuation_unbypassability", "boundary://boundary.unmodelled_own_behaviour"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review each release; discharge blocked by pinned-toolchain ceilings 2 and 9, not by choice."
@@ -447,7 +447,7 @@ would need `label_a != label_b ==> digest(label_a, x) != digest(label_b, y)`. Th
 domain-separation property of the construction, it lives at
 `boundary.crypto_primitives`, and no wording here should let it be read as proved.
 """
-scope = ["unit://http_profile.continuation_binding"]
+scope = ["unit://http_profile.continuation_binding", "boundary://boundary.unmodelled_own_behaviour"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP3"
 review_requirement = "Owner review; discharge requires a proof about the digest construction itself, i.e. crossing boundary.crypto_primitives."
@@ -484,6 +484,7 @@ scope = [
     "unit://http_profile.continuation_binding",
     "unit://http_profile.continuation_unbypassability",
     "unit://http_profile.freshness_window",
+  "boundary://boundary.unmodelled_own_behaviour",
 ]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP3"
@@ -509,6 +510,7 @@ scope = [
     "unit://http_profile.continuation_binding",
     "unit://http_profile.continuation_unbypassability",
     "unit://http_profile.freshness_window",
+  "boundary://boundary.unmodelled_own_behaviour",
 ]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP3"
@@ -526,6 +528,7 @@ scope = [
     "unit://http_profile.continuation_binding",
     "unit://http_profile.continuation_unbypassability",
     "unit://http_profile.freshness_window",
+  "boundary://boundary.unmodelled_own_behaviour",
 ]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP3"
@@ -560,7 +563,7 @@ the verifier-result claims has a named premise instead of an implied one. It sto
 acceptable if the algorithm is broken, or if the crate is replaced by an implementation
 whose acceptance criterion is not the scheme's.
 """
-scope = ["unit://http_profile.verifier_results"]
+scope = ["unit://http_profile.verifier_results", "boundary://boundary.crypto_primitives"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-061 MCPRE-136"
 review_requirement = "Owner review; any change of signature backend or pinned version."
@@ -581,7 +584,7 @@ labelling is built on, for the claims the prover does not reach. It stops being 
 if SHA-256 is broken for second preimages, or if a profile revision digests attacker-chosen
 structure without a domain separator.
 """
-scope = ["unit://http_profile.verifier_results"]
+scope = ["unit://http_profile.verifier_results", "boundary://boundary.crypto_primitives"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-061 MCPRE-136"
 review_requirement = "Owner review; any change to the evidence digest algorithm or its labelling."
@@ -615,7 +618,7 @@ credential's root issuer kid, and the signing key is authorized by the credentia
 rather than by any seam answer. The premise is the same one; the keyid it is applied to is
 not.
 """
-scope = ["unit://http_profile.verifier_results"]
+scope = ["unit://http_profile.verifier_results", "boundary://boundary.unmodelled_own_behaviour"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-061 MCPRE-136"
 review_requirement = "Owner review; any change to the seam's contract or to slot enforcement."
@@ -647,7 +650,7 @@ It stops being acceptable if the adapter starts branching on the parser's error 
 (today it maps every parse failure to one refusal), or if identity interpretation is ever
 given a second parser whose field sets must agree.
 """
-scope = ["unit://proxy.certificate_identity"]
+scope = ["unit://proxy.certificate_identity", "boundary://boundary.x509"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-063 Slice 1"
 review_requirement = "Owner review; any change to the certificate identity adapter or its parser dependency."
@@ -677,7 +680,7 @@ profile cannot be recognised by a fixed byte prefix, this assumption must be re-
 the parser inside the trusted computing base — a materially larger claim than the one made
 here.
 """
-scope = ["unit://proxy.ed25519_public_key"]
+scope = ["unit://proxy.ed25519_public_key", "boundary://boundary.x509"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-063 Slice 2"
 review_requirement = "Owner review; any change that lets the accepting path consult the parser."
@@ -721,7 +724,7 @@ taking the parser's bytes verbatim — a re-encoding would make this code a seco
 what the credential says — or if a second certificate parser is introduced whose reported
 SPKI must agree with this one's.
 """
-scope = ["unit://proxy.credential_key_correspondence"]
+scope = ["unit://proxy.credential_key_correspondence", "boundary://boundary.x509"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-063 Slice 2"
 review_requirement = "Owner review; any change to the credential adapter's certificate parsing or its parser dependency."
@@ -758,7 +761,7 @@ It stops being acceptable if this authority ever begins to CONSTRUCT the associa
 instance by pairing a chain captured from one connection with another — rather than reading
 it from the connection it was reported for.
 """
-scope = ["unit://proxy.channel_associated_credential"]
+scope = ["unit://proxy.channel_associated_credential", "boundary://boundary.tls_mechanism"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-063 Slice 4"
 review_requirement = "Owner review; any change that captures a credential anywhere other than the connection whose establishment boundary was just crossed."
@@ -797,7 +800,7 @@ from the compatibility projection rather than through the owner's named leaf pro
 if a second establishment mechanism with a different reporting order is admitted without its
 own premise.
 """
-scope = ["unit://proxy.channel_associated_identity"]
+scope = ["unit://proxy.channel_associated_identity", "boundary://boundary.tls_mechanism"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-063 Slice 5"
 review_requirement = "Owner review; any change to which element of the associated chain the identity is read from, or the admission of a second establishment mechanism."
@@ -835,7 +838,7 @@ It stops being acceptable if this authority ever begins to DECIDE acceptance rat
 relay it, if a second establishment mechanism with different path semantics is admitted
 without its own premise, or if the epoch gate stops being the thing that governs resumption.
 """
-scope = ["unit://proxy.mechanism_verified_credential"]
+scope = ["unit://proxy.mechanism_verified_credential", "boundary://boundary.tls_mechanism"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-064 Slice 1"
 review_requirement = "Owner review; any change to how the establishment path is read, or to the gate that governs resumption."
@@ -891,7 +894,7 @@ mechanism that does not prove possession — a credential presented in a request
 credential recovered from a store, or an establishment mechanism admitted without its own
 premise — or if client authentication ever becomes optional in a supported build.
 """
-scope = ["unit://proxy.authenticated_relationship_peer"]
+scope = ["unit://proxy.authenticated_relationship_peer", "boundary://boundary.tls_mechanism"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-064 Slice 2"
 review_requirement = "Owner review; any change that composes an authenticated peer from an acceptance produced by a different establishment mechanism, or that makes client authentication optional."
@@ -983,7 +986,7 @@ whose reported fields must agree with this one's, if it begins branching on the 
 error kinds (today every parse failure is one refusal), or if revocation lookup moves to a
 key this premise does not name.
 """
-scope = ["unit://proxy.credential_currency"]
+scope = ["unit://proxy.credential_currency", "boundary://boundary.x509"]
 owner = "mats@sundvall.name"
 introduced_by = "Owner completeness ruling A, 2026-08-31"
 review_requirement = "Owner review; any change to the credential-currency X.509 adapter, to its parser dependency, or to the field set revocation lookup is keyed by."
@@ -1022,7 +1025,7 @@ It stops being acceptable if a `RawEd25519TlsSigner` implementation is admitted 
 exported key is derived from a source other than the signing key's own custody, or if the
 resolver ever accepts an export from one signer and installs another.
 """
-scope = ["unit://proxy.delegated_resolver_materialization"]
+scope = ["unit://proxy.delegated_resolver_materialization", "boundary://boundary.tls_mechanism"]
 owner = "mats@sundvall.name"
 introduced_by = "Owner completeness ruling A, 2026-08-31"
 review_requirement = "Owner review; any new RawEd25519TlsSigner implementation, and any change to how the resolver obtains or installs the signer's exported key."
@@ -1065,7 +1068,7 @@ It stops being acceptable if the deployment runs a replication topology outside 
 set — a chained or read-only replica counted toward the quorum, or a failover policy that can
 promote a replica the primary never waited on.
 """
-scope = ["unit://proxy.replay_admission_gate"]
+scope = ["unit://proxy.replay_admission_gate", "boundary://boundary.shared_state_store"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 §28 / issue #744, D2a"
 review_requirement = "Owner review; any change to the WAIT quorum handling, to the tier's strict-production minimum, or to the replication topologies ADR-MCPS-020 admits."
@@ -1153,7 +1156,7 @@ It stops being acceptable if the deployment runs a single-member or non-quorum e
 admission stops using the CREATE comparison, or if a lease TTL is derived from anything but
 the request's own retain-until.
 """
-scope = ["unit://proxy.replay_admission_gate"]
+scope = ["unit://proxy.replay_admission_gate", "boundary://boundary.shared_state_store"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 §28 / issue #744, D2a"
 review_requirement = "Owner review; any change to the txn comparison, the lease derivation, or the cluster topology the tier is declared against."

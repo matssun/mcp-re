@@ -157,7 +157,15 @@ stage_static() {
     && python3 tools/verification/test_theorem_review.py \
     && python3 tools/verification/test_views.py \
     && python3 tools/verification/test_evidence_bundle.py \
+    `# In NEITHER aggregate until the v0.17 Slice B sweep: mutation-probe.yml names it and` \
+    `# that workflow is paths:-filtered, so the mutation lane's verdict semantics were` \
+    `# established only on the pull requests that tripped its filter.` \
+    && python3 tools/verification/test_mutation_lane.py \
     && python3 tools/verification/test_r9_linkage.py \
+    `# The published claim surface and the declared root set are one fact written twice.` \
+    `# They had diverged in four ways and nothing related them; this is what relates them.` \
+    && python3 scripts/claim_surface_gate.py --selftest \
+    && python3 scripts/claim_surface_gate.py \
     `# The R9 record is a historical measurement, and the appendix in the packet is a view` \
     `# of it. --check refuses a hand-edited appendix, an untracked surviving High/Critical` \
     `# row, and a merged_closure whose commit is not an ancestor of HEAD — the last because` \

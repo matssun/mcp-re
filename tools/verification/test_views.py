@@ -31,7 +31,11 @@ sys.path.insert(0, str(HERE))
 
 from _load_tool import load_tool  # noqa: E402
 
-from _manifest import load_assumptions, load_verification  # noqa: E402
+from _manifest import (  # noqa: E402
+    load_assumptions,
+    load_trust_boundaries,
+    load_verification,
+)
 from _theorems import load_theorems  # noqa: E402
 from _views import GENERATED_ROOT, render_all  # noqa: E402
 
@@ -40,14 +44,16 @@ generator = load_tool('generate-views', 'generate_views')
 UNIT = "http_profile.freshness_window"
 
 
-def catalogues(*theorem_rows, roots: list[str] | None = None) -> tuple[dict, dict, dict]:
+def catalogues(
+    *theorem_rows, roots: list[str] | None = None
+) -> tuple[dict, dict, dict, dict]:
     doc = load_verification()
     theorems = {
         "schema_version": 1,
         "root_theorems": list(roots or []),
         "theorem": list(theorem_rows),
     }
-    return theorems, doc, load_assumptions()
+    return theorems, doc, load_assumptions(), load_trust_boundaries()
 
 
 def theorem(**overrides) -> dict:
@@ -98,7 +104,12 @@ def test_the_committed_views_match_the_live_catalogues():
     """The repository as it stands: what is checked in is what the catalogues render."""
     doc = load_verification()
     theorems = load_theorems({unit["id"] for unit in doc.get("unit", [])})
-    assert generator.differences(render_all(theorems, doc, load_assumptions())) == []
+    assert (
+        generator.differences(
+            render_all(theorems, doc, load_assumptions(), load_trust_boundaries())
+        )
+        == []
+    )
 
 
 # --- drift ----------------------------------------------------------------------
@@ -191,7 +202,7 @@ def test_every_view_carries_a_do_not_edit_marker_and_its_sources():
 def test_no_view_truncates_what_it_shows():
     """Silent truncation reads as coverage. Nothing here bounds its input, so the longest
     declared assumption description must appear in full."""
-    _theorems, _doc, assumptions = catalogues(theorem())
+    _theorems, _doc, assumptions, _boundaries = catalogues(theorem())
     longest = max(
         (entry["description"] for entry in assumptions.get("assumption", [])),
         key=len,
@@ -243,10 +254,10 @@ def test_the_theorem_only_views_do_not_read_the_other_catalogues():
     their own fingerprint axis does not cover, which is the collapse §14.7 exists to
     prevent."""
     doc = load_verification()
-    theorems, _doc, assumptions = catalogues(theorem())
-    baseline = render_all(theorems, doc, assumptions)
+    theorems, _doc, assumptions, _boundaries = catalogues(theorem())
+    baseline = render_all(theorems, doc, assumptions, _boundaries)
     mutated = dict(doc, unit=[dict(unit, **{"class": "V9"}) for unit in doc["unit"]])
-    moved = render_all(theorems, mutated, assumptions)
+    moved = render_all(theorems, mutated, assumptions, _boundaries)
 
     for name in ("theorem-index.md", "theorem-dependencies.md"):
         key = f"{GENERATED_ROOT}/{name}"

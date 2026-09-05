@@ -33,7 +33,12 @@ subset would leave the rest editable by hand.
 
 from __future__ import annotations
 
-from _catalogue_views import assumption_consumers, owner_view, structural_blast_radius
+from _catalogue_views import (
+    assumption_consumers,
+    owner_view,
+    structural_blast_radius,
+    trust_boundaries,
+)
 from _theorem_views import theorem_dependencies, theorem_index
 from _view_format import GENERATED_ROOT
 
@@ -45,10 +50,13 @@ __all__ = [
     "structural_blast_radius",
     "theorem_dependencies",
     "theorem_index",
+    "trust_boundaries",
 ]
 
 
-def render_all(theorems: dict, verification: dict, assumptions: dict) -> dict[str, str]:
+def render_all(
+    theorems: dict, verification: dict, assumptions: dict, boundaries: dict
+) -> dict[str, str]:
     """Every generated view, keyed by repo-relative path."""
     return {
         f"{GENERATED_ROOT}/theorem-index.md": theorem_index(theorems),
@@ -59,5 +67,11 @@ def render_all(theorems: dict, verification: dict, assumptions: dict) -> dict[st
         f"{GENERATED_ROOT}/owners.md": owner_view(theorems, verification, assumptions),
         f"{GENERATED_ROOT}/blast-radius.md": structural_blast_radius(
             theorems, verification, assumptions
+        ),
+        # The DERIVED half of the assumption→boundary relation. Rendered here rather than
+        # stored in `trust-boundaries.toml`, because a boundary that listed its own premises
+        # would be the second authority over an edge `scope` already owns.
+        f"{GENERATED_ROOT}/trust-boundaries.md": trust_boundaries(
+            theorems, verification, assumptions, boundaries
         ),
     }
