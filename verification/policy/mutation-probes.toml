@@ -2568,15 +2568,14 @@ expect_red = [
 ]
 
 # ---------------------------------------------------------------------------
-# proxy.trust_plane_runtime (M92–M95, M98, M99 — THM-0097) and proxy.trust_epoch_source
-# (M96, M97 — no theorem) — v0.17 trust-plane ownership slice. The eight weakenings are the
-# deletions the census found the battery would otherwise not notice.
+# proxy.trust_plane_runtime — v0.17 trust-plane ownership slice. No theorem yet; each
+# `conjunct` is the unit description's own words. The eight weakenings are the deletions
+# the census found the battery would otherwise not notice.
 # ---------------------------------------------------------------------------
 
 [[probe]]
 id = "M92-trust-flush-is-applied-before-the-lookup"
 unit = "proxy.trust_plane_runtime"
-theorem = "THM-0097"
 conjunct = "a change of the shared epoch this replica observes strips every cached binding's authority before the next lookup"
 path = "mcp-re-proxy/src/trust_plane/push_trust.rs"
 anchor = """
@@ -2588,12 +2587,12 @@ weakening = """
 expect_red = [
   "lib#trust_plane::push_trust::tests::pushed_invalidation_rejects_the_key_before_t_elapses",
   "lib#trust_plane::push_trust::tests::flush_all_evicts_every_cached_binding_forcing_re_resolve",
+  "lib#trust_epoch::tests::an_observed_advance_makes_the_next_lookup_the_stores_answer",
 ]
 
 [[probe]]
 id = "M93-an-invalidated-entry-does-not-answer"
 unit = "proxy.trust_plane_runtime"
-theorem = "THM-0097"
 conjunct = "strips every cached binding's authority — an invalidated entry answers nothing on its own"
 path = "mcp-re-proxy/src/trust_plane/trust_cache.rs"
 anchor = """
@@ -2607,12 +2606,12 @@ weakening = """
 expect_red = [
   "lib#trust_plane::push_trust::tests::flush_all_evicts_every_cached_binding_forcing_re_resolve",
   "lib#trust_plane::trust_cache::tests::evict_drops_an_in_window_entry_forcing_re_resolution",
+  "lib#trust_epoch::tests::an_observed_advance_makes_the_next_lookup_the_stores_answer",
 ]
 
 [[probe]]
 id = "M94-a-flush-cannot-extend-a-deadline"
 unit = "proxy.trust_plane_runtime"
-theorem = "THM-0097"
 conjunct = "a cached positive binding never answers past the deadline it was first cached under"
 path = "mcp-re-proxy/src/trust_plane/trust_cache.rs"
 anchor = """
@@ -2632,7 +2631,6 @@ expect_red = [
 [[probe]]
 id = "M95-the-window-closes"
 unit = "proxy.trust_plane_runtime"
-theorem = "THM-0097"
 conjunct = "a cached positive binding answers for at most T"
 path = "mcp-re-proxy/src/trust_plane/trust_cache.rs"
 anchor = """
@@ -2647,11 +2645,12 @@ expect_red = [
   "lib#trust_plane::trust_cache::tests::no_indefinite_stale_active_past_window_fails_closed",
   "lib#trust_plane::trust_cache::tests::active_re_resolves_after_window",
   "lib#trust_plane::push_trust::tests::channel_failure_falls_back_to_bounded_t_entry_still_served_until_expiry",
+  "lib#trust_epoch::tests::a_source_outage_flushes_nothing_and_the_deadline_still_governs",
 ]
 
 [[probe]]
 id = "M96-a-failed-read-is-not-a-healthy-source"
-unit = "proxy.trust_epoch_source"
+unit = "proxy.trust_plane_runtime"
 conjunct = "a source outage is reported, never read as a steady epoch"
 path = "mcp-re-proxy/src/trust_epoch.rs"
 anchor = """
@@ -2669,7 +2668,7 @@ expect_red = [
 
 [[probe]]
 id = "M97-a-regression-is-a-change"
-unit = "proxy.trust_epoch_source"
+unit = "proxy.trust_plane_runtime"
 conjunct = "a change of the shared epoch — any change, a regressed counter included — flushes; rollback is not representable on this side"
 path = "mcp-re-proxy/src/trust_epoch.rs"
 anchor = """
@@ -2685,7 +2684,6 @@ expect_red = [
 [[probe]]
 id = "M98-a-stale-store-refuses"
 unit = "proxy.trust_plane_runtime"
-theorem = "THM-0097"
 conjunct = "a store that has stopped being maintained refuses with Unavailable rather than serving"
 path = "mcp-re-proxy/src/trust_plane/freshness.rs"
 anchor = """
@@ -2704,7 +2702,6 @@ expect_red = [
 [[probe]]
 id = "M99-keep-last-good-is-bounded"
 unit = "proxy.trust_plane_runtime"
-theorem = "THM-0097"
 conjunct = "a store that has stopped being maintained — the reload's keep-last-good tolerance is bounded by exactly the budget"
 path = "mcp-re-proxy/src/trust_plane/reload.rs"
 anchor = """

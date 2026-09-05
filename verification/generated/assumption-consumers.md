@@ -58,6 +58,6 @@ independent results, and this view exists so it cannot read as the latter.
 | ASM-0041 | An etcd `POST /v3/kv/txn` that succeeds under `compare { target: CREATE, create_revision: 0 }` means the key did not exist at a linearization point and now does, cluster-wide, for the granted lease's TTL. | proxy.replay_admission_gate | THM-0092 |
 | ASM-0042 | WITHDRAWN — discharged by unit://sdk_python.exchange_path. | _no unit_ | _no theorem_ |
 | ASM-0043 | WITHDRAWN — discharged by unit://sdk_typescript.exchange_path. | _no unit_ | _no theorem_ |
-| ASM-0044 | A read of the trust-epoch key over a replica's own connection, issued after an operator's `INCR` on that key was acknowledged, returns a value different from every value that replica read before the `INCR`. | proxy.trust_epoch_source | _no theorem_ |
+| ASM-0044 | A read of the trust-epoch key over a replica's own connection, issued after an operator's `INCR` on that key was acknowledged, returns a value different from every value that replica read before the `INCR`. | proxy.trust_plane_runtime | _no theorem_ |
 
 16 assumption(s) are reached by more than one theorem.
