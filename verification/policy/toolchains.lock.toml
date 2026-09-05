@@ -241,13 +241,26 @@ theorem proved with a different mathlib is a theorem proved in a different envir
 # one of these.
 #
 # THE SET IS THE SUPPORTED SET. `sdk/python/pyproject.toml` declares
-# `requires-python = ">=3.10,<3.15"`, and every minor in that range is measured here. If
+# `requires-python = ">=3.14.5,<3.15"`, and every minor in that range is measured here. If
 # they diverge the support claim is wider than the evidence, which is the defect this entry
 # exists to stop; `scripts/python_runtime_gate.py` fails the build on divergence.
+#
+# NARROWED 2026-09-05, from five minors to one, by owner ruling. The range was ">=3.10"
+# inherited from the upstream MCP SDK's own floor, which is not this package's obligation:
+# it cost a battery on five interpreters to hold a claim nobody had decided to make. The
+# floor's PATCH component is load-bearing — 3.14.0 through 3.14.4 ship the incremental
+# cycle collector upstream reverted in 3.14.5 — and the gate reads the minor, so 3.14.7
+# below is the measured representative of the claimed 3.14 line exactly as 3.10.20 was of
+# 3.10 before it.
+#
+# This narrowing invalidated the standing THM-0094 approval rather than merely trimming a
+# list: that review record ratifies the supported-runtime boundary conjunct by conjunct,
+# naming CPython 3.10 through 3.14. A narrower claim is a different claim and needs its own
+# review.
 [python]
 state = "resolved"
 ecosystem = "python"
-interpreters = ["3.10.20", "3.11.15", "3.12.13", "3.13.15", "3.14.7"]
+interpreters = ["3.14.7"]
 source = "sdk/python/pyproject.toml requires-python; installed by scripts/prepare_python_matrix.sh"
 note = """
 Patch versions are the ones `uv python install` resolves for these minors at the pin date.
