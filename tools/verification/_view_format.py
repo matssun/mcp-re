@@ -23,6 +23,10 @@ SOURCES = (
     "verification/policy/theorems.toml",
     "verification/policy/verification.toml",
     "verification/policy/assumptions.toml",
+    # Added with the derived boundary view. A page that named three sources while reading
+    # four would understate what can invalidate it, and the banner is the only place a
+    # reader is told what a regeneration depends on.
+    "verification/policy/trust-boundaries.toml",
 )
 
 

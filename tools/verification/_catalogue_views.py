@@ -77,6 +77,70 @@ def assumption_consumers(theorems: dict, verification: dict, assumptions: dict) 
     return body
 
 
+def trust_boundaries(
+    theorems: dict, verification: dict, assumptions: dict, boundaries: dict
+) -> str:
+    """What each declared trust boundary carries — the DERIVED boundary → assumption view.
+
+    The relation is stored in ONE direction only: an assumption names the boundary it
+    crosses, in its own `scope`, beside the units it is scoped to. That is the same rule
+    §8.2 already applies to `consumed_by`, applied to the other edge in `scope`, and for
+    the same reason — two independently maintained tables of one relation drift, and the
+    drift is invisible because each reads as authoritative alone.
+
+    So this page is computed, never written. A boundary declaration says what lies beyond
+    it and what class a unit may reach without a premise; it does NOT list its premises,
+    and adding such a list would create the second authority this view exists instead of.
+    """
+    units = verification.get("unit", [])
+    supporters = _supporters(theorems)
+    rows = []
+    for boundary in sorted(boundaries.get("boundary", []), key=lambda row: row["id"]):
+        crossing = [
+            entry
+            for entry in sorted(assumptions.get("assumption", []), key=lambda row: row["id"])
+            if f"boundary://{boundary['id']}" in [str(t) for t in entry.get("scope", [])]
+        ]
+        reached = sorted(
+            {
+                tid
+                for entry in crossing
+                for unit in _scoped_units(entry, units)
+                for tid in supporters.get(unit, [])
+            }
+        )
+        rows.append(
+            (
+                boundary["id"],
+                boundary["kind"],
+                str(boundary.get("max_class_without_assumption") or "_no cap_"),
+                ", ".join(entry["id"] for entry in crossing) or "_no premise_",
+                ", ".join(reached) or "_no theorem_",
+            )
+        )
+
+    body = header(
+        "Trust boundaries",
+        "Where MCP-RE stops being able to prove and starts having to trust, and what\n"
+        "each boundary carries. Derived by following assumption scope → boundary, and\n"
+        "scope → unit → theorem: the forward edges live in `assumptions.toml` and this\n"
+        "direction is computed, never stored.\n\n"
+        "A boundary with no premise is not thereby safe. It means no claim above V0 has\n"
+        "yet had to trust it — which is a fact about what has been proved so far, not\n"
+        "about the boundary.",
+    )
+    body += "\n" + table(
+        rows,
+        ("boundary", "kind", "class cap", "premises crossing it", "reaches theorems"),
+    )
+    carrying = [row for row in rows if row[3] != "_no premise_"]
+    body += (
+        f"\n{len(carrying)} of {len(rows)} declared boundary(ies) carry at least one "
+        f"registered premise.\n"
+    )
+    return body
+
+
 def owner_view(theorems: dict, verification: dict, assumptions: dict) -> str:
     units = {unit["id"]: unit for unit in verification.get("unit", [])}
     by_owner: dict[str, list[dict]] = {}

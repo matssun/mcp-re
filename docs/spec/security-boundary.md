@@ -12,6 +12,11 @@ STATUS:  RATIFIED — the current canonical MCP-RE security-claim boundary
          AMENDED by the owner on 2026-09-03: THM-0042 moved §4 -> §2, by the route
          §7 reserves — established and independently reviewed — not by declaration.
          See §7.1.
+         AMENDED by the owner on 2026-09-05 (v0.17 Slice A): THM-0091, THM-0094 and
+         THM-0095 moved §4 -> §2 by that same route; §4 restructured and its three
+         duplicated rows removed; stale sentences in §3 and §5 corrected. The
+         mapping between this document's claims and the theorem registry's roots
+         is now mechanically checked and cannot drift again. See §4.4 and §7.1.
 ```
 
 This document states what MCP-RE protects, and — with equal weight — what it does **not**.
@@ -75,7 +80,10 @@ it. A claim with no root in this table is not a claim this document makes.
 | A caller cannot reach the backend by omitting evidence, presenting another exchange's evidence, presenting a fact the deployment selected no authority for, or handing the pipeline a security value it constructed itself. | **THM-0074** — no unearned dispatch |
 | A refusal cannot reach the dispatch, and its own effects cannot be mistaken for those of a served request — including where an approval was spent and the refusal must not read as an ordinary retry. | **THM-0078** — refusal is terminal |
 | A response cannot be attributed to the trust root directly, signed by a credential the deployment does not hold or no longer holds, or advertise validity its credential does not authorize. | **THM-0075** — no unearned response attribution |
-| **Through the shipped Rust client proxy**, an application is not handed, as this call's answer, a response from another exchange or signer, or one that verified only unbound — and is not led to repeat a side effect by reading silence as *it did not run*. The claim is over that implementation, not over the exchange path in general: the Python and TypeScript SDKs implement the boundary independently and are §4, not §2. | **THM-0076** — a client accepts only an answer to its own request |
+| **Through the shipped Rust client proxy**, an application is not handed, as this call's answer, a response from another exchange or signer, or one that verified only unbound — and is not led to repeat a side effect by reading silence as *it did not run*. The claim is over that implementation, not over the exchange path in general: the Python and TypeScript members of this family are the two rows below, and neither establishes anything about this one. | **THM-0076** — a client accepts only an answer to its own request |
+| **Through the shipped Python SDK**, the same: an application is not handed another exchange's answer, and the response deadline is enforced rather than suppressed by a fill-to read across several underlying reads. A separate row because the boundary is implemented independently per language and byte-level parity fixtures compare bytes, while every divergence this family exists for is behavioural. | **THM-0094** — the shipped Python SDK accepts only an answer to its own request |
+| **Through the shipped TypeScript SDK**, the same claim over that implementation, for the same reason it is not folded into either row above. | **THM-0095** — the shipped TypeScript SDK accepts only an answer to its own request |
+| An unrelated browser origin, or a DNS-rebinding attacker reaching the client sidecar's local listener, cannot cause it to sign and emit a security-bearing outbound exchange. The claim ends at admission: what the sidecar does with a request it admitted is the rows above. | **THM-0091** — the sidecar signs only for a request its ingress policy admitted |
 | An operator cannot obtain a weaker posture by supplying a combination nobody validated, and a serving component cannot disagree with the owner about what was configured. | **THM-0077** — no unselected posture |
 | A runtime that never bound a listener cannot be recorded as a clean drained shutdown. | **THM-0012** — the lifecycle record |
 | An auditor cannot be shown a receipt from a log the deployment's pin does not describe, where verification runs through a pin-projected resolver. | **THM-0072** — pinned-service receipt |
@@ -105,10 +113,13 @@ commitment.
 **Durable audit persistence.** THM-0071 is about the modeled in-process path. If the process
 disappears, records emitted and not yet drained go with it.
 
-**That a described call ever happened.** Retained-evidence correspondence is not currently
-claimed at all (§4). Even once established it would be correspondence only — whatever was
-reconstructed is what was committed to — and would not establish that the retained bytes are
-themselves valid evidence, nor that the reconstruction is complete.
+**That a described call ever happened.** Retained-evidence correspondence IS claimed —
+THM-0042, §2, since 2026-09-03 — and it is correspondence only: whatever was reconstructed
+is what was committed to. It does not establish that the retained bytes are themselves
+valid evidence, that the reconstruction is complete, or that the call it describes ever
+occurred. This paragraph previously read "not currently claimed at all (§4)", which was
+true when it was written and was left standing by the 2026-09-03 move; the non-claim it
+makes is unchanged, and only the sentence asserting where the claim sits was wrong.
 
 **Anything about a non-pinned resolver.** THM-0072 says nothing about a verification
 performed through a `stated` resolver, which remains a supported non-pin provenance for
@@ -128,28 +139,69 @@ evidence. A premise being about code this project owns does not make it a result
 
 **Deployment artefacts as runtime theorems.** See §0.
 
-## 4. Root families ruled in scope and NOT yet established
+## 4. Root families ruled in scope, and where each now stands
 
 The completeness ruling of 2026-08-31 found the declared root set incomplete against this
-claim surface and ruled the following in scope. **None of them is established yet**, and
-until each is, MCP-RE makes no claim in that area. Where a theorem has since been WRITTEN it
-is named — a written, unreviewed theorem is not an established one, and naming it here is
-what keeps "the argument exists and is unreviewed" distinguishable from "no argument exists". Listing them here rather than omitting
-them is the point: an unstated gap is the failure mode this document exists to prevent.
+claim surface and ruled six areas in scope. This section is the record of that ruling and
+of what has happened to each area since. Listing them rather than omitting them is the
+point: an unstated gap is the failure mode this document exists to prevent, and an area
+that closes must be visibly closed rather than quietly deleted.
+
+**Every area the ruling named is now settled.** Three became system roots and are published
+in §2; three are established subordinate claims composing under a §2 root. §4.3 records
+which, and by what route. The table below therefore holds no open gap — only the two areas
+the ruling placed **outside** the runtime roots, which are dispositions about where a
+concern is owned rather than gaps in it.
+
+Read the emptiness of the gap column precisely. It says the 2026-08-31 list is closed. It
+does **not** say no further area exists: an area enters this section by an owner
+completeness ruling and by no other route, and the v0.17 assurance census names candidates
+— cross-replica trust-epoch propagation, serving-interval confinement, bounded drain —
+that are **not** ruled in scope here and are therefore not claims, not gaps, and not
+promises. They are census findings awaiting a ruling. A document that admitted them on its
+own would be inferring a ratification, which §7 forbids in as many words.
 
 | area | disposition | placement |
 |---|---|---|
-| **Replay** store durability | in scope; **written, unreviewed** — THM-0086 and THM-0092 | under THM-0077 — the selected tier materializes honestly — and THM-0074: a replay state the request requires and the store cannot establish must prevent dispatch. The second rests on ASM-0040 / ASM-0041, per mechanism |
-| **Continuation** correlation durability | in scope, and **not the same shape**; **written and owner-reviewed** — THM-0087 and THM-0093, with THM-0096 the materialization leaf | the capability is OPTIONAL, selected with `--continuation-control-redis-url`: an omitted flag is a legitimate OFF that installs no store and no node-local substitute, and a SELECTED capability that cannot be established refuses startup. Under THM-0077: the runtime installs exactly the capability its `ContinuationControlPlan` names (THM-0096), composed there with the parent fact that the plan represents the validated configuration — which THM-0096 does not itself establish. Under THM-0074, via THM-0093: a leg that requires correlation fails closed rather than proceeding unbound, and an absent capability reaches it as a deployment fact rather than as the caller's forged continuation |
-| Retained-evidence reservation fidelity | in scope | retained-evidence family; a pending marker may exist only under the execution threshold its owner defines |
-| Outbound credential acquisition (KMS / STS / metadata / remote signer) | in scope; **written, unreviewed** — THM-0089 and THM-0090 | under THM-0077 / materialization; a credential-bearing outbound call reaches only the authority selected and validated for that capability. THM-0090 ends at the authority NAMED — the address a name resolves to is not closed |
-| Client sidecar local ingress | in scope, **its own client-side root**; **declared, unreviewed** — THM-0091 | not folded into THM-0076; an unrelated browser origin or DNS-rebinding attacker must not cause a security-bearing outbound exchange |
-| Python and TypeScript SDK exchange paths | in scope, as a **supported-client root family** | each independently implemented boundary gets its own root; the Rust THM-0076 is one member |
-| Outbound credential acquisition (KMS / STS / metadata / remote signer) | in scope | under THM-0077 / materialization; a credential-bearing outbound call reaches only the authority selected and validated for that capability |
-| Client sidecar local ingress | in scope, **its own client-side root** | not folded into THM-0076; an unrelated browser origin or DNS-rebinding attacker must not cause a security-bearing outbound exchange |
-| Python and TypeScript SDK exchange paths | in scope, as a **supported-client root family**; **declared, unreviewed** — THM-0094 (Python) and THM-0095 (TypeScript) | each independently implemented boundary gets its own root; the Rust THM-0076 is one member. The parity fixtures are green while the implementations diverge behaviourally, which is why one theorem over "the SDK" would be a claim about no shipped artefact |
 | Deployment rendering | **outside** the runtime roots | release / deployment conformance gates (§0) |
-| The ADR-MCPRE-059 assurance platform | **outside** the product roots | assurance TCB (§0); its false-green defects are platform-integrity work |
+| The ADR-MCPRE-059 assurance platform | **outside** the product roots | assurance TCB (§0); its remaining defects are platform-integrity work |
+
+### 4.3 The ruled-in areas, and how each was settled
+
+Recorded here rather than deleted, for the reason §4.1 gives: an area that vanishes from
+this document leaves a reader unable to tell a closed gap from one nobody wrote down.
+Each row states the route, because the routes differ and §7 reserves only one of them for
+reaching §2.
+
+| area | settled as | route |
+|---|---|---|
+| **Replay** store durability | subordinate claims under §2 | THM-0086 (the selected tier materializes honestly, under THM-0077) and THM-0092 (an unestablished replay state does not dispatch, under THM-0074). What an acknowledged write DURABLY established remains a foreign premise per mechanism — ASM-0040 for Redis, ASM-0041 for etcd — and neither theorem uses it. The durability of the store is trusted, not proved, and §3 governs that |
+| **Continuation** correlation durability | subordinate claims under §2 | THM-0087 and THM-0093 under THM-0074, with THM-0096 the materialization leaf under THM-0077. §4.1 and §4.2 record the two corrections this area needed before it could be stated: the capability is selected with `--continuation-control-redis-url` rather than opportunistic, and a selected capability that cannot be established refuses startup |
+| Retained-evidence reservation fidelity | subordinate claim under §2 | THM-0088 — a retention artefact reads as a crossing only for an exchange that crossed — under THM-0078. The pending marker may exist only under the execution threshold its owner defines, which is what that claim states |
+| Outbound credential acquisition (KMS / STS / metadata / remote signer) | subordinate claims under §2 | THM-0089 and THM-0090 under THM-0077. THM-0090 ends at the authority NAMED: the address a name resolves to is not closed, and that boundary is carried forward unchanged rather than retired with the row |
+| Client sidecar local ingress | **§2 claim** — THM-0091 | established and owner-reviewed; moved by the route §7 reserves. Deliberately not folded into THM-0076: that root's subject is response acceptance, and this attack completes before any answer exists |
+| Python and TypeScript SDK exchange paths | **§2 claims** — THM-0094, THM-0095 | established and owner-reviewed; moved by the same route. A supported-client root FAMILY, one member per shipped implementation. One theorem over "the SDK" would be a claim about no shipped artefact: the parity fixtures compare bytes, and every divergence the family exists for is behavioural |
+
+The three duplicated rows this table replaces are recorded in §7.1. Each area appeared
+twice with different dispositions — one row naming its theorems, one not — so the answer a
+reader got depended on which row they reached first. That is now mechanically refused;
+see §4.4.
+
+### 4.4 How this section is kept honest
+
+`scripts/claim_surface_gate.py` relates this document to
+`verification/policy/theorems.toml` on every merge, and refuses six ways they can diverge:
+a declared root with no §2 claim, a §2 claim naming no declared root, one root claimed
+twice, a theorem both claimed in §2 and disclaimed here, a §4 area listed twice, and a §2
+claim whose owner specification review no longer covers the theorem's current fingerprint.
+
+What it deliberately does **not** do is generate the claim prose. The security consequence
+a reader needs is written for that reader; a §2 built by templating theorem titles would be
+a worse document that merely happened to agree with the registry. Root identity and
+membership are the registry's; the human claim is this document's; only the mapping is
+mechanical. And what it cannot see is stated in the gate itself: evidence freshness lives
+in an attestation store that is machine-local and gitignored, so no merge-path control can
+report it, and this document must never be read as asserting it.
 
 ### 4.1 Amendment — 2026-09-01
 
@@ -217,18 +269,40 @@ has none.
   when #736 replaced a curated field list with a closed canonical representation, and it
   returned to §2 on 2026-09-03 once the corrected statement was owner-reviewed and
   `review --root-completeness` reported it established. It was not weakened to get there.
-- **Assurance-platform false-green classes are open.** Until they are closed, the word
-  ESTABLISHED carries less than it appears to. The list and its priority order are in the
-  ruling record.
-- **THM-0077 does not currently establish, and §2 claims it.** Its specification review is
-  `STALE_DEPENDENCY_CLAIM`: the theorem's own claim text is byte-identical to the text the
-  owner reviewed, and its dependency closure grew by one premise — THM-0086, the replay
-  materialization leaf, which is itself reviewed and established. Nothing about the posture
-  claim has weakened and no evidence stopped holding; what is missing is an owner review
-  covering the closure as it now stands, which is an event that has not happened. The row
-  stays in §2 rather than being moved out, because moving it would report a weakened claim
-  where the fact is an unrenewed signature — but a reader must know the difference, which
-  is why it is here. Root completeness: 7 of 9.
+- **The assurance platform's priority false-green classes are CLOSED; the class is not.**
+  The four defects that directly invalidated a verdict — a stale evidence bundle surviving
+  a failed run, `verify` returning 0 while printing FAIL, the five-verdict lane algebra
+  collapsing so `UNAVAILABLE` and `SKIPPED` were unreachable, and the deleted-specification
+  detector matching prose in a doc comment — are repaired, each with a negative control in
+  the platform's own suites. What remains open is named in the ruling record and in #739,
+  and none of it is in the "a verdict cannot be believed" tier. This row is not deleted:
+  the reader who was told ESTABLISHED carried less than it appeared to is owed the update
+  in the same place, and the residual list is still real.
+
+- **ESTABLISHED is a statement about a measured machine, not about this commit.** The
+  specification-review axis is source and travels with the repository; the evidence axis
+  does not. `.verification/attestations/` is gitignored, so on a clean clone no unit is
+  FRESH and no theorem derives established until a lane runs. That is correct — a claim
+  about a tree nobody measured would be the false green this platform exists to refuse —
+  but it means no merge-path control can report freshness, and none pretends to.
+  `scripts/claim_surface_gate.py` therefore checks the mapping and the review axis, and
+  says so in its own text.
+- **THM-0077's stale review is CLOSED.** This row previously read "THM-0077 does not
+  currently establish, and §2 claims it", on a `STALE_DEPENDENCY_CLAIM` caused by the
+  dependency closure growing by one premise (THM-0086) after the owner's review. The review
+  covering the closure as it now stands has since happened; the theorem's specification
+  review is `REVIEWED` at its current fingerprint and it derives established. The row is
+  corrected rather than deleted, because a reader who was told a §2 claim was unsigned is
+  owed the retraction in the place they read it.
+
+  The count that stood here — "Root completeness: 7 of 9" — was stale in two ways at once,
+  and both are worth naming. It counted against a nine-root surface when twelve were
+  declared, and it reported a shortfall that no longer existed. `tools/verification/review`
+  reports 12 of 12 on a measured tree, and `scripts/claim_surface_gate.py` now refuses the
+  divergence that let a hand-written count in this section disagree with the registry at
+  all. **No count is restated here.** A number in this document is a second authority over
+  a fact the registry owns, and restating it would rebuild exactly what the gate was
+  written to prevent.
 - **THM-0087 is registered and owner-reviewed** (Batch 5C, 2026-09-03). It states an
   actor-scoped, non-consuming continuation lookup. It was briefly attached to THM-0077 as if
   it were the continuation posture claim; it is not, and that edge was removed on
@@ -294,6 +368,10 @@ ratification read as covering text the owner never saw.
 |---|---|---|
 | 2026-09-01 | §4.1, the replay/continuation split | owner amendment, recorded in §4.1 |
 | 2026-09-03 | **THM-0042 moved §4 → §2**, its §5 open edge closed, and the §3 confidentiality non-claim restated over an established root | owner specification review of 2026-09-03 at merged main `09b5913a`, over theorem fingerprint `sha256:9d769c2c…69d03c6f`; `review --root-completeness` reported it established |
+| 2026-09-05 | **THM-0091, THM-0094 and THM-0095 moved §4 → §2.** Three roots that were established and owner-reviewed while §4 still listed them as in scope and not yet established, and which §7.1 recorded no move for | owner ruling of 2026-09-05 authorizing v0.17 Slice A. Each carries a specification-review record covering its current theorem fingerprint — `verification/reviews/specification/THM-0091.json`, `THM-0094.json`, `THM-0095.json` — which is the route §7 reserves. Not a new ratification: the claims were already established, and what had failed was the record of the move |
+| 2026-09-05 | **§4 restructured.** Its title stops asserting that every listed area is unestablished; the six ruled-in areas move to a new §4.3 stating how each was settled; the three DUPLICATED rows are removed; §4.4 records the gate | same ruling. The duplicates were `Outbound credential acquisition`, `Client sidecar local ingress` and `Python and TypeScript SDK exchange paths`, each present twice with different dispositions — one row naming its theorems, one not — so a reader's answer depended on which row they reached first. The de-duplication resolves in favour of the row that named its theorems, which is the more specific and was the later addition |
+| 2026-09-05 | **§3's retained-evidence parenthetical corrected**, and **§5's THM-0077 and platform-false-green rows corrected** | same ruling. All three were stale in the direction of understating what holds. The non-claims and disclosures they make are unchanged; what was wrong was where each said the claim sat, and a hand-written root-completeness count that disagreed with the registry. No count is restated |
+| 2026-09-05 | **§2, §4 and the theorem registry are now mechanically related** by `scripts/claim_surface_gate.py`, on the merge path | same ruling. The gate refuses a declared root with no claim, a claim with no root, a root claimed twice, a theorem both claimed and disclaimed, a duplicated §4 area, an unclassifiable §4 table, and a claim whose specification review no longer covers the theorem's current fingerprint. It does **not** generate claim prose; §4.4 states why |
 
 The 2026-09-03 move is exactly the route the clause above reserves. THM-0042 was reopened —
 not newly declared — when #736 replaced a curated field list that omitted `signature-input`

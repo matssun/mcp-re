@@ -4045,15 +4045,23 @@ that the SDK does not hand it a peer verdict or an execution fact the peer never
 policy outside this adapter is not this adapter's proposition.
 
 THE SUPPORTED RUNTIME SET IS PART OF THE CLAIM. "The shipped Python SDK" means the package
-as it runs on the interpreters it declares support for, and that is now a measured set
-rather than an inference from one machine: `requires-python = ">=3.10,<3.15"`, and the
-battery runs on every minor in that range at the exact patch versions
-`toolchains.lock.toml` `[python].interpreters` pins. The runtime identity is inside this
-unit's fingerprint, so changing an interpreter drops the standing evidence instead of
-silently carrying it; a minor outside the range is outside this claim; and
-`scripts/python_runtime_gate.py` refuses a support claim wider than the measured set. It
-matters here specifically because the read bound above rests on stdlib `read1` behaviour,
-which is a per-minor fact.
+as it runs on the interpreters it declares support for, and that is a measured set rather
+than an inference from one machine: `requires-python = ">=3.14.5,<3.15"`, and the battery
+runs on every minor in that range at the exact patch versions `toolchains.lock.toml`
+`[python].interpreters` pins. The runtime identity is inside this unit's fingerprint, so
+changing an interpreter drops the standing evidence instead of silently carrying it; a
+minor outside the range is outside this claim; and `scripts/python_runtime_gate.py`
+refuses a support claim wider than the measured set. It matters here specifically because
+the read bound above rests on stdlib `read1` behaviour, which is a per-minor fact.
+
+THE SET WAS NARROWED ON 2026-09-05, from CPython 3.10-3.14 to 3.14 alone, and the claim is
+smaller for it. This is a WITHDRAWAL of support, not a correction: the earlier range was
+inherited from the upstream MCP SDK's own floor and cost a battery on five interpreters to
+hold. Anything running 3.10 through 3.13 is now outside this claim entirely — not weakly
+covered, not covered by inference from an adjacent minor. The floor's patch component is
+part of the proposition and not a formality: 3.14.0 through 3.14.4 ship the incremental
+cycle collector CPython reverted in 3.14.5, so they are outside the claim as surely as
+3.13 is.
 
 It says nothing about the transport below it, nothing about the proxy's own guarantees, and
 nothing about an application that bypasses this adapter.

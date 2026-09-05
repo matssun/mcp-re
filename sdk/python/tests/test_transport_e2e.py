@@ -34,10 +34,12 @@ pytest.importorskip("mcp", reason="the transport adapter needs the upstream MCP 
 pytest.importorskip("httpx")
 pytest.importorskip("cryptography")
 # `tomllib` is 3.11+, and this file reads the port registry with it. A bare module-level
-# import made the whole file a COLLECTION ERROR on CPython 3.10 — a supported minor — which
-# is a red that says nothing about the SDK and, in a directory-wide run, takes every other
-# file's result with it. Declared here with the same mechanism as the other environmental
-# requirements, so 3.10 SKIPS this live-proxy lane and reports why (#746).
+# import made the whole file a COLLECTION ERROR on CPython 3.10, which was a supported minor
+# until the 2026-09-05 narrowing — a red that says nothing about the SDK and, in a
+# directory-wide run, takes every other file's result with it. The guard is KEPT rather than
+# deleted with the support claim: it costs one skip on an interpreter this package no longer
+# claims, and removing it would restore a collection error for anyone running the file
+# outside the pinned matrix (#746).
 tomllib = pytest.importorskip(
     "tomllib", reason="the port registry is read with tomllib, which is 3.11+"
 )

@@ -23,6 +23,7 @@ from _manifest import (  # noqa: E402
     REPO_ROOT,
     ManifestError,
     load_assumptions,
+    load_trust_boundaries,
     load_verification,
 )
 from _theorems import load_theorems  # noqa: E402
@@ -35,7 +36,7 @@ def rendered() -> dict[str, str]:
         {unit["id"] for unit in doc.get("unit", [])},
         [e for e in doc.get("edge", []) if e.get("kind") == "PROOF_DEPENDENCY"],
     )
-    return render_all(theorems, doc, load_assumptions())
+    return render_all(theorems, doc, load_assumptions(), load_trust_boundaries())
 
 
 def differences(views: dict[str, str]) -> list[str]:

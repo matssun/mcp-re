@@ -6,6 +6,7 @@
        verification/policy/theorems.toml
        verification/policy/verification.toml
        verification/policy/assumptions.toml
+       verification/policy/trust-boundaries.toml
 -->
 
 # Owner view

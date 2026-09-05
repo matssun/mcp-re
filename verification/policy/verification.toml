@@ -2396,7 +2396,7 @@ exported_contracts = []
 evidence = ["test://sdk_python/exchange_path/root_battery"]
 # MEASURED ON EVERY SUPPORTED INTERPRETER, not on whichever one the runner offers. The
 # battery is selected by node id and run once per version in `toolchains.lock.toml`
-# `[python].interpreters` — CPython 3.10 through 3.14 — in environments
+# `[python].interpreters` — CPython 3.14 alone since the 2026-09-05 narrowing — in environments
 # `scripts/prepare_python_matrix.sh` prepares from a single abi3 wheel. The runtime identity
 # is ecosystem-scoped into this unit's fingerprint, so an interpreter bump drops the standing
 # attestation rather than being inherited by it. The `downloader — Python maturin wheel` CI

@@ -76,6 +76,13 @@ EXEMPT: dict[str, str] = {
     # measures.
     "scripts/module_map.py": "an architecture report with no verdict; --selftest only",
     "scripts/startup_backedges.py": "an architecture report with no verdict; --selftest only",
+    # Named only by the `paths:`-filtered verification workflow, and correctly so: it
+    # checks the self-hosted runner's environment for that workflow's jobs. Its scope IS
+    # that filter — there is no other job whose environment it describes — which is the
+    # one shape the filtered-only rule below is meant to admit rather than refuse.
+    "scripts/verification_runner_preflight.sh": (
+        "a runner-environment preflight whose scope is the verification workflow itself"
+    ),
 }
 
 
@@ -83,25 +90,78 @@ def invoked_by(path: Path) -> set[str]:
     return set(INVOCATION.findall(path.read_text(encoding="utf-8")))
 
 
-def workflow_coverage() -> set[str]:
-    covered: set[str] = set()
+#: A `paths:` key under `on:` — the marker of a workflow that does not run on every PR.
+PATH_FILTER = re.compile(r"^\s+paths:", re.M)
+
+
+def workflow_coverage() -> tuple[set[str], set[str]]:
+    """`(named by an UNCONDITIONAL workflow, named only by a path-filtered one)`.
+
+    The split is the second half of this gate's own failure class, and it was missing.
+    Being NAMED by a workflow was treated as coverage, whatever that workflow's trigger —
+    so a control could sit inside a `paths:`-filtered workflow, run on the PRs that touched
+    those paths, and run on no others, while this gate reported it enforced. That is the
+    same defect one level up: the filter and the set of changes the control must see are
+    one dependency written down twice, and when they diverge nothing goes red, the job
+    simply does not start.
+
+    It was not hypothetical. `tools/verification/test_mutation_lane.py` — the self-test for
+    the mutation lane's verdict semantics — was in neither `local_gate.sh` nor any
+    unconditional workflow, and was invisible here because `mutation-probe.yml` mentions it.
+    """
+    unconditional: set[str] = set()
+    filtered: set[str] = set()
     for workflow in sorted(WORKFLOWS.glob("*.yml")):
-        covered |= invoked_by(workflow)
-    return covered
+        text = workflow.read_text(encoding="utf-8")
+        target = filtered if PATH_FILTER.search(text) else unconditional
+        target |= set(INVOCATION.findall(text))
+    return unconditional, filtered - unconditional
 
 
-def defects(gated: set[str], covered: set[str], exempt: dict[str, str]) -> list[str]:
+#: The assurance platform's own self-tests. They are what establishes that a `verify`
+#: verdict means what ADR-MCPRE-059 says it means, so every product claim rests on them —
+#: which is why their scope here is NOT "whatever local_gate.sh happens to invoke". A suite
+#: nobody wired into either aggregate would otherwise be enforced by nothing and visible to
+#: nothing, and that is exactly how `test_mutation_lane.py` came to be neither.
+SELFTEST_GLOB = "tools/verification/test_*.py"
+
+
+def defects(
+    gated: set[str],
+    covered: set[str],
+    exempt: dict[str, str],
+    filtered_only: set[str] | None = None,
+    selftests: set[str] | None = None,
+) -> list[str]:
     """Controls the merge path does not run, and exemptions that name nothing."""
-    found = [
-        f"{script} runs only in scripts/local_gate.sh. A control the assurance model "
-        f"relies on must be present on the merge path; add it to a workflow, or add it "
-        f"to EXEMPT with the reason it is deliberately local."
-        for script in sorted(gated - covered - exempt.keys())
-    ]
+    filtered_only = filtered_only or set()
+    found: list[str] = []
+    for script in sorted(gated - covered - exempt.keys()):
+        if script in filtered_only:
+            found.append(
+                f"{script} is named only by a `paths:`-filtered workflow. It therefore runs "
+                f"on the pull requests that touch those paths and on no others, while "
+                f"reading as enforced. Move it to an unconditional job, or add it to EXEMPT "
+                f"with the reason its scope really is that filter."
+            )
+            continue
+        found.append(
+            f"{script} runs only in scripts/local_gate.sh. A control the assurance model "
+            f"relies on must be present on the merge path; add it to a workflow, or add it "
+            f"to EXEMPT with the reason it is deliberately local."
+        )
+    for script in sorted((selftests or set()) - covered - exempt.keys()):
+        found.append(
+            f"{script} is an assurance-platform self-test that no unconditional workflow "
+            f"names. These suites are what establishes that a `verify` verdict means what "
+            f"ADR-MCPRE-059 says it means; one that runs conditionally, or not at all, "
+            f"leaves that meaning unestablished on every pull request that does not trip "
+            f"its filter."
+        )
     found.extend(
         f"EXEMPT names {script}, which scripts/local_gate.sh does not invoke. A dead "
         f"exemption is a claim about nothing and hides the next one that matters."
-        for script in sorted(exempt.keys() - gated)
+        for script in sorted(exempt.keys() - gated - (selftests or set()))
     )
     return found
 
@@ -148,6 +208,39 @@ def selftest() -> int:
         if not any(needle in entry for entry in found):
             print(f"SELFTEST FAIL: accepted {label}", file=sys.stderr)
             return 1
+    # The two rules added after the sweep, each with the case that motivated it.
+    filtered = defects(
+        {"scripts/a.py"}, set(), {}, filtered_only={"scripts/a.py"}
+    )
+    if not any("`paths:`-filtered workflow" in entry for entry in filtered):
+        print("SELFTEST FAIL: accepted a control named only by a filtered workflow", file=sys.stderr)
+        return 1
+    if any("runs only in scripts/local_gate.sh" in entry for entry in filtered):
+        print("SELFTEST FAIL: a filtered-only control reported as local-only", file=sys.stderr)
+        return 1
+    uncovered_suite = defects(
+        set(), set(), {}, selftests={"tools/verification/test_x.py"}
+    )
+    if not any("assurance-platform self-test" in entry for entry in uncovered_suite):
+        print("SELFTEST FAIL: accepted a self-test no unconditional workflow names", file=sys.stderr)
+        return 1
+    covered_suite = defects(
+        set(),
+        {"tools/verification/test_x.py"},
+        {},
+        selftests={"tools/verification/test_x.py"},
+    )
+    if covered_suite:
+        print(f"SELFTEST FAIL: refused a covered self-test: {covered_suite}", file=sys.stderr)
+        return 1
+    # A filtered workflow must not count as coverage, and an unfiltered one must.
+    if PATH_FILTER.search("on:\n  pull_request:\n    branches: [main]\n"):
+        print("SELFTEST FAIL: PATH_FILTER matched a workflow with no paths key", file=sys.stderr)
+        return 1
+    if not PATH_FILTER.search("on:\n  pull_request:\n    paths:\n      - 'src/**'\n"):
+        print("SELFTEST FAIL: PATH_FILTER missed a paths key", file=sys.stderr)
+        return 1
+
     # The extractor is half the gate: a pattern that stopped matching would report an empty
     # scope as a clean tree, which is the failure this repository has already shipped once.
     if "tools/verification/verify" in INVOCATION.findall("python3 tools/verification/verify"):
@@ -177,17 +270,27 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    covered = workflow_coverage()
-    found = defects(gated, covered, EXEMPT)
+    covered, filtered_only = workflow_coverage()
+    selftests = {
+        path.relative_to(REPO).as_posix() for path in REPO.glob(SELFTEST_GLOB)
+    }
+    if not selftests:
+        print(
+            f"FAIL: no assurance-platform self-test matched {SELFTEST_GLOB}. An empty "
+            f"scope is the gate measuring nothing while printing OK.",
+            file=sys.stderr,
+        )
+        return 1
+    found = defects(gated, covered, EXEMPT, filtered_only, selftests)
     for defect in found:
         print(f"FAIL: {defect}", file=sys.stderr)
     if found:
         return 1
     exemptions = ", ".join(f"{name} ({why})" for name, why in sorted(EXEMPT.items()))
     print(
-        f"merge-path gate: OK — {len(gated)} script(s) invoked by local_gate.sh, "
-        f"{len(gated - EXEMPT.keys())} of them named by a workflow. "
-        f"Exempt: {exemptions}"
+        f"merge-path gate: OK — {len(gated)} script(s) invoked by local_gate.sh and "
+        f"{len(selftests)} platform self-test(s), all named by an UNCONDITIONAL workflow "
+        f"except: {exemptions}"
     )
     return 0
 
