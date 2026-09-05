@@ -281,6 +281,11 @@ paths = [
   "mcp-re-proxy/src/async_redis_store.rs",
   "mcp-re-proxy/src/async_etcd_store.rs",
   "mcp-re-proxy/src/shared_replay.rs",
+  # v0.17 trust-plane ownership slice. The trust-epoch counter is read from the same store
+  # class — `RedisEpochReader` holds a Redis connection of its own — and the file was not
+  # listed, so a unit reaching it crossed this boundary without the model saying so. Named
+  # precisely: the reader, not the cache that reacts to what it read.
+  "mcp-re-proxy/src/trust_epoch.rs",
 ]
 beyond = "Whether Redis replication and etcd consensus behave as their premises state. THM-0092's scope says this in as many words, and no umbrella premise stands in for both mechanisms."
 max_class_without_assumption = "V0"

@@ -2566,3 +2566,150 @@ weakening = """
 expect_red = [
   "lib#http_profile_serve::continuation::answer_leg::tests::an_absent_capability_is_the_deployments_fact_and_not_the_callers",
 ]
+
+# ---------------------------------------------------------------------------
+# proxy.trust_plane_runtime — v0.17 trust-plane ownership slice. No theorem yet; each
+# `conjunct` is the unit description's own words. The eight weakenings are the deletions
+# the census found the battery would otherwise not notice.
+# ---------------------------------------------------------------------------
+
+[[probe]]
+id = "M92-trust-flush-is-applied-before-the-lookup"
+unit = "proxy.trust_plane_runtime"
+conjunct = "a change of the shared epoch this replica observes strips every cached binding's authority before the next lookup"
+path = "mcp-re-proxy/src/trust_plane/push_trust.rs"
+anchor = """
+        self.apply_pending_invalidations();
+"""
+weakening = """
+        let _ = &self.channel;
+"""
+expect_red = [
+  "lib#trust_plane::push_trust::tests::pushed_invalidation_rejects_the_key_before_t_elapses",
+  "lib#trust_plane::push_trust::tests::flush_all_evicts_every_cached_binding_forcing_re_resolve",
+  "lib#trust_epoch::tests::an_observed_advance_makes_the_next_lookup_the_stores_answer",
+]
+
+[[probe]]
+id = "M93-an-invalidated-entry-does-not-answer"
+unit = "proxy.trust_plane_runtime"
+conjunct = "strips every cached binding's authority — an invalidated entry answers nothing on its own"
+path = "mcp-re-proxy/src/trust_plane/trust_cache.rs"
+anchor = """
+        if entry.invalidated {
+            return None;
+        }
+"""
+weakening = """
+        // an invalidated entry keeps answering until its window closes
+"""
+expect_red = [
+  "lib#trust_plane::push_trust::tests::flush_all_evicts_every_cached_binding_forcing_re_resolve",
+  "lib#trust_plane::trust_cache::tests::evict_drops_an_in_window_entry_forcing_re_resolution",
+  "lib#trust_epoch::tests::an_observed_advance_makes_the_next_lookup_the_stores_answer",
+]
+
+[[probe]]
+id = "M94-a-flush-cannot-extend-a-deadline"
+unit = "proxy.trust_plane_runtime"
+conjunct = "a cached positive binding never answers past the deadline it was first cached under"
+path = "mcp-re-proxy/src/trust_plane/trust_cache.rs"
+anchor = """
+        if let Some(deadline) = ceiling {
+            expires_at = expires_at.min(deadline);
+        }
+"""
+weakening = """
+        let _ = ceiling;
+"""
+expect_red = [
+  "lib#trust_plane::trust_cache::tests::a_flush_cannot_lengthen_a_cached_bindings_deadline",
+  "lib#trust_plane::trust_cache::tests::an_eviction_cannot_lengthen_the_evicted_bindings_deadline",
+  "lib#trust_plane::push_trust::tests::a_flush_never_extends_a_cached_bindings_deadline",
+]
+
+[[probe]]
+id = "M95-the-window-closes"
+unit = "proxy.trust_plane_runtime"
+conjunct = "a cached positive binding answers for at most T"
+path = "mcp-re-proxy/src/trust_plane/trust_cache.rs"
+anchor = """
+        if now < entry.expires_at {
+            Some(entry.outcome.to_result())
+"""
+weakening = """
+        if now < entry.expires_at || entry.expires_at > 0 {
+            Some(entry.outcome.to_result())
+"""
+expect_red = [
+  "lib#trust_plane::trust_cache::tests::no_indefinite_stale_active_past_window_fails_closed",
+  "lib#trust_plane::trust_cache::tests::active_re_resolves_after_window",
+  "lib#trust_plane::push_trust::tests::channel_failure_falls_back_to_bounded_t_entry_still_served_until_expiry",
+  "lib#trust_epoch::tests::a_source_outage_flushes_nothing_and_the_deadline_still_governs",
+]
+
+[[probe]]
+id = "M96-a-failed-read-is-not-a-healthy-source"
+unit = "proxy.trust_plane_runtime"
+conjunct = "a source outage is reported, never read as a steady epoch"
+path = "mcp-re-proxy/src/trust_epoch.rs"
+anchor = """
+                *recover(self.healthy.lock()) = false;
+                return;
+"""
+weakening = """
+                return;
+"""
+expect_red = [
+  "lib#trust_epoch::tests::read_error_marks_unhealthy_and_emits_nothing",
+  "lib#trust_epoch::tests::recovery_after_outage_catches_an_epoch_that_advanced_during_it",
+  "lib#trust_epoch::tests::a_source_outage_flushes_nothing_and_the_deadline_still_governs",
+]
+
+[[probe]]
+id = "M97-a-regression-is-a-change"
+unit = "proxy.trust_plane_runtime"
+conjunct = "a change of the shared epoch — any change, a regressed counter included — flushes; rollback is not representable on this side"
+path = "mcp-re-proxy/src/trust_epoch.rs"
+anchor = """
+            Some(prev) if epoch != prev => {
+"""
+weakening = """
+            Some(prev) if epoch > prev => {
+"""
+expect_red = [
+  "lib#trust_epoch::tests::a_regressed_counter_flushes_rather_than_being_adopted_silently",
+]
+
+[[probe]]
+id = "M98-a-stale-store-refuses"
+unit = "proxy.trust_plane_runtime"
+conjunct = "a store that has stopped being maintained refuses with Unavailable rather than serving"
+path = "mcp-re-proxy/src/trust_plane/freshness.rs"
+anchor = """
+        if self.freshness.is_stale() {
+"""
+weakening = """
+        if self.freshness.is_stale() && false {
+"""
+expect_red = [
+  "lib#trust_plane::store_cadence_tests::a_frozen_store_stops_answering_instead_of_serving_the_revoked_key",
+  "lib#trust_plane::freshness_transition_tests::the_resolver_stays_closed_even_after_a_straggler_reports_fresh",
+  "lib#trust_plane::handle_lifetime_tests::a_resolver_that_outlives_the_plane_fails_closed",
+  "lib#trust_plane::handle_lifetime_tests::a_plane_materialized_without_a_reload_cadence_still_fails_closed_after_drop",
+]
+
+[[probe]]
+id = "M99-keep-last-good-is-bounded"
+unit = "proxy.trust_plane_runtime"
+conjunct = "a store that has stopped being maintained — the reload's keep-last-good tolerance is bounded by exactly the budget"
+path = "mcp-re-proxy/src/trust_plane/reload.rs"
+anchor = """
+            if consecutive_failures >= TRUST_RELOAD_FAILURE_BUDGET {
+"""
+weakening = """
+            if consecutive_failures > TRUST_RELOAD_FAILURE_BUDGET {
+"""
+expect_red = [
+  "lib#trust_plane::reload::reload_loop_tests::the_failure_budget_fails_closed_on_exactly_the_fifth_consecutive_bad_read",
+]

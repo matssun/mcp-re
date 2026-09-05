@@ -723,4 +723,326 @@ mod tests {
         let _ = release_tx.send(());
         polling.join().expect("poller thread joins");
     }
+
+    /// A counter that goes BACKWARDS is a change, and a change flushes.
+    ///
+    /// The source has no notion of rollback to represent: it compares the read against the
+    /// last value it saw and flushes on any difference. That is the only safe reading of a
+    /// regression — a store restored from a snapshot, a failover to a replica that never
+    /// saw the `INCR`, a reconnect landing on the wrong instance — because a flush can only
+    /// tighten trust. Adopting the lower value silently would be the one thing the
+    /// request-side reader must never do: skip the flush the operator's advance had earned
+    /// and wait for the counter to climb back past it.
+    #[test]
+    fn a_regressed_counter_flushes_rather_than_being_adopted_silently() {
+        let src = TrustEpochSource::new(FakeReader::new(5));
+        src.poll_once();
+        assert!(src.drain_pending().is_empty()); // baseline @5
+        src.reader.set(3);
+        src.poll_once();
+        assert_eq!(
+            src.drain_pending(),
+            vec![InvalidationEvent::FlushAll],
+            "a regressed counter is a change the cache must hear about"
+        );
+        assert!(src.is_healthy(), "a regression is not a read failure");
+        // The lower value is now the baseline, so climbing back is a change too — the
+        // source never remembers a high-water mark, and must not: that is the signing
+        // side's rule, where minting under a lower epoch would resurrect credentials.
+        src.reader.set(5);
+        src.poll_once();
+        assert_eq!(src.drain_pending(), vec![InvalidationEvent::FlushAll]);
+    }
+
+    /// Wait until `done` holds, or fail after `within`. Polling rather than sleeping a
+    /// fixed amount, so the bound asserted is the one the property names.
+    fn wait_for(within: Duration, mut done: impl FnMut() -> bool) -> Duration {
+        let started = Instant::now();
+        while !done() {
+            assert!(
+                started.elapsed() <= within,
+                "condition not met within {within:?}"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        started.elapsed()
+    }
+
+    /// The production poller, not `poll_once` driven by hand: the FIRST read happens at
+    /// once, the next reads happen on the cadence, and a stop is observed inside it.
+    ///
+    /// This is the only test that runs `trust_epoch_poller_body`, and it is the one that
+    /// makes the startup line true. Every other test drives `poll_once` directly, which
+    /// proves what a poll does and nothing about whether one happens: a body that slept a
+    /// full interval before its first read, or never read again after it, would leave
+    /// every other control in this module green while the replica adopted the first
+    /// advance after startup as its baseline and detected nothing afterwards.
+    #[test]
+    fn the_poller_body_reads_at_once_then_on_its_cadence_and_stops_when_asked() {
+        let src = std::sync::Arc::new(TrustEpochSource::new(FakeReader::new(1)));
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let halt = std::sync::Arc::clone(&stop);
+        let body = trust_epoch_poller_body(std::sync::Arc::clone(&src), 1, move || {
+            halt.load(std::sync::atomic::Ordering::SeqCst)
+        });
+        let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            body();
+            let _ = finished_tx.send(());
+        });
+
+        // Immediate first poll: the baseline exists well before one interval has passed.
+        let first = wait_for(Duration::from_millis(500), || src.reader.reads() >= 1);
+        assert!(
+            first < Duration::from_secs(1),
+            "the first read waited an interval"
+        );
+        assert!(
+            src.is_healthy(),
+            "a polled source under its poller reports healthy"
+        );
+        assert!(
+            src.drain_pending().is_empty(),
+            "the baseline poll must not flush"
+        );
+
+        // An advance is detected within one interval of the cadence, plus scheduling.
+        src.reader.set(2);
+        let detected = wait_for(Duration::from_millis(2_500), || {
+            src.drain_pending() == vec![InvalidationEvent::FlushAll]
+        });
+        assert!(
+            detected <= Duration::from_millis(2_500),
+            "the flush landed later than one poll interval plus slack: {detected:?}"
+        );
+
+        // The stop is observed inside the interval, not at its end.
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        finished_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("the poller stops within its nap increments, not after a full interval");
+    }
+
+    /// A reader whose SECOND read panics: the first establishes a baseline, then the
+    /// poller dies inside its own thread.
+    struct PanicsOnSecondRead {
+        reads: std::sync::atomic::AtomicUsize,
+    }
+    impl EpochReader for PanicsOnSecondRead {
+        fn read_epoch(&self) -> Result<i64, EpochReadError> {
+            let n = self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            assert!(n == 0, "the poller's read panicked");
+            Ok(1)
+        }
+    }
+
+    /// A poller that dies takes the health claim with it.
+    ///
+    /// Everything downstream believes what this thread last wrote. Unsupervised, a panic
+    /// leaves `healthy` latched at `true` and `last_poll` at a recent instant, so the
+    /// replica keeps reporting a revocation window it no longer provides until the
+    /// liveness bound expires — and the bound is several intervals long. The supervisor
+    /// reports the death at once instead.
+    #[test]
+    fn a_poller_whose_read_panics_reports_the_source_unhealthy_at_once() {
+        let src = std::sync::Arc::new(TrustEpochSource::new(PanicsOnSecondRead {
+            reads: std::sync::atomic::AtomicUsize::new(0),
+        }));
+        let body = trust_epoch_poller_body(std::sync::Arc::clone(&src), 1, || false);
+        let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+        // Quiet the panic message: the panic is the test's input, not a failure of it.
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        std::thread::spawn(move || {
+            body();
+            let _ = finished_tx.send(());
+        });
+        finished_rx
+            .recv_timeout(Duration::from_secs(3))
+            .expect("the body returns after the panic instead of taking the thread down");
+        std::panic::set_hook(previous);
+        assert!(
+            !src.is_healthy(),
+            "a dead poller must not keep reporting the health it last observed"
+        );
+    }
+
+    /// A store the composition test scripts: `Ok(key)` or `Err(Revoked)`, counting how
+    /// often the cache actually consulted it.
+    struct ScriptedStore {
+        revoked: std::sync::atomic::AtomicBool,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+    impl mcp_re_core::TrustResolver for ScriptedStore {
+        fn resolve(
+            &self,
+            _signer: &str,
+            _key_id: &str,
+        ) -> Result<mcp_re_core::VerificationKey, mcp_re_core::TrustResolverError> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if self.revoked.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(mcp_re_core::TrustResolverError::Revoked);
+            }
+            Ok(mcp_re_core::SigningKey::from_seed_bytes(&[5u8; 32]).public_key())
+        }
+    }
+
+    /// The push-tier cache over THIS source, with a store and a clock the test drives.
+    ///
+    /// `push_trust`'s own tests drive an in-memory channel, and this module's tests drive
+    /// the source with nothing behind it; the property a deployment relies on is the two
+    /// composed, which only the Redis-gated e2e exercised. Wired exactly as
+    /// `build_trust_epoch_channel` wires it: a `SharedEpochChannel` over one shared source.
+    fn push_cache_over(
+        src: &std::sync::Arc<TrustEpochSource<FakeReader>>,
+        store: std::sync::Arc<ScriptedStore>,
+        clock: std::sync::Arc<std::sync::atomic::AtomicI64>,
+    ) -> crate::trust_plane::PushInvalidationTrustCache {
+        struct Shared(std::sync::Arc<ScriptedStore>);
+        impl mcp_re_core::TrustResolver for Shared {
+            fn resolve(
+                &self,
+                signer: &str,
+                key_id: &str,
+            ) -> Result<mcp_re_core::VerificationKey, mcp_re_core::TrustResolverError> {
+                self.0.resolve(signer, key_id)
+            }
+        }
+        crate::trust_plane::PushInvalidationTrustCache::new(
+            Box::new(Shared(store)),
+            COMPOSED_T,
+            5,
+            Box::new(move || clock.load(std::sync::atomic::Ordering::SeqCst)),
+            Box::new(SharedEpochChannel(std::sync::Arc::clone(src))),
+        )
+    }
+
+    /// The bounded window the composition tests run under.
+    const COMPOSED_T: i64 = 60;
+
+    /// An observed advance strips the cache's authority before the next lookup, so the
+    /// next answer is the store's — and, as the negative control, a poll that observes NO
+    /// advance leaves the cached answer standing over a store that has already revoked.
+    ///
+    /// This is the in-process form of what `redis_trust_epoch_e2e_test` shows with a real
+    /// store: the same source type, the same cache type, the same channel adapter, minus
+    /// the foreign read. What it establishes is a property of ONE replica's reaction to a
+    /// value its reader returned; what the counter's value means across replicas is the
+    /// store's premise, not this test's.
+    #[test]
+    fn an_observed_advance_makes_the_next_lookup_the_stores_answer() {
+        use mcp_re_core::TrustResolver;
+        let src = std::sync::Arc::new(TrustEpochSource::new(FakeReader::new(1)));
+        let store = std::sync::Arc::new(ScriptedStore {
+            revoked: std::sync::atomic::AtomicBool::new(false),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let clock = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(1_000));
+        let cache = push_cache_over(&src, std::sync::Arc::clone(&store), clock);
+        src.poll_once(); // baseline @1
+
+        cache.resolve("did:host", "key-1").expect("active cached");
+        let calls = || store.calls.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(calls(), 1);
+
+        // NEGATIVE CONTROL: the store revokes, the counter does not move. The cached
+        // binding still answers — nothing on this replica has learned anything.
+        store
+            .revoked
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        src.poll_once();
+        cache
+            .resolve("did:host", "key-1")
+            .expect("without an advance the cached binding serves within T");
+        assert_eq!(calls(), 1, "no advance, no re-resolve");
+
+        // The advance is observed. The next lookup is the store's answer.
+        src.reader.set(2);
+        src.poll_once();
+        assert_eq!(
+            cache.resolve("did:host", "key-1").unwrap_err(),
+            mcp_re_core::TrustResolverError::Revoked,
+            "after an observed advance the cache answers nothing on its own authority"
+        );
+        assert_eq!(calls(), 2, "the flush forced exactly one live resolution");
+    }
+
+    /// A source outage flushes nothing and changes nothing about serving: the cached
+    /// binding stands until its own deadline, and at that deadline the store is consulted
+    /// whatever the source says.
+    ///
+    /// This pins what "reverts to the bounded-T guarantee" MEANS in the tree. The health
+    /// flag is a witness nothing on the request path reads; the bound under an outage is
+    /// the same deadline the entry carried while the source was healthy. A test that
+    /// asserted only `!is_healthy()` would let an implementation serve past T on the
+    /// unhealthy arm and stay green.
+    #[test]
+    fn a_source_outage_flushes_nothing_and_the_deadline_still_governs() {
+        use mcp_re_core::TrustResolver;
+        let src = std::sync::Arc::new(TrustEpochSource::new(FakeReader::new(1)));
+        let store = std::sync::Arc::new(ScriptedStore {
+            revoked: std::sync::atomic::AtomicBool::new(false),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let clock = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(1_000));
+        let cache = push_cache_over(&src, std::sync::Arc::clone(&store), clock.clone());
+        src.poll_once(); // baseline @1
+        cache.resolve("did:host", "key-1").expect("active cached");
+
+        // The store revokes AND the counter advances, but the read fails: the advance is
+        // invisible to this replica, and it must not guess.
+        store
+            .revoked
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        src.reader.fail();
+        src.poll_once();
+        assert!(!src.is_healthy());
+        clock.store(1_000 + COMPOSED_T - 1, std::sync::atomic::Ordering::SeqCst);
+        cache
+            .resolve("did:host", "key-1")
+            .expect("inside its deadline the cached binding serves through the outage");
+        assert_eq!(store.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        // At the deadline the store is consulted, outage or not.
+        clock.store(1_000 + COMPOSED_T, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            cache.resolve("did:host", "key-1").unwrap_err(),
+            mcp_re_core::TrustResolverError::Revoked,
+            "the deadline governs whatever the source says"
+        );
+
+        // Recovery: the read returns, the advance that happened during the outage is
+        // caught, and the flush lands — self-healing, through the cache this time.
+        src.reader.set(2);
+        src.poll_once();
+        assert!(src.is_healthy());
+        assert_eq!(
+            src.drain_pending(),
+            vec![InvalidationEvent::FlushAll],
+            "the advance missed during the outage is detected on recovery"
+        );
+    }
+
+    /// An ABSENT epoch key is a read failure, never a live epoch 0.
+    ///
+    /// The e2e shows this against a real Redis by deleting the key; this is the rule at
+    /// the seam that decides it, so the property is measured in the default battery under
+    /// the Redis feature rather than only where a live store is provisioned.
+    #[cfg(feature = "redis_replay")]
+    #[test]
+    fn an_absent_epoch_key_is_a_read_failure_not_epoch_zero() {
+        let Err(err) = RedisEpochReader::require_present(None, "mcp-re:trust:epoch") else {
+            panic!("an absent key must fail closed, not read as epoch 0");
+        };
+        assert!(
+            err.0.contains("does not exist"),
+            "the refusal names the absent key so the operator can seed it: {}",
+            err.0
+        );
+        assert_eq!(
+            RedisEpochReader::require_present(Some(0), "k").ok(),
+            Some(0),
+            "a present counter at 0 is a live baseline: presence is the fact, not the value"
+        );
+    }
 }

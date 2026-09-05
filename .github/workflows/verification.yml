@@ -73,6 +73,13 @@ on:
       # remaining members belong to other owners.
       - "mcp-re-proxy/src/exchange_state.rs"
       - "mcp-re-proxy/src/request_stages.rs"
+      # v0.17 trust-plane ownership slice: the runtime trust plane, `proxy.trust_plane_runtime`.
+      # The subtree pattern also matches `window_policy.rs`, which the unit excludes; a
+      # filter that over-triggers is the safe direction, one that under-triggers is the
+      # defect this gate exists for.
+      - "mcp-re-proxy/src/trust_plane/**"
+      - "mcp-re-proxy/src/trust_epoch.rs"
+      - "mcp-re-proxy/src/reloading_trust.rs"
       # #741 put the inner-plane seam inside the dispatch-commitment closure: the capability
       # the ready state carries is produced there, so a change to it dirties the unit and
       # this lane must re-measure it.
@@ -269,6 +276,13 @@ on:
       # remaining members belong to other owners.
       - "mcp-re-proxy/src/exchange_state.rs"
       - "mcp-re-proxy/src/request_stages.rs"
+      # v0.17 trust-plane ownership slice: the runtime trust plane, `proxy.trust_plane_runtime`.
+      # The subtree pattern also matches `window_policy.rs`, which the unit excludes; a
+      # filter that over-triggers is the safe direction, one that under-triggers is the
+      # defect this gate exists for.
+      - "mcp-re-proxy/src/trust_plane/**"
+      - "mcp-re-proxy/src/trust_epoch.rs"
+      - "mcp-re-proxy/src/reloading_trust.rs"
       # #741 put the inner-plane seam inside the dispatch-commitment closure: the capability
       # the ready state carries is produced there, so a change to it dirties the unit and
       # this lane must re-measure it.
