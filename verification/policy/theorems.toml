@@ -4433,11 +4433,24 @@ continuation entry and about the entry surviving a read that admits nothing — 
 deployment posture, and not about whether the shared tier this deployment holds is the one its
 configuration selected. That materialization claim is THM-0077's and is not restated here.
 
-The store is OPPORTUNISTIC, which is why no "prevents startup" conjunct appears: an
-unavailable shared tier does not refuse startup — the deployment announces its absence and
-serves — and an answer leg that needs a correlated continuation fails closed at the binding
-rather than being admitted unbound. That is where this claim departs from the shape of its
-replay sibling.
+NO "PREVENTS STARTUP" CONJUNCT APPEARS, because startup posture is a different authority's
+fact and not because this claim is indifferent to it. Which capability the runtime installs
+for the plan it was given — including that a SELECTED store this build cannot provide, or
+cannot establish, refuses startup by name rather than being announced as OFF — is THM-0096's
+and is deliberately not restated here. What an answer leg may proceed on, and how a
+request-time absence is attributed between the caller and the deployment, is THM-0093's.
+This claim observes its own `ContinuationPlane` state and consumes no proposition from
+either.
+
+That paragraph previously read "the store is OPPORTUNISTIC ... an unavailable shared tier
+does not refuse startup — the deployment announces its absence and serves — and an answer
+leg that needs a correlated continuation fails closed at the binding". Both halves described
+behaviour the tree no longer has: the capability has a dedicated selector
+(`--continuation-control-redis-url`), a selected capability is never silently downgraded,
+and a deployment-side absence is refused before admission as a fact about the DEPLOYMENT
+rather than at the binding as a fact about the caller. The claim itself did not move — it is
+about keying and the non-consuming read — so what is corrected is the reason given for a
+boundary that was always correctly drawn.
 
 THE PROVENANCE IS COMPOSED, NOT LOCAL, and the composition is named because the alternative is
 to imply a stronger local fact than exists. THM-0051 establishes that the product the serving
