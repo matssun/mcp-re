@@ -361,6 +361,26 @@ jobs:
           python3 tools/verification/test_theorem_review.py
           python3 tools/verification/test_views.py
           python3 tools/verification/test_evidence_bundle.py
+          # Added by the v0.17 Slice B sweep. It was in NEITHER local_gate.sh nor any
+          # unconditional workflow: `mutation-probe.yml` names it, and that workflow is
+          # `paths:`-filtered, so the mutation lane's verdict semantics were established
+          # only on pull requests that happened to trip the filter. `merge_path_gate.py`
+          # could not see it, because "named by a workflow" was treated as coverage
+          # whatever the trigger. Both halves are fixed.
+          python3 tools/verification/test_mutation_lane.py
+
+      # ADR-MCPRE-059 §28 + the ratified security boundary. The registry's `root_theorems`
+      # and `docs/spec/security-boundary.md` §2 are ONE fact — what MCP-RE promises —
+      # written down twice, and they had diverged: twelve declared roots against nine
+      # published claims, three roots simultaneously claimed and disclaimed, three §4 rows
+      # duplicated with different dispositions, and a hand-written root-completeness count
+      # that disagreed with the tool. Nothing failed, because no control related the two.
+      # This is that control. It checks the MAPPING and the review axis only: evidence
+      # freshness lives in a gitignored attestation store that no merge-path job can read.
+      - name: Claim-surface gate (declared roots ↔ published claims)
+        run: |
+          python3 scripts/claim_surface_gate.py --selftest
+          python3 scripts/claim_surface_gate.py
 
       # ADR-MCPRE-059 §14.7 — approval is evidence ABOUT a fingerprint, never a bit on the
       # object approved. This gate had `scripts/local_gate.sh` as its only caller, and it

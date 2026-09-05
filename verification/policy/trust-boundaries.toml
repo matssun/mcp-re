@@ -170,6 +170,146 @@ max_class_without_assumption = "V0"
 # fails when a new `SystemTime::now()` site appears undeclared.
 
 # ---------------------------------------------------------------------------
+# Boundaries declared by the v0.17 TCB slice
+# ---------------------------------------------------------------------------
+#
+# The registry above named five boundaries while `assumptions.toml` registered forty-one
+# premises, and exactly ONE of those premises named a boundary in its scope. The relation
+# was not missing from the schema — `scope` has always accepted `boundary://<id>`, and that
+# is the single canonical direction, with every reverse view derived from it. It was
+# unpopulated, which is worse than absent: `boundary_class_violations` consulted a relation
+# that almost nothing declared, so the cap it enforces could not fire for the boundaries
+# nobody had written down.
+#
+# The five entries below make the relation TOTAL. Every assumption now names what it
+# crosses, `load_assumptions` refuses one that does not, and the reverse view is generated
+# rather than stored.
+
+[[boundary]]
+id = "boundary.rust_std"
+description = "The Rust standard and core libraries, and compiler-derived trait impls, whose behaviour a proof assumes rather than checks."
+kind = "language-runtime"
+# Where std's behaviour is ASSUMED, not where it is called. `assume_specification` is the
+# mechanism, and it lives in the two specification modules — a boundary listing every file
+# that calls `saturating_add` would name the whole workspace and bound nothing.
+paths = [
+  "mcp-re-core/src/verus_std_specs.rs",
+  "mcp-re-http-profile/src/verus_std_specs.rs",
+]
+beyond = "The implementation of std/core, and the semantics the compiler gives a derived trait impl."
+# NO CLASS CAP, deliberately, and this is the honest state rather than an oversight.
+#
+# `semantic_boundary_crossings` attributes a seam to a boundary by LOCATION — the seam must
+# sit in a file the boundary declares — and both specification modules hold TWO kinds of
+# seam: the `assume_specification` items that are std's behaviour, and the `uninterp` items
+# (`labeled_digest`, `skew_of`, `validity_of`) that are MCP-RE's own and belong to
+# `boundary.unmodelled_own_behaviour`. A cap here therefore fires on any unit whose cone
+# reaches the file at all, which it did: `http_profile.continuation_binding` and
+# `http_profile.continuation_unbypassability` were reported as trusting std while the seams
+# their proofs actually consume there are the own-code ones, already registered as
+# ASM-0024/0025/0026 and already scoped to both units.
+#
+# The two available answers were both wrong. Registering std premises for those units would
+# INVENT two entries naming nothing anyone measured, in a registry whose whole value is
+# that every entry names something real. Dropping the boundary would leave the language
+# runtime absent from the trust inventory, which is the condition this slice exists to end.
+#
+# So the boundary is declared — a reader asking what this system trusts now gets std in the
+# answer, with its premises listed under it — and the cap is left unset until seam
+# attribution can separate two boundaries inside one module. That separation is a change to
+# what a boundary declaration MEANS, is named as such in `semantic_boundary_crossings`'s own
+# docstring, and is not made here. `check-assumptions` still refuses any UNREGISTERED seam,
+# so no seam in these files goes unaccounted for in the meantime; what is not yet forced is
+# that a std seam's assumption names this boundary.
+
+[[boundary]]
+id = "boundary.unmodelled_own_behaviour"
+description = "MCP-RE's own behaviour, where the current proof or evidence lane stops at it and treats it as opaque."
+kind = "proof-lane"
+# The honest name for the largest class of premise in the registry, and the one §3 of the
+# security boundary already names in prose: "MCP-RE's own behaviour, where a proof lane
+# stops at it ... A premise being about code this project owns does not make it a result."
+#
+# It is a real boundary by this file's own definition — the place MCP-RE stops being able
+# to prove and starts having to trust — and it is not FOREIGN. Keeping it in the same table
+# rather than inventing a second one is the point: a reader asking "what does this system
+# trust?" must get one answer, and the answer must include the premises about its own code.
+paths = [
+  "mcp-re-core/src/verus_proofs.rs",
+  "mcp-re-core/src/time/mod.rs",
+  "mcp-re-http-profile/src/admission.rs",
+  "mcp-re-http-profile/src/artifact.rs",
+  "mcp-re-http-profile/src/authoritative_admission.rs",
+  "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/block/artifact_binding.rs",
+  "mcp-re-http-profile/src/policy.rs",
+  "mcp-re-http-profile/src/verified_request/floor.rs",
+]
+beyond = "The behaviour of MCP-RE code that the lane establishing the claim above it does not model."
+max_class_without_assumption = "V0"
+
+[[boundary]]
+id = "boundary.x509"
+description = "X.509 / ASN.1 certificate parsing, as implemented by the `x509-parser` dependency."
+kind = "foreign-dependency"
+paths = [
+  "mcp-re-proxy/src/communication_assurance/**/*.rs",
+  "mcp-re-proxy/src/client_revocation.rs",
+]
+beyond = "Whether the parser faithfully reports what the certificate bytes actually encode — SANs and their order, the subject CN, the SubjectPublicKeyInfo, the validity instants, the issuer and subject Name encodings, and the serial."
+max_class_without_assumption = "V0"
+
+[[boundary]]
+id = "boundary.tls_mechanism"
+description = "The TLS establishment mechanism, as implemented by rustls: what it accepts, what it reports about a relationship, and the trait contracts it imposes on a signer."
+kind = "foreign-dependency"
+paths = [
+  "mcp-re-proxy/src/tls_listener_state/**/*.rs",
+  "mcp-re-proxy/src/delegated_tls.rs",
+  "mcp-re-proxy/src/delegated_tls/**/*.rs",
+]
+beyond = "Whether a handshake that reports success proved what the protocol says it proves, whether the reported chain is the peer's in the order claimed, and whether a resumed session continues an earlier authenticated one."
+max_class_without_assumption = "V0"
+
+[[boundary]]
+id = "boundary.shared_state_store"
+description = "The external stores a fleet's cross-replica state is kept in — Redis and etcd — and what an acknowledged write to one durably established."
+kind = "external-service"
+paths = [
+  "mcp-re-proxy/src/redis_store.rs",
+  "mcp-re-proxy/src/etcd_store.rs",
+  "mcp-re-proxy/src/async_redis_store.rs",
+  "mcp-re-proxy/src/async_etcd_store.rs",
+  "mcp-re-proxy/src/shared_replay.rs",
+]
+beyond = "Whether Redis replication and etcd consensus behave as their premises state. THM-0092's scope says this in as many words, and no umbrella premise stands in for both mechanisms."
+max_class_without_assumption = "V0"
+
+[[boundary]]
+id = "boundary.monotonic_clock"
+description = "MONOTONIC time — `std::time::Instant` — as the basis of every production deadline and elapsed-time measurement."
+kind = "environment"
+# SETTLED HERE, 2026-09-05. `boundary.clock`'s own note recorded this as "an OPEN QUESTION
+# for the owner ... recorded here rather than silently folded into" the wall-clock boundary.
+# An open question living in a comment is a fact the model does not hold, so it is answered
+# in the model: monotonic time is its OWN authority, separate from `boundary.clock`, because
+# the two are trusted for different things. A wall clock is trusted to agree with a peer's
+# within a skew bound; a monotonic clock is trusted to advance, and to advance at a rate
+# that makes a deadline mean a duration. Neither premise implies the other.
+#
+# No assumption names it today, and that is the correct state rather than a gap: no unit
+# above V0 crosses it, so nothing has yet had to trust it in a claim. The declaration is
+# what makes the cap live the moment one does.
+paths = [
+  "mcp-re-client/src/serve/deadlines.rs",
+  "mcp-re-transport/src/limits.rs",
+  "mcp-re-proxy/src/stage_timers/**/*.rs",
+  "mcp-re-proxy/src/managed_worker/**/*.rs",
+]
+beyond = "That the monotonic clock advances, and that it advances at a rate which makes an elapsed measurement a duration. It is not comparable to any peer's clock, which is why it is not boundary.clock."
+max_class_without_assumption = "V0"
+
+# ---------------------------------------------------------------------------
 # What is deliberately NOT a boundary
 # ---------------------------------------------------------------------------
 #

@@ -611,7 +611,17 @@ def test_a_clock_acquisition_site_alone_is_not_a_trusted_premise():
             {"id": "u", "class": "V1", "paths": ["mcp-re-host/src/clock.rs"]},
         ]
     }
-    assert boundary_class_violations(unit, BOUNDARIES_REAL, scoped()) == []
+    # The assertion names the boundary it is about. It was `== []` until the v0.17 TCB
+    # slice, which is a GLOBAL claim — that this hypothetical unit crosses nothing at all —
+    # and that held only while the registry happened to declare five boundaries. Declaring
+    # `boundary.unmodelled_own_behaviour` made it false for a reason with nothing to do with
+    # clocks: `mcp-re-host` depends on `mcp-re-core`, so this unit's evidence cone reaches
+    # the seams in `time/mod.rs`, and a proof there really would be stated over them.
+    #
+    # A test whose subject is one rule must not assert a property of every rule, or the next
+    # correctly-declared boundary breaks it and the breakage says nothing about clocks.
+    violations = boundary_class_violations(unit, BOUNDARIES_REAL, scoped())
+    assert not [entry for entry in violations if "boundary.clock" in entry], violations
 
 
 def test_the_preserved_unit_is_still_v1_and_assumes_nothing_about_a_clock():
