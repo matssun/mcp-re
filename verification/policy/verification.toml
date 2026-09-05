@@ -3586,6 +3586,165 @@ tested_symbols = [
   "tests/scitt_retained_corpus_test#the_manifest_describes_the_committed_artifacts",
 ]
 
+# v0.17 trust-plane ownership slice. The runtime trust plane — ADR-MCPS-021's three
+# revocation tiers, the `--trust` reload, and the MCPS-84 trust-epoch source — implemented
+# security-bearing behaviour that no unit owned, while the status prose called its
+# cross-replica half "proved". The census record is
+# `verification/reviews/packets/trust-plane-ownership-2026-09-05.md`; this entry is the
+# owner it found the tree could honestly register, and it is deliberately ONE REPLICA wide.
+[[unit]]
+id = "proxy.trust_plane_runtime"
+class = "V0"
+description = "What ONE replica's request-trust resolver may answer under its local trust state: a cached positive binding answers for at most T and never past the deadline it was first cached under; a change of the shared epoch this replica OBSERVES strips every cached binding's authority before the next lookup, so the next answer is the local store snapshot's; a store that has stopped being maintained, and a store that cannot answer past T, refuse with Unavailable rather than serving; and no step — flush, eviction, source outage, poller death, reload — can widen what is served. Says nothing about what the counter's value means to any other replica, and nothing about how the trust document reaches this one."
+paths = [
+  # The plane: what it owns, what it hands out, and the terminal transition its `Drop`
+  # makes. `fleet_trust_bound` lives here too — the operator-facing bound is part of what
+  # this unit measures, because a bound the code prints is a claim the code makes.
+  "mcp-re-proxy/src/trust_plane/mod.rs",
+  # Tier 1 and the bounded window every caching tier runs under, including the
+  # tighten-only rule: an invalidated entry's deadline is a ceiling on whatever replaces it.
+  "mcp-re-proxy/src/trust_plane/trust_cache.rs",
+  # Tier 3: drain the channel before every lookup; an unhealthy channel changes nothing
+  # about serving, because the deadline is what bounds it in both states.
+  "mcp-re-proxy/src/trust_plane/push_trust.rs",
+  # Tier 2: no positive cache, so the store swap is the whole window.
+  "mcp-re-proxy/src/trust_plane/live_trust.rs",
+  # The event vocabulary and the source contract the two above compose over.
+  "mcp-re-proxy/src/trust_plane/invalidation_channel.rs",
+  # Which structure implements the declared tier.
+  "mcp-re-proxy/src/trust_plane/revocation_resolver.rs",
+  # The three-state freshness latch and the resolver that refuses on it.
+  "mcp-re-proxy/src/trust_plane/freshness.rs",
+  # The reload cycle, the bounded keep-last-good budget, and the halt exit.
+  "mcp-re-proxy/src/trust_plane/reload.rs",
+  # One read of `--trust`, two products that cannot disagree.
+  "mcp-re-proxy/src/trust_plane/snapshot.rs",
+  # The delivered window R + T, stated as arithmetic. Claim surface, and measured as one.
+  "mcp-re-proxy/src/trust_plane/delivered_window.rs",
+  # The epoch→event source, its poller body and supervision, and the Redis reader whose
+  # absent-key refusal is the one place a foreign read's MEANING is decided locally.
+  "mcp-re-proxy/src/trust_epoch.rs",
+  # The atomically swapped snapshot every tier resolves against, and the read-only signer
+  # directory. "The next answer is the local store's" names this type.
+  "mcp-re-proxy/src/reloading_trust.rs",
+  # NOT `trust_plane/window_policy.rs`: two ADR-MCPS-021 rules with no caller and no
+  # input, whose own doc comment says so. Nothing this unit claims runs through them, and a
+  # closure that named them would let the unit's fingerprint move for code that decides
+  # nothing.
+  # NOT `trust_document.rs`: the parser. Parsing is a separate authority under the
+  # security-code rule, and it has no unit today — recorded in the census packet as a gap
+  # rather than absorbed here.
+  # NOT `signing_plane/**`: the RESPONSE-side reader of the same counter. It consumes the
+  # same foreign fact for a different local decision (which epoch label to mint under),
+  # with its own baseline and its own regression rule, and it already has an owner.
+  # NOT `startup_plan.rs` (`TrustEpochPlan`) or `app.rs` (`build_actor_resolver`): the
+  # configuration projection and the composition seam belong to the units that own them.
+]
+exported_contracts = []
+# TWO evidence classes. Every conjunct in the description is a check that could be deleted
+# with the battery still green unless a control notices, and several of them had exactly
+# that shape before this slice: the poller body that makes "within one poll interval" true
+# had no test at all, and the source and the cache were each tested against a fake of the
+# other. The probes name the deletions; the controls below are what turn red.
+evidence = [
+  "test://proxy/trust_plane/local_currency",
+  "mutation://proxy/trust_plane/local_currency",
+]
+# WHAT IS AND IS NOT IN THE BATTERY.
+#
+# Every member is an in-process control over ONE replica. The lane that drives a real Redis
+# — `tests/integration_ext/redis_trust_epoch_e2e_test.rs` — is deliberately NOT a member:
+# it self-skips by returning `ok` when no store is provisioned, so a `test://` member naming
+# it would read as PASS having measured nothing (the standing hazard, ADR-MCPRE-061 §2
+# class 8). It runs in `live-infra-e2e.yml` nightly under `MCP_RE_REQUIRE_LIVE_INFRA=1`,
+# which is where it is binding, and it is cited in the census packet as live evidence of
+# the reader — not as this unit's battery.
+#
+# The GKE Proof 2 (`docs/security/gke-multi-replica-validation.sh`) is not evidence for
+# this unit at all: it exercises the SIGNING-side epoch label (a credential minted under the
+# pre-bump label is refused by a sibling), which is the other consumer of the counter.
+tested_symbols = [
+  # --- the source: what one read does to this replica ---
+  "lib#trust_epoch::tests::first_poll_establishes_baseline_without_flush",
+  "lib#trust_epoch::tests::epoch_advance_emits_a_single_flush_all",
+  # Rollback is not representable on this side: any change flushes, and a flush can only
+  # tighten. Without this, `!=` may become `>` and a regressed store silently adopts.
+  "lib#trust_epoch::tests::a_regressed_counter_flushes_rather_than_being_adopted_silently",
+  "lib#trust_epoch::tests::read_error_marks_unhealthy_and_emits_nothing",
+  "lib#trust_epoch::tests::recovery_after_outage_catches_an_epoch_that_advanced_during_it",
+  "lib#trust_epoch::tests::draining_does_not_read_the_store",
+  "lib#trust_epoch::tests::the_request_path_does_not_wait_on_a_stalled_epoch_read",
+  "lib#trust_epoch::tests::a_source_that_stops_being_polled_stops_reporting_healthy",
+  "lib#trust_epoch::tests::a_poller_that_never_ran_is_not_healthy",
+  "lib#trust_epoch::tests::a_poisoned_queue_still_delivers_the_flush",
+  # THE POLLER. The only controls that run `trust_epoch_poller_body`, which is what makes
+  # "flush within one poll interval" a fact about the deployment rather than about
+  # `poll_once` driven by hand.
+  "lib#trust_epoch::tests::the_poller_body_reads_at_once_then_on_its_cadence_and_stops_when_asked",
+  "lib#trust_epoch::tests::a_poller_whose_read_panics_reports_the_source_unhealthy_at_once",
+  # THE COMPOSITION, in process: the production source type under the production cache
+  # type through the production adapter. Advance → the next answer is the store's; outage →
+  # nothing flushes and the deadline governs. Before these, only the Redis-gated e2e
+  # composed the two.
+  "lib#trust_epoch::tests::an_observed_advance_makes_the_next_lookup_the_stores_answer",
+  "lib#trust_epoch::tests::a_source_outage_flushes_nothing_and_the_deadline_still_governs",
+  # The reader's one local rule about a foreign read's meaning. Exists only under
+  # `redis_replay`, which is why `test_features` names it.
+  "lib#trust_epoch::tests::an_absent_epoch_key_is_a_read_failure_not_epoch_zero",
+  # --- Tier 3 over the seam ---
+  "lib#trust_plane::push_trust::tests::pushed_invalidation_rejects_the_key_before_t_elapses",
+  "lib#trust_plane::push_trust::tests::flush_all_evicts_every_cached_binding_forcing_re_resolve",
+  "lib#trust_plane::push_trust::tests::channel_failure_falls_back_to_bounded_t_entry_still_served_until_expiry",
+  "lib#trust_plane::push_trust::tests::store_outage_past_t_fails_closed_even_under_push_tier",
+  "lib#trust_plane::push_trust::tests::a_flush_never_extends_a_cached_bindings_deadline",
+  # A flush revokes NOTHING by itself: its reach is the cache, and the store decides.
+  "lib#trust_plane::push_trust::tests::a_flush_re_resolves_against_the_store_as_it_stands_and_revokes_nothing_itself",
+  # The mirror: a healthy, empty channel is an ordinary hit.
+  "lib#trust_plane::push_trust::tests::healthy_channel_with_no_pending_events_is_a_normal_cache_hit",
+  # --- Tier 1 and the window ---
+  "lib#trust_plane::trust_cache::tests::active_hit_within_window_does_not_consult_inner",
+  "lib#trust_plane::trust_cache::tests::active_re_resolves_after_window",
+  "lib#trust_plane::trust_cache::tests::no_indefinite_stale_active_past_window_fails_closed",
+  "lib#trust_plane::trust_cache::tests::active_then_source_down_within_window_still_serves_cached",
+  "lib#trust_plane::trust_cache::tests::restart_empty_cache_with_source_down_fails_closed",
+  "lib#trust_plane::trust_cache::tests::unavailable_is_not_cached_and_fails_closed",
+  "lib#trust_plane::trust_cache::tests::revoked_is_cached_and_denies",
+  "lib#trust_plane::trust_cache::tests::a_flush_cannot_lengthen_a_cached_bindings_deadline",
+  "lib#trust_plane::trust_cache::tests::an_eviction_cannot_lengthen_the_evicted_bindings_deadline",
+  "lib#trust_plane::trust_cache::tests::evict_drops_an_in_window_entry_forcing_re_resolution",
+  "lib#trust_plane::trust_cache::tests::a_pre_epoch_clock_reading_closes_every_window_instead_of_freezing_it",
+  # --- Tier 2 ---
+  "lib#trust_plane::live_trust::tests::store_revocation_is_visible_on_the_next_request_with_no_t_wait",
+  "lib#trust_plane::live_trust::tests::store_outage_fails_closed_never_active",
+  "lib#trust_plane::live_trust::tests::the_live_window_is_the_store_swap_because_the_tier_adds_none_of_its_own",
+  "lib#trust_plane::live_trust::tests::a_stale_store_snapshot_is_served_verbatim_by_the_tier",
+  # --- the declared tier governs the resolver ---
+  "lib#trust_plane::revocation_resolver::tests::live_tier_wrapping_reflects_a_store_revocation_immediately",
+  "lib#trust_plane::revocation_resolver::tests::bounded_cache_tier_wrapping_caches_within_t",
+  "lib#trust_plane::revocation_resolver::tests::push_tier_wrapping_behaves_as_bounded_t_with_an_inert_channel",
+  # --- freshness: the three-state latch and what it does at the resolver ---
+  "lib#trust_plane::store_cadence_tests::a_frozen_store_stops_answering_instead_of_serving_the_revoked_key",
+  "lib#trust_plane::freshness_transition_tests::a_reload_landing_after_the_owner_is_gone_cannot_report_the_store_fresh",
+  "lib#trust_plane::freshness_transition_tests::the_resolver_stays_closed_even_after_a_straggler_reports_fresh",
+  "lib#trust_plane::freshness_transition_tests::exhausting_the_failure_budget_is_still_undone_by_a_successful_reload",
+  "lib#trust_plane::freshness_transition_tests::a_reload_completing_inside_the_drop_join_window_cannot_revive_the_resolver",
+  "lib#trust_plane::handle_lifetime_tests::a_resolver_that_outlives_the_plane_fails_closed",
+  "lib#trust_plane::handle_lifetime_tests::a_plane_materialized_without_a_reload_cadence_still_fails_closed_after_drop",
+  # --- the reload: the swap, the budget, the halt ---
+  "lib#trust_plane::reload::reload_loop_tests::a_halted_reloader_marks_the_trust_store_stale",
+  "lib#trust_plane::reload::reload_loop_tests::a_reload_cycle_replaces_the_map_the_resolver_answers_from",
+  "lib#trust_plane::reload::reload_loop_tests::the_failure_budget_fails_closed_on_exactly_the_fifth_consecutive_bad_read",
+  # --- the bound the operator is told ---
+  "lib#trust_plane::reload::reload_loop_tests::a_caching_tier_states_the_cache_lifetime_on_top_of_the_store_cadence",
+  "lib#trust_plane::delivered_window::tests::a_store_that_is_never_re_read_delivers_an_unbounded_window",
+  "lib#trust_plane::store_cadence_tests::the_push_tier_bound_states_the_poll_interval_not_the_next_request",
+  "lib#trust_plane::store_cadence_tests::a_push_tier_without_a_source_reports_the_fallback_only",
+]
+# The Redis reader and its two controls exist only under this feature. Named so the
+# fingerprint says the battery measured the crate that carries the networked source, not
+# the one where `RedisEpochReader` does not exist.
+test_features = ["redis_replay"]
+
 [[edge]]
 kind = "PROOF_DEPENDENCY"
 from = "conformance.retained_corpus"

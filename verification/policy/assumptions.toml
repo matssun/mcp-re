@@ -1198,3 +1198,55 @@ introduced_by = "ADR-MCPRE-059 §28 / issue #746 (D8)"
 review_requirement = "Withdrawn; nothing trusts it. Any future re-registration is a NEW id."
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
+
+# ---------------------------------------------------------------------------
+# v0.17 trust-plane ownership slice — the ONE foreign premise the request-trust plane
+# advertises over.
+# ---------------------------------------------------------------------------
+#
+# Registered narrowly and for one reason. `proxy.trust_plane_runtime`'s claim is ONE
+# replica wide and needs no premise: what a replica does with a value its reader returned is
+# local. But the code PRINTS a fleet statement — "the trust cache flushes within one poll
+# interval of an epoch advance" — and the statement is true of a fleet only if every
+# replica's read returns the advanced value. That is what a `GET` on another connection
+# means, and it is the store's fact, not MCP-RE's. Consumed by no theorem today; the census
+# packet records that a cross-replica claim, if one is ever stated, rests here.
+
+[[assumption]]
+id = "ASM-0044"
+description = "A read of the trust-epoch key over a replica's own connection, issued after an operator's `INCR` on that key was acknowledged, returns a value different from every value that replica read before the `INCR`."
+justification = """
+`TrustEpochSource` compares each read against the last value THIS process saw and flushes
+its cache on any difference, and the startup line derives a fleet-wide bound — one poll
+interval — from that comparison. MCP-RE cannot establish the premise the derivation rests
+on: the counter lives in a remote process, the `INCR` is issued on a connection this
+replica does not hold, and what a later `GET` on this replica's connection returns is
+decided by the store's replication and routing, not by anything here.
+
+So the premise is narrow on purpose. It is NOT "Redis is correct", not durability of the
+counter, not ordering between replicas, and not that every replica observes the advance at
+the same time. It is only that an acknowledged write becomes visible to a subsequent read
+on another connection — read-your-writes across connections against one primary. A read
+that returns the OLD value satisfies nothing here and is exactly the case this premise
+excludes; a read that FAILS, or returns a LOWER value, is outside the premise and is handled
+locally (an unhealthy source with the baseline held, and a flush, respectively — measured
+by the unit).
+
+It stops being acceptable if the epoch key is served from a read replica that can lag the
+primary, if the deployment routes a replica's connection to a different primary than the
+operator's, or if the key can be evicted or restored to an older value without that
+reading as absence or regression at the reader.
+
+The same counter is read by the delegated-signing plane for a different local decision
+(which epoch label to mint under, `signing_plane::DelegatedEpochWatch`). That consumer is
+NOT in this premise's scope: it holds its own baseline over its own connection and refuses
+a regression rather than flushing, and a premise about what one plane's read means must not
+be read as an ordering between the two planes' observations, which nothing in the tree
+establishes.
+"""
+scope = ["unit://proxy.trust_plane_runtime", "boundary://boundary.shared_state_store"]
+owner = "mats@sundvall.name"
+introduced_by = "v0.17 trust-plane ownership slice (verification/reviews/packets/trust-plane-ownership-2026-09-05.md)"
+review_requirement = "Owner review; any change to the epoch reader, to the poll-interval bound the startup line states, or to the store topology the deployment documentation admits for the epoch key."
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"

@@ -95,6 +95,7 @@ attestations this view cannot see.
 | unit://proxy.trust_composition_root | source, contracts or evidence | THM-0038, THM-0067, THM-0077 | _no consumer_ |
 | unit://proxy.trust_configuration_state | source, contracts or evidence | THM-0035, THM-0036 | _no consumer_ |
 | unit://proxy.trust_plan | source, contracts or evidence | THM-0037, THM-0066 | _no consumer_ |
+| unit://proxy.trust_plane_runtime | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://sdk_python.exchange_path | source, contracts or evidence | THM-0094 | _no consumer_ |
 | unit://sdk_typescript.exchange_path | source, contracts or evidence | THM-0095 | _no consumer_ |
 
@@ -243,3 +244,4 @@ attestations this view cannot see.
 | ASM-0041 | description, justification, scope or mechanism | proxy.replay_admission_gate | assumption review |
 | ASM-0042 | description, justification, scope or mechanism | _no unit_ | assumption review |
 | ASM-0043 | description, justification, scope or mechanism | _no unit_ | assumption review |
+| ASM-0044 | description, justification, scope or mechanism | proxy.trust_plane_runtime | assumption review |

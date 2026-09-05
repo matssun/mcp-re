@@ -144,18 +144,29 @@ The current demonstration and live-validation package proves:
 
 MCP-RE runs as N identical replicas behind a load balancer with no security claim
 weakened, behind an explicit `--fleet` flag orthogonal to `--strict`
-(ADR-MCPS-049). The fleet composes, *proves*, and documents the node-local
-coherence guarantees:
+(ADR-MCPS-049). The fleet composes and documents the node-local coherence
+guarantees. Which of them are *claims* is decided by §2 of
+[`docs/spec/security-boundary.md`](spec/security-boundary.md), not by this list:
 
 - **Cross-replica replay coherence** — `--fleet` rejects node-local (memory/file)
   replay caches; a replica must use a shared, cross-replica ReplayCache (Redis). A
   two-replica e2e proves a nonce accepted by one replica is rejected by a sibling
   (MCPS-79/80/81).
-- **Cross-replica trust revocation** — a Redis-backed trust-epoch source flushes the
-  ADR-021 Push-tier trust cache across replicas on an epoch advance, reverting to the
-  bounded-staleness guarantee on a read outage, with explicit per-tier
-  revocation-lag bounds. An e2e proves a revocation reaches a sibling, with a
-  negative control (MCPS-84/85/86).
+- **Cross-replica trust revocation — measured, not proved.** Owned since v0.17 by
+  `unit://proxy.trust_plane_runtime`, and the claim it can carry is one replica wide:
+  on observing a change of the shared Redis trust epoch, a replica strips every cached
+  request-signer binding of its authority before the next lookup, so the next answer
+  is its own `--trust` snapshot's; a read outage flushes nothing and the deadline the
+  entry already carried still governs; no flush, eviction, outage or reload can widen
+  what is served. The epoch by itself revokes nothing — the delivered window is the
+  reload cadence plus `T`, stated on the startup line. That an `INCR` reaches every
+  replica's next read is a foreign premise on the shared store (ASM-0044), not a
+  result. The e2e (MCPS-84/85/86) drives ONE replica whose cache is flushed by an
+  `INCR` from another connection, with a negative control, and runs only in the
+  opt-in nightly live-infra lane; the live GKE proof exercises the delegated-signing
+  epoch label, not this cache. No two-replica behaviour of the request-trust cache
+  is demonstrated anywhere. Census:
+  [`verification/reviews/packets/trust-plane-ownership-2026-09-05.md`](../verification/reviews/packets/trust-plane-ownership-2026-09-05.md).
 - **Fleet operations** — session affinity for stateful inner backends; a bounded
   graceful `SIGTERM`/`SIGINT` drain of in-flight requests for rolling deploys
   (ADR-MCPRE-051 §6); a concurrent-TLS-client load harness reporting p50/p99/p999
