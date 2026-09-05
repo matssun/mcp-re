@@ -793,9 +793,18 @@ mod tests {
 
         // Immediate first poll: the baseline exists well before one interval has passed.
         let first = wait_for(Duration::from_millis(500), || src.reader.reads() >= 1);
-        assert!(first < Duration::from_secs(1), "the first read waited an interval");
-        assert!(src.is_healthy(), "a polled source under its poller reports healthy");
-        assert!(src.drain_pending().is_empty(), "the baseline poll must not flush");
+        assert!(
+            first < Duration::from_secs(1),
+            "the first read waited an interval"
+        );
+        assert!(
+            src.is_healthy(),
+            "a polled source under its poller reports healthy"
+        );
+        assert!(
+            src.drain_pending().is_empty(),
+            "the baseline poll must not flush"
+        );
 
         // An advance is detected within one interval of the cadence, plus scheduling.
         src.reader.set(2);
@@ -821,9 +830,7 @@ mod tests {
     }
     impl EpochReader for PanicsOnSecondRead {
         fn read_epoch(&self) -> Result<i64, EpochReadError> {
-            let n = self
-                .reads
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let n = self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             assert!(n == 0, "the poller's read panicked");
             Ok(1)
         }
@@ -872,8 +879,7 @@ mod tests {
             _signer: &str,
             _key_id: &str,
         ) -> Result<mcp_re_core::VerificationKey, mcp_re_core::TrustResolverError> {
-            self.calls
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             if self.revoked.load(std::sync::atomic::Ordering::SeqCst) {
                 return Err(mcp_re_core::TrustResolverError::Revoked);
             }

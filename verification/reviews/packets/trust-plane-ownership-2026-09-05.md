@@ -352,3 +352,24 @@ would create a GAP with no owner able to close it; leaving it as a census findin
 honest state, and §4 of the security boundary already says exactly that.
 
 The theorem waits for an owner ruling on this packet. Nothing in this slice pre-empts it.
+
+---
+
+## Amendment — 2026-09-05, the one-replica theorem (THM-0097)
+
+Owner ruling on this packet: accepted; one subordinate theorem authorized for §4 items 1–6,
+strictly local, composing under THM-0074, with ASM-0044 kept OUT of its closure.
+
+Assumption reach is derived scope → unit → theorem, so a theorem supported by a unit that
+holds `trust_epoch.rs` would carry ASM-0044 whatever the theorem said. §3's closure is
+therefore split: `proxy.trust_plane_runtime` keeps the plane, the tiers, freshness, the
+reload, the snapshot types and the `InvalidationChannel` seam — the REACTION to an event —
+and the new `proxy.trust_epoch_source` owns `trust_epoch.rs` alone, the PRODUCTION of an
+event from a foreign read, with ASM-0044 scoped to it and probes M96/M97 re-homed. The
+runtime unit's closure now names no assumption. Everything else in this packet stands.
+
+THM-0097 is registered with `depends_on = []` and added to THM-0074's `depends_on`. That
+edge moves THM-0074's `theorem_dependencies` component, so its standing specification review
+no longer covers its fingerprint until the owner records a dependency-only re-affirmation,
+as was done for THM-0077 on 2026-09-03. The claim-surface gate refuses the tree until then;
+the theorem PR is meant to stop there.
