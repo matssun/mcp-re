@@ -882,10 +882,20 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Inside the package's declared range, and it has to be: this job INSTALLS the built
+      # wheel, so an interpreter outside `requires-python` is refused by pip rather than
+      # producing a weaker result. It was "3.12" until the 2026-09-05 narrowing to
+      # `>=3.14.5,<3.15`, and the failure was the correct one —
+      # `Package 'mcp-re-sdk' requires a different Python: 3.12.14 not in '<3.15,>=3.14.5'`.
+      #
+      # This job stays INDEPENDENT evidence over the installed artifact on a second OS, and
+      # that independence is unaffected: what makes it independent is the OS, the installed
+      # wheel and the directory-based selection, never the interpreter differing from the
+      # one the authoritative matrix pins.
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       # The pinned Rust toolchain (rust-toolchain.toml at the repo root) applies
       # here too — rustup walks up to it — so the wheel is built with the same
