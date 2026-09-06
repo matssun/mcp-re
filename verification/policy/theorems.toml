@@ -5023,58 +5023,84 @@ depends_on = []
 
 [[theorem]]
 id = "THM-0104"
-title = "A request the serving path abandons on shutdown is one that never executed, never one half-executed"
+title = "Shutdown stops admission and bounds the wait on admitted work; what the drain leaves behind it never resumes"
 statement = """
 For one core of the async serving path, from the moment a shutdown is signalled:
 
-Acceptance stops — the accept loop exits before the drain begins, so no request admitted
-after the signal exists. A request already admitted is IN FLIGHT from an RAII guard taken
-before its body is read until its task ends, and the count cannot disagree with reality in
-either direction: the guard's construction is the only increment and its `Drop` the only
-decrement, so a request cannot be served without being counted, nor counted after it is
-finished.
+ADMISSION STOPS. The accept loop exits before the drain begins, so no request admitted after
+the signal exists.
 
-The drain then waits while that count is non-zero. A request that reached the handler
-therefore runs to completion and is ANSWERED — its response reaches the client rather than
-being cut off mid-flight.
+ADMITTED WORK IS COUNTED UNTIL ITS TASK ENDS. A request is IN FLIGHT from an RAII guard taken
+after admission and before its body is read, until its task ends. The guard's construction is
+the only increment and its `Drop` the only decrement, so a request cannot be served without
+being counted, nor counted after it has finished. The guard spans the WHOLE of the request's
+processing — body read, handler, response — so the count is a count of work not yet finished,
+never a count of work not yet started.
 
-When the grace expires the core's runtime is dropped, and a task still suspended at an await
-point — a request still reading its body, which has not reached the handler — is cancelled
-there. It never enters the handler: not while the drain runs, and not afterwards, because
-the runtime that would have polled it no longer exists.
+THE DRAIN WAITS ON THAT COUNT, BOUNDED. It polls while the count is non-zero and returns when
+the count reaches zero OR the grace deadline passes, whichever comes first. A grace that
+cannot be turned into an instant makes the drain decline to start rather than park process
+exit behind a deadline it cannot enforce.
 
-So every admitted request ends in one of two states: answered, or never executed. There is
-no third state in which the handler ran and the client was not answered.
+WHAT THE GRACE LEAVES BEHIND MAY BE CANCELLED. When the drain returns, the core's runtime is
+dropped and a task still suspended at an await point is cancelled there. That await point may
+be anywhere the request's processing suspends, INCLUDING INSIDE THE HANDLER.
+
+CANCELLATION IS TERMINAL. A task cancelled by the runtime drop is never polled again: it does
+not enter the handler afterwards, and it does not resume inside it. Once `serve` returns, no
+admitted request makes further progress — which is the fact teardown's second phase relies on
+when it drops the trust, signing and TLS planes.
 """
 security_consequence = """
-A shutdown cannot produce the outcome a client cannot recover from: a request whose effect
-happened while the client saw no answer. An operator draining a replica — a rolling deploy, a
-scale-down, a node drain — is not choosing between abandoning work and delaying exit, because
-what is abandoned is only work that had not started. The client's retry of an abandoned
-request is safe on the same grounds the exchange machine states for a refusal before the
-execution threshold, and here the grounds are that the handler was never entered.
+An operator draining a replica — a rolling deploy, a scale-down, a node drain — gets two
+facts, and must not be sold a third.
+
+The two: nothing new is admitted after the signal, and no admitted request executes, or
+resumes executing, after `serve` returns, so the planes are dismantled behind work that has
+provably stopped rather than work assumed to have stopped.
+
+The third, which this mechanism does NOT provide: that a request cancelled at grace expiry
+had not already executed. The in-flight count does not distinguish a request stalled in its
+body read from one suspended inside the handler, so once the grace expires the drain cannot
+say on which side of the exchange's execution threshold the abandoned work sat.
+
+Whether a client may safely retry an abandoned request is therefore decided by the exchange
+state and retry authorities, on the evidence THOSE authorities hold about how far the exchange
+progressed — never by the drain counter. A deployment wanting zero-abandoned drain in fact
+rather than in bound configures `drain_grace >= request_deadline`; that is a configuration
+relation resting on the request deadline's own enforcement, and is not claimed here.
 """
 scope = """
-The SAFETY half only, and the exclusion is the point of the statement. NOTHING here bounds
-how long teardown takes: that an idle drain returns promptly, that a saturated drain finishes
-within a few seconds, and that a stuck request cannot delay exit much past the grace are
-WALL-CLOCK MEASUREMENTS taken on the box that ran them — real controls
+WHAT IS NOT CLAIMED, in terms, because an earlier statement of this theorem claimed all three
+and was corrected by owner ruling on 2026-09-06: that a request which reached the handler runs
+to completion and is answered; that every admitted request ends answered or never executed;
+that retry of an abandoned request is safe because the handler was never entered. The
+`InFlightGuard` spans body read, handler and response alike, and the drain exits on the grace
+as readily as on the count, so runtime teardown after grace expiry can cancel a task suspended
+INSIDE `handler(..).await`. The battery's
+`a_request_abandoned_by_the_grace_never_reaches_the_handler` exercises a request stalled in its
+BODY READ; it establishes that cancellation is terminal for a task that had not yet reached the
+handler, not that every abandoned task is such a task.
+
+NOTHING HERE BOUNDS HOW LONG TEARDOWN TAKES. That an idle drain returns promptly, that a
+saturated drain finishes within a few seconds, and that a stuck request cannot delay exit much
+past the grace are WALL-CLOCK MEASUREMENTS taken on the box that ran them — real controls
 (`idle_drain_returns_promptly`, `stuck_request_cannot_delay_exit_past_grace`, and the tail
-assertions of the two zero-abandoned controls), and part of the battery this unit's evidence
-rests on, but not conjuncts of this claim. A red from one of them is a statement about the
-machine, not about the property. The bounded-exit guarantee an operator configures
-(`drain_grace` under a Kubernetes termination grace period) is that timing property and is
-therefore not claimed here.
+assertions of the two zero-abandoned controls), part of the battery this unit's evidence rests
+on, but not conjuncts of this claim. A red from one of them is a statement about the machine,
+not about the property. The bounded-exit guarantee an operator configures (`drain_grace` under
+a Kubernetes termination grace period) is that timing property and is therefore not claimed
+here either.
 
 ONE core, and the async path. The per-core fleet inherits the mechanism because each core's
-`serve` drains before its worker thread joins, but that composition is not stated. The
-blocking mTLS harness is not an MCP-RE serving path and is out of scope.
+`serve` drains before its worker thread joins, but that composition is not stated. The blocking
+mTLS harness is not an MCP-RE serving path and is out of scope.
 
 The cancellation half is STRUCTURAL — a task suspended at an await point when its runtime is
-dropped is not polled again — and has no deletable check, so it carries no probe; what a
-probe can reach is the drain's wait and the guard that makes the count move. The three
-non-UTF-8 header controls sharing this test binary belong to a boundary-refusal authority
-that has no owner, and are not evidence for anything here.
+dropped is not polled again — and has no deletable check, so it carries no probe; what a probe
+can reach is the drain's wait and the guard that makes the count move. The three non-UTF-8
+header controls sharing this test binary belong to a boundary-refusal authority that has no
+owner, and are not evidence for anything here.
 
 Outside every root's closure, deliberately and for the same reason as THM-0012: no root's
 dispatch or response claim rests on what shutdown does to work already admitted. Executable,
