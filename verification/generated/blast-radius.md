@@ -55,6 +55,7 @@ attestations this view cannot see.
 | unit://proxy.certificate_identity | source, contracts or evidence | THM-0024 | proxy.channel_associated_identity (COMPILE_DEPENDENCY) |
 | unit://proxy.channel_associated_credential | source, contracts or evidence | THM-0028 | proxy.channel_associated_identity (CONTRACT_CONSUMES), proxy.mechanism_verified_credential (CONTRACT_CONSUMES) |
 | unit://proxy.channel_associated_identity | source, contracts or evidence | THM-0029 | proxy.authenticated_relationship_peer (CONTRACT_CONSUMES) |
+| unit://proxy.client_credential_window | source, contracts or evidence | THM-0102 | _no consumer_ |
 | unit://proxy.continuation_correlation_store | source, contracts or evidence | THM-0087 | _no consumer_ |
 | unit://proxy.continuation_installation | source, contracts or evidence | THM-0096 | _no consumer_ |
 | unit://proxy.continuation_key_provenance | source, contracts or evidence | THM-0087 | _no consumer_ |
@@ -92,7 +93,7 @@ attestations this view cannot see.
 | unit://proxy.serving_trust_seam | source, contracts or evidence | THM-0066, THM-0099 | _no consumer_ |
 | unit://proxy.signing_credential_provenance | source, contracts or evidence | THM-0082 | _no consumer_ |
 | unit://proxy.signing_role_separation | source, contracts or evidence | THM-0073 | _no consumer_ |
-| unit://proxy.tls_listener_state | source, contracts or evidence | THM-0048, THM-0054 | proxy.credential_currency (COMPILE_DEPENDENCY) |
+| unit://proxy.tls_listener_state | source, contracts or evidence | THM-0048, THM-0054, THM-0103 | proxy.credential_currency (COMPILE_DEPENDENCY) |
 | unit://proxy.trust_composition_root | source, contracts or evidence | THM-0038, THM-0067, THM-0077 | _no consumer_ |
 | unit://proxy.trust_configuration_state | source, contracts or evidence | THM-0035, THM-0036 | _no consumer_ |
 | unit://proxy.trust_document_interpretation | source, contracts or evidence | THM-0098 | _no consumer_ |
@@ -206,6 +207,8 @@ attestations this view cannot see.
 | THM-0099 | statement, consequence, scope or review requirement | specification review | THM-0074 |
 | THM-0100 | statement, consequence, scope or review requirement | specification review | THM-0074 |
 | THM-0101 | statement, consequence, scope or review requirement | specification review | THM-0074 |
+| THM-0102 | statement, consequence, scope or review requirement | specification review | THM-0077 |
+| THM-0103 | statement, consequence, scope or review requirement | specification review | THM-0048 |
 
 ## Assumptions
 

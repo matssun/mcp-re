@@ -209,6 +209,9 @@ on:
       # the composition root that consumes those projections without re-reading trust.
       - "mcp-re-proxy/src/config_state/trust_revocation.rs"
       - "mcp-re-proxy/src/config_state/trust_document.rs"
+      # v0.17 / #581 row 2: the connection credential window, `proxy.client_credential_window`.
+      - "mcp-re-proxy/src/config_state/client_credential_window.rs"
+      - "mcp-re-proxy/src/config_state/credential_currency_bound.rs"
       # ADR-MCPRE-067 Phase 5 moved the online-revocation SELECTION out of a flat
       # `DeploymentRequest` field, so `proxy.online_ocsp_reachability`'s closure now names
       # the file holding `is_required()` — the predicate THM-0013's refusal reads.
@@ -414,6 +417,9 @@ on:
       # the composition root that consumes those projections without re-reading trust.
       - "mcp-re-proxy/src/config_state/trust_revocation.rs"
       - "mcp-re-proxy/src/config_state/trust_document.rs"
+      # v0.17 / #581 row 2: the connection credential window, `proxy.client_credential_window`.
+      - "mcp-re-proxy/src/config_state/client_credential_window.rs"
+      - "mcp-re-proxy/src/config_state/credential_currency_bound.rs"
       # ADR-MCPRE-067 Phase 5 moved the online-revocation SELECTION out of a flat
       # `DeploymentRequest` field, so `proxy.online_ocsp_reachability`'s closure now names
       # the file holding `is_required()` — the predicate THM-0013's refusal reads.

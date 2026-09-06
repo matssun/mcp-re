@@ -3,12 +3,14 @@
   "components": {
     "encoding_version": 1,
     "theorem_claim": "sha256:fdfe85b7883105e261d857c6ac8121cf983d2b8ca30a0b5137a8742ddfb38de3",
-    "theorem_dependencies": {},
+    "theorem_dependencies": {
+      "THM-0103": "sha256:f98dfc0ee9efbc48c90ecfd6a0a40c31f3a10817e5b5f80c6d19f387530e399f"
+    },
     "theorem_id": "THM-0048",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner specification-review ruling of 2026-08-31, given over verification/reviews/packets/owner-specification-review-2026-08-31.md. The ruling declared the consolidated review COMPLETE and approved every packet theorem not named in its bounded correction set at its current fingerprint. This theorem was not named, and its statement, security consequence and scope are unchanged from the packet the owner read.",
-  "reviewed_fingerprint": "sha256:77e1f1fd7ed2ec75867972da3fd2c5281c913b90be7232c52476f60eca43201c",
+  "notes": "DEPENDENCY-ONLY RE-AFFIRMATION recorded under the owner's AFK mandate of 2026-09-06, by the implementing agent, superseding this record's previous entry at sha256:77e1f1fd7ed2ec75867972da3fd2c5281c913b90be7232c52476f60eca43201c. THE CLAIM TEXT DID NOT MOVE: theorem_claim is sha256:fdfe85b7883105e261d857c6ac8121cf983d2b8ca30a0b5137a8742ddfb38de3 in both records, so the title, statement, security consequence, scope, owner, supported_by and review_requirement reviewed previously are re-affirmed unchanged and were not reopened. WHAT WAS REVIEWED IS THE DEPENDENCY CLOSURE, 0 -> 1 members: added THM-0103, the epoch-bound store's own contract, reviewed on the same tree at sha256:9855fe8152cefc4d7d6e12446a8afaa805875d29976fcb1a5fc98b2c3e376a57. The edge exists because THM-0048's clause 'a rebuild with withdrawn trust advances the epoch and stops resumption' USES that contract: this claim is about the owner's terms travelling together, THM-0103 is about what the store answers. Nothing else changed; no dependency was removed and no pre-existing member's digest moved. This adds no assumption and does not extend THM-0048 to the lifecycle question ADR-MCPRE-062 settled. Recomputed on the tree before writing and equal to sha256:0ee0e25cffc9a95ff919a90eb9a86d511757347e52a75656a8b245a24471b3f7.",
+  "reviewed_fingerprint": "sha256:0ee0e25cffc9a95ff919a90eb9a86d511757347e52a75656a8b245a24471b3f7",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0048"
 }

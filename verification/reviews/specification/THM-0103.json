@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:f98dfc0ee9efbc48c90ecfd6a0a40c31f3a10817e5b5f80c6d19f387530e399f",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0103",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "SPECIFICATION REVIEW RECORDED UNDER THE OWNER'S AFK MANDATE OF 2026-09-06 (backlog item 5, 'TLS propositions already governed by #581/#598'), by the implementing agent as routine owner-review maintenance \u2014 not a transcription of a ruling naming this fingerprint. Both issues are HITL and stay open for the owner's specification review; this record is the artefact that review reads. #581 ROW 1, PHRASED AT THE STORE AS #598 REQUIRES. #598 records that within a production listener the trusted client-CA set is immutable, so the authentication epoch is a CONSTRUCTION-TIME CONSTANT and the publication's change branch has never fired outside a test; it warns that #581 must not state a formally tidy but operationally false composition theorem, and that the claim must be phrased strictly at the store level. It is. The scope says in terms that nothing here establishes that a production listener's epoch ADVANCES, names ADR-MCPRE-062 (superseding ADR-055) as having settled the lifecycle by choosing the immutable-listener model, and points at THM-0048's cache NON-CONTINUITY as the safety property across an anchor change. THE RESUMED WITNESS IS PART OF THE CLAIM ON PURPOSE: a store that silently never resumed would satisfy every refusal conjunct while withdrawing the property ADR-055 exists to provide, so both directions are witnessed against real rustls handshakes rather than against a HashMap. COMPOSITION: THM-0048 now depends_on THM-0103, because THM-0048's clause 'a rebuild with withdrawn trust advances the epoch and stops resumption' USES the store's contract; the root THM-0077 picks it up transitively rather than by a second direct edge. EVIDENCE COMPLETENESS: five controls in auth_epoch::tests existed and were named by no unit (the epoch is a property of the anchor SET, the domain string, both publication-change directions) and are registered now \u2014 a control the fingerprint does not carry is not evidence. Probes M116-M118. NOT DONE, and outside this mandate: retiring or re-scoping ADR-055's dormant live-epoch machinery, which is #598's remaining scope and is a redesign. The fingerprint was recomputed on the tree before this record was written and equals the value above. Reviewed tree: assurance/tls-propositions stacked on #820 head 18bd34de.",
+  "reviewed_fingerprint": "sha256:9855fe8152cefc4d7d6e12446a8afaa805875d29976fcb1a5fc98b2c3e376a57",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0103"
+}

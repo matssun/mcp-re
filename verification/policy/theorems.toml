@@ -2353,7 +2353,11 @@ handshake's own correctness.
 owner = "proxy.tls_listener_state"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.tls_listener_state"]
-depends_on = []
+# The clause "a rebuild with withdrawn trust advances the epoch and stops resumption" USES
+# the store's contract: that a session tagged with a superseded epoch is not returned. This
+# claim is about the owner's terms travelling together; THM-0103 is about what the store
+# answers, and both directions of it are witnessed at real rustls handshakes.
+depends_on = ["THM-0103"]
 
 [[theorem]]
 id = "THM-0049"
@@ -3452,6 +3456,10 @@ depends_on = [
   # THM-0087 states an actor-scoped, non-consuming lookup relation over a running store.
   # Those are different propositions, and an edge between them would make the root's
   # dependency closure claim support it does not have. Owner ruling of 2026-09-01.
+  # MCPRE-145 / #581 row 2: the connection credential window. A deployment cannot hold a
+  # posture whose reported exposure window its own durations contradict — the pair that was
+  # accepted while the transcript printed a window forty minutes shorter than the truth.
+  "THM-0102",
   "THM-0086",
   # ADR-MCPRE-059 §28 / #744: the continuation materialization leaf, D1b′ — the claim
   # THM-0087 was mistaken for. The sibling of THM-0086 and the same shape: PLAN → RUNTIME,
@@ -4904,3 +4912,111 @@ owner = "proxy.exchange_transition_ownership"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.exchange_transition_ownership", "unit://proxy.exchange_lifecycle"]
 depends_on = ["THM-0043"]
+
+[[theorem]]
+id = "THM-0102"
+title = "A validated deployment's connection-age bound never exceeds the credential lifetime it reports as its exposure window"
+statement = """
+For every `ClientCredentialWindow` a deployment holds — and every validated deployment
+holds exactly one, or is refused:
+
+`connection_age() <= cert_lifetime()`, `cert_lifetime() <= MAX_CLIENT_CERT_LIFETIME` (one
+hour), both non-zero, and `exposure_window() == cert_lifetime()`. The public constructor
+is the only way to obtain one and refuses any pair that breaks a bound, so the relation
+travels with the value: a plan, a transcript line or a serving option that holds the window
+holds the relation, whichever crate built it. A deployment that disables either bound, or
+names a lifetime past the ceiling, resolves no window and is refused naming the flag; the
+relation is not judged while a half is illegal.
+
+The credential-currency ceiling the serving path applies on every request is the window's
+`cert_lifetime()`, taken from the validated state, and the revocation-posture transcript
+prints the window's `connection_age()` beside the exposure window it makes honest.
+"""
+security_consequence = """
+The exposure window an operator reads at startup is the certificate lifetime, and that is
+an honest bound on how long a compromised client credential stays usable ONLY if no
+connection may live longer than the credential on one handshake. The relation is owned by
+the value: a deployment naming `--max-client-cert-lifetime 600 --max-connection-age-secs
+3000` — accepted before this owner existed, with the transcript reporting 600s while a
+connection outlived its credential by forty minutes — cannot be represented, so no
+transcript can report a window the configuration contradicts.
+"""
+scope = """
+The CONFIGURED relation and the two consumers that read it, nothing about the runtime that
+enforces it. The bound on a live connection's age is enforced in
+`async_serve/connection.rs` (a graceful shutdown at `max_connection_age`) and the per-request
+re-check of the leaf's validity and span is THM-0032's; that a connection is in fact closed
+at the configured age is an OBLIGATION this theorem names and does not establish — that
+code has no test and belongs to no unit, and it lives in the `async_serve` feature lane, so
+a plain `cargo test --workspace` says nothing about it. The claim "a connection cannot
+outlive the credential that authenticated it" is therefore stated here at the level of the
+values a deployment chose, not at the level of the socket.
+
+Not a claim about the certificate's own validity window (THM-0032, per request), about
+revocation (THM-0054, THM-0032), or about resumption (THM-0048). An auxiliary claim outside
+every root's closure: THM-0074's per-request currency does not depend on the connection-age
+bound, which is defence in depth that forces a re-handshake through the current CRL.
+Executable and structural, class V0.
+"""
+owner = "proxy.client_credential_window"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.client_credential_window"]
+depends_on = []
+
+[[theorem]]
+id = "THM-0103"
+title = "The epoch-bound session store resumes a session under the epoch that tagged it, and under no other"
+statement = """
+For the epoch-bound TLS session store a listener is built with:
+
+Every value the store writes carries the epoch in force at the write, prefixed at that
+epoch's own width, and every read splits the stored value at that same width — one split, so
+the prefix compared and the session returned cannot be taken at different offsets. A read
+returns the session if and only if the stored tag equals the epoch in force at the read; a
+stored value too short to carry a tag is a mismatch. A `get` that mismatches EVICTS the entry
+rather than leaving it to be re-read and re-rejected until it ages out; a `take` has already
+removed it.
+
+Both directions are witnessed at the mechanism rather than at the map. Against real rustls
+handshakes: a second connection resumes while the epoch holds — the handshake reports
+`Resumed`, so the gate is not vacuously closed — withdrawing a trusted client CA advances the
+epoch and forces a full handshake, republishing the epoch of an unchanged CA set does not
+stop resumption, and resumption returns once the original trust is restored. The epoch itself
+is a function of the trusted client-CA SET: order and duplication are not inputs, and
+publication reports a change exactly when the value changed.
+"""
+security_consequence = """
+An authentication result cannot outlive the trust it was derived from by being restored from
+a session cache. rustls runs chain building, CRL consultation and the certificate's own
+validity window on a FULL handshake only, and a resumed session restores the stored peer
+chain verbatim; tying the cache to a digest of the trusted client-CA set means a peer whose
+issuer has been withdrawn cannot present a stored session as a shortcut past the chain
+building that would now refuse it. The `Resumed` witness is part of the claim: a store that
+silently never resumed would satisfy every refusal conjunct and would have withdrawn the
+performance property the mechanism exists to provide.
+"""
+scope = """
+A claim about the STORE, and deliberately not about a lifecycle. Within a production listener
+the trusted client-CA set is immutable, so the authentication epoch is a CONSTRUCTION-TIME
+CONSTANT and the change branch of the publication has never fired outside a test: this
+theorem must never be read as establishing that a production listener's epoch ADVANCES when
+its anchors change, which nothing in the tree establishes and which ADR-MCPRE-062 (superseding
+ADR-MCPRE-055, #598) settled by choosing the immutable-listener model instead. Under that
+model an anchor-set change replaces the listener and therefore the store, and the safety
+property across the change is cache NON-CONTINUITY — THM-0048's "a different anchor set is a
+different state with its own empty cache" — not an epoch transition inside a surviving cache.
+Retiring or re-scoping the dormant live-epoch machinery is #598's remaining scope and is not
+done here.
+
+It covers the trusted client-CA set and EXCLUDES CRL contents and every CRL parameter: a
+revoked peer is refused per request by the revocation controls, not by the epoch. Nothing
+about the handshake's own correctness, about what the accepted credential then means
+(THM-0031), or about how the store is paired with its listener (THM-0048). The bound
+in-memory cache's own eviction policy under pressure is rustls's. Executable, class V0: unit
+controls over the store's contract plus real-handshake acceptance inside the owner's module
+tree.
+"""
+owner = "proxy.tls_listener_state"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.tls_listener_state"]
+depends_on = []
