@@ -109,6 +109,7 @@ graph BT
     THM_0097["THM-0097<br/>A replica serves no request-signer binding outside its snapshot's authority window"]
     THM_0098["THM-0098<br/>A replica's trust snapshot is the slot-wise interpretation of one accepted trust document"]
     THM_0099["THM-0099<br/>The production actor resolver answers its Request-slot selector from the deployment's trust document"]
+    THM_0100["THM-0100<br/>A replica's exposure to a key its document no longer enrols is confined to the serving interval it prints"]
     THM_0007 --> THM_0008
     THM_0010 --> THM_0009
     THM_0001 --> THM_0014
@@ -191,6 +192,7 @@ graph BT
     THM_0097 --> THM_0074
     THM_0098 --> THM_0074
     THM_0099 --> THM_0074
+    THM_0100 --> THM_0074
     THM_0022 --> THM_0075
     THM_0062 --> THM_0075
     THM_0063 --> THM_0075
@@ -242,6 +244,7 @@ graph BT
     THM_0066 --> THM_0099
     THM_0097 --> THM_0099
     THM_0098 --> THM_0099
+    THM_0097 --> THM_0100
     classDef root stroke-width:3px;
     class THM_0071,THM_0074,THM_0075,THM_0076,THM_0077,THM_0078 root;
 ```

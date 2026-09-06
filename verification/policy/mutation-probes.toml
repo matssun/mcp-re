@@ -2841,3 +2841,53 @@ weakening = """
 expect_red = [
   "tests/integration#revocation_serving_wiring_test::slot_discipline_holds",
 ]
+
+[[probe]]
+id = "M107-the-reload-sleeps-exactly-its-cadence"
+unit = "proxy.trust_plane_runtime"
+theorem = "THM-0100"
+conjunct = "the reload worker reads again no later than R after the previous cycle — each cycle is one halt-aware sleep of exactly R"
+path = "mcp-re-proxy/src/trust_plane/reload.rs"
+anchor = """
+        if halt.sleep(Duration::from_secs(interval_secs)) {
+"""
+weakening = """
+        if halt.sleep(Duration::from_secs(interval_secs.saturating_mul(10))) {
+"""
+expect_red = [
+  "lib#trust_plane::reload::reload_loop_tests::the_reload_loop_reads_on_its_cadence_until_halted",
+]
+
+[[probe]]
+id = "M108-a-successful-cycle-swaps-the-snapshot"
+unit = "proxy.trust_plane_runtime"
+theorem = "THM-0100"
+conjunct = "a successful cycle swaps the snapshot the resolver and the signer directory answer from"
+path = "mcp-re-proxy/src/trust_plane/reload.rs"
+anchor = """
+            store.store(resolver, signers);
+            freshness.mark_fresh();
+"""
+weakening = """
+            freshness.mark_fresh();
+"""
+expect_red = [
+  "lib#trust_plane::reload::reload_loop_tests::a_reload_cycle_replaces_the_map_the_resolver_answers_from",
+  "lib#trust_plane::reload::reload_loop_tests::the_reload_loop_reads_on_its_cadence_until_halted",
+]
+
+[[probe]]
+id = "M109-the-printed-window-is-R-plus-T"
+unit = "proxy.trust_plane_runtime"
+theorem = "THM-0100"
+conjunct = "the delivered revocation window the transcript prints is exactly R + T for the caching tiers"
+path = "mcp-re-proxy/src/trust_plane/delivered_window.rs"
+anchor = """
+            let total = r.saturating_add(*t_secs);
+"""
+weakening = """
+            let total = r;
+"""
+expect_red = [
+  "lib#trust_plane::reload::reload_loop_tests::a_caching_tier_states_the_cache_lifetime_on_top_of_the_store_cadence",
+]

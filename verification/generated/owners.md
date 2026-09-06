@@ -93,6 +93,6 @@ not an omission to hide.
 | proxy.trust_document_interpretation | V0 | THM-0098 | 0 |
 | proxy.trust_epoch_source | V0 | _none_ | 1 |
 | proxy.trust_plan | V0 | THM-0037 | 0 |
-| proxy.trust_plane_runtime | V0 | THM-0097 | 0 |
+| proxy.trust_plane_runtime | V0 | THM-0097, THM-0100 | 0 |
 | sdk_python.exchange_path | V0 | THM-0094 | 0 |
 | sdk_typescript.exchange_path | V0 | THM-0095 | 0 |
