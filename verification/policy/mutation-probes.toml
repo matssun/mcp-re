@@ -3145,6 +3145,76 @@ expect_red = [
 ]
 
 [[probe]]
+id = "M124-an-unreadable-eviction-policy-is-refused"
+unit = "proxy.redis_replay_adapter"
+theorem = "THM-0106"
+conjunct = "a maxmemory-policy the store could not read is refused too — an unverifiable policy is not evidence of a safe one"
+path = "mcp-re-proxy/src/async_redis_store.rs"
+anchor = """
+        None => Err(ReplayStoreError::Unavailable {
+"""
+weakening = """
+        None => Ok(()),
+        #[expect(unreachable_patterns, reason = "probe weakening")]
+        None => Err(ReplayStoreError::Unavailable {
+"""
+expect_red = [
+  "lib#async_redis_store::tests::every_evicting_policy_is_refused_and_so_is_an_unreadable_one",
+]
+
+[[probe]]
+id = "M125-a-wait-quorum-shortfall-fails-closed"
+unit = "proxy.redis_replay_adapter"
+theorem = "THM-0106"
+conjunct = "a declared WAIT quorum is ENFORCED: an acknowledgement shortfall fails closed rather than reporting the nonce fresh"
+path = "mcp-re-proxy/src/redis_store.rs"
+anchor = """
+    acked_replicas >= i64::from(quorum)
+"""
+weakening = """
+    acked_replicas >= 0 || quorum == quorum
+"""
+expect_red = [
+  "lib#redis_store::tests::wait_quorum_is_met_only_with_enough_acks",
+  "lib#redis_store::tests::wait_quorum_shortfall_fails_closed_with_fresh_nonce_contract",
+]
+
+[[probe]]
+id = "M126-a-failed-revoke-still-answers-replay"
+unit = "proxy.etcd_replay_adapter"
+theorem = "THM-0107"
+conjunct = "lease cleanup is fail-SAFE, never fail-closed: a revoke that fails still answers Replay and never an error"
+path = "mcp-re-proxy/src/etcd_store.rs"
+anchor = """
+            let _ = self
+                .transport
+                .post("v3/lease/revoke", &build_lease_revoke_body(lease_id));
+"""
+weakening = """
+            self.transport
+                .post("v3/lease/revoke", &build_lease_revoke_body(lease_id))?;
+"""
+expect_red = [
+  "lib#etcd_store::tests::replay_revoke_failure_still_returns_replay_never_errors",
+]
+
+[[probe]]
+id = "M127-the-operation-deadline-is-clamped-at-both-ends"
+unit = "proxy.etcd_replay_adapter"
+theorem = "THM-0107"
+conjunct = "the per-operation deadline is clamped at BOTH ends — zero would fail every insert closed, and an absurd value is indistinguishable from no deadline"
+path = "mcp-re-proxy/src/async_etcd_store.rs"
+anchor = """
+            op_timeout: op_timeout.clamp(Duration::from_millis(1), MAX_ETCD_OP_TIMEOUT),
+"""
+weakening = """
+            op_timeout,
+"""
+expect_red = [
+  "lib#async_etcd_store::tests::the_operation_timeout_is_clamped_at_both_ends",
+]
+
+[[probe]]
 id = "M130-an-empty-server-ca-bundle-is-refused"
 unit = "client.transport_server_identity"
 theorem = "THM-0109"

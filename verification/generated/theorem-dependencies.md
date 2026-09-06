@@ -113,6 +113,8 @@ graph BT
     THM_0101["THM-0101<br/>An emitted exchange transition corresponds to the work that justifies it, except the six the assembly owns"]
     THM_0102["THM-0102<br/>A validated deployment's connection-age bound never exceeds the credential lifetime it reports as its exposure window"]
     THM_0103["THM-0103<br/>The epoch-bound session store resumes a session under the epoch that tagged it, and under no other"]
+    THM_0106["THM-0106<br/>The Redis replay backend refuses a server that may drop a nonce, and turns every non-answer into an outage"]
+    THM_0107["THM-0107<br/>The etcd replay backend records a nonce only under a bounded lease through a linearized put-if-absent, and turns every non-answer into an outage"]
     THM_0007 --> THM_0008
     THM_0010 --> THM_0009
     THM_0001 --> THM_0014
@@ -246,6 +248,8 @@ graph BT
     THM_0051 --> THM_0087
     THM_0089 --> THM_0090
     THM_0086 --> THM_0092
+    THM_0106 --> THM_0092
+    THM_0107 --> THM_0092
     THM_0087 --> THM_0093
     THM_0066 --> THM_0099
     THM_0097 --> THM_0099

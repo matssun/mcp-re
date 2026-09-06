@@ -70,6 +70,7 @@ not an omission to hide.
 | proxy.delegated_signing_credential | V0 | THM-0062 | 0 |
 | proxy.dispatch_commitment | V0 | THM-0045, THM-0051, THM-0052, THM-0074 | 0 |
 | proxy.ed25519_public_key | V0 | THM-0025 | 1 |
+| proxy.etcd_replay_adapter | V0 | THM-0107 | 0 |
 | proxy.exchange_lifecycle | V0 | THM-0043, THM-0044, THM-0078 | 0 |
 | proxy.exchange_transition_ownership | V0 | THM-0101 | 0 |
 | proxy.kms_endpoint_authority | V0 | THM-0089 | 0 |
@@ -79,6 +80,7 @@ not an omission to hide.
 | proxy.outstanding_id_provenance | V0 | _none_ | 0 |
 | proxy.pdp_decision_relation | V0 | THM-0040 | 0 |
 | proxy.peer_identity_value | V0 | THM-0023 | 0 |
+| proxy.redis_replay_adapter | V0 | THM-0106 | 0 |
 | proxy.refusal_audit_emission | V0 | THM-0085 | 0 |
 | proxy.refusal_provenance | V0 | THM-0046 | 0 |
 | proxy.refusal_site_totality | V0 | THM-0081 | 0 |

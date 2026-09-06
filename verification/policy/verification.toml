@@ -4080,6 +4080,111 @@ tested_symbols = [
   "lib#async_replay::in_memory::tests::an_already_stale_retain_until_is_refused_pre_store",
 ]
 
+
+# ---------------------------------------------------------------------------
+# The DEPLOYABLE replay backends — ADR-MCPS-020 / ADR-MCPRE-051 §4, registered 2026-09-06
+# ---------------------------------------------------------------------------
+#
+# The census (#824) measured the shared Redis/etcd stores at 1 of 5 files owned. These are
+# the MECHANISMS ASM-0040 and ASM-0041 name, so registering them puts the premises' own
+# subjects under an owner — but the premise and the theorem answer different questions and
+# this registration keeps them apart:
+#
+#   * ASM-0040 / ASM-0041 are about what an ACKNOWLEDGED insert durably established. Foreign,
+#     per mechanism, unchanged here.
+#   * THM-0106 / THM-0107 are about what happens when there is NO acknowledgement, and about
+#     the configuration that would silently invalidate the premise. Local, measured.
+#
+# TWO UNITS AND TWO THEOREMS, never one union. Two mechanisms, two premises, two feature
+# lanes, and THM-0092's own scope already insists that "the two are NOT equally strong and
+# this claim does not level them". A single unit spanning both would also need both features
+# at once, which is the shape ADR-MCPRE-061 records as invisible to every single-feature lane.
+#
+# LANE IDENTITY. `redis_store`/`async_redis_store` exist only under `redis_replay`;
+# `etcd_store`/`async_etcd_store` only under `cpstore_etcd`. A plain `cargo test --workspace`
+# compiles both to zero tests. `test_features` names each lane, which `verify-mutations` has
+# honoured since #822 — before that fix every probe over these batteries would have returned
+# MEASUREMENT FAILURE.
+
+[[unit]]
+id = "proxy.redis_replay_adapter"
+class = "V0"
+description = "The deployable Redis replay backend, sync and async: it refuses at connect any server whose maxmemory-policy could drop a nonce before its TTL — and refuses one whose policy it could not read, because an unverifiable policy is not evidence of a safe one — derives the PX window from its own clock as retain_until minus now rather than as an absolute epoch, refuses an already-stale window before Redis is touched, enforces a declared WAIT quorum rather than merely auditing it, and turns every operational outcome that is not an answer into Unavailable. Says nothing about what an acknowledged insert durably established; that is ASM-0040."
+paths = [
+  "mcp-re-proxy/src/redis_store.rs",
+  "mcp-re-proxy/src/async_redis_store.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://proxy/replay/redis_adapter",
+  # Two conjuncts a green battery held while neither was load-bearing: that an UNREADABLE
+  # policy is refused, and that a WAIT shortfall does not become a Fresh. M124-M125 ask.
+  "mutation://proxy/replay/redis_adapter",
+]
+tested_symbols = [
+  "lib#async_redis_store::tests::a_noeviction_redis_is_accepted",
+  "lib#async_redis_store::tests::a_store_refuses_to_connect_to_an_evicting_redis",
+  "lib#async_redis_store::tests::every_evicting_policy_is_refused_and_so_is_an_unreadable_one",
+  "lib#async_redis_store::tests::the_policy_is_read_out_of_either_protocols_reply",
+  "lib#redis_store::tests::abandoned_connect_threads_are_bounded_by_a_ceiling_failing_closed",
+  "lib#redis_store::tests::fatal_error_does_not_reconnect",
+  "lib#redis_store::tests::injected_clock_drives_the_pre_store_staleness_gate",
+  "lib#redis_store::tests::injected_clock_makes_ttl_the_window_not_the_now_zero_epoch",
+  "lib#redis_store::tests::nonpositive_window_is_flagged_stale_pre_store",
+  "lib#redis_store::tests::one_stalled_connect_strands_at_most_one_permit",
+  "lib#redis_store::tests::reconnect_failure_after_transient_fails_closed",
+  "lib#redis_store::tests::refused_redis_fails_closed_at_construction_not_after_the_deadline",
+  "lib#redis_store::tests::stalled_redis_fails_closed_within_timeout_not_hang",
+  "lib#redis_store::tests::the_build_can_open_a_tls_redis_endpoint",
+  "lib#redis_store::tests::transient_error_reconnects_and_retries",
+  "lib#redis_store::tests::transient_without_reconnect_stays_failed",
+  "lib#redis_store::tests::ttl_ms_clamps_to_minimal_when_already_expired",
+  "lib#redis_store::tests::ttl_ms_is_window_not_absolute_epoch",
+  "lib#redis_store::tests::wait_quorum_is_met_only_with_enough_acks",
+  "lib#redis_store::tests::wait_quorum_shortfall_fails_closed_with_fresh_nonce_contract",
+]
+test_features = ["redis_replay"]
+
+[[unit]]
+id = "proxy.etcd_replay_adapter"
+class = "V0"
+description = "The deployable etcd replay backend, sync and async: it records a nonce only through a linearized put-if-absent comparing CREATE_REVISION to zero, under a lease whose TTL is a bounded window derived from its own clock, revokes the lease a Replay did not use while keeping the one a Fresh did, parses a lease id fail-closed, refuses an already-stale window before etcd is touched, bounds every round trip by a clamped per-operation deadline, and turns every transport, status, parse or timeout outcome into Unavailable. Says nothing about what a successful transaction durably established; that is ASM-0041."
+paths = [
+  "mcp-re-proxy/src/etcd_store.rs",
+  "mcp-re-proxy/src/async_etcd_store.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://proxy/replay/etcd_adapter",
+  # Two conjuncts a green battery held while neither was load-bearing: that a failed revoke
+  # still answers Replay rather than erroring, and that the deadline is clamped at BOTH ends.
+  "mutation://proxy/replay/etcd_adapter",
+]
+tested_symbols = [
+  "lib#async_etcd_store::tests::a_fresh_window_is_bounded_by_the_per_operation_deadline",
+  "lib#async_etcd_store::tests::an_already_stale_request_is_rejected_without_touching_etcd",
+  "lib#async_etcd_store::tests::an_expired_lease_is_never_reused",
+  "lib#async_etcd_store::tests::nonces_retained_to_the_same_instant_share_one_lease",
+  "lib#async_etcd_store::tests::the_operation_timeout_is_clamped_at_both_ends",
+  "lib#etcd_store::tests::cross_instance_insert_via_a_is_replay_via_b",
+  "lib#etcd_store::tests::fresh_does_not_revoke_the_lease",
+  "lib#etcd_store::tests::fresh_then_replay_single_instance",
+  "lib#etcd_store::tests::injected_clock_makes_ttl_the_window_not_the_now_zero_epoch",
+  "lib#etcd_store::tests::lease_grant_body_carries_bounded_ttl",
+  "lib#etcd_store::tests::lease_revoke_body_carries_string_lease_id",
+  "lib#etcd_store::tests::nonpositive_ttl_rejected_pre_store_no_etcd_calls",
+  "lib#etcd_store::tests::parse_lease_id_accepts_string_and_number",
+  "lib#etcd_store::tests::parse_lease_id_fails_closed_on_missing_zero_or_garbage",
+  "lib#etcd_store::tests::replay_revoke_failure_still_returns_replay_never_errors",
+  "lib#etcd_store::tests::replay_revokes_the_unused_lease",
+  "lib#etcd_store::tests::store_unavailable_fails_closed_never_fresh",
+  "lib#etcd_store::tests::ttl_secs_clamps_to_minimal_when_already_expired",
+  "lib#etcd_store::tests::ttl_secs_is_window_not_absolute_epoch",
+  "lib#etcd_store::tests::txn_body_is_put_if_absent_under_lease",
+  "lib#etcd_store::tests::txn_not_succeeded_is_replay",
+  "lib#etcd_store::tests::txn_succeeded_is_fresh",
+]
+test_features = ["cpstore_etcd"]
 # ---------------------------------------------------------------------------
 # The client mTLS transport — MCPS-053 / MCPS-071, registered 2026-09-06
 # ---------------------------------------------------------------------------
