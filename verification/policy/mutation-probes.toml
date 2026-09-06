@@ -3055,3 +3055,36 @@ expect_red = [
   "lib#tls_listener_state::resumption_acceptance::handshakes::republishing_the_epoch_of_an_unchanged_ca_set_does_not_stop_resumption",
   "lib#tls_listener_state::resumption_acceptance::handshakes::resumption_returns_once_the_original_trust_is_restored",
 ]
+
+[[probe]]
+id = "M119-the-drain-waits-for-work-in-flight"
+unit = "proxy.serving_drain"
+theorem = "THM-0104"
+conjunct = "the drain waits while any request is in flight, so a request that reached the handler is answered rather than cut off"
+path = "mcp-re-proxy/src/async_serve/core_admission.rs"
+anchor = """
+        while self.in_flight_requests.load(Ordering::Acquire) > 0 {
+"""
+weakening = """
+        while false {
+"""
+expect_red = [
+  "tests/async_drain_test#in_flight_request_completes_during_drain_zero_abandoned",
+  "tests/async_drain_test#saturated_drain_completes_all_in_flight_zero_abandoned",
+]
+
+[[probe]]
+id = "M120-the-in-flight-guard-is-the-count"
+unit = "proxy.serving_drain"
+theorem = "THM-0104"
+conjunct = "a request is counted in flight from before its body is read — the guard's construction is the only increment"
+path = "mcp-re-proxy/src/async_serve/mod.rs"
+anchor = """
+        counter.fetch_add(1, Ordering::AcqRel);
+"""
+weakening = """
+"""
+expect_red = [
+  "tests/async_drain_test#in_flight_request_completes_during_drain_zero_abandoned",
+  "tests/async_drain_test#saturated_drain_completes_all_in_flight_zero_abandoned",
+]

@@ -204,6 +204,10 @@ on:
       # `scripts/verification_trigger_gate.py` exempts exactly that case.
       - "mcp-re-proxy/tests/integration/**"
       - "mcp-re-proxy/tests/integration.rs"
+      # v0.17: the bounded-drain battery, `proxy.serving_drain`. Its own binary, because it
+      # runs under RUST_TEST_THREADS=1 in the Bazel lane — a property of a binary.
+      - "mcp-re-proxy/tests/async_drain_test.rs"
+      - "mcp-re-proxy/tests/async_drain_test/**"
       # MCPRE-146/148: the three trust units declared with the four theorems — the
       # revocation posture and trust-document state, the plan projected from them, and
       # the composition root that consumes those projections without re-reading trust.
@@ -412,6 +416,10 @@ on:
       # `scripts/verification_trigger_gate.py` exempts exactly that case.
       - "mcp-re-proxy/tests/integration/**"
       - "mcp-re-proxy/tests/integration.rs"
+      # v0.17: the bounded-drain battery, `proxy.serving_drain`. Its own binary, because it
+      # runs under RUST_TEST_THREADS=1 in the Bazel lane — a property of a binary.
+      - "mcp-re-proxy/tests/async_drain_test.rs"
+      - "mcp-re-proxy/tests/async_drain_test/**"
       # MCPRE-146/148: the three trust units declared with the four theorems — the
       # revocation posture and trust-document state, the plan projected from them, and
       # the composition root that consumes those projections without re-reading trust.
