@@ -67,10 +67,20 @@ the two source comments that still asserted the superseded lifecycle:
 
 Both now say what is true: within a production listener the epoch is a **construction-time
 constant**, because the CRL reload worker re-reads only CRLs and every rebuild receives the
-same anchors; the change branch is kept because it makes the store's contract **total**, not
-because it describes a lifecycle production has; and the safety property across an anchor-set
-change is cache **non-continuity**. A `grep` over `docs/` and `mcp-re-proxy/src` now finds no
-document or comment claiming a production epoch advances.
+same anchors; the tag comparison is defence in depth beneath cache **non-continuity** rather
+than the mechanism carrying the safety property. A `grep` over `docs/` and `mcp-re-proxy/src`
+now finds no document or comment claiming a production epoch advances.
+
+**The correction is size-neutral, and the ratchet is why.** `auth_epoch.rs` is in
+`config/module-size-debt.toml`, and a registered file may not grow — reviewed-exception
+included. A first draft of these comments added sixteen production lines and
+`scripts/module_size_gate.py` refused it, correctly: a file already over the threshold does
+not get to grow because the prose being added is true. The correction was rewritten to fit,
+which cost nothing that mattered — the long reasoning belongs in this packet, and a third
+edit fell out of it. `SharedTlsAuthEpoch::store`'s doc said `None` is returned "when a reload
+produced identical trust, which is the common case". Under model A it is not the common case,
+it is the ONLY case in production, and it now says so. The full argument lives here; the
+comments carry the claim.
 
 ### The one scope box not executed as ADR-062 anticipated, and why
 

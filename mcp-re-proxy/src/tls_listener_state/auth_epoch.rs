@@ -121,21 +121,8 @@ impl TlsAuthEpoch {
     }
 }
 
-/// The epoch this listener's sessions are tagged with, behind a swap whose CHANGE branch a
-/// production listener never takes.
-///
-/// Under ADR-MCPRE-062 (model A, superseding ADR-MCPRE-055; adjudicated on #598) the trusted
-/// client-CA set of one listener is IMMUTABLE, so within a production listener this value is
-/// a CONSTRUCTION-TIME CONSTANT: the CRL reload worker re-reads only CRLs, every rebuild
-/// receives the same anchors, and [`Self::store`] therefore republishes an identical epoch
-/// and returns `None`. The safety property across an anchor-set change is cache
-/// NON-CONTINUITY — a different anchor set is a different listener security state and
-/// therefore a different store — not an epoch transition inside a surviving cache.
-///
-/// The change branch is kept because it makes [`EpochBoundSessionStore`]'s contract TOTAL:
-/// a session tagged with an epoch other than the one in force is never returned, whoever
-/// wrote it. It does not describe a lifecycle production has, and nothing may read it as
-/// evidence that a production listener's epoch advances when its anchors change.
+/// The epoch tagging this listener's sessions: a CONSTRUCTION-TIME CONSTANT under
+/// ADR-MCPRE-062 model A, never evidence that a production listener's epoch advances.
 ///
 /// Same shape as [`SharedClientRevocation`](crate::client_revocation::SharedClientRevocation)
 /// and [`config_snapshot`](crate::config_snapshot): an `RwLock<Arc<…>>` whose read path
@@ -163,9 +150,8 @@ impl SharedTlsAuthEpoch {
         )
     }
 
-    /// Publish a new epoch. Returns the previous value when it CHANGED, so the caller
-    /// can emit the audit event; `None` when a reload produced identical trust, which
-    /// is the common case and is not worth a log line.
+    /// Publish an epoch. Returns the previous value when it CHANGED, so the caller can emit
+    /// the audit event; `None` when the trust is identical — under model A, always.
     pub(super) fn store(&self, epoch: TlsAuthEpoch) -> Option<TlsAuthEpoch> {
         let mut guard = self
             .current
@@ -189,11 +175,9 @@ impl SharedTlsAuthEpoch {
 ///
 /// The store OUTLIVES any one `ServerConfig`. A rebuild — the `--client-crl-reload-secs`
 /// cadence is the one that happens in a running process — installs THIS store again and
-/// republishes the epoch computed from that rebuild's trust inputs, so the cache the fleet
-/// filled survives the reload. Under model A that republished epoch is the same value every
-/// time, because a rebuild receives the same anchors; the tag comparison below is defence in
-/// depth beneath cache non-continuity rather than the mechanism that carries the safety
-/// property. See [`SharedTlsAuthEpoch`].
+/// republishes the epoch computed from that rebuild's trust inputs, so the cache the
+/// fleet filled survives the reload. Under model A that epoch is the same value every
+/// time; the tag comparison is defence in depth beneath cache non-continuity.
 #[derive(Debug)]
 pub(super) struct EpochBoundSessionStore {
     epoch: Arc<SharedTlsAuthEpoch>,
