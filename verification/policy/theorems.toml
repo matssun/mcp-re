@@ -5020,3 +5020,67 @@ owner = "proxy.tls_listener_state"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.tls_listener_state"]
 depends_on = []
+
+[[theorem]]
+id = "THM-0104"
+title = "A request the serving path abandons on shutdown is one that never executed, never one half-executed"
+statement = """
+For one core of the async serving path, from the moment a shutdown is signalled:
+
+Acceptance stops — the accept loop exits before the drain begins, so no request admitted
+after the signal exists. A request already admitted is IN FLIGHT from an RAII guard taken
+before its body is read until its task ends, and the count cannot disagree with reality in
+either direction: the guard's construction is the only increment and its `Drop` the only
+decrement, so a request cannot be served without being counted, nor counted after it is
+finished.
+
+The drain then waits while that count is non-zero. A request that reached the handler
+therefore runs to completion and is ANSWERED — its response reaches the client rather than
+being cut off mid-flight.
+
+When the grace expires the core's runtime is dropped, and a task still suspended at an await
+point — a request still reading its body, which has not reached the handler — is cancelled
+there. It never enters the handler: not while the drain runs, and not afterwards, because
+the runtime that would have polled it no longer exists.
+
+So every admitted request ends in one of two states: answered, or never executed. There is
+no third state in which the handler ran and the client was not answered.
+"""
+security_consequence = """
+A shutdown cannot produce the outcome a client cannot recover from: a request whose effect
+happened while the client saw no answer. An operator draining a replica — a rolling deploy, a
+scale-down, a node drain — is not choosing between abandoning work and delaying exit, because
+what is abandoned is only work that had not started. The client's retry of an abandoned
+request is safe on the same grounds the exchange machine states for a refusal before the
+execution threshold, and here the grounds are that the handler was never entered.
+"""
+scope = """
+The SAFETY half only, and the exclusion is the point of the statement. NOTHING here bounds
+how long teardown takes: that an idle drain returns promptly, that a saturated drain finishes
+within a few seconds, and that a stuck request cannot delay exit much past the grace are
+WALL-CLOCK MEASUREMENTS taken on the box that ran them — real controls
+(`idle_drain_returns_promptly`, `stuck_request_cannot_delay_exit_past_grace`, and the tail
+assertions of the two zero-abandoned controls), and part of the battery this unit's evidence
+rests on, but not conjuncts of this claim. A red from one of them is a statement about the
+machine, not about the property. The bounded-exit guarantee an operator configures
+(`drain_grace` under a Kubernetes termination grace period) is that timing property and is
+therefore not claimed here.
+
+ONE core, and the async path. The per-core fleet inherits the mechanism because each core's
+`serve` drains before its worker thread joins, but that composition is not stated. The
+blocking mTLS harness is not an MCP-RE serving path and is out of scope.
+
+The cancellation half is STRUCTURAL — a task suspended at an await point when its runtime is
+dropped is not polled again — and has no deletable check, so it carries no probe; what a
+probe can reach is the drain's wait and the guard that makes the count move. The three
+non-UTF-8 header controls sharing this test binary belong to a boundary-refusal authority
+that has no owner, and are not evidence for anything here.
+
+Outside every root's closure, deliberately and for the same reason as THM-0012: no root's
+dispatch or response claim rests on what shutdown does to work already admitted. Executable,
+class V0, measured under the `async_serve` feature lane named by the owning unit.
+"""
+owner = "proxy.serving_drain"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.serving_drain"]
+depends_on = []

@@ -119,7 +119,9 @@ def claims_mutation_evidence(unit: dict) -> bool:
     return any(str(e).startswith("mutation://") for e in unit.get("evidence", []))
 
 
-def declared_battery(units: dict, probe: dict, where: str) -> tuple[str, dict[str, list[str]]]:
+def declared_battery(
+    units: dict, probe: dict, where: str
+) -> tuple[str, dict[str, list[str]], list[str]]:
     """The unit's package and its declared members, grouped by cargo target.
 
     Read from `verification.toml` rather than restated here: the probe names controls, and
@@ -128,6 +130,14 @@ def declared_battery(units: dict, probe: dict, where: str) -> tuple[str, dict[st
     `expect_red` is compared against the unit's `tested_symbols` VERBATIM — target and
     symbol — because that is what test identity is here. Matching on the bare symbol would
     let a probe be satisfied by a same-named test in a target it never meant to touch.
+
+    The unit's `test_features` travel with the battery, for the reason the test lane already
+    takes them: Cargo compiles a different crate per feature set, so a control behind
+    `#[cfg(feature = ...)]` DOES NOT EXIST without it. Omitting them here never made a probe
+    pass wrongly — the adjudicator refuses a control it did not watch execute — but it made
+    every probe over a feature-gated battery UNMEASURABLE, reporting the lane's own blindness
+    as a MEASUREMENT FAILURE against the probe. Found by the first such probe, M119/M120 over
+    the `async_serve` drain battery, 2026-09-06.
     """
     unit = units.get(probe["unit"])
     if unit is None:
@@ -158,7 +168,8 @@ def declared_battery(units: dict, probe: dict, where: str) -> tuple[str, dict[st
             f"compile-fail controls; no runtime weakening can turn one red, so a probe "
             f"expecting it could never be satisfied honestly."
         )
-    return package, grouped
+    features = sorted(str(f) for f in unit.get("test_features", []))
+    return package, grouped, features
 
 
 def adjudicate(probe: dict, observed: dict[str, str]) -> tuple[list[str], list[str]]:
@@ -216,7 +227,13 @@ def copy_tree(destination: Path) -> None:
         shutil.copy2(source, out)
 
 
-def run_battery(tree: Path, package: str, grouped: dict[str, list[str]], target_dir: Path):
+def run_battery(
+    tree: Path,
+    package: str,
+    grouped: dict[str, list[str]],
+    target_dir: Path,
+    features: list[str],
+):
     """Every declared member's reported result, across the unit's targets.
 
     Returns (ran, results). `ran` is False when a target failed to COMPILE — under a
@@ -225,9 +242,20 @@ def run_battery(tree: Path, package: str, grouped: dict[str, list[str]], target_
     anything.
     """
     results: dict[str, str] = {}
+    feature_argv = ["--features", ",".join(features)] if features else []
     for target in sorted(grouped):
         proc = subprocess.run(
-            ["cargo", "test", "-p", package, *target_argv(target), "--", "--exact", *grouped[target]],
+            [
+                "cargo",
+                "test",
+                "-p",
+                package,
+                *feature_argv,
+                *target_argv(target),
+                "--",
+                "--exact",
+                *grouped[target],
+            ],
             cwd=tree,
             capture_output=True,
             text=True,
@@ -376,14 +404,14 @@ def main() -> int:
         for index, probe in enumerate(probes):
             where = f"probe {probe['id']}"
             try:
-                package, grouped = declared_battery(units, probe, where)
+                package, grouped, features = declared_battery(units, probe, where)
                 original = apply(tree, probe, where)
             except ManifestError as exc:
                 print(f"  FAIL {probe['id']}: {exc}", file=sys.stderr)
                 failures.append(probe["id"])
                 continue
             try:
-                ran, results = run_battery(tree, package, grouped, target_dir)
+                ran, results = run_battery(tree, package, grouped, target_dir, features)
             finally:
                 (tree / probe["path"]).write_text(original)
             if not ran:

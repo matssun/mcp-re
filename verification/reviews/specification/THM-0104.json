@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:5b8d156d0395e89cdc472056602c590d564b21ed72b5afea8a84e1337eebcaba",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0104",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "SPECIFICATION REVIEW RECORDED UNDER THE OWNER'S AFK MANDATE OF 2026-09-06 (backlog item 6, 'bounded-drain safety, separated from timing/liveness'), by the implementing agent as routine owner-review maintenance \u2014 not a transcription of a ruling naming this fingerprint. THE SEPARATION THE ITEM NAMES IS THE STATEMENT: the safety half is claimed (a request is answered, or never executed \u2014 there is no state in which the handler ran and the client was not answered), and the three wall-clock bounds are excluded BY CONTROL NAME in the scope, together with the reason a red from one of them is a statement about the machine rather than about the property. NO RULE IS ADDED. MCPRE-115 / ADR-MCPRE-051 section 6 specified the bounded graceful drain and its battery has been a NAMED RELEASE GATE in ci.yml since; what was missing is that the battery belonged to no unit, so what it measured was evidence for nothing. This registers the owner and states the half that is a safety property. LANE IDENTITY IS PART OF THE EVIDENCE and was measured rather than assumed: the file is gated on the async_serve feature, so a plain cargo test --workspace compiles it to zero tests; the unit names test_features, and on 2026-09-06 the battery passed identically with and without the Bazel target's RUST_TEST_THREADS=1 (0.9s parallel, 2.8s serial), so registering it under the cargo lane does not import the timing fragility that setting exists to avoid. THE CANCELLATION HALF IS STRUCTURAL and carries no probe: a task suspended at an await point when its runtime is dropped is not polled again, and there is no deletable check. What probes reach is the drain's wait (M119) and the guard that makes the count move (M120). The vacuity control is registered with them \u2014 without it, a handler that was never wired would satisfy the abandoned-request assertion by running nothing at all. OUTSIDE EVERY ROOT'S CLOSURE, deliberately and on THM-0012's precedent: no root's dispatch or response claim rests on what shutdown does to work already admitted, and an edge asserted for tidiness would make a root's closure claim support it does not have. The three non-UTF-8 header controls sharing this test binary are a boundary-refusal authority with no owner, recorded as a separate finding and not absorbed. The fingerprint was recomputed on the tree before this record was written and equals the value above. Reviewed tree: assurance/bounded-drain-safety stacked on #821 head 254c7e3e.",
+  "reviewed_fingerprint": "sha256:5addbb430123a6d840e46280b24b86f1977bd02ac54125c76c61471dc52d674f",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0104"
+}

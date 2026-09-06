@@ -320,3 +320,10 @@ graph BT
     classDef root stroke-width:3px;
     class THM_0095 root;
 ```
+
+## Component 9
+
+```mermaid
+graph BT
+    THM_0104["THM-0104<br/>A request the serving path abandons on shutdown is one that never executed, never one half-executed"]
+```

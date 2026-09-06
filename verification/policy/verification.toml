@@ -2773,6 +2773,58 @@ tested_symbols = [
   "tests/integration#serving_identity_provenance_test::the_rules_would_catch_each_regression",
 ]
 
+# ---------------------------------------------------------------------------
+# The bounded serving drain — MCPRE-115 / ADR-MCPRE-051 §6, registered 2026-09-06
+# ---------------------------------------------------------------------------
+#
+# The drain battery is a NAMED RELEASE GATE in ci.yml and belonged to no unit, so what it
+# measured was evidence for nothing. It is registered here with its SAFETY half separated
+# from its timing half: THM-0104 states only that a request is answered or never executed,
+# and names the three wall-clock bounds it does NOT claim.
+#
+# LANE IDENTITY. The battery exists only under `async_serve`, so `test_features` names it —
+# a plain `cargo test --workspace` compiles this file to zero tests and would report a green
+# that measured nothing. The Bazel target additionally sets `RUST_TEST_THREADS=1`; measured
+# on 2026-09-06, the battery passes identically with and without it (0.9s parallel, 2.8s
+# serial), so the lane this evidence is taken in is stated rather than assumed.
+#
+# The three non-UTF-8 header controls in the same FILE are deliberately NOT here: they are a
+# boundary-refusal authority that happens to share a binary, and they belong to no unit
+# either. Recorded as a separate finding rather than absorbed to make this list look
+# complete.
+
+[[unit]]
+id = "proxy.serving_drain"
+class = "V0"
+description = "What a shutdown does to requests already in the async serving path: acceptance stops, an RAII guard taken before the body read counts a request as in flight until its task ends, and the drain waits while that count is non-zero, so a request that reached the handler is answered rather than cut off and a request abandoned when the grace expires never reaches the handler. Claims nothing about how LONG teardown takes."
+paths = [
+  "mcp-re-proxy/src/async_serve/core_admission.rs",
+  "mcp-re-proxy/src/async_serve/mod.rs",
+  "mcp-re-proxy/src/async_serve/request.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://proxy/serving/bounded_drain",
+  # Two conjuncts a green battery can hold while neither is load-bearing: the drain's wait
+  # and the guard that makes the count move. M119-M120 ask.
+  "mutation://proxy/serving/bounded_drain",
+]
+# Both safety directions and the vacuity control that makes the second non-vacuous — without
+# it a handler that was never wired would satisfy "an abandoned request never reached the
+# handler" by never running anything at all (ADR-MCPRE-057 §17.6). The three wall-clock
+# controls are named here because they are part of the battery this unit's evidence rests on;
+# what they measure is excluded from THM-0104 by name.
+tested_symbols = [
+  "tests/async_drain_test#in_flight_request_completes_during_drain_zero_abandoned",
+  "tests/async_drain_test#saturated_drain_completes_all_in_flight_zero_abandoned",
+  "tests/async_drain_test#a_request_abandoned_by_the_grace_never_reaches_the_handler",
+  "tests/async_drain_test#the_handler_entry_counter_moves_for_a_request_that_is_not_abandoned",
+  "tests/async_drain_test#idle_drain_returns_promptly",
+  "tests/async_drain_test#stuck_request_cannot_delay_exit_past_grace",
+]
+test_features = ["async_serve"]
+
+
 [[unit]]
 id = "proxy.signing_credential_provenance"
 class = "V0"
