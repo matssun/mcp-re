@@ -3935,7 +3935,7 @@ carries.
 owner = "proxy.replay_admission_gate"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.replay_admission_gate"]
-depends_on = ["THM-0086"]
+depends_on = ["THM-0086", "THM-0106", "THM-0107"]
 
 [[theorem]]
 id = "THM-0093"
@@ -5198,4 +5198,149 @@ class V0, measured in the default cargo lane.
 owner = "proxy.async_replay_retention"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.async_replay_retention"]
+depends_on = []
+
+[[theorem]]
+id = "THM-0106"
+title = "The Redis replay backend refuses a server that may drop a nonce, and turns every non-answer into an outage"
+statement = """
+REFUSED AT CONNECT, NOT TRUSTED AT RUNTIME. The store asks the server for its
+`maxmemory-policy` and refuses to open at all unless the answer is `noeviction`. Every
+`volatile-*` and `allkeys-*` policy is refused by name, case-insensitively because the reply
+is a server string rather than a token this code chose. **A policy it could not read is
+refused too**: an empty reply, an error, a renamed `CONFIG` — an unverifiable policy is not
+evidence of a safe one.
+
+THE WINDOW IS A WINDOW. The `PX` TTL is `retain_until - now` read from the store's OWN clock,
+never an absolute epoch, and it clamps to a minimal value rather than going negative when the
+instant has already passed. An already-stale `retain_until` is refused BEFORE Redis is
+touched.
+
+THE DECLARED TIER IS ENFORCED, NOT AUDITED. Where `REDIS_WAIT_QUORUM` is selected, a fresh
+insert is followed by `WAIT`, and an acknowledgement shortfall FAILS CLOSED — it does not
+report the nonce fresh and note the shortfall.
+
+EVERY NON-ANSWER IS AN OUTAGE. A stall is bounded by a timeout rather than hanging; a refused
+endpoint fails closed at construction rather than after the deadline; a transient error is
+retried only where retry is safe and a fatal one is not retried at all; a reconnect that
+itself fails, fails closed. Connect attempts that were abandoned are bounded by a ceiling
+which also fails closed, and one stalled connect strands at most one permit. No path returns
+`Fresh`.
+"""
+security_consequence = """
+The excluded outcome is a replay bypass **produced by capacity pressure rather than by an
+attack**. "Key present" is the whole replay signal, so an admitted nonce that leaves the
+keyspace before its TTL is `Fresh` again for the remainder of its freshness window — on every
+replica at once, silently, with the operator's dashboards green. Every replay key carries a
+`PX` TTL, which makes it a PREFERRED victim under the `volatile-*` policies and an ordinary
+one under `allkeys-*`, so `volatile-*` is not the safer half.
+
+This is the guard on ASM-0040's own precondition, and that is why an unreadable policy is
+refused rather than assumed benign. ASM-0040 establishes what configured replica
+acknowledgements mean; it says nothing about a server that discards the key afterwards, and a
+deployment that could not be asked is a deployment whose premise cannot be checked.
+
+The rest is the negative direction THM-0092's consequence needs from a DEPLOYED backend
+rather than from a stub: a deployment believing it has cross-replica replay protection must
+not serve a replayed request as fresh because the store it was supposed to consult was
+unreachable. The gate's own battery measures that against a store that errors; this measures
+that the shipped adapter is such a store.
+"""
+scope = """
+NOTHING ABOUT DURABILITY. What an acknowledged `SET NX` durably established is ASM-0040, a
+foreign premise with its documented failover caveat — `REDIS_WAIT_QUORUM` is not linearizable
+replay durability and is not a guarantee that every later failover preserves the nonce.
+Nothing here restates it or strengthens it, and this theorem is not evidence for it.
+
+NOT A LIVENESS CLAIM: it says no failure becomes a `Fresh`, never that a healthy Redis
+answers.
+
+THE POLICY IS READ ONCE, AT CONNECT. A server whose policy is changed underneath a live
+connection is not detected by this mechanism, and nothing here claims otherwise; that is an
+operator control, and the connect-time refusal is what stops a misconfigured deployment from
+starting rather than what stops one from being reconfigured.
+
+The `WAIT` conjunct governs the tier the store was BUILT with. That the tier a deployment
+DECLARED is the tier the store was built with is `app.rs`'s composition and THM-0092's
+subject, not this one's.
+
+Measured in the `redis_replay` feature lane named by the owning unit — a plain
+`cargo test --workspace` compiles these files to zero tests. Executable, class V0.
+"""
+owner = "proxy.redis_replay_adapter"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.redis_replay_adapter"]
+depends_on = []
+
+[[theorem]]
+id = "THM-0107"
+title = "The etcd replay backend records a nonce only under a bounded lease through a linearized put-if-absent, and turns every non-answer into an outage"
+statement = """
+ONE LINEARIZED ADMISSION. The record is a `v3/kv/txn` comparing `CREATE_REVISION == 0` and
+PUTting the key under a lease iff it does not yet exist. Etcd linearizes the transaction, so
+two racing inserts cannot both observe the key absent: `succeeded` is `Fresh`, and
+not-`succeeded` is `Replay`.
+
+THE LEASE IS BOUNDED, AND IS A WINDOW. The lease TTL is `retain_until - now` on the store's
+OWN clock, clamped to a minimal value rather than going negative, so a recorded nonce
+self-expires at the freshness window even if the proxy dies. An already-stale `retain_until`
+is refused with NO etcd call at all. Nonces retained to the same instant share one lease, so
+the outstanding-lease count grows with the freshness window rather than with request volume,
+and an expired lease is never reused.
+
+THE LEASE A REPLAY DID NOT USE IS GIVEN BACK. A `Replay` revokes the lease it minted and did
+not consume; a `Fresh` keeps it. A revoke that FAILS still answers `Replay` and never an
+error — the nonce's status is already known, and turning lease hygiene into a refusal would
+convert a bookkeeping failure into a denial of service.
+
+FAIL CLOSED, AND BOUNDED. A lease id that is missing, zero or unparseable is refused. Every
+transport, status, parse or TIMEOUT outcome is `Unavailable`. The per-operation deadline is
+clamped at BOTH ends and applies to every one of the three POSTs, because an awaited future
+that never completes holds its request and its admission slot forever — a black-holed
+endpoint would otherwise consume the whole `--max-in-flight` budget without a single invalid
+request being sent.
+"""
+security_consequence = """
+This is the negative direction THM-0092's consequence needs from a DEPLOYED backend rather
+than from a stub. A deployment believing it has cross-replica replay protection must not
+serve a replayed request as fresh because the store it was supposed to consult was
+unreachable; the gate's own battery measures that against a store that errors, and this
+measures that the shipped adapter is such a store.
+
+Two of the conjuncts exclude outcomes that are not obviously replay bugs and are.
+
+An UNBOUNDED lease would leave an admitted nonce in etcd after the proxy that recorded it
+died, which is a resource leak rather than a bypass — but a lease TTL computed from an
+absolute epoch instead of a window is the mirror image and IS a bypass in the other
+direction, because a clamp to a minimal value is what a negative window becomes if nothing
+catches it.
+
+An UNBOUNDED round trip is a denial of service reachable without sending anything invalid:
+the request path awaits the handler unbounded, so the deadline has to live where the round
+trip is issued. That is why the timeout is here rather than in the tier, and why it is
+clamped at both ends — an unclamped deadline of zero is no round trip at all, and an
+unclamped large one is the black hole again.
+"""
+scope = """
+NOTHING ABOUT DURABILITY OR CONSENSUS. What a successful transaction durably established is
+ASM-0041, a foreign premise. Nothing here establishes that etcd's consensus behaves as that
+premise states, and this theorem is not evidence for it. Etcd is stronger than Redis here by
+CONSENSUS rather than by count, and that comparison belongs to the premises, not to this
+claim.
+
+NOT A LIVENESS CLAIM: it says no failure becomes a `Fresh`, never that a healthy etcd
+answers.
+
+THE PROTOCOL IS MEASURED AGAINST SCRIPTED GATEWAYS AND PURE HELPERS, not against a live etcd
+cluster. What is established is that this adapter sends the put-if-absent it claims to send,
+reads the reply it claims to read, and fails closed on everything else — not that a real
+cluster answers as the protocol says. A live-cluster exercise is separate evidence and is not
+claimed here.
+
+Measured in the `cpstore_etcd` feature lane named by the owning unit — a plain
+`cargo test --workspace` compiles these files to zero tests. Executable, class V0.
+"""
+owner = "proxy.etcd_replay_adapter"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.etcd_replay_adapter"]
 depends_on = []
