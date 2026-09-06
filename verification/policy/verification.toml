@@ -3716,6 +3716,7 @@ tested_symbols = [
   # --- the reload: the swap, the budget, the halt ---
   "lib#trust_plane::reload::reload_loop_tests::a_halted_reloader_marks_the_trust_store_stale",
   "lib#trust_plane::reload::reload_loop_tests::a_reload_cycle_replaces_the_map_the_resolver_answers_from",
+  "lib#trust_plane::reload::reload_loop_tests::the_reload_loop_reads_on_its_cadence_until_halted",
   "lib#trust_plane::reload::reload_loop_tests::the_failure_budget_fails_closed_on_exactly_the_fifth_consecutive_bad_read",
   # --- the bound the operator is told ---
   "lib#trust_plane::reload::reload_loop_tests::a_caching_tier_states_the_cache_lifetime_on_top_of_the_store_cadence",

@@ -137,6 +137,7 @@ any of them is closed.
 | THM-0097 | A replica serves no request-signer binding outside its snapshot's authority window | proxy.trust_plane_runtime | unit://proxy.trust_plane_runtime | live |
 | THM-0098 | A replica's trust snapshot is the slot-wise interpretation of one accepted trust document | proxy.trust_document_interpretation | unit://proxy.trust_document_interpretation, unit://proxy.trust_plane_runtime | live |
 | THM-0099 | The production actor resolver answers its Request-slot selector from the deployment's trust document | proxy.serving_trust_seam | unit://proxy.serving_trust_seam | live |
+| THM-0100 | A replica's exposure to a key its document no longer enrols is confined to the serving interval it prints | proxy.trust_plane_runtime | unit://proxy.trust_plane_runtime | live |
 
 ## Claims in full
 
@@ -948,7 +949,7 @@ any of them is closed.
 
 **Review requirement.** Owner security-specification review
 
-**Depends on.** THM-0003, THM-0004, THM-0005, THM-0006, THM-0009, THM-0015, THM-0034, THM-0040, THM-0043, THM-0045, THM-0050, THM-0051, THM-0052, THM-0053, THM-0066, THM-0079, THM-0080, THM-0083, THM-0092, THM-0093, THM-0097, THM-0098, THM-0099
+**Depends on.** THM-0003, THM-0004, THM-0005, THM-0006, THM-0009, THM-0015, THM-0034, THM-0040, THM-0043, THM-0045, THM-0050, THM-0051, THM-0052, THM-0053, THM-0066, THM-0079, THM-0080, THM-0083, THM-0092, THM-0093, THM-0097, THM-0098, THM-0099, THM-0100
 
 ### THM-0075 — No unearned response attribution
 
@@ -1225,3 +1226,15 @@ any of them is closed.
 **Review requirement.** Owner security-specification review
 
 **Depends on.** THM-0066, THM-0097, THM-0098
+
+### THM-0100 — A replica's exposure to a key its document no longer enrols is confined to the serving interval it prints
+
+**Statement.** For one replica whose trust plane re-reads `--trust` on a cadence `R` (`TrustReloadPlan::Every`) under a tier with positive-cache lifetime `T` (`T = 0` for the live tier): The reload worker reads the document again no later than `R` after the previous cycle completed, for as long as it is running: each cycle is one halt-aware sleep of exactly `R` followed by one read, and the worker runs from materialization until halt, panic, or the plane's drop. A successful cycle swaps the snapshot the resolver and the signer directory answer from, atomically and together, before the next request is resolved. Consequently a `(signer, key_id)` absent from the document a successful cycle reads at instant `t` is served by that replica at no instant later than `t + T` (THM-0097), and a key removed from the bytes at the path at instant `w` is absent from the first successful read that starts after `w`, which starts no later than `w + R` while cycles succeed. While cycles fail, the snapshot in force is the last successful read's for at most five consecutive failures, after which the resolver refuses (THM-0097); so the exposure is at most `R + T` while reads succeed, at most `5R + T` across a failing stretch, and closed thereafter. The interval the startup transcript prints as the delivered revocation window is exactly this arithmetic: `R + T` for the caching tiers, `R` for the live tier, and `UNBOUNDED` when no cadence is configured — in which case the snapshot is the startup read for the process's lifetime and nothing here bounds anything.
+
+**Security consequence.** An operator who removes a key from `--trust` can read the worst-case time until this replica stops verifying under it from the line the replica printed at startup, and that line is arithmetic over the two values the deployment chose rather than a promise the runtime may or may not keep: the cadence is the sleep the loop performs, the cache lifetime is THM-0097's window, and a reload that silently stopped does not extend the window — it closes the resolver. A deployment with no cadence is told, in the same place, that removal does nothing until restart.
+
+**Scope — what this does NOT establish.** ONE replica, its own clock (`boundary.monotonic_clock` for the sleep and the cache deadline). The bytes at the path at read time are the input: nothing here says when an operator's write reaches the path — a ConfigMap remount, a volume sync or a file copy is outside the replica — so `w` is the instant the new bytes are readable at the path, not the instant the operator saved them. Nothing about the epoch counter or the push tier's flush, which can only shorten the exposure and never lengthens it (THM-0097). Nothing about the read itself beyond its success or failure; what an accepted document means is THM-0098's. Not a liveness claim about requests: that a key still enrolled is served is not stated. The read's own duration is not modelled — a read that takes longer than `R` delays the next cycle by that much. Nothing cross-replica: the fleet's exposure is each replica's, and the replicas' `w` differ. Executable and structural, class V0.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0097

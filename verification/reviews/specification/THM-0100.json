@@ -1,0 +1,16 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:ae29504570a41f4ec2273265b6af7d13acb9285cdbaab34f926927ca72e7ef4c",
+    "theorem_dependencies": {
+      "THM-0097": "sha256:a34375425f7a0e724f5014291e2721d71c5f6fdb77a68df55d659117416d9cc2"
+    },
+    "theorem_id": "THM-0100",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "SPECIFICATION REVIEW RECORDED UNDER THE OWNER'S AFK MANDATE OF 2026-09-06 (backlog item 3, 'serving-interval confinement', read as the R + T exposure window the replica prints \u2014 the reading is recorded in the packet), by the implementing agent as routine owner-review maintenance, not a transcription of a ruling naming this fingerprint. THE RULES ARE ALREADY ON RECORD: the owner's ruling of 2026-09-05 accepted that the ceiling is R + T, that the poll interval bounds observation and flush rather than revocation, and that THM-0097 takes the reload cadence R as outside its statement. This theorem is the R half: the loop is one halt-aware sleep of exactly R and one read (new control the_reload_loop_reads_on_its_cadence_until_halted, probe M107), a successful cycle swaps the snapshot (M108), and the printed window is the arithmetic R + T / R / UNBOUNDED (M109). Composed with THM-0097 it yields the exposure bound: R + T while reads succeed, 5R + T across a failing stretch, closed thereafter. NO ASSUMPTION IS ADDED: the bytes at the path at read time are the input; when an operator's write reaches the path is outside the replica and is said so in the scope; the sleep and the cache deadline cross boundary.monotonic_clock / boundary.clock already declared for the owning unit. Owner proxy.trust_plane_runtime, depends_on [THM-0097], composed at THM-0074 beside THM-0097/0098/0099. The fingerprint was recomputed on the tree before this record was written and equals the value above. Reviewed tree: assurance/serving-interval-confinement stacked on #818 head a74f3a67.",
+  "reviewed_fingerprint": "sha256:0fd8421dd81ad3971f3c8122d23b4f6152162bb153d102b0a49ad5bf9aebd56a",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0100"
+}

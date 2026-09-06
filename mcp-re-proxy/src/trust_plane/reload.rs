@@ -261,6 +261,63 @@ mod reload_loop_tests {
         );
     }
 
+    fn wait_for(budget: Duration, mut done: impl FnMut() -> bool) -> bool {
+        let deadline = std::time::Instant::now() + budget;
+        while std::time::Instant::now() < deadline {
+            if done() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        done()
+    }
+
+    /// The loop is one halt-aware sleep of exactly `R` followed by one read, until halted:
+    /// a key rotated in the file is served within one cadence, and the halt that ends the
+    /// loop freezes the store. This is the `R` in the printed `R + T`; without it the
+    /// arithmetic names a cadence nothing measures.
+    #[test]
+    fn the_reload_loop_reads_on_its_cadence_until_halted() {
+        let path = trust_file("cadence", "kid-first");
+        let trust_path = path.to_string_lossy().into_owned();
+        let store = Arc::new(load_trust_snapshot(&trust_path, "response-kid").expect("initial"));
+        let deployment = Arc::new(AtomicBool::new(false));
+        let workers = WorkerSet::new(Arc::clone(&deployment));
+        let halt = workers.halt();
+        let freshness = Arc::new(TrustStoreFreshness::default());
+        freshness.mark_fresh();
+        let worker = {
+            let store = Arc::clone(&store);
+            let trust_path = trust_path.clone();
+            let freshness = Arc::clone(&freshness);
+            std::thread::spawn(move || {
+                trust_reload_loop(&store, &trust_path, "response-kid", 1, &freshness, &halt);
+            })
+        };
+
+        // The operator rotates the key. The next cycle, at most R = 1s away, must land it.
+        let _ = trust_file("cadence", "kid-second");
+        let landed = wait_for(Duration::from_millis(2500), || {
+            store.signer_for("kid-second").is_some()
+        });
+        assert!(
+            landed,
+            "the loop did not re-read --trust within its cadence"
+        );
+        assert!(
+            store.signer_for("kid-first").is_none(),
+            "the swap must retire the previous map in the same cycle"
+        );
+
+        deployment.store(true, Ordering::SeqCst);
+        worker.join().expect("the loop returns on halt");
+        assert!(
+            freshness.is_stale(),
+            "the halt that ends the loop must freeze the store"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
     /// A cycle REPLACES the map the resolver answers from, and resets the failure budget.
     #[test]
     fn a_reload_cycle_replaces_the_map_the_resolver_answers_from() {
