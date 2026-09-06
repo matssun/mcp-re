@@ -4185,6 +4185,59 @@ tested_symbols = [
   "lib#etcd_store::tests::txn_succeeded_is_fresh",
 ]
 test_features = ["cpstore_etcd"]
+
+
+# ---------------------------------------------------------------------------
+# The KMS Ed25519 protocol seam — ADR-MCPS-028 §D / ADR-MCPRE-063, registered 2026-09-06
+# ---------------------------------------------------------------------------
+#
+# Item 3 of the ranked remainder is the keysources: 3 of 17 files owned in this area, with
+# 108 controls between them. This registers the ONE authority in it that is a sealed owner
+# rather than a provider adapter — the provider-agnostic seam where a network client's bytes
+# become typed operands, and where every produced signature is re-verified before it is
+# emitted. `gcp_kms_keysource.rs` (2 660 lines, 39 controls), `aws_kms_keysource.rs` and
+# `aws_sts.rs` are the adapters BENEATH it and stay unowned; they are their own slice.
+#
+# THE MODULE STATES ITS OWN OPERATIONAL TEST, which is why this is a theorem and not a
+# registration of three type definitions: "delete every length check elsewhere and an
+# over-long signature is still unconstructible". That is R-SEAL's quantifier — every
+# inhabitant satisfies it, not every construction site checks it.
+#
+# NOT ABSORBED. `remote_signer_call/` (3 files, 10 controls) is a genuinely security-relevant
+# neighbour — whether a failed signer call means the account is out of quota or this request
+# was bad, which arms the handshake throttle — and it is deliberately NOT registered here. It
+# is gated `#[cfg(any(feature = "aws_kms_keysource", feature = "gcp_kms_keysource"))]`, the
+# shape ADR-MCPRE-061 records as the trap: a unit naming ONE feature measures the module under
+# that one and says nothing about the other. It needs a slice that measures both lanes.
+
+[[unit]]
+id = "proxy.kms_ed25519_seam"
+class = "V0"
+description = "The provider-agnostic Ed25519 KMS seam: three types that each make one wrong value unconstructible — a pre-hashed input reaching a RAW-only signing call, a signature of any length but 64 leaving the seam, and a public key that has not been through RFC 8410 SubjectPublicKeyInfo interpretation — and one re-verification, at the seam, of every signature against the signer's own advertised public key before it is emitted. Knows no provider: AWS and GCP are adapters beneath it and are not owned here."
+paths = [
+  "mcp-re-proxy/src/kms_keysource/mod.rs",
+  "mcp-re-proxy/src/kms_keysource/protocol_operands.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://proxy/kms/ed25519_seam",
+  # Two conjuncts a green battery held while neither was load-bearing: that the 64-byte
+  # length is the ONLY way in, and that the seam's own re-verification is what catches a
+  # backend wired to a mismatched key. M128-M129 ask.
+  "mutation://proxy/kms/ed25519_seam",
+]
+tested_symbols = [
+  "lib#kms_keysource::protocol_operands::tests::a_public_key_that_is_not_an_ed25519_spki_is_refused",
+  "lib#kms_keysource::protocol_operands::tests::a_raw_message_is_the_preimage_itself",
+  "lib#kms_keysource::protocol_operands::tests::only_sixty_four_bytes_make_a_signature",
+  "lib#kms_keysource::protocol_operands::tests::the_signature_bytes_survive_the_seam",
+  "lib#kms_keysource::tests::kms_signature_verifies_under_mcp_re_core_verifier",
+  "lib#kms_keysource::tests::mismatched_key_signature_fails_closed_at_the_seam",
+  "lib#kms_keysource::tests::non_ed25519_public_key_fails_closed",
+  "lib#kms_keysource::tests::prehash_mode_is_caught_at_the_seam",
+  "lib#kms_keysource::tests::tls_delegated_signer_is_none_without_tls_key_some_with",
+  "lib#kms_keysource::tests::wrong_length_signature_fails_closed",
+]
 # ---------------------------------------------------------------------------
 # The client mTLS transport — MCPS-053 / MCPS-071, registered 2026-09-06
 # ---------------------------------------------------------------------------

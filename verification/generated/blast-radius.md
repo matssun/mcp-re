@@ -77,6 +77,7 @@ attestations this view cannot see.
 | unit://proxy.etcd_replay_adapter | source, contracts or evidence | THM-0107 | _no consumer_ |
 | unit://proxy.exchange_lifecycle | source, contracts or evidence | THM-0043, THM-0044, THM-0074, THM-0078, THM-0101 | _no consumer_ |
 | unit://proxy.exchange_transition_ownership | source, contracts or evidence | THM-0101 | _no consumer_ |
+| unit://proxy.kms_ed25519_seam | source, contracts or evidence | THM-0108 | _no consumer_ |
 | unit://proxy.kms_endpoint_authority | source, contracts or evidence | THM-0089 | _no consumer_ |
 | unit://proxy.mechanism_verified_credential | source, contracts or evidence | THM-0030 | proxy.authenticated_relationship_peer (CONTRACT_CONSUMES), proxy.credential_currency (CONTRACT_CONSUMES) |
 | unit://proxy.online_ocsp_reachability | source, contracts or evidence | THM-0013 | _no consumer_ |
@@ -219,6 +220,7 @@ attestations this view cannot see.
 | THM-0105 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0106 | statement, consequence, scope or review requirement | specification review | THM-0092 |
 | THM-0107 | statement, consequence, scope or review requirement | specification review | THM-0092 |
+| THM-0108 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0109 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0110 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 

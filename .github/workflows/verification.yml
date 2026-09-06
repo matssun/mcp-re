@@ -62,6 +62,9 @@ on:
       - "mcp-re-proxy/src/async_redis_store.rs"
       - "mcp-re-proxy/src/etcd_store.rs"
       - "mcp-re-proxy/src/async_etcd_store.rs"
+      # The provider-agnostic Ed25519 KMS seam (THM-0108). The provider adapters beneath it
+      # are unowned and are their own slice.
+      - "mcp-re-proxy/src/kms_keysource/**"
       # The client mTLS transport (THM-0109 / THM-0110). Whole crate, sources and the two
       # integration batteries alike: `mtls_client_test.rs` and `dos_hardening_test.rs` ARE
       # the evidence for both units, so a change to either must re-trigger them.
@@ -291,6 +294,9 @@ on:
       - "mcp-re-proxy/src/async_redis_store.rs"
       - "mcp-re-proxy/src/etcd_store.rs"
       - "mcp-re-proxy/src/async_etcd_store.rs"
+      # The provider-agnostic Ed25519 KMS seam (THM-0108). The provider adapters beneath it
+      # are unowned and are their own slice.
+      - "mcp-re-proxy/src/kms_keysource/**"
       # The client mTLS transport (THM-0109 / THM-0110). Whole crate, sources and the two
       # integration batteries alike: `mtls_client_test.rs` and `dos_hardening_test.rs` ARE
       # the evidence for both units, so a change to either must re-trigger them.

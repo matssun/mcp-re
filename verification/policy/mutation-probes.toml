@@ -3215,6 +3215,46 @@ expect_red = [
 ]
 
 [[probe]]
+id = "M128-sixty-four-bytes-is-the-only-way-in"
+unit = "proxy.kms_ed25519_seam"
+theorem = "THM-0108"
+conjunct = "a RawEd25519Signature exists only at exactly 64 bytes — the length interpretation is the only way in, not a step a caller performs"
+path = "mcp-re-proxy/src/kms_keysource/protocol_operands.rs"
+anchor = """
+        let array: [u8; ED25519_SIGNATURE_LEN] = bytes.try_into().map_err(|_| {
+"""
+weakening = """
+        let mut padded = [0u8; ED25519_SIGNATURE_LEN];
+        let take = bytes.len().min(ED25519_SIGNATURE_LEN);
+        padded[..take].copy_from_slice(&bytes[..take]);
+        let array: [u8; ED25519_SIGNATURE_LEN] = Ok::<_, ()>(padded).map_err(|_| {
+"""
+# ONLY the direct type-level control. `wrong_length_signature_fails_closed` is deliberately
+# NOT named: it drives a backend returning 63 bytes through the whole signer, and the seam's
+# re-verification catches the padded result too, so it stays green under this weakening and
+# would be a false claim about what this probe proved. It is defended twice, which is a fact
+# about the design rather than a gap — see the packet.
+expect_red = [
+  "lib#kms_keysource::protocol_operands::tests::only_sixty_four_bytes_make_a_signature",
+]
+
+[[probe]]
+id = "M129-the-seam-reverifies-before-it-emits"
+unit = "proxy.kms_ed25519_seam"
+theorem = "THM-0108"
+conjunct = "every signature is verified against the signer's OWN advertised public key at the seam before it is emitted, so a backend wired to a mismatched key fails closed"
+path = "mcp-re-proxy/src/kms_keysource/mod.rs"
+anchor = """
+        verify_ed25519(preimage, &encoded, &public_key).map_err(|_| {
+"""
+weakening = """
+        verify_ed25519(preimage, &encoded, &public_key).or(Ok(())).map_err(|_: ()| {
+"""
+expect_red = [
+  "lib#kms_keysource::tests::mismatched_key_signature_fails_closed_at_the_seam",
+]
+
+[[probe]]
 id = "M130-an-empty-server-ca-bundle-is-refused"
 unit = "client.transport_server_identity"
 theorem = "THM-0109"
