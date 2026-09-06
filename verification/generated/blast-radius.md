@@ -48,6 +48,7 @@ attestations this view cannot see.
 | unit://http_profile.submitted_hop_identity | source, contracts or evidence | THM-0042 | http_profile.scitt_retained_correspondence (PROOF_DEPENDENCY) |
 | unit://http_profile.verifier_result_separation | source, contracts or evidence | THM-0047, THM-0051 | _no consumer_ |
 | unit://http_profile.verifier_results | source, contracts or evidence | THM-0014, THM-0015, THM-0016, THM-0017, THM-0018, THM-0019, THM-0020, THM-0021, THM-0022, THM-0065 | proxy.request_peer_binding (COMPILE_DEPENDENCY) |
+| unit://proxy.async_replay_retention | source, contracts or evidence | THM-0105 | _no consumer_ |
 | unit://proxy.audit_delivery | source, contracts or evidence | THM-0070 | _no consumer_ |
 | unit://proxy.audit_record_coordinates | source, contracts or evidence | THM-0069, THM-0071 | _no consumer_ |
 | unit://proxy.authenticated_relationship_peer | source, contracts or evidence | THM-0031 | proxy.current_authenticated_peer (CONTRACT_CONSUMES) |
@@ -211,6 +212,7 @@ attestations this view cannot see.
 | THM-0102 | statement, consequence, scope or review requirement | specification review | THM-0077 |
 | THM-0103 | statement, consequence, scope or review requirement | specification review | THM-0048 |
 | THM-0104 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
+| THM-0105 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 
 ## Assumptions
 

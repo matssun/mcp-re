@@ -4005,3 +4005,77 @@ so two substitutable tail hops compared equal and correspondence reported a bind
 not have. Neither half states the claim alone, and putting the identity under the comparison
 would let a future curation of the digest pass as a property of the comparison.
 """
+
+# ---------------------------------------------------------------------------
+# The async replay RETENTION ACCOUNT — MCPRE-117 / ADR-MCPRE-051 §4, registered 2026-09-06
+# ---------------------------------------------------------------------------
+#
+# The census (#824) measured the replay stores at 0 of 10 files owned — the largest fully
+# unowned security-relevant surface among replay, KMS and conformance. This registers the
+# part of that surface which is a security proposition of its own rather than a foreign
+# durability premise: the per-replica retention ACCOUNT the tier keeps above the backend
+# seam, so one signature-valid actor cannot deny replay protection to every other signer.
+#
+# WHAT IS DELIBERATELY EXCLUDED, and why the exclusion is the honest half:
+#
+#   * `l1_fast_reject.rs` — DORMANT. `app.rs` installs the L2 directly on every backend,
+#     nothing outside `async_replay_test` constructs an L1, and no configuration surface
+#     selects one. Excluded from `paths` on the precedent by which
+#     `trust_plane/window_policy.rs` is excluded from `proxy.trust_plane_runtime`.
+#   * `tests/async_replay_test.rs` — the named CI release gate "§4 cross-core /
+#     cross-replica replay race". NOT cited: all five of its controls construct an
+#     `L1FastRejectStore`, so however green it is, it measures a two-tier architecture no
+#     deployment runs. Citing it would make this unit's evidence look complete about the
+#     composition that ships when it is not.
+#   * `async_redis_store.rs` / `async_etcd_store.rs` — unowned, and next on the ranked
+#     remainder. They are ASM-0040 / ASM-0041's subjects, which is a different question.
+#   * `shared_replay.rs`, `replay_tier.rs` — the SYNC twins, a separate composition with a
+#     separate battery.
+#
+# TWO CONTROLS WERE ADDED because two conjuncts were true and unmeasured, and each is a
+# deletable line. Every pre-existing control presents ONE key per actor (`replay_key` builds
+# `{actor}#key-1`), so a tier charging `key.signer` instead of `key.principal` satisfied all
+# fifteen of them — and enrolling keys is cheap. And only CANCELLATION was measured on the
+# unsettled-charge path, never an ERROR, so releasing on every non-`Fresh` exit — the exact
+# defect `charge.rs` documents — went undetected. M121 and M122 ask.
+
+[[unit]]
+id = "proxy.async_replay_retention"
+class = "V0"
+description = "The per-replica replay retention ACCOUNT the async tier keeps above the backend seam: every admitted nonce is charged to the principal the verifier resolved before the store is touched, the per-actor share leaves an unspendable reserve so a greedy actor is refused rather than every other signer, and a reservation is handed back only by an authoritative Replay — an error or a cancellation leaves it unknown-whether-retained and the charge is kept on the entry's own retain_until timeline. Every refusal on this path is Unavailable, never Fresh. Excludes the dormant L1 and says nothing about cross-replica durability."
+paths = [
+  "mcp-re-proxy/src/async_replay/mod.rs",
+  "mcp-re-proxy/src/async_replay/bounds.rs",
+  "mcp-re-proxy/src/async_replay/charge.rs",
+  "mcp-re-proxy/src/async_replay/in_memory.rs",
+  "mcp-re-proxy/src/async_replay/local_refusals.rs",
+  "mcp-re-proxy/src/async_replay/retained_set.rs",
+  "mcp-re-proxy/src/async_replay/retention_ledger.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://proxy/replay/async_retention_account",
+  # Three conjuncts a green battery held while none was load-bearing: which identity the
+  # charge is against, what an error does to it, and whether the per-actor wall exists at
+  # all. M121-M123 ask.
+  "mutation://proxy/replay/async_retention_account",
+]
+tested_symbols = [
+  "lib#async_replay::tests::the_tier_budgets_a_durable_backend_that_budgets_nothing_itself",
+  "lib#async_replay::tests::one_subject_gets_one_budget_however_many_keys_it_holds",
+  "lib#async_replay::tests::a_replay_hands_the_charge_back",
+  "lib#async_replay::tests::a_store_failure_is_unavailable_and_keeps_the_charge",
+  "lib#async_replay::tests::an_abandoned_insert_keeps_its_charge_because_the_write_may_have_landed",
+  "lib#async_replay::tests::an_abandoned_insert_s_charge_expires_with_the_entry_it_may_have_created",
+  "lib#async_replay::tests::the_tier_releases_charges_once_their_retention_expires",
+  "lib#async_replay::bounds::tests::the_budget_reserves_headroom_and_splits_evenly",
+  "lib#async_replay::bounds::tests::no_number_of_actors_can_spend_the_reserve",
+  "lib#async_replay::retention_ledger::tests::a_release_returns_one_actors_charge_and_no_one_elses",
+  "lib#async_replay::retention_ledger::tests::a_committed_charge_is_returned_only_when_its_retention_expires",
+  "lib#async_replay::in_memory::tests::in_memory_store_is_fresh_then_replay_and_single_process",
+  "lib#async_replay::in_memory::tests::the_async_store_evicts_entries_past_their_retain_until",
+  "lib#async_replay::in_memory::tests::the_async_store_refuses_rather_than_growing_past_its_ceiling",
+  "lib#async_replay::in_memory::tests::one_actor_cannot_spend_the_whole_ceiling_and_deny_another",
+  "lib#async_replay::in_memory::tests::pruning_releases_the_per_actor_charge",
+  "lib#async_replay::in_memory::tests::an_already_stale_retain_until_is_refused_pre_store",
+]

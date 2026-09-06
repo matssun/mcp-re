@@ -408,6 +408,102 @@ mod tests {
         });
     }
 
+    /// The budget is charged to the RESOLVED PRINCIPAL, never to the signer slot.
+    ///
+    /// The slot carries the keyid, so charging it would hand one subject a fresh budget
+    /// for every key it enrols — and enrolling keys is cheap. Every other control in this
+    /// module presents ONE key per actor, so a tier that charged `key.signer` would
+    /// satisfy all of them and this defect would ship green.
+    #[test]
+    fn one_subject_gets_one_budget_however_many_keys_it_holds() {
+        // max_entries 10 ⇒ reserve 2, pressure at 8, solo budget 8.
+        let tier = AsyncReplayTier::new(
+            Arc::new(UnboundedDurableStore::default()),
+            crate::config_state::test_support::freshness(0),
+        )
+        .with_max_retained_entries(10);
+        const SUBJECT: &str = "did:example:many-keys";
+
+        block(async {
+            let mut admitted = 0usize;
+            for i in 0..20 {
+                // A DIFFERENT signer slot every time, the same subject behind all of them.
+                let key = ReplayKey {
+                    signer: format!("{SUBJECT}#key-{i}"),
+                    principal: SUBJECT.to_string(),
+                    audience: "did:example:verifier".to_string(),
+                    nonce: format!("nonce-{i}"),
+                    expires_at_unix: 9_000,
+                };
+                match tier.check_and_insert(&key, 1_000).await {
+                    Ok(ReplayDecision::Fresh) => admitted += 1,
+                    Err(ReplayCacheError::Unavailable { .. }) => break,
+                    other => panic!("unexpected decision {other:?}"),
+                }
+            }
+            assert_eq!(
+                admitted, 8,
+                "one subject gets one budget, not one budget per key it holds"
+            );
+            assert_eq!(tier.ledger.held_by(SUBJECT), 8);
+        });
+    }
+
+    /// A store that FAILED is not a store that answered.
+    struct FailingStore;
+
+    impl AsyncAtomicReplayStore for FailingStore {
+        fn atomic_insert_if_absent<'a>(
+            &'a self,
+            _insert: ReplayInsert<'a>,
+        ) -> ReplayDecisionFuture<'a> {
+            Box::pin(async {
+                Err(ReplayStoreError::Unavailable {
+                    details: "backend refused the connection".to_string(),
+                })
+            })
+        }
+
+        fn durability_class(&self) -> ReplayDurabilityClass {
+            ReplayDurabilityClass::Durable
+        }
+    }
+
+    /// An operational failure is reported as `Unavailable` and KEEPS its charge.
+    ///
+    /// Two directions in one control because they are one defect. Fail closed: a store
+    /// that did not answer has not said the nonce is fresh, and an unrecorded nonce can
+    /// be replayed. And an error is not proof the write did not land — for the Redis and
+    /// etcd backends retention IS the round trip, so a command that reached the server
+    /// and then failed to answer may already have retained an entry. Only cancellation
+    /// was measured before this control; the error path was not, so releasing on every
+    /// non-`Fresh` exit — the defect `charge.rs` documents — went undetected.
+    #[test]
+    fn a_store_failure_is_unavailable_and_keeps_the_charge() {
+        let tier = AsyncReplayTier::new(
+            Arc::new(FailingStore),
+            crate::config_state::test_support::freshness(0),
+        )
+        .with_max_retained_entries(10);
+        const ACTOR: &str = "did:example:unlucky";
+        block(async {
+            let refused = tier
+                .check_and_insert(&replay_key(ACTOR, "nonce-0", 9_000), 1_000)
+                .await
+                .expect_err("a failing store must not produce a decision");
+            assert_eq!(
+                refused.to_mcp_re_error(),
+                mcp_re_core::McpReError::ReplayCacheUnavailable,
+                "fail closed on the frozen token, never an allow"
+            );
+            assert_eq!(
+                tier.ledger.held_by(ACTOR),
+                1,
+                "an error is not proof the write did not land, so the charge is kept"
+            );
+        });
+    }
+
     /// A store whose insert never completes — the shape of a wedged backend, and the
     /// case where the caller stops waiting.
     struct NeverAnsweringStore;
