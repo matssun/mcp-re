@@ -1,0 +1,16 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:0d5713f5681f2b757e8bc6173577e10153b4f7e98ec20f34171b1a4c30364642",
+    "theorem_dependencies": {
+      "THM-0043": "sha256:1ece28b4aeef476884140e0c2e594036d64eea9a19110eef6dd085af4296adb7"
+    },
+    "theorem_id": "THM-0101",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "SPECIFICATION REVIEW RECORDED UNDER THE OWNER'S AFK MANDATE OF 2026-09-06 (backlog item 4, #583 / MCPRE-147 deliverable 1), by the implementing agent as routine owner-review maintenance. #583 is HITL: 'final closure requires owner security-specification review' \u2014 this record establishes the theorem in the graph so the machinery can measure it; the ISSUE stays open for the owner's closure, and this record is the artefact that review reads. THE RULES ARE ALREADY ON RECORD: ADR-MCPRE-057 section 4 / ADR-MCPRE-058 section 12 (the model-as-value encoding), ADR-MCPRE-061 section 11 (a deletable check is remembered, not owned), the exchange-lifecycle component doc section 4.1 (Established<T> + establish() and the six assembly-owned transitions with their reasons), and THM-0043 (legality) which this theorem depends on. WHAT THE THEOREM STATES: a stage-owned event reaches the machine only inside an Established<T> that nothing but establish() opens and that must be consumed; the assembly states exactly six named events by direct advance; the two sets are disjoint; and the six are measured in both directions, so #583's 'deleted advance is detected' obligation is CLOSED by the stale half of the inventory control (probe M110) rather than recorded as open. The six assembly-owned transitions are EXCLUDED from the correspondence claim by name in the scope, which is #583's stated deliverable. Evidence: the four pre-existing but previously unregistered source controls in exchange_transition_ownership_test, plus one added control (the carrier has no reader but establish) with probe M112. Owner unit://proxy.exchange_transition_ownership (new; paths overlap refusal_site_totality and exchange_lifecycle deliberately), supported also by unit://proxy.exchange_lifecycle for the carrier's structure. No assumption added. Composed at THM-0074. The fingerprint was recomputed on the tree before this record was written and equals the value above. Reviewed tree: assurance/exchange-transition-correspondence stacked on #819 head 18fe41c1.",
+  "reviewed_fingerprint": "sha256:740be0c72db0d77d987e01dbad585d78f99705d7ec0dbed52549fb8831066da1",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0101"
+}

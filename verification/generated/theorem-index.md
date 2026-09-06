@@ -138,6 +138,7 @@ any of them is closed.
 | THM-0098 | A replica's trust snapshot is the slot-wise interpretation of one accepted trust document | proxy.trust_document_interpretation | unit://proxy.trust_document_interpretation, unit://proxy.trust_plane_runtime | live |
 | THM-0099 | The production actor resolver answers its Request-slot selector from the deployment's trust document | proxy.serving_trust_seam | unit://proxy.serving_trust_seam | live |
 | THM-0100 | A replica's exposure to a key its document no longer enrols is confined to the serving interval it prints | proxy.trust_plane_runtime | unit://proxy.trust_plane_runtime | live |
+| THM-0101 | An emitted exchange transition corresponds to the work that justifies it, except the six the assembly owns | proxy.exchange_transition_ownership | unit://proxy.exchange_lifecycle, unit://proxy.exchange_transition_ownership | live |
 
 ## Claims in full
 
@@ -949,7 +950,7 @@ any of them is closed.
 
 **Review requirement.** Owner security-specification review
 
-**Depends on.** THM-0003, THM-0004, THM-0005, THM-0006, THM-0009, THM-0015, THM-0034, THM-0040, THM-0043, THM-0045, THM-0050, THM-0051, THM-0052, THM-0053, THM-0066, THM-0079, THM-0080, THM-0083, THM-0092, THM-0093, THM-0097, THM-0098, THM-0099, THM-0100
+**Depends on.** THM-0003, THM-0004, THM-0005, THM-0006, THM-0009, THM-0015, THM-0034, THM-0040, THM-0043, THM-0045, THM-0050, THM-0051, THM-0052, THM-0053, THM-0066, THM-0079, THM-0080, THM-0083, THM-0092, THM-0093, THM-0097, THM-0098, THM-0099, THM-0100, THM-0101
 
 ### THM-0075 — No unearned response attribution
 
@@ -1238,3 +1239,15 @@ any of them is closed.
 **Review requirement.** Owner security-specification review
 
 **Depends on.** THM-0097
+
+### THM-0101 — An emitted exchange transition corresponds to the work that justifies it, except the six the assembly owns
+
+**Statement.** For the serving assembly — `handle` and its region functions — and the exchange machine it drives: Every `ExchangeEvent` the machine learns of reaches it in one of exactly two ways. A STAGE-OWNED event travels inside an `Established<T>`: the carrier is constructed at the site the stage's work returned its product, has no public field and no reader other than `ExchangeProgress::establish`, and is `#[must_use]`, so the assembly cannot obtain the product without the machine advancing the event in the same step and cannot discard the product without a warning the build refuses. An ASSEMBLY-OWNED event is stated by a direct `advance` in the serving path, and the set of events stated that way is exactly the six inventoried with the reason no stage's success could carry each: `BackendDispatched`, `ContinuationRetired`, `ContinuationNotRequired`, `EvidenceRetained`, `TerminalResponseServed`, `OpenLegResponseServed`. The two sets are disjoint: no event a stage establishes is also advanced by the serving path, so no stage's fact is stated twice or remembered beside the carrier. The assembly-owned set is measured in both directions — an advance naming an event outside the six, and a listed event the serving path no longer advances, are each a failing control — so a deleted assembly-owned `advance` is detected, not merely forbidden. Legality is THM-0043's: every advance, by either route, is checked against the relation in every build and latches an anomaly when refused. What this theorem adds is that for the stage-owned events the machine's state implies the stage's product was obtained, and for the six it names, and only those, the correspondence rests on the assembly's own statement.
+
+**Security consequence.** The machine's record of which stages ran is not a bookkeeping object procedural code remembers to update: a served exchange cannot reach a later stage's product — a verified request, an admitted actor, a signed reply, a recorded continuation leg — with the machine still saying the stage did not run, so every refusal's retry contract, derived from that machine (THM-0081), is derived from a state at least as far along as the work actually got. The one residue where the correspondence is asserted rather than carried is enumerated and justified, so a reviewer knows exactly which six transitions to read by hand.
+
+**Scope — what this does NOT establish.** The serving assembly under `http_profile_serve/` and the carrier in `exchange_state.rs`, production halves only. The six assembly-owned transitions are EXCLUDED from the correspondence claim: that the dispatch, the two continuation facts, retention and the two terminals are stated at the right moment is the assembly's own statement, read by hand, and this theorem says only that those six are the whole residue and that removing one is detected. Not stated: that a stage's work is correct (each stage's own theorem), that the relation is complete (THM-0043), or that a refusal carries the right disposition (THM-0081). `Established` is constructible anywhere in the crate; the claim is not that a wrong carrier is unconstructible but that every carrier in the serving path is built at its stage's success site (source-measured, listed in the packet) and that nothing but `establish` can open one (structural). Source-text evidence, recorded as evidence: deleting the battery leaves a reintroduced `advance` compiling. Class V0.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0043

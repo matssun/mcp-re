@@ -70,7 +70,8 @@ attestations this view cannot see.
 | unit://proxy.delegated_signing_credential | source, contracts or evidence | THM-0062, THM-0063 | _no consumer_ |
 | unit://proxy.dispatch_commitment | source, contracts or evidence | THM-0045, THM-0051, THM-0052, THM-0074 | _no consumer_ |
 | unit://proxy.ed25519_public_key | source, contracts or evidence | THM-0025 | proxy.credential_key_correspondence (COMPILE_DEPENDENCY) |
-| unit://proxy.exchange_lifecycle | source, contracts or evidence | THM-0043, THM-0044, THM-0074, THM-0078 | _no consumer_ |
+| unit://proxy.exchange_lifecycle | source, contracts or evidence | THM-0043, THM-0044, THM-0074, THM-0078, THM-0101 | _no consumer_ |
+| unit://proxy.exchange_transition_ownership | source, contracts or evidence | THM-0101 | _no consumer_ |
 | unit://proxy.kms_endpoint_authority | source, contracts or evidence | THM-0089 | _no consumer_ |
 | unit://proxy.mechanism_verified_credential | source, contracts or evidence | THM-0030 | proxy.authenticated_relationship_peer (CONTRACT_CONSUMES), proxy.credential_currency (CONTRACT_CONSUMES) |
 | unit://proxy.online_ocsp_reachability | source, contracts or evidence | THM-0013 | _no consumer_ |
@@ -146,7 +147,7 @@ attestations this view cannot see.
 | THM-0040 | statement, consequence, scope or review requirement | specification review | THM-0045, THM-0052, THM-0074 |
 | THM-0041 | statement, consequence, scope or review requirement | specification review | THM-0072 |
 | THM-0042 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
-| THM-0043 | statement, consequence, scope or review requirement | specification review | THM-0044, THM-0074, THM-0078, THM-0081 |
+| THM-0043 | statement, consequence, scope or review requirement | specification review | THM-0044, THM-0074, THM-0078, THM-0081, THM-0101 |
 | THM-0044 | statement, consequence, scope or review requirement | specification review | THM-0078 |
 | THM-0045 | statement, consequence, scope or review requirement | specification review | THM-0052, THM-0074, THM-0078 |
 | THM-0046 | statement, consequence, scope or review requirement | specification review | THM-0069, THM-0071, THM-0078, THM-0081, THM-0085 |
@@ -204,6 +205,7 @@ attestations this view cannot see.
 | THM-0098 | statement, consequence, scope or review requirement | specification review | THM-0074, THM-0099 |
 | THM-0099 | statement, consequence, scope or review requirement | specification review | THM-0074 |
 | THM-0100 | statement, consequence, scope or review requirement | specification review | THM-0074 |
+| THM-0101 | statement, consequence, scope or review requirement | specification review | THM-0074 |
 
 ## Assumptions
 

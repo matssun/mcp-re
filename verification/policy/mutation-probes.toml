@@ -2891,3 +2891,57 @@ weakening = """
 expect_red = [
   "lib#trust_plane::reload::reload_loop_tests::a_caching_tier_states_the_cache_lifetime_on_top_of_the_store_cadence",
 ]
+
+[[probe]]
+id = "M110-a-deleted-assembly-advance-is-detected"
+unit = "proxy.exchange_transition_ownership"
+theorem = "THM-0101"
+conjunct = "the assembly-owned set is measured in both directions — a listed event the serving path no longer advances is a failing control"
+path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/mod.rs"
+anchor = """
+            progress.advance(ExchangeEvent::ContinuationNotRequired);
+            return Ok(());
+"""
+weakening = """
+            return Ok(());
+"""
+expect_red = [
+  "tests/integration#exchange_transition_ownership_test::the_serving_path_states_only_the_assembly_s_own_transitions",
+]
+
+[[probe]]
+id = "M111-a-reintroduced-advance-beside-a-stage-is-detected"
+unit = "proxy.exchange_transition_ownership"
+theorem = "THM-0101"
+conjunct = "no event a stage establishes is also advanced by the serving path"
+path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/mod.rs"
+anchor = """
+            Ok(bytes) => progress.establish(bytes),
+"""
+weakening = """
+            Ok(bytes) => {
+                progress.advance(ExchangeEvent::ResponseObserved);
+                progress.establish(bytes)
+            }
+"""
+expect_red = [
+  "tests/integration#exchange_transition_ownership_test::no_transition_a_stage_establishes_is_also_advanced_by_the_serving_path",
+]
+
+[[probe]]
+id = "M112-the-carrier-cannot-be-read-past-the-machine"
+unit = "proxy.exchange_transition_ownership"
+theorem = "THM-0101"
+conjunct = "an Established<T> has no reader other than establish — no public field, no accessor"
+path = "mcp-re-proxy/src/exchange_state.rs"
+anchor = """
+pub(crate) struct Established<T> {
+    value: T,
+"""
+weakening = """
+pub(crate) struct Established<T> {
+    pub(crate) value: T,
+"""
+expect_red = [
+  "tests/integration#exchange_transition_ownership_test::the_carrier_has_no_reader_but_establish",
+]
