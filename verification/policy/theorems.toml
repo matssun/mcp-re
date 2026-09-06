@@ -3330,6 +3330,9 @@ depends_on = [
   # The snapshot THM-0097 serves from is one accepted document's request-slot enrolment —
   # composed here, not in THM-0097, which takes the snapshot as an input authority.
   "THM-0098",
+  # ASM-0029's Request-slot half, instantiated for the resolver the serving path runs:
+  # THM-0066 (where the seam comes from) composed with THM-0097 and THM-0098.
+  "THM-0099",
 ]
 
 [[theorem]]
@@ -4725,3 +4728,61 @@ owner = "proxy.trust_document_interpretation"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.trust_document_interpretation", "unit://proxy.trust_plane_runtime"]
 depends_on = []
+
+[[theorem]]
+id = "THM-0099"
+title = "The production actor resolver answers its Request-slot selector from the deployment's trust document"
+statement = """
+For one replica running the actor resolver the composition root builds, and for every
+`(key_id, Request)` selector the verifier queries:
+
+A `Resolved` answer carries `subject` equal to the signer the replica's CURRENT materialized
+trust snapshot binds `key_id` to — the one signer an accepted trust document enrolled that
+`key_id` for in the request slot — and `verification_key` equal to a key a snapshot within
+the replica's authority window admitted for exactly that `(subject, key_id)` coordinate; its
+`slot` is `Request`, its `role` is `client`, and its `keyid` is the queried `key_id`.
+
+A `key_id` the current snapshot does not bind — never enrolled, enrolled for another slot
+only, the deployment's own response kid, or removed by a reload that has landed — yields
+`NotTrusted` without the tier being consulted; a pair the tier will not serve yields
+`NotTrusted`; a tier that cannot answer yields `Unavailable`. No `Resolved` answer is produced
+in any of those cases.
+
+For the `Response` slot the resolver answers only the deployment's own response kid, with
+the deployment's own identity and response verification key, and consults no trust document
+at all.
+"""
+security_consequence = """
+ASM-0029's Request-slot half, instantiated: for the resolver the deployment actually runs,
+"the identity and verification key this deployment has authorized to sign under that keyid in
+that slot" IS the enrolment the deployment's trust document states, as interpreted by
+THM-0098 and served within the window THM-0097 bounds. A request signer cannot be resolved
+to an identity the document did not bind to its `key_id`, nor verified under a key the
+document did not enrol for that identity, and a key the document never enrolled for the
+request slot — an authorization authority, the deployment's own issuer key — cannot become a
+client credential through this seam. The premise stays a premise for the verifier, which
+accepts any resolver; what this states is that the resolver installed satisfies it.
+"""
+scope = """
+ONE replica, the PRODUCTION composition only: `build_actor_resolver` over the reloading
+signer directory and the revocation-tier resolver, as THM-0066 establishes the serving
+path installs. Nothing about a resolver a test or another program injects; ASM-0029 remains
+the verifier's premise for those and is not withdrawn, narrowed or reworded here.
+
+The two halves of a `Resolved` answer may come from different snapshots inside the authority
+window: `subject` is read from the current snapshot's signer map on every call, while the key
+may be a cached answer an earlier snapshot gave for the same `(subject, key_id)` pair within
+`T` (THM-0097). Both are the document's enrolment for that pair; which document is the one
+in force is THM-0097's window, and that the snapshot is the operator's intent is nobody's
+claim (THM-0098's scope).
+
+The Response-slot sentence restates THM-0066 and adds nothing about where the response
+verification key came from — that is THM-0082's. Nothing about the verifier's use of the
+answer, transport binding, audience, replay or dispatch. Executable and structural, class V0:
+the composition is measured by source controls and a wiring battery over a scripted tier, and
+the conjuncts about the tier's and the document's answers are the premises named below.
+"""
+owner = "proxy.serving_trust_seam"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.serving_trust_seam"]
+depends_on = ["THM-0066", "THM-0097", "THM-0098"]

@@ -136,6 +136,7 @@ any of them is closed.
 | THM-0096 | The runtime installs exactly the continuation capability its plan names | proxy.continuation_materialization | unit://proxy.continuation_installation, unit://proxy.continuation_materialization, unit://proxy.continuation_materialization_shared | live |
 | THM-0097 | A replica serves no request-signer binding outside its snapshot's authority window | proxy.trust_plane_runtime | unit://proxy.trust_plane_runtime | live |
 | THM-0098 | A replica's trust snapshot is the slot-wise interpretation of one accepted trust document | proxy.trust_document_interpretation | unit://proxy.trust_document_interpretation, unit://proxy.trust_plane_runtime | live |
+| THM-0099 | The production actor resolver answers its Request-slot selector from the deployment's trust document | proxy.serving_trust_seam | unit://proxy.serving_trust_seam | live |
 
 ## Claims in full
 
@@ -947,7 +948,7 @@ any of them is closed.
 
 **Review requirement.** Owner security-specification review
 
-**Depends on.** THM-0003, THM-0004, THM-0005, THM-0006, THM-0009, THM-0015, THM-0034, THM-0040, THM-0043, THM-0045, THM-0050, THM-0051, THM-0052, THM-0053, THM-0066, THM-0079, THM-0080, THM-0083, THM-0092, THM-0093, THM-0097, THM-0098
+**Depends on.** THM-0003, THM-0004, THM-0005, THM-0006, THM-0009, THM-0015, THM-0034, THM-0040, THM-0043, THM-0045, THM-0050, THM-0051, THM-0052, THM-0053, THM-0066, THM-0079, THM-0080, THM-0083, THM-0092, THM-0093, THM-0097, THM-0098, THM-0099
 
 ### THM-0075 — No unearned response attribution
 
@@ -1212,3 +1213,15 @@ any of them is closed.
 **Scope — what this does NOT establish.** ONE replica. The BYTES are the input authority: nothing here says which path was read, who wrote the file, or that its contents are the operator's intent — the locator belongs to `proxy.trust_configuration_state`, and reading the file is the caller's. Nothing about WHEN a change to the bytes reaches the snapshot, or what is served meanwhile: that is the reload cadence and THM-0097. The authorization-issuer set the evaluator installs is read ONCE at startup from its own read of the same path and is not refreshed; this claim covers the projection, not the installation, and does not say that the evaluator's read and the trust plane's read saw the same bytes. Nothing about a key beyond decodability. Nothing about which slot the serving seam consults first — the resolver holds every written coordinate, and that a Request-slot lookup goes through the request-signer map before the resolver is `proxy.serving_trust_seam`'s. Nothing cross-replica. The one-parse correspondence between the snapshot's two halves is structural (two projections of one parsed value in `trust_plane/snapshot.rs`), not mutation-probed: a second parse of the same bytes is indistinguishable from the first. Executable and structural, class V0.
 
 **Review requirement.** Owner security-specification review
+
+### THM-0099 — The production actor resolver answers its Request-slot selector from the deployment's trust document
+
+**Statement.** For one replica running the actor resolver the composition root builds, and for every `(key_id, Request)` selector the verifier queries: A `Resolved` answer carries `subject` equal to the signer the replica's CURRENT materialized trust snapshot binds `key_id` to — the one signer an accepted trust document enrolled that `key_id` for in the request slot — and `verification_key` equal to a key a snapshot within the replica's authority window admitted for exactly that `(subject, key_id)` coordinate; its `slot` is `Request`, its `role` is `client`, and its `keyid` is the queried `key_id`. A `key_id` the current snapshot does not bind — never enrolled, enrolled for another slot only, the deployment's own response kid, or removed by a reload that has landed — yields `NotTrusted` without the tier being consulted; a pair the tier will not serve yields `NotTrusted`; a tier that cannot answer yields `Unavailable`. No `Resolved` answer is produced in any of those cases. For the `Response` slot the resolver answers only the deployment's own response kid, with the deployment's own identity and response verification key, and consults no trust document at all.
+
+**Security consequence.** ASM-0029's Request-slot half, instantiated: for the resolver the deployment actually runs, "the identity and verification key this deployment has authorized to sign under that keyid in that slot" IS the enrolment the deployment's trust document states, as interpreted by THM-0098 and served within the window THM-0097 bounds. A request signer cannot be resolved to an identity the document did not bind to its `key_id`, nor verified under a key the document did not enrol for that identity, and a key the document never enrolled for the request slot — an authorization authority, the deployment's own issuer key — cannot become a client credential through this seam. The premise stays a premise for the verifier, which accepts any resolver; what this states is that the resolver installed satisfies it.
+
+**Scope — what this does NOT establish.** ONE replica, the PRODUCTION composition only: `build_actor_resolver` over the reloading signer directory and the revocation-tier resolver, as THM-0066 establishes the serving path installs. Nothing about a resolver a test or another program injects; ASM-0029 remains the verifier's premise for those and is not withdrawn, narrowed or reworded here. The two halves of a `Resolved` answer may come from different snapshots inside the authority window: `subject` is read from the current snapshot's signer map on every call, while the key may be a cached answer an earlier snapshot gave for the same `(subject, key_id)` pair within `T` (THM-0097). Both are the document's enrolment for that pair; which document is the one in force is THM-0097's window, and that the snapshot is the operator's intent is nobody's claim (THM-0098's scope). The Response-slot sentence restates THM-0066 and adds nothing about where the response verification key came from — that is THM-0082's. Nothing about the verifier's use of the answer, transport binding, audience, replay or dispatch. Executable and structural, class V0: the composition is measured by source controls and a wiring battery over a scripted tier, and the conjuncts about the tier's and the document's answers are the premises named below.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0066, THM-0097, THM-0098

@@ -2837,7 +2837,12 @@ paths = [
   "mcp-re-proxy/src/http_profile_serve/request_admission.rs",
 ]
 exported_contracts = []
-evidence = ["test://proxy/trust/serving_seam_wiring"]
+evidence = [
+  "test://proxy/trust/serving_seam_wiring",
+  # THM-0099's two seam conjuncts — the subject comes from the directory, an unbound kid
+  # never reaches the tier — are load-bearing only if a control notices. M105-M106 ask.
+  "mutation://proxy/trust/serving_seam_wiring",
+]
 # Two halves, and the second is the one the first cannot say. The wiring battery pins what
 # the seam DOES — whatever the tier decides, the Request slot obeys — taking the seam as
 # given. The composition controls pin that the seam the serving path runs is the one built

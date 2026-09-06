@@ -84,7 +84,7 @@ not an omission to hide.
 | proxy.retention_commitment | V0 | THM-0088 | 0 |
 | proxy.runtime_lifecycle | V0 | THM-0012 | 0 |
 | proxy.serving_identity_provenance | V0 | THM-0080 | 0 |
-| proxy.serving_trust_seam | V0 | THM-0066 | 0 |
+| proxy.serving_trust_seam | V0 | THM-0066, THM-0099 | 0 |
 | proxy.signing_credential_provenance | V0 | THM-0082 | 0 |
 | proxy.signing_role_separation | V0 | THM-0073 | 0 |
 | proxy.tls_listener_state | V0 | THM-0048, THM-0054 | 0 |

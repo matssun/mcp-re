@@ -2807,3 +2807,37 @@ struct RawEntry {
 expect_red = [
   "lib#trust_document::tests::an_unknown_member_is_refused_rather_than_ignored",
 ]
+
+[[probe]]
+id = "M105-the-subject-is-the-directorys-signer"
+unit = "proxy.serving_trust_seam"
+theorem = "THM-0099"
+conjunct = "a Resolved Request-slot actor's subject is the signer the current snapshot binds the key_id to, not a value derived from the request"
+path = "mcp-re-proxy/src/app.rs"
+anchor = """
+                    subject: signer,
+"""
+weakening = """
+                    subject: kid.to_string(),
+"""
+expect_red = [
+  "tests/integration#revocation_serving_wiring_test::active_binding_resolves_the_key_the_tier_returns",
+]
+
+[[probe]]
+id = "M106-an-unbound-kid-never-reaches-the-tier"
+unit = "proxy.serving_trust_seam"
+theorem = "THM-0099"
+conjunct = "a key_id the current snapshot does not bind yields NotTrusted without the tier being consulted"
+path = "mcp-re-proxy/src/app.rs"
+anchor = """
+            let Some(signer) = signers.signer_for(kid) else {
+                return ResolverOutcome::NotTrusted;
+            };
+"""
+weakening = """
+            let signer = signers.signer_for(kid).unwrap_or_default();
+"""
+expect_red = [
+  "tests/integration#revocation_serving_wiring_test::slot_discipline_holds",
+]
