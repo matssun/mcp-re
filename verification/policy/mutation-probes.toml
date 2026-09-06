@@ -3088,3 +3088,58 @@ expect_red = [
   "tests/async_drain_test#in_flight_request_completes_during_drain_zero_abandoned",
   "tests/async_drain_test#saturated_drain_completes_all_in_flight_zero_abandoned",
 ]
+
+[[probe]]
+id = "M130-an-empty-server-ca-bundle-is-refused"
+unit = "client.transport_server_identity"
+theorem = "THM-0109"
+conjunct = "an empty server-CA bundle is refused at construction — a config built over no roots authenticates nothing and would otherwise look like a working deployment until the first handshake"
+path = "mcp-re-transport/src/tls_config.rs"
+anchor = """
+        if server_ca.is_empty() {
+            return Err(TransportError::EmptyServerCa);
+        }
+"""
+weakening = """
+        if false {
+            return Err(TransportError::EmptyServerCa);
+        }
+"""
+expect_red = [
+  "tests/mtls_client_test#empty_server_ca_is_rejected_fail_closed",
+]
+
+[[probe]]
+id = "M131-a-control-character-in-a-header-is-refused-not-stripped"
+unit = "client.transport_message_hygiene"
+theorem = "THM-0110"
+conjunct = "a caller-supplied header value carrying CR or LF is REFUSED, never sanitised — stripping produces a request the caller did not describe and sends it anyway"
+path = "mcp-re-transport/src/request.rs"
+# LITERAL strings: the anchor contains Rust byte escapes (b'\r'), and a TOML basic string
+# would turn them into the control characters themselves before the lane ever saw the text.
+anchor = '''
+            .any(|b| b == b'\r' || b == b'\n' || b == 0 || (b < 0x20 && b != b'\t') || b == 0x7F)
+'''
+weakening = '''
+            .any(|_b| false)
+'''
+expect_red = [
+  "lib#request::tests::a_crlf_in_a_header_value_is_rejected_not_sanitised",
+  "lib#request::tests::a_bare_lf_in_a_header_value_is_rejected",
+]
+
+[[probe]]
+id = "M132-a-short-body-is-an-error-not-a-shorter-body"
+unit = "client.transport_message_hygiene"
+theorem = "THM-0110"
+conjunct = "a body shorter than the content-length it declared is an ERROR, never a shorter body the caller believes is complete"
+path = "mcp-re-transport/src/response.rs"
+anchor = """
+        if declared_len != body_len {
+"""
+weakening = """
+        if false {
+"""
+expect_red = [
+  "lib#response::framing_tests::a_truncated_body_is_rejected_not_silently_shortened",
+]

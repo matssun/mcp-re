@@ -4005,3 +4005,92 @@ so two substitutable tail hops compared equal and correspondence reported a bind
 not have. Neither half states the claim alone, and putting the identity under the comparison
 would let a future curation of the digest pass as a property of the comparison.
 """
+
+
+# ---------------------------------------------------------------------------
+# The client mTLS transport — MCPS-053 / MCPS-071, registered 2026-09-06
+# ---------------------------------------------------------------------------
+#
+# Item 5 of the ranked remainder listed `mcp-re-transport` as a wholly unowned crate. The
+# first measurement of it was WRONG and is corrected here: counting inline `#[cfg(test)]`
+# blocks made it look like an EVIDENCE gap (five of nine source files have none). It is not.
+# The evidence lives in `tests/` — five guards in `mtls_client_test.rs`, four bounds in
+# `dos_hardening_test.rs`, and a fault-injection lane whose Bazel targets are explicitly NOT
+# `manual`, so they run on every `bazel test //...`. It is an OWNERSHIP gap over evidence that
+# already exists, like the keysources.
+#
+# TWO UNITS, because the crate holds two authorities. Whom this client trusts to be the proxy
+# is not the same question as what it is willing to read off the wire, and one unit answering
+# both would have an "and" in its answer to ADR-MCPRE-061 §8 question 1.
+
+[[unit]]
+id = "client.transport_server_identity"
+class = "V0"
+description = "Whom the client transport trusts to be the proxy: a standard WebPkiServerVerifier over ONLY the configured server CA, so a server certificate that is untrusted, carries the wrong identity, or is expired is rejected during the handshake and the request body is never sent — and an empty server-CA bundle is refused at construction rather than producing a config that trusts nothing and says so at handshake time."
+paths = [
+  "mcp-re-transport/src/lib.rs",
+  "mcp-re-transport/src/tls_config.rs",
+  "mcp-re-transport/src/client.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://client/transport/server_identity",
+  # The empty-bundle refusal is a deletable line and the only conjunct here a probe can
+  # reach in this lane; the other three are demonstrated load-bearing by a SEPARATE feature
+  # lane, which the theorem's scope names rather than this unit citing. M130 asks.
+  "mutation://client/transport/server_identity",
+]
+tested_symbols = [
+  "tests/mtls_client_test#untrusted_server_cert_is_rejected",
+  "tests/mtls_client_test#wrong_server_identity_is_rejected",
+  "tests/mtls_client_test#expired_server_cert_is_rejected",
+  "tests/mtls_client_test#empty_server_ca_is_rejected_fail_closed",
+  "tests/mtls_client_test#trusted_server_and_client_round_trip_succeeds",
+]
+
+[[unit]]
+id = "client.transport_message_hygiene"
+class = "V0"
+description = "What the client transport is willing to put on the wire and read back off it: a request whose header values carry CR or LF is refused rather than sanitised, transport-owned headers cannot be supplied by a caller, and a response is rejected rather than silently repaired when its framing is ambiguous — obs-fold, a bare LF in the header block, transfer-encoding, a duplicated content-length, a missing terminator, or a body shorter than the length it declared. Reads are bounded by a byte ceiling and by an aggregate deadline, so neither a stalled peer nor a trickling one is unbounded."
+paths = [
+  "mcp-re-transport/src/request.rs",
+  "mcp-re-transport/src/response.rs",
+  "mcp-re-transport/src/remote.rs",
+  "mcp-re-transport/src/limits.rs",
+  "mcp-re-transport/src/io_errors.rs",
+  "mcp-re-transport/src/exchange.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://client/transport/message_hygiene",
+  # Two conjuncts a green battery held while neither was load-bearing: that a CR/LF in a
+  # header value is REFUSED rather than stripped, and that a short body is an error rather
+  # than a shorter body. M131-M132 ask.
+  "mutation://client/transport/message_hygiene",
+]
+tested_symbols = [
+  "lib#remote::tests::a_relative_target_uri_fails_closed",
+  "lib#remote::tests::origin_form_keeps_the_path_and_query",
+  "lib#remote::tests::origin_form_of_a_bare_authority_is_root",
+  "lib#request::tests::a_bare_lf_in_a_header_value_is_rejected",
+  "lib#request::tests::a_crlf_in_a_header_value_is_rejected_not_sanitised",
+  "lib#request::tests::a_non_token_method_or_header_name_is_rejected",
+  "lib#request::tests::a_request_target_with_a_space_is_rejected",
+  "lib#request::tests::caller_headers_are_emitted_verbatim",
+  "lib#request::tests::transport_owned_headers_are_refused",
+  "lib#response::framing_tests::a_bare_lf_in_the_header_block_is_rejected",
+  "lib#response::framing_tests::a_bodyless_202_is_readable",
+  "lib#response::framing_tests::a_header_line_without_a_colon_is_rejected",
+  "lib#response::framing_tests::a_non_http_status_line_is_rejected",
+  "lib#response::framing_tests::a_reason_phrase_is_optional",
+  "lib#response::framing_tests::a_response_with_no_header_terminator_is_rejected",
+  "lib#response::framing_tests::a_truncated_body_is_rejected_not_silently_shortened",
+  "lib#response::framing_tests::an_obs_fold_continuation_is_rejected",
+  "lib#response::framing_tests::duplicate_content_length_is_rejected",
+  "lib#response::framing_tests::status_and_headers_are_preserved",
+  "lib#response::framing_tests::transfer_encoding_is_rejected",
+  "tests/dos_hardening_test#handshake_byte_trickle_aborts_at_aggregate_deadline",
+  "tests/dos_hardening_test#handshake_stall_times_out_not_hangs",
+  "tests/dos_hardening_test#oversized_response_is_rejected_not_oom",
+  "tests/dos_hardening_test#slow_trickle_response_aborts_at_aggregate_deadline",
+]

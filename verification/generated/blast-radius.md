@@ -26,6 +26,8 @@ attestations this view cannot see.
 | unit://client.local_ingress_authority | source, contracts or evidence | THM-0091 | _no consumer_ |
 | unit://client.proxy_request_correspondence | source, contracts or evidence | THM-0084 | _no consumer_ |
 | unit://client.response_acceptance | source, contracts or evidence | THM-0058, THM-0059, THM-0076 | _no consumer_ |
+| unit://client.transport_message_hygiene | source, contracts or evidence | THM-0110 | _no consumer_ |
+| unit://client.transport_server_identity | source, contracts or evidence | THM-0109 | _no consumer_ |
 | unit://client.trust_manifest_lifecycle | source, contracts or evidence | THM-0057, THM-0058 | _no consumer_ |
 | unit://conformance.retained_corpus | source, contracts or evidence | THM-0042 | http_profile.scitt_retained_correspondence (PROOF_DEPENDENCY) |
 | unit://core.time_rfc3339 | source, contracts or evidence | THM-0002 | _no consumer_ |
@@ -211,6 +213,8 @@ attestations this view cannot see.
 | THM-0102 | statement, consequence, scope or review requirement | specification review | THM-0077 |
 | THM-0103 | statement, consequence, scope or review requirement | specification review | THM-0048 |
 | THM-0104 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
+| THM-0109 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
+| THM-0110 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 
 ## Assumptions
 

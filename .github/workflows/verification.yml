@@ -51,6 +51,12 @@ on:
       # Issue #744: the two store-materialization owners, sibling authorities that had
       # no unit between them.
       - "mcp-re-proxy/src/replay_plane/**"
+      # The client mTLS transport (THM-0109 / THM-0110). Whole crate, sources and the two
+      # integration batteries alike: `mtls_client_test.rs` and `dos_hardening_test.rs` ARE
+      # the evidence for both units, so a change to either must re-trigger them.
+      - "mcp-re-transport/src/**"
+      - "mcp-re-transport/tests/**"
+      - "mcp-re-transport/Cargo.toml"
       - "mcp-re-proxy/src/continuation_store/**"
       - "mcp-re-proxy/src/redis_continuation_store.rs"
       # Issue #744, D1b′: the continuation MATERIALIZATION owners — which capability the
@@ -263,6 +269,12 @@ on:
       # Issue #744: the two store-materialization owners, sibling authorities that had
       # no unit between them.
       - "mcp-re-proxy/src/replay_plane/**"
+      # The client mTLS transport (THM-0109 / THM-0110). Whole crate, sources and the two
+      # integration batteries alike: `mtls_client_test.rs` and `dos_hardening_test.rs` ARE
+      # the evidence for both units, so a change to either must re-trigger them.
+      - "mcp-re-transport/src/**"
+      - "mcp-re-transport/tests/**"
+      - "mcp-re-transport/Cargo.toml"
       - "mcp-re-proxy/src/continuation_store/**"
       - "mcp-re-proxy/src/redis_continuation_store.rs"
       # Issue #744, D1b′: the continuation MATERIALIZATION owners — which capability the
