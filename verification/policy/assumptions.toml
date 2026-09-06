@@ -1204,9 +1204,10 @@ tool_specific_mechanism = "foreign-dependency"
 # advertises over.
 # ---------------------------------------------------------------------------
 #
-# Registered narrowly and for one reason. `proxy.trust_plane_runtime`'s claim is ONE
-# replica wide and needs no premise: what a replica does with a value its reader returned is
-# local. But the code PRINTS a fleet statement — "the trust cache flushes within one poll
+# Registered narrowly and for one reason. `proxy.trust_plane_runtime`'s claim (THM-0097) is
+# ONE replica wide and needs no premise: what a replica does with an event it was handed is
+# local, which is why the reader that produces the event is a separate unit,
+# `proxy.trust_epoch_source`, and this premise is scoped to THAT one. But the code PRINTS a fleet statement — "the trust cache flushes within one poll
 # interval of an epoch advance" — and the statement is true of a fleet only if every
 # replica's read returns the advanced value. That is what a `GET` on another connection
 # means, and it is the store's fact, not MCP-RE's. Consumed by no theorem today; the census
@@ -1244,7 +1245,7 @@ a regression rather than flushing, and a premise about what one plane's read mea
 be read as an ordering between the two planes' observations, which nothing in the tree
 establishes.
 """
-scope = ["unit://proxy.trust_plane_runtime", "boundary://boundary.shared_state_store"]
+scope = ["unit://proxy.trust_epoch_source", "boundary://boundary.shared_state_store"]
 owner = "mats@sundvall.name"
 introduced_by = "v0.17 trust-plane ownership slice (verification/reviews/packets/trust-plane-ownership-2026-09-05.md)"
 review_requirement = "Owner review; any change to the epoch reader, to the poll-interval bound the startup line states, or to the store topology the deployment documentation admits for the epoch key."

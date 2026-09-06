@@ -106,6 +106,7 @@ graph BT
     THM_0092["THM-0092<br/>A request whose replay state was not established does not dispatch"]
     THM_0093["THM-0093<br/>An answer leg that needs a continuation does not proceed unbound"]
     THM_0096["THM-0096<br/>The runtime installs exactly the continuation capability its plan names"]
+    THM_0097["THM-0097<br/>A replica serves no request-signer binding outside its snapshot's authority window"]
     THM_0007 --> THM_0008
     THM_0010 --> THM_0009
     THM_0001 --> THM_0014
@@ -185,6 +186,7 @@ graph BT
     THM_0083 --> THM_0074
     THM_0092 --> THM_0074
     THM_0093 --> THM_0074
+    THM_0097 --> THM_0074
     THM_0022 --> THM_0075
     THM_0062 --> THM_0075
     THM_0063 --> THM_0075

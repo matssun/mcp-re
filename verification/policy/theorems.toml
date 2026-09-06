@@ -3320,6 +3320,13 @@ depends_on = [
   # duplicates the D1 leaves above, which say only which tier the serving path holds.
   "THM-0092",
   "THM-0093",
+  # v0.17 trust-plane slice. The obligation "actor resolution against the MATERIALIZED trust
+  # authority" is stated in this root's own scope and named by THM-0066, whose scope stops
+  # at the seam: what the tier's answer IS "is the tier's". Nothing stated the tier's half —
+  # that a served binding is the snapshot's answer or a cached one inside its deadline, and
+  # that an unmaintained snapshot serves nothing. Refusal-direction, one replica, the same
+  # shape as the two D2 leaves above it. Composition happens HERE, not in THM-0066.
+  "THM-0097",
 ]
 
 [[theorem]]
@@ -4575,4 +4582,76 @@ supported_by = [
   "unit://proxy.continuation_materialization_shared",
   "unit://proxy.continuation_installation",
 ]
+depends_on = []
+
+[[theorem]]
+id = "THM-0097"
+title = "A replica serves no request-signer binding outside its snapshot's authority window"
+statement = """
+For one replica, and for every Request-slot `(signer, key_id)` its trust plane's resolver is
+asked about:
+
+A verification key the resolver returns is either the answer the replica's CURRENT
+materialized trust snapshot gave on this resolution — always under the live tier, and under
+the bounded-cache and push tiers whenever no serving cache entry exists for the pair — or a
+cached answer that the snapshot in force at caching time gave, served only while the entry's
+authority deadline has not been reached. The deadline is the cache's clock reading at first
+caching plus the declared window `T`.
+
+An invalidation — a per-key eviction or a coarse flush delivered through the plane's
+`InvalidationChannel` — strips a cached entry's authority before the next lookup, and the
+entry that replaces it on re-resolution inherits the earlier deadline as a ceiling. No
+eviction, flush, or re-resolution moves a pair's deadline later than the instant it was first
+cached plus `T`; at or past that deadline the cache serves nothing and the snapshot is
+consulted.
+
+`Unavailable` from the snapshot is never cached, and is the resolver's answer whenever no
+serving entry exists and the snapshot cannot answer.
+
+A snapshot that has stopped being maintained — the reload exhausted its consecutive-failure
+budget, the reload worker died or observed its halt, or the owning plane was dropped — yields
+no binding: the resolver answers `Unavailable`, outside every cache. The two terminal cases
+are irreversible; a successful reload landing afterwards does not reopen the resolver.
+"""
+security_consequence = """
+A key that the replica's snapshot no longer admits — removed, or marked revoked — cannot keep
+verifying requests on that replica for longer than `T` past the last instant the snapshot
+admitted it, and no operation on the cache can revive it or extend that exposure: an
+operator's flush can only shorten it. A replica whose snapshot has gone unmaintained refuses
+rather than becoming an indefinitely valid frozen verifier, so a reload that silently stopped
+cannot turn `--trust` back into a boot-time map. An outage of the snapshot is reported, never
+softened into a served key.
+"""
+scope = """
+ONE replica. The materialized snapshot is an INPUT authority: nothing here says what it
+represents, that `trust_document.rs` parsed the operator's document correctly, that it
+matches the operator's intent, or that it matches any other replica's snapshot. Nothing here
+says how fast a change to `--trust` reaches the snapshot — that is the reload cadence `R`,
+an operator setting, and the delivered window `R + T` printed at startup is that cadence
+composed with this claim, not this claim.
+
+Nothing about the epoch counter. Not that an `INCR` is observed, not that it is observed
+within any interval, not that an observed change is a revocation: over an unchanged snapshot
+a flush re-caches the same key under the same deadline. How a flush event is PRODUCED from a
+read of the shared store is `proxy.trust_epoch_source`'s, carries ASM-0044, and is outside
+this closure — this claim is true whether or not any other connection ever sees the write.
+Nothing about Redis, etcd, or any shared store; nothing about cross-replica convergence or a
+common trust-document state; and no ordering between a request-cache invalidation and the
+delegated-signing plane's retirement of its epoch, which reads the same counter for a
+different decision and is not related to this one by anything in the tree.
+
+`T` is measured against the clock the cache was given. Production injects the system clock,
+so the cache crosses `boundary.clock`; no agreement with any peer's clock is claimed, and a
+reading with no representable Unix instant closes every window rather than opening one.
+
+Not a liveness claim: that an admitted key IS served is not stated. What is cached
+NEGATIVELY — a revoked or unknown pair, and for how long — is an availability fact and is not
+part of this claim, which is about the keys that are served.
+
+Executable and structural, class V0: a battery over production behaviour with each conjunct
+mutation-probed, not a machine-checked proof.
+"""
+owner = "proxy.trust_plane_runtime"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.trust_plane_runtime"]
 depends_on = []

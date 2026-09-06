@@ -3595,7 +3595,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.trust_plane_runtime"
 class = "V0"
-description = "What ONE replica's request-trust resolver may answer under its local trust state: a cached positive binding answers for at most T and never past the deadline it was first cached under; a change of the shared epoch this replica OBSERVES strips every cached binding's authority before the next lookup, so the next answer is the local store snapshot's; a store that has stopped being maintained, and a store that cannot answer past T, refuse with Unavailable rather than serving; and no step — flush, eviction, source outage, poller death, reload — can widen what is served. Says nothing about what the counter's value means to any other replica, and nothing about how the trust document reaches this one."
+description = "What ONE replica's request-trust resolver may answer under its local trust state, taking the materialized snapshot as an input authority: a cached positive binding answers for at most T and never past the deadline it was first cached under; an invalidation event delivered to the plane — a per-key eviction or a coarse flush — strips the cached binding's authority before the next lookup, so the next answer is the local snapshot's; a snapshot that has stopped being maintained, and a snapshot that cannot answer past T, refuse with Unavailable rather than serving; and no step — flush, eviction, outage, reload — can widen what is served. How an event is PRODUCED from the shared counter is `proxy.trust_epoch_source`'s; what the snapshot represents, and how the trust document reaches this replica, are nobody's claim here."
 paths = [
   # The plane: what it owns, what it hands out, and the terminal transition its `Drop`
   # makes. `fleet_trust_bound` lives here too — the operator-facing bound is part of what
@@ -3621,9 +3621,12 @@ paths = [
   "mcp-re-proxy/src/trust_plane/snapshot.rs",
   # The delivered window R + T, stated as arithmetic. Claim surface, and measured as one.
   "mcp-re-proxy/src/trust_plane/delivered_window.rs",
-  # The epoch→event source, its poller body and supervision, and the Redis reader whose
-  # absent-key refusal is the one place a foreign read's MEANING is decided locally.
-  "mcp-re-proxy/src/trust_epoch.rs",
+  # NOT `trust_epoch.rs`: the epoch→event source is `proxy.trust_epoch_source`, split out
+  # on 2026-09-05 when THM-0097 was registered. Assumption reach is derived scope → unit →
+  # theorem, so a unit holding the reader would carry ASM-0044 into a theorem that is true
+  # without any cross-connection propagation. The seam between the two is
+  # `InvalidationChannel`, which stays here: this unit owns the REACTION to an event, the
+  # other owns its production from a foreign read.
   # The atomically swapped snapshot every tier resolves against, and the read-only signer
   # directory. "The next answer is the local store's" names this type.
   "mcp-re-proxy/src/reloading_trust.rs",
@@ -3652,7 +3655,9 @@ evidence = [
 ]
 # WHAT IS AND IS NOT IN THE BATTERY.
 #
-# Every member is an in-process control over ONE replica. The lane that drives a real Redis
+# Every member is an in-process control over ONE replica, driving the plane through the
+# `InvalidationChannel` seam with the in-memory reference channel — the theorem is about the
+# reaction, and the reaction is the same whichever channel delivers the event. The lane that drives a real Redis
 # — `tests/integration_ext/redis_trust_epoch_e2e_test.rs` — is deliberately NOT a member:
 # it self-skips by returning `ok` when no store is provisioned, so a `test://` member naming
 # it would read as PASS having measured nothing (the standing hazard, ADR-MCPRE-061 §2
@@ -3664,33 +3669,6 @@ evidence = [
 # this unit at all: it exercises the SIGNING-side epoch label (a credential minted under the
 # pre-bump label is refused by a sibling), which is the other consumer of the counter.
 tested_symbols = [
-  # --- the source: what one read does to this replica ---
-  "lib#trust_epoch::tests::first_poll_establishes_baseline_without_flush",
-  "lib#trust_epoch::tests::epoch_advance_emits_a_single_flush_all",
-  # Rollback is not representable on this side: any change flushes, and a flush can only
-  # tighten. Without this, `!=` may become `>` and a regressed store silently adopts.
-  "lib#trust_epoch::tests::a_regressed_counter_flushes_rather_than_being_adopted_silently",
-  "lib#trust_epoch::tests::read_error_marks_unhealthy_and_emits_nothing",
-  "lib#trust_epoch::tests::recovery_after_outage_catches_an_epoch_that_advanced_during_it",
-  "lib#trust_epoch::tests::draining_does_not_read_the_store",
-  "lib#trust_epoch::tests::the_request_path_does_not_wait_on_a_stalled_epoch_read",
-  "lib#trust_epoch::tests::a_source_that_stops_being_polled_stops_reporting_healthy",
-  "lib#trust_epoch::tests::a_poller_that_never_ran_is_not_healthy",
-  "lib#trust_epoch::tests::a_poisoned_queue_still_delivers_the_flush",
-  # THE POLLER. The only controls that run `trust_epoch_poller_body`, which is what makes
-  # "flush within one poll interval" a fact about the deployment rather than about
-  # `poll_once` driven by hand.
-  "lib#trust_epoch::tests::the_poller_body_reads_at_once_then_on_its_cadence_and_stops_when_asked",
-  "lib#trust_epoch::tests::a_poller_whose_read_panics_reports_the_source_unhealthy_at_once",
-  # THE COMPOSITION, in process: the production source type under the production cache
-  # type through the production adapter. Advance → the next answer is the store's; outage →
-  # nothing flushes and the deadline governs. Before these, only the Redis-gated e2e
-  # composed the two.
-  "lib#trust_epoch::tests::an_observed_advance_makes_the_next_lookup_the_stores_answer",
-  "lib#trust_epoch::tests::a_source_outage_flushes_nothing_and_the_deadline_still_governs",
-  # The reader's one local rule about a foreign read's meaning. Exists only under
-  # `redis_replay`, which is why `test_features` names it.
-  "lib#trust_epoch::tests::an_absent_epoch_key_is_a_read_failure_not_epoch_zero",
   # --- Tier 3 over the seam ---
   "lib#trust_plane::push_trust::tests::pushed_invalidation_rejects_the_key_before_t_elapses",
   "lib#trust_plane::push_trust::tests::flush_all_evicts_every_cached_binding_forcing_re_resolve",
@@ -3739,6 +3717,62 @@ tested_symbols = [
   "lib#trust_plane::delivered_window::tests::a_store_that_is_never_re_read_delivers_an_unbounded_window",
   "lib#trust_plane::store_cadence_tests::the_push_tier_bound_states_the_poll_interval_not_the_next_request",
   "lib#trust_plane::store_cadence_tests::a_push_tier_without_a_source_reports_the_fallback_only",
+]
+# No `test_features`: nothing in this closure is feature-gated. The reader's controls are
+# `proxy.trust_epoch_source`'s, which names `redis_replay`.
+
+[[unit]]
+id = "proxy.trust_epoch_source"
+class = "V0"
+description = "How ONE replica turns reads of the shared trust-epoch counter into invalidation events: the first successful read is a baseline and emits nothing; any later read that differs — a regression included — queues one coarse flush and moves the baseline; a failed read emits nothing, marks the source unhealthy and holds the baseline, so an advance missed during an outage is caught on recovery; the poller reads at once and then on its cadence, a dead poller reports unhealthy, and the request path drains the queue without waiting on any read. An ABSENT key is a read failure, never epoch 0."
+paths = [
+  # The source, the poller body and its supervision, the channel adapter, and the Redis
+  # reader. One file, deliberately: the reader's absent-key rule is the one place a
+  # foreign read's MEANING is decided locally, and it belongs beside the comparison that
+  # consumes it.
+  "mcp-re-proxy/src/trust_epoch.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://proxy/trust_epoch_source/one_read_one_event",
+  "mutation://proxy/trust_epoch_source/one_read_one_event",
+]
+# THIS is the unit ASM-0044 is scoped to. The fleet-shaped sentence the proxy prints —
+# "the trust cache flushes within one poll interval of an epoch advance" — is true of a
+# fleet only if every replica's read returns the advanced value, and that is the store's
+# fact. Splitting the source from the plane is what keeps that premise off THM-0097, a
+# claim about what a replica does with an event it was handed, which is true whether or
+# not any other connection ever sees the write.
+#
+# The e2e in `tests/integration_ext/redis_trust_epoch_e2e_test.rs` is NOT a member, for
+# the reason recorded on `proxy.trust_plane_runtime`: it self-skips green without a store.
+tested_symbols = [
+  "lib#trust_epoch::tests::first_poll_establishes_baseline_without_flush",
+  "lib#trust_epoch::tests::epoch_advance_emits_a_single_flush_all",
+  # Rollback is not representable on this side: any change flushes, and a flush can only
+  # tighten. Without this, `!=` may become `>` and a regressed store silently adopts.
+  "lib#trust_epoch::tests::a_regressed_counter_flushes_rather_than_being_adopted_silently",
+  "lib#trust_epoch::tests::read_error_marks_unhealthy_and_emits_nothing",
+  "lib#trust_epoch::tests::recovery_after_outage_catches_an_epoch_that_advanced_during_it",
+  "lib#trust_epoch::tests::draining_does_not_read_the_store",
+  "lib#trust_epoch::tests::the_request_path_does_not_wait_on_a_stalled_epoch_read",
+  "lib#trust_epoch::tests::a_source_that_stops_being_polled_stops_reporting_healthy",
+  "lib#trust_epoch::tests::a_poller_that_never_ran_is_not_healthy",
+  "lib#trust_epoch::tests::a_poisoned_queue_still_delivers_the_flush",
+  # THE POLLER. The only controls that run `trust_epoch_poller_body`, which is what makes
+  # "flush within one poll interval" a fact about the deployment rather than about
+  # `poll_once` driven by hand.
+  "lib#trust_epoch::tests::the_poller_body_reads_at_once_then_on_its_cadence_and_stops_when_asked",
+  "lib#trust_epoch::tests::a_poller_whose_read_panics_reports_the_source_unhealthy_at_once",
+  # THE COMPOSITION, in process: this source under the production cache type through the
+  # production adapter. Advance → the next answer is the store's; outage → nothing flushes
+  # and the deadline governs. Listed here because the source is what these drive; the
+  # cache's half of each is a member of `proxy.trust_plane_runtime` in its own right.
+  "lib#trust_epoch::tests::an_observed_advance_makes_the_next_lookup_the_stores_answer",
+  "lib#trust_epoch::tests::a_source_outage_flushes_nothing_and_the_deadline_still_governs",
+  # The reader's one local rule about a foreign read's meaning. Exists only under
+  # `redis_replay`, which is why `test_features` names it.
+  "lib#trust_epoch::tests::an_absent_epoch_key_is_a_read_failure_not_epoch_zero",
 ]
 # The Redis reader and its two controls exist only under this feature. Named so the
 # fingerprint says the battery measured the crate that carries the networked source, not
