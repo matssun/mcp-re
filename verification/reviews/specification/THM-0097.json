@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:a34375425f7a0e724f5014291e2721d71c5f6fdb77a68df55d659117416d9cc2",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0097",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "OWNER SPECIFICATION-REVIEW RULING OF 2026-09-06, recorded by the implementing agent as a MECHANICAL TRANSCRIPTION. The review authority is the owner's ruling; the agent wrote the file and did not approve the theorem. The owner named this exact reviewed_fingerprint in the ruling (the value reported by #816), and it was recomputed on the tree before this record was written and matches. The reviewed tree is #816 head 589d4c4a, which contains main 3b062e34 as an ancestor, so the branch tip and the merge tree are the same tree. APPROVED AS WRITTEN: the proposition, security consequence, scope, ownership split and assumption closure. The theorem is correctly bounded to ONE replica. The owner approved in particular that: the materialized trust snapshot is an INPUT AUTHORITY; cached positive authority has a TIGHTEN-ONLY deadline; invalidation cannot extend that deadline; unavailable state is not converted into a served key; an unmaintained snapshot fails closed; terminal stale state cannot be revived; the theorem says NOTHING about epoch propagation, shared-store behaviour, cross-replica convergence, common trust-document state, parser correctness or operator intent; and the theorem is V0 executable/structural assurance, not represented as machine-checked proof. THE UNIT SPLIT IS ALSO APPROVED: trust_epoch.rs lives in unit://proxy.trust_epoch_source, ASM-0044 belongs there, and ASM-0044 must not enter THM-0097 merely through unit closure. This theorem's closure names no assumption; it crosses boundary.clock through the cache's declared clock seam only. The census record is verification/reviews/packets/trust-plane-ownership-2026-09-05.md (amendment section). Composition: THM-0097 -> THM-0074 directly, beside THM-0092 and THM-0093; not a root; the published section-2 claim surface is unchanged.",
+  "reviewed_fingerprint": "sha256:5e1a9e152078dd177d1a5c2f1806824809b0a15b3ec7c3b8eabd9e5e68bd257b",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0097"
+}
