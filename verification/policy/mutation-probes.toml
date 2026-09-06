@@ -3060,7 +3060,7 @@ expect_red = [
 id = "M119-the-drain-waits-for-work-in-flight"
 unit = "proxy.serving_drain"
 theorem = "THM-0104"
-conjunct = "the drain waits while any request is in flight, so a request that reached the handler is answered rather than cut off"
+conjunct = "the drain waits while any request is in flight, so it returns on the count reaching zero rather than immediately"
 path = "mcp-re-proxy/src/async_serve/core_admission.rs"
 anchor = """
         while self.in_flight_requests.load(Ordering::Acquire) > 0 {

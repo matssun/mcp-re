@@ -325,5 +325,5 @@ graph BT
 
 ```mermaid
 graph BT
-    THM_0104["THM-0104<br/>A request the serving path abandons on shutdown is one that never executed, never one half-executed"]
+    THM_0104["THM-0104<br/>Shutdown stops admission and bounds the wait on admitted work; what the drain leaves behind it never resumes"]
 ```

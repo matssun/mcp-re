@@ -34,8 +34,13 @@ in its body read therefore counts as in flight — which is why the grace exists
 | `idle_drain_returns_promptly` | **timing** — `join < 3 s` |
 | `stuck_request_cannot_delay_exit_past_grace` | **timing** — `join < grace + 3 s` |
 
-THM-0104 claims the safety half only: **every admitted request ends answered or never
-executed; there is no third state in which the handler ran and the client was not answered.**
+THM-0104 claims the safety half only. **As first written it overclaimed that half, and was
+corrected by owner ruling on 2026-09-06** — see §7. It now states: admission stops; admitted
+work is counted until its task ends; the drain waits on that count until zero or grace expiry;
+what the grace leaves behind may be cancelled wherever it is suspended, the handler included;
+and a cancelled task is never polled again. It makes **no** claim about whether cancelled work
+crossed the exchange execution threshold.
+
 The scope names the three wall-clock bounds, says they are measurements on the box that ran
 them, and says a red from one of them is a statement about the machine rather than about the
 property. The bounded-exit guarantee an operator configures (`drain_grace` under a Kubernetes
@@ -105,3 +110,47 @@ The three non-UTF-8 header controls in the same test binary
 `ordinary_header_values_still_reach_the_handler`) are a **boundary-refusal authority sharing
 a binary**, not drain evidence. They belong to no unit. Recorded here as a separate finding
 rather than absorbed to make this unit's battery look complete.
+
+## 7. The owner correction — 2026-09-06
+
+Mats reviewed the interim chain and required one correction. It is right, and the mechanism
+says so in three lines of source:
+
+* `async_serve/request.rs:81` takes `InFlightGuard` **before** the body read and holds it
+  through `handler(served_req).await` to the response — the guard spans execution, not merely
+  the pre-execution phase;
+* `core_admission.rs:92-98` exits the poll loop on `in_flight_requests == 0` **or** on the
+  grace deadline, whichever comes first;
+* so runtime teardown after grace expiry can cancel a task suspended **inside the handler**.
+
+Three claims of the first statement are therefore not established by the drain mechanism, and
+are withdrawn:
+
+| withdrawn claim | why it does not follow |
+|---|---|
+| "a request that reached the handler therefore runs to completion and is answered" | only true when the count reaches zero; the grace can expire first |
+| "every admitted request ends answered, or never executed" | omits the third state the grace admits: cancelled mid-execution |
+| "retry of an abandoned request is safe because the handler was never entered" | the drain counter cannot tell which side of the threshold the work sat on |
+
+What survives is what the mechanism actually establishes, listed in §2 above. The
+execution/safe-retry correspondence belongs to the exchange-state and retry authorities
+(THM-0043, THM-0081 and the exchange machine's own statements about the execution threshold),
+not to the drain counter — the counter counts unfinished work, and unfinished is not unstarted.
+
+**No production code changed.** The ruling is explicit that production must not be redesigned
+to preserve the stronger theorem unless a measured product requirement demands it, and none
+was found: `drain_grace >= request_deadline` is the documented configuration relation that
+gives a zero-abandoned drain in fact, and it rests on the request deadline's own enforcement
+rather than on the drain.
+
+The battery is unchanged and still measures what it measured; what changed is the sentence it
+is evidence for. One consequence worth naming: the control
+`a_request_abandoned_by_the_grace_never_reaches_the_handler` is now understood as evidence for
+**terminal cancellation** — a task short of the handler when the runtime is dropped never
+reaches it, before or after the join — and its name reads more broadly than what it exercises.
+It was not renamed, because renaming a control moves five tables (the unit's `tested_symbols`,
+both probes' `expect_red`, the CI release-gate lane and the generated indices); the narrower
+reading is stated in the theorem's scope and in the unit's comment instead.
+
+THM-0104 has no dependents and sits outside every root's closure, so the correction moves its
+own review fingerprint and nothing else.

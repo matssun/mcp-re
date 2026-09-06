@@ -2779,8 +2779,11 @@ tested_symbols = [
 #
 # The drain battery is a NAMED RELEASE GATE in ci.yml and belonged to no unit, so what it
 # measured was evidence for nothing. It is registered here with its SAFETY half separated
-# from its timing half: THM-0104 states only that a request is answered or never executed,
-# and names the three wall-clock bounds it does NOT claim.
+# from its timing half: THM-0104 states admission stop, the counting of admitted work, the
+# bounded wait, and that cancellation is terminal — and names, as things it does NOT claim,
+# the three wall-clock bounds AND any relation between an abandoned request and the
+# exchange execution threshold. The guard spans the handler, so grace expiry can cancel a
+# task suspended inside it (owner correction, 2026-09-06).
 #
 # LANE IDENTITY. The battery exists only under `async_serve`, so `test_features` names it —
 # a plain `cargo test --workspace` compiles this file to zero tests and would report a green
@@ -2796,7 +2799,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.serving_drain"
 class = "V0"
-description = "What a shutdown does to requests already in the async serving path: acceptance stops, an RAII guard taken before the body read counts a request as in flight until its task ends, and the drain waits while that count is non-zero, so a request that reached the handler is answered rather than cut off and a request abandoned when the grace expires never reaches the handler. Claims nothing about how LONG teardown takes."
+description = "What a shutdown does to requests already in the async serving path: acceptance stops, an RAII guard taken before the body read counts a request as in flight until its task ends, and the drain waits on that count until it reaches zero or the grace expires. Work the grace leaves behind may be cancelled wherever it is suspended, the handler included, and a cancelled task is never polled again. Claims nothing about how LONG teardown takes, and nothing about whether cancelled work crossed the exchange execution threshold."
 paths = [
   "mcp-re-proxy/src/async_serve/core_admission.rs",
   "mcp-re-proxy/src/async_serve/mod.rs",
@@ -2809,11 +2812,14 @@ evidence = [
   # and the guard that makes the count move. M119-M120 ask.
   "mutation://proxy/serving/bounded_drain",
 ]
-# Both safety directions and the vacuity control that makes the second non-vacuous — without
-# it a handler that was never wired would satisfy "an abandoned request never reached the
-# handler" by never running anything at all (ADR-MCPRE-057 §17.6). The three wall-clock
-# controls are named here because they are part of the battery this unit's evidence rests on;
-# what they measure is excluded from THM-0104 by name.
+# The counted-drain controls, the terminal-cancellation control, and the vacuity control that
+# makes the latter non-vacuous — without it a handler that was never wired would satisfy "an
+# abandoned request never reached the handler" by never running anything at all
+# (ADR-MCPRE-057 §17.6). Note what that control exercises: a request stalled in its BODY READ,
+# so it establishes cancellation is terminal for a task short of the handler, NOT that every
+# abandoned task is short of the handler. The three wall-clock controls are named here because
+# they are part of the battery this unit's evidence rests on; what they measure is excluded
+# from THM-0104 by name.
 tested_symbols = [
   "tests/async_drain_test#in_flight_request_completes_during_drain_zero_abandoned",
   "tests/async_drain_test#saturated_drain_completes_all_in_flight_zero_abandoned",

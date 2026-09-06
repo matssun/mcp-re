@@ -24,8 +24,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _ecosystems import CARGO
 from _ecosystems import PYTHON
 from _ecosystems import TYPESCRIPT
+from _ecosystems import parse_results
 from _ecosystems import test_argv
 from _ecosystems import valid_target
+from _ecosystems import ReportUnreadable
 from _manifest import ManifestError  # noqa: E402
 from _manifest import _validate_test_features  # noqa: E402
 from _load_tool import load_tool  # noqa: E402
@@ -446,6 +448,62 @@ def test_the_python_command_runs_the_prepared_environment_for_that_runtime():
     assert "uv" not in argv, "the lane must not resolve or sync its own environment"
     assert argv[-1] == "tests/test_x.py::test_y"
     assert "no:randomly" in argv, "order must be reproducible from the record"
+    assert "--color=no" in argv, (
+        "the runner must be told not to colour, or an environment variable decides "
+        "whether the lane can read the report"
+    )
+
+
+def test_a_coloured_pytest_report_is_still_read():
+    """A measured false RED, 2026-09-06.
+
+    pytest honours `FORCE_COLOR` even when its stdout is a PIPE, so an environment
+    variable set by whatever invoked the lane wrapped every status in SGR escapes. The
+    reader matches a WORD at a known position; the escape sequence in front of it made
+    every line unmatchable while leaving the log perfectly legible to a human. All
+    thirty-nine controls of `sdk_python.exchange_path` were reported as `never ran` while
+    every one of them had just passed.
+
+    The argv now says `--color=no`, and this is the second half: a report that arrives
+    coloured anyway is still read, so the lane does not depend on one runner honouring
+    one flag.
+    """
+    coloured = (
+        "collected 2 items\n\n"
+        "tests/test_x.py::test_one \x1b[32mPASSED\x1b[0m\x1b[32m [ 50%]\x1b[0m\n"
+        "tests/test_x.py::test_two \x1b[31mFAILED\x1b[0m\x1b[31m [100%]\x1b[0m\n"
+    )
+    observed = parse_results(PYTHON, coloured)
+    assert observed == {
+        "tests/test_x.py::test_one": "ok",
+        "tests/test_x.py::test_two": "FAILED",
+    }, observed
+
+
+def test_a_collected_run_this_lane_cannot_read_is_a_reading_failure_not_absent_tests():
+    """The two call for OPPOSITE next actions, so they may not share a verdict.
+
+    `never ran` says the tests are absent and sends a reader to the test files. An
+    unreadable report says the LANE is broken and sends a reader here. pytest states how
+    many cases it collected, so a run that collected some and yielded no status this
+    reader understands is the second, and says so.
+    """
+    unreadable = "collected 3 items\n\ntests/test_x.py::test_one <<<who knows>>>\n"
+    try:
+        parse_results(PYTHON, unreadable)
+    except ReportUnreadable as exc:
+        assert "collected 3" in str(exc), exc
+    else:
+        raise AssertionError("a collected run with no readable status must not read as absent")
+
+
+def test_a_run_that_collected_nothing_is_not_called_unreadable():
+    """An empty selection IS a battery that never ran, and the lane already says so.
+
+    Turning it into a reading failure would hide the case the `--exact` selection exists
+    to catch: a declared symbol that does not exist.
+    """
+    assert parse_results(PYTHON, "collected 0 items\n\nno tests ran\n") == {}
 
 
 def test_two_runtimes_are_two_environments():
