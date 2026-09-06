@@ -617,6 +617,21 @@ The delegated claims consume it at a DIFFERENT selector: there the seam is queri
 credential's root issuer kid, and the signing key is authorized by the credential chain
 rather than by any seam answer. The premise is the same one; the keyid it is applied to is
 not.
+
+**THM-0099 discharges this premise for the MCP-RE production resolver, and for nothing else
+(owner ruling, 2026-09-06).** The premise is NOT withdrawn: the generic verifier accepts an
+INJECTED resolver, so the correctness of an arbitrary injected resolver remains an interface
+assumption, and that is what this entry continues to state. What THM-0099 adds is an
+INSTANCE: for the resolver the MCP-RE composition actually installs, the Request-slot half of
+this selector question is measured rather than assumed — the resolver answers from the
+materialized trust snapshot, so the identity and verification key it returns for a queried
+(keyid, Request) are the deployment's own trust decision.
+
+Two things this instantiation does not do. It does not make the premise unnecessary for any
+other consumer of the seam: an embedder installing its own resolver gets the assumption, not
+the theorem. And it does not reach the other selectors — the delegated claims query the
+seam for a credential's root issuer kid, where the signing key is authorized by the
+credential chain rather than by a seam answer, and THM-0099 says nothing about those.
 """
 scope = ["unit://http_profile.verifier_results", "boundary://boundary.unmodelled_own_behaviour"]
 owner = "mats@sundvall.name"
