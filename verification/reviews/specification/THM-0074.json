@@ -49,13 +49,15 @@
       "THM-0098": "sha256:ab7d6f400ba80eb0efe73b45929d4a4bd68456de580eb12ae948be58b277f56b",
       "THM-0099": "sha256:eaf092812cfe2ff127be20741ab27c1aa5330a7b7b9cb0e33579494ccc886a47",
       "THM-0100": "sha256:ae29504570a41f4ec2273265b6af7d13acb9285cdbaab34f926927ca72e7ef4c",
-      "THM-0101": "sha256:0d5713f5681f2b757e8bc6173577e10153b4f7e98ec20f34171b1a4c30364642"
+      "THM-0101": "sha256:0d5713f5681f2b757e8bc6173577e10153b4f7e98ec20f34171b1a4c30364642",
+      "THM-0106": "sha256:fdd244d4ea07be034ed2558a7cfb015525ac117a46ac2395630832c720c6d68b",
+      "THM-0107": "sha256:e1bbab3da6f8f2de5ff707aaca9f04d3a2c2c2eb853ebf338a0646cc124cadd4"
     },
     "theorem_id": "THM-0074",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "DEPENDENCY-ONLY RE-AFFIRMATION recorded under the owner's AFK mandate of 2026-09-06, by the implementing agent, superseding this record's previous entry at sha256:e20f18fbcc2647b1cce45d11d5534fcb15e966ef4120019741d76ff01ed9c60d (the THM-0100 addition, #819). THE CLAIM TEXT DID NOT MOVE: theorem_claim is sha256:9f4cc66aa2c97a11a13a9f28252a0ec9c1d627c7669bf31597c58e651582cf6d in both records; title, statement, security consequence, scope, owner, supported_by and review_requirement are re-affirmed unchanged and were not reopened. WHAT WAS REVIEWED IS THE DEPENDENCY CLOSURE, 45 -> 46 members: added THM-0101, the exchange work/event correspondence (a stage-owned transition is emitted only when the stage's product is consumed; the six assembly-owned transitions excluded by name), reviewed on the same tree at sha256:740be0c72db0d77d987e01dbad585d78f99705d7ec0dbed52549fb8831066da1. No dependency removed, no pre-existing digest changed. THIS RE-AFFIRMATION ACKNOWLEDGES ONLY that addition: it does not widen what earns dispatch, adds no assumption, and changes nothing about the relation THM-0043 already establishes. Recomputed on the tree before writing and equal to sha256:edb4d999903e847cc74190f81feba658d610f6e3bc9663b3179a2cdbc5b30206.",
-  "reviewed_fingerprint": "sha256:edb4d999903e847cc74190f81feba658d610f6e3bc9663b3179a2cdbc5b30206",
+  "notes": "DEPENDENCY-ONLY RE-AFFIRMATION, recorded under the owner's AFK mandate as routine maintenance. The theorem's own claim text, security consequence, scope, owner and review requirement are BYTE-IDENTICAL to the reviewed version; what moved is the transitive dependency closure, because THM-0092 gained THM-0106 and THM-0107. WHAT THIS REVIEW ACKNOWLEDGES: the addition of two subordinate local results about the DEPLOYABLE replay backends \u2014 that the Redis adapter refuses a server which may drop a nonce before its TTL and refuses one whose policy it could not read, and that the etcd adapter records a nonce only under a bounded lease through a linearized put-if-absent \u2014 each turning every non-answer into an outage rather than a fresh nonce. WHAT IT DOES NOT DO: it does not widen what earns dispatch, it introduces no new trust assumption, it adds nothing to ASM-0040 or ASM-0041 and restates neither, and it does not level the two mechanisms \u2014 a deployment still obtains the strength of the tier it wired. The edge STRENGTHENS the support beneath an existing claim rather than changing the claim: THM-0092's consequence was already about a store that was unreachable, and its battery already measured that against a stub; what is new is that the shipped adapters are measured to BE such a store. The fingerprint was recomputed on the tree after the last edit and equals the value above.",
+  "reviewed_fingerprint": "sha256:2672e2f71c89d5b4e4bdf3f21129220c0990a4642d8db10f436ecef450458970",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0074"
 }

@@ -55,6 +55,13 @@ on:
       # excluded from the unit, but the glob covers the directory so a fingerprint input
       # cannot land outside every trigger.
       - "mcp-re-proxy/src/async_replay/**"
+      # The deployable replay backends (THM-0106 / THM-0107). Feature-gated, so a plain
+      # cargo lane compiles them to zero tests — which is exactly why a change to one must
+      # still re-trigger the units that carry them.
+      - "mcp-re-proxy/src/redis_store.rs"
+      - "mcp-re-proxy/src/async_redis_store.rs"
+      - "mcp-re-proxy/src/etcd_store.rs"
+      - "mcp-re-proxy/src/async_etcd_store.rs"
       - "mcp-re-proxy/src/continuation_store/**"
       - "mcp-re-proxy/src/redis_continuation_store.rs"
       # Issue #744, D1b′: the continuation MATERIALIZATION owners — which capability the
@@ -271,6 +278,13 @@ on:
       # excluded from the unit, but the glob covers the directory so a fingerprint input
       # cannot land outside every trigger.
       - "mcp-re-proxy/src/async_replay/**"
+      # The deployable replay backends (THM-0106 / THM-0107). Feature-gated, so a plain
+      # cargo lane compiles them to zero tests — which is exactly why a change to one must
+      # still re-trigger the units that carry them.
+      - "mcp-re-proxy/src/redis_store.rs"
+      - "mcp-re-proxy/src/async_redis_store.rs"
+      - "mcp-re-proxy/src/etcd_store.rs"
+      - "mcp-re-proxy/src/async_etcd_store.rs"
       - "mcp-re-proxy/src/continuation_store/**"
       - "mcp-re-proxy/src/redis_continuation_store.rs"
       # Issue #744, D1b′: the continuation MATERIALIZATION owners — which capability the
