@@ -405,6 +405,13 @@ def test_argv(
             "-p",
             "no:randomly",
             "--no-header",
+            # `--color=no` because pytest honours FORCE_COLOR even when its stdout is a
+            # PIPE, and a coloured status wraps the word this lane reads in escape bytes.
+            # Without it, an environment variable set by whatever invoked the lane decides
+            # whether the report is readable — and an unreadable report presented as forty
+            # controls that "never ran" is a statement about the tests, which is false.
+            # The runner is told what to emit rather than the lane guessing what it meant.
+            "--color=no",
             "-v",
             *selectors,
         ]
@@ -461,10 +468,21 @@ _CARGO_RESULT = re.compile(
     r"^test (?P<name>\S+) \.\.\. .*?(?P<status>" + "|".join(_CARGO_STATUSES) + r")$"
 )
 
+#: SGR/CSI escape sequences a runner emits when it decides to colour its output. Stripped
+#: before any line is matched: the lane reads a WORD at a known position, and an escape
+#: sequence in front of that word makes the line unmatchable while leaving it perfectly
+#: legible to a human reading the log. That difference is the whole defect — the report was
+#: there and the lane said the tests never ran.
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
 #: pytest's verbose line: `tests/test_x.py::test_name PASSED`.
 _PYTEST_RESULT = re.compile(
     r"^(?P<name>\S+::\S+)\s+(?P<status>PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)\b"
 )
+
+#: pytest's collection line: `collected 39 items`. The lane's own cross-check that a run
+#: which produced no readable result produced no RESULT, rather than none it could read.
+_PYTEST_COLLECTED = re.compile(r"^collect(?:ed|ing \.\.\. collected) (?P<count>\d+) item")
 
 #: vitest's JSON reporter states each case's status in words. Translated into the lane's one
 #: vocabulary here, like every other runner's.
@@ -505,6 +523,8 @@ def parse_results(eco: Ecosystem, stdout: str) -> dict[str, str]:
     where the rule is applied.
     """
     out: dict[str, str] = {}
+    # Before anything is matched, and for every runner: see `_ANSI`.
+    stdout = _ANSI.sub("", stdout)
     if eco is CARGO:
         for line in stdout.splitlines():
             match = _CARGO_RESULT.match(line.strip())
@@ -519,6 +539,17 @@ def parse_results(eco: Ecosystem, stdout: str) -> dict[str, str]:
                 out[match.group("name")] = (
                     "ok" if status == "PASSED" else "ignored" if status == "SKIPPED" else "FAILED"
                 )
+        # The runner SAID it collected cases and this reader understood none of them. That
+        # is the lane failing to read a report, not a battery of controls that never ran,
+        # and the two call for opposite next actions: one is fixed here, the other in the
+        # tests. Reported as its own failure so it cannot masquerade as the second.
+        collected = _PYTEST_COLLECTED.search(stdout)
+        if not out and collected and int(collected.group("count")) > 0:
+            raise ReportUnreadable(
+                f"pytest collected {collected.group('count')} case(s) and this lane read a "
+                f"status line for none of them; the run said: "
+                + (stdout.strip()[-2000:] or "(nothing)")
+            )
         return out
     if eco is TYPESCRIPT:
         # The JSON blob is the last thing on stdout, after whatever the build or the runner
