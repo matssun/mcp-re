@@ -73,8 +73,11 @@ impl CoreVerdict {
 impl RefusalCause {
     /// The frozen public token this refusal is served as.
     ///
-    /// The ONLY rendering point. Both arms already own a total mapping onto frozen vocabulary,
-    /// so this adds no vocabulary and makes no choice: it asks each authority what it says.
+    /// The final PRESENTATION boundary — where the served token is composed, not where any
+    /// mapping is owned. Both arms own a total mapping onto frozen vocabulary of their own,
+    /// and the subordinate `PolicyError -> mcp-re.authorization_*` mapping belongs to
+    /// `mcp_re_policy::PolicyError` alone. This adds no vocabulary and makes no choice: it
+    /// asks each authority what it says.
     pub(crate) fn wire_code(&self) -> &'static str {
         match self {
             RefusalCause::Core(v) => v.wire_code(),

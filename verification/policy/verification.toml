@@ -4325,3 +4325,86 @@ tested_symbols = [
   "tests/dos_hardening_test#oversized_response_is_rejected_not_oom",
   "tests/dos_hardening_test#slow_trickle_response_aborts_at_aggregate_deadline",
 ]
+
+# v0.17 policy-authority slice. `mcp-re-policy` was wholly unowned — 0/6 files — and the
+# census called it "a decision about authority rather than a registration". The decision was
+# made (owner ruling, 2026-09-07): the three types are NOT collapsed, and the crate's real
+# authority set is measured rather than assumed. What the measurement found is that only two
+# of the six files had a consumer; `block.rs`, `decision.rs` and `wire.rs` were each a second
+# authority over a fact the RFC 9421 tree already owns, and they were deleted.
+#
+# `revocation.rs` is NOT in this unit's paths. `LiveTrustResolver::with_revocation_source` is
+# `#[allow(dead_code)]` and documents itself as NOT WIRED: no production path installs a
+# `RevocationSource`. Excluded on the precedent that kept `trust_plane/window_policy.rs` out of
+# `proxy.trust_plane_runtime` and `async_replay/l1_fast_reject.rs` out of
+# `proxy.async_replay_retention` — a unit must not carry evidence about code no deployment runs.
+[[unit]]
+id = "policy.authorization_taxonomy"
+class = "V0"
+description = "The frozen ADR-MCPS-013 authorization-denial vocabulary: one variant per `mcp-re.authorization_*` wire token, the sole authority over that mapping, and the split that keeps an unavailable revocation backend from being served as a revocation."
+paths = [
+  "mcp-re-policy/src/error.rs",
+  "mcp-re-policy/src/lib.rs",
+]
+exported_contracts = []
+evidence = ["test://policy/authorization_taxonomy/frozen_tokens"]
+tested_symbols = [
+  "lib#error::tests::every_variant_renders_its_exact_wire_token",
+  "lib#error::tests::revoked_and_unavailable_are_distinct_tokens",
+  "lib#error::tests::errors_compare_by_value",
+]
+
+# The client seam's refusal algebra, and the projection that keeps it from being a second
+# minting authority. Before this slice `BindingSpecRefusal::wire_code` matched onto two
+# `&'static str` literals — a fifth producer of `mcp-re.*` tokens, rendered by BOTH published
+# SDKs, and one the ADR-MCPRE-066 Slice 2 drift guard's hand-maintained producer list had
+# never been told about.
+[[unit]]
+id = "client.binding_spec_refusal"
+class = "V0"
+description = "Which provider lists are a legal contribution to a signed request, and which Core verdict each refusal IS. The narrowing — an opaque provider asked to mint a `pdp-decision` binding — is half of a Mode-2 pair and is refused rather than constructed; every refusal derives its wire token from an exhaustive Core projection instead of a table of strings."
+paths = [
+  "mcp-re-client-core/src/binding_spec/mod.rs",
+  "mcp-re-client-core/src/binding_spec/refusal.rs",
+  "mcp-re-client-core/src/core_projection.rs",
+]
+exported_contracts = []
+evidence = ["test://client/binding_spec/refusal_projection"]
+tested_symbols = [
+  "lib#binding_spec::refusal::tests::the_narrowing_reports_the_type_as_unsupported_in_this_form",
+  "lib#binding_spec::refusal::tests::shape_refusals_report_a_malformed_binding",
+  "lib#binding_spec::refusal::tests::a_carrier_refusal_keeps_the_carriers_own_token",
+  "lib#core_projection::tests::every_refusal_names_a_core_verdict",
+  "lib#core_projection::tests::a_carrier_refusal_keeps_the_carriers_own_verdict",
+  "lib#binding_spec::tests::the_opaque_form_refuses_pdp_decision_because_that_is_half_of_a_pair",
+  "lib#binding_spec::tests::the_reference_form_still_accepts_pdp_decision",
+]
+
+# The measurement that replaced the producer list. `no_producer_outside_core_mints_a_wire_token`
+# scans a hand-maintained set of files, and ADR-MCPRE-066 §2.1 names that shape's defect in its
+# own words. `exactly_two_files_decide_what_a_verdict_token_says` walks every workspace source
+# tree instead, and `the_scanned_crate_set_is_the_workspace` derives the crate list from the
+# workspace manifest, so a member cannot be scanned by nobody.
+[[unit]]
+id = "conformance.verdict_vocabulary_scope"
+class = "V0"
+description = "How many files in this workspace decide what an `mcp-re.*` verdict token says, measured over every crate's source tree rather than read off a list of producers: exactly two, the frozen Core taxonomy and the frozen authorization taxonomy."
+paths = [
+  "mcp-re-conformance/tests/audit_vocabulary_guard_test.rs",
+  # The primitive the walk rests on. A scan that mis-reads a literal reports test code as
+  # production, which is how this control would pass over a producer it never read.
+  "mcp-re-test-paths/src/rust_source.rs",
+  "mcp-re-test-paths/src/rust_source/brace_scan.rs",
+  "mcp-re-test-paths/src/source_trees.rs",
+]
+exported_contracts = []
+evidence = ["test://conformance/audit_vocabulary/verdict_scope"]
+# The battery is the guard; the scanner is a path this unit's fingerprint must cover, because
+# a change to what counts as a brace changes what the walk reads.
+test_package = "mcp-re-conformance"
+tested_symbols = [
+  "tests/audit_vocabulary_guard_test#exactly_two_files_decide_what_a_verdict_token_says",
+  "tests/audit_vocabulary_guard_test#the_scanned_crate_set_is_the_workspace",
+  "tests/audit_vocabulary_guard_test#no_producer_outside_core_mints_a_wire_token",
+  "tests/audit_vocabulary_guard_test#guard_inputs_are_non_empty",
+]

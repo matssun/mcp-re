@@ -4,14 +4,13 @@ version = "0.16.0"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "MCP-RE delegated authorization (Phase 5): AuthorizationProfile abstraction + Reference Signed Authorization Profile. Pluggable Biscuit/UCAN/OAuth-bound profiles later."
+description = "MCP-RE authorization vocabulary: the frozen ADR-MCPS-013 denial taxonomy and the injected revocation seam. Pluggable Biscuit/UCAN/OAuth-bound mechanisms sit behind the ADR-MCPRE-065 boundary, not here."
 
 [dependencies]
-# Phase 5 (ADR-MCPS-013). Interprets the artifact behind Core's opaque
-# authorization_hash. Pure — depends only on mcp-re-core + serde. No networking/async.
-mcp-re-core = { path = "../mcp-re-core" }
-serde = { workspace = true }
-serde_json = { workspace = true }
+# ADR-MCPS-013. The authorization-denial vocabulary and the dormant revocation seam.
+# Pure, and now dependency-free but for the error derive: the modules that read a JSON
+# body and rendered a JSON-RPC envelope belonged to the `_meta` carrier ADR-MCPRE-050
+# replaced, so serde and the Core primitives went with them. No networking/async.
 thiserror = { workspace = true }
 
 [lib]

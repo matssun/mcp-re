@@ -2,36 +2,34 @@ load("//bazel:defs.bzl", "nt_rust_library", "nt_rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
-# MCPS-019..023 (Phase 5, ADR-MCPS-013): delegated authorization. Pure library —
-# depends only on the verification crate plus serde/serde_json. No networking/async
-# (firewall: ADR-MCPS-011/012).
+# ADR-MCPRE-066 §2.1: the source tree, exposed so the conformance audit-vocabulary guard can
+# MEASURE which files decide what an `mcp-re.*` verdict token says, rather than reading a
+# hand-maintained list of producers. The sentinel names the tree; the guard walks it.
+filegroup(
+    name = "guard_src_files",
+    srcs = glob(["src/**/*.rs"]),
+)
+
+exports_files(["src/lib.rs"])
+
+# ADR-MCPS-013: the authorization-denial vocabulary. Pure library — the error derive is
+# its only dependency. No networking/async (firewall: ADR-MCPS-011/012).
 nt_rust_library(
     name = "mcp_re_policy",
     srcs = glob(["src/**/*.rs"]),
     crate_name = "mcp_re_policy",
     edition = "2021",
-    deps = [
-        "//mcp-re-core:mcp_re_core",
-        "@crates_mcp_re//:serde",
-        "@crates_mcp_re//:serde_json",
-        "@crates_mcp_re//:thiserror",
-    ],
+    deps = ["@crates_mcp_re//:thiserror"],
 )
 
-# Unit tests for the Phase 5 abstraction (trait object-safety, error taxonomy,
-# decision, authorization block extraction, revocation source, reference profile,
-# policy evaluator).
+# Unit tests for the two authorities: the frozen error taxonomy and the revocation
+# seam's determinate/indeterminate split.
 nt_rust_test(
     name = "mcp_re_policy_test",
     crate = ":mcp_re_policy",
     auto_cargo_toml = False,
     bazel_build_cfg = False,
     edition = "2021",
-    deps = [
-        "//mcp-re-core:mcp_re_core",
-        "@crates_mcp_re//:serde",
-        "@crates_mcp_re//:serde_json",
-        "@crates_mcp_re//:thiserror",
-    ],
+    deps = ["@crates_mcp_re//:thiserror"],
 )
 

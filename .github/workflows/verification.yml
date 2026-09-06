@@ -71,6 +71,22 @@ on:
       - "mcp-re-transport/src/**"
       - "mcp-re-transport/tests/**"
       - "mcp-re-transport/Cargo.toml"
+      # The v0.17 policy-authority slice (THM-0111). Three units:
+      #   - the frozen ADR-MCPS-013 taxonomy, the sole owner of the authorization mapping;
+      #   - the client seam's binding-spec refusal and its Core projection;
+      #   - the workspace walk that MEASURES how many files decide what a verdict says.
+      # The walk reads every crate's source tree, so its own inputs are already covered by
+      # the broad filters above; what is enumerated here is the units' declared paths.
+      - "mcp-re-policy/src/**"
+      - "mcp-re-policy/Cargo.toml"
+      - "mcp-re-client-core/src/binding_spec/**"
+      - "mcp-re-client-core/src/core_projection.rs"
+      - "mcp-re-conformance/tests/audit_vocabulary_guard_test.rs"
+      - "mcp-re-conformance/tests/audit_vocabulary_guard_test/**"
+      # The scanner the walk rests on. A change to what counts as a brace changes what the
+      # control reads, so it is a fingerprint input and must re-trigger the lane.
+      - "mcp-re-test-paths/src/**"
+      - "mcp-re-test-paths/Cargo.toml"
       - "mcp-re-proxy/src/continuation_store/**"
       - "mcp-re-proxy/src/redis_continuation_store.rs"
       # Issue #744, D1b′: the continuation MATERIALIZATION owners — which capability the
@@ -303,6 +319,22 @@ on:
       - "mcp-re-transport/src/**"
       - "mcp-re-transport/tests/**"
       - "mcp-re-transport/Cargo.toml"
+      # The v0.17 policy-authority slice (THM-0111). Three units:
+      #   - the frozen ADR-MCPS-013 taxonomy, the sole owner of the authorization mapping;
+      #   - the client seam's binding-spec refusal and its Core projection;
+      #   - the workspace walk that MEASURES how many files decide what a verdict says.
+      # The walk reads every crate's source tree, so its own inputs are already covered by
+      # the broad filters above; what is enumerated here is the units' declared paths.
+      - "mcp-re-policy/src/**"
+      - "mcp-re-policy/Cargo.toml"
+      - "mcp-re-client-core/src/binding_spec/**"
+      - "mcp-re-client-core/src/core_projection.rs"
+      - "mcp-re-conformance/tests/audit_vocabulary_guard_test.rs"
+      - "mcp-re-conformance/tests/audit_vocabulary_guard_test/**"
+      # The scanner the walk rests on. A change to what counts as a brace changes what the
+      # control reads, so it is a fingerprint input and must re-trigger the lane.
+      - "mcp-re-test-paths/src/**"
+      - "mcp-re-test-paths/Cargo.toml"
       - "mcp-re-proxy/src/continuation_store/**"
       - "mcp-re-proxy/src/redis_continuation_store.rs"
       # Issue #744, D1b′: the continuation MATERIALIZATION owners — which capability the

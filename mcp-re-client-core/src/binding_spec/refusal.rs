@@ -7,6 +7,7 @@
 //! reported as is a lossy projection of it that the vocabulary — not this crate —
 //! decides.
 
+use mcp_re_core::McpReError;
 use mcp_re_http_profile::HttpProfileError;
 
 /// Why a provider list is not a legal contribution to a signed request.
@@ -42,24 +43,17 @@ pub enum BindingSpecRefusal {
 impl BindingSpecRefusal {
     /// The frozen wire token this refusal is reported as.
     ///
-    /// Lossy on purpose: the four decision-shaped refusals are all "the spec is not a
-    /// legal authorization binding", which the vocabulary spells
-    /// `authorization_binding_malformed`, and the narrowing is reported as the artifact
-    /// type not being supported IN THIS FORM — which is exactly what it is, and is the
-    /// same token the wrapper classes raise when they reject earlier.
+    /// **Derived**, not chosen here: it asks the crate's Core projection
+    /// (`From<&BindingSpecRefusal> for McpReError`) which verdict this refusal IS, and
+    /// takes that verdict's token. There is no table of strings beside the projection,
+    /// because two statements of one mapping is how a renamed Core token leaves a carrier
+    /// emitting the old spelling (ADR-MCPRE-066 Slice 2).
+    ///
+    /// The projection is lossy on purpose, and it says why: the five shape refusals are
+    /// all "the spec is not a legal authorization binding", and the narrowing is the
+    /// artifact type not being supported IN THIS FORM.
     pub fn wire_code(&self) -> &'static str {
-        match self {
-            BindingSpecRefusal::OpaqueBindingIsHalfOfADecision
-            | BindingSpecRefusal::DecisionFormIsNotThisArtifactType => {
-                "mcp-re.authorization_binding_type_unsupported"
-            }
-            BindingSpecRefusal::NotSpecJson
-            | BindingSpecRefusal::MaterialNotBase64Url
-            | BindingSpecRefusal::DecisionNotText
-            | BindingSpecRefusal::DecisionCarriesReferenceFields
-            | BindingSpecRefusal::MoreThanOneDecision => "mcp-re.authorization_binding_malformed",
-            BindingSpecRefusal::Malformed(e) => e.wire_code(),
-        }
+        McpReError::from(self).wire_code()
     }
 }
 

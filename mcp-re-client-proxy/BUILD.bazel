@@ -2,6 +2,16 @@ load("//bazel:defs.bzl", "nt_rust_library", "nt_rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
+# ADR-MCPRE-066 §2.1: the source tree, exposed so the conformance audit-vocabulary guard can
+# MEASURE which files decide what an `mcp-re.*` verdict token says, rather than reading a
+# hand-maintained list of producers. The sentinel names the tree; the guard walks it.
+filegroup(
+    name = "guard_src_files",
+    srcs = glob(["src/**/*.rs"]),
+)
+
+exports_files(["src/lib.rs"])
+
 # MCPS-49 (ADR-MCPS-044 §Proxy transparency / §Security adapter scope): the local
 # client-side MCP-RE proxy — the first adoption bridge. Mode-specific layer above the
 # pure mcp-re-client-core seam; the transport is abstracted behind a trait so the

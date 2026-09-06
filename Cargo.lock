@@ -1084,9 +1084,6 @@ dependencies = [
 name = "mcp-re-policy"
 version = "0.16.0"
 dependencies = [
- "mcp-re-core",
- "serde",
- "serde_json",
  "thiserror",
 ]
 

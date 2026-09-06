@@ -17,6 +17,7 @@ not an omission to hide.
 
 | unit | class | owns theorems | assumptions |
 |---|---|---|---|
+| client.binding_spec_refusal | V0 | _none_ | 0 |
 | client.delegation_policy_seal | V0 | THM-0060 | 0 |
 | client.execution_contract | V0 | THM-0061 | 0 |
 | client.local_ingress_authority | V0 | THM-0091 | 0 |
@@ -26,6 +27,7 @@ not an omission to hide.
 | client.transport_server_identity | V0 | THM-0109 | 0 |
 | client.trust_manifest_lifecycle | V0 | THM-0057 | 0 |
 | conformance.retained_corpus | V0 | _none_ | 0 |
+| conformance.verdict_vocabulary_scope | V0 | THM-0111 | 0 |
 | core.time_rfc3339 | V1 | THM-0002 | 4 |
 | http_profile.admission_assertion | V0 | THM-0053 | 0 |
 | http_profile.admission_currency | V1 | THM-0003, THM-0004, THM-0005, THM-0006 | 7 |
@@ -46,6 +48,7 @@ not an omission to hide.
 | http_profile.submitted_hop_identity | V0 | _none_ | 0 |
 | http_profile.verifier_result_separation | V0 | THM-0047 | 0 |
 | http_profile.verifier_results | V0 | THM-0014, THM-0015, THM-0016, THM-0017, THM-0018, THM-0019, THM-0020, THM-0021, THM-0022 | 3 |
+| policy.authorization_taxonomy | V0 | _none_ | 0 |
 | proxy.async_replay_retention | V0 | THM-0105 | 0 |
 | proxy.audit_delivery | V0 | THM-0070 | 0 |
 | proxy.audit_record_coordinates | V0 | THM-0069, THM-0071 | 0 |

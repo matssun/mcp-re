@@ -328,6 +328,14 @@ fn no_producer_outside_core_mints_a_wire_token() {
             "MCP_RE_PROXY_SRC_DISPATCH_PROJECTION",
             "the ProxyDispatchError projection",
         ),
+        (
+            "MCP_RE_CLIENT_CORE_SRC_BINDING_REFUSAL",
+            "BindingSpecRefusal",
+        ),
+        (
+            "MCP_RE_CLIENT_CORE_SRC_PROJECTION",
+            "the BindingSpecRefusal projection",
+        ),
     ] {
         let src = read(env_key);
         let production = mcp_re_test_paths::rust_source::production_half(&src);
@@ -348,17 +356,219 @@ fn no_producer_outside_core_mints_a_wire_token() {
         frozen.len()
     );
 
-    // And the projection really is where the carrier's verdicts are decided, so the file
-    // being scanned above is the one that replaced the table rather than an empty stub.
-    let projection = read("MCP_RE_PROFILE_SRC_PROJECTION");
+    // And each projection really is where that producer's verdicts are decided, so the
+    // files scanned above are the ones that replaced a table rather than empty stubs.
+    for (env_key, signature, who) in [
+        (
+            "MCP_RE_PROFILE_SRC_PROJECTION",
+            "impl From<&HttpProfileError> for McpReError",
+            "the carrier",
+        ),
+        (
+            "MCP_RE_CLIENT_CORE_SRC_PROJECTION",
+            "impl From<&BindingSpecRefusal> for McpReError",
+            "the client seam",
+        ),
+    ] {
+        let projection = read(env_key);
+        assert!(
+            projection.contains(signature),
+            "{who}'s Core projection is not where this guard is looking"
+        );
+        assert!(
+            !projection.contains("_ =>"),
+            "{who}'s Core projection has a wildcard arm — a new failure would inherit a              verdict instead of naming one"
+        );
+    }
+}
+
+/// ADR-MCPRE-066 §2.1, closed — **which files decide what an `mcp-re.*` verdict token says
+/// is MEASURED, not listed.**
+///
+/// `no_producer_outside_core_mints_a_wire_token` scans a hand-maintained set of producer
+/// files, and the ADR names that shape's defect in its own words: such a list describes
+/// yesterday's producer set on exactly the day a producer moves. #637 found a producer it
+/// had never been told about, and the v0.17 policy-authority slice found a fifth —
+/// `BindingSpecRefusal`, rendered by both published SDKs from a table of two string
+/// literals.
+///
+/// So this control does not read a list of producers. It walks EVERY workspace crate's
+/// source tree, takes each file's production half, and asserts that the set of files
+/// holding a verdict-token literal is exactly the two frozen vocabularies:
+///
+/// ```text
+/// mcp-re-core/src/error.rs      McpReError    — the Core verification taxonomy (ADR-MCPS-035)
+/// mcp-re-policy/src/error.rs    PolicyError   — the authorization taxonomy (ADR-MCPS-013)
+/// ```
+///
+/// A **verdict token** is `mcp-re.<name>` with no further dot. The dotted spellings are
+/// audit EVENT types (`mcp-re.request.accepted`, `mcp-re.delegated_key.issued`), a separate
+/// vocabulary the three allowlist tests above pin exactly.
+///
+/// The crate list is itself derived rather than remembered: it comes from the workspace
+/// `Cargo.toml` at compile time, and a member with no registered source tree fails here
+/// instead of going unscanned. Its scope is therefore exactly the Cargo/Bazel workspace —
+/// see [`CRATE_SOURCE_TREES`] for the two source trees outside it and why the structural
+/// producer check covers them instead.
+#[test]
+fn exactly_two_files_decide_what_a_verdict_token_says() {
+    let expected: BTreeSet<String> = SOLE_MINTING_FILES.iter().map(|s| s.to_string()).collect();
+
+    let mut found: BTreeSet<String> = BTreeSet::new();
+    let mut files_scanned = 0usize;
+    for (crate_dir, env_key) in CRATE_SOURCE_TREES {
+        // The sentinel is `<crate>/src/lib.rs`; its parent is the tree to walk.
+        let sentinel = locate(env_key);
+        let src_root = sentinel
+            .parent()
+            .unwrap_or_else(|| panic!("{env_key} resolved to a path with no parent"))
+            .to_path_buf();
+        for file in rust_sources_under(&src_root) {
+            files_scanned += 1;
+            let text =
+                std::fs::read_to_string(&file).unwrap_or_else(|e| panic!("read {file:?}: {e}"));
+            let production = mcp_re_test_paths::rust_source::production_half(&text);
+            if !verdict_tokens(&production).is_empty() {
+                let rel = file
+                    .strip_prefix(&src_root)
+                    .unwrap_or(&file)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                found.insert(format!("{crate_dir}/src/{rel}"));
+            }
+        }
+    }
+
+    // Positive control on the walk and the runfiles wiring: an empty or tiny scan would
+    // make the equality below hold vacuously.
     assert!(
-        projection.contains("impl From<&HttpProfileError> for McpReError"),
-        "the carrier's Core projection is not where this guard is looking"
+        files_scanned >= 200,
+        "the workspace walk read only {files_scanned} source files — the runfiles wiring is          broken, and this control measures nothing"
     );
+    assert_eq!(
+        found, expected,
+        "the set of files deciding what an mcp-re.* VERDICT token says is not the two frozen          vocabularies. A file that appears here and is not one of them has re-created the          parallel namespace ADR-MCPRE-066 Slice 2 removed: state which verdict the failure IS          (an exhaustive `From<&_> for McpReError` or a `PolicyError`) and derive the token from          that. A file that DISAPPEARS from here has moved a frozen vocabulary, which is an ADR."
+    );
+}
+
+/// Every workspace crate that has a source tree, and the sentinel naming it. Derived
+/// against the workspace `Cargo.toml` by [`the_scanned_crate_set_is_the_workspace`], so a
+/// new member cannot be scanned by nobody.
+///
+/// # What is NOT here, and why
+///
+/// `sdk/python` and `sdk/typescript` are separate Cargo workspaces with their own lockfiles
+/// and no Bazel target, so they cannot be delivered as runfiles and a cargo-only scan would
+/// make this lane measure two different things in its two lanes. They are thin PyO3/napi
+/// wrappers over `mcp_re_client_core::build_authorization`, and the refusal they render is
+/// `BindingSpecRefusal` — which, since the v0.17 policy-authority slice, derives its token
+/// from the client seam's Core projection rather than from a table. That is the property
+/// [`no_producer_outside_core_mints_a_wire_token`] checks directly, on the file the SDKs
+/// render THROUGH.
+const CRATE_SOURCE_TREES: &[(&str, &str)] = &[
+    ("mcp-re-core", "MCP_RE_SRC_TREE_CORE"),
+    ("mcp-re-proxy", "MCP_RE_SRC_TREE_PROXY"),
+    ("mcp-re-host", "MCP_RE_SRC_TREE_HOST"),
+    ("mcp-re-client-core", "MCP_RE_SRC_TREE_CLIENT_CORE"),
+    ("mcp-re-client", "MCP_RE_SRC_TREE_CLIENT"),
+    ("mcp-re-client-proxy", "MCP_RE_SRC_TREE_CLIENT_PROXY"),
+    ("mcp-re-transport", "MCP_RE_SRC_TREE_TRANSPORT"),
+    ("mcp-re-policy", "MCP_RE_SRC_TREE_POLICY"),
+    ("mcp-re-http-profile", "MCP_RE_SRC_TREE_HTTP_PROFILE"),
+    ("mcp-re-demo", "MCP_RE_SRC_TREE_DEMO"),
+    ("mcp-re-test-paths", "MCP_RE_SRC_TREE_TEST_PATHS"),
+];
+
+/// Workspace members with no `src/` tree at all. Named rather than inferred: a crate that
+/// acquires one must be added to [`CRATE_SOURCE_TREES`], and listing it here is the
+/// deliberate act that says it has none.
+const MEMBERS_WITHOUT_A_SOURCE_TREE: &[&str] = &["mcp-re-conformance"];
+
+/// The two files that may hold a verdict-token literal, and the only two.
+const SOLE_MINTING_FILES: &[&str] = &["mcp-re-core/src/error.rs", "mcp-re-policy/src/error.rs"];
+
+/// The scanned set is the workspace, so nothing is scanned by nobody.
+///
+/// Read from the root `Cargo.toml` at COMPILE time, which is the one input a new crate
+/// cannot be added to the workspace without touching.
+#[test]
+fn the_scanned_crate_set_is_the_workspace() {
+    let members = workspace_members(include_str!("../../Cargo.toml"));
     assert!(
-        !projection.contains("_ =>"),
-        "the carrier's Core projection has a wildcard arm — a new failure would inherit a          verdict instead of naming one"
+        members.len() >= 10,
+        "parsed {} workspace members — the manifest parser is broken and every membership          assertion below is vacuous",
+        members.len()
     );
+    let accounted: BTreeSet<String> = CRATE_SOURCE_TREES
+        .iter()
+        .map(|(dir, _)| (*dir).to_string())
+        .chain(
+            MEMBERS_WITHOUT_A_SOURCE_TREE
+                .iter()
+                .map(|d| (*d).to_string()),
+        )
+        .collect();
+    let unscanned: Vec<&String> = members.iter().filter(|m| !accounted.contains(*m)).collect();
+    assert!(
+        unscanned.is_empty(),
+        "workspace member(s) {unscanned:?} are scanned by no source-tree sentinel. Add one to          CRATE_SOURCE_TREES (with its runfiles wiring), or to MEMBERS_WITHOUT_A_SOURCE_TREE if          the crate genuinely has no src/."
+    );
+}
+
+/// The `members = [...]` entries of the workspace manifest, comments stripped.
+fn workspace_members(manifest: &str) -> BTreeSet<String> {
+    let after = manifest
+        .split_once("members = [")
+        .map(|(_, rest)| rest)
+        .unwrap_or_else(|| panic!("the workspace manifest has no `members = [` list"));
+    let body = after
+        .split_once(']')
+        .map(|(inside, _)| inside)
+        .unwrap_or_else(|| panic!("the workspace `members` list is unterminated"));
+    body.lines()
+        .map(|line| line.split('#').next().unwrap_or(""))
+        .filter_map(|line| {
+            let start = line.find('"')?;
+            let rest = &line[start + 1..];
+            let end = rest.find('"')?;
+            Some(rest[..end].to_string())
+        })
+        .collect()
+}
+
+/// Every `.rs` file under `root`, recursively. std only.
+fn rust_sources_under(root: &std::path::Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(e) => panic!("read_dir {dir:?}: {e}"),
+        };
+        for entry in entries {
+            let path = entry
+                .unwrap_or_else(|e| panic!("dir entry under {dir:?}: {e}"))
+                .path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
+            }
+        }
+    }
+    out
+}
+
+/// The VERDICT tokens in `text`: `mcp-re.<name>` with no further dot.
+///
+/// The dotted spellings are audit event types, a separate vocabulary with its own exact
+/// allowlists above. Conflating the two would report `audit.rs` as a third minting
+/// authority, which it is not — it names events, never verdicts.
+fn verdict_tokens(text: &str) -> BTreeSet<String> {
+    mcp_re_string_literals(text)
+        .into_iter()
+        .filter(|token| !token.trim_start_matches("mcp-re.").contains('.'))
+        .collect()
 }
 
 #[test]
