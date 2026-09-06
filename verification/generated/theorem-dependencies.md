@@ -332,10 +332,17 @@ graph BT
 
 ```mermaid
 graph BT
-    THM_0109["THM-0109<br/>The client transport verifies the proxy's server certificate against the configured CA, and a request body is never sent to a server it did not authenticate"]
+    THM_0105["THM-0105<br/>Replay retention is a bounded per-replica account, charged before the store is touched and handed back only by an answer that proves nothing was retained"]
 ```
 
 ## Component 11
+
+```mermaid
+graph BT
+    THM_0109["THM-0109<br/>The client transport verifies the proxy's server certificate against the configured CA, and a request body is never sent to a server it did not authenticate"]
+```
+
+## Component 12
 
 ```mermaid
 graph BT

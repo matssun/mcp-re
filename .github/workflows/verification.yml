@@ -51,6 +51,10 @@ on:
       # Issue #744: the two store-materialization owners, sibling authorities that had
       # no unit between them.
       - "mcp-re-proxy/src/replay_plane/**"
+      # The async replay retention account (THM-0105); `l1_fast_reject.rs` is dormant and
+      # excluded from the unit, but the glob covers the directory so a fingerprint input
+      # cannot land outside every trigger.
+      - "mcp-re-proxy/src/async_replay/**"
       # The client mTLS transport (THM-0109 / THM-0110). Whole crate, sources and the two
       # integration batteries alike: `mtls_client_test.rs` and `dos_hardening_test.rs` ARE
       # the evidence for both units, so a change to either must re-trigger them.
@@ -269,6 +273,10 @@ on:
       # Issue #744: the two store-materialization owners, sibling authorities that had
       # no unit between them.
       - "mcp-re-proxy/src/replay_plane/**"
+      # The async replay retention account (THM-0105); `l1_fast_reject.rs` is dormant and
+      # excluded from the unit, but the glob covers the directory so a fingerprint input
+      # cannot land outside every trigger.
+      - "mcp-re-proxy/src/async_replay/**"
       # The client mTLS transport (THM-0109 / THM-0110). Whole crate, sources and the two
       # integration batteries alike: `mtls_client_test.rs` and `dos_hardening_test.rs` ARE
       # the evidence for both units, so a change to either must re-trigger them.

@@ -46,6 +46,7 @@ not an omission to hide.
 | http_profile.submitted_hop_identity | V0 | _none_ | 0 |
 | http_profile.verifier_result_separation | V0 | THM-0047 | 0 |
 | http_profile.verifier_results | V0 | THM-0014, THM-0015, THM-0016, THM-0017, THM-0018, THM-0019, THM-0020, THM-0021, THM-0022 | 3 |
+| proxy.async_replay_retention | V0 | THM-0105 | 0 |
 | proxy.audit_delivery | V0 | THM-0070 | 0 |
 | proxy.audit_record_coordinates | V0 | THM-0069, THM-0071 | 0 |
 | proxy.authenticated_relationship_peer | V0 | THM-0031 | 1 |

@@ -3090,6 +3090,61 @@ expect_red = [
 ]
 
 [[probe]]
+id = "M121-the-charge-is-against-the-principal"
+unit = "proxy.async_replay_retention"
+theorem = "THM-0105"
+conjunct = "retention is charged to the PRINCIPAL the verifier resolved, never to the signer slot, so one subject gets one budget however many keys it enrols"
+path = "mcp-re-proxy/src/async_replay/mod.rs"
+anchor = """
+        let charge = Charge::reserve(&self.ledger, &key.principal, now_unix, retain_until)
+"""
+weakening = """
+        let charge = Charge::reserve(&self.ledger, &key.signer, now_unix, retain_until)
+"""
+expect_red = [
+  "lib#async_replay::tests::one_subject_gets_one_budget_however_many_keys_it_holds",
+]
+
+[[probe]]
+id = "M122-an-unanswered-insert-keeps-its-charge"
+unit = "proxy.async_replay_retention"
+theorem = "THM-0105"
+conjunct = "only an authoritative Replay hands a charge back; an error or a cancellation leaves it unknown-whether-retained and it is kept"
+path = "mcp-re-proxy/src/async_replay/charge.rs"
+anchor = """
+            Settlement::Indeterminate => {
+                self.ledger
+                    .commit(Arc::clone(&self.actor), self.retain_until);
+            }
+"""
+weakening = """
+            Settlement::Indeterminate => {
+                self.ledger.release(&self.actor);
+            }
+"""
+expect_red = [
+  "lib#async_replay::tests::a_store_failure_is_unavailable_and_keeps_the_charge",
+  "lib#async_replay::tests::an_abandoned_insert_keeps_its_charge_because_the_write_may_have_landed",
+]
+
+[[probe]]
+id = "M123-the-per-actor-wall-is-above-the-seam"
+unit = "proxy.async_replay_retention"
+theorem = "THM-0105"
+conjunct = "an actor over its share is refused above the backend seam, so it cannot spend the shared store's capacity — not even the round trip"
+path = "mcp-re-proxy/src/async_replay/retention_ledger.rs"
+anchor = """
+            if charged >= budget {
+"""
+weakening = """
+            if false {
+"""
+expect_red = [
+  "lib#async_replay::tests::the_tier_budgets_a_durable_backend_that_budgets_nothing_itself",
+  "lib#async_replay::tests::one_subject_gets_one_budget_however_many_keys_it_holds",
+]
+
+[[probe]]
 id = "M130-an-empty-server-ca-bundle-is-refused"
 unit = "client.transport_server_identity"
 theorem = "THM-0109"
