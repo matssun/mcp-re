@@ -162,23 +162,26 @@ Registry: [`verification/policy/theorems.toml`](../../../verification/policy/the
 |---|---|---|---|
 | No validated deployment enables online OCSP client-certificate revocation | configuration legality | THM-0013 · `unit://proxy.online_ocsp_reachability` | in registry |
 | Fail-closed revocation is a property of the verifier type, not a constructor argument | local | type-level — a verifier that admits unknown revocation status is unconstructible | structural, no registry entry |
-| **Resumption is offered only while the authentication epoch is current** (ADR-055) | listener lifetime | `EpochBoundSessionStore` + `TlsAuthEpoch::compute`; test below | **structural + tested, not stated as a theorem** |
-| **A connection cannot outlive the credential that authenticated it** | relation | `ClientCredentialWindow` projections | **sealed, no registry entry** |
-| **Transport identity is derived only from the credential the mechanism accepted for that relationship** | composition | THM-0031 · `unit://proxy.authenticated_relationship_peer` · probe M42 · ASM-0036 · `tls::authenticated_identity_resolution_tests` · `scripts/serving_identity_provenance_gate.py` | in registry (authority) + gated (call sites) |
+| A session resumes under the epoch that tagged it and under no other, and a mismatch is evicted rather than left | store contract (**not** listener lifetime — see §13.1) | THM-0103 · `unit://proxy.tls_listener_state` · probes M116–M118 | in registry |
+| A validated deployment's connection-age bound never exceeds the credential lifetime it reports as its exposure window | configured relation (the socket-level close is an obligation, see the scope) | THM-0102 · `unit://proxy.client_credential_window` · probes M113–M115 | in registry |
+| Transport identity is derived only from the credential the mechanism accepted for that relationship | composition | authority: THM-0031 · `unit://proxy.authenticated_relationship_peer` · probe M42 · ASM-0036; route: THM-0080 · `unit://proxy.serving_identity_provenance` · `scripts/serving_identity_provenance_gate.py` | in registry (both halves) |
 | Certificate identity interpretation reads the configured field and refuses rather than falling back | certificate evidence → identity evidence | THM-0024 · `unit://proxy.certificate_identity` · probes M25–M28 | in registry |
 | Every peer identity value is well-formed, whatever evidence produced it | identity value | THM-0023 · `unit://proxy.peer_identity_value` · probe M29 | in registry |
 | Every canonical Ed25519 public key value is the canonical RFC 8410 encoding of its own point | key representation | THM-0025 · `unit://proxy.ed25519_public_key` · probes M32, M35 | in registry |
 | Credential/key correspondence relates two interpreted keys and attributes every refusal to the failing side | delegated credential | THM-0026 · `unit://proxy.credential_key_correspondence` · probes M31, M33, M34 · ASM-0032 (leaf SPKI extraction, on the accepting path) | in registry |
 | A delegated resolver's existence proves its credential and signer corresponded | construction closure | THM-0027 · `unit://proxy.delegated_resolver_materialization` · probes M36, M37 | in registry |
 
-Two of the gaps this table recorded are now closed, and by a claim narrower than the row
-that anticipated them: THM-0024 states that identity interpretation reads the configured
-field and nothing else, and it deliberately does NOT state that the certificate was
-verified. The composition gap in row five is therefore still open — it always was a
-different proposition, and separating them is what ADR-MCPRE-063 §3.1 requires. The X.509
-parser beneath THM-0024 is ASM-0030, an assumed foreign boundary, not a proved one.
+THM-0024 states that identity interpretation reads the configured field and nothing else,
+and it deliberately does NOT state that the certificate was verified. The X.509 parser
+beneath it is ASM-0030, an assumed foreign boundary, not a proved one.
 
-Three of five original rows are real properties with no registry entry. That is the honest state, and it is what ADR-061 §12's "attach the theorem to the smallest authority that establishes it" is for — not a reason to weaken the claims, a list of theorems worth writing.
+**The three rows #581 recorded as unstated are now stated, and one of them was already
+stated when the issue was written.** Row five's composition half is THM-0080, registered by
+ADR-MCPRE-064 Slice 2 (#619/#621) after #581 was filed: the serving paths take no
+raw-certificate route and ask their authority exactly once, which is the call-site fact this
+row wanted. Rows one and two were real gaps and were closed by the #581 slice of 2026-09-06 —
+with row one's scope corrected to the STORE, per ADR-MCPRE-062 and §13.1, rather than to a
+listener lifetime the production composition does not have.
 
 ## 11. Test/evidence inventory
 
@@ -254,8 +257,14 @@ Re-measured by the ADR-061 §5.1 rule after MCPRE-138 (`scripts/module_size_gate
    ADR-062 DECISION      A is accepted
    MCPRE-137 (#573)      conforms to A structurally; exposes no epoch mutation
                          does NOT retire ADR-055's dormant live-epoch machinery
-   #598 REMAINING        retire/re-scope that machinery, and its theorem consequences
+   #598 REMAINING        retire/re-scope that machinery
    ```
+
+   The theorem consequence is discharged: THM-0103 states the property at the STORE, and its
+   scope says in terms that a production listener's epoch is a construction-time constant and
+   that nothing here establishes an epoch transition inside a surviving cache. What remains
+   under #598 is the code question — retiring or re-scoping the dormant live-epoch machinery —
+   which is a redesign and is not done under a theorem-drafting mandate.
 
 2. **`transport.rs` (1274) and `ocsp.rs` (1271) are band-3 units with no blueprint.** They are named here so their absence is a recorded gap rather than an implied claim of coverage. `transport.rs` shrank by 31 lines and `tls.rs` by 26 when ADR-063 Slice 1 moved certificate identity interpretation out; both debt entries were ratcheted down rather than left at the old number, because a stale baseline is 31 lines of headroom nobody paid for.
 
@@ -263,7 +272,7 @@ Re-measured by the ADR-061 §5.1 rule after MCPRE-138 (`scripts/module_size_gate
 
 4. **The trusted-ingress facade's delegation is pinned by nothing this graph declares.** `transport::validate_asserted_identity_value` delegates to the `PeerIdentityValue` owner, and its own tests go red when the owner's rules weaken — but they are not evidence for THM-0023, whose claim is over inhabitants of the type. A caller that stopped constructing the type would leave every inhabitant well-formed and the ingress path unprotected. Closing this needs the trusted-ingress authority that ADR-063 Slice 1 deliberately did not build.
 
-5. **Three properties in §10 have no theorem.** Structural and tested is not the same as stated.
+5. ~~**Three properties in §10 have no theorem.**~~ — **CLOSED** (2026-09-06). Row five was already THM-0080 when #581 was written; rows one and two are now THM-0103 and THM-0102. Structural and tested is still not the same as stated, which is why each carries a scope sentence naming what it does not establish.
 
 ## 14. Completion criteria
 
@@ -272,5 +281,5 @@ Re-measured by the ADR-061 §5.1 rule after MCPRE-138 (`scripts/module_size_gate
 - ~~blocking harness is outside the TLS authority if retained~~ — done, `blocking_mtls_harness` (MCPRE-138);
 - ~~no test-only consumer forces a misleading production export~~ — done, the harness entry points are exported from their own module (MCPRE-138);
 - TLS authority has a narrow facade and private subordinate implementation tree;
-- the resumption property and the credential-window relation are stated in the theorem registry with correct scope — under ADR-062 the resumption row is listener/store NON-CONTINUITY, not live epoch advancement (see the #581 note);
+- ~~the resumption property and the credential-window relation are stated in the theorem registry with correct scope~~ — done, THM-0103 and THM-0102 (#581 slice, 2026-09-06); under ADR-062 the resumption row is the STORE's contract and the safety property across an anchor change is listener/store NON-CONTINUITY, not live epoch advancement;
 - exact cargo/Bazel feature lanes cover exported-key, delegated-key, revocation, resumption, and async serving paths, each named per §11.

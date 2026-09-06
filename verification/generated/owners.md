@@ -51,6 +51,7 @@ not an omission to hide.
 | proxy.certificate_identity | V0 | THM-0024 | 1 |
 | proxy.channel_associated_credential | V0 | THM-0028 | 1 |
 | proxy.channel_associated_identity | V0 | THM-0029 | 1 |
+| proxy.client_credential_window | V0 | THM-0102 | 0 |
 | proxy.continuation_correlation_store | V0 | THM-0087 | 0 |
 | proxy.continuation_installation | V0 | _none_ | 0 |
 | proxy.continuation_key_provenance | V0 | _none_ | 0 |
@@ -88,7 +89,7 @@ not an omission to hide.
 | proxy.serving_trust_seam | V0 | THM-0066, THM-0099 | 0 |
 | proxy.signing_credential_provenance | V0 | THM-0082 | 0 |
 | proxy.signing_role_separation | V0 | THM-0073 | 0 |
-| proxy.tls_listener_state | V0 | THM-0048, THM-0054 | 0 |
+| proxy.tls_listener_state | V0 | THM-0048, THM-0054, THM-0103 | 0 |
 | proxy.trust_composition_root | V0 | THM-0038, THM-0067, THM-0077 | 0 |
 | proxy.trust_configuration_state | V0 | THM-0035, THM-0036 | 0 |
 | proxy.trust_document_interpretation | V0 | THM-0098 | 0 |

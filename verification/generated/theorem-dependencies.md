@@ -111,6 +111,8 @@ graph BT
     THM_0099["THM-0099<br/>The production actor resolver answers its Request-slot selector from the deployment's trust document"]
     THM_0100["THM-0100<br/>A replica's exposure to a key its document no longer enrols is confined to the serving interval it prints"]
     THM_0101["THM-0101<br/>An emitted exchange transition corresponds to the work that justifies it, except the six the assembly owns"]
+    THM_0102["THM-0102<br/>A validated deployment's connection-age bound never exceeds the credential lifetime it reports as its exposure window"]
+    THM_0103["THM-0103<br/>The epoch-bound session store resumes a session under the epoch that tagged it, and under no other"]
     THM_0007 --> THM_0008
     THM_0010 --> THM_0009
     THM_0001 --> THM_0014
@@ -145,6 +147,7 @@ graph BT
     THM_0039 --> THM_0040
     THM_0043 --> THM_0044
     THM_0040 --> THM_0045
+    THM_0103 --> THM_0048
     THM_0055 --> THM_0050
     THM_0015 --> THM_0051
     THM_0047 --> THM_0051
@@ -221,6 +224,7 @@ graph BT
     THM_0089 --> THM_0077
     THM_0090 --> THM_0077
     THM_0096 --> THM_0077
+    THM_0102 --> THM_0077
     THM_0043 --> THM_0078
     THM_0044 --> THM_0078
     THM_0045 --> THM_0078

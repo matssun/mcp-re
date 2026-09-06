@@ -498,6 +498,15 @@ tested_symbols = [
   "lib#tls_listener_state::auth_epoch::tests::a_rebuild_with_withdrawn_trust_advances_the_epoch_and_stops_resumption",
   "lib#tls_listener_state::auth_epoch::tests::withdrawing_an_anchor_changes_the_epoch",
   "lib#tls_listener_state::auth_epoch::tests::the_anchor_set_alone_determines_the_epoch",
+  # Registered by the #581 slice: five controls existed in the module and were named by no
+  # unit, so the store contract THM-0103 states rested on evidence the fingerprint did not
+  # carry. The epoch is a function of the anchor SET — order and duplication are not inputs —
+  # and the publication reports a change exactly when there is one.
+  "lib#tls_listener_state::auth_epoch::tests::the_epoch_is_a_property_of_the_anchor_set_not_its_order",
+  "lib#tls_listener_state::auth_epoch::tests::a_duplicated_anchor_does_not_change_the_epoch",
+  "lib#tls_listener_state::auth_epoch::tests::the_epoch_domain_names_the_current_definition",
+  "lib#tls_listener_state::auth_epoch::tests::storing_an_identical_epoch_reports_no_change",
+  "lib#tls_listener_state::auth_epoch::tests::storing_a_different_epoch_reports_the_previous_one",
 ]
 
 # ---------------------------------------------------------------------------
@@ -1710,6 +1719,46 @@ tested_symbols = [
   "lib#config_state::trust_document::tests::the_stored_path_is_the_operators_string_verbatim",
   "lib#config_state::trust_document::tests::the_public_constructor_validates_too",
 ]
+
+# ---------------------------------------------------------------------------
+# The connection credential window — MCPRE-145 / #581 row 2, 2026-09-06
+# ---------------------------------------------------------------------------
+#
+# `ClientCredentialWindow` is sealed for the relation *a connection may not outlive the
+# credential that authenticated it*, and belonged to no unit, so the relation it owns was
+# evidence for nothing. The currency-bound projection travels with it: the two files answer
+# one question — what actually bounds a compromised credential's usefulness — and separating
+# them would leave the posture name in one fingerprint and the durations it names in another.
+
+[[unit]]
+id = "proxy.client_credential_window"
+class = "V0"
+description = "How long a client credential authorizes a connection, as one owned relation: the certificate lifetime and the connection age are legal only together, construction refuses any pair where the connection could outlive the credential or the lifetime passes the one-hour ceiling, the exposure window projects the lifetime the age respects, and the posture name a deployment reports states which of the three bounds actually governs. Claims nothing about a live connection being closed at that age, which is the async serving path's."
+paths = [
+  "mcp-re-proxy/src/config_state/client_credential_window.rs",
+  "mcp-re-proxy/src/config_state/credential_currency_bound.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://proxy/tls/connection_credential_window",
+  # Three conjuncts a green battery can hold while none is load-bearing: the relation
+  # itself, the ceiling, and which duration the exposure window projects. M113-M115 ask.
+  "mutation://proxy/tls/connection_credential_window",
+]
+# Both directions of the relation — the last legal pair and the first illegal one — plus the
+# two ways a half can be missing, and the rule that an unanswerable relation is not reported
+# as a violated one.
+tested_symbols = [
+  "lib#config_state::client_credential_window::tests::a_connection_may_not_outlive_the_credential_that_authenticated_it",
+  "lib#config_state::client_credential_window::tests::an_age_equal_to_the_lifetime_is_the_last_legal_pair",
+  "lib#config_state::client_credential_window::tests::the_exposure_window_is_the_lifetime_the_connection_age_respects",
+  "lib#config_state::client_credential_window::tests::disabling_either_bound_resolves_no_window",
+  "lib#config_state::client_credential_window::tests::a_lifetime_past_the_ceiling_resolves_no_window",
+  "lib#config_state::client_credential_window::tests::the_public_constructor_validates_too",
+  "lib#config_state::credential_currency_bound::tests::every_posture_names_what_actually_bounds_the_exposure",
+  "lib#config_state::credential_currency_bound::tests::a_mechanism_that_does_not_exist_produces_the_same_posture",
+]
+
 
 [[unit]]
 id = "proxy.trust_plan"

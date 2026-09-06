@@ -2945,3 +2945,113 @@ pub(crate) struct Established<T> {
 expect_red = [
   "tests/integration#exchange_transition_ownership_test::the_carrier_has_no_reader_but_establish",
 ]
+
+[[probe]]
+id = "M113-a-connection-may-not-outlive-its-credential"
+unit = "proxy.client_credential_window"
+theorem = "THM-0102"
+conjunct = "connection_age <= cert_lifetime — the relation over the values the deployment chose, not against the ceiling constant"
+path = "mcp-re-proxy/src/config_state/client_credential_window.rs"
+anchor = """
+        if connection_age > cert_lifetime {
+"""
+weakening = """
+        if connection_age > cert_lifetime && false {
+"""
+expect_red = [
+  "lib#config_state::client_credential_window::tests::a_connection_may_not_outlive_the_credential_that_authenticated_it",
+  "lib#config_state::client_credential_window::tests::an_age_equal_to_the_lifetime_is_the_last_legal_pair",
+  "lib#config_state::client_credential_window::tests::the_public_constructor_validates_too",
+]
+
+[[probe]]
+id = "M114-the-lifetime-ceiling-is-enforced"
+unit = "proxy.client_credential_window"
+theorem = "THM-0102"
+conjunct = "cert_lifetime <= MAX_CLIENT_CERT_LIFETIME — the one-hour ceiling gates construction, not just the residue"
+path = "mcp-re-proxy/src/config_state/client_credential_window.rs"
+anchor = """
+        if cert_lifetime > MAX_CLIENT_CERT_LIFETIME {
+"""
+weakening = """
+        if cert_lifetime > MAX_CLIENT_CERT_LIFETIME && false {
+"""
+expect_red = [
+  "lib#config_state::client_credential_window::tests::the_public_constructor_validates_too",
+]
+
+[[probe]]
+id = "M115-the-exposure-window-is-the-lifetime"
+unit = "proxy.client_credential_window"
+theorem = "THM-0102"
+conjunct = "exposure_window() projects the certificate lifetime — the duration the operator is told, not the connection age"
+path = "mcp-re-proxy/src/config_state/client_credential_window.rs"
+anchor = """
+    pub fn exposure_window(&self) -> Duration {
+        self.cert_lifetime
+    }
+"""
+weakening = """
+    pub fn exposure_window(&self) -> Duration {
+        self.connection_age
+    }
+"""
+expect_red = [
+  "lib#config_state::client_credential_window::tests::the_exposure_window_is_the_lifetime_the_connection_age_respects",
+  "lib#config_state::credential_currency_bound::tests::every_posture_names_what_actually_bounds_the_exposure",
+]
+
+[[probe]]
+id = "M116-a-superseded-session-is-refused"
+unit = "proxy.tls_listener_state"
+theorem = "THM-0103"
+conjunct = "a read returns the session only if the stored tag equals the epoch in force — a session tagged under withdrawn trust does not resume"
+path = "mcp-re-proxy/src/tls_listener_state/auth_epoch.rs"
+anchor = """
+        (stored_tag == tag.as_slice()).then(|| session.to_vec())
+"""
+weakening = """
+        let _ = stored_tag;
+        Some(session.to_vec())
+"""
+expect_red = [
+  "lib#tls_listener_state::auth_epoch::tests::a_session_stored_under_a_withdrawn_anchor_does_not_resume",
+  "lib#tls_listener_state::auth_epoch::tests::a_rebuild_with_withdrawn_trust_advances_the_epoch_and_stops_resumption",
+  "lib#tls_listener_state::resumption_acceptance::handshakes::withdrawing_a_trusted_ca_stops_resumption_and_forces_a_full_handshake",
+]
+
+[[probe]]
+id = "M117-a-stale-session-is-evicted-not-left"
+unit = "proxy.tls_listener_state"
+theorem = "THM-0103"
+conjunct = "a get that mismatches evicts the entry rather than leaving it to be re-read and re-rejected"
+path = "mcp-re-proxy/src/tls_listener_state/auth_epoch.rs"
+anchor = """
+                self.inner.take(key);
+"""
+weakening = """
+"""
+expect_red = [
+  "lib#tls_listener_state::auth_epoch::tests::a_stale_session_is_evicted_by_get_not_left_to_be_re_rejected",
+]
+
+[[probe]]
+id = "M118-a-current-session-does-resume"
+unit = "proxy.tls_listener_state"
+theorem = "THM-0103"
+conjunct = "the gate is not vacuously closed — a session stored under the epoch in force IS returned, and rustls reports Resumed"
+path = "mcp-re-proxy/src/tls_listener_state/auth_epoch.rs"
+anchor = """
+        (stored_tag == tag.as_slice()).then(|| session.to_vec())
+"""
+weakening = """
+        let _ = (stored_tag, session);
+        None
+"""
+expect_red = [
+  "lib#tls_listener_state::auth_epoch::tests::a_session_stored_under_the_current_epoch_resumes",
+  "lib#tls_listener_state::auth_epoch::tests::a_rebuild_that_republishes_the_same_trust_keeps_the_cache",
+  "lib#tls_listener_state::resumption_acceptance::handshakes::a_second_connection_resumes_while_the_trust_epoch_holds",
+  "lib#tls_listener_state::resumption_acceptance::handshakes::republishing_the_epoch_of_an_unchanged_ca_set_does_not_stop_resumption",
+  "lib#tls_listener_state::resumption_acceptance::handshakes::resumption_returns_once_the_original_trust_is_restored",
+]

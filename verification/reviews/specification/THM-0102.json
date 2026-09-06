@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:b0d718cf1245ddb0da8de4d0ce24112503561a2ca171a41654464f3c2bc229bb",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0102",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "SPECIFICATION REVIEW RECORDED UNDER THE OWNER'S AFK MANDATE OF 2026-09-06 (backlog item 5, 'TLS propositions already governed by #581/#598'), by the implementing agent as routine owner-review maintenance \u2014 not a transcription of a ruling naming this fingerprint. Both issues are HITL and stay open for the owner's specification review; this record is the artefact that review reads. #581 ROW 2, and the rule is already on record: the relation 'a connection may not outlive the credential that authenticated it' is the component blueprint's section 7, and ClientCredentialWindow was built to own it after the measured defect \u2014 --max-client-cert-lifetime 600 with --max-connection-age-secs 3000 accepted, both halves bounded against the CEILING CONSTANT and nothing relating them, while the transcript reported a 600s exposure window. This theorem states what construction already enforces; it adds no rule. THE FILES WERE OWNED BY NO UNIT: config_state/client_credential_window.rs and config_state/credential_currency_bound.rs appeared in no [[unit]] at all, so the sealed relation was evidence for nothing. unit://proxy.client_credential_window is new and owns both, because they answer one question \u2014 what actually bounds a compromised credential's usefulness. THE OBLIGATION IS NAMED, NOT FOLDED IN: that a LIVE connection is closed at the configured age is enforced in async_serve/connection.rs, which has no test, belongs to no unit and lives in a feature lane a plain cargo test compiles to nothing. The scope says so and states the claim at the level of the values a deployment chose. Composed directly under THM-0077 (no deployment serves a posture nobody selected), beside THM-0048 and THM-0054. No assumption. Probes M113-M115. The fingerprint was recomputed on the tree before this record was written and equals the value above. Reviewed tree: assurance/tls-propositions stacked on #820 head 18bd34de.",
+  "reviewed_fingerprint": "sha256:6bb5cdc3e29b3c189fd02659beabe894e90050d858178fc7a94fb3aa84c92cdc",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0102"
+}
