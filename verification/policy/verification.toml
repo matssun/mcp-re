@@ -3779,6 +3779,58 @@ tested_symbols = [
 # the one where `RedisEpochReader` does not exist.
 test_features = ["redis_replay"]
 
+# ---------------------------------------------------------------------------
+# The trust-document parser — v0.17 census gap, 2026-09-06
+# ---------------------------------------------------------------------------
+#
+# Recorded in the trust-plane census of 2026-09-05 as the parser with no owner, and kept out
+# of `proxy.trust_plane_runtime` because parsing is a separate authority under the
+# security-code rule. It is TWO stages with one owner each: a structural parse that accepts
+# a whole document or nothing, and three slot projections that read the parsed document and
+# never the bytes. THM-0097 takes the snapshot as an input authority; this unit is where
+# that input is made from a byte string.
+
+[[unit]]
+id = "proxy.trust_document_interpretation"
+class = "V0"
+description = "What a byte string must be to be a trust document, and what an accepted document enrols each key AS: one structural parse (exactly the members signer/key_id/public_key and optionally slots, no member twice, no unknown member or slot name, every key decodable, every key_id enrolled once across the document) that yields a whole document or a refusal naming the first broken rule; then three projections of the parsed entries — the resolver over every written coordinate, the request-signer map over entries with slots absent or listing request, and the authorization-issuer map over entries listing that slot — each excluding the deployment's own response_kid. Claims nothing about the path, the bytes' provenance, when a change is observed, or which slot the serving seam consults first."
+paths = ["mcp-re-proxy/src/trust_document.rs"]
+exported_contracts = []
+evidence = [
+  "test://proxy/trust_document/one_parse_slot_projections",
+  # Five rules a green battery can hold while none is load-bearing: key_id uniqueness, the
+  # response_kid exclusion, the absent-slots default in BOTH directions, and the two closed
+  # vocabularies. M100-M104 ask.
+  "mutation://proxy/trust_document/one_parse_slot_projections",
+]
+# The structural stage: what is refused, and that a refusal is whole. The two duplicate
+# rules are distinct propositions — the same signer twice is key substitution, two signers
+# under one key_id is signer substitution under the coordinate the serving path resolves by —
+# and the two vocabulary rules likewise: a member the parser does not know and a slot name
+# it does not know each used to widen silently.
+tested_symbols = [
+  "lib#trust_document::tests::loads_a_trust_file",
+  "lib#trust_document::tests::trust_file_with_bad_key_errors",
+  "lib#trust_document::tests::load_trust_rejects_malformed_entries",
+  "lib#trust_document::tests::trust_file_with_duplicate_key_id_is_rejected",
+  "lib#trust_document::tests::trust_file_duplicate_same_key_is_also_rejected",
+  "lib#trust_document::tests::trust_file_same_signer_distinct_key_ids_is_fine",
+  "lib#trust_document::tests::a_key_id_shared_by_two_signers_is_refused_rather_than_resolved_by_file_order",
+  "lib#trust_document::tests::a_duplicate_authority_kid_is_refused_rather_than_resolved_by_file_order",
+  "lib#trust_document::tests::a_duplicated_member_is_refused_rather_than_read_last_wins",
+  "lib#trust_document::tests::an_unknown_member_is_refused_rather_than_ignored",
+  "lib#trust_document::tests::an_unknown_slot_is_refused_rather_than_ignored",
+  "lib#trust_document::tests::slots_must_be_an_array_when_present",
+  # The slot projections: each direction of the absent-slots default, the authority of a
+  # declared list, the response_kid exclusion from both maps (and only from the maps), and
+  # that every coordinate a map names is one the resolver holds under the same signer.
+  "lib#trust_document::tests::an_authority_key_is_not_a_request_signer_and_a_request_signer_is_not_an_authority",
+  "lib#trust_document::tests::a_slotless_entry_is_a_request_signer_only",
+  "lib#trust_document::tests::slots_present_narrows_and_is_authoritative",
+  "lib#trust_document::tests::the_response_kid_is_never_a_request_signer_nor_an_authority",
+  "lib#trust_document::tests::every_slot_map_entry_names_a_coordinate_the_resolver_holds",
+]
+
 [[edge]]
 kind = "PROOF_DEPENDENCY"
 from = "conformance.retained_corpus"

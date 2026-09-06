@@ -39,9 +39,8 @@ pub(super) fn read_trust_file(
     response_kid: &str,
 ) -> Result<(mcp_re_core::InMemoryTrustResolver, HashMap<String, String>), String> {
     let bytes = std::fs::read(trust_path).map_err(|e| format!("{trust_path}: {e}"))?;
-    let resolver = crate::trust_document::load_trust(&bytes)?;
+    let document = crate::trust_document::TrustDocument::parse(&bytes)?;
     // Slot-scoped: only entries this file enrols for the REQUEST slot become client
     // request signers. A key carried here for another purpose is not one.
-    let signers = crate::trust_document::load_trust_request_signers(&bytes, response_kid)?;
-    Ok((resolver, signers))
+    Ok((document.resolver(), document.request_signers(response_kid)))
 }

@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:ab7d6f400ba80eb0efe73b45929d4a4bd68456de580eb12ae948be58b277f56b",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0098",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "SPECIFICATION REVIEW RECORDED UNDER THE OWNER'S AFK MANDATE OF 2026-09-06, by the implementing agent, as routine owner-review maintenance for a class whose semantic rules the owner has already ruled \u2014 not as a transcription of a ruling naming this fingerprint. The mandate authorises a subordinate non-root theorem for the trust_document.rs correspondence provided it broadens no published boundary and introduces no trust assumption; this theorem does neither: no assumption in its closure, depends_on empty, composed at THM-0074 beside THM-0097 which the owner approved at sha256:5e1a9e152078dd177d1a5c2f1806824809b0a15b3ec7c3b8eabd9e5e68bd257b with the snapshot as an INPUT authority. RULES ALREADY ON RECORD that this theorem states: duplicate (signer, key_id) refused rather than last-write-wins (audit ledger 54aadf7b6257f126); slots present authoritative, slots absent = request only, an absent slots never an authority (ADR-MCPRE-065 section 8); the closed slot vocabulary refusing a typo (a startup failure rather than a silently narrower key); response_kid excluded from both maps. TWO CONJUNCTS EXTEND THOSE RULINGS and are flagged for the owner to overturn (packet verification/reviews/packets/trust-document-interpretation-2026-09-06.md section 8): (1) key_id unique across the WHOLE document, because the serving seam resolves a request signer by key_id alone and a document binding one key_id to two signers was silently resolved by file order; (2) the member vocabulary closed \u2014 unknown or duplicated JSON members refused \u2014 because a misspelt slots left a key enrolled WIDER than written, the same shape the slot-typo ruling refuses. Both are one-line reversals. The fingerprint was recomputed on the tree before this record was written and equals the value above. Reviewed tree: assurance/trust-document-interpretation rebased on main 67ee9f30.",
+  "reviewed_fingerprint": "sha256:c63fde3bf946b70c85f78bd0676fd7df53d4a80d18d4f6be9d1d6a0a7f62b08c",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0098"
+}

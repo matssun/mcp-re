@@ -125,9 +125,13 @@ Mint the same shapes `full_stack_test` mints in-process, but on disk. You need:
 | A client **leaf cert** whose **URI SAN** equals the request `signer` | The agent's mTLS identity | (presented by the host, not a proxy flag) |
 | **Trust file** (JSON array) | Request-signer + authorization-issuer public keys | `--trust` |
 
-The trust file is a JSON array of `{ "signer", "key_id", "public_key" }`
-(public key Base64URL-no-pad). It carries **both** the request-signer key and (for
-`--authz reference`) the authorization-issuer key.
+The trust file is a JSON array of `{ "signer", "key_id", "public_key" }` entries
+(public key Base64URL-no-pad) with an optional `"slots"` array. It carries **both** the
+request-signer key and (for `--authz pdp-decision`) the authorization-issuer key, and
+`slots` is what separates them: an entry with no `slots` is a request signer only, and an
+authority must say `"slots": ["authorization-issuer"]`. The vocabulary is closed — an
+unknown member, an unknown slot name, a duplicated member, or a `key_id` enrolled twice
+refuses startup rather than enrolling a key more widely than you wrote.
 
 `trust_document` is the authoritative boundary for what those bytes mean — duplicate
 rejection, slot discipline, and the exclusion of the deployment's own response key from
@@ -145,7 +149,8 @@ command line.
   {
     "signer": "did:example:authz-issuer-1",
     "key_id": "authz-key-1",
-    "public_key": "<authorization-issuer public key, b64url-no-pad>"
+    "public_key": "<authorization-issuer public key, b64url-no-pad>",
+    "slots": ["authorization-issuer"]
   }
 ]
 ```

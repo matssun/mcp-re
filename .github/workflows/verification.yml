@@ -80,6 +80,8 @@ on:
       - "mcp-re-proxy/src/trust_plane/**"
       - "mcp-re-proxy/src/trust_epoch.rs"
       - "mcp-re-proxy/src/reloading_trust.rs"
+      # v0.17: the trust-document parser, `proxy.trust_document_interpretation`.
+      - "mcp-re-proxy/src/trust_document.rs"
       # #741 put the inner-plane seam inside the dispatch-commitment closure: the capability
       # the ready state carries is produced there, so a change to it dirties the unit and
       # this lane must re-measure it.
@@ -283,6 +285,8 @@ on:
       - "mcp-re-proxy/src/trust_plane/**"
       - "mcp-re-proxy/src/trust_epoch.rs"
       - "mcp-re-proxy/src/reloading_trust.rs"
+      # v0.17: the trust-document parser, `proxy.trust_document_interpretation`.
+      - "mcp-re-proxy/src/trust_document.rs"
       # #741 put the inner-plane seam inside the dispatch-commitment closure: the capability
       # the ready state carries is produced there, so a change to it dirties the unit and
       # this lane must re-measure it.

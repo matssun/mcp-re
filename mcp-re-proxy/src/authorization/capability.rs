@@ -46,7 +46,8 @@ pub(crate) fn evaluator(
         return Ok(Established::off(AUTHORIZATION_OFF));
     };
     let bytes = std::fs::read(trust.path()).map_err(|e| format!("{}: {e}", trust.path()))?;
-    let issuers = crate::trust_document::load_authorization_issuers(&bytes, response_kid)?;
+    let issuers =
+        crate::trust_document::TrustDocument::parse(&bytes)?.authorization_issuers(response_kid);
     if issuers.is_empty() {
         return Err(format!(
             "--authz pdp-decision installs the carried-PDP-decision authority, but {} enrols \
