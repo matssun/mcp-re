@@ -71,6 +71,7 @@ not an omission to hide.
 | proxy.etcd_replay_adapter | V0 | THM-0107 | 0 |
 | proxy.exchange_lifecycle | V0 | THM-0043, THM-0044, THM-0078 | 0 |
 | proxy.exchange_transition_ownership | V0 | THM-0101 | 0 |
+| proxy.kms_ed25519_seam | V0 | THM-0108 | 0 |
 | proxy.kms_endpoint_authority | V0 | THM-0089 | 0 |
 | proxy.mechanism_verified_credential | V0 | THM-0030 | 1 |
 | proxy.online_ocsp_reachability | V0 | THM-0013 | 0 |

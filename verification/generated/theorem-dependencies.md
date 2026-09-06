@@ -338,3 +338,10 @@ graph BT
 graph BT
     THM_0105["THM-0105<br/>Replay retention is a bounded per-replica account, charged before the store is touched and handed back only by an answer that proves nothing was retained"]
 ```
+
+## Component 11
+
+```mermaid
+graph BT
+    THM_0108["THM-0108<br/>The KMS seam admits only a raw preimage, emits only a 64-byte signature, and verifies every one of them under the signer's own advertised key first"]
+```

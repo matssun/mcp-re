@@ -5344,3 +5344,89 @@ owner = "proxy.etcd_replay_adapter"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.etcd_replay_adapter"]
 depends_on = []
+
+[[theorem]]
+id = "THM-0108"
+title = "The KMS seam admits only a raw preimage, emits only a 64-byte signature, and verifies every one of them under the signer's own advertised key first"
+statement = """
+POSSESSION IS THE PROOF, three times. At the seam where a provider's network client meets
+the provider-agnostic Ed25519 mapping, three types each make one wrong value
+UNCONSTRUCTIBLE rather than merely checked for:
+
+  * `RawEd25519Message` is the RAW arm and there is NO digest arm, so a pre-hashed input
+    cannot reach a RAW-only signing call. Ed25519 and Ed25519ph are different algorithms
+    over the same key and a signature made by the second does not verify under the first;
+    the missing input is NAMED rather than fabricated, so a pre-hashed variant arrives as a
+    sibling type when something produces one and every backend's match then fails to compile
+    until it says what it does with it.
+  * `RawEd25519Signature` exists only at exactly 64 bytes. The length interpretation is not
+    a step a caller performs — it is the only way in — so a backend returning 65 bytes, an
+    empty body, or a DER-wrapped signature produces no value at all.
+  * `Ed25519SpkiDer` exists only after RFC 8410 `SubjectPublicKeyInfo` interpretation, which
+    happens ONCE, here, rather than in each provider adapter. Holding one means the DER was
+    well-formed AND declared Ed25519 AND carried a canonical 32-byte point.
+
+AND ONE RE-VERIFICATION, AT THE SEAM. Before any signature is emitted, it is verified
+against THIS signer's own advertised `response_public_key` using the deployment's own
+verifier, and a failure is a refusal rather than an emission. The concrete adapters
+self-verify as well and that is kept as defence in depth — but the property "every signature
+is verified locally before it is emitted" holds at the seam, so it holds for ANY backend,
+including a future one that forgot to self-verify and one wired to a mismatched key.
+
+The gate is not vacuous: a genuine signature over the preimage DOES verify under
+`mcp-re-core`'s own verifier, and the seam's projection returns the signature bytes
+unaltered.
+"""
+security_consequence = """
+The excluded outcome is the proxy emitting a response signature that its own advertised
+public key cannot verify — a signature relying parties are told to check against a key it was
+not made with. Three ways to produce one are made unreachable rather than caught:
+
+A PRE-HASH MISMATCH is the subtle one. `ED25519_PH_SHA_512` / `MessageType: DIGEST` is a
+legitimate KMS operation over the very same key, and a backend that selects it returns a
+perfectly well-formed 64-byte signature that simply does not verify over the raw preimage.
+No length check finds it and no error is returned by the provider. It is caught here because
+the type admits no digest.
+
+A MALFORMED LENGTH would otherwise be a value the seam passes on for someone downstream to
+notice, and the operational test is what makes it owned instead: delete every length check
+elsewhere and an over-long signature is still unconstructible.
+
+A MISMATCHED KEY is the one that survives both. A backend wired to the wrong KMS key
+produces a valid Ed25519 signature of the right length over the right message — under the
+wrong key. Only the re-verification against the signer's OWN advertised key catches it, which
+is why that check sits at the seam and not in each adapter: an adapter that forgets is exactly
+the case it exists for.
+"""
+scope = """
+THE SEAM, NOT THE PROVIDERS. `gcp_kms_keysource.rs`, `aws_kms_keysource.rs` and `aws_sts.rs`
+are the adapters BENEATH this seam and belong to no unit; nothing here establishes that any
+of them speaks its provider's protocol correctly, selects the right key, or reaches the
+endpoint a deployment intended. What is established is that whatever they return crosses this
+boundary only as a typed value the seam could construct, and only after verifying.
+
+NOT A CLAIM ABOUT KEY CUSTODY. That the private key never leaves the KMS is the provider's
+property and the trait's shape — this trait never asks for a private key — not a result
+proved here.
+
+NOT A CLAIM ABOUT THE FAILURE PATH. How a failed remote-signer call is classified, and
+whether it arms the handshake-path throttle, is `remote_signer_call`'s authority. It has no
+unit, it is gated on `any(aws_kms_keysource, gcp_kms_keysource)` — the shape that makes a
+single-feature lane silent about the other — and it is recorded as a named gap rather than
+absorbed here.
+
+The public-key rule itself is NOT implemented here: what makes a blob a legal Ed25519 public
+key is a property of the key representation with its own owner under ADR-MCPRE-063 Slice 2,
+and this seam maps that owner's refusal into the `KeyError` vocabulary its callers match on.
+The three distinctions that owner draws — unreadable bytes, a well-formed key of another
+algorithm, a non-canonical encoding — are rendered into the message rather than lost, because
+this vocabulary has one variant for all three.
+
+Executable, class V0, measured in the default cargo lane. Outside every root's closure: no
+root's response-signing claim is stated at this seam, and the delegated-signing terminal that
+roots consume is `proxy.delegated_signing_credential`'s.
+"""
+owner = "proxy.kms_ed25519_seam"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.kms_ed25519_seam"]
+depends_on = []
