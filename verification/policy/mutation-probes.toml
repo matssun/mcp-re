@@ -2716,3 +2716,94 @@ weakening = """
 expect_red = [
   "lib#trust_plane::reload::reload_loop_tests::the_failure_budget_fails_closed_on_exactly_the_fifth_consecutive_bad_read",
 ]
+
+[[probe]]
+id = "M100-a-key-id-enrols-once"
+unit = "proxy.trust_document_interpretation"
+theorem = "THM-0098"
+conjunct = "every key_id is enrolled once across the whole document — the same signer twice and two signers under one key_id are both refused"
+path = "mcp-re-proxy/src/trust_document.rs"
+anchor = """
+            if let Some(prior) = entries.iter().find(|e| e.key_id == key_id) {
+"""
+weakening = """
+            if let Some(prior) = entries.iter().find(|e| e.key_id == key_id && false) {
+"""
+expect_red = [
+  "lib#trust_document::tests::trust_file_with_duplicate_key_id_is_rejected",
+  "lib#trust_document::tests::trust_file_duplicate_same_key_is_also_rejected",
+  "lib#trust_document::tests::a_key_id_shared_by_two_signers_is_refused_rather_than_resolved_by_file_order",
+  "lib#trust_document::tests::a_duplicate_authority_kid_is_refused_rather_than_resolved_by_file_order",
+]
+
+[[probe]]
+id = "M101-the-response-kid-is-no-request-signer"
+unit = "proxy.trust_document_interpretation"
+theorem = "THM-0098"
+conjunct = "the deployment's own response_kid is excluded from the request-signer map whether or not the entry declares slots"
+path = "mcp-re-proxy/src/trust_document.rs"
+anchor = """
+            .filter(|e| e.key_id != response_kid)
+            .filter(|e| e.slots.is_none() || e.lists(Slot::Request))
+"""
+weakening = """
+            .filter(|e| e.slots.is_none() || e.lists(Slot::Request))
+"""
+expect_red = [
+  "lib#trust_document::tests::the_response_kid_is_never_a_request_signer_nor_an_authority",
+]
+
+[[probe]]
+id = "M102-declared-slots-narrow"
+unit = "proxy.trust_document_interpretation"
+theorem = "THM-0098"
+conjunct = "slots present is authoritative — an entry that does not list request is not a request signer"
+path = "mcp-re-proxy/src/trust_document.rs"
+anchor = """
+            .filter(|e| e.slots.is_none() || e.lists(Slot::Request))
+"""
+weakening = """
+            .filter(|_| true)
+"""
+expect_red = [
+  "lib#trust_document::tests::an_authority_key_is_not_a_request_signer_and_a_request_signer_is_not_an_authority",
+  "lib#trust_document::tests::slots_present_narrows_and_is_authoritative",
+  "lib#trust_document::tests::every_slot_map_entry_names_a_coordinate_the_resolver_holds",
+]
+
+[[probe]]
+id = "M103-absent-slots-enrol-no-authority"
+unit = "proxy.trust_document_interpretation"
+theorem = "THM-0098"
+conjunct = "slots absent is a request signer only — an existing document never acquires a policy authority by being left alone"
+path = "mcp-re-proxy/src/trust_document.rs"
+anchor = """
+            .filter(|e| e.lists(Slot::AuthorizationIssuer))
+"""
+weakening = """
+            .filter(|e| e.slots.is_none() || e.lists(Slot::AuthorizationIssuer))
+"""
+expect_red = [
+  "lib#trust_document::tests::a_slotless_entry_is_a_request_signer_only",
+  "lib#trust_document::tests::an_authority_key_is_not_a_request_signer_and_a_request_signer_is_not_an_authority",
+  "lib#trust_document::tests::every_slot_map_entry_names_a_coordinate_the_resolver_holds",
+]
+
+[[probe]]
+id = "M104-the-member-vocabulary-is-closed"
+unit = "proxy.trust_document_interpretation"
+theorem = "THM-0098"
+conjunct = "an unknown member is a refusal, not an ignored key — a misspelt slots cannot leave a key enrolled for everything"
+path = "mcp-re-proxy/src/trust_document.rs"
+anchor = """
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawEntry {
+"""
+weakening = """
+#[derive(Deserialize)]
+struct RawEntry {
+"""
+expect_red = [
+  "lib#trust_document::tests::an_unknown_member_is_refused_rather_than_ignored",
+]

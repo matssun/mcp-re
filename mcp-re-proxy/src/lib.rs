@@ -83,7 +83,7 @@ pub mod retained_evidence;
 pub mod transparency;
 /// Interpretation and validation of trust-document bytes — the authoritative boundary
 /// every construction path reaches, whether or not it meets a parser.
-pub mod trust_document;
+pub(crate) mod trust_document;
 // ADR-MCPS-028 §C: native GCP Cloud KMS Ed25519 response signer over blocking HTTPS
 // (ureq) + OAuth2 bearer — NO async google-cloud SDK. Compiled ONLY under the
 // non-default `gcp_kms_keysource` feature.
