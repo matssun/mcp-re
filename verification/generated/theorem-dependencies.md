@@ -327,3 +327,10 @@ graph BT
 graph BT
     THM_0104["THM-0104<br/>Shutdown stops admission and bounds the wait on admitted work; what the drain leaves behind it never resumes"]
 ```
+
+## Component 10
+
+```mermaid
+graph BT
+    THM_0105["THM-0105<br/>Replay retention is a bounded per-replica account, charged before the store is touched and handed back only by an answer that proves nothing was retained"]
+```
