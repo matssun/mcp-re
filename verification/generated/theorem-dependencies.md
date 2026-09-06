@@ -345,3 +345,17 @@ graph BT
 graph BT
     THM_0108["THM-0108<br/>The KMS seam admits only a raw preimage, emits only a 64-byte signature, and verifies every one of them under the signer's own advertised key first"]
 ```
+
+## Component 12
+
+```mermaid
+graph BT
+    THM_0109["THM-0109<br/>The client transport verifies the proxy's server certificate against the configured CA, and a request body is never sent to a server it did not authenticate"]
+```
+
+## Component 13
+
+```mermaid
+graph BT
+    THM_0110["THM-0110<br/>The client transport refuses an ambiguous message rather than repairing it, and reads nothing unbounded"]
+```

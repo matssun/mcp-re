@@ -22,6 +22,8 @@ not an omission to hide.
 | client.local_ingress_authority | V0 | THM-0091 | 0 |
 | client.proxy_request_correspondence | V0 | THM-0084 | 0 |
 | client.response_acceptance | V0 | THM-0058, THM-0059, THM-0076 | 0 |
+| client.transport_message_hygiene | V0 | THM-0110 | 0 |
+| client.transport_server_identity | V0 | THM-0109 | 0 |
 | client.trust_manifest_lifecycle | V0 | THM-0057 | 0 |
 | conformance.retained_corpus | V0 | _none_ | 0 |
 | core.time_rfc3339 | V1 | THM-0002 | 4 |
