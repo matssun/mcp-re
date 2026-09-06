@@ -262,6 +262,67 @@ fn the_rule_would_catch_a_reintroduced_advance() {
 
 /// The inventory is not a bare list: every entry states why the transition is the
 /// assembly's rather than some stage's.
+/// The carrier's other half: a stage's product cannot be read past the machine.
+///
+/// `Established<T>` is constructible anywhere in the crate, so what makes it a carrier
+/// rather than a wrapper is that NOTHING opens it but `ExchangeProgress::establish` — no
+/// public field, no accessor, no `Deref`. Privacy is a compile-time fact, but a widened
+/// field compiles too, and would leave every behavioural control green while the assembly
+/// quietly read `.value` without advancing. Measured at the source, in the production half
+/// of `exchange_state.rs`, reached from the serving anchor's parent directory.
+#[test]
+fn the_carrier_has_no_reader_but_establish() {
+    let anchor = mcp_re_test_paths::resolve_runfile("MCP_RE_HTTP_PROFILE_SERVE_SRC");
+    let src = anchor
+        .parent()
+        .and_then(|serve| serve.parent())
+        .map(|src| src.join("exchange_state.rs"))
+        .unwrap_or_else(|| panic!("{anchor:?} is not under src/"));
+    let text = std::fs::read_to_string(&src).unwrap_or_else(|e| panic!("read {src:?}: {e}"));
+    let production = production_half(&text);
+
+    let struct_at = production
+        .find("struct Established<T> {")
+        .expect("the carrier is declared in exchange_state.rs");
+    let body_end = production[struct_at..]
+        .find("\n}")
+        .map(|end| struct_at + end)
+        .expect("the carrier's declaration closes");
+    let fields = &production[struct_at..body_end];
+    assert!(
+        !fields.contains("pub"),
+        "a field of Established is readable outside the machine: {fields}"
+    );
+    assert!(
+        production[..struct_at].contains("#[must_use"),
+        "the carrier lost its #[must_use]: a dropped stage product would no longer warn"
+    );
+
+    let impl_at = production
+        .find("impl<T> Established<T> {")
+        .expect("the carrier has an inherent impl");
+    let impl_end = production[impl_at..]
+        .find("\n}")
+        .map(|end| impl_at + end)
+        .expect("the impl closes");
+    let methods: Vec<&str> = production[impl_at..impl_end]
+        .lines()
+        .filter(|l| l.trim_start().starts_with("pub") && l.contains("fn "))
+        .collect();
+    assert_eq!(
+        methods.len(),
+        1,
+        "Established must expose exactly one method, its constructor: {methods:?}"
+    );
+    assert!(methods[0].contains("fn new("), "{methods:?}");
+    assert!(
+        !production.contains("impl<T> std::ops::Deref for Established")
+            && !production.contains("impl<T> Deref for Established")
+            && !production.contains("for Established<T>"),
+        "a trait impl on Established could open the carrier without the machine"
+    );
+}
+
 #[test]
 fn every_assembly_owned_transition_states_why_no_stage_carries_it() {
     for (event, reason) in ASSEMBLY_OWNED {

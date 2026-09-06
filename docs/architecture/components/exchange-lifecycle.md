@@ -131,10 +131,10 @@ Registry: [`verification/policy/theorems.toml`](../../../verification/policy/the
 | A presented continuation cannot bypass verification | request region | THM-0009 · `unit://http_profile.continuation_unbypassability` | in registry |
 | Continuation handles match their presented inputs in role | request region | THM-0010 · `unit://http_profile.continuation_binding` | in registry |
 | The lifecycle record cannot claim a shutdown that did not happen | runtime lifecycle (neighbouring authority) | THM-0012 · `unit://proxy.runtime_lifecycle` | in registry |
-| **Emitted transitions correspond to work performed** — the machine's state implies the stages it names actually executed | exchange machine ↔ serving path | `Established<T>` + `establish()` in `exchange_state.rs`; no registry entry | **structural, not stated.** The mechanism holds it for stage-owned transitions; no theorem asserts it, and the five assembly-owned transitions of §4.1 are outside whatever it would assert |
-| **Every production refusal is inside the lifecycle or is a declared pre-exchange transport refusal** | composition | **none** | **gap — see §5** |
+| Emitted transitions correspond to work performed — the machine's state implies the stages it names actually executed, except the six assembly-owned transitions of §4.1, excluded by name | exchange machine ↔ serving path | THM-0101 · `unit://proxy.exchange_transition_ownership` (`Established<T>` + `establish()` in `exchange_state.rs`; source controls in `exchange_transition_ownership_test`) | in registry |
+| Every production refusal is inside the lifecycle or is one of the four declared pre-exchange transport replies | composition | THM-0081 · `unit://proxy.refusal_site_totality`; `scripts/refusal_provenance_gate.py` clause 12 | in registry |
 
-The first row is the interesting one. The property is now structurally true for stage-owned transitions and has no theorem, so nothing states its exact scope — in particular that the five assembly-owned transitions are excluded. A theorem here would be worth more than more mechanism.
+The correspondence row's scope sentence is the deliverable: the assembly-owned transitions are six, not five — the two terminals are two events — and THM-0101 names them. The control that inventories them fails in both directions, so a deleted assembly-owned `advance` is detected rather than merely forbidden.
 
 ## 8. Test/evidence inventory
 
@@ -194,9 +194,9 @@ Open:
 
 1. **Six authorities share the serving file** — §10. `http_profile_serve.rs` is the only ADR-061 §5.3 band-4 unit in the repository, and the presumption that band states holds.
 
-2. **No theorem states the §4.1 correspondence or its exact scope.** The mechanism is structural; the claim about *what it does not cover* exists only in prose, here and at the type. That is defect class 6 in miniature.
+2. ~~**No theorem states the §4.1 correspondence or its exact scope.**~~ — **CLOSED** by THM-0101 (#583 slice, 2026-09-06): the six assembly-owned transitions are excluded by name in its scope, and the inventory control measures both directions.
 
-3. **The §5 refusal-coverage question is unanswered.** No inventory says which production refusals occur before machine construction, so "every meaningful refusal belongs to the exchange model" is currently an aspiration rather than a measured property.
+3. ~~**The §5 refusal-coverage question is unanswered.**~~ — **CLOSED** by THM-0081: `ExchangeProgress::new()` is the first statement of `handle`, and the answers outside the exchange are exactly the transport frame's four, each pre-handler.
 
 4. ~~**`stage_timers.rs` and `http_profile_dispatch.rs` have no test module**~~ — **CLOSED** by MCPRE-152 / #588. `stage_timers.rs` gained 7 tests pinning the discriminant↔slot↔name correspondence (the hand-written discriminants are used directly as array subscripts, so a duplicate silently folds two stages into one report column) and the off-path's no-clock-read property. `http_profile_dispatch.rs` gained 5, including a witness cache that makes *refused before the store is touched* observable, and the #308 AT4 case: a deployment declaring `Linearizable` while wiring a single-process store is still refused by the core gate beneath.
 
@@ -204,8 +204,8 @@ Open:
 
 - ✅ no independent procedural ordering duplicates the exchange relation, and the prose table is gone rather than corrected;
 - ✅ a stage that establishes a state returns that fact; `handle` cannot emit a stage transition the work did not earn;
-- the §7 correspondence theorem exists, names a real unit, and states in its scope sentence that the five assembly-owned transitions are excluded;
-- the §5 refusal inventory exists, so refusal coverage is measured rather than asserted;
+- ✅ the §7 correspondence theorem exists (THM-0101), names a real unit, and states in its scope sentence that the six assembly-owned transitions are excluded;
+- ✅ the §5 refusal inventory exists (THM-0081), so refusal coverage is measured rather than asserted;
 - every production request/refusal is either inside the exchange lifecycle or explicitly classified as pre-exchange transport handling;
 - authorities B, C, D, G, and H from §10 have owners outside the serving file, or a recorded ADR-061 §14 exception says why not;
 - tests derive from the same transition authority rather than duplicating a second transition table;

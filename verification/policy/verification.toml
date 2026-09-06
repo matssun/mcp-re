@@ -1998,6 +1998,41 @@ tested_symbols = [
   "lib#exchange_state::tests::an_illegal_transition_names_both_halves",
 ]
 
+# ---------------------------------------------------------------------------
+# The work/event correspondence — MCPRE-147 / #583, 2026-09-06
+# ---------------------------------------------------------------------------
+#
+# `Established<T>` + `establish()` hold structurally that a stage-owned transition is emitted
+# only when the stage's product is consumed. The source controls that keep that structure
+# honest existed (`exchange_transition_ownership_test`) and were registered nowhere; this
+# unit is their owner. Its paths overlap `proxy.refusal_site_totality` and
+# `proxy.exchange_lifecycle` on purpose: the property is about the seam between the
+# assembly and the machine, and a fingerprint that saw only one side would miss half the
+# regressions.
+
+[[unit]]
+id = "proxy.exchange_transition_ownership"
+class = "V0"
+description = "How an exchange event reaches the machine: a stage-owned event travels only inside an Established<T> that nothing but establish() can open and that must be consumed; the assembly states exactly six named events by direct advance, each with its reason; the two sets are disjoint; and the six are measured in both directions, so a reintroduced advance beside a stage and a deleted assembly-owned advance are each a failing control."
+paths = [
+  "mcp-re-proxy/src/http_profile_serve/**/*.rs",
+  "mcp-re-proxy/src/exchange_state.rs",
+]
+exported_contracts = []
+evidence = [
+  "test://proxy/exchange/transition_ownership",
+  # Three conjuncts a green battery can hold while none is load-bearing: the stale half of
+  # the inventory, disjointness, and the carrier's privacy. M110-M112 ask.
+  "mutation://proxy/exchange/transition_ownership",
+]
+tested_symbols = [
+  "tests/integration#exchange_transition_ownership_test::no_transition_a_stage_establishes_is_also_advanced_by_the_serving_path",
+  "tests/integration#exchange_transition_ownership_test::the_serving_path_states_only_the_assembly_s_own_transitions",
+  "tests/integration#exchange_transition_ownership_test::the_rule_would_catch_a_reintroduced_advance",
+  "tests/integration#exchange_transition_ownership_test::every_assembly_owned_transition_states_why_no_stage_carries_it",
+  "tests/integration#exchange_transition_ownership_test::the_carrier_has_no_reader_but_establish",
+]
+
 [[unit]]
 id = "proxy.dispatch_commitment"
 class = "V0"
