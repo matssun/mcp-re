@@ -1,0 +1,16 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:40e9c621501ac0637d7ca5d4857e76589a78a889b078c21d10d58f70a07305d4",
+    "theorem_dependencies": {
+      "THM-0061": "sha256:60ac9474f7a2ae28be7fa0020a8f123a09cd468bd036a3b9e7d842481df594e2"
+    },
+    "theorem_id": "THM-0126",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Approved as currently stated by the owner ruling of 2026-09-07, recorded in verification/reviews/rulings/thm-0076-dependency-closure-2026-09-07.md. This record is a mechanical transcription of that ruling against the fingerprint the tree carries; the statement was not altered to accommodate it. The measurement record is verification/reviews/packets/client-correctness-2026-09-07.md.\n\nCOMPOSITION, NOT CLASSIFICATION. The three-way discriminator is client.execution_contract's under THM-0061, which this depends on; whether the bytes are genuine and answer this request is client.response_acceptance's under THM-0076. What is approved here is that the shipped proxy composes those two answers without adding a reading of its own — in particular that it does not ask the classification question a second time over the raw body, which is how two readers of one message come to disagree about what it says.\n\nTHE TWO REFUSALS ARE THE LOAD-BEARING PAIR. An input_required reply carrying no usable requestState is malformed, and an unrecognized resultType is invalid. A genuine signature over a message this client cannot classify must not become 'the call finished': an elicitation handed to an application as a completed tool result consumes the open leg's correlation entry, never fires the input-required callback, and signs no answer leg. The well-formed-continuation control is what keeps the refusals from being vacuous.\n\nTHE SEAL CLAIM IS ABOUT THE TREE, NOT THE TYPE, and the scope says so in its own words. Every control performs a real delegated signing round trip and takes its VerifiedDelegatedResponse from verify_delegated_response, the only producer in this workspace; VerifiedDelegatedResponse carries pub fields deliberately, for the prover, and a caller outside the workspace could assemble one. Nothing here claims otherwise, and sealing that chain stays client.response_acceptance's question.\n\nRATIFIED AS A PREMISE OF THM-0076 by the same ruling. Without it, an unclassifiable verified result could become a completed answer without violating that root's old closure.\n\nNot what the server's result MEANS beyond its classification, and nothing about replies that never verified — those do not reach this composition at all.",
+  "reviewed_fingerprint": "sha256:732c25f445a1c6fc07cb516f1d6a4e96e4ca39acb66eb4dc939a65a8eadcddf9",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0126"
+}

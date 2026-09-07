@@ -1,0 +1,18 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:d44c6a28eda5852bf12562c5d717f20a1877f97c5d01d73803fefc595e5bdc0e",
+    "theorem_dependencies": {
+      "THM-0057": "sha256:6af9416e71f599cefa633a6efd1174807feb9d8aab41658586b3ec15e8bfb4dd",
+      "THM-0120": "sha256:fab37abfbe683e94bd06429f958a6975eb67769ac4010f46b9ed64f491171885",
+      "THM-0121": "sha256:ee4b3ea0f8909542edaed45a60098c924628122551276086e3c1c1e666788c0a"
+    },
+    "theorem_id": "THM-0127",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Approved as currently stated by the owner ruling of 2026-09-07, recorded in verification/reviews/rulings/thm-0076-dependency-closure-2026-09-07.md. This record is a mechanical transcription of that ruling against the fingerprint the tree carries; the statement was not altered to accommodate it. The measurement record is verification/reviews/packets/client-correctness-2026-09-07.md.\n\nWHETHER IT RUNS, NOT WHAT IT DOES. The dispositions of a refresh cycle — last-good on a failed read, withdrawal on expiry, the durable rollback floor — are client.anchor_refresh's under THM-0120, which this depends on. What is approved here is that the deployable's serving path performs them: the AnchorRefresher starts BEFORE the local listener is served and is held for as long as it serves.\n\nTHE CONTROL GAP IT CLOSES IS THE POINT. The refresh cycle is the only place anchors are withdrawn on expiry and nothing on the request path consults that expiry, so a serving path that omitted the start would verify under a lapsed manifest for as long as the process ran — with every control over the refresher itself still passing, because none of them asks whether the artifact an operator runs starts one. That is the class of defect a claim over the deployable exists to catch, and it is why this is measured over the shipped serve_until_shutdown rather than over a harness that assembles a refresher.\n\nRATIFIED AS A PREMISE OF THM-0076 by the same ruling. Without it, the refresher could remain correct while the deployable stopped starting it and went on using anchors after their governing manifest expired — which is a statement about the trust configuration THM-0076 quantifies over.\n\nNOT A FRESHNESS BOUND: how stale anchors may become between cycles is the configured cadence's, and the bound on trust.reload_secs is client.config_lattice's. NOT AN AVAILABILITY CLAIM: it says nothing about the refresher continuing to make progress under a wedged filesystem.",
+  "reviewed_fingerprint": "sha256:420a9a9c8f06ea71d6c8638f10ed64d1e5088a433227cfa17b921c6854ecd3e8",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0127"
+}

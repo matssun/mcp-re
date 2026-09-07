@@ -15,13 +15,17 @@
       "THM-0059": "sha256:61c436753de5a58ea8afb6d533e3c219dc98ce7608793888e1886c01f9933266",
       "THM-0060": "sha256:993e13ab515e251b36a384bd4b92602f3bdad949d09f6196103b5b81fd621269",
       "THM-0061": "sha256:60ac9474f7a2ae28be7fa0020a8f123a09cd468bd036a3b9e7d842481df594e2",
-      "THM-0084": "sha256:6e2056c9c9a85ee5c42e9cd7c60711115968db07dcd422c9a98109c6d3ac9900"
+      "THM-0084": "sha256:6e2056c9c9a85ee5c42e9cd7c60711115968db07dcd422c9a98109c6d3ac9900",
+      "THM-0120": "sha256:fab37abfbe683e94bd06429f958a6975eb67769ac4010f46b9ed64f491171885",
+      "THM-0121": "sha256:ee4b3ea0f8909542edaed45a60098c924628122551276086e3c1c1e666788c0a",
+      "THM-0126": "sha256:40e9c621501ac0637d7ca5d4857e76589a78a889b078c21d10d58f70a07305d4",
+      "THM-0127": "sha256:d44c6a28eda5852bf12562c5d717f20a1877f97c5d01d73803fefc595e5bdc0e"
     },
     "theorem_id": "THM-0076",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner specification-review ruling of 2026-08-31. This theorem IS in the ruling's bounded correction set, and the ruling approved the corrected semantics conditionally: the record is written for the resulting fingerprint provided the statement, scope and consequence match the ruling exactly. They do. Restated to the shipped `ClientProxy` path, which removes a contradiction rather than adding a caveat: the statement claimed the response resolved against the request this client sent while the scope called that pairing a caller obligation. THM-0084 is added as a logical dependency and discharges it where the shipped path owns it. `ResponseExpectation::new` stays public for FFI, and raw FFI/low-level reconstruction remain outside the system-root guarantee.",
-  "reviewed_fingerprint": "sha256:3d10b59aa7ff1e6d3b8ff90dd3ddd3fb308fa5359c5518ce6f41885e259cc2c8",
+  "notes": "DEPENDENCY-ONLY RE-AFFIRMATION under the owner ruling of 2026-09-07, recorded in verification/reviews/rulings/thm-0076-dependency-closure-2026-09-07.md. It is recorded as such deliberately: an approval that did not distinguish itself from a fresh reading of a restated claim would make the two indistinguishable later.\n\nTHE STATEMENT AND THE SECURITY CONSEQUENCE ARE UNCHANGED. theorem_claim is byte-identical to the one the 2026-08-31 ruling approved (sha256:ca9f6756…a926e6269); the only component that moved is theorem_dependencies, and it moved by ADDITION. The published §2 claim prose in docs/spec/security-boundary.md is unchanged, the root set is unchanged, and no §4 row moves.\n\nWHAT WAS RATIFIED: the two composition edges THM-0126 → THM-0076 and THM-0127 → THM-0076. This root is a claim over what the SHIPPED Rust client proxy may hand its application as this call's answer, under its CURRENT trust configuration. THM-0126 owns the step from a genuinely verified response to a terminal, continuation or refusal outcome; without it an unclassifiable verified result could become a completed answer WITHOUT violating the old closure. THM-0127 owns the composition step that makes the deployable actually maintain the trust configuration whose semantics THM-0057 and THM-0120 establish; without it the refresher could stay correct while the deployable stopped starting it.\n\nTHE EARLIER RECORD'S CONTENT STILL HOLDS and is not restated away: the claim is over the shipped ClientProxy path, THM-0084 discharges the request/response pairing where that path owns it, ResponseExpectation::new stays public for bindings that hold no SignedRequest, and raw FFI and low-level reconstruction remain outside this system-root guarantee.\n\nNO ANALOGOUS EDGE IS MANUFACTURED for any other root. THM-0091 stays outside on the reasoning §4.3 already records.",
+  "reviewed_fingerprint": "sha256:e0b19a03b8812fc204bc29d49268ae71cb1fe492d20fb34485ace86eec5173d3",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0076"
 }

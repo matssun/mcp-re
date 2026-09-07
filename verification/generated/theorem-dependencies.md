@@ -219,6 +219,8 @@ graph BT
     THM_0060 --> THM_0076
     THM_0061 --> THM_0076
     THM_0084 --> THM_0076
+    THM_0126 --> THM_0076
+    THM_0127 --> THM_0076
     THM_0005 --> THM_0077
     THM_0013 --> THM_0077
     THM_0036 --> THM_0077

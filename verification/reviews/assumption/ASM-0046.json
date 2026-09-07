@@ -1,0 +1,10 @@
+{
+  "axis": "assumption",
+  "components": {
+    "assumption_entry": "sha256:10dbed856d4e66ad1bb2e393a664ff80dd08168521e6685e6d8e320b16187ac9"
+  },
+  "notes": "Approved as currently stated by the owner ruling of 2026-09-07, recorded in verification/reviews/rulings/thm-0076-dependency-closure-2026-09-07.md. This record is a mechanical transcription of that ruling against the digest of the registry entry as it stands; the justification was not altered to accommodate it. The measurement record is verification/reviews/packets/escape-hatch-site-registration-2026-09-07.md.\n\nTHE WEAKEST PREMISE IN THE REGISTRY, APPROVED AS ONE. external_body on a type specification REMOVES the ability to reason about a representation; it does not add a claim about one. That is why it is approved rather than waved through with the mirrors beside it: the entry states its own ceiling, and the ceiling is what is being approved.\n\nOPACITY IS THE CORRECT CHOICE FOR EXACTLY THESE THREE. VerifierPolicy carries a deployment's construction, algorithm registry and transport policy, none of which any claim reasons about; ProfileAlgorithm is a resolved algorithm the freshness theorem deliberately says nothing about; VerificationKey is a foreign type whose contents no theorem mentions. Making any of them transparent would put representation the proofs do not model inside their reach — so this is a narrowing premise, not a widening one.\n\nNO THEOREM READS A FIELD OF ANY OF THE THREE, and none may. The policy accessors ASM-0007, ASM-0008 and ASM-0009 are the only way in and each is registered on its own; this entry does not cover them and must not be read as covering them.\n\nTHE DISCHARGE CONDITION IS A REPLACEMENT, NOT A RENEWAL. It stops being acceptable the moment a theorem needs to say something about one of these representations, at which point the entry is replaced by a proof about it. A renewal at that point would be the failure this axis exists to make visible.",
+  "reviewed_fingerprint": "sha256:10dbed856d4e66ad1bb2e393a664ff80dd08168521e6685e6d8e320b16187ac9",
+  "reviewer": "mats@sundvall.name",
+  "subject": "ASM-0046"
+}

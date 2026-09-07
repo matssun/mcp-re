@@ -64,6 +64,20 @@ record's `notes` states which family the claim sat in and what the ruling actual
 it, because "APPROVED" alone does not distinguish a claim that was read and found right from
 one that was waved through with its family.
 
+`assumption/` exists as of the owner ruling of 2026-09-07
+(`rulings/thm-0076-dependency-closure-2026-09-07.md`) and holds **two** records, ASM-0045 and
+ASM-0046. Before them the axis had no record at all, which
+`packets/thm-0094-python-sdk-root-2026-09-03.md` recorded as an open state; the directory
+existing does not close it for the other entries. An assumption with no record here is
+UNREVIEWED on this axis, and that is the correct reading — a directory is not an approval, and
+the axis is per subject.
+
+A record on this axis names the **entry digest** (`_fingerprint.assumption_digest`, the whole
+registry entry canonically encoded), so widening a justification, extending a `scope` or adding
+a `site` invalidates the approval exactly as weakening a `statement` invalidates a
+specification one. Nothing else about an assumption is reviewable separately: the entry IS the
+trusted claim.
+
 
 ## The three layers, and which directory each lives in
 
