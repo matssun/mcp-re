@@ -1001,6 +1001,7 @@ version = "0.16.0"
 dependencies = [
  "mcp-re-client-core",
  "mcp-re-core",
+ "mcp-re-http-profile",
  "serde_json",
 ]
 

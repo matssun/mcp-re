@@ -32,9 +32,11 @@ attestations this view cannot see.
 | unit://client.proxy_request_correspondence | source, contracts or evidence | THM-0084 | _no consumer_ |
 | unit://client.request_construction | source, contracts or evidence | THM-0125 | _no consumer_ |
 | unit://client.response_acceptance | source, contracts or evidence | THM-0058, THM-0059, THM-0076 | _no consumer_ |
+| unit://client.serving_lifetime | source, contracts or evidence | THM-0127 | _no consumer_ |
 | unit://client.transport_message_hygiene | source, contracts or evidence | THM-0110 | _no consumer_ |
 | unit://client.transport_server_identity | source, contracts or evidence | THM-0109 | _no consumer_ |
 | unit://client.trust_manifest_lifecycle | source, contracts or evidence | THM-0057, THM-0058 | _no consumer_ |
+| unit://client.verified_outcome | source, contracts or evidence | THM-0126 | _no consumer_ |
 | unit://conformance.retained_corpus | source, contracts or evidence | THM-0042 | http_profile.scitt_retained_correspondence (PROOF_DEPENDENCY) |
 | unit://conformance.verdict_vocabulary_scope | source, contracts or evidence | THM-0111 | _no consumer_ |
 | unit://core.audit_vocabulary | source, contracts or evidence | THM-0122 | _no consumer_ |
@@ -194,7 +196,7 @@ attestations this view cannot see.
 | THM-0058 | statement, consequence, scope or review requirement | specification review | THM-0076 |
 | THM-0059 | statement, consequence, scope or review requirement | specification review | THM-0076 |
 | THM-0060 | statement, consequence, scope or review requirement | specification review | THM-0076 |
-| THM-0061 | statement, consequence, scope or review requirement | specification review | THM-0076 |
+| THM-0061 | statement, consequence, scope or review requirement | specification review | THM-0076, THM-0126 |
 | THM-0062 | statement, consequence, scope or review requirement | specification review | THM-0063, THM-0075, THM-0082 |
 | THM-0063 | statement, consequence, scope or review requirement | specification review | THM-0075, THM-0078 |
 | THM-0064 | statement, consequence, scope or review requirement | specification review | THM-0077, THM-0082 |
@@ -253,12 +255,14 @@ attestations this view cannot see.
 | THM-0117 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0118 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0119 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
-| THM-0120 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
+| THM-0120 | statement, consequence, scope or review requirement | specification review | THM-0127 |
 | THM-0121 | statement, consequence, scope or review requirement | specification review | THM-0120 |
 | THM-0122 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0123 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0124 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0125 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
+| THM-0126 | statement, consequence, scope or review requirement | specification review | THM-0076 |
+| THM-0127 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 
 ## Assumptions
 

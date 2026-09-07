@@ -28,9 +28,11 @@ not an omission to hide.
 | client.proxy_request_correspondence | V0 | THM-0084 | 0 |
 | client.request_construction | V0 | THM-0125 | 0 |
 | client.response_acceptance | V0 | THM-0058, THM-0059, THM-0076 | 0 |
+| client.serving_lifetime | V0 | THM-0127 | 0 |
 | client.transport_message_hygiene | V0 | THM-0110 | 0 |
 | client.transport_server_identity | V0 | THM-0109 | 0 |
 | client.trust_manifest_lifecycle | V0 | THM-0057 | 0 |
+| client.verified_outcome | V0 | THM-0126 | 0 |
 | conformance.retained_corpus | V0 | _none_ | 0 |
 | conformance.verdict_vocabulary_scope | V0 | THM-0111 | 0 |
 | core.audit_vocabulary | V0 | THM-0122 | 0 |

@@ -163,6 +163,8 @@ any of them is closed.
 | THM-0123 | An admitted local request cannot leak its slot, cannot be guessed onto a route, and a pause is never rendered as a finished call | client.local_serving_pipeline | unit://client.local_serving_pipeline | live |
 | THM-0124 | A declared binding commits to what the verifier will digest, or the deployment does not start | client.deployment_config | unit://client.deployment_config | live |
 | THM-0125 | A request a verifier could not bind is refused before it is sent, and a notification is not a request with no id | client.request_construction | unit://client.request_construction | live |
+| THM-0126 | A verified reply is not a completed call | client.verified_outcome | unit://client.verified_outcome | live |
+| THM-0127 | The deployable's serving path always runs an anchor refresher | client.serving_lifetime | unit://client.serving_lifetime | live |
 
 ## Claims in full
 
@@ -1000,7 +1002,7 @@ any of them is closed.
 
 **Review requirement.** Owner security-specification review
 
-**Depends on.** THM-0057, THM-0058, THM-0059, THM-0060, THM-0061, THM-0084
+**Depends on.** THM-0057, THM-0058, THM-0059, THM-0060, THM-0061, THM-0084, THM-0126
 
 ### THM-0077 — No deployment serves a posture nobody selected
 
@@ -1525,3 +1527,27 @@ any of them is closed.
 **Scope — what this does NOT establish.** THE SHAPE, NOT THE SIGNATURE'S CORRECTNESS. That the RFC 9421 signature base is composed correctly and verifies is the carrier's, under the http-profile units. NOT WHAT THE BINDING MEANS. Which artifact types are legal in which form is `client.binding_spec_refusal`'s under THM-0111's producer conjunct; what is established here is that a request with none, or with one this seam cannot build, does not go out. NOT KEY CUSTODY. Which key signs and where it lives is the caller's; what is claimed about custody is only that the two classes are indistinguishable in the emitted bytes. Executable, class V0, measured in the default cargo lane.
 
 **Review requirement.** Owner security-specification review
+
+### THM-0126 — A verified reply is not a completed call
+
+**Statement.** When the shipped client proxy resolves a VERIFIED delegated success reply into an outcome for the local caller, the reply's `resultType` is classified ONCE, from the `result` member already derived from the verified bytes, and two shapes never resolve to a terminal outcome: a reply announcing itself `input_required` while carrying no usable `requestState` is refused as malformed, and a `resultType` this client does not recognize is refused as invalid. A reply that IS a well-formed continuation surfaces the state its answer leg must sign over rather than being refused. A VERIFIED rejection receipt resolves to a provable denial carrying the signed wire code, never to a success result.
+
+**Security consequence.** A genuine signature over a message this client cannot classify cannot become *the call finished*. An elicitation cannot be handed to an application as a completed tool result — the failure mode that consumes the open leg's correlation entry, never fires the input-required callback, and signs no answer leg — and a newer server's extension result type cannot end an exchange whose continuation semantics this client does not know.
+
+**Scope — what this does NOT establish.** COMPOSITION, not classification and not trust. The three-way discriminator itself is `client.execution_contract`'s under THM-0061; whether the bytes are genuine and answer this request is `client.response_acceptance`'s under THM-0076. What is established here is that the shipped proxy composes those answers without adding a reading of its own — in particular that it does not ask the classification question a second time over the raw body, which is how two readers of one message come to disagree about what it says. It establishes nothing about what the server's result MEANS beyond its classification, and nothing about replies that never verified: those do not reach this composition at all. Executable, class V0, measured in the default cargo lane over a real delegated signing round trip — `VerifiedDelegatedResponse` is obtainable only from a verification that succeeded, so no control here can be satisfied by a hand-built value.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0061
+
+### THM-0127 — The deployable's serving path always runs an anchor refresher
+
+**Statement.** The deployable client's serving path starts an `AnchorRefresher` over the anchors every route verifies against BEFORE the local listener is served, and holds it for as long as it serves. Consequently a client that is serving is a client whose anchors are being re-read on the configured cadence, and whose anchors are WITHDRAWN once the manifest in force has passed its own `expires_at` with no newer document accepted.
+
+**Security consequence.** A deployed client cannot outlive the trust picture an org published. The refresh cycle is the only place anchors are withdrawn on expiry and nothing on the request path consults that expiry, so a serving path that omitted the start would verify under a lapsed manifest for as long as the process ran — with every control over the refresher itself still passing, because none of them asks whether the artifact an operator runs starts one.
+
+**Scope — what this does NOT establish.** WHETHER IT RUNS, not what it does. The dispositions of a refresh cycle — last-good on a failed read, withdrawal on expiry, the durable rollback floor — are `client.anchor_refresh`'s under THM-0120. What is established here is that the deployable's serving path performs them. NOT A FRESHNESS BOUND. How stale anchors may become between cycles is the configured cadence's and no number is asserted here; the configuration boundary bounds `trust.reload_secs`, and that bound is `client.config_lattice`'s. NOT AN AVAILABILITY CLAIM. It says nothing about the refresher continuing to make progress under a wedged filesystem. Executable, class V0, measured in the default cargo lane over the shipped `serve_until_shutdown` itself.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0120

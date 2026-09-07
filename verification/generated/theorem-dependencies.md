@@ -121,6 +121,8 @@ graph BT
     THM_0116["THM-0116<br/>A non-exporting signer's advertised key is established at construction, and a signature it cannot verify is never emitted"]
     THM_0120["THM-0120<br/>A client that cannot establish current anchors publishes none, rather than serving on expired ones"]
     THM_0121["THM-0121<br/>The rollback floor only rises, and a floor that has been pushed too high stops the client rather than lowering itself"]
+    THM_0126["THM-0126<br/>A verified reply is not a completed call"]
+    THM_0127["THM-0127<br/>The deployable's serving path always runs an anchor refresher"]
     THM_0007 --> THM_0008
     THM_0010 --> THM_0009
     THM_0001 --> THM_0014
@@ -217,6 +219,7 @@ graph BT
     THM_0060 --> THM_0076
     THM_0061 --> THM_0076
     THM_0084 --> THM_0076
+    THM_0126 --> THM_0076
     THM_0005 --> THM_0077
     THM_0013 --> THM_0077
     THM_0036 --> THM_0077
@@ -268,6 +271,8 @@ graph BT
     THM_0108 --> THM_0116
     THM_0057 --> THM_0120
     THM_0121 --> THM_0120
+    THM_0061 --> THM_0126
+    THM_0120 --> THM_0127
     classDef root stroke-width:3px;
     class THM_0071,THM_0074,THM_0075,THM_0076,THM_0077,THM_0078 root;
 ```

@@ -37,11 +37,11 @@ lane actually measure":
                                 Cargo features they resolve under — WHICH tests were
                                 selected
   * `test_sources`              the bytes of the integration-test targets those selectors
-                                run. In-crate (`lib#`, `doc#`) selectors are NOT here: they
-                                execute code inside the unit's declared `paths`, which
-                                `source_inputs` already digests, and the manifest loader
-                                REFUSES a `lib#`/`doc#` selector whose module is not
-                                declared, so that is a checked fact rather than a hope.
+                                run. In-crate (`lib#`, `doc#`, `bin/<name>#`) selectors are
+                                NOT here: they execute code inside the unit's declared
+                                `paths`, which `source_inputs` already digests, and the
+                                manifest loader REFUSES an in-crate selector whose module is
+                                not declared, so that is a checked fact rather than a hope.
   * `test_lane_identity`        the selector mechanism itself — `verify-tests` and the
                                 manifest logic it reads. The meaning of `doc#…`, and of
                                 `test_package`, is decided by that code; if the measuring

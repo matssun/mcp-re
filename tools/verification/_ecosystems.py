@@ -292,14 +292,22 @@ def valid_target(eco: Ecosystem, target: str) -> bool:
     """Whether `target` is a runnable target NAME in this ecosystem.
 
     The target is the half of a `tested_symbols` entry before the `#`, and what it may say
-    is the ecosystem's business: Cargo has an open-ended `tests/<name>` family beside `lib`
-    and `doc`, while a pytest or vitest battery is selected by file-and-name and needs only
-    the one target that says which runner reads the selector.
+    is the ecosystem's business: Cargo has two open-ended families — `tests/<name>` and
+    `bin/<name>` — beside `lib` and `doc`, while a pytest or vitest battery is selected by
+    file-and-name and needs only the one target that says which runner reads the selector.
+
+    `bin/<name>` exists because a DEPLOYABLE's own crate is not its library. What running
+    means — the composition the operator's process actually performs — is decided in the
+    binary crate, and a lane that can select only `lib` can make no statement about it: the
+    controls compile, `cargo test` runs them, and no `tested_symbols` entry can name one.
     """
     if eco is CARGO:
         if target in ("lib", "doc"):
             return True
-        return target.startswith("tests/") and target.count("/") == 1 and bool(target[6:])
+        for prefix in ("tests/", "bin/"):
+            if target.startswith(prefix):
+                return target.count("/") == 1 and bool(target[len(prefix):])
+        return False
     return eco.selector_targets is not None and target in eco.selector_targets
 
 
@@ -373,7 +381,12 @@ def test_argv(
             # edit above it — churn that says nothing about the property. The lane's
             # containment check is what makes this selection precise.
             return ["cargo", "test", "-p", project, *feature_argv, "--doc", "--", *selectors]
-        target_argv = ["--lib"] if target == "lib" else ["--test", target[6:]]
+        if target == "lib":
+            target_argv = ["--lib"]
+        elif target.startswith("bin/"):
+            target_argv = ["--bin", target[4:]]
+        else:
+            target_argv = ["--test", target[6:]]
         return [
             "cargo",
             "test",

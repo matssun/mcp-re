@@ -2438,6 +2438,42 @@ tested_symbols = [
   "lib#result_classification::tests::an_absent_result_type_is_terminal_as_the_spec_requires_of_clients",
   "lib#result_classification::tests::an_unrecognized_result_type_is_never_terminal",
   "lib#result_classification::tests::the_live_seam_refuses_what_the_reporting_seam_merely_names",
+  # The parsed face and the byte face are ONE classifier with two input shapes. A caller
+  # holding the already-derived reply asks over the `result`; asking over the bytes again
+  # classifies the same message twice, and two readers of one message are how they come to
+  # disagree about it.
+  "lib#result_classification::tests::the_parsed_face_and_the_byte_face_answer_the_same_question",
+]
+
+# What a VERIFIED outcome MEANS to a plain MCP client. Its own unit rather than part of
+# `client.response_acceptance` or of `client.execution_contract`, because the three answer
+# different questions: acceptance decides whether these bytes are genuine and answer THIS
+# request, the execution contract decides what a receipt's words mean, and this decides what
+# a genuine answer entitles a caller to conclude about whether the exchange is FINISHED.
+#
+# The classification RULE is `client.execution_contract`'s under THM-0061. What is owned
+# here is the COMPOSITION the shipped proxy performs with it — which is why the census that
+# found this file unowned refused to register it by citing the other unit's controls, and
+# said it needed new ones. It has them: every control below drives a real delegated signing
+# round trip, because `VerifiedDelegatedResponse` is obtainable only from a verification
+# that succeeded.
+[[unit]]
+id = "client.verified_outcome"
+class = "V0"
+description = "What a verified reply entitles a plain MCP client to conclude: a genuine signature says the server said this, not that the call finished. An input-required reply withholding a usable requestState is malformed rather than terminal, an unrecognized resultType is never resolved to a class, and a verified rejection receipt is an answer rather than a success."
+paths = ["mcp-re-client-proxy/src/verified_outcome.rs"]
+exported_contracts = []
+evidence = ["test://client/verified_outcome/what_a_verified_reply_entitles"]
+# The two refusals are the point, and the third control is what stops "fails closed" from
+# being satisfied by refusing every non-terminal leg: a well-formed continuation must still
+# surface its state. The rejection control keeps a provable denial an ANSWER rather than a
+# transport failure or a success.
+tested_symbols = [
+  "lib#verified_outcome::tests::a_verified_terminal_reply_is_success",
+  "lib#verified_outcome::tests::a_verified_input_required_reply_surfaces_its_continuation_state",
+  "lib#verified_outcome::tests::a_verified_input_required_reply_with_no_usable_state_fails_closed",
+  "lib#verified_outcome::tests::a_verified_unrecognized_result_type_never_becomes_terminal",
+  "lib#verified_outcome::tests::a_verified_rejection_receipt_is_an_answer_and_never_a_success",
 ]
 
 # ---------------------------------------------------------------------------------------
@@ -4855,6 +4891,32 @@ tested_symbols = [
   # loader. Without it the controls above are about a module rather than about the deployable.
   "tests/local_leg_e2e_test#a_replayed_older_manifest_cannot_restore_service_through_the_listener",
   "tests/local_leg_e2e_test#a_published_revocation_reaches_the_running_listener",
+]
+
+# What RUNNING means for the deployable. `client.anchor_refresh` owns what a refresh cycle
+# does; this owns whether the artifact an operator runs performs one at all. The two are
+# different propositions and a green refresher battery establishes only the first: a serving
+# path that omitted the start would leave every one of those controls passing while the
+# process verified, for as long as it ran, under a trust picture whose governing document
+# had lapsed.
+#
+# Its control is the first in this repository to name a BINARY crate's own module. That is
+# the point rather than an accident of placement — `startup.rs` is a module of the binary,
+# not of the library, because what the invocation asked for and what running means are the
+# CLI shell's facts.
+[[unit]]
+id = "client.serving_lifetime"
+class = "V0"
+description = "The deployable client's serving lifetime: the anchor refresher is started unconditionally before the local listener is served and held for as long as it serves, because it is the only place anchors are withdrawn once the manifest in force has passed its own expires_at and nothing on the request path consults that expiry."
+paths = ["mcp-re-client/src/startup.rs"]
+exported_contracts = []
+evidence = ["test://client/serving_lifetime/refresher_started_and_held"]
+# One control, and it observes the EFFECT rather than the call: the anchors in force become
+# the empty set while `serve_until_shutdown` runs. The question is asked at the load-time
+# instant, before the manifest's own expiry, so a false pass cannot be manufactured by the
+# clock having moved past `expires_at`.
+tested_symbols = [
+  "bin/mcp-re-client#startup::tests::the_serving_path_starts_the_anchor_refresher_and_anchors_are_withdrawn_on_expiry",
 ]
 
 # The durable rollback floor the client's anchor refresh rests on. Its own unit and not part
