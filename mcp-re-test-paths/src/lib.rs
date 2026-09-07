@@ -6,14 +6,17 @@
 //! var first; if absent, it falls back to `<workspace-root>/target/<profile>/<bin>`
 //! (or, for the data fixtures we ship, a fixed source-tree path).
 //!
-//! New env keys must be added to [`SOURCE_FALLBACKS`] — the resolver fails
-//! loudly on unknown keys rather than silently returning an empty path.
+//! New env keys must be added to one of the two tables — `source_fallbacks` for a FILE a
+//! guard parses, `source_trees` for a TREE a guard walks — and the resolver fails loudly on
+//! unknown keys rather than silently returning an empty path.
 //!
 //! [`rust_source`] is the other half of the same job: the guards that resolve a source
 //! path here then scan its text need one shared, tested definition of which lines are
 //! production.
 
 mod source_fallbacks;
+mod source_trees;
+mod traceability_sources;
 
 pub mod rust_source;
 
@@ -63,10 +66,18 @@ fn cargo_fallback(env_key: &str) -> PathBuf {
     if env_key == PROXY_CLI_KEY {
         return find_bin(&workspace_root, "mcp-re-proxy");
     }
-    let Some((_, rel)) = SOURCE_FALLBACKS.iter().find(|(key, _)| *key == env_key) else {
+    if let Some(sentinel) = source_trees::sentinel_for(env_key) {
+        return workspace_root.join(sentinel);
+    }
+    let mut declared = SOURCE_FALLBACKS
+        .iter()
+        .chain(traceability_sources::TRACEABILITY_SOURCES.iter());
+    let Some((_, rel)) = declared.find(|(key, _)| *key == env_key) else {
         panic!(
             "mcp_re_test_paths: unknown runfile env key '{env_key}' — add it to \
-             SOURCE_FALLBACKS in mcp-re-test-paths/src/lib.rs"
+             SOURCE_FALLBACKS (a file a guard parses), SOURCE_TREES (a tree a guard \
+             walks), or TRACEABILITY_SOURCES (a test that witnesses a claim), in \
+             mcp-re-test-paths/src/"
         );
     };
     workspace_root.join(rel)

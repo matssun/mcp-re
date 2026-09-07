@@ -117,12 +117,134 @@ PERMITTED_TRANSITIONS = {
 }
 
 
+class _BraceScan:
+    """A brace-counting scan over a sequence of Rust lines, with state carried ACROSS them.
+
+    A per-line, literal-blind count was this gate's measurement defect and it is the same
+    class as the truncation §5.1 describes: braces inside a string, a character literal or a
+    comment were counted as code. A raw byte string holding JSON —
+    ``br#"{"error":{"data":{...}}}"#``, which `execution_contract.rs` writes over five lines
+    inside a test module — closed the region three lines early, so test code below it was
+    counted as PRODUCTION and the file measured larger than it is.
+
+    Mirrors `mcp-re-test-paths/src/rust_source.rs`, which is the same definition on the Rust
+    side. The two must not drift: they decide the same fact for different gates.
+    """
+
+    CODE, STR, RAW, BLOCK = 0, 1, 2, 3
+
+    def __init__(self) -> None:
+        self.mode = self.CODE
+        self.hashes = 0
+        self.depth = 0
+
+    def feed(self, line: str) -> str:
+        """`line` with literals and comments blanked, continuing what `line` began inside."""
+        out: list[str] = []
+        i = 0
+        n = len(line)
+        while i < n:
+            if self.mode == self.CODE:
+                i = self._code(line, i, n, out)
+            elif self.mode == self.STR:
+                i = self._str(line, i)
+            elif self.mode == self.RAW:
+                i = self._raw(line, i, n)
+            else:
+                i = self._block(line, i)
+        return "".join(out)
+
+    def _code(self, line: str, i: int, n: int, out: list[str]) -> int:
+        two = line[i : i + 2]
+        if two == "//":
+            return n
+        if two == "/*":
+            self.mode, self.depth = self.BLOCK, 1
+            return i + 2
+        opened = self._open_raw(line, i)
+        if opened is not None:
+            return opened
+        c = line[i]
+        if c == '"':
+            self.mode = self.STR
+            return i + 1
+        if c == "'":
+            return self._char_literal(line, i, out)
+        out.append(c)
+        return i + 1
+
+    def _open_raw(self, line: str, i: int) -> int | None:
+        """Enter a raw string if one opens at `i`, else None.
+
+        The prefix must not be the tail of an identifier: `for` and `char` end in the
+        letters an opener starts with.
+        """
+        if i > 0 and (line[i - 1].isalnum() or line[i - 1] == "_"):
+            return None
+        j = i
+        if line[j : j + 1] == "b":
+            j += 1
+        if line[j : j + 1] != "r":
+            return None
+        j += 1
+        start = j
+        while line[j : j + 1] == "#":
+            j += 1
+        if line[j : j + 1] != '"':
+            return None
+        self.mode, self.hashes = self.RAW, j - start
+        return j + 1
+
+    def _str(self, line: str, i: int) -> int:
+        c = line[i]
+        if c == "\\":
+            return i + 2
+        if c == '"':
+            self.mode = self.CODE
+        return i + 1
+
+    def _raw(self, line: str, i: int, n: int) -> int:
+        if line[i] != '"':
+            return i + 1
+        if line[i + 1 : i + 1 + self.hashes] != "#" * self.hashes:
+            return i + 1
+        self.mode = self.CODE
+        return i + 1 + self.hashes
+
+    def _block(self, line: str, i: int) -> int:
+        two = line[i : i + 2]
+        if two == "/*":
+            self.depth += 1
+            return i + 2
+        if two == "*/":
+            self.depth -= 1
+            if self.depth <= 0:
+                self.mode = self.CODE
+            return i + 2
+        return i + 1
+
+    @staticmethod
+    def _char_literal(line: str, i: int, out: list[str]) -> int:
+        """Skip `'x'` / `'\\n'`, or emit the tick of a lifetime and move on."""
+        if line[i + 1 : i + 2] == "\\":
+            j = i + 3
+            while j < len(line) and line[j] != "'":
+                j += 1
+            return j + 1
+        if line[i + 2 : i + 3] == "'":
+            return i + 3
+        out.append("'")
+        return i + 1
+
+
 def production_lines(text: str) -> int:
     """Every line of a Rust source that is NOT inside a test region.
 
     A test region runs from its `#[cfg(test)]`-family attribute to the end of the module it
-    introduces, tracked by brace depth. Counting resumes afterwards, and a file may contain
-    several regions: a file that puts a helper module below its tests is not thereby exempt.
+    introduces, tracked by brace depth over CODE characters only — a brace inside a string,
+    a raw string, a character literal or a comment is not a brace. Counting resumes
+    afterwards, and a file may contain several regions: a file that puts a helper module
+    below its tests is not thereby exempt.
 
     This is deliberately NOT "lines before the first test module" — that rule discards every
     production item below the tests, and measured `trust_plane.rs` at 134 lines when it is
@@ -133,12 +255,13 @@ def production_lines(text: str) -> int:
     i = 0
     while i < len(lines):
         if TEST_ATTR.match(lines[i].lstrip()):
-            # Skip to the opening brace of the module, then past its matching close.
+            scan = _BraceScan()
             depth = 0
             opened = False
             while i < len(lines):
-                depth += lines[i].count("{") - lines[i].count("}")
-                if "{" in lines[i]:
+                code = scan.feed(lines[i])
+                depth += code.count("{") - code.count("}")
+                if "{" in code:
                     opened = True
                 i += 1
                 if opened and depth <= 0:

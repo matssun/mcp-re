@@ -7,6 +7,12 @@
 //! resolver that grows every time an unrelated guard adds an input is a resolver nobody can
 //! read for what it does.
 //!
+//! What it does NOT hold is the security-traceability guard's witness map — the per-test
+//! sources each manifest claim is evidenced by. That is a different fact with a different
+//! owner ([`super::traceability_sources`]): this table answers *where does a guard's input
+//! live*, and that one answers *which test witnesses a claim*. They sat together only
+//! because both resolve through the same lookup.
+//!
 //! Note what this table IS: a hand-maintained list of a guard's inputs, and therefore the
 //! exact shape ADR-MCPRE-066 §2.1 warns about — it describes yesterday's architecture on
 //! the day a file moves. Two things keep that honest rather than latent. Every consumer
@@ -49,6 +55,16 @@ pub(super) const SOURCE_FALLBACKS: &[(&str, &str)] = &[
         "MCP_RE_PROXY_SRC_DISPATCH_PROJECTION",
         "mcp-re-proxy/src/http_profile_dispatch/core_projection.rs",
     ),
+    // The client seam's binding-spec refusal, the fourth producer — rendered by both
+    // published SDKs, and the one this list had never been told about.
+    (
+        "MCP_RE_CLIENT_CORE_SRC_BINDING_REFUSAL",
+        "mcp-re-client-core/src/binding_spec/refusal.rs",
+    ),
+    (
+        "MCP_RE_CLIENT_CORE_SRC_PROJECTION",
+        "mcp-re-client-core/src/core_projection.rs",
+    ),
     // ADR-MCPRE-056 §8: a projected plane's own source, read by the reach-back rule
     // that asserts materialization names no configuration type.
     // ADR-MCPRE-056 §8 fourth clause: the composition root's own source, read by the
@@ -89,90 +105,6 @@ pub(super) const SOURCE_FALLBACKS: &[(&str, &str)] = &[
     ("MCP_RE_BUILD_POLICY", "mcp-re-policy/BUILD.bazel"),
     ("MCP_RE_BUILD_PROXY", "mcp-re-proxy/BUILD.bazel"),
     ("MCP_RE_BUILD_TRANSPORT", "mcp-re-transport/BUILD.bazel"),
-    // Per-test source files (read by the security-traceability guard)
-    //
-    // ADR-MCPS-034: the two method-transparency proof artifacts.
-    (
-        "MCP_RE_SRC_METHOD_TRANSPARENCY",
-        "mcp-re-conformance/tests/method_transparency_test.rs",
-    ),
-    (
-        "MCP_RE_SRC_METHOD_NAME_DRIFT_GUARD",
-        "mcp-re-conformance/tests/method_name_drift_guard_test.rs",
-    ),
-    (
-        "MCP_RE_SRC_KEY_SOURCE",
-        "mcp-re-proxy/tests/key_source_test.rs",
-    ),
-    (
-        "MCP_RE_SRC_DEV_ENV_KEY_SOURCE",
-        "mcp-re-proxy/tests/dev_env_key_source_test.rs",
-    ),
-    (
-        "MCP_RE_SRC_MTLS_CLIENT",
-        "mcp-re-transport/tests/mtls_client_test.rs",
-    ),
-    (
-        "MCP_RE_SRC_DELEGATED_SERVING",
-        "mcp-re-proxy/tests/integration_async/delegated_serving_test.rs",
-    ),
-    (
-        "MCP_RE_SRC_DELEGATED_PROD_WIRING",
-        "mcp-re-proxy/tests/integration_async/delegated_production_wiring_test.rs",
-    ),
-    (
-        "MCP_RE_SRC_DELEGATED_E2E",
-        "mcp-re-proxy/tests/integration_async/delegated_client_server_e2e_test.rs",
-    ),
-    (
-        "MCP_RE_SRC_DELEGATION_VECTORS",
-        "mcp-re-conformance/tests/delegation_vectors_test.rs",
-    ),
-    (
-        "MCP_RE_SRC_ROOT_KEY_LIFECYCLE",
-        "mcp-re-proxy/tests/integration_async/root_key_lifecycle_test.rs",
-    ),
-    (
-        "MCP_RE_SRC_ROOT_AUTHORITY_MANIFEST",
-        "mcp-re-proxy/tests/integration_async/root_authority_manifest_test.rs",
-    ),
-    (
-        "MCP_RE_SRC_MRT_CONTINUATION",
-        "mcp-re-proxy/tests/integration_async/mrt_continuation_serving_test.rs",
-    ),
-    ("MCP_RE_SRC_CLI", "mcp-re-proxy/src/cli.rs"),
-    // MCPS-72 (#252): KMS-lifecycle offline negatives are in-crate #[cfg(test)]
-    // unit tests, so the traceability guard reads their src/*.rs (not tests/*.rs).
-    (
-        "MCP_RE_SRC_KMS_KEYSOURCE",
-        "mcp-re-proxy/src/kms_keysource/mod.rs",
-    ),
-    (
-        "MCP_RE_SRC_GCP_KMS_KEYSOURCE",
-        "mcp-re-proxy/src/gcp_kms_keysource.rs",
-    ),
-    (
-        "MCP_RE_SRC_AWS_KMS_KEYSOURCE",
-        "mcp-re-proxy/src/aws_kms_keysource.rs",
-    ),
-    // ADR-MCPS-036 gate spine: the conformance-guard test sources the
-    // traceability manifest maps for the audit (#151) and forbidden-claim
-    // (#155) guards, plus the §A claim matrix read by the §A-coverage check.
-    (
-        "MCP_RE_SRC_AUDIT_VOCABULARY_GUARD",
-        "mcp-re-conformance/tests/audit_vocabulary_guard_test.rs",
-    ),
-    (
-        "MCP_RE_SRC_FORBIDDEN_CLAIM_GUARD",
-        "mcp-re-conformance/tests/forbidden_claim_guard_test.rs",
-    ),
-    // ADR-MCPRE-050 §A witnesses: the RFC 9421 security-property proofs that map
-    // each §A capability claim to a green test.
-    (
-        "MCP_RE_SRC_RFC9421_SECURITY_PROPERTIES",
-        "mcp-re-conformance/tests/rfc9421_security_properties_test.rs",
-    ),
-    ("MCP_RE_CLAIM_MATRIX", "docs/spec/v0.5-claim-matrix.md"),
     // ADR-MCPS-036: proposal-facing docs scanned by the forbidden-claim guard.
     (
         "MCP_RE_DOC_SECURITY_BOUNDARY",

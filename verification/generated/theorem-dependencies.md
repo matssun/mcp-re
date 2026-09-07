@@ -115,6 +115,7 @@ graph BT
     THM_0103["THM-0103<br/>The epoch-bound session store resumes a session under the epoch that tagged it, and under no other"]
     THM_0106["THM-0106<br/>The Redis replay backend refuses a server that may drop a nonce, and turns every non-answer into an outage"]
     THM_0107["THM-0107<br/>The etcd replay backend records a nonce only under a bounded lease through a linearized put-if-absent, and turns every non-answer into an outage"]
+    THM_0111["THM-0111<br/>Two vocabularies decide what an mcp-re.* verdict token says, and every other producer names a verdict rather than spelling one"]
     THM_0007 --> THM_0008
     THM_0010 --> THM_0009
     THM_0001 --> THM_0014
@@ -256,6 +257,7 @@ graph BT
     THM_0098 --> THM_0099
     THM_0097 --> THM_0100
     THM_0043 --> THM_0101
+    THM_0046 --> THM_0111
     classDef root stroke-width:3px;
     class THM_0071,THM_0074,THM_0075,THM_0076,THM_0077,THM_0078 root;
 ```

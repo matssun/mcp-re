@@ -5548,3 +5548,76 @@ owner = "client.transport_message_hygiene"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://client.transport_message_hygiene"]
 depends_on = []
+
+# v0.17 policy-authority slice. The proposition ADR-MCPRE-066 Slice 2 established for two
+# producers, stated once over the workspace — and measured rather than listed, which is the
+# defect §2.1 names in its own words and which cost this tree a fifth producer nobody knew
+# about until this slice walked the tree.
+[[theorem]]
+id = "THM-0111"
+title = "Two vocabularies decide what an mcp-re.* verdict token says, and every other producer names a verdict rather than spelling one"
+statement = """
+Exactly two files in this workspace hold a verdict-token literal: `mcp-re-core/src/error.rs`,
+the frozen Core verification taxonomy (ADR-MCPS-035), and `mcp-re-policy/src/error.rs`, the
+frozen authorization-denial taxonomy (ADR-MCPS-013). Each owns its own mapping totally — one
+variant per token, rendered by `wire_code()` and by `Display` alike.
+
+Every other taxonomy that reaches the wire states which of those verdicts it IS, through an
+exhaustive projection with no wildcard arm, and derives its token from that projection rather
+than keeping a table beside it: the RFC 9421 carrier, the replay-tier dispatch gate, the PDP
+relation adapter (which returns a `PolicyError`, never a string), and the client seam's
+binding-spec refusal. Composition boundaries above them — `AuthorizationRefusal`,
+`RefusalCause` — ask each authority what it says and add no vocabulary of their own.
+
+A **verdict token** is `mcp-re.<name>` with no further dot. The dotted spellings are audit
+event types, a separate vocabulary whose success, rejection and key-lifecycle sets are pinned
+to exact allowlists.
+"""
+security_consequence = """
+One authority's verdict cannot pass for another's, and cannot pass for a token nobody owns.
+
+That is the mechanism behind #637: a string is accepted by anything that takes a string, so a
+`PolicyError` token reached Core's `AuditEvent.reason` and the record could no longer say which
+authority had spoken. It is also the mechanism behind the failure this theorem's own evidence
+was rebuilt to catch — `BindingSpecRefusal` rendered `mcp-re.authorization_binding_*` from two
+hand-written literals, both published SDKs rendered THROUGH it, and the drift guard's producer
+list had never been told the file existed. A token renamed in Core would have left two shipped
+surfaces emitting the old spelling with nothing able to notice.
+"""
+scope = """
+WHAT IS ESTABLISHED IS THE ABSENCE OF A SECOND TABLE, over the whole workspace. The control
+walks every crate's source tree, takes each file's production half, and asserts the set of
+files holding a verdict literal is exactly the two frozen vocabularies. The crate list is
+derived from the workspace manifest, so a new member is scanned or the lane fails; it is not a
+list of producers, which is the shape ADR-MCPRE-066 §2.1 rejects.
+
+NOT A CLAIM THAT THE GROUPINGS ARE RIGHT. Which carrier failure is which Core verdict is a
+ratified owner decision (MCPRE-92), reviewed as one. A projection that is exhaustive and
+wildcard-free can still map a failure onto the wrong verdict, and no guard can see that.
+
+NOT A CLAIM THAT THE TWO TOKEN SETS ARE DISJOINT. `mcp-re.authorization_binding_profile_required`
+is spelled by both, with different meanings — Core's is a structured binding presented without
+a binding profile; the authorization one is a deployment having configured no authority to
+validate against. The JSON-RPC envelope separates them by `data.policy`, and the Core spelling
+has no production producer on this tree. Left as measured rather than corrected: the tokens are
+frozen, and re-spelling one is an ADR.
+
+SCOPED TO THE CARGO/BAZEL WORKSPACE. `sdk/python` and `sdk/typescript` are separate Cargo
+workspaces with no Bazel target, so they cannot be delivered as runfiles and a cargo-only scan
+would make this lane measure two different things in its two lanes. They are thin wrappers over
+`mcp_re_client_core::build_authorization`, and the refusal they render is covered directly by
+the producer check on the file they render THROUGH.
+
+DOES NOT ESTABLISH the correctness of either frozen taxonomy, nor that a refusal reaches the
+audit boundary — THM-0046, THM-0069 and THM-0071 are those propositions.
+
+Executable, class V0, measured in the default cargo lane.
+"""
+owner = "conformance.verdict_vocabulary_scope"
+review_requirement = "Owner security-specification review"
+supported_by = [
+  "unit://conformance.verdict_vocabulary_scope",
+  "unit://policy.authorization_taxonomy",
+  "unit://client.binding_spec_refusal",
+]
+depends_on = ["THM-0046"]

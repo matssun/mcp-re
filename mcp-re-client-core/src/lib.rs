@@ -27,6 +27,9 @@
 // `unsafe` here means deleting this line: an architectural decision, reviewed as one.
 #![forbid(unsafe_code)]
 pub mod binding_spec;
+/// Which Core verdict each of this crate's refusals IS — the one place that decides
+/// (ADR-MCPRE-066 Slice 2). Every `wire_code` in the crate is derived from it.
+mod core_projection;
 mod delegated_evidence;
 mod delegated_trust;
 mod delegation_policy;

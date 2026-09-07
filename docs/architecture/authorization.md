@@ -84,13 +84,27 @@ rich authorization request. Neither is Biscuit-shaped. Whether Biscuit arrives a
 `artifact_type` or behind `pdp-decision` is a **mechanism** question for the adapter, and the
 semantic layer must not require an answer to it.
 
-### 2.5 Legacy inputs that must not be reused
+### 2.5 Legacy inputs — now deleted
 
-`extract_authorization_block(request: &serde_json::Value)` re-extracts a sibling `_meta` block
-from a **raw JSON body** and depends on the native opaque `authorization_hash`. That is the
-pre-RFC-9421 model twice over: it reaches past the verifier into representation, and it keys
-off a carrier that no longer exists. Authorization must consume `VerifiedMcpRequest`, not a
-`Value`.
+`extract_authorization_block(request: &serde_json::Value)` re-extracted a sibling `_meta`
+block from a **raw JSON body** and depended on the native opaque `authorization_hash`. That
+was the pre-RFC-9421 model twice over: it reached past the verifier into representation, and
+it keyed off a carrier that no longer exists. Authorization consumes `VerifiedMcpRequest`,
+never a `Value`.
+
+It is no longer an input that *must not* be reused; it is one that cannot be. `block.rs`,
+`decision.rs` and `wire.rs` were deleted from `mcp-re-policy`, each a second authority over a
+fact the RFC 9421 tree already owns and none with a consumer:
+
+| deleted | what owns the fact now |
+|---|---|
+| `block.rs` — `params._meta` sibling-block extraction | `RequestBlock.artifact_bindings[]` (§2.4) |
+| `decision.rs` — `Allow \| Deny(PolicyError)` | `AuthorizationPosture` / `AuthorizationRefusal` (§3), which can tell an unconfigured deployment from a permitting one and keep the two refusing authorities apart |
+| `wire.rs` — an unsigned JSON-RPC denial envelope | `mcp_re_proxy::receipt::ResponseSigning`, which decides the posture a refusal is signed under |
+
+What remains in `mcp-re-policy` is exactly two authorities: `PolicyError`, the frozen
+ADR-MCPS-013 denial taxonomy and the sole owner of the `PolicyError -> mcp-re.authorization_*`
+mapping; and `RevocationSource`, a dormant seam no production path installs.
 
 ### 2.6 Request facts the verifier already owns
 

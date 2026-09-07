@@ -65,6 +65,7 @@ nt_rust_test(
     srcs = ["tests/audit_vocabulary_guard_test.rs"],
     auto_cargo_toml = False,
     bazel_build_cfg = False,
+    compile_data = ["//:Cargo.toml"],
     data = [
         "//mcp-re-core:src_files",
         "//mcp-re-core:src/error.rs",
@@ -73,6 +74,32 @@ nt_rust_test(
         "//mcp-re-http-profile:src/error/core_projection.rs",
         "//mcp-re-proxy:src/http_profile_dispatch.rs",
         "//mcp-re-proxy:src/http_profile_dispatch/core_projection.rs",
+        "//mcp-re-client-core:src/binding_spec/refusal.rs",
+        "//mcp-re-client-core:src/core_projection.rs",
+        # ADR-MCPRE-066 §2.1: every workspace source tree, so which files decide what a
+        # verdict token says is measured rather than listed.
+        "//mcp-re-core:guard_src_files",
+        "//mcp-re-core:src/lib.rs",
+        "//mcp-re-proxy:guard_src_files",
+        "//mcp-re-proxy:src/lib.rs",
+        "//mcp-re-host:guard_src_files",
+        "//mcp-re-host:src/lib.rs",
+        "//mcp-re-client-core:guard_src_files",
+        "//mcp-re-client-core:src/lib.rs",
+        "//mcp-re-client:guard_src_files",
+        "//mcp-re-client:src/lib.rs",
+        "//mcp-re-client-proxy:guard_src_files",
+        "//mcp-re-client-proxy:src/lib.rs",
+        "//mcp-re-transport:guard_src_files",
+        "//mcp-re-transport:src/lib.rs",
+        "//mcp-re-policy:guard_src_files",
+        "//mcp-re-policy:src/lib.rs",
+        "//mcp-re-http-profile:guard_src_files",
+        "//mcp-re-http-profile:src/lib.rs",
+        "//mcp-re-demo:guard_src_files",
+        "//mcp-re-demo:src/lib.rs",
+        "//mcp-re-test-paths:guard_src_files",
+        "//mcp-re-test-paths:src/lib.rs",
     ],
     edition = "2021",
     env = {
@@ -85,6 +112,22 @@ nt_rust_test(
         # The replay-tier gate, a third producer of audit rejection reasons.
         "MCP_RE_PROXY_SRC_DISPATCH": "$(rlocationpath //mcp-re-proxy:src/http_profile_dispatch.rs)",
         "MCP_RE_PROXY_SRC_DISPATCH_PROJECTION": "$(rlocationpath //mcp-re-proxy:src/http_profile_dispatch/core_projection.rs)",
+        # The client seam's binding-spec refusal, a fourth producer — and the one the
+        # guard's hand-maintained list had never been told about. Both SDKs render it.
+        "MCP_RE_CLIENT_CORE_SRC_BINDING_REFUSAL": "$(rlocationpath //mcp-re-client-core:src/binding_spec/refusal.rs)",
+        "MCP_RE_CLIENT_CORE_SRC_PROJECTION": "$(rlocationpath //mcp-re-client-core:src/core_projection.rs)",
+        # One sentinel per workspace source tree; the guard walks each sentinel's parent.
+        "MCP_RE_SRC_TREE_CORE": "$(rlocationpath //mcp-re-core:src/lib.rs)",
+        "MCP_RE_SRC_TREE_PROXY": "$(rlocationpath //mcp-re-proxy:src/lib.rs)",
+        "MCP_RE_SRC_TREE_HOST": "$(rlocationpath //mcp-re-host:src/lib.rs)",
+        "MCP_RE_SRC_TREE_CLIENT_CORE": "$(rlocationpath //mcp-re-client-core:src/lib.rs)",
+        "MCP_RE_SRC_TREE_CLIENT": "$(rlocationpath //mcp-re-client:src/lib.rs)",
+        "MCP_RE_SRC_TREE_CLIENT_PROXY": "$(rlocationpath //mcp-re-client-proxy:src/lib.rs)",
+        "MCP_RE_SRC_TREE_TRANSPORT": "$(rlocationpath //mcp-re-transport:src/lib.rs)",
+        "MCP_RE_SRC_TREE_POLICY": "$(rlocationpath //mcp-re-policy:src/lib.rs)",
+        "MCP_RE_SRC_TREE_HTTP_PROFILE": "$(rlocationpath //mcp-re-http-profile:src/lib.rs)",
+        "MCP_RE_SRC_TREE_DEMO": "$(rlocationpath //mcp-re-demo:src/lib.rs)",
+        "MCP_RE_SRC_TREE_TEST_PATHS": "$(rlocationpath //mcp-re-test-paths:src/lib.rs)",
     },
     deps = [
         "//mcp-re-test-paths:mcp_re_test_paths",

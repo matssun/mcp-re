@@ -29,6 +29,10 @@
 //! close, a `;`-terminated item at that semicolon. Counting resumes immediately after.
 //! Everything outside every region is production.
 
+mod brace_scan;
+
+use brace_scan::BraceScan;
+
 /// Whether `line` opens a test region.
 ///
 /// Both `#[cfg(test)]` and the `#[cfg(all(test, unix))]` family open one. Matching only the
@@ -37,40 +41,6 @@
 fn opens_test_region(line: &str) -> bool {
     let t = line.trim_start();
     t.starts_with("#[cfg(test") || t.starts_with("#[cfg(all(test")
-}
-
-/// `line` with string literals and line comments blanked, so their braces do not count.
-fn brace_significant(line: &str) -> String {
-    let mut out = String::with_capacity(line.len());
-    let mut chars = line.chars().peekable();
-    let mut in_string = false;
-    while let Some(c) = chars.next() {
-        if in_string {
-            in_string = still_in_string(c, &mut chars);
-            continue;
-        }
-        match c {
-            '"' => in_string = true,
-            '/' if chars.peek() == Some(&'/') => break,
-            _ => out.push(c),
-        }
-    }
-    out
-}
-
-/// Whether the scan is still inside a string literal after consuming `c`.
-///
-/// A backslash escapes exactly one following character and never ends the string, so the
-/// escaped character is consumed here rather than examined by the caller.
-fn still_in_string(c: char, chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> bool {
-    match c {
-        '\\' => {
-            chars.next();
-            true
-        }
-        '"' => false,
-        _ => true,
-    }
 }
 
 /// The lines of `source`, 1-indexed, that lie outside every test region.
@@ -102,13 +72,17 @@ pub fn production_lines(source: &str) -> Vec<(usize, &str)> {
 ///
 /// Scans forward for the item's opening brace. An attributed item with no brace before a
 /// `;` — `#[cfg(test)] use super::*;` — is a single-line region and ends at that semicolon.
+///
+/// The [`BraceScan`] is created once for the whole region rather than per line, because a
+/// literal that spans lines is exactly where a forgetful scan mis-counts.
 fn end_of_region(lines: &[&str], start: usize) -> usize {
     let mut depth: i64 = 0;
     let mut opened = false;
     let mut i = start;
+    let mut scan = BraceScan::new();
     while i < lines.len() {
         let Some(raw) = lines.get(i) else { break };
-        let code = brace_significant(raw);
+        let code = scan.feed(raw);
         let opens = i64::try_from(code.matches('{').count()).unwrap_or(i64::MAX);
         let closes = i64::try_from(code.matches('}').count()).unwrap_or(i64::MAX);
         depth = depth.saturating_add(opens).saturating_sub(closes);
@@ -186,6 +160,104 @@ mod tests {
         let half = production_half(source);
         assert!(!half.contains("use super::*"));
         assert!(half.contains("fn b()"));
+    }
+
+    /// The defect this scanner was rewritten for. A raw byte string holding JSON puts
+    /// unbalanced braces on a line, and `execution_contract.rs` writes one over five lines
+    /// inside a test module. A per-line, raw-string-blind scan closed the region at the
+    /// literal's last line and reported twenty-seven lines of test code as production.
+    #[test]
+    fn a_multi_line_raw_string_does_not_close_a_region() {
+        let src = concat!(
+            "fn keep() {}\n",
+            "#[cfg(test)]\n",
+            "mod tests {\n",
+            "    #[test]\n",
+            "    fn t() {\n",
+            "        let body = br#\"{\"error\":{\"data\":{\n",
+            "            \"wire_code\":\"mcp-re.evidence_retention_indeterminate\"}}}\"#;\n",
+            "        let _ = body;\n",
+            "    }\n",
+            "}\n",
+            "fn after() {}\n",
+        );
+        let production = production_half(src);
+        assert!(production.contains("fn keep()"));
+        assert!(
+            production.contains("fn after()"),
+            "production below the region must survive"
+        );
+        assert!(
+            !production.contains("evidence_retention_indeterminate"),
+            "a literal inside the test region was measured as production"
+        );
+        assert!(
+            !production.contains("let _ = body"),
+            "the region closed early, so test code below the raw string read as production"
+        );
+    }
+
+    /// A raw string closes only on its OWN hash count, so an inner `"#` is not a
+    /// terminator.
+    #[test]
+    fn a_raw_string_closes_only_on_its_own_hash_count() {
+        let src = concat!(
+            "#[cfg(test)]\n",
+            "mod tests {\n",
+            "    const S: &str = r##\"a \"# b {\"##;\n",
+            "    fn t() { let _ = S; }\n",
+            "}\n",
+            "fn after() {}\n",
+        );
+        let production = production_half(src);
+        assert!(production.contains("fn after()"));
+        assert!(!production.contains("let _ = S"));
+    }
+
+    /// `for` and `char` end in the letters a raw-string opener starts with. Treating one as
+    /// an opener would swallow the rest of the file into a literal.
+    #[test]
+    fn an_identifier_ending_in_r_is_not_a_raw_string_opener() {
+        let src = concat!(
+            "#[cfg(test)]\n",
+            "mod tests {\n",
+            "    fn t() { for \"x\" in [] {} }\n",
+            "}\n",
+            "fn after() {}\n",
+        );
+        assert!(production_half(src).contains("fn after()"));
+    }
+
+    /// A brace inside a character literal is not a brace, and a lifetime tick is not a
+    /// character literal.
+    #[test]
+    fn a_brace_in_a_char_literal_does_not_close_a_region() {
+        let src = concat!(
+            "#[cfg(test)]\n",
+            "mod tests {\n",
+            "    fn t<'a>(s: &'a str) { let _ = ('}', '{', s); }\n",
+            "}\n",
+            "fn after() {}\n",
+        );
+        let production = production_half(src);
+        assert!(production.contains("fn after()"));
+        assert!(!production.contains("fn t<"));
+    }
+
+    /// A block comment nests, and its braces are not code.
+    #[test]
+    fn a_brace_in_a_nested_block_comment_does_not_close_a_region() {
+        let src = concat!(
+            "#[cfg(test)]\n",
+            "mod tests {\n",
+            "    /* } /* } */ } */\n",
+            "    fn t() {}\n",
+            "}\n",
+            "fn after() {}\n",
+        );
+        let production = production_half(src);
+        assert!(production.contains("fn after()"));
+        assert!(!production.contains("fn t()"));
     }
 
     #[test]

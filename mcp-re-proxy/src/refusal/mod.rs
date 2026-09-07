@@ -51,7 +51,9 @@
 //!
 //! ## Three projections, three questions
 //!
-//! * [`RefusalCause::wire_code`] — the public code, at the one presentation boundary.
+//! * [`RefusalCause::wire_code`] — the public code, at the final presentation boundary.
+//!   Composition, never ownership: `PolicyError` owns the authorization-token mapping and
+//!   `McpReError` owns Core's, and neither is reproduced here.
 //! * `RefusalCause::authorization_facet` — what the AUTHORIZATION authority says about this
 //!   refusal, the question the pre-rendered string made unanswerable.
 //! * `RefusalCause::core_verdict` — which CORE verdict the audit record is written under,
