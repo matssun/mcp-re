@@ -19,6 +19,22 @@ a range this gate cannot read is a range it cannot check, and silently passing a
 unrecognised specifier is exactly the "configured but enforces nothing" shape the repository
 refuses. An unbounded upper end therefore FAILS: it claims every future minor.
 
+THE THIRD FACT is the one that broke on the v0.17 candidate: a **deploy image that
+installs the shipped wheel** carries an interpreter too, and nothing related it to either
+of the two above. `deploy/docker/Dockerfile.loadgen` sat on `python:3.12-slim` — correct
+while the package claimed `>=3.10`, and unbuildable the moment the support claim was
+narrowed to `>=3.14.5`. It failed at `docker build`, in stage 5, after a three-replica
+fleet rollout, with `ERROR: Package 'mcp-re-sdk' requires a different Python` — a support
+decision surfacing as a deploy failure two lanes away from where it was taken.
+
+So a Dockerfile stage that pip-installs the MCP-RE wheel must name a base image that is
+EXACTLY one of the pinned interpreters. Exactly, not merely inside the range: a floating
+`python:3.14-slim` is a different artefact on every rebuild, which is the reason
+`Dockerfile.inner` already gives for pinning `mcp` to an exact version, and "inside the
+range at build time" is not a property of the file. A stage that does NOT install the
+wheel is not bound by this — `Dockerfile.inner` runs the upstream MCP SDK and nothing of
+ours, and its interpreter is its own business.
+
 Run: python3 scripts/python_runtime_gate.py
 """
 from __future__ import annotations
@@ -31,6 +47,19 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT = REPO_ROOT / "sdk" / "python" / "pyproject.toml"
 LOCK = REPO_ROOT / "verification" / "policy" / "toolchains.lock.toml"
+DOCKER_DIR = REPO_ROOT / "deploy" / "docker"
+
+#: `FROM <image> AS <stage>` — the stage name is optional, because an unnamed final stage
+#: is still a stage that can install the wheel.
+FROM_LINE = re.compile(r"^FROM\s+(\S+)(?:\s+AS\s+(\S+))?\s*$", re.IGNORECASE)
+
+#: A `python:` base image, with the version as the tag's leading component.
+PYTHON_BASE = re.compile(r"^python:([0-9][^-\s]*)(?:-\S+)?$")
+
+#: What makes a stage one that runs OUR wheel. Matched on the install command rather than
+#: on the stage name: a stage renamed from `loadgen` to anything else installs the same
+#: wheel, and a rule keyed on the name would stop applying without anything changing.
+INSTALLS_SDK = re.compile(r"pip3?\s+install[^\n]*(?:/wheels/|sdk/python)")
 
 #: One clause of a `requires-python` specifier: an operator and a dotted version.
 CLAUSE = re.compile(r"^(>=|>|<=|<|==|!=|~=)\s*(\d+)\.(\d+)(?:\.\d+)?$")
@@ -134,6 +163,68 @@ def check(specifier: str | None, entry) -> tuple[str | None, str]:
     )
 
 
+def wheel_stages(text: str) -> list[tuple[str, str | None]]:
+    """`(base image, stage name)` for every stage in one Dockerfile that installs OUR wheel.
+
+    A forward pass over the file rather than a regex over the whole text: the install
+    command must be attributed to the stage it is IN, and the two `FROM` lines in
+    `Dockerfile.loadgen` are two different interpreters. Attributing an install to the
+    wrong stage would check the builder's Python and pass while the runtime's is wrong —
+    which is the defect, inverted.
+    """
+    found: list[tuple[str, str | None]] = []
+    base: str | None = None
+    stage: str | None = None
+    claimed = False
+    for line in text.splitlines():
+        opening = FROM_LINE.match(line.strip())
+        if opening is not None:
+            base, stage, claimed = opening.group(1), opening.group(2), False
+            continue
+        if base is None or claimed:
+            continue
+        if INSTALLS_SDK.search(line):
+            found.append((base, stage))
+            claimed = True
+    return found
+
+
+def check_images(dockerfiles: dict[str, str], pinned: dict[tuple[int, int], str]) -> str | None:
+    """The third fact: a stage that installs the wheel runs a PINNED interpreter.
+
+    `dockerfiles` is `{path: text}` so `--selftest` can feed it files that do not exist;
+    a gate whose only input is the real tree is one nobody proves is alive.
+    """
+    allowed = set(pinned.values())
+    for path in sorted(dockerfiles):
+        for base, stage in wheel_stages(dockerfiles[path]):
+            where = f"{path} stage {stage!r}" if stage else path
+            match = PYTHON_BASE.match(base)
+            if match is None:
+                return (
+                    f"{where} installs the MCP-RE wheel on base image {base!r}, which names "
+                    f"no Python version this gate can read. The interpreter that runs the "
+                    f"shipped wheel is part of the support claim and must be stated"
+                )
+            version = match.group(1)
+            if version not in allowed:
+                inside = tuple(int(part) for part in version.split(".") if part.isdigit())
+                hint = (
+                    "it is not an exact major.minor.patch, so what it resolves to is a "
+                    "property of the day it is built"
+                    if len(inside) != 3
+                    else "that interpreter is not one the battery is measured on"
+                )
+                return (
+                    f"{where} installs the MCP-RE wheel on python:{version}, and "
+                    f"[python].interpreters pins {', '.join(sorted(allowed))} — {hint}. "
+                    f"A deploy image outside the supported range cannot install the wheel "
+                    f"at all, and it fails at `docker build` inside a fleet proof rather "
+                    f"than where the support decision was taken"
+                )
+    return None
+
+
 #: Every way the two facts can diverge, each paired with the positive case it must not
 #: reject. A gate that refuses everything measures as little as one that refuses nothing.
 SELFTEST_CASES = (
@@ -188,8 +279,64 @@ SELFTEST_CASES = (
 )
 
 
+#: The wheel-installing base image, against the pinned set. Same shape and same rule as
+#: `SELFTEST_CASES`: every refusal paired with the acceptance it must not swallow.
+IMAGE_SELFTEST_CASES = (
+    (
+        "the stale base image the v0.17 candidate actually carried",
+        {"Dockerfile.loadgen": "FROM rust:1 AS wheel\nRUN cd sdk/python && maturin build\n"
+                               "FROM python:3.12-slim AS loadgen\n"
+                               "RUN pip install --no-cache-dir /wheels/*.whl\n"},
+        True,
+    ),
+    (
+        "a floating minor tag inside the supported range",
+        {"Dockerfile.loadgen": "FROM python:3.14-slim AS loadgen\n"
+                               "RUN pip install --no-cache-dir /wheels/*.whl\n"},
+        True,
+    ),
+    (
+        "a base image naming no readable version",
+        {"Dockerfile.loadgen": "FROM ghcr.io/example/python AS loadgen\n"
+                               "RUN pip install --no-cache-dir /wheels/*.whl\n"},
+        True,
+    ),
+    (
+        "the install attributed to the BUILDER stage rather than the runtime one",
+        {"Dockerfile.loadgen": "FROM python:3.12-slim AS wheel\n"
+                               "RUN pip3 install --no-cache-dir maturin\n"
+                               "FROM python:3.14.7-slim AS loadgen\n"
+                               "RUN pip install --no-cache-dir /wheels/*.whl\n"},
+        False,
+    ),
+    (
+        "a stage that installs something else entirely",
+        {"Dockerfile.inner": "FROM python:3.12-slim AS inner\n"
+                             "RUN pip install --no-cache-dir \"mcp==2.0.0\"\n"},
+        False,
+    ),
+    (
+        "the pinned interpreter, exactly",
+        {"Dockerfile.loadgen": "FROM python:3.14.7-slim AS loadgen\n"
+                               "RUN pip install --no-cache-dir /wheels/*.whl\n"},
+        False,
+    ),
+)
+
+#: The pin the image cases are measured against — one interpreter, as the tree declares.
+IMAGE_SELFTEST_PIN = {(3, 14): "3.14.7"}
+
+
 def selftest() -> int:
     failures = 0
+    for name, files, must_refuse in IMAGE_SELFTEST_CASES:
+        refused = check_images(files, IMAGE_SELFTEST_PIN) is not None
+        if refused != must_refuse:
+            verb = "was accepted" if must_refuse else "was refused"
+            print(f"  SELFTEST FAIL: {name} {verb}", file=sys.stderr)
+            failures += 1
+        else:
+            print(f"  ok   {name}: {'refused' if refused else 'accepted'}")
     for name, specifier, entry, must_refuse in SELFTEST_CASES:
         refusal, _ = check(specifier, entry)
         refused = refusal is not None
@@ -202,7 +349,8 @@ def selftest() -> int:
     if failures:
         print(f"python-runtime gate: SELFTEST FAIL — {failures} case(s)", file=sys.stderr)
         return 1
-    print(f"python-runtime gate: SELFTEST OK — {len(SELFTEST_CASES)} case(s)")
+    total = len(SELFTEST_CASES) + len(IMAGE_SELFTEST_CASES)
+    print(f"python-runtime gate: SELFTEST OK — {total} case(s)")
     return 0
 
 
@@ -214,7 +362,31 @@ def main(argv: list[str]) -> int:
     refusal, summary = check(project.get("requires-python"), entry)
     if refusal is not None:
         return fail(refusal)
-    print(f"python-runtime gate: OK — {summary}")
+
+    # Only reached once the claim and the pin agree, so `pinned` below is the checked set
+    # rather than a second reading of the registry.
+    pinned = {}
+    for version in entry["interpreters"]:
+        major, minor, _ = str(version).split(".")
+        pinned[(int(major), int(minor))] = str(version)
+    dockerfiles = {
+        path.relative_to(REPO_ROOT).as_posix(): path.read_text(encoding="utf-8")
+        for path in sorted(DOCKER_DIR.glob("Dockerfile*"))
+        if path.is_file()
+    }
+    if not dockerfiles:
+        return fail(
+            f"no Dockerfile under {DOCKER_DIR.relative_to(REPO_ROOT)} — the image half of "
+            f"this gate would measure nothing, which is not the same as finding nothing"
+        )
+    image_refusal = check_images(dockerfiles, pinned)
+    if image_refusal is not None:
+        return fail(image_refusal)
+
+    print(
+        f"python-runtime gate: OK — {summary}; {len(dockerfiles)} deploy Dockerfile(s) "
+        f"examined, every stage installing the MCP-RE wheel on a pinned interpreter"
+    )
     return 0
 
 
