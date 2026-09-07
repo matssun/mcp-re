@@ -27,7 +27,15 @@ COPY . .
 # build host, so no cross-compile).
 RUN cd sdk/python && maturin build --release --out /wheels
 
-FROM python:3.12-slim AS loadgen
+# The interpreter is the one `verification/policy/toolchains.lock.toml` `[python]` pins,
+# named exactly rather than as a floating `3.14-slim`. Two reasons, and the first is the one
+# that broke this file: `sdk/python` declares `requires-python >=3.14.5,<3.15`, so a base
+# image outside that range cannot install the wheel built two stages up — and it fails at
+# `docker build`, after a full fleet rollout, reading like a deploy problem. The second is
+# the reason `Dockerfile.inner` gives for pinning `mcp`: a floating tag makes the artefact
+# a different one on every rebuild. `scripts/python_runtime_gate.py` holds this equal to
+# the pin.
+FROM python:3.14.7-slim AS loadgen
 COPY --from=wheel /wheels /wheels
 RUN pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels
 COPY docs/security/mcp_re_gke_client.py /app/mcp_re_gke_client.py
