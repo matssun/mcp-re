@@ -222,6 +222,11 @@ def test_an_unknown_target_is_malformed_rather_than_skipped():
     assert valid_target(CARGO, "lib")
     assert valid_target(CARGO, "tests/full_profile_test")
     assert not valid_target(CARGO, "pytest")
+    # A DEPLOYABLE's own crate is not its library: what running means is decided in the
+    # binary crate, and a lane that can select only `lib` can state nothing about it.
+    assert valid_target(CARGO, "bin/mcp-re-client")
+    assert not valid_target(CARGO, "bin/")
+    assert not valid_target(CARGO, "bin/a/b")
     assert valid_target(PYTHON, "pytest")
     assert not valid_target(PYTHON, "lib")
     assert valid_target(TYPESCRIPT, "vitest")
@@ -250,6 +255,10 @@ def test_each_ecosystem_selects_exactly_the_declared_symbols():
     ]
     assert test_argv(CARGO, "p", "tests/x", ["a"]) == [
         "cargo", "test", "-p", "p", "--test", "x", "--", "--exact", "a",
+    ]
+    assert test_argv(CARGO, "mcp-re-client", "bin/mcp-re-client", ["startup::tests::t"]) == [
+        "cargo", "test", "-p", "mcp-re-client", "--bin", "mcp-re-client",
+        "--", "--exact", "startup::tests::t",
     ]
     # pytest selects by exact node id, in the PREPARED environment for the runtime named —
     # the interpreter a battery ran on is part of what the record describes, and the lane

@@ -15,6 +15,13 @@ mcp-re-client-core = { path = "../mcp-re-client-core" }
 mcp-re-core = { path = "../mcp-re-core" }
 serde_json = { workspace = true }
 
+# The `verified_outcome` controls hand `read_outcome` a GENUINELY verified reply, so the
+# test half needs the server's delegated signing side. `VerifiedDelegatedResponse` is only
+# obtainable from a verification that succeeded — a control over what a verified outcome
+# MEANS cannot be written without performing one.
+[dev-dependencies]
+mcp-re-http-profile = { path = "../mcp-re-http-profile" }
+
 [lib]
 name = "mcp_re_client_proxy"
 path = "src/lib.rs"

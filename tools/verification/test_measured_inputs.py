@@ -229,6 +229,24 @@ def test_in_crate_selectors_are_covered_by_the_units_own_paths():
     }
     _validate_in_crate_selectors("unit[0]", nested)
 
+    # A binary crate's modules live under the same `<pkg>/src` tree, so `bin/<name>#`
+    # carries the identical obligation. Exempting it would put a deployable's own controls
+    # outside every fingerprint component — the one place the question "does the artifact an
+    # operator runs do this?" can be asked.
+    deployable = {
+        "paths": ["mcp-re-client/src/anchors/mod.rs"],
+        "tested_symbols": ["bin/mcp-re-client#startup::tests::t"],
+    }
+    try:
+        _validate_in_crate_selectors("unit[0]", deployable)
+    except ManifestError:
+        pass
+    else:
+        raise AssertionError("an undeclared binary-crate module must be refused too")
+
+    deployable["paths"].append("mcp-re-client/src/startup.rs")
+    _validate_in_crate_selectors("unit[0]", deployable)
+
 
 def test_the_test_lane_instrument_is_part_of_the_evidence_identity():
     """The meaning of a `doc#` selector, of `test_package`, and of which ecosystem runs the

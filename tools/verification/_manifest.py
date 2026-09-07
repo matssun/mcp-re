@@ -141,12 +141,13 @@ def test_package_for(unit: dict) -> str | None:
 
 
 def _module_candidates(package: str, symbol_path: str) -> list[str]:
-    """The source files a `lib#`/`doc#` selector's module path could name, longest first.
+    """The source files an IN-CRATE selector's module path could name, longest first.
 
     `lib#rejection::tests::x` can only execute code in `<pkg>/src/rejection.rs`;
-    `doc#verified_response::bound::X` in `<pkg>/src/verified_response/bound.rs`. Every
-    prefix is offered because the selector names an item, not a file, and the file boundary
-    can be anywhere above it.
+    `doc#verified_response::bound::X` in `<pkg>/src/verified_response/bound.rs`;
+    `bin/mcp-re-client#startup::tests::x` in `<pkg>/src/startup.rs`. Every prefix is
+    offered because the selector names an item, not a file, and the file boundary can be
+    anywhere above it.
     """
     segments = [s for s in symbol_path.split("::") if s]
     out: list[str] = []
@@ -197,13 +198,17 @@ def _validate_test_features(uwhere: str, unit: dict) -> None:
 
 
 def _validate_in_crate_selectors(uwhere: str, unit: dict) -> None:
-    """A `lib#`/`doc#` selector must execute code the unit's own `paths` measure.
+    """A `lib#`/`doc#`/`bin/<name>#` selector must execute code the unit's own `paths` measure.
 
     Integration-test sources enter the fingerprint as their own component; in-crate tests
     do not, because they live inside the source files the unit already declares. That is
     only true if it IS true, so it is checked rather than assumed: a `lib#` selector whose
     module is not in `paths` would be a battery member whose body could be rewritten with
     no fingerprint moving — the same false-freshness shape as an unmeasured implementation.
+
+    A binary crate's modules live under the same `<pkg>/src` tree, so `bin/<name>#` carries
+    the identical obligation and is checked by the identical rule. Exempting it would let a
+    deployable's own controls sit outside every fingerprint component.
     """
     package = test_package_for(unit)
     if package is None or unit_ecosystem(unit) is not CARGO:
@@ -211,7 +216,7 @@ def _validate_in_crate_selectors(uwhere: str, unit: dict) -> None:
     declared = set(unit["paths"])
     for symbol in unit.get("tested_symbols", []):
         target, _, path = str(symbol).partition("#")
-        if target not in ("lib", "doc"):
+        if target not in ("lib", "doc") and not target.startswith("bin/"):
             continue
         candidates = _module_candidates(package, path)
         if not any(c in declared for c in candidates):

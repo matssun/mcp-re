@@ -80,6 +80,18 @@ pub fn continuation_state(body: &[u8]) -> Result<Option<String>, HttpProfileErro
     mcp_re_http_profile::result_class::input_required_state(body)
 }
 
+/// The same three-way contract, over a `result` member the caller has ALREADY parsed.
+///
+/// A caller that has derived the plain JSON-RPC reply from the verified bytes holds the
+/// `result` already. Handing those bytes back to [`continuation_state`] parses the same
+/// message a second time and classifies it a second time, which is how two readers of one
+/// message end up disagreeing about what it says — the defect
+/// [`mcp_re_http_profile::result_class::input_required_state_of`] exists to remove. Such a
+/// caller asks the question here, once.
+pub fn continuation_state_of(result: Option<&Value>) -> Result<Option<String>, HttpProfileError> {
+    mcp_re_http_profile::result_class::input_required_state_of(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,5 +136,32 @@ mod tests {
             continuation_state(terminal).expect("terminal is legal"),
             None
         );
+    }
+
+    #[test]
+    fn the_parsed_face_and_the_byte_face_answer_the_same_question() {
+        // ONE classifier with two input shapes, not two classifiers. A caller that has
+        // already derived the reply from the verified bytes asks over the parsed `result`;
+        // asking over the bytes again would parse and classify the same message a second
+        // time, and two readers of one message are how they come to disagree about it.
+        for body in [
+            serde_json::json!({"jsonrpc": "2.0", "id": 1, "result": {"ok": true}}),
+            serde_json::json!({"jsonrpc": "2.0", "id": 1, "result": {
+                "resultType": mcp_re_http_profile::result_class::INPUT_REQUIRED_RESULT_TYPE,
+                "requestState": "s-1",
+            }}),
+            serde_json::json!({"jsonrpc": "2.0", "id": 1, "result": {
+                "resultType": mcp_re_http_profile::result_class::INPUT_REQUIRED_RESULT_TYPE,
+            }}),
+            serde_json::json!({"jsonrpc": "2.0", "id": 1, "result": {"resultType": "later"}}),
+            serde_json::json!({"jsonrpc": "2.0", "id": 1, "error": {"code": -32000}}),
+        ] {
+            let bytes = body.to_string();
+            assert_eq!(
+                continuation_state_of(body.get("result")),
+                continuation_state(bytes.as_bytes()),
+                "the two faces disagree about {bytes}"
+            );
+        }
     }
 }

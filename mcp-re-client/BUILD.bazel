@@ -69,7 +69,14 @@ nt_rust_test(
     edition = "2021",
     deps = [
         ":mcp_re_client",
+        # The serving-lifetime control drives `serve_until_shutdown` itself, so it builds
+        # the manifest the loader accepts, the snapshot the routes read, and the serving
+        # context the listener drives — none of which the CLI crate names on its own.
+        "//mcp-re-client-core:mcp_re_client_core",
+        "//mcp-re-client-proxy:mcp_re_client_proxy",
+        "//mcp-re-core:mcp_re_core",
         "@crates_mcp_re//:libc",
+        "@crates_mcp_re//:serde_json",
     ],
 )
 
