@@ -137,3 +137,96 @@ Items 3–6 of #672 — extracting the trust-anchor lifecycle, the execution con
 theorem gaps, the public-field carriers — are architectural decomposition, not defects on the
 shipping path. The v0.17 objective is explicit that only the former blocks the release, and
 the `response.rs` re-census belongs after those moves rather than before them.
+
+## The client-response census, re-run on the remainder
+
+The v0.17 objective asks one question of what is left: *is anything remaining a
+security/correctness defect on the shipping path, or is it architectural improvement?*
+**Architectural.** Three measurements support that, and the third corrects this packet's own
+first draft.
+
+### 1. Item 6's named carrier is already sealed
+
+The census names `DelegationPolicy::max_clock_skew` as a self-documented public field. It is
+not one: every field of `DelegationPolicy` is private, `new()` clamps the skew to the
+profile's `0..=MAX_CLOCK_SKEW_BOUND`, and `with_expectations` is the whole projection. The
+module documents why all four fields are private rather than only the invariant-bearing one —
+"a type whose invariant-bearing field is private while its siblings are `pub` tells a reader
+nothing about which is which". The row is dated evidence.
+
+### 2. `response.rs` is 360 production lines, not 1105
+
+The census figure counts the whole file. ADR-MCPRE-061 counts production lines — a test region
+opens at `#[cfg(test)]` and counting resumes after it — and the module-size registry measures
+it that way. Both figures are true of different things; only one of them is the threshold the
+rule states.
+
+### 3. The seal claim in this packet's first draft was too strong
+
+It said `VerifiedDelegatedResponse` "is obtainable only from a verification that succeeded".
+That is true of the TREE and false of the TYPE.
+
+`verify_delegated_response` is the only producer in the workspace — measured, three
+construction sites, all inside it, and no test anywhere assembles one. But
+`VerifiedDelegatedResponse`, `VerifiedDelegatedMcpResponse` and
+`VerifiedDelegatedUnboundResponse` all carry `pub` fields, deliberately, so the prover can
+name them; `VerifiedMcpResponse::from_block` says in its own words that this is *"a
+convenience, not a seal"*. A caller outside this workspace can assemble one.
+
+The distinction is the one R-SEAL is about, and getting it wrong in a theorem's scope is worse
+than leaving the seal open: *"this constructor checks X"* quantifies over sites, *"every
+inhabitant satisfies X"* quantifies over the type, and only the second is a theorem. THM-0126's
+scope now states the first, which is what the controls establish.
+
+**Whether that chain should be sealed is `client.response_acceptance`'s question**, not this
+unit's — and the answer is not obviously yes: the fields are `pub` for the prover, and a
+Verus-proved postcondition outranks a seal. It is recorded as an open architectural question,
+not as a defect.
+
+### What that leaves
+
+Items 3–5 of #672 are extraction and theorem allocation. Item 6's first carrier is closed and
+its remainder is the question above. Item 7 is a question for its owner. **No security or
+correctness defect remains on the client shipping path**, which is the condition the v0.17
+objective set for moving to the release candidate.
+
+## One edge is PROPOSED, not taken — a ratification question for the owner
+
+THM-0126's first draft was recorded as a premise of **THM-0076**, and the local gate refused
+it before anything was pushed:
+
+```
+claim-surface gate: FAIL
+  §2 claims THM-0076, whose specification review is STALE_DEPENDENCY_CLAIM:
+  changed since review: theorem_dependencies.
+```
+
+The gate is right, and the refusal is the useful outcome. THM-0076 is a **published** claim in
+[`docs/spec/security-boundary.md`](../../../docs/spec/security-boundary.md) §2; adding a
+premise republishes it in a form the owner has approved in no version now on the tree.
+Ratification is an event, not an inference, and a root's decomposition is owner-ratified under
+ADR-MCPRE-059 §21.1.
+
+So the edge is out, THM-0076 stands exactly as ratified, and THM-0126 stands as an owned local
+claim — which the registry explicitly tolerates.
+
+**The question, in one line:** THM-0076 promises that *"what the client may conclude about
+whether the work ran is what the receipt states"*. THM-0126 establishes the neighbouring
+proposition — that a **verified** answer this client cannot classify never becomes *the call
+finished*. Should it be a premise of that root?
+
+Arguments both ways, so that the answer is a decision rather than a default:
+
+- **For.** The root's subject is what the shipped client proxy hands an application as this
+  call's answer, and an unclassifiable `resultType` resolved to terminal is exactly such a
+  handing-over. The root already depends on THM-0061, which is the classification rule this
+  composes.
+- **Against.** THM-0076's own scope names *response acceptance* — whether these bytes are
+  genuine and answer this request. Whether a genuine answer means the exchange is finished is
+  arguably the next question rather than part of that one, and #834's sibling THM-0091 was
+  kept out of THM-0076 on precisely that reasoning ("that root's subject is response
+  acceptance, and this attack completes before any answer exists").
+
+Adding it costs a re-review of a published root claim; leaving it out costs a root whose
+closure does not mention a proposition its consequence arguably depends on. Either is
+defensible and neither is mine.
