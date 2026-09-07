@@ -8,9 +8,29 @@ MCP-RE is an experimental third-party security extension proposal for MCP.
 
 It is not an official MCP extension unless accepted through the official MCP governance and proposal process.
 
-**v0.16.0 — prepared, not yet released (2026-08-10).** The version is bumped and the
-changelog written, but a release exists once it is merged, tagged and the images are built
-at that tag; none of that has happened, so "current release" below still reads v0.14.0.
+**v0.17.0 — prepared, not yet released (2026-09-07).** The version is bumped and the
+changelog written; a release exists once it is merged, tagged and the images are built at
+that tag, and only the first of those has happened.
+
+v0.17 is an **assurance closure** release rather than a feature one: the declared theorem
+registry goes 95 → 126 claims over 76 → 111 evidence units, under an unchanged set of twelve
+system roots, and `review --require-root-complete` reports 12 of 12 established on a measured
+tree. What that buys is not new behaviour but the retirement of prose: cross-replica trust
+revocation stops being described as *proved* and is owned, measured and stated one replica
+wide; proof escape hatches are registered per **site** rather than per mechanism kind, which
+brought 30 silently-covered seams into the registry under two new premises; and the client
+proxy's double classification of one verified reply — which made its own malformed-continuation
+refusal unreachable — is gone. Two product-visible changes do move: the **Python SDK withdraws
+support for everything below CPython 3.14.5** (BREAKING for that support claim), and
+`mcp-re-policy` loses three modules nothing called. Full detail in
+[`CHANGELOG.md`](../CHANGELOG.md).
+
+**v0.16.0 — released and tagged 2026-09-04** at `f4cc6539`, the tag object being `39d351f1`.
+Provenance, including the duplicate #810/#811 merge and why `main` was deliberately not
+rewritten: [`releases/v0.16.0-provenance.md`](releases/v0.16.0-provenance.md). This
+paragraph previously read "prepared, not yet released (2026-08-10)" and was stale from the
+day the tag landed; the correction is recorded rather than made silently, because a status
+document that quietly agrees with reality after the fact teaches no one to check it.
 
 This release makes the serving path's **exchange lifecycle a value** with an explicit
 execution threshold (ADR-MCPRE-057, ADR-MCPRE-058), and the consequences are wire-visible.
@@ -25,10 +45,10 @@ runtime states (trust staleness, delegated-signing retirement) can no longer be 
 an in-flight worker. Full detail in [`CHANGELOG.md`](../CHANGELOG.md).
 
 **v0.15.0 — tagged 2026-08-06 and pushed to `origin`.** Whether its images were built at
-that tag is not answerable from this tree; the "current release" line below still reads
-v0.14.0 and was not updated when the tag landed, so one of the two is stale and it is an
-owner call which. Its content is summarised here rather than dropped, since it reaches most
-users alongside v0.16.0. The serving runtime's topology changed
+that tag is not answerable from this tree. The "current release" line below read v0.14.0
+from this tag until 2026-09-07; it now reads v0.16.0, and the stale-line question that
+stood here is answered rather than left open. Its content is summarised here rather than
+dropped, since it reaches most users alongside v0.16.0. The serving runtime's topology changed
 (ADR-MCPRE-051 §1 amended) — each shard now carries a Tokio worker pool instead of a
 single thread, and `--cores` / `--workers-per-shard` are independent knobs. The local §7
 anchor moved 5,530.9 → 15,454.9 rps and was re-baselined to v6. A live GKE run on
@@ -38,13 +58,21 @@ found the cloud SLO lane had always measured a **debug** build, so the declared 
 targets are marked `invalidated-pending-remeasurement` — see
 [`docs/security/gke-slo-baseline-runbook.md`](security/gke-slo-baseline-runbook.md).
 
-**Current release: v0.14.0** (2026-07-28) — a security-audit release: fourteen rounds
+**Current release: v0.16.0** (2026-09-04) — the exchange-lifecycle release summarised
+above, whose accepted GKE performance figures and their three non-comparable measurement
+classes are in [`CHANGELOG.md`](../CHANGELOG.md) and
+[`bench/v016-performance-rounds.md`](bench/v016-performance-rounds.md). This line read
+v0.14.0 through both the v0.15.0 and v0.16.0 tags; it is corrected here and the two releases
+it skipped are summarised above and below rather than dropped.
+
+**v0.14.0** (2026-07-28) — a security-audit release: fourteen rounds
 of the audit funnel closed 57 finding clusters, each fix carrying a negative control,
 over the HTTP-profile serving stack landed in v0.11–v0.12 and the first live
 KMS-via-Workload-Identity GKE run in v0.12.1. A sixth audit round since then closed a
 further 127 clusters including all 25 highs; that work, the live AWS KMS lanes, the
 per-request revocation check, evidence retention (ADR-MCPRE-054) and the client
-ambassador binary are on `main` and unreleased. The sole over-the-wire carrier is the
+ambassador binary were on `main` and unreleased when this paragraph was written, and
+reached users in v0.15.0 and v0.16.0. The sole over-the-wire carrier is the
 **RFC 9421 HTTP Message Signatures + RFC 9530 Content-Digest** profile
 (`mcp-re-http-v1`, ADR-MCPRE-050);
 the earlier native/object envelope (Ed25519-over-JCS `_meta`, draft-01/draft-02)

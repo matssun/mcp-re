@@ -12,304 +12,206 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
-### Removed — the direct-root client response verification path (BREAKING, `mcp-re-client-core`)
-
-**Migration, in one line:** call `verify_delegated_response`, and rename the pin —
-`with_expected_server_signer(kid)` becomes `with_expected_issuer_kid(kid)`.
-
-```
-removed:   mcp_re_client_core::verify_signed_response
-           mcp_re_client_core::verify_and_classify_response
-           mcp_re_client_core::ClassifiedResponse
-
-renamed:   ResponseExpectation::with_expected_server_signer  ->  with_expected_issuer_kid
-```
-
-`verify_signed_response` accepted a response signed directly by any key the injected
-resolver returned for the Response slot — no credential chain, and no revocation seam on
-that call. **Delegated-required has been the only response-signing mode since
-ADR-MCPRE-052**, so what this API preserved was an unselected second security contract that
-contradicted the governing one. It had **no caller anywhere in the repository** — not a
-test, not a fixture, not a conformance vector — and the stated reason for keeping it
-public, negative-test fixtures, had no fixture behind it.
-
-`ClassifiedResponse` goes with it: `verify_and_classify_response` was its only producer, and
-its `verified` field was the direct-root verdict type. `ResultClass`, `classify_result` and
-`continuation_state` are unaffected and still exported — they are what the client proxy and
-both SDK bindings actually use.
-
-**No deprecated wrappers.** Keeping a shim alive would keep the unsupported path alive. This
-is a deliberate pre-1.0 public-API correction, taken now rather than carried toward 1.0.
-
-### Changed — the response pin says `issuer`, because that is what it compares (BREAKING, `mcp-re-client-core`)
-
-`ResponseExpectation`'s pin is compared against the delegation credential's **root issuer
-kid**, never against the response-signing kid — the latter is an RFC 7638 thumbprint that
-rotates every TTL by design, so pinning it would fail on the first rotation and would say
-nothing about server identity. The names now match the comparison:
-
-```
-expected_server_signer_keyid   ->  expected_issuer_kid
-with_expected_server_signer()  ->  with_expected_issuer_kid()
-```
-
-Behaviour is unchanged; the three negative controls are unchanged (a pinned issuer accepts
-the chained root, another issuer fails closed, and pinning the rotating delegated kid is
-refused). `mcp-re-client`'s `expected_server_keyid` route field keeps its published name.
+_Nothing yet._
 
 
-### Removed — replay configuration is a durability tier and its witness; `--replay-cache` is gone (BREAKING)
+## [0.17.0] — 2026-09-07
 
-**Migration, in one line:** delete `--replay-cache` and `--replay-path` from your command
-lines and your chart values; keep `--replay-durability-tier` and its store locator.
+v0.17 is an **assurance closure** release. The product surface moves very little; what
+moves is how much of it is owned, measured and reviewed, and how much of what the project
+says about itself is backed by something that runs.
 
-```
-removed:   --replay-cache memory | file | shared
-           --replay-path <path>
+### Changed — the Python SDK supports CPython 3.14.5 and up (BREAKING, support claim)
 
-required:  --replay-durability-tier redis-wait-quorum:<quorum>:<timeout_ms>
-             with --replay-redis-url <url>
-           — or —
-           --replay-durability-tier linearizable
-             with --cpstore-etcd-endpoint <url>
-```
+`requires-python` was `>=3.10,<3.15`, a floor inherited from the upstream MCP SDK's range
+rather than decided here. It is now `>=3.14.5,<3.15`.
 
-A command line still passing `--replay-cache shared` now fails with `unknown flag
---replay-cache` rather than starting. The Helm chart no longer renders it; an install that
-pinned a chart version older than this one keeps working against its own proxy image, but
-a new chart with an old image (or the reverse) will not.
+This is a **withdrawal** of support, not a trim. Anything on 3.10 through 3.13, or on
+3.14.0 through 3.14.4, is outside the claim entirely — not weakly covered, and not covered
+by inference from an adjacent minor.
 
-**No replay backend is selected implicitly.** A deployment that declares no durability
-tier is refused at every ingress path — the parser, the validation boundary, and the
-classifier — rather than falling back to anything. There is nothing left to fall back to.
+The patch component of the floor is load-bearing. CPython 3.14.0 replaced the generational
+cycle collector with an incremental one, it caused significant memory pressure in
+production, and it was **reverted in 3.14.5** — whose release was pulled forward to ship
+that revert. 3.14.0–3.14.4 run a collector upstream has withdrawn.
 
-**Why this is a security-model correction rather than a rename.** `--replay-cache` had one
-value that named a deployment and two that named refusals. `memory` kept admitted nonces
-in process memory, so a restart re-opened a replay window for every captured envelope
-still inside `expires_at + skew` — and it was also the value when the flag was omitted.
-`file` was refused under CF-01 as a state no build could establish. Keeping the selector
-meant keeping a type in which two of three variants were historical fiction, and keeping
-"missing configuration" as a path that quietly became the least safe option before being
-refused one stage later.
+The upper bound is not caution: `scripts/python_runtime_gate.py` refuses an unbounded upper
+end, because an open range claims every future minor with no evidence behind it. Widening
+the range is a support decision followed by a measured battery, in that order.
 
-Every representable replay state is now shared. That converts a rule into a property: the
-`--fleet` posture used to reject node-local replay kinds, and that clause is deleted
-because no such kind exists to reject. Fleet-safety is no longer a condition remembered at
-validation time; it holds by construction.
+Holding the old floor cost the THM-0094 root battery on five interpreters — five prepared
+environments and five measured runs — to evidence a claim nobody had chosen to make. The
+resolution shrank with the claim: 484 lines out of `sdk/python/uv.lock`, and
+`exceptiongroup` and `tomli` gone, both backports carried only for minors this package no
+longer claims.
 
-Also removed: `mcp-re-proxy/src/durable_replay.rs` (`DurableReplayCache`), which
-implemented the `file` arm. No supported configuration had constructed it since CF-01.
-`SharedReplayCache` is unaffected — it is the shared store, exercised by the cross-replica
-coherence harness.
+### Removed — three `mcp-re-policy` modules that no code called (BREAKING, `mcp-re-policy`)
 
-The two sub-strict durability tiers (`redis-async`, `single-store-fail-closed`) still
-parse and are still refused as deployment states. They remain in the tier type because the
-dispatcher gates on them at runtime, which guards a tier constructed in-process rather
-than parsed.
+`block.rs`, `decision.rs` and `wire.rs` had **zero consumers** and each was a second
+authority over a fact the RFC 9421 tree already owns: the deleted `_meta` carrier's parser,
+a posture model strictly weaker than the ADR-MCPRE-065 types, and an unsigned JSON-RPC
+envelope carrying open finding #144. The crate now depends on `thiserror` alone.
 
-### Fixed — the named release-gate lanes point at test binaries that exist
+`revocation.rs` is retained and excluded from its assurance unit, recorded as a dormant
+seam no production path installs — the distinction between *unused* and *deleted* is a
+decision, and it is taken rather than defaulted.
 
-Consolidating the proxy's test binaries renamed the units the workflows invoke by
-name, and nothing checked that table. Twenty-four `cargo test --test <name>`
-invocations across four workflows and two example scripts named binaries that no
-longer exist. Only four went red: the cloud-KMS lanes and several live-infra lanes
-are gated, so their breakage would have surfaced on a billed nightly run against a
-real endpoint. Two of the four red ones were ADR-MCPRE-051 §7 release gates — the
-cross-replica replay race and the inner-plane concurrency proof — which had been
-erroring out rather than running since the merge.
+`PolicyError`, `AuthorizationRefusal` and `RefusalCause` remain **three** semantic
+authorities. No `PolicyError → McpReError` projection was added: composing three errors
+into one renderer would relocate the authority, not remove it.
 
-Every lane now selects a module inside its merged binary and runs through
-`scripts/run_test_lane.sh`, which refuses a lane that exited 0 having run zero
-tests. That guard is not decoration: a missing *binary* exits 101, but a missing
-*filter* prints `0 passed` and exits 0, and the `--ignored` live-cloud lanes would
-select nothing twice over. `scripts/cargo_test_target_gate.py` asserts both halves
-statically — every `--test` names a real target, every `module::` filter names a
-module its binary declares — in the local gate and in CI.
+### Security — a clock set far enough before the epoch reported the furthest instant in the future
 
-### Fixed — the security boundary no longer claims an authorization control it does not run
+`mcp-re-host`'s `clock.rs` computed a pre-epoch reading as `(secs as i64).checked_neg()`.
+`2^63 + 1` wraps to `i64::MIN + 1`, and negating that yields `i64::MAX`: a host clock set
+unrepresentably far **before** the epoch produced the furthest representable instant in the
+**future** — a value every freshness window accepts, and precisely the fabricated plausible
+time the surrounding comment said must never be produced.
 
-`docs/spec/security-boundary.md` listed deny-before-dispatch authorization among the
-things MCP-RE protects, in the present tense. It does not: `--authz reference` is refused
-at configuration validation, so every accepted deployment runs with authorization off.
-The entry now states the boundary rather than the absence — MCP-RE answers *who signed
-this* and *which channel it arrived on*, never *may-act*, and authorization must be
-enforced upstream of the proxy. The document is `type:HITL`; the owner approved the
-replacement text and it is applied here.
+Fixed with `try_from`, extracted to a pure function first because a `SystemTimeError` is
+not constructible and the fallible path could not otherwise be driven by a control.
 
-ADR-MCPS-013 (#362) and ADR-MCPS-018 (#367) moved to `status:deprecated` and
-`status:superseded`, so `docs/adr/README.md` no longer needs the note recording that the
-index and the discussion labels disagreed.
+Reachability is narrow — it needs a host clock set more than ~292 billion years before the
+Unix epoch — but the failure direction is the dangerous one, and the code claimed the
+opposite behaviour.
 
-### Changed — a conformance category must have an executable witness
+### Fixed — the client proxy classified one verified reply twice
 
-`docs/conformance-guide.md` advertised four conformance categories. Two of them had no
-harness anywhere in the tree. The guide named a corpus at `mcp-re-core/tests/vectors/`
-that does not exist, an aggregate `conformance_manifest.json` and `drift_guard_test` that
-do not exist, and a `PolicyEvaluator` type that does not exist; its corpus-pinning section
-published two digests and told the reader to reproduce them with a script that cannot run,
-because the bytes it hashes were deleted with the corpus.
+`verified_outcome.rs` classified a verified delegated reply **once** over the parsed
+`result`, and then **again** over `response.body` inside the input-required arm, which
+re-parses and re-classifies the same message. Two readers of one message are how two
+answers about what it says come to exist.
 
-The guide now advertises the three categories that have both a corpus and a target that
-reaches it — HTTP profile, delegated-required credentials, and SCITT receipts — and states
-the pinning mechanism that is real: each corpus manifest carries a per-fixture SHA-256 and
-a `corpus_digest`, recomputed from the checked-in bytes at test time, with a tampered
-fixture as the negative control. Properties proven by targets rather than by vectors are
-pointed at the security traceability manifest, which is drift-guarded and does exist.
+That second reader also made the composition's own refusal unreachable: `continuation_state`
+errors on a withheld `requestState` before the `Option` is ever inspected, so the
+"malformed continuation" refusal could not execute. **A refusal that cannot execute is not a
+control.**
 
-`scripts/conformance_claims_gate.py` now holds the guide to the tree in both directions: an
-advertised category must name a corpus that exists and a declared `nt_rust_test` whose
-`data` reaches it, every corpus in the tree must be advertised, and a published
-`corpus_digest` must be recomputed by some harness that reaches its corpus. Both edges
-matter — a corpus with no harness is never executed, and a category whose corpus and
-harness were both deleted keeps advertising coverage that exists nowhere.
+The question is now asked once, through `continuation_state_of` — the parsed face of the one
+classifier, added beside the byte face rather than replacing it, with a control pinning that
+the two answer the same question. **Behaviour is unchanged in every case, error identity
+included.**
 
-**Phase-5 authorization is not a conformance category.** `--authz reference` is refused at
-configuration, so there is no implementation for its vectors to run against.
-`mcp-re-policy/tests/vectors/phase5_vectors.json` is retained — its generator is gone and
-this is the only remaining copy — but reclassified in place as preserved design input
-rather than evidence.
+### Fixed — `cargo deny` had been red on `main` for four merges
 
-Removed with it: `scripts/corpus_digest.py`, which hashed a corpus no longer in the tree,
-and the `mcp-re-conformance` **library**. That library had no consumer anywhere — no
-crate, test, or binary named `mcp_re_conformance::` — and its modules loaded the same
-absent corpus while its own docs described a `runner::RunReport` and a
-`target::ConformanceTarget` that do not exist. It also carried the only
-`mcp-re-conformance → mcp-re-proxy` dependency edge. The package keeps everything that
-carries evidence: the three corpora and the sixteen test targets that replay and guard
-them. It is now test-only and has no library.
+A yanked `wnaf 0.14.0`, reached transitively through `primeorder`, failed the advisories
+check on `5b385e41`, `740bb7bb`, `7d6ffbc7` and `86e868c8`. Updated to `0.14.1` in all three
+lockfiles. A supply-chain gate that is red on every merge is a gate nobody reads.
 
-### Security — `h2` queued empty DATA frames without a bound (RUSTSEC-2026-0258)
+### Changed — the trust document is parsed once and projected three ways
 
-`h2` 0.4.15 → 0.4.16. The crate accepted and queued empty HTTP/2 DATA frames without
-limit; a stream that is not actively drained grows without bound, and the accumulated
-length can overflow into a panic (GHSA-q83h-524g-xf6h, low severity).
+`trust_document` performed one structural parse and then answered slot questions from it;
+the three slot projections are now named, and `unit://proxy.trust_document_interpretation`
+owns the interpretation. Behaviour is unchanged; what changed is that the interpretation has
+one owner rather than being reconstructed per caller.
 
-It reaches MCP-RE on the shipped serving path, not incidentally: `hyper` is declared with
-the `http2` feature and the proxy is the server, so the frames come from a remote client
-over the same connection that carries signed exchanges. The advisory's fix is entirely in
-the crate — no MCP-RE code changes — and `deny.toml` keeps an intentionally empty
-`ignore` list, so bumping the dependency is the only route.
+### Changed — `PROJECT_STATUS.md` no longer calls cross-replica trust revocation *proved*
 
-Only the root workspace resolves `h2`; `sdk/python`, `sdk/typescript` and the in-tree
-mock-PKCS#11 provider do not, and all four crate universes are clean under the policy
-after the bump. `MODULE.bazel.lock` re-resolves the crate-universe hub with it.
+The v0.17 census found `trust_plane/**` and `trust_epoch.rs` implementing security-bearing
+cross-replica trust behaviour that **no assurance unit owned**, while the status document
+described it as proved. The evidence that existed was a Redis end-to-end test driving one
+replica in an opt-in nightly lane that self-skips without a store, plus a GKE proof of the
+*signing*-side epoch label — a different mechanism with a different owner. The poller body,
+the thing that makes "within one poll interval" true, had no test at all.
 
-### Fixed — the supply-chain gate stopped measuring after the first failing workspace
+The behaviour is unchanged and is now owned: `unit://proxy.trust_plane_runtime`, five new
+controls, eight mutation probes, and ASM-0044 registering the one store property the account
+rests on.
 
-The four `cargo deny` invocations are separate steps so a failure names the workspace at
-fault rather than producing one merged wall of output. They carried the default
-`success()` condition, so a failure in the root workspace skipped the other three and the
-run reported nothing whatsoever about them — an advisory reaching two crate universes
-would have been discovered one release at a time, and the RUSTSEC-2026-0258 run is an
-instance: three of the four lockfiles went unexamined.
+### Added — the ADR-MCPRE-059 assurance closure for v0.17
 
-Each subsequent step is now `if: ${{ !cancelled() }}`. Every manifest is checked on every
-run, and the job still fails if any of them does.
+| | v0.16.0 | v0.17.0 |
+|---|---|---|
+| declared theorems | 95 | **126** |
+| declared evidence units | 76 | **111** |
+| registered assumptions | 41 | **44** |
+| declared system roots | 12 | 12 |
 
+Source-file ownership was measured at **329 of 509** at the close of the ownership slice,
+against 275 at v0.16; the units registered after it raise that further, and the authoritative
+count is the registry rather than this table. The root set is deliberately unchanged: this
+release closes and measures the argument under the twelve promises
+`docs/spec/security-boundary.md` §2 already published, and declares no new one.
 
-### Changed — the transport binding is a value the owner produced, not a policy the caller supplies
+**THM-0126** — *a verified reply is not a completed call* — and **THM-0127** — *the
+deployable's serving path always runs an anchor refresher* — are the two new claims over the
+shipped client. THM-0127's control drives `serve_until_shutdown` itself and observes the one
+effect only a running refresher produces; deleting the start call fails it. That control is
+the first to name a **binary** crate's own module, and the test lane could not select one:
+`bin/<name>#` now joins `lib#`, `doc#` and `tests/<name>#`. A deployable's own crate is not
+its library, and a lane that can select only `lib` can state nothing about the artifact an
+operator runs.
 
-`HttpProfileProxy::with_transport_binding` took a `Box<dyn TransportBindingPolicy + Send +
-Sync>`, and both the trait and the method were public. That parameter states only that
-*some* binding rule will run. Every implementation satisfies it — including one whose
-`check` returns `Ok(())` for every request, which the serving path cannot distinguish from
-a binding that held, because the exchange is recorded as `TransportBindingChecked` either
-way. The configuration owner's refusals (`--transport-binding none`, `lb-assertion`,
-`attested-ingress`) therefore bound the CLI path only; an embedder linking the crate reached
-the serving path without passing through them.
+Both are premises of **THM-0076** as of the owner ruling of 2026-09-07
+(`verification/reviews/rulings/thm-0076-dependency-closure-2026-09-07.md`). That is a
+dependency-closure correction: THM-0076's statement, its security consequence and its §2
+claim prose are unchanged.
 
-The serving path now takes a `TransportBinding`: a private representation whose every
-constructor is `pub(crate)`, produced from the `ChannelBindingState` that
-`config_state::transport` recognised. Possession is the proof that the mode was approved,
-with no trailing clause about which call site built it. Embedders get one named capability,
-`with_exact_match_transport_binding()`, which chooses *whether* the channel is bound and
-cannot choose *what* binding means.
+### Changed — proof escape hatches are registered per SITE, not per mechanism kind
 
-`pub(crate)` normally seals nothing in this workspace, because an owner's consumers live in
-its own crate. Here it is the correct lever precisely because the consumers being excluded
-are the ones outside the crate: `app.rs` should build these and an embedder should not. The
-seal is also self-reinforcing — `TransportBinding` being `pub(crate)` means re-publishing
-the setter alone fails the `private_interfaces` lint, and CI runs clippy with `-D warnings`.
-Undoing it takes three deliberate edits, not one.
+`registered_by_unit()` returned `{unit: {mechanism kind}}` and an assumption's `scope` names
+whole crates, so a single entry licensed every present **and future** seam of that kind in
+every file those units declare. The registry recorded "this unit trusts uninterpreted spec
+functions", which is not a fact about any seam.
 
-No behaviour changes for any deployment: `channel_binding_effects` installed
-`ExactMatchBinding` unconditionally before and installs `TransportBinding::exact_match()`
-now.
+Registration is now `<path>#<qualified item>`: the item rather than a line number, qualified
+by the enclosing `impl`/`mod`, with `assume_specification[ … ]` read from its own balanced
+brackets. A seam is registered **iff** the mechanism matches, a unit in `scope` declares the
+file, **and** `sites` names it. An assumption with no `sites` registers nothing, and a
+registration naming no live seam fails — the same defect read backwards.
 
-Measured while sealing, and recorded against the two round-10 ledger findings it answers
-(`2ffecbbbe6e1e143`, `372e0f9c3638e53b`): **no crate or test wires `MappedBinding` or either
-LB-assertion verifier into a live proxy.** The only external installation in the tree was
-one integration test passing `ExactMatchBinding`. With `MappedBinding`'s public re-export
-removed, rustc reports it as never-constructed outright — measured, then reverted, because
-whether the type should exist is an owner decision and it is not on `AGENT_INSTRUCTIONS`
-§9's refused-not-removed list.
+All 55 seams resolve and none collide. 25 are what the existing entries already described;
+the other **30** were being covered silently — the `Ex…` type specifications that let a Verus
+specification name the profile's own datatypes. They get two new premises, because there are
+two propositions and not thirty: **ASM-0045** (each mirror declares the datatype it names —
+nameability, not meaning) and **ASM-0046** (three are additionally opaque, which *removes*
+the ability to reason about a representation rather than adding a claim about one). Both are
+owner-reviewed as of 2026-09-07, and they open the `assumption` review axis, which had until
+now carried no record at all.
 
-### Fixed — the transport-hardening guide documented a way to turn channel binding off
+### Changed — the v0.17 supply-chain claim is scoped to the Rust graph, and says so
 
-`docs/transport-hardening-guide.md` told operators that `--transport-binding none` gives
-"no binding; the mTLS identity is ignored". No such value exists: the parser accepts only
-`exact`, `lb-assertion` and `attested-ingress`, and `BindingKind::None` is refused at the
-validation boundary if a programmatically built configuration carries it. The guide also
-said `MappedBinding` "is available in the library" and that the CLI "wires `exact` or
-`none`".
+`cargo deny check advisories licenses bans sources` runs against **four** manifests — the
+root workspace, both SDK crates and the mock-PKCS#11 fixture — under one `deny.toml`, on
+every relevant merge and on a daily schedule. That is the claim v0.17 makes.
 
-The section now states what the code does: `exact` is the default and the only deployable
-value, the other two parseable values are refused, there is no value that turns binding off,
-and `MappedBinding` has no deployment route.
+It is **not** an all-PyPI/all-npm claim, and the release notes do not present it as one.
+`cargo deny` reads Cargo manifests; it cannot see `sdk/python/uv.lock` or any
+`package-lock.json`. The scope is acceptable for this release because neither SDK ships a
+runtime dependency graph — the Python SDK declares no hard runtime Python dependencies and
+`mcp` is optional; the TypeScript SDK has no ordinary runtime dependency set and its MCP
+integrations are optional peer dependencies. A PyPI/npm advisory lane is recorded as future
+assurance-platform work, not as a v0.17 gate.
 
+### Fixed — assurance-platform defects found by the campaign that uses it
 
-### Changed — fail-closed client revocation is a property of the type, not a parameter (BREAKING, internal API)
+- **The test lane could not read a coloured pytest report.** ANSI escapes in the summary
+  line defeated the parser, and a lane that cannot parse its runner fails as its own reading
+  failure rather than reporting the run.
+- **`verify-mutations` built its battery command without `test_features`**, so a probe over
+  a feature-gated control measured a crate compiled without it.
+- **Ten declared selectors named a module that does not exist.** `request.rs` puts its
+  controls in `evidence_precondition_tests` and `notification_tests`, not `tests`;
+  `verify-tests` reported them as *never ran*. This is why a battery is declared by exact
+  selector rather than by module.
+- **A control of the campaign's own was flaky by construction** — a nonce-fill check
+  compared two single-byte draws, which collide once in 256, so it would have failed on a
+  correct implementation roughly every four-hundredth run. Rewritten over eight draws with a
+  distinct initial byte each.
+- **`BindingSpecRefusal` rendered two `mcp-re.*` wire tokens through a hand-maintained
+  four-file list**, and both published SDKs render refusals through it. A token renamed in
+  Core would have left two shipped surfaces emitting the old spelling with nothing able to
+  notice. Replaced by an exhaustive `From<&BindingSpecRefusal> for McpReError`, with the
+  file list now derived by a measurement rather than maintained.
 
-`allow_unknown_revocation_status` is gone. It was a `bool` carried through eight signatures
-in `tls.rs`, into `build_client_verifier`, into `ClientRevocationIndex`, and into the
-`TlsAuthEpoch` digest — and production had exactly one value for it. `tls_plane.rs` seeded a
-literal `let allow_unknown_status = false;` and threaded it everywhere; the code comment
-already said what the parameter really was: *"unknown revocation status is refused
-unconditionally; there is no operator knob."*
+### Housekeeping — the v0.16.0 changelog section is completed
 
-A parameter whose only legal production value is `false` is not a policy. It is a
-correctness obligation on every caller, and the whole `TlsPlane` post-owner contract —
-which lets a serving snapshot outlive its plane and perform no fail-closed transition on
-drop — rested on nobody ever passing `true`.
-
-Now:
-
-  * `ClientRevocationIndex::admits` returns `false` for `RevocationVerdict::Unknown` as a
-    literal. `from_crl_ders` takes CRL bytes and nothing else, so no constructible index
-    admits an unknown status.
-  * `build_client_verifier` never calls `allow_unknown_revocation_status()` and takes no
-    input that could make it do so; rustls' `UnknownStatusPolicy::Deny` stands on every
-    verifier the crate can produce.
-  * The seven `build_server_config*` entry points and `new_resumption_state` lost the
-    parameter.
-
-**`TlsAuthEpoch` is redefined and its domain separator moves `v1` → `v2`.** The digest no
-longer hashes a client-auth policy byte; it is now `H(domain-v2, canonical-set(client-CA
-anchors))`. Removing a component changes what the digest means, so it gets a new domain
-rather than a silently redefined `v1`. Sessions are process-local and the store is rebuilt
-on start, so no persisted digest needed preserving. The doc states why the policy is absent
-and that reintroducing it requires revising the epoch definition — so the byte cannot be
-casually added back.
-
-Tests followed the propositions rather than the code. `the_client_auth_policy_is_part_of_the_epoch`
-and `a_policy_change_alone_stops_resumption` asserted claims that no longer exist and were
-replaced, not deleted:
-
-  * `the_anchor_set_alone_determines_the_epoch` — the epoch is a pure function of the anchor
-    set, and dropping any single anchor moves it.
-  * `republishing_the_epoch_of_an_unchanged_ca_set_does_not_stop_resumption` — the property
-    with production consequences, and the stronger test. Every CRL reload republishes the
-    epoch; if that invalidated sessions, each reload interval would be a fleet-wide teardown,
-    because TLS 1.3 has no renegotiation and an epoch change is connection-fatal.
-  * `unknown_status_is_refused_with_no_policy_input_that_could_admit_it` — the property
-    control: both routes to `Unknown` (an issuer no CRL covers, a CRL past `nextUpdate`) are
-    refused through an index built by the public constructor, with a positive control that
-    the same index still admits while it can vouch.
-
-`client_revocation`'s post-owner contract test kept its first half and lost its
-counterfactual — building an index that admits unknown status is no longer expressible. The
-contract now rests on the type rather than on a value production remembered to set.
-
+Eleven entries that shipped **in v0.16.0** were left under `[Unreleased]` when that section
+was cut, so the v0.16.0 release notes did not carry them. Every one of them is an ancestor of
+the v0.16.0 tag target `f4cc6539`, verified with `git merge-base --is-ancestor`. They are now
+under `[0.16.0]`, where they belong; **none is new in v0.17**. The move is marked in place
+rather than absorbed, for the reason `docs/spec/security-boundary.md` §7.1 gives about
+amendments.
 
 ## [0.16.0] — 2026-09-04
 
@@ -650,6 +552,315 @@ what `ValidatedConfig::try_from` runs and which no route into the runtime can sk
 
 Operators passing `--client-ocsp require` on the command line see no change: it was
 refused before and is refused now, with the same message pointing at `--client-crl`.
+
+### Recorded late — eleven entries that shipped in this release
+
+The entries below were written while v0.16.0 was in flight and were still under
+`[Unreleased]` when the `[0.16.0]` heading was cut above them, so the v0.16.0 release notes
+did not carry them. Every one of the commits they describe is an ancestor of the v0.16.0 tag
+target `f4cc6539`, verified with `git merge-base --is-ancestor`; **none of them is new in
+v0.17.0**. They are moved here, under a heading that says what happened, rather than
+absorbed silently — the same rule `docs/spec/security-boundary.md` §7.1 applies to
+amendments.
+
+### Removed — the direct-root client response verification path (BREAKING, `mcp-re-client-core`)
+
+**Migration, in one line:** call `verify_delegated_response`, and rename the pin —
+`with_expected_server_signer(kid)` becomes `with_expected_issuer_kid(kid)`.
+
+```
+removed:   mcp_re_client_core::verify_signed_response
+           mcp_re_client_core::verify_and_classify_response
+           mcp_re_client_core::ClassifiedResponse
+
+renamed:   ResponseExpectation::with_expected_server_signer  ->  with_expected_issuer_kid
+```
+
+`verify_signed_response` accepted a response signed directly by any key the injected
+resolver returned for the Response slot — no credential chain, and no revocation seam on
+that call. **Delegated-required has been the only response-signing mode since
+ADR-MCPRE-052**, so what this API preserved was an unselected second security contract that
+contradicted the governing one. It had **no caller anywhere in the repository** — not a
+test, not a fixture, not a conformance vector — and the stated reason for keeping it
+public, negative-test fixtures, had no fixture behind it.
+
+`ClassifiedResponse` goes with it: `verify_and_classify_response` was its only producer, and
+its `verified` field was the direct-root verdict type. `ResultClass`, `classify_result` and
+`continuation_state` are unaffected and still exported — they are what the client proxy and
+both SDK bindings actually use.
+
+**No deprecated wrappers.** Keeping a shim alive would keep the unsupported path alive. This
+is a deliberate pre-1.0 public-API correction, taken now rather than carried toward 1.0.
+
+### Changed — the response pin says `issuer`, because that is what it compares (BREAKING, `mcp-re-client-core`)
+
+`ResponseExpectation`'s pin is compared against the delegation credential's **root issuer
+kid**, never against the response-signing kid — the latter is an RFC 7638 thumbprint that
+rotates every TTL by design, so pinning it would fail on the first rotation and would say
+nothing about server identity. The names now match the comparison:
+
+```
+expected_server_signer_keyid   ->  expected_issuer_kid
+with_expected_server_signer()  ->  with_expected_issuer_kid()
+```
+
+Behaviour is unchanged; the three negative controls are unchanged (a pinned issuer accepts
+the chained root, another issuer fails closed, and pinning the rotating delegated kid is
+refused). `mcp-re-client`'s `expected_server_keyid` route field keeps its published name.
+
+
+### Removed — replay configuration is a durability tier and its witness; `--replay-cache` is gone (BREAKING)
+
+**Migration, in one line:** delete `--replay-cache` and `--replay-path` from your command
+lines and your chart values; keep `--replay-durability-tier` and its store locator.
+
+```
+removed:   --replay-cache memory | file | shared
+           --replay-path <path>
+
+required:  --replay-durability-tier redis-wait-quorum:<quorum>:<timeout_ms>
+             with --replay-redis-url <url>
+           — or —
+           --replay-durability-tier linearizable
+             with --cpstore-etcd-endpoint <url>
+```
+
+A command line still passing `--replay-cache shared` now fails with `unknown flag
+--replay-cache` rather than starting. The Helm chart no longer renders it; an install that
+pinned a chart version older than this one keeps working against its own proxy image, but
+a new chart with an old image (or the reverse) will not.
+
+**No replay backend is selected implicitly.** A deployment that declares no durability
+tier is refused at every ingress path — the parser, the validation boundary, and the
+classifier — rather than falling back to anything. There is nothing left to fall back to.
+
+**Why this is a security-model correction rather than a rename.** `--replay-cache` had one
+value that named a deployment and two that named refusals. `memory` kept admitted nonces
+in process memory, so a restart re-opened a replay window for every captured envelope
+still inside `expires_at + skew` — and it was also the value when the flag was omitted.
+`file` was refused under CF-01 as a state no build could establish. Keeping the selector
+meant keeping a type in which two of three variants were historical fiction, and keeping
+"missing configuration" as a path that quietly became the least safe option before being
+refused one stage later.
+
+Every representable replay state is now shared. That converts a rule into a property: the
+`--fleet` posture used to reject node-local replay kinds, and that clause is deleted
+because no such kind exists to reject. Fleet-safety is no longer a condition remembered at
+validation time; it holds by construction.
+
+Also removed: `mcp-re-proxy/src/durable_replay.rs` (`DurableReplayCache`), which
+implemented the `file` arm. No supported configuration had constructed it since CF-01.
+`SharedReplayCache` is unaffected — it is the shared store, exercised by the cross-replica
+coherence harness.
+
+The two sub-strict durability tiers (`redis-async`, `single-store-fail-closed`) still
+parse and are still refused as deployment states. They remain in the tier type because the
+dispatcher gates on them at runtime, which guards a tier constructed in-process rather
+than parsed.
+
+### Fixed — the named release-gate lanes point at test binaries that exist
+
+Consolidating the proxy's test binaries renamed the units the workflows invoke by
+name, and nothing checked that table. Twenty-four `cargo test --test <name>`
+invocations across four workflows and two example scripts named binaries that no
+longer exist. Only four went red: the cloud-KMS lanes and several live-infra lanes
+are gated, so their breakage would have surfaced on a billed nightly run against a
+real endpoint. Two of the four red ones were ADR-MCPRE-051 §7 release gates — the
+cross-replica replay race and the inner-plane concurrency proof — which had been
+erroring out rather than running since the merge.
+
+Every lane now selects a module inside its merged binary and runs through
+`scripts/run_test_lane.sh`, which refuses a lane that exited 0 having run zero
+tests. That guard is not decoration: a missing *binary* exits 101, but a missing
+*filter* prints `0 passed` and exits 0, and the `--ignored` live-cloud lanes would
+select nothing twice over. `scripts/cargo_test_target_gate.py` asserts both halves
+statically — every `--test` names a real target, every `module::` filter names a
+module its binary declares — in the local gate and in CI.
+
+### Fixed — the security boundary no longer claims an authorization control it does not run
+
+`docs/spec/security-boundary.md` listed deny-before-dispatch authorization among the
+things MCP-RE protects, in the present tense. It does not: `--authz reference` is refused
+at configuration validation, so every accepted deployment runs with authorization off.
+The entry now states the boundary rather than the absence — MCP-RE answers *who signed
+this* and *which channel it arrived on*, never *may-act*, and authorization must be
+enforced upstream of the proxy. The document is `type:HITL`; the owner approved the
+replacement text and it is applied here.
+
+ADR-MCPS-013 (#362) and ADR-MCPS-018 (#367) moved to `status:deprecated` and
+`status:superseded`, so `docs/adr/README.md` no longer needs the note recording that the
+index and the discussion labels disagreed.
+
+### Changed — a conformance category must have an executable witness
+
+`docs/conformance-guide.md` advertised four conformance categories. Two of them had no
+harness anywhere in the tree. The guide named a corpus at `mcp-re-core/tests/vectors/`
+that does not exist, an aggregate `conformance_manifest.json` and `drift_guard_test` that
+do not exist, and a `PolicyEvaluator` type that does not exist; its corpus-pinning section
+published two digests and told the reader to reproduce them with a script that cannot run,
+because the bytes it hashes were deleted with the corpus.
+
+The guide now advertises the three categories that have both a corpus and a target that
+reaches it — HTTP profile, delegated-required credentials, and SCITT receipts — and states
+the pinning mechanism that is real: each corpus manifest carries a per-fixture SHA-256 and
+a `corpus_digest`, recomputed from the checked-in bytes at test time, with a tampered
+fixture as the negative control. Properties proven by targets rather than by vectors are
+pointed at the security traceability manifest, which is drift-guarded and does exist.
+
+`scripts/conformance_claims_gate.py` now holds the guide to the tree in both directions: an
+advertised category must name a corpus that exists and a declared `nt_rust_test` whose
+`data` reaches it, every corpus in the tree must be advertised, and a published
+`corpus_digest` must be recomputed by some harness that reaches its corpus. Both edges
+matter — a corpus with no harness is never executed, and a category whose corpus and
+harness were both deleted keeps advertising coverage that exists nowhere.
+
+**Phase-5 authorization is not a conformance category.** `--authz reference` is refused at
+configuration, so there is no implementation for its vectors to run against.
+`mcp-re-policy/tests/vectors/phase5_vectors.json` is retained — its generator is gone and
+this is the only remaining copy — but reclassified in place as preserved design input
+rather than evidence.
+
+Removed with it: `scripts/corpus_digest.py`, which hashed a corpus no longer in the tree,
+and the `mcp-re-conformance` **library**. That library had no consumer anywhere — no
+crate, test, or binary named `mcp_re_conformance::` — and its modules loaded the same
+absent corpus while its own docs described a `runner::RunReport` and a
+`target::ConformanceTarget` that do not exist. It also carried the only
+`mcp-re-conformance → mcp-re-proxy` dependency edge. The package keeps everything that
+carries evidence: the three corpora and the sixteen test targets that replay and guard
+them. It is now test-only and has no library.
+
+### Security — `h2` queued empty DATA frames without a bound (RUSTSEC-2026-0258)
+
+`h2` 0.4.15 → 0.4.16. The crate accepted and queued empty HTTP/2 DATA frames without
+limit; a stream that is not actively drained grows without bound, and the accumulated
+length can overflow into a panic (GHSA-q83h-524g-xf6h, low severity).
+
+It reaches MCP-RE on the shipped serving path, not incidentally: `hyper` is declared with
+the `http2` feature and the proxy is the server, so the frames come from a remote client
+over the same connection that carries signed exchanges. The advisory's fix is entirely in
+the crate — no MCP-RE code changes — and `deny.toml` keeps an intentionally empty
+`ignore` list, so bumping the dependency is the only route.
+
+Only the root workspace resolves `h2`; `sdk/python`, `sdk/typescript` and the in-tree
+mock-PKCS#11 provider do not, and all four crate universes are clean under the policy
+after the bump. `MODULE.bazel.lock` re-resolves the crate-universe hub with it.
+
+### Fixed — the supply-chain gate stopped measuring after the first failing workspace
+
+The four `cargo deny` invocations are separate steps so a failure names the workspace at
+fault rather than producing one merged wall of output. They carried the default
+`success()` condition, so a failure in the root workspace skipped the other three and the
+run reported nothing whatsoever about them — an advisory reaching two crate universes
+would have been discovered one release at a time, and the RUSTSEC-2026-0258 run is an
+instance: three of the four lockfiles went unexamined.
+
+Each subsequent step is now `if: ${{ !cancelled() }}`. Every manifest is checked on every
+run, and the job still fails if any of them does.
+
+
+### Changed — the transport binding is a value the owner produced, not a policy the caller supplies
+
+`HttpProfileProxy::with_transport_binding` took a `Box<dyn TransportBindingPolicy + Send +
+Sync>`, and both the trait and the method were public. That parameter states only that
+*some* binding rule will run. Every implementation satisfies it — including one whose
+`check` returns `Ok(())` for every request, which the serving path cannot distinguish from
+a binding that held, because the exchange is recorded as `TransportBindingChecked` either
+way. The configuration owner's refusals (`--transport-binding none`, `lb-assertion`,
+`attested-ingress`) therefore bound the CLI path only; an embedder linking the crate reached
+the serving path without passing through them.
+
+The serving path now takes a `TransportBinding`: a private representation whose every
+constructor is `pub(crate)`, produced from the `ChannelBindingState` that
+`config_state::transport` recognised. Possession is the proof that the mode was approved,
+with no trailing clause about which call site built it. Embedders get one named capability,
+`with_exact_match_transport_binding()`, which chooses *whether* the channel is bound and
+cannot choose *what* binding means.
+
+`pub(crate)` normally seals nothing in this workspace, because an owner's consumers live in
+its own crate. Here it is the correct lever precisely because the consumers being excluded
+are the ones outside the crate: `app.rs` should build these and an embedder should not. The
+seal is also self-reinforcing — `TransportBinding` being `pub(crate)` means re-publishing
+the setter alone fails the `private_interfaces` lint, and CI runs clippy with `-D warnings`.
+Undoing it takes three deliberate edits, not one.
+
+No behaviour changes for any deployment: `channel_binding_effects` installed
+`ExactMatchBinding` unconditionally before and installs `TransportBinding::exact_match()`
+now.
+
+Measured while sealing, and recorded against the two round-10 ledger findings it answers
+(`2ffecbbbe6e1e143`, `372e0f9c3638e53b`): **no crate or test wires `MappedBinding` or either
+LB-assertion verifier into a live proxy.** The only external installation in the tree was
+one integration test passing `ExactMatchBinding`. With `MappedBinding`'s public re-export
+removed, rustc reports it as never-constructed outright — measured, then reverted, because
+whether the type should exist is an owner decision and it is not on `AGENT_INSTRUCTIONS`
+§9's refused-not-removed list.
+
+### Fixed — the transport-hardening guide documented a way to turn channel binding off
+
+`docs/transport-hardening-guide.md` told operators that `--transport-binding none` gives
+"no binding; the mTLS identity is ignored". No such value exists: the parser accepts only
+`exact`, `lb-assertion` and `attested-ingress`, and `BindingKind::None` is refused at the
+validation boundary if a programmatically built configuration carries it. The guide also
+said `MappedBinding` "is available in the library" and that the CLI "wires `exact` or
+`none`".
+
+The section now states what the code does: `exact` is the default and the only deployable
+value, the other two parseable values are refused, there is no value that turns binding off,
+and `MappedBinding` has no deployment route.
+
+
+### Changed — fail-closed client revocation is a property of the type, not a parameter (BREAKING, internal API)
+
+`allow_unknown_revocation_status` is gone. It was a `bool` carried through eight signatures
+in `tls.rs`, into `build_client_verifier`, into `ClientRevocationIndex`, and into the
+`TlsAuthEpoch` digest — and production had exactly one value for it. `tls_plane.rs` seeded a
+literal `let allow_unknown_status = false;` and threaded it everywhere; the code comment
+already said what the parameter really was: *"unknown revocation status is refused
+unconditionally; there is no operator knob."*
+
+A parameter whose only legal production value is `false` is not a policy. It is a
+correctness obligation on every caller, and the whole `TlsPlane` post-owner contract —
+which lets a serving snapshot outlive its plane and perform no fail-closed transition on
+drop — rested on nobody ever passing `true`.
+
+Now:
+
+  * `ClientRevocationIndex::admits` returns `false` for `RevocationVerdict::Unknown` as a
+    literal. `from_crl_ders` takes CRL bytes and nothing else, so no constructible index
+    admits an unknown status.
+  * `build_client_verifier` never calls `allow_unknown_revocation_status()` and takes no
+    input that could make it do so; rustls' `UnknownStatusPolicy::Deny` stands on every
+    verifier the crate can produce.
+  * The seven `build_server_config*` entry points and `new_resumption_state` lost the
+    parameter.
+
+**`TlsAuthEpoch` is redefined and its domain separator moves `v1` → `v2`.** The digest no
+longer hashes a client-auth policy byte; it is now `H(domain-v2, canonical-set(client-CA
+anchors))`. Removing a component changes what the digest means, so it gets a new domain
+rather than a silently redefined `v1`. Sessions are process-local and the store is rebuilt
+on start, so no persisted digest needed preserving. The doc states why the policy is absent
+and that reintroducing it requires revising the epoch definition — so the byte cannot be
+casually added back.
+
+Tests followed the propositions rather than the code. `the_client_auth_policy_is_part_of_the_epoch`
+and `a_policy_change_alone_stops_resumption` asserted claims that no longer exist and were
+replaced, not deleted:
+
+  * `the_anchor_set_alone_determines_the_epoch` — the epoch is a pure function of the anchor
+    set, and dropping any single anchor moves it.
+  * `republishing_the_epoch_of_an_unchanged_ca_set_does_not_stop_resumption` — the property
+    with production consequences, and the stronger test. Every CRL reload republishes the
+    epoch; if that invalidated sessions, each reload interval would be a fleet-wide teardown,
+    because TLS 1.3 has no renegotiation and an epoch change is connection-fatal.
+  * `unknown_status_is_refused_with_no_policy_input_that_could_admit_it` — the property
+    control: both routes to `Unknown` (an issuer no CRL covers, a CRL past `nextUpdate`) are
+    refused through an index built by the public constructor, with a positive control that
+    the same index still admits while it can vouch.
+
+`client_revocation`'s post-owner contract test kept its first half and lost its
+counterfactual — building an index that admits unknown status is no longer expressible. The
+contract now rests on the type rather than on a value production remembered to set.
+
 
 ## [0.15.0] — 2026-08-06
 
