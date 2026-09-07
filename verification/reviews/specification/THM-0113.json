@@ -1,0 +1,16 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:b6e8c504cb054d12996c455f7c32cd5777d2eb403b5767b715079f4e5979358e",
+    "theorem_dependencies": {
+      "THM-0088": "sha256:33ff0b40ae6653e2564b29c668cdb320d5946d60e475f0409d08d96849a42bf3"
+    },
+    "theorem_id": "THM-0113",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Recorded under the owner's v0.17 assurance-closure mandate of 2026-09-07, priority 3. Recorded by the implementing agent as routine owner-review maintenance, not as a transcription of a ruling naming this fingerprint.\n\nTHE AUDITOR'S HALF IS A SEPARATE AUTHORITY AND THE MODULE SAYS WHY, in three reasons that are this theorem's premise: a chain is not whole until its last hop, so a PEP attesting per hop could only ever commit to a truncated record; the audit posture is the auditor's to choose; and registering against a transparency service is network I/O, which in front of a response would make an audit dependency an availability dependency.\n\nTHE EVIDENCE ALREADY EXISTED. This is an OWNERSHIP gap, not an evidence gap \u2014 attest_chain has three controls in transparency_e2e_test.rs and no unit cited any of them. The third is the one R9-C103/C128 exist for: the self-check used to be SKIPPED for a reconstruction that broke at hop 0, on the reasoning that such a record names no call. That is right about the identity fields and wrong about the submission, which is call-specific there too \u2014 so the one check that could catch a statement issued over different bytes was absent on exactly the records an auditor investigates.\n\nWHAT COMES BACK IS BOTH, AND THAT IS THE OTHER HALF OF THE CLAIM. A SignedStatement alone does not say whether the record it describes is whole; the ChainLabel inside it does. Returning only the statement would leave a caller acting on an INCOMPLETE verdict, or discovering it by decoding a document it had already submitted \u2014 at which point it is public. BoundToSubmissionOnly is carried rather than collapsed into success for the same reason.\n\nWHAT IS NOT CLAIMED: nothing about the serving path, which retains and does nothing else; not that the chain is complete or that its hops verify, only that the label reaches the caller; nothing about the transparency service, its registration or its receipt; and no custody claim about the issuing key, which arrives as a caller-supplied closure.",
+  "reviewed_fingerprint": "sha256:b81b709eb1d9d052ba159914936bddadb9ded2e8d27cb47e13e22e56ab92da35",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0113"
+}

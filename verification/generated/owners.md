@@ -29,6 +29,7 @@ not an omission to hide.
 | conformance.retained_corpus | V0 | _none_ | 0 |
 | conformance.verdict_vocabulary_scope | V0 | THM-0111 | 0 |
 | core.time_rfc3339 | V1 | THM-0002 | 4 |
+| host.request_freshness_inputs | V0 | THM-0114 | 0 |
 | http_profile.admission_assertion | V0 | THM-0053 | 0 |
 | http_profile.admission_currency | V1 | THM-0003, THM-0004, THM-0005, THM-0006 | 7 |
 | http_profile.artifact_typing | V1 | THM-0007 | 6 |
@@ -74,6 +75,7 @@ not an omission to hide.
 | proxy.dispatch_commitment | V0 | THM-0045, THM-0051, THM-0052, THM-0074 | 0 |
 | proxy.ed25519_public_key | V0 | THM-0025 | 1 |
 | proxy.etcd_replay_adapter | V0 | THM-0107 | 0 |
+| proxy.evidence_attestation | V0 | THM-0113 | 0 |
 | proxy.exchange_lifecycle | V0 | THM-0043, THM-0044, THM-0078 | 0 |
 | proxy.exchange_transition_ownership | V0 | THM-0101 | 0 |
 | proxy.kms_ed25519_seam | V0 | THM-0108 | 0 |
@@ -88,10 +90,13 @@ not an omission to hide.
 | proxy.refusal_audit_emission | V0 | THM-0085 | 0 |
 | proxy.refusal_provenance | V0 | THM-0046 | 0 |
 | proxy.refusal_site_totality | V0 | THM-0081 | 0 |
+| proxy.remote_signer_call_aws | V0 | THM-0115 | 0 |
+| proxy.remote_signer_call_gcp | V0 | _none_ | 0 |
 | proxy.replay_admission_gate | V0 | THM-0092 | 2 |
 | proxy.replay_materialization | V0 | THM-0086 | 0 |
 | proxy.request_peer_binding | V0 | THM-0034 | 0 |
 | proxy.response_signing | V0 | THM-0063, THM-0075 | 0 |
+| proxy.retained_record_content | V0 | THM-0112 | 0 |
 | proxy.retention_commitment | V0 | THM-0088 | 0 |
 | proxy.runtime_lifecycle | V0 | THM-0012 | 0 |
 | proxy.serving_drain | V0 | THM-0104 | 0 |

@@ -859,29 +859,6 @@ mod tests {
             "one execution wrote more than one hop object"
         );
     }
-    ///
-    /// `("@method";key="cookie")` names one component. Reading every quoted token in the
-    /// list would read the parameter VALUE as a second one, so the widening the previous
-    /// test closes at the dictionary level would simply move inside the parentheses.
-    #[test]
-    fn an_in_list_component_parameter_cannot_widen_the_covered_set() {
-        let headers = vec![
-            (
-                "Signature-Input".to_owned(),
-                "mcp-re=(\"@method\";key=\"cookie\" \"content-digest\")".to_owned(),
-            ),
-            ("cookie".to_owned(), "session=secret".to_owned()),
-            ("content-digest".to_owned(), "sha-256=:AAAA:".to_owned()),
-        ];
-        let kept = covered_headers(&headers, mcp_re_http_profile::REQUEST_LABEL);
-        let names: Vec<&str> = kept.iter().map(|(name, _)| name.as_str()).collect();
-        assert!(
-            !names.contains(&"cookie"),
-            "a component parameter value was read as a covered header: {names:?}"
-        );
-        assert!(names.contains(&"content-digest"), "kept {names:?}");
-    }
-
     /// R8-C093 / R9-C004: a call that never committed takes its marker with it, and
     /// takes it on DROP.
     ///

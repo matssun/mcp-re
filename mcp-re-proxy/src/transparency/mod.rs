@@ -122,14 +122,6 @@ pub use dispatch_committed::DispatchCommitted;
 pub use durability::EvidenceRetention;
 pub use reserved_before_dispatch::ReservedBeforeDispatch;
 
-/// The schema token every retained record carries.
-///
-/// A content-addressed blob has no type of its own — the store returns bytes that hash
-/// to the name asked for and nothing more. Without a token in the record, a future
-/// change to the encoding would be read by an old reader as a valid record of a
-/// different shape, and the chain it reconstructed would be about something else.
-pub const RETAINED_HOP_SCHEMA: &str = "mcp-re-retained-hop/v1";
-
 /// A retention failure. Every variant refuses the exchange.
 #[derive(Debug)]
 pub enum RetentionError {

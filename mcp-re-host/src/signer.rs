@@ -124,3 +124,109 @@ impl HostSigner {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::HostSigner;
+    use mcp_re_client_core::ArtifactBinding;
+    use mcp_re_client_core::ArtifactType;
+    use mcp_re_client_core::AudienceTuple;
+    use mcp_re_core::SigningKey;
+    use serde_json::json;
+    use serde_json::Map;
+
+    /// 16 bytes base64url-no-pad: the carrier enforces the 128-bit entropy floor, so a
+    /// short label is refused rather than signed.
+    const NONCE: &str = "AAECAwQFBgcICQoLDA0ODw";
+    const OTHER_NONCE: &str = "EBESExQVFhcYGRobHB0eHw";
+
+    fn host() -> HostSigner {
+        HostSigner::new(
+            SigningKey::from_seed_bytes(&[7u8; 32]),
+            "did:example:agent",
+            "k1",
+        )
+    }
+
+    fn audience() -> AudienceTuple {
+        AudienceTuple {
+            audience_id: "svc".to_owned(),
+            target_uri: "https://example.test/mcp".to_owned(),
+            route: None,
+        }
+    }
+
+    fn bindings() -> Vec<ArtifactBinding> {
+        vec![ArtifactBinding::opaque_digest(
+            ArtifactType::PdpDecision,
+            b"decision-bytes",
+        )]
+    }
+
+    /// The identity is readable and the key is not. There is no accessor returning the
+    /// `SigningKey` or a detached signature, so code holding a `HostSigner` can ask for a
+    /// signed request and can never forge one (ADR-MCPS-003 signing locus).
+    #[test]
+    fn the_identity_is_readable_and_the_key_is_not() {
+        let host = host();
+        assert_eq!(host.signer(), "did:example:agent");
+        assert_eq!(host.key_id(), "k1");
+    }
+
+    /// A signed request names the SIGNER'S OWN key id, not one a caller supplied alongside
+    /// the call: a verifier resolves the key this host actually signed with.
+    #[test]
+    fn a_signed_request_names_the_signers_own_key_id() {
+        let signed = host()
+            .sign_request(
+                &json!(1),
+                "tools/call",
+                Map::new(),
+                "https://example.test/mcp",
+                audience(),
+                bindings(),
+                NONCE,
+                1_700_000_000,
+                1_700_000_060,
+            )
+            .expect("a well-formed request signs");
+        assert!(
+            signed
+                .headers()
+                .iter()
+                .any(|(name, value)| name.eq_ignore_ascii_case("signature-input")
+                    && value.contains("keyid=\"k1\"")),
+            "the signature input must name the host's own key id"
+        );
+    }
+
+    /// The `tools/call` convenience signs the same way, under the same key id.
+    #[test]
+    fn the_tool_call_convenience_signs_under_the_same_identity() {
+        let signed = host()
+            .sign_tool_call(
+                &json!("req-1"),
+                "read",
+                json!({ "path": "/tmp/x" }),
+                "https://example.test/mcp",
+                audience(),
+                bindings(),
+                OTHER_NONCE,
+                1_700_000_000,
+                1_700_000_060,
+            )
+            .expect("a well-formed tool call signs");
+        assert!(
+            signed
+                .headers()
+                .iter()
+                .any(|(name, value)| name.eq_ignore_ascii_case("signature-input")
+                    && value.contains("keyid=\"k1\"")),
+            "the signature input must name the host's own key id"
+        );
+        assert!(
+            !signed.body().is_empty(),
+            "a signed tool call carries the body its digest covers"
+        );
+    }
+}

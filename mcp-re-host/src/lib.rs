@@ -18,6 +18,9 @@
 // `unsafe` here means deleting this line: an architectural decision, reviewed as one.
 #![forbid(unsafe_code)]
 pub mod clock;
+/// Why the deterministic fixtures cannot reach a production build — the two halves of the
+/// audit #81 boundary, read from the source and the manifest that are actually built.
+mod fixture_boundary;
 pub mod nonce;
 pub mod signer;
 

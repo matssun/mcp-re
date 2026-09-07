@@ -93,6 +93,7 @@ pub(crate) fn quota_verdict(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::handshake_quota::QuotaVerdict;
 
     // The chained cause reaches the operator WITHOUT entering the body a classifier reads.
     // This is the property the separate field exists for: appending the cause to the body
@@ -144,5 +145,121 @@ mod tests {
             ),
             None
         );
+    }
+
+    /// The two providers' data, so the RULE below is exercised with what actually reaches it
+    /// (ADR-MCPRE-061 EX-008). These mirror the sets `aws_kms_keysource` and
+    /// `gcp_kms_keysource` pass; the adapters' own controls establish that each really does
+    /// pass its own, and what is measured here is the rule over both shapes.
+    const AWS: QuotaSignals = QuotaSignals {
+        path: &["__type"],
+        exhausted: &["ThrottlingException", "LimitExceededException"],
+        namespaced: true,
+    };
+    const GCP: QuotaSignals = QuotaSignals {
+        path: &["error", "status"],
+        exhausted: &["RESOURCE_EXHAUSTED"],
+        namespaced: false,
+    };
+
+    fn verdict(status: u16, body: &str, signals: QuotaSignals) -> QuotaVerdict {
+        quota_verdict(
+            &RemoteSignerFailure::status_body(status, body.to_string()),
+            signals,
+        )
+    }
+
+    /// A gateway sheds load before either service's error shape is reached, so the status is
+    /// checked FIRST and a 429/503 with an empty body is still exhaustion. Reading the body
+    /// first would classify a front-door 429 as unrelated and leave the window unarmed.
+    #[test]
+    fn a_shed_load_status_is_exhaustion_on_either_provider_whatever_the_body_says() {
+        for signals in [AWS, GCP] {
+            for status in [429u16, 503] {
+                assert_eq!(verdict(status, "", signals), QuotaVerdict::Exhausted);
+                assert_eq!(
+                    verdict(status, "{\"__type\":\"ValidationException\"}", signals),
+                    QuotaVerdict::Exhausted,
+                    "a front-door {status} states no service error shape at all"
+                );
+            }
+        }
+    }
+
+    /// The stated name decides, at the provider's own path — and AWS namespaces it, so the
+    /// SUFFIX is what is compared. A whole-string comparison would miss every real
+    /// `com.amazonaws.kms#ThrottlingException`.
+    #[test]
+    fn a_stated_exhaustion_name_arms_the_window_at_each_providers_own_path() {
+        assert_eq!(
+            verdict(
+                400,
+                "{\"__type\":\"com.amazonaws.kms#ThrottlingException\"}",
+                AWS
+            ),
+            QuotaVerdict::Exhausted
+        );
+        assert_eq!(
+            verdict(400, "{\"__type\":\"LimitExceededException\"}", AWS),
+            QuotaVerdict::Exhausted,
+            "an un-namespaced name still matches"
+        );
+        assert_eq!(
+            verdict(400, "{\"error\":{\"status\":\"RESOURCE_EXHAUSTED\"}}", GCP),
+            QuotaVerdict::Exhausted
+        );
+    }
+
+    /// **A body that states no name states nothing, and nothing is not a positive.** A
+    /// permanent misconfiguration classified as exhaustion becomes a permanent local refusal
+    /// that hides the misconfiguration it came from.
+    #[test]
+    fn a_failure_that_states_no_quota_arms_nothing() {
+        for signals in [AWS, GCP] {
+            for body in [
+                "",
+                "not json at all",
+                "{}",
+                "{\"__type\":\"ValidationException\"}",
+                "{\"error\":{\"status\":\"INVALID_ARGUMENT\"}}",
+                "{\"__type\":429}",
+            ] {
+                assert_eq!(
+                    verdict(400, body, signals),
+                    QuotaVerdict::Unrelated,
+                    "body {body:?} states no quota"
+                );
+            }
+        }
+    }
+
+    /// Each provider reads its OWN path. A body stating the other provider's field is not a
+    /// positive here, which is what keeps one adapter's vocabulary from arming the other's
+    /// window.
+    #[test]
+    fn one_providers_vocabulary_does_not_arm_the_others_window() {
+        assert_eq!(
+            verdict(400, "{\"error\":{\"status\":\"RESOURCE_EXHAUSTED\"}}", AWS),
+            QuotaVerdict::Unrelated
+        );
+        assert_eq!(
+            verdict(400, "{\"__type\":\"ThrottlingException\"}", GCP),
+            QuotaVerdict::Unrelated
+        );
+    }
+
+    /// A call that got no answer has no body to state anything, so it arms nothing — a
+    /// connect refusal is not evidence that a quota is gone.
+    #[test]
+    fn a_transport_failure_arms_nothing() {
+        for signals in [AWS, GCP] {
+            assert_eq!(
+                quota_verdict(
+                    &RemoteSignerFailure::transport("connection refused".to_string()),
+                    signals
+                ),
+                QuotaVerdict::Unrelated
+            );
+        }
     }
 }

@@ -29,7 +29,17 @@ use serde::Serialize;
 
 use super::covered_set::covered_headers;
 use super::RetentionError;
-use super::RETAINED_HOP_SCHEMA;
+
+/// The schema token every retained record carries.
+///
+/// A content-addressed blob has no type of its own — the store returns bytes that hash to the
+/// name asked for and nothing more. Without a token in the record, a future change to the
+/// encoding would be read by an old reader as a valid record of a different shape, and the
+/// chain it reconstructed would be about something else.
+///
+/// `pub(super)` and declared HERE: the record is the only thing that writes it or checks it,
+/// and it was `pub` for a consumer that does not exist anywhere in the tree.
+pub(super) const RETAINED_HOP_SCHEMA: &str = "mcp-re-retained-hop/v1";
 
 /// One retained exchange, in the form an auditor reconstructs a chain from.
 ///
@@ -117,5 +127,174 @@ pub(super) fn retained_request(request: &HttpRequest) -> RetainedRequest {
         target_uri: request.target_uri.clone(),
         headers: covered_headers(&request.headers, mcp_re_http_profile::REQUEST_LABEL),
         body_b64: b64url_encode(&request.body),
+    }
+}
+
+// Everything below is test code. The `#[cfg(test)]` marker lives HERE because it is the
+// region `scripts/module_size_gate.py` reads.
+#[cfg(test)]
+mod tests {
+    use super::RetainedHopRecord;
+    use super::RETAINED_HOP_SCHEMA;
+    use mcp_re_http_profile::HttpRequest;
+    use mcp_re_http_profile::HttpResponse;
+
+    fn request() -> HttpRequest {
+        HttpRequest {
+            method: "POST".to_owned(),
+            target_uri: "https://example.test/mcp".to_owned(),
+            headers: vec![
+                (
+                    "signature-input".to_owned(),
+                    format!(
+                        "{}=(\"@method\" \"content-digest\")",
+                        mcp_re_http_profile::REQUEST_LABEL
+                    ),
+                ),
+                ("signature".to_owned(), "abc".to_owned()),
+                ("content-digest".to_owned(), "sha-256=:AAAA:".to_owned()),
+                ("cookie".to_owned(), "session=secret".to_owned()),
+            ],
+            body: b"{\"jsonrpc\":\"2.0\"}".to_vec(),
+        }
+    }
+
+    fn response() -> HttpResponse {
+        HttpResponse {
+            status: 200,
+            headers: vec![
+                (
+                    "signature-input".to_owned(),
+                    format!(
+                        "{}=(\"@status\" \"content-digest\")",
+                        mcp_re_http_profile::RESPONSE_LABEL
+                    ),
+                ),
+                ("signature".to_owned(), "def".to_owned()),
+                ("content-digest".to_owned(), "sha-256=:BBBB:".to_owned()),
+                ("set-cookie".to_owned(), "session=secret".to_owned()),
+            ],
+            body: b"{\"result\":1}".to_vec(),
+        }
+    }
+
+    /// The whole point of the record: an auditor gets back exactly the bytes the signature
+    /// was over. A record that did not round-trip could not re-verify a hop that was
+    /// perfectly valid.
+    #[test]
+    fn a_record_round_trips_the_bytes_a_reconstruction_re_verifies() {
+        let hop = RetainedHopRecord::of(&request(), &response())
+            .into_hop()
+            .expect("a record this implementation wrote reads back");
+        assert_eq!(hop.request.method, "POST");
+        assert_eq!(hop.request.target_uri, "https://example.test/mcp");
+        assert_eq!(hop.request.body, b"{\"jsonrpc\":\"2.0\"}");
+        assert_eq!(hop.response.status, 200);
+        assert_eq!(hop.response.body, b"{\"result\":1}");
+    }
+
+    /// **Retaining more is a credential on disk.** The store has no expiry and holds one
+    /// object per served call; an uncovered `cookie` contributes nothing to any
+    /// reconstruction and would sit there forever. Both directions, because a `set-cookie`
+    /// on the response half is the same exposure.
+    #[test]
+    fn an_uncovered_credential_header_is_not_retained_in_either_direction() {
+        let record = RetainedHopRecord::of(&request(), &response());
+        let hop = record.into_hop().expect("reads back");
+        let request_names: Vec<&str> = hop
+            .request
+            .headers
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
+        let response_names: Vec<&str> = hop
+            .response
+            .headers
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
+        assert!(
+            !request_names.contains(&"cookie"),
+            "an uncovered request credential was retained: {request_names:?}"
+        );
+        assert!(
+            !response_names.contains(&"set-cookie"),
+            "an uncovered response credential was retained: {response_names:?}"
+        );
+    }
+
+    /// **Retaining less breaks re-verification.** The covered components and the two headers
+    /// carrying the signature itself must survive, or a reconstruction fails on a hop that
+    /// was valid. This is the direction the control above could be satisfied by deleting
+    /// everything.
+    #[test]
+    fn every_covered_header_and_the_signature_itself_survive() {
+        let hop = RetainedHopRecord::of(&request(), &response())
+            .into_hop()
+            .expect("reads back");
+        for (half, headers) in [
+            ("request", &hop.request.headers),
+            ("response", &hop.response.headers),
+        ] {
+            let names: Vec<&str> = headers.iter().map(|(name, _)| name.as_str()).collect();
+            for required in ["signature", "signature-input", "content-digest"] {
+                assert!(
+                    names.contains(&required),
+                    "the {half} half dropped `{required}`, which its own signature base \
+                     names: {names:?}"
+                );
+            }
+        }
+    }
+
+    /// A content-addressed blob has no type of its own. Without the schema token a future
+    /// encoding would be read by an old reader as a valid record of a different shape, and
+    /// the chain it reconstructed would be about something else.
+    #[test]
+    fn a_record_of_an_unknown_schema_is_refused_rather_than_interpreted() {
+        let record = RetainedHopRecord::of(&request(), &response());
+        let mut json: serde_json::Value =
+            serde_json::to_value(&record).expect("the record serializes");
+        json["schema"] = serde_json::Value::String("mcp-re-retained-hop/v2".to_owned());
+        let future: RetainedHopRecord =
+            serde_json::from_value(json).expect("the shape still parses");
+        assert!(
+            future.into_hop().is_err(),
+            "a record naming an unknown schema must be refused, not read as this one"
+        );
+    }
+
+    /// The stored form is `deny_unknown_fields`, so a record carrying a field this reader
+    /// does not know is refused at parse rather than silently ignored.
+    #[test]
+    fn an_unknown_field_is_refused_at_parse() {
+        let record = RetainedHopRecord::of(&request(), &response());
+        let mut json: serde_json::Value = serde_json::to_value(&record).expect("serializes");
+        json["extra"] = serde_json::Value::Bool(true);
+        assert!(
+            serde_json::from_value::<RetainedHopRecord>(json).is_err(),
+            "an unknown field must be refused, not ignored"
+        );
+    }
+
+    /// A body that is not base64url is a malformed record, not a shorter body.
+    #[test]
+    fn a_body_that_is_not_base64url_is_malformed_not_empty() {
+        let record = RetainedHopRecord::of(&request(), &response());
+        let mut json: serde_json::Value = serde_json::to_value(&record).expect("serializes");
+        json["request"]["body_b64"] = serde_json::Value::String("!!! not base64".to_owned());
+        let broken: RetainedHopRecord = serde_json::from_value(json).expect("shape parses");
+        assert!(
+            broken.into_hop().is_err(),
+            "an undecodable body must be refused, never read as an empty one"
+        );
+    }
+
+    /// The schema token this implementation writes is the one it accepts.
+    #[test]
+    fn the_written_schema_is_the_accepted_one() {
+        let record = RetainedHopRecord::of(&request(), &response());
+        let json: serde_json::Value = serde_json::to_value(&record).expect("serializes");
+        assert_eq!(json["schema"].as_str(), Some(RETAINED_HOP_SCHEMA));
     }
 }
