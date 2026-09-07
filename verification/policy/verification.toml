@@ -2455,8 +2455,10 @@ tested_symbols = [
 # here is the COMPOSITION the shipped proxy performs with it — which is why the census that
 # found this file unowned refused to register it by citing the other unit's controls, and
 # said it needed new ones. It has them: every control below drives a real delegated signing
-# round trip, because `VerifiedDelegatedResponse` is obtainable only from a verification
-# that succeeded.
+# round trip and takes its `VerifiedDelegatedResponse` from `verify_delegated_response`,
+# which is the only producer in the workspace. The TYPE is not sealed — the profile's
+# verified-response fields are `pub` for the prover's sake and say so — so this is a
+# property of the controls and of the tree, not a theorem about every inhabitant.
 [[unit]]
 id = "client.verified_outcome"
 class = "V0"

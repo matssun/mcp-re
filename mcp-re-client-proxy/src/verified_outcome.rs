@@ -248,9 +248,13 @@ mod tests {
     ///
     /// The round trip is real on both halves: the server delegated-signs the bytes under a
     /// credential issued by the root, and the client verifies them through the shipped
-    /// verifier. Nothing here constructs a `VerifiedDelegatedResponse` — the type is only
-    /// obtainable from a verification that succeeded, which is what makes these controls
-    /// statements about the deployed path rather than about a hand-built value.
+    /// verifier. Nothing here assembles a `VerifiedDelegatedResponse`; it comes from
+    /// `verify_delegated_response`, which is the only producer in the workspace — so these
+    /// are statements about the deployed path rather than about a hand-built value.
+    ///
+    /// The TYPE is not sealed, and this does not pretend otherwise: the profile's
+    /// verified-response structs carry `pub` fields for the prover's sake and say in their
+    /// own documentation that this is a convenience rather than a seal.
     fn outcome_of(body: &[u8]) -> Result<ProxyResponse, ProxyError> {
         let signed = signed();
         let mut custody = custody();

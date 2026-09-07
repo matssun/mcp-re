@@ -261,7 +261,7 @@ attestations this view cannot see.
 | THM-0123 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0124 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0125 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
-| THM-0126 | statement, consequence, scope or review requirement | specification review | THM-0076 |
+| THM-0126 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0127 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 
 ## Assumptions
