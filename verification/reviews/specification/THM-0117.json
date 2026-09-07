@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:19af2d11f29dce1c832ff6fc4a6c0db076f9245c0138cdcd4d1dbb106517980b",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0117",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Recorded under the owner's v0.17 assurance-closure mandate of 2026-09-07, priority 5: register owners and existing evidence first, state a theorem only where the surface has an independently meaningful security proposition, and do not manufacture theorem IDs. Recorded by the implementing agent as routine owner-review maintenance, not as a transcription of a ruling naming this fingerprint. The measurement record is verification/reviews/packets/ownership-remainder-2026-09-07.md.\n\nTWO ACQUIRERS, ONE PROPOSITION, AND THE DIRECTION IS THE WHOLE CLAIM. An expiry that cannot be read \u2014 absent, unparseable, or a lifetime the issuer did not establish \u2014 treated as UNLIMITED is a credential used forever, and the failure is SILENT because the credential keeps working until the issuer revokes it. Treated as already expired it costs an exchange, which is the cheap side of the same uncertainty.\n\nA stated expiry extended by a local reuse floor is that failure in miniature, and a far-future expiry accepted as stated would let a malformed answer outlive the real session the provider will honour \u2014 so it is truncated to the ceiling.\n\nTHE SINGLE-FLIGHT AND COOL-OFF CONJUNCTS are availability with a security edge: a failed exchange repeated by every waiter is a self-inflicted flood against the credential authority, and a cool-off a backwards clock step can extend is a local outage a time correction creates.\n\nWHERE THE TOKEN IS SENT is a conjunct of the AWS unit only. A projected web-identity token handed to a re-pointed STS endpoint is a credential leak, refused at construction; the GCE metadata server has no operator-settable endpoint to re-point.\n\nNOT THE CREDENTIAL'S POWER, and not the issuer's honesty. What is established is that this implementation never reads more lifetime out of an answer than the answer states.",
+  "reviewed_fingerprint": "sha256:b02cff188dee908a50e218956a69b912bb9a56071e3cc87ceb009ddd41a386e9",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0117"
+}

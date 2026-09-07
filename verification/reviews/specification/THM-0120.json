@@ -1,0 +1,17 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:fab37abfbe683e94bd06429f958a6975eb67769ac4010f46b9ed64f491171885",
+    "theorem_dependencies": {
+      "THM-0057": "sha256:6af9416e71f599cefa633a6efd1174807feb9d8aab41658586b3ec15e8bfb4dd",
+      "THM-0121": "sha256:ee4b3ea0f8909542edaed45a60098c924628122551276086e3c1c1e666788c0a"
+    },
+    "theorem_id": "THM-0120",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Recorded under the owner's v0.17 assurance-closure mandate of 2026-09-07, priority 5: register owners and existing evidence first, state a theorem only where the surface has an independently meaningful security proposition, and do not manufacture theorem IDs. Recorded by the implementing agent as routine owner-review maintenance, not as a transcription of a ruling naming this fingerprint. The measurement record is verification/reviews/packets/ownership-remainder-2026-09-07.md.\n\nTHE PRODUCTION CALLER ADR-MCPRE-052's FLOOR NEVER HAD, and the module says so in its own words: every piece existed \u2014 FileManifestFloor, load_signed_manifest_with_floor, the four-state TrustedIssuerSet, the AnchorSnapshot behind an atomic swap \u2014 and the chain ran end to end only in tests, so restart-durable rollback protection was a property the codebase could demonstrate and no deployment had. THM-0057 owns the LOADER in mcp-re-client-core; nothing owned the caller.\n\nTHE TWO DISPOSITIONS ARE OPPOSITE AND BOTH ARE NECESSARY. Withdrawing trust on a transient read error \u2014 the file being rewritten, the volume briefly gone, the document truncated \u2014 turns a filesystem hiccup into a total outage. Keeping it after EXPIRY is the stale trust picture load_signed_manifest fails closed to prevent, reached by another route: a client quietly outliving the trust an org published, with nothing in its behaviour to say so. So an expired manifest with no newer document accepted publishes an EMPTY set, every response fails closed as an untrusted issuer, and the operator gets a loud line naming the expiry.\n\nTHE EPHEMERAL-FLOOR CONTROL is what makes the durable one's refusal a property of the FLOOR rather than of the process, and the two e2e controls are what make all of it about the running listener rather than about a module.\n\nNOT A FRESHNESS BOUND, and not a claim about the publisher: that the manifest an org published is the one on disk is outside this boundary entirely.",
+  "reviewed_fingerprint": "sha256:18730d1a9b09f29565ea4f177af35779a5d977f39d69ff9533be898e033280a1",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0120"
+}

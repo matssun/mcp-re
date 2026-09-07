@@ -17,18 +17,27 @@ not an omission to hide.
 
 | unit | class | owns theorems | assumptions |
 |---|---|---|---|
+| client.anchor_refresh | V0 | THM-0120 | 0 |
 | client.binding_spec_refusal | V0 | _none_ | 0 |
 | client.delegation_policy_seal | V0 | THM-0060 | 0 |
+| client.deployment_config | V0 | THM-0124 | 0 |
 | client.execution_contract | V0 | THM-0061 | 0 |
 | client.local_ingress_authority | V0 | THM-0091 | 0 |
+| client.local_serving_pipeline | V0 | THM-0123 | 0 |
+| client.manifest_floor | V0 | THM-0121 | 0 |
 | client.proxy_request_correspondence | V0 | THM-0084 | 0 |
+| client.request_construction | V0 | THM-0125 | 0 |
 | client.response_acceptance | V0 | THM-0058, THM-0059, THM-0076 | 0 |
 | client.transport_message_hygiene | V0 | THM-0110 | 0 |
 | client.transport_server_identity | V0 | THM-0109 | 0 |
 | client.trust_manifest_lifecycle | V0 | THM-0057 | 0 |
 | conformance.retained_corpus | V0 | _none_ | 0 |
 | conformance.verdict_vocabulary_scope | V0 | THM-0111 | 0 |
+| core.audit_vocabulary | V0 | THM-0122 | 0 |
+| core.content_address | V0 | _none_ | 0 |
+| core.replay_seam | V0 | THM-0118 | 0 |
 | core.time_rfc3339 | V1 | THM-0002 | 4 |
+| core.trust_resolver_seam | V0 | THM-0119 | 0 |
 | host.request_freshness_inputs | V0 | THM-0114 | 0 |
 | http_profile.admission_assertion | V0 | THM-0053 | 0 |
 | http_profile.admission_currency | V1 | THM-0003, THM-0004, THM-0005, THM-0006 | 7 |
@@ -55,6 +64,8 @@ not an omission to hide.
 | proxy.audit_record_coordinates | V0 | THM-0069, THM-0071 | 0 |
 | proxy.authenticated_relationship_peer | V0 | THM-0031 | 1 |
 | proxy.authorization_posture | V0 | THM-0056 | 0 |
+| proxy.aws_kms_adapter | V0 | THM-0116 | 0 |
+| proxy.aws_sts_credentials | V0 | THM-0117 | 0 |
 | proxy.certificate_identity | V0 | THM-0024 | 1 |
 | proxy.channel_associated_credential | V0 | THM-0028 | 1 |
 | proxy.channel_associated_identity | V0 | THM-0029 | 1 |
@@ -78,6 +89,7 @@ not an omission to hide.
 | proxy.evidence_attestation | V0 | THM-0113 | 0 |
 | proxy.exchange_lifecycle | V0 | THM-0043, THM-0044, THM-0078 | 0 |
 | proxy.exchange_transition_ownership | V0 | THM-0101 | 0 |
+| proxy.gcp_kms_adapter | V0 | _none_ | 0 |
 | proxy.kms_ed25519_seam | V0 | THM-0108 | 0 |
 | proxy.kms_endpoint_authority | V0 | THM-0089 | 0 |
 | proxy.mechanism_verified_credential | V0 | THM-0030 | 1 |
@@ -86,6 +98,7 @@ not an omission to hide.
 | proxy.outstanding_id_provenance | V0 | _none_ | 0 |
 | proxy.pdp_decision_relation | V0 | THM-0040 | 0 |
 | proxy.peer_identity_value | V0 | THM-0023 | 0 |
+| proxy.pkcs11_adapter | V0 | _none_ | 0 |
 | proxy.redis_replay_adapter | V0 | THM-0106 | 0 |
 | proxy.refusal_audit_emission | V0 | THM-0085 | 0 |
 | proxy.refusal_provenance | V0 | THM-0046 | 0 |

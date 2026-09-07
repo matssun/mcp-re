@@ -5861,3 +5861,549 @@ supported_by = [
   "unit://proxy.remote_signer_call_gcp",
 ]
 depends_on = []
+
+# v0.17 assurance-closure mandate, priority 5. THM-0108's scope names precisely what it does
+# NOT establish about the adapters beneath the seam — that any of them speaks its provider's
+# protocol correctly, selects the right key, or reaches the endpoint a deployment intended.
+# These two theorems are the parts of that with an independently meaningful proposition and
+# evidence that already exists. Custody is NOT among them: that the private key never leaves
+# the KMS is the provider's property and the trait's shape, and nothing here proves it.
+[[theorem]]
+id = "THM-0116"
+title = "A non-exporting signer's advertised key is established at construction, and a signature it cannot verify is never emitted"
+statement = """
+Each non-exporting response signer — AWS KMS, GCP Cloud KMS, PKCS#11 — establishes the key it
+advertises BEFORE it will sign anything: the provider is asked for the key's algorithm and
+public key, an algorithm that is not Ed25519 refuses construction, and the public key is
+accepted only as a well-formed RFC 8410 Ed25519 encoding. A GCP key version that has been
+destroyed refuses construction rather than producing a signer with no public key.
+
+Every signature the adapter produces is verified against that advertised public key, with the
+deployment's own verifier, before it is returned. A signature made over a PRE-HASH — a
+legitimate operation on the same key, returning a well-formed 64 bytes — fails that check and
+is refused rather than emitted.
+
+Each adapter reaches only the endpoint the deployment's endpoint authority admits, and it is
+refused at CONSTRUCTION rather than at use.
+"""
+security_consequence = """
+This is the half THM-0108 states cannot be established at the seam. The seam's re-verification
+catches a mismatched key for any backend; what it cannot do is establish that a backend asked
+the provider what key it has, or that a destroyed key version does not yield a signer.
+
+An adapter that skipped the construction-time check would advertise a public key it had not
+established and would fail every request at the seam instead of at startup — a deployment that
+comes up and refuses everything, rather than one that refuses to come up.
+
+A destroyed GCP key version whose public key cannot be fetched must not produce a signer at
+all: the alternative is a proxy that starts, advertises nothing verifiable, and discovers it
+on the first response it must sign.
+
+And an endpoint refused at construction rather than at use is the difference between a
+deployment that will not start and one that sends a credential-bearing request to an operator-
+supplied host before noticing. R9's only Critical lived in exactly that gap.
+"""
+scope = """
+NOT A CUSTODY CLAIM. That the private key never leaves the KMS or the token is the provider's
+property and the trait's shape — none of these traits asks for a private key — and it is not
+proved here. In particular NOTHING here is a FIPS-140-2 Level 3 or HSM-protection claim: a
+Cloud KMS EC_SIGN_ED25519 key version may be SOFTWARE- or HSM-protected and the two REST
+operations used cannot establish which, so the KMS adapters are honestly labelled
+software-protection custody. Real FIPS-L3 custody evidence remains a DEFERRED obligation
+awaiting validated hardware.
+
+NOT A PROTOCOL-CONFORMANCE CLAIM. That each adapter speaks its provider's wire protocol
+correctly is established by its own controls against fixtures, not against a live provider;
+the live-infra lane is separate and off the merge path.
+
+NOT THE ENDPOINT RULE ITSELF. Which endpoints an operator may set is THM-0089's; what is
+established here is that each adapter consults it and refuses at construction.
+
+NOT THE SEAM'S TYPES. `RawEd25519Message`, `RawEd25519Signature` and `Ed25519SpkiDer` are
+THM-0108's, and the seam's re-verification is kept as defence in depth beneath these adapters'
+own.
+
+THREE LANES, MEASURED SEPARATELY. Each adapter exists only under its own non-default feature;
+a plain `cargo test --workspace` compiles all three to zero tests, so each is its own unit
+naming its own lane.
+
+Executable, class V0, measured in the three named feature lanes.
+"""
+owner = "proxy.aws_kms_adapter"
+review_requirement = "Owner security-specification review"
+supported_by = [
+  "unit://proxy.aws_kms_adapter",
+  "unit://proxy.gcp_kms_adapter",
+  "unit://proxy.pkcs11_adapter",
+]
+depends_on = ["THM-0108", "THM-0089"]
+
+[[theorem]]
+id = "THM-0117"
+title = "An acquired credential is never used past the lifetime its issuer stated, and a lifetime that cannot be read is not a long one"
+statement = """
+A credential acquired from AWS STS or from the GCE/GKE metadata server carries the expiry its
+issuer stated, and that expiry is never extended: neither by the reuse floor that keeps an
+unreadable one from being re-exchanged on every call, nor by a stated value beyond the real
+session ceiling, which is truncated to it.
+
+An expiry that CANNOT be read — absent, unparseable, or a lifetime the issuer did not
+establish — is treated as already expired, never as unlimited. The credential is still reused
+briefly rather than re-exchanged per call, and that brief window is a floor on churn rather
+than an extension of a stated lifetime.
+
+Concurrent callers perform ONE exchange between them, a failed exchange is not repeated by
+every waiter, and the cool-off after a failure expires on its own and is cleared by a success.
+A clock that steps backwards does not extend it.
+"""
+security_consequence = """
+The direction is the whole claim. An expiry that cannot be read, treated as UNLIMITED, is a
+credential used forever — and the failure is silent, because the credential keeps working
+until the issuer revokes it. Treated as already expired it costs an exchange, which is the
+cheap side of the same uncertainty.
+
+A stated expiry extended by a local reuse floor is the same failure in miniature, and a
+far-future expiry accepted as stated would let an issuer's malformed answer outlive the real
+session the provider will honour.
+
+The single-flight and cool-off conjuncts are availability with a security edge: a failed
+exchange repeated by every waiter is a self-inflicted flood against the credential authority,
+and a cool-off a backwards clock step can extend is a local outage a time correction creates.
+"""
+scope = """
+THE LIFETIME, NOT THE CREDENTIAL'S POWER. Nothing here is about what the credential is
+permitted to do, which role it assumes, or whether the assumed role is least-privileged.
+
+NOT A CLAIM ABOUT THE ISSUER. That the issuer's stated expiry is honest, and that the token it
+returns is the one it minted, are the provider's; what is established is that this
+implementation never reads more lifetime out of an answer than the answer states.
+
+WHERE THE TOKEN IS SENT is a conjunct of the AWS unit and not of the metadata one: a projected
+web-identity token handed to a re-pointed STS endpoint is a credential leak, and it is refused
+at construction. The GCE metadata server has no operator-settable endpoint to re-point.
+
+TWO LANES. The AWS acquirer exists under `aws_kms_keysource` and the metadata acquirer under
+`gcp_kms_keysource`; neither is in the default lane.
+
+Executable, class V0, measured in the two named feature lanes.
+"""
+owner = "proxy.aws_sts_credentials"
+review_requirement = "Owner security-specification review"
+supported_by = [
+  "unit://proxy.aws_sts_credentials",
+  "unit://proxy.gcp_kms_adapter",
+]
+depends_on = []
+
+# v0.17 assurance-closure mandate, priority 5, the `mcp-re-core` half. Three seams the whole
+# pipeline rests on, each with substantial evidence and, until now, no owner. Two of them
+# state a proposition worth a theorem; the content-address grammar is registered as an owner
+# and left without one, because "a parser accepts exactly what it emits" is a property its
+# controls state directly and a theorem would only restate.
+[[theorem]]
+id = "THM-0118"
+title = "A replay verdict and a replay-tier outage are different answers, and neither is an allow"
+statement = """
+The replay seam returns a DECISION on success — `Fresh` or `Replay` — and an operational
+ERROR on failure. There is no third arm and no path on which a failure yields `Fresh`.
+
+The key is the verified triple `(signer, principal, nonce)`: the same nonce under a different
+signer, or accounted to a different principal, is fresh, and an entry becomes admissible again
+only after its retain-until instant has passed.
+
+Every failure the reference cache owns is an error VALUE and not a panic — a poisoned lock and
+the entry ceiling both refuse as an outage, and a clone of a poisoned cache admits nothing.
+
+Every implementation self-declares a durability class, and the declaration defaults to the
+single-process one, so a cache that says nothing about its durability is read as the weakest
+rather than as the strongest.
+"""
+security_consequence = """
+The excluded outcome is a replayed request served because the tier could not answer. That is
+the failure a bare boolean produces: "not found" and "could not look up" collapse into one
+value, and the safe reading of the collapsed value is whichever one the caller happened to
+choose. Here the caller cannot choose — the type has no arm for it.
+
+The panic conjunct is a different failure with the same effect. A poisoned lock that panicked
+would turn a per-request refusal into a worker-terminating panic on every later request, so
+one bad request would take the tier out for all of them.
+
+The fail-closed DEFAULT on the durability class is what keeps a new backend from being wired
+as though it were shared. A per-node in-memory cache does not prevent cross-node replays, and
+a backend that forgot to declare would otherwise be indistinguishable from one that had.
+"""
+scope = """
+THE SEAM, NOT A DEPLOYMENT'S TIER. `InMemoryReplayCache` is a single-process reference and
+declares itself one; nothing here establishes that any deployed cache is shared, durable, or
+linearizable. Those are the deployable backends' properties, under THM-0106 and THM-0107, and
+the tier's fail-closed ordering is THM-0092's.
+
+NOT THE PIPELINE'S ORDERING. That the cache is consulted only AFTER the signature verifies —
+so invalid-signature garbage cannot burn a legitimate nonce — is the verification pipeline's,
+and is stated by its owner rather than measured here.
+
+NOT A RETENTION BOUND. What is established is that an entry is readmitted only after its
+retain-until instant; whether the caller computed that instant from the right clock is the
+caller's.
+
+Executable, class V0, measured in the default cargo lane.
+"""
+owner = "core.replay_seam"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://core.replay_seam"]
+depends_on = []
+
+[[theorem]]
+id = "THM-0119"
+title = "A trust binding that does not exist and a resolver that cannot answer are different refusals, and the key that names one binding names no other"
+statement = """
+The trust-resolver seam maps `(signer, key_id)` to a verification key. A binding that is
+unknown, or that has been revoked, is refused as an ACTOR-BINDING failure; a resolver that
+could not answer is refused as an OUTAGE. The mapping between the two outcomes and the two
+frozen tokens is exact in both directions, and neither is an allow.
+
+The composite key the reference resolver indexes by is injective across pairs whose members
+contain the delimiter, so no `(signer, key_id)` pair resolves under another pair's entry.
+"""
+security_consequence = """
+An outage reported as an actor-binding failure tells an operator that a caller presented an
+unknown key when the truth is that the trust store was unreachable — and the two send an
+investigation to opposite places. The reverse reading is worse: a revoked binding reported as
+an outage invites a retry against a store that will keep saying the same thing.
+
+The injectivity conjunct is the one an ordinary happy-path battery does not reach. A signer
+name containing the delimiter could, under a naive join, resolve using a different signer's
+key id — which is a key confusion at the point the whole pipeline decides who signed.
+"""
+scope = """
+THE SEAM AND THE REFERENCE IMPLEMENTATION. Nothing here is about the runtime trust plane's
+tiers, its caching windows, or its revocation channel — those are THM-0097 through THM-0100's,
+over `proxy.trust_plane_runtime`.
+
+NOT A CLAIM ABOUT WHICH KEYS A DEPLOYMENT TRUSTS. The resolver answers from what it was given;
+where the bindings came from and whether they were authorized is the trust document's
+authority.
+
+Executable, class V0, measured in the default cargo lane.
+"""
+owner = "core.trust_resolver_seam"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://core.trust_resolver_seam"]
+depends_on = []
+
+[[theorem]]
+id = "THM-0120"
+title = "A client that cannot establish current anchors publishes none, rather than serving on expired ones"
+statement = """
+The deployable client loads its trust anchors from a signed manifest against a DURABLE
+rollback floor: a published manifest raises the floor, and after a restart a rolled-back
+document is still refused. An ephemeral floor forgets that, which is what makes the durable
+one's refusal a property of the floor rather than of the process.
+
+A refresh that FAILS — the file is being rewritten, the volume is briefly gone, the document
+is truncated — keeps the anchors in force. A refresh that finds the loaded manifest EXPIRED,
+with no newer document accepted, publishes an EMPTY set: every response then fails closed as
+an untrusted issuer while the refresh keeps retrying.
+"""
+security_consequence = """
+The two dispositions are opposite and both are necessary. Withdrawing trust on a transient
+read error turns a brief filesystem hiccup into a total outage. Keeping it after expiry is the
+stale trust picture `load_signed_manifest` fails closed to prevent, reached by another route —
+a client quietly outliving the trust an org published, with nothing in its behaviour to say so.
+
+The durable floor is what makes rollback protection a property of the DEPLOYMENT rather than
+of a process's memory. Every piece of it existed before this module and the chain ran end to
+end only in tests; an attacker who can replace the manifest file could otherwise restore an
+older document across a restart, and the client would accept it.
+"""
+scope = """
+THE CALLER, NOT THE LOADER. Manifest validity, signature verification, the version floor's own
+rules and the four-state issuer set are `client.trust_manifest_lifecycle`'s under THM-0057.
+What is established here is that the deployable consults them, and what it does with each
+answer.
+
+NOT A FRESHNESS BOUND. How stale the anchors may become between refreshes is the configured
+cadence's; nothing here asserts a number.
+
+NOT A CLAIM ABOUT THE PUBLISHER. That the manifest an org published is the one on disk is
+outside this boundary entirely.
+
+Executable, class V0, measured in the default cargo lane.
+"""
+owner = "client.anchor_refresh"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://client.anchor_refresh"]
+depends_on = ["THM-0057", "THM-0121"]
+
+[[theorem]]
+id = "THM-0121"
+title = "The rollback floor only rises, and a floor that has been pushed too high stops the client rather than lowering itself"
+statement = """
+The manifest version floor is a DIRECTORY of one empty marker per accepted version, and the
+floor is the maximum of those names. Recording a version creates a marker; reading takes the
+max. The set only ever grows, so the floor is monotone BY CONSTRUCTION rather than by a
+comparison someone performs: two concurrent writers create different names and cannot
+collide, a late writer recording a lower version cannot lower the maximum, and there is no
+lock to leak if a process dies mid-update. Each marker is `sync_all`ed and followed by a
+directory fsync, so a power loss does not lose it.
+
+An empty directory reads as zero, which is the honest meaning of *this verifier has never
+accepted a manifest*. An operator-declared BOOTSTRAP minimum is the floor's lower bound
+whatever the filesystem says, and it survives deleting the whole directory.
+
+A declared CEILING fail-stops. A stored floor above it is a named refusal, never a clamp, and
+a record that would push the floor above the ceiling is refused before it is written.
+"""
+security_consequence = """
+Rollback protection that resets on restart is not rollback protection. `load_signed_manifest`
+takes `min_version` as an argument and hands the accepted version back "for the caller to
+record"; nothing recorded it, so the floor was 0 on every start and an attacker who could
+serve an old manifest could un-revoke a root, re-widen a closed overlap window, or resurrect
+a withdrawn issuer.
+
+The construction is what closes the two failures a single counter file has, and the module's
+own topology is multi-writer. Two writers that both read floor 5 and then persist 10 and 7
+leave it at 7, which makes a superseded manifest acceptable again. Writing through one fixed
+`.tmp` path is worse: every writer truncates the same inode and writes from its own offset, so
+`100` and `7` publish as `700` — rejecting every legitimate manifest until an operator repairs
+the file by hand.
+
+Deletion is a CHEAPER capability than corruption, and an ephemeral sidecar loses its volume on
+every restart, so "0 after deletion" would hand back the whole rollback window for free. The
+bootstrap minimum is the part of the floor an attacker cannot reach.
+
+Upward, the markers are unauthenticated by construction: a directory writer can create
+`18446744073709551615` and refuse every manifest thereafter, including a break-glass
+revocation. That is the TUF fast-forward shape. `min(stored_floor, ceiling)` would be WORSE
+than no ceiling — it lowers a floor on the say-so of the storage that just proved
+untrustworthy, silently re-opening the rollback window and letting the attacker choose which
+versions come back by choosing how far to overshoot. A floor above its ceiling means the
+storage and the trust domain bounding it disagree, and neither may be preferred.
+"""
+scope = """
+NOT AVAILABILITY. A malicious fast-forward still stops the client. What is established is that
+it stops LOUDLY, at a named error an operator can act on, rather than silently withdrawing
+every anchor once the loaded manifest expires.
+
+THE CEILING IS WORTH EXACTLY THE TRUST DOMAIN IT COMES FROM. Read from a config file the
+floor-directory writer can also edit, it adds nothing; it must be no more writable than the
+org keys themselves. Nothing here establishes where a deployment's ceiling came from.
+
+NOT THE MANIFEST'S VALIDITY. Whether the document is signed by a trusted root, and what its
+version means, are `client.trust_manifest_lifecycle`'s under THM-0057.
+
+NOT WHAT A DEPLOYMENT DOES WITH THE ANSWER. That is `client.anchor_refresh`'s under THM-0120.
+
+Executable, class V0, measured in the default cargo lane.
+"""
+owner = "client.manifest_floor"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://client.manifest_floor"]
+depends_on = []
+
+[[theorem]]
+id = "THM-0122"
+title = "A security record says what a Core verdict says, and its display text is never a verdict"
+statement = """
+Every rejection reason an audit record can carry is a frozen `McpReError::wire_code()` token,
+and it is one BY TYPE: no constructor in the audit vocabulary takes a string, so a rejection
+event is built from an `McpReError` or — when the authority that ended the exchange was not
+Core — from nothing at all.
+
+The net-new surface is exactly five events the error taxonomy cannot express: two successes
+(`mcp-re.request.accepted`, `mcp-re.response.signed`) and three delegated-key lifecycle events.
+There is no `authorization_hash_mismatch` reason, because "mismatch" would claim Core compared
+an authorization artifact it only binds.
+
+The optional reason LABEL is non-normative display text. No label is ever a wire token, and no
+two verdicts share a sentence.
+"""
+security_consequence = """
+A record whose reason could be any string is a record in which one authority's verdict passes
+for another's. That is #637 exactly: a `PolicyError` token reached `AuditEvent.reason`, and
+from the record alone nobody could tell which authority had spoken. Removing the
+string-taking constructors made the containment a property of the type, so there is no
+producer graph left to discover.
+
+The label conjuncts are the mirror of that. A label that WAS a token would let a reader treat
+display prose as a machine verdict; two verdicts sharing a sentence would make two different
+outcomes indistinguishable in the record an investigation reads.
+
+And an `authorization_hash_mismatch` reason would report a semantic comparison as Core's when
+Core performed none — attributing a decision to the layer that binds rather than to the one
+that interprets.
+"""
+scope = """
+THE VOCABULARY, NOT THE EMISSION. Nothing here establishes that a record is written, that it
+reaches a sink, or that a sink is durable. Which coordinate each authority writes into is
+ADR-MCPRE-066's, under THM-0069 and THM-0071.
+
+NOT A SIEM SCHEMA. The vocabulary fixes the stable machine tokens and nothing else; deployment
+audit policy is not replaced by it.
+
+THE TREE-WIDE HALF IS THM-0111'S. That exactly two files in the workspace decide what an
+`mcp-re.*` verdict token says is measured there; what is established here is what the audit
+layer may say with them.
+
+Executable, class V0, measured in the default cargo lane.
+"""
+owner = "core.audit_vocabulary"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://core.audit_vocabulary"]
+depends_on = []
+
+[[theorem]]
+id = "THM-0123"
+title = "An admitted local request cannot leak its slot, cannot be guessed onto a route, and a pause is never rendered as a finished call"
+statement = """
+The deployable client's local listener holds an in-flight ceiling whose slot is returned on
+every exit: a refused claim releases it, and a worker that PANICS returns it too. A zero
+ceiling admits nothing.
+
+A request's route is named by its path — a nested or empty path names none — and any other
+path reaches the default route only where one is configured. The host must be a loopback
+literal or `localhost`, and the content type must be JSON.
+
+Reads and writes are bounded, so a peer that never reads hits the write deadline. A verified
+reply that announces a PAUSE is rendered as a pause, never as a finished call. The response
+writer emits exactly one `Content-Length` and closes.
+"""
+security_consequence = """
+The panic conjunct is the one an ordinary battery does not reach. A slot leaked by a panicking
+worker ratchets the ceiling down over the process's life until the listener admits nothing —
+a local denial of service that no error path reports, reached by whatever input made the
+worker panic.
+
+A path guessed onto a route sends a request to an audience it does not name, and the audience
+is what the signature binds; a default route reached by a path that names none would do that
+silently. The host and content-type guards are what keep a browser or a non-loopback peer from
+driving the operator's signing identity.
+
+A pause rendered as a finished call reports a call that has NOT run as one that has, which is
+the same class of error the execution contract exists for, at the last hop before the local
+client acts on it.
+
+Two `Content-Length` headers, or a close on top of unread bytes, are how a refusal reaches the
+caller as an unexplained broken pipe instead of the refusal it was given.
+"""
+scope = """
+WHAT HAPPENS TO AN ADMITTED REQUEST, NOT WHOSE REQUESTS ARE ADMITTED. The bind scope, the
+accepted authority and the head fields are `client.local_ingress_authority`'s under THM-0091.
+
+NOT THE REMOTE LEG. What is sent, how it is signed, and whether the answer verifies are
+`client.proxy_request_correspondence`'s and the transport units'.
+
+NOT A NUMBER. The ceiling and the deadlines are configured values; what is claimed is that
+they are applied and that exceeding one refuses, never that any value is sufficient.
+
+Executable, class V0, measured in the default cargo lane.
+"""
+owner = "client.local_serving_pipeline"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://client.local_serving_pipeline"]
+depends_on = []
+
+[[theorem]]
+id = "THM-0124"
+title = "A declared binding commits to what the verifier will digest, or the deployment does not start"
+statement = """
+A client configuration document is refused rather than defaulted: an unknown field is an
+error, and every declared artifact binding must be one the client can actually produce.
+
+A binding over a header the client does not send is refused. A DPoP binding digests what the
+VERIFIER digests, and only on a bearer `authorization` header; a DPoP binding declared on
+another header, on a non-bearer authorization, or sourced from a literal or a file is refused.
+A non-DPoP header binding digests the header value verbatim. A literal mTLS binding is
+refused.
+
+The configured clock-skew bound equals the profile's, and a value outside it is refused. A
+reload cadence that is disabled or unbounded is refused. Route ids are unique, the org-key pin
+set is non-empty, and the rollback floor must be named.
+"""
+security_consequence = """
+An artifact binding is a commitment the request signs. A binding over a header the client does
+not send commits to the digest of nothing, which no verifier can reproduce and which therefore
+fails every exchange — after the deployment has started and told an operator it was configured.
+
+The DPoP conjuncts are sharper. Digesting the header VALUE where the verifier digests the
+proof produces evidence that is well-formed, correctly signed, and about the wrong bytes. A
+DPoP binding on a non-bearer authorization, or on another header entirely, names a credential
+the profile does not put there. A literal or file-sourced DPoP proof is a credential the
+OPERATOR minted rather than the client, which is a different actor than the one the signature
+attributes it to.
+
+Every remaining refusal closes a way for a deployment to come up claiming a control it does
+not have: an unbounded reload cadence is a trust picture that never refreshes, a duplicate
+route id makes two audiences one, an empty pin set trusts every issuer, and an unnamed floor
+is rollback protection that resets on restart.
+"""
+scope = """
+THE DOCUMENT, NOT THE DEPLOYMENT. What the values mean at runtime — the anchors actually in
+force, the floor actually recorded, the request actually signed — belongs to
+`client.anchor_refresh`, `client.manifest_floor` and `client.proxy_request_correspondence`.
+
+THE BIND SCOPE'S OWN RULE IS THM-0091'S. Its two arms live in this file and are measured by
+this unit, but what makes a bind scope legitimate is the ingress authority's.
+
+NOT A CLAIM THAT THE VALUES ARE WISE. A skew inside the profile bound and a cadence that is
+bounded are both still deployment choices.
+
+Executable, class V0, measured in the default cargo lane.
+"""
+owner = "client.deployment_config"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://client.deployment_config"]
+depends_on = []
+
+[[theorem]]
+id = "THM-0125"
+title = "A request a verifier could not bind is refused before it is sent, and a notification is not a request with no id"
+statement = """
+Every signed request is built through one seam, and it refuses locally what a verifier would
+refuse remotely: a request carrying no artifact binding, or a structurally invalid one, does
+not sign. A valid binding still signs, so the refusal is not vacuous.
+
+The caller's own `params._meta` survives signing unchanged, and the MCP-RE evidence block
+lands at the body root rather than inside the caller's content.
+
+A signed NOTIFICATION carries no `id` key at all — absent, never present-and-null — while
+carrying the ordinary RFC 9421 evidence, and a continuation declared on one is refused. Both
+custody classes emit identical notification bytes.
+
+A presented decision mints its binding over the exact bytes presented; a caller presenting
+none authors a block without one, rather than an empty or placeholder binding.
+"""
+security_consequence = """
+An unbindable request refused at the call site is a deployment that learns at the point it
+made the mistake. Sent, it becomes a remote rejection an operator must attribute backwards
+through a signature, a carrier and a verifier — and a placeholder binding sent instead would
+be worse still: a commitment to bytes nobody has.
+
+`id: null` is not the absence of an id. It is a REQUEST whose id is null, which a server may
+answer — and the client that sent a notification is not waiting for an answer, so the reply
+is either discarded or correlated to something else. The key must be absent.
+
+Two custody classes emitting different bytes for the same notification would make the signing
+MECHANISM observable on the wire, which is a fact about the deployment's key custody that
+nothing in the profile intends to publish.
+
+And the caller's `params._meta` surviving is what keeps this seam from silently editing the
+content it is signing over.
+"""
+scope = """
+THE SHAPE, NOT THE SIGNATURE'S CORRECTNESS. That the RFC 9421 signature base is composed
+correctly and verifies is the carrier's, under the http-profile units.
+
+NOT WHAT THE BINDING MEANS. Which artifact types are legal in which form is
+`client.binding_spec_refusal`'s under THM-0111's producer conjunct; what is established here
+is that a request with none, or with one this seam cannot build, does not go out.
+
+NOT KEY CUSTODY. Which key signs and where it lives is the caller's; what is claimed about
+custody is only that the two classes are indistinguishable in the emitted bytes.
+
+Executable, class V0, measured in the default cargo lane.
+"""
+owner = "client.request_construction"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://client.request_construction"]
+depends_on = []

@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:d3a57c7e4101e8b08cda99813e06ffea42ec097519798cc26d9634fd6b95b8cb",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0119",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Recorded under the owner's v0.17 assurance-closure mandate of 2026-09-07, priority 5: register owners and existing evidence first, state a theorem only where the surface has an independently meaningful security proposition, and do not manufacture theorem IDs. Recorded by the implementing agent as routine owner-review maintenance, not as a transcription of a ruling naming this fingerprint. The measurement record is verification/reviews/packets/ownership-remainder-2026-09-07.md.\n\nTWO REFUSALS THAT MUST NOT BE READ AS EACH OTHER. An outage reported as an actor-binding failure tells an operator a caller presented an unknown key when the truth is the trust store was unreachable, and the two send an investigation to opposite places. The reverse is worse: a revoked binding reported as an outage invites a retry against a store that will keep saying the same thing.\n\nTHE INJECTIVITY CONTROL is the one an ordinary happy-path battery does not reach. Under a naive join, a signer name containing the delimiter could resolve using a DIFFERENT signer's key id \u2014 a key confusion at the exact point the pipeline decides who signed.\n\nNOT THE RUNTIME TRUST PLANE. Its tiers, caching windows and revocation channel are THM-0097 through THM-0100's. Not a claim about which keys a deployment trusts: the resolver answers from what it was given.",
+  "reviewed_fingerprint": "sha256:e1b6ece8eebddbe10e1ab34b0394910a7438ce11c0c917c4fa0f0a25818a26eb",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0119"
+}

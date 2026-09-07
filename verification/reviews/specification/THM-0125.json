@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:63bc054d7298e084d1843420550ec0cf692c3598e7b8d10a389e3ef9a1967dc6",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0125",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Recorded under the owner's v0.17 assurance-closure mandate of 2026-09-07, priority 5: register owners and existing evidence first, state a theorem only where the surface has an independently meaningful security proposition, and do not manufacture theorem IDs. Recorded by the implementing agent as routine owner-review maintenance, not as a transcription of a ruling naming this fingerprint. The measurement record is verification/reviews/packets/ownership-remainder-2026-09-07.md.\n\nTHE REQUEST-CONSTRUCTION HALF OF THE CLIENT SEAM. client.response_acceptance owned what a client will accept back; nothing owned what it puts on the wire, and both published SDKs and the client proxy build every signed request through this file.\n\nTHE TWO LOCAL REFUSALS ARE THE LOAD-BEARING PAIR. An unbindable request refused at the CALL SITE is a deployment that learns at the point it made the mistake; sent, it becomes a remote rejection an operator must attribute backwards through a signature, a carrier and a verifier. A placeholder binding sent instead would be worse: a commitment to bytes nobody has. The 'a valid binding still signs' control is what keeps the refusals from being vacuous.\n\nid: null IS NOT THE ABSENCE OF AN id. It is a REQUEST whose id is null, which a server may answer \u2014 and the client that sent a notification is not waiting, so the reply is discarded or correlated to something else. The key must be absent, and that is asserted directly rather than through a round trip.\n\nTWO CUSTODY CLASSES EMITTING DIFFERENT BYTES for the same notification would make the signing MECHANISM observable on the wire \u2014 a fact about the deployment's key custody that nothing in the profile intends to publish.\n\nTHE SELECTORS FOR THIS UNIT WERE WRONG ON THE FIRST PASS and the lane said so. request.rs puts its controls in evidence_precondition_tests and notification_tests, not tests; verify-tests reported ten members as 'never ran'. That is the reason a battery is declared by exact selector rather than by module, and it is recorded here because a silent module rename is the same failure.\n\nNOT THE SIGNATURE'S CORRECTNESS, which is the carrier's; not what a binding MEANS, which is client.binding_spec_refusal's; and no custody claim beyond the two classes being indistinguishable in the emitted bytes.",
+  "reviewed_fingerprint": "sha256:5da16efed9a73cc22821b44d508575cd6726c619ff21f7f970ca2f4a2a3534fb",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0125"
+}

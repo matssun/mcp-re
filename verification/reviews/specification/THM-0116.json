@@ -1,0 +1,17 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:7ee6dba78d696a9f9eb46bfbed8166c78a5b7568495e776ec6f038faf48e2990",
+    "theorem_dependencies": {
+      "THM-0089": "sha256:5f08ed31d860d3ef9a71836edf1b0bff9ea496a89e74dae727eb4baff757fad8",
+      "THM-0108": "sha256:bc0572c08bd951cc9bf782e7e58ed31535ad37668a41cef95ae0a7f9de40c749"
+    },
+    "theorem_id": "THM-0116",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Recorded under the owner's v0.17 assurance-closure mandate of 2026-09-07, priority 5: register owners and existing evidence first, state a theorem only where the surface has an independently meaningful security proposition, and do not manufacture theorem IDs. Recorded by the implementing agent as routine owner-review maintenance, not as a transcription of a ruling naming this fingerprint. The measurement record is verification/reviews/packets/ownership-remainder-2026-09-07.md.\n\nTHIS IS THE HALF THM-0108's SCOPE SAYS CANNOT BE ESTABLISHED AT THE SEAM, in its own words: 'nothing here establishes that any of them speaks its provider's protocol correctly, selects the right key, or reaches the endpoint a deployment intended.' The seam's re-verification catches a mismatched key for ANY backend; what it cannot do is establish that a backend asked the provider what key it has.\n\nAN OWNERSHIP GAP, NOT AN EVIDENCE GAP: 14 controls in the AWS adapter, 39 in the GCP one, 9 in the PKCS#11 one, and no unit cited any of them. THREE UNITS, one per provider, because each module exists only under its own non-default feature and a plain cargo test --workspace compiles all three to ZERO tests.\n\nTHE CONSTRUCTION-TIME HALF IS THE POINT. An adapter that skipped it would advertise a public key it had not established and fail every request at the seam instead of at startup \u2014 a deployment that comes up and refuses everything, rather than one that refuses to come up. A destroyed GCP key version whose public key cannot be fetched must not produce a signer at all. And an endpoint refused at CONSTRUCTION rather than at use is the difference between a deployment that will not start and one that sends a credential-bearing request to an operator-supplied host before noticing; R9's only Critical lived in exactly that gap.\n\nNO CUSTODY CLAIM, AND IN PARTICULAR NO FIPS-L3 CLAIM. A Cloud KMS EC_SIGN_ED25519 key version may be SOFTWARE- or HSM-protected, and getPublicKey/asymmetricSign cannot establish which; the adapters are honestly labelled software-protection custody. Real FIPS-L3 custody evidence remains a DEFERRED obligation awaiting validated hardware, and is not weakened here to manufacture closure. Not a protocol-conformance claim either: each adapter's controls run against fixtures, and the live-infra lane is separate and off the merge path.",
+  "reviewed_fingerprint": "sha256:7e2a8323068d1bb2ade83ec18b7369f1c54bf2578adfcc174213c2dd5e3395e4",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0116"
+}
