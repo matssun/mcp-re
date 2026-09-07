@@ -85,6 +85,9 @@ owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; any change to parse_fixed_digits or its callers."
 affected_contracts = ["contract://core/time/parse_rfc3339_utc"]
+sites = [
+  "mcp-re-core/src/time/mod.rs#parse_fixed_digits",
+]
 tool_specific_mechanism = "verus:external_body"
 
 [[assumption]]
@@ -100,6 +103,9 @@ owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; discharge if vstd gains a specification for it."
 affected_contracts = ["contract://core/time/parse_rfc3339_utc"]
+sites = [
+  "mcp-re-core/src/verus_std_specs.rs#u8::is_ascii_digit",
+]
 tool_specific_mechanism = "verus:assume_specification"
 
 [[assumption]]
@@ -114,6 +120,9 @@ owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; strengthen if a proof ever depends on its result."
 affected_contracts = ["contract://core/time/parse_rfc3339_utc"]
+sites = [
+  "mcp-re-core/src/verus_std_specs.rs#<[T]>::split_last",
+]
 tool_specific_mechanism = "verus:assume_specification"
 
 [[assumption]]
@@ -130,6 +139,9 @@ owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; replace with a proof if a theorem ever concerns Display output."
 affected_contracts = ["contract://core/time/parse_rfc3339_utc"]
+sites = [
+  "mcp-re-core/src/verus_std_specs.rs#ExMcpReError",
+]
 tool_specific_mechanism = "verus:external_type_specification"
 
 # ---------------------------------------------------------------------------
@@ -151,6 +163,9 @@ owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; discharge if vstd gains signed saturating specifications."
 affected_contracts = ["contract://http_profile/verify/check_params"]
+sites = [
+  "mcp-re-http-profile/src/verus_std_specs.rs#i64::saturating_sub",
+]
 tool_specific_mechanism = "verus:assume_specification"
 
 [[assumption]]
@@ -162,6 +177,9 @@ owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; discharge if vstd gains signed saturating specifications."
 affected_contracts = ["contract://http_profile/verify/check_params"]
+sites = [
+  "mcp-re-http-profile/src/verus_std_specs.rs#i64::saturating_add",
+]
 tool_specific_mechanism = "verus:assume_specification"
 
 [[assumption]]
@@ -179,6 +197,9 @@ owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; any change that makes the getter more than a field read."
 affected_contracts = ["contract://http_profile/verify/check_params"]
+sites = [
+  "mcp-re-http-profile/src/policy.rs#VerifierPolicy::max_clock_skew",
+]
 tool_specific_mechanism = "verus:external_body"
 
 [[assumption]]
@@ -190,6 +211,9 @@ owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; any change that makes the getter more than a field read."
 affected_contracts = ["contract://http_profile/verify/check_params"]
+sites = [
+  "mcp-re-http-profile/src/policy.rs#VerifierPolicy::max_signature_validity",
+]
 tool_specific_mechanism = "verus:external_body"
 
 [[assumption]]
@@ -205,6 +229,9 @@ owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; MUST be discharged before any algorithm-agility theorem."
 affected_contracts = ["contract://http_profile/verify/check_params"]
+sites = [
+  "mcp-re-http-profile/src/policy.rs#VerifierPolicy::accepted_algorithm",
+]
 tool_specific_mechanism = "verus:external_body"
 
 [[assumption]]
@@ -219,6 +246,9 @@ owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; strengthen if a proof ever depends on its result."
 affected_contracts = ["contract://http_profile/verify/check_params"]
+sites = [
+  "mcp-re-http-profile/src/verus_std_specs.rs#Option::<T>::as_deref",
+]
 tool_specific_mechanism = "verus:assume_specification"
 
 # ---------------------------------------------------------------------------
@@ -241,6 +271,9 @@ owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review; MUST be discharged before any theorem claiming the binding commits to the assertion's admitted state."
 affected_contracts = ["contract://http_profile/admission/check_admission"]
+sites = [
+  "mcp-re-http-profile/src/admission.rs#AdmissionBinding::matches_state",
+]
 tool_specific_mechanism = "verus:external_body"
 
 [[assumption]]
@@ -265,6 +298,9 @@ owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review; a separate unit for assertion validity is the discharge, not an ensures added here."
 affected_contracts = ["contract://http_profile/admission/check_admission"]
+sites = [
+  "mcp-re-http-profile/src/admission.rs#verify_admission_assertion",
+]
 tool_specific_mechanism = "verus:external_body"
 
 [[assumption]]
@@ -282,6 +318,9 @@ owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review; revisit if a theorem ever needs to say something about a key."
 affected_contracts = ["contract://http_profile/admission/check_admission"]
+sites = [
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExVerificationKey",
+]
 tool_specific_mechanism = "verus:external_type_specification"
 
 [[assumption]]
@@ -300,6 +339,9 @@ owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review; re-examine if AdmissionStatus ever gains a hand-written PartialEq or a payload-carrying variant."
 affected_contracts = ["contract://http_profile/admission/check_admission"]
+sites = [
+  "mcp-re-http-profile/src/verus_std_specs.rs#<AdmissionStatus as core::cmp::PartialEq>::eq",
+]
 tool_specific_mechanism = "verus:assume_specification"
 
 # ---------------------------------------------------------------------------
@@ -337,6 +379,10 @@ owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review; MUST be discharged before any theorem claiming a binding commits to the presented credential."
 affected_contracts = ["contract://http_profile/artifact/verify_artifact_binding"]
+sites = [
+  "mcp-re-http-profile/src/artifact.rs#sha256_b64url",
+  "mcp-re-http-profile/src/artifact.rs#compare",
+]
 tool_specific_mechanism = "verus:external_body"
 
 [[assumption]]
@@ -352,6 +398,9 @@ owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review; a validate() contract is its own unit, not an ensures added here."
 affected_contracts = ["contract://http_profile/artifact/verify_artifact_binding"]
+sites = [
+  "mcp-re-http-profile/src/block/artifact_binding.rs#ArtifactBinding::validate",
+]
 tool_specific_mechanism = "verus:external_body"
 
 [[assumption]]
@@ -363,6 +412,10 @@ owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review; re-examine if either enum gains a hand-written PartialEq or a payload-carrying variant."
 affected_contracts = ["contract://http_profile/artifact/verify_artifact_binding"]
+sites = [
+  "mcp-re-http-profile/src/verus_std_specs.rs#<crate::block::ArtifactType as core::cmp::PartialEq>::eq",
+  "mcp-re-http-profile/src/verus_std_specs.rs#<BindingType as core::cmp::PartialEq>::eq",
+]
 tool_specific_mechanism = "verus:assume_specification"
 
 # ---------------------------------------------------------------------------
@@ -407,6 +460,10 @@ owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review each release; discharge blocked by pinned-toolchain ceilings 2 and 9, not by choice."
 affected_contracts = ["contract://http_profile/dispatch/prepare_http_dispatch"]
+sites = [
+  "mcp-re-http-profile/src/block.rs#ActorIdentity::actor_id",
+  "mcp-re-http-profile/src/block.rs#ResolvedActor::actor_id",
+]
 tool_specific_mechanism = "verus:external_body"
 
 [[assumption]]
@@ -452,6 +509,9 @@ owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP3"
 review_requirement = "Owner review; discharge requires a proof about the digest construction itself, i.e. crossing boundary.crypto_primitives."
 affected_contracts = ["contract://http_profile/block/continuation_verify"]
+sites = [
+  "mcp-re-http-profile/src/block.rs#RequestEvidenceDigest::matches_labeled",
+]
 tool_specific_mechanism = "verus:external_body"
 
 # --- Uninterpreted specification functions -----------------------------------
@@ -490,6 +550,9 @@ owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP3"
 review_requirement = "Owner review; discharge requires crossing boundary.crypto_primitives with a proof about the digest construction."
 affected_contracts = ["contract://http_profile/block/continuation_verify"]
+sites = [
+  "mcp-re-http-profile/src/verus_std_specs.rs#labeled_digest",
+]
 tool_specific_mechanism = "verus:uninterp"
 
 [[assumption]]
@@ -516,6 +579,9 @@ owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP3"
 review_requirement = "Owner review; any change that makes the skew more than a per-policy constant."
 affected_contracts = ["contract://http_profile/verify/check_params"]
+sites = [
+  "mcp-re-http-profile/src/verus_std_specs.rs#skew_of",
+]
 tool_specific_mechanism = "verus:uninterp"
 
 [[assumption]]
@@ -534,6 +600,9 @@ owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP3"
 review_requirement = "Owner review; any change that makes the bound more than a per-policy constant."
 affected_contracts = ["contract://http_profile/verify/check_params"]
+sites = [
+  "mcp-re-http-profile/src/verus_std_specs.rs#validity_of",
+]
 tool_specific_mechanism = "verus:uninterp"
 
 # ---------------------------------------------------------------------------
@@ -1266,3 +1335,130 @@ introduced_by = "v0.17 trust-plane ownership slice (verification/reviews/packets
 review_requirement = "Owner review; any change to the epoch reader, to the poll-interval bound the startup line states, or to the store topology the deployment documentation admits for the epoch key."
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
+
+# ---------------------------------------------------------------------------
+# Per-site registration — the seams kind-level registration was hiding
+# ---------------------------------------------------------------------------
+#
+# R9-C037 / R9-C067 / R9-C068. Registration used to be per (unit, mechanism kind), and
+# `scope` names whole crates, so ONE entry licensed every present and future site of that
+# mechanism in every file those units declare. The registry recorded "this unit trusts
+# uninterpreted spec functions", which is not a fact about any seam.
+#
+# Moving to `sites` made the difference measurable: 55 seams exist, and 25 of them were the
+# ones the entries above actually describe. The 30 below are what the kind-level rule was
+# covering silently — the `Ex…` type specifications that let a Verus specification NAME the
+# profile's own datatypes. They are two propositions, not thirty: one about mirroring, one
+# about opacity. Site granularity is not the same question as assumption granularity, and
+# splitting one proposition into thirty entries would say nothing more while making the
+# registry unreadable.
+#
+# What per-site registration buys here is the FUTURE site: adding a twenty-eighth `Ex…`
+# declaration does not become trusted by inheriting these entries. It fails the gate until
+# somebody decides it belongs, which is the whole content of the change.
+
+[[assumption]]
+id = "ASM-0045"
+description = "Each `Ex…` external type specification declares the same datatype as the profile type it mirrors, so a specification naming the mirror is a specification about the real type."
+justification = """
+NAMEABILITY, not meaning. Verus cannot reason about a type it has no declaration for, and
+these types are defined in production modules that the prover does not read under the
+`verify` feature. The mirror is what lets a contract mention `SignatureParams` or
+`AdmissionClaims` at all.
+
+What is trusted is the CORRESPONDENCE, and it is narrow: that each `Ex…` declaration lists
+the same variants and fields as the type it names. Verus checks the mirror's shape against
+the real type where it can, which is why this is a premise about the parts it cannot —
+notably that a transparent mirror does not silently omit a variant a proof then treats as
+unreachable.
+
+Nothing about BEHAVIOUR is assumed: no impl, no derive, no accessor is in scope here. The
+three types that must additionally be OPAQUE carry their own entry (ASM-0046), because
+hiding a representation and mirroring one are different decisions.
+
+It stops being acceptable if a mirror is edited without the type it mirrors, or if a proof
+begins to depend on a field the mirror declares but the type no longer has.
+"""
+scope = [
+  "unit://http_profile.admission_currency",
+  "unit://http_profile.artifact_typing",
+  "unit://http_profile.continuation_binding",
+  "unit://http_profile.continuation_unbypassability",
+  "unit://http_profile.freshness_window",
+  "boundary://boundary.unmodelled_own_behaviour",
+]
+sites = [
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExVerifierPolicy",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExSignatureParams",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExProfileAlgorithm",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExHttpProfileError",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExAdmissionStatus",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExBindingType",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExAudience",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExAdmissionClaims",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExAdmissionBinding",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExAuthoritativeAdmission",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExVerifiedAdmission",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExAdmissionPolicy",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExArtifactType",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExArtifactBinding",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExSignerSlot",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExActorIdentity",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExResolvedActor",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExAudienceTuple",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExRequestEvidenceDigest",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExHttpContinuation",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExHttpRequestEvidenceBlock",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExRequestEvidence",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExFloorVerifiedRequest",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExVerifiedMcpRequest",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExHttpReplayKey",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExDispatchError",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExRetainedContinuation",
+]
+owner = "mats@sundvall.name"
+introduced_by = "v0.17 per-site escape-hatch registration (verification/reviews/packets/escape-hatch-site-registration-2026-09-07.md)"
+review_requirement = "Owner review; any `Ex…` declaration added, removed, or changed in shape."
+affected_contracts = []
+tool_specific_mechanism = "verus:external_type_specification"
+
+[[assumption]]
+id = "ASM-0046"
+description = "`ExVerifierPolicy`, `ExProfileAlgorithm` and `ExVerificationKey` are OPAQUE: the prover models each as a datatype with no readable fields."
+justification = """
+The weakest premise in this registry, and it is here because the mechanism list is right to
+count it. `external_body` on a type specification REMOVES the ability to reason about the
+representation; it does not add a claim about one. No theorem reads a field of any of these
+three, and none may — the policy accessors (ASM-0007, ASM-0008, ASM-0009) are the only way
+in, and each is registered on its own.
+
+Opacity is the correct choice for exactly these three and not for the mirrors beside them.
+`VerifierPolicy` carries a deployment's construction, algorithm registry and transport
+policy, none of which any claim here reasons about; `ProfileAlgorithm` is a resolved
+algorithm the freshness theorem deliberately says nothing about; `VerificationKey` is a
+foreign type whose contents no theorem mentions (ASM-0013 registers its mirror for the same
+reason). Making any of them transparent would put representation the proofs do not model
+inside their reach.
+
+It stops being acceptable the moment a theorem needs to say something about one of these
+representations, at which point the entry is replaced by a proof about it rather than
+renewed.
+"""
+scope = [
+  "unit://http_profile.admission_currency",
+  "unit://http_profile.artifact_typing",
+  "unit://http_profile.continuation_binding",
+  "unit://http_profile.continuation_unbypassability",
+  "unit://http_profile.freshness_window",
+  "boundary://boundary.unmodelled_own_behaviour",
+]
+sites = [
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExVerifierPolicy",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExProfileAlgorithm",
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExVerificationKey",
+]
+owner = "mats@sundvall.name"
+introduced_by = "v0.17 per-site escape-hatch registration (verification/reviews/packets/escape-hatch-site-registration-2026-09-07.md)"
+review_requirement = "Owner review; any theorem that begins to read a field of one of these types, and any type added to or removed from the list."
+affected_contracts = []
+tool_specific_mechanism = "verus:external_body"

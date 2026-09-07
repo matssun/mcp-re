@@ -32,35 +32,138 @@ from _load_tool import load_tool  # noqa: E402
 
 gate = load_tool('check-assumptions', 'check_assumptions')
 
-
-# --- registration is per unit, not per mechanism name -------------------------
-
-
-REGISTRY = {"core.time_rfc3339": {"external_body"}}
+import _seams as seams  # noqa: E402
 
 
-def test_a_mechanism_is_registered_inside_the_unit_that_registered_it():
-    assert gate.is_registered("external_body", {"core.time_rfc3339"}, REGISTRY)
+# --- registration is per SITE, inside a unit ----------------------------------
+
+
+SITE = "mcp-re-core/src/time/mod.rs#parse_fixed_digits"
+NEXT_SITE = "mcp-re-core/src/time/mod.rs#parse_offset"
+REGISTRY = {"core.time_rfc3339": {("external_body", SITE)}}
+
+
+def test_a_site_is_registered_inside_the_unit_that_registered_it():
+    assert gate.is_registered("external_body", SITE, {"core.time_rfc3339"}, REGISTRY)
 
 
 def test_a_mechanism_registered_in_one_unit_does_not_cover_another():
-    """THE control. `verus:external_body` trusted for the time parser said nothing about a
-    new `external_body` in the admission path, and the gate passed it anyway."""
+    """THE original control. `verus:external_body` trusted for the time parser said nothing
+    about a new `external_body` in the admission path, and the gate passed it anyway."""
     assert not gate.is_registered(
-        "external_body", {"http_profile.admission_currency"}, REGISTRY
+        "external_body", SITE, {"http_profile.admission_currency"}, REGISTRY
     )
 
 
+def test_registering_one_seam_does_not_license_the_next_one_beside_it():
+    """R9-C037 / R9-C067 / R9-C068, as a control. Registration used to be per (unit,
+    mechanism kind) and `scope` names whole crates, so one entry licensed every present and
+    FUTURE site of that mechanism in every file those units declare — the registry recorded
+    "this unit trusts uninterpreted spec functions", which is not a fact about any seam."""
+    assert not gate.is_registered(
+        "external_body", NEXT_SITE, {"core.time_rfc3339"}, REGISTRY
+    )
+
+
+def test_the_mechanism_still_has_to_match_at_the_same_site():
+    """Trusting an uninterpreted spec function is not trusting an `external_body`, even
+    where both sit on one item."""
+    assert not gate.is_registered("uninterp", SITE, {"core.time_rfc3339"}, REGISTRY)
+
+
+def test_a_seam_with_no_nameable_item_is_unregistrable_rather_than_registered():
+    """Fail-closed on the identity, not just on the decision: a seam with no item has
+    nothing to register, and answering yes would make the unnameable case the widest one."""
+    assert not gate.is_registered("external_body", None, {"core.time_rfc3339"}, REGISTRY)
+
+
 def test_a_file_no_unit_declares_can_register_nothing():
-    assert not gate.is_registered("external_body", frozenset(), REGISTRY)
+    assert not gate.is_registered("external_body", SITE, frozenset(), REGISTRY)
 
 
 def test_a_file_shared_by_units_is_covered_by_any_of_their_registrations():
     """A trusted-specs file belongs to every unit that declares it, so a registration by
     one of them is a registration for that file — the crossing is visible in the listing."""
     assert gate.is_registered(
-        "external_body", {"other.unit", "core.time_rfc3339"}, REGISTRY
+        "external_body", SITE, {"other.unit", "core.time_rfc3339"}, REGISTRY
     )
+
+
+def test_an_assumption_with_no_sites_registers_nothing():
+    """The fail-closed direction, and the only one available: "absent means all" is the rule
+    being replaced. A premise whose sites nobody has decided trusts nothing, rather than
+    trusting whatever the mechanism kind next appears in."""
+    doc = {"assumption": [{
+        "id": "ASM-TEST",
+        "tool_specific_mechanism": "verus:external_body",
+        "scope": ["unit://core.time_rfc3339"],
+    }]}
+    original = gate.load_assumptions
+    gate.load_assumptions = lambda: doc
+    try:
+        registry = gate.registered_by_unit()
+    finally:
+        gate.load_assumptions = original
+    assert not gate.is_registered("external_body", SITE, {"core.time_rfc3339"}, registry)
+
+
+# --- a site key is the ITEM, not a line number --------------------------------
+
+
+def test_two_methods_of_one_name_in_one_file_are_two_sites():
+    """`mcp-re-http-profile/src/block.rs` declares `actor_id` in `impl ActorIdentity` and in
+    `impl ResolvedActor`. An unqualified key would make them ONE site, and registering
+    either would license both."""
+    lines = [
+        "impl ActorIdentity {",
+        "    #[verifier::external_body]",
+        "    pub fn actor_id(&self) -> String {",
+        "        String::new()",
+        "    }",
+        "}",
+        "impl ResolvedActor {",
+        "    #[verifier::external_body]",
+        "    pub fn actor_id(&self) -> String {",
+        "        String::new()",
+        "    }",
+        "}",
+    ]
+    assert seams.item_at(lines, 2) == "ActorIdentity::actor_id"
+    assert seams.item_at(lines, 8) == "ResolvedActor::actor_id"
+
+
+def test_a_comment_added_above_a_seam_does_not_move_its_key():
+    """A registry keyed on line numbers goes stale on formatting, and one that goes stale on
+    formatting is one people regenerate without reading."""
+    before = ["#[verifier::external_body]", "pub fn f() {}"]
+    after = ["/// Why this is trusted.", "#[verifier::external_body]", "pub fn f() {}"]
+    assert seams.item_at(before, 1) == seams.item_at(after, 2) == "f"
+
+
+def test_an_assume_specification_names_the_symbol_in_its_own_brackets():
+    """And the brackets are BALANCED, not non-greedy: `<[T]>::split_last` contains a `]` of
+    its own, and a non-greedy match truncates it to `<[T` — one key for two different
+    standard-library seams."""
+    lines = ["pub assume_specification<T>[ <[T]>::split_last ](s: &[T]) -> (r: Option<()>)"]
+    assert seams.item_at(lines, 1) == "<[T]>::split_last"
+
+
+def test_a_brace_inside_a_string_does_not_open_a_qualifying_block():
+    """The qualifier stack is counted over code with literals removed. A `{` in a literal
+    that opened a block would mis-attribute every item after it."""
+    lines = [
+        'const OPEN: &str = "{";',
+        "impl Real {",
+        "    #[verifier::external_body]",
+        "    pub fn f(&self) {}",
+        "}",
+    ]
+    assert seams.item_at(lines, 3) == "Real::f"
+
+
+def test_a_seam_with_no_following_item_has_no_key():
+    assert seams.item_at(["#[verifier::external_body]"], 1) is None
+    assert seams.site_key("a/b.rs", ["#[verifier::external_body]"], 1) is None
 
 
 # --- the mechanisms the production scan looks for -----------------------------
@@ -318,7 +421,9 @@ def test_a_site_no_unit_declares_is_told_to_declare_the_file_first():
     )
     # And the two branches are selected by the owner set, which is what `is_registered`
     # already answers `False` for.
-    assert not gate.is_registered("external_body", frozenset(), {"u": {"external_body"}})
+    assert not gate.is_registered(
+        "external_body", SITE, frozenset(), {"u": {("external_body", SITE)}}
+    )
 
 
 # ---------------------------------------------------------------------------

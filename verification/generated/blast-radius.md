@@ -310,3 +310,5 @@ attestations this view cannot see.
 | ASM-0042 | description, justification, scope or mechanism | _no unit_ | assumption review |
 | ASM-0043 | description, justification, scope or mechanism | _no unit_ | assumption review |
 | ASM-0044 | description, justification, scope or mechanism | proxy.trust_epoch_source | assumption review |
+| ASM-0045 | description, justification, scope or mechanism | http_profile.admission_currency, http_profile.artifact_typing, http_profile.continuation_binding, http_profile.continuation_unbypassability, http_profile.freshness_window | assumption review |
+| ASM-0046 | description, justification, scope or mechanism | http_profile.admission_currency, http_profile.artifact_typing, http_profile.continuation_binding, http_profile.continuation_unbypassability, http_profile.freshness_window | assumption review |

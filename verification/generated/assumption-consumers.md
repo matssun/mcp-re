@@ -59,5 +59,7 @@ independent results, and this view exists so it cannot read as the latter.
 | ASM-0042 | WITHDRAWN — discharged by unit://sdk_python.exchange_path. | _no unit_ | _no theorem_ |
 | ASM-0043 | WITHDRAWN — discharged by unit://sdk_typescript.exchange_path. | _no unit_ | _no theorem_ |
 | ASM-0044 | A read of the trust-epoch key over a replica's own connection, issued after an operator's `INCR` on that key was acknowledged, returns a value different from every value that replica read before the `INCR`. | proxy.trust_epoch_source | _no theorem_ |
+| ASM-0045 | Each `Ex…` external type specification declares the same datatype as the profile type it mirrors, so a specification naming the mirror is a specification about the real type. | http_profile.admission_currency, http_profile.artifact_typing, http_profile.continuation_binding, http_profile.continuation_unbypassability, http_profile.freshness_window | THM-0001, THM-0003, THM-0004, THM-0005, THM-0006, THM-0007, THM-0009, THM-0010, THM-0014, THM-0016, THM-0017, THM-0021, THM-0022 |
+| ASM-0046 | `ExVerifierPolicy`, `ExProfileAlgorithm` and `ExVerificationKey` are OPAQUE: the prover models each as a datatype with no readable fields. | http_profile.admission_currency, http_profile.artifact_typing, http_profile.continuation_binding, http_profile.continuation_unbypassability, http_profile.freshness_window | THM-0001, THM-0003, THM-0004, THM-0005, THM-0006, THM-0007, THM-0009, THM-0010, THM-0014, THM-0016, THM-0017, THM-0021, THM-0022 |
 
-16 assumption(s) are reached by more than one theorem.
+18 assumption(s) are reached by more than one theorem.
