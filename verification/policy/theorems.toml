@@ -2846,14 +2846,12 @@ owner = "client.verified_outcome"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://client.verified_outcome"]
 depends_on = ["THM-0061"]
-# NOT YET a premise of THM-0076, and that is a ratification question rather than an
-# omission. What a verified answer entitles a caller to conclude reads as part of what that
-# root promises — "what the client may conclude about whether the work ran is what the
-# receipt states" — but THM-0076 is a PUBLISHED claim in `docs/spec/security-boundary.md`
-# §2, and adding a premise to it republishes it in a form the owner reviewed in no version
-# on the tree. `scripts/claim_surface_gate.py` says exactly that, and it is right to. The
-# edge is proposed in
-# verification/reviews/packets/client-correctness-2026-09-07.md and is the owner's to make.
+# A premise of THM-0076 since the owner ruling of 2026-09-07, recorded in
+# verification/reviews/rulings/thm-0076-dependency-closure-2026-09-07.md. The edge was
+# proposed and deliberately left untaken in
+# verification/reviews/packets/client-correctness-2026-09-07.md, because adding a premise to
+# a PUBLISHED root republishes it in a form the owner had approved in no version on the tree.
+# The ruling is that event; THM-0076's statement and security consequence are unchanged.
 
 [[theorem]]
 id = "THM-0127"
@@ -2891,6 +2889,11 @@ owner = "client.serving_lifetime"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://client.serving_lifetime"]
 depends_on = ["THM-0120"]
+# A premise of THM-0076 since the owner ruling of 2026-09-07, recorded in
+# verification/reviews/rulings/thm-0076-dependency-closure-2026-09-07.md: the root is a claim
+# about what the shipped client proxy may hand its application under its CURRENT trust
+# configuration, and without this the refresher could remain correct while the deployable
+# stopped starting it and went on verifying under a lapsed manifest.
 
 # =======================================================================================
 # Stage 5 — the response-emission cluster.
@@ -3505,7 +3508,18 @@ It does not establish that the deployment was right to trust an anchor.
 owner = "client.response_acceptance"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://client.response_acceptance"]
-depends_on = ["THM-0058", "THM-0059", "THM-0057", "THM-0060", "THM-0061", "THM-0084"]
+depends_on = [
+  "THM-0058", "THM-0059", "THM-0057", "THM-0060", "THM-0061", "THM-0084",
+  # Ratified 2026-09-07, dependency closure only: the statement and the security
+  # consequence are untouched. THM-0126 owns the step from a genuinely verified reply
+  # to a terminal, continuation or refusal outcome, and THM-0127 owns the composition
+  # step that makes the deployable actually maintain the trust configuration whose
+  # semantics THM-0057 and THM-0120 establish. Without the first, an unclassifiable
+  # verified result could become a completed answer without violating the old closure;
+  # without the second, the refresher could stay correct while the deployable stopped
+  # starting it. Neither is outside this root's published consequence.
+  "THM-0126", "THM-0127",
+]
 
 [[theorem]]
 id = "THM-0077"

@@ -1002,7 +1002,7 @@ any of them is closed.
 
 **Review requirement.** Owner security-specification review
 
-**Depends on.** THM-0057, THM-0058, THM-0059, THM-0060, THM-0061, THM-0084
+**Depends on.** THM-0057, THM-0058, THM-0059, THM-0060, THM-0061, THM-0084, THM-0126, THM-0127
 
 ### THM-0077 — No deployment serves a posture nobody selected
 
