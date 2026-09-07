@@ -4605,3 +4605,447 @@ test_features = ["gcp_kms_keysource"]
 tested_symbols = [
   "lib#remote_signer_call::tests::a_chained_cause_renders_but_never_enters_the_body",
 ]
+
+# v0.17 assurance-closure mandate, priority 5: ownership over evidence that already exists.
+# THM-0108's own scope names these adapters as unowned and says exactly what it does NOT
+# establish about them — that any of them speaks its provider's protocol correctly, selects
+# the right key, or reaches the endpoint a deployment intended. These units are that.
+#
+# ONE UNIT PER PROVIDER, because a green result under one feature is not evidence about
+# another: each of these modules exists only under its own non-default feature, and a plain
+# `cargo test --workspace` compiles all three to zero tests.
+[[unit]]
+id = "proxy.aws_kms_adapter"
+class = "V0"
+description = "The AWS KMS Ed25519 response signer: the key spec is read at construction and a non-Ed25519 one fails closed, the advertised public key is parsed from RFC 8410 SPKI, every signature is verified locally before it is returned, and a pre-hashed signature is refused rather than emitted. Two operations only — GetPublicKey and Sign — over a minimal audited SigV4, with no aws-sdk-kms and no tokio."
+paths = ["mcp-re-proxy/src/aws_kms_keysource.rs", "mcp-re-proxy/src/aws_sigv4.rs"]
+exported_contracts = []
+evidence = ["test://proxy/aws_kms_adapter/construction_and_emission"]
+test_features = ["aws_kms_keysource"]
+tested_symbols = [
+  "lib#aws_kms_keysource::tests::non_ed25519_key_spec_fails_closed",
+  "lib#aws_kms_keysource::tests::get_public_key_parses_ed25519_spki",
+  "lib#aws_kms_keysource::tests::aws_backend_signs_and_verifies_end_to_end",
+  "lib#aws_kms_keysource::tests::prehash_signature_is_rejected_before_return",
+  "lib#aws_kms_keysource::tests::aws_backend_tls_sign_verifies_under_reported_spki",
+  "lib#aws_kms_keysource::tests::a_poisoned_signer_lock_still_signs",
+  "lib#aws_kms_keysource::tests::amz_date_formats_known_epochs",
+  # The endpoint conjuncts. THM-0089 owns the ENDPOINT AUTHORITY rule; these are the
+  # adapter's own wiring of it, and without them a correct rule could sit beside an adapter
+  # that never consulted it.
+  "lib#aws_kms_keysource::tests::authority_strips_scheme_and_path",
+  "lib#aws_kms_keysource::tests::an_authority_that_re_points_the_request_is_refused",
+  "lib#aws_kms_keysource::tests::the_aws_kms_endpoints_an_operator_legitimately_sets_still_yield_an_authority",
+  "lib#aws_kms_keysource::tests::a_hostile_region_stops_the_default_kms_endpoint_being_built",
+  "lib#aws_kms_keysource::tests::a_hostile_region_is_refused_even_with_an_explicit_endpoint",
+  # The quota wiring: this adapter passes ITS OWN signals to the shared rule. THM-0115 owns
+  # the rule; these two establish the data reaching it is this provider's.
+  "lib#aws_kms_keysource::tests::only_account_quota_failures_reach_the_exhausted_verdict",
+  "lib#aws_kms_keysource::tests::a_throttled_tls_sign_stops_calling_kms_for_the_cooldown",
+]
+
+[[unit]]
+id = "proxy.gcp_kms_adapter"
+class = "V0"
+description = "The GCP Cloud KMS Ed25519 response signer: the key version's algorithm is read at construction and anything but EC_SIGN_ED25519 fails closed, the advertised public key is parsed from an RFC 8410 PEM, every signature is verified locally before it is returned, and a pre-hashed signature is refused. A destroyed key version fails closed at construction; a disabled one stops new signing without being mistaken for verifier revocation."
+paths = ["mcp-re-proxy/src/gcp_kms_keysource.rs"]
+exported_contracts = []
+evidence = ["test://proxy/gcp_kms_adapter/construction_and_emission"]
+test_features = ["gcp_kms_keysource"]
+tested_symbols = [
+  "lib#gcp_kms_keysource::tests::non_ed25519_algorithm_fails_closed",
+  "lib#gcp_kms_keysource::tests::get_public_key_parses_ed25519_pem",
+  "lib#gcp_kms_keysource::tests::pem_roundtrips_to_spki_der",
+  "lib#gcp_kms_keysource::tests::gcp_backend_signs_and_verifies_end_to_end",
+  "lib#gcp_kms_keysource::tests::prehash_signature_is_rejected_before_return",
+  "lib#gcp_kms_keysource::tests::gcp_backend_tls_sign_verifies_under_reported_spki",
+  # The key-lifecycle conjuncts, and the third is the one that keeps the first two honest:
+  # a KMS-side disable is not the same fact as a trust-policy revocation, and reading either
+  # as the other would either serve a retired key or refuse a live one.
+  "lib#gcp_kms_keysource::tests::kms_destroy_public_key_unavailable_fails_closed_at_construction",
+  "lib#gcp_kms_keysource::tests::kms_disable_stops_new_signing",
+  "lib#gcp_kms_keysource::tests::kms_disable_alone_is_not_verifier_revocation",
+  "lib#gcp_kms_keysource::tests::trust_policy_revoke_rejects_kms_signed_evidence",
+  "lib#gcp_kms_keysource::tests::rotation_overlap_old_and_new_then_old_revoked",
+  # Endpoint authority, as wired by this adapter.
+  "lib#gcp_kms_keysource::tests::a_gcp_kms_endpoint_that_re_points_the_request_is_refused_at_construction",
+  "lib#gcp_kms_keysource::tests::the_gcp_kms_endpoints_an_operator_legitimately_sets_are_still_accepted",
+  "lib#gcp_kms_keysource::tests::the_operation_paths_do_not_depend_on_the_endpoint_spelling",
+  # Quota wiring, this provider's data.
+  "lib#gcp_kms_keysource::tests::only_project_quota_failures_reach_the_exhausted_verdict",
+  "lib#gcp_kms_keysource::tests::a_throttled_tls_sign_stops_calling_kms_for_the_cooldown",
+]
+
+[[unit]]
+id = "proxy.pkcs11_adapter"
+class = "V0"
+description = "The PKCS#11-backed response signer: the Ed25519 private key never leaves the token, the public key is read from the token and re-emitted as well-formed RFC 8410 SPKI, and a 64-byte signature that does not verify under it is refused before emission. A session that goes invalid is reopened once and retried; a fatal error is not retried and a failed retry is never cached."
+paths = [
+  # Enumerated rather than globbed, because a `lib#pkcs11_keysource::...` selector names a
+  # module whose own source must be measured: without the module file in `paths`, the test
+  # body could be rewritten under the same name with the fingerprint standing still.
+  "mcp-re-proxy/src/pkcs11_keysource/mod.rs",
+  "mcp-re-proxy/src/pkcs11_keysource/session.rs",
+  "mcp-re-proxy/src/pkcs11_keysource/session_pool.rs",
+  "mcp-re-proxy/src/pkcs11_keysource/amortized_session.rs",
+  "mcp-re-proxy/src/pkcs11_keysource/tls_signer.rs",
+  "mcp-re-proxy/src/pkcs11_keysource/token.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/pkcs11_adapter/token_custody_and_sessions"]
+test_features = ["pkcs11_keysource"]
+tested_symbols = [
+  "lib#pkcs11_keysource::tests::tls_spki_is_well_formed_rfc8410_and_round_trips",
+  "lib#pkcs11_keysource::tests::unverifiable_64byte_signature_is_rejected_before_emit",
+  # The session discipline. Its security content is the retry rule, not the amortization:
+  # a fatal error retried would drive a token into a lockout, and a failed retry cached
+  # would serve a broken session to every later handshake.
+  "lib#pkcs11_keysource::tests::sequential_signs_amortize_to_one_login",
+  "lib#pkcs11_keysource::tests::fatal_error_is_not_retried",
+  "lib#pkcs11_keysource::tests::session_invalid_reopens_once_and_retries",
+  "lib#pkcs11_keysource::tests::reopen_failure_after_invalid_fails_closed",
+  "lib#pkcs11_keysource::tests::failed_retry_does_not_cache_the_session",
+  "lib#pkcs11_keysource::tests::the_tls_session_pool_signs_several_handshakes_at_once",
+  "lib#pkcs11_keysource::tests::the_tls_session_pool_amortizes_one_login_per_session",
+]
+
+# The two credential acquirers, which are a different authority from the signers above: what
+# they establish is about a token's LIFETIME, not about a signature.
+[[unit]]
+id = "proxy.aws_sts_credentials"
+class = "V0"
+description = "Acquiring AWS credentials by web-identity AssumeRole: an expiry that cannot be read is already-expired rather than unlimited, a stated expiry is never extended, a far-future one is truncated to the real session ceiling, concurrent callers perform one exchange between them, and a failed exchange is not repeated by every waiter."
+paths = ["mcp-re-proxy/src/aws_sts.rs"]
+exported_contracts = []
+evidence = ["test://proxy/aws_sts/credential_lifetime"]
+test_features = ["aws_kms_keysource"]
+tested_symbols = [
+  "lib#aws_sts::tests::a_well_formed_response_yields_the_credentials_and_its_expiry",
+  "lib#aws_sts::tests::a_session_token_is_always_set_so_sigv4_sends_x_amz_security_token",
+  # The direction that matters. An unreadable expiry read as UNLIMITED is a credential used
+  # forever; read as already-expired it costs an exchange.
+  "lib#aws_sts::tests::an_unparseable_expiration_reads_as_already_expired_not_as_unlimited",
+  "lib#aws_sts::tests::a_missing_expiration_element_reads_as_already_expired",
+  "lib#aws_sts::tests::a_far_future_expiration_is_truncated_to_the_real_session_ceiling",
+  "lib#aws_sts::tests::a_stated_expiry_is_never_extended_by_the_reuse_floor",
+  "lib#aws_sts::tests::an_unreadable_expiration_is_reused_briefly_rather_than_re_exchanged_every_call",
+  # A field that is absent, empty, or echoed outside `Credentials` is not a credential.
+  "lib#aws_sts::tests::a_response_without_credentials_is_refused",
+  "lib#aws_sts::tests::each_missing_credential_field_is_named",
+  "lib#aws_sts::tests::an_empty_credential_field_is_refused_rather_than_signed_with",
+  "lib#aws_sts::tests::a_value_echoed_outside_credentials_is_not_mistaken_for_one",
+  "lib#aws_sts::tests::xml_entities_decode_and_amp_is_decoded_last",
+  "lib#aws_sts::tests::form_encoding_escapes_what_a_jwt_and_an_arn_contain",
+  "lib#aws_sts::tests::session_names_are_validated_against_the_sts_grammar",
+  # Where the token is sent. A projected web-identity token handed to a re-pointed endpoint
+  # is a credential leak, and it is refused at construction rather than at use.
+  "lib#aws_sts::tests::a_region_that_could_redirect_the_token_is_refused",
+  "lib#aws_sts::tests::a_hostile_region_stops_the_default_endpoint_being_built",
+  "lib#aws_sts::tests::an_explicit_sts_endpoint_that_re_points_the_projected_token_is_refused",
+  "lib#aws_sts::tests::the_sts_endpoints_an_operator_legitimately_sets_are_still_admitted",
+  "lib#aws_sts::tests::a_hand_built_web_identity_config_cannot_re_point_the_projected_token",
+  # Single-flight and cool-off, including the clock direction that would otherwise extend it.
+  "lib#aws_sts::tests::a_failed_sts_exchange_is_not_repeated_by_every_waiter",
+  "lib#aws_sts::tests::concurrent_callers_perform_one_sts_exchange_between_them",
+  "lib#aws_sts::tests::concurrent_callers_perform_one_exchange_between_them",
+  "lib#aws_sts::tests::the_sts_failure_cool_off_expires_and_a_success_clears_it",
+  "lib#aws_sts::tests::a_backwards_clock_step_does_not_extend_the_sts_failure_cool_off",
+  "lib#aws_sts::tests::the_sts_windows_must_outlast_what_they_are_measured_against",
+  "lib#aws_sts::tests::a_poisoned_credential_lock_still_serves_credentials",
+]
+
+# v0.17 assurance-closure mandate, priority 5, the `mcp-re-core` half. Three seams the whole
+# verification pipeline rests on, each with substantial evidence and no owner. Registered as
+# three units and not one, because a single answer to ADR-MCPRE-061 §8 question 1 would need
+# two "and"s: what a replay cache establishes, what a trust resolver establishes, and what a
+# content-address is are three facts.
+[[unit]]
+id = "core.replay_seam"
+class = "V0"
+description = "The replay seam: an injected cache keyed by the verified (signer, principal, nonce) triple, consulted only after the signature verifies, returning a DECISION on success and an operational ERROR on failure — never an allow. Every failure the reference cache owns is a value rather than a panic, and every implementation self-declares a durability class that defaults, fail-closed, to the single-process one."
+paths = ["mcp-re-core/src/replay.rs"]
+exported_contracts = []
+evidence = ["test://core/replay_seam/decision_and_outage"]
+# The key's shape is the first three: a nonce is fresh again under a different signer or a
+# different principal, which is what makes the triple a triple rather than a nonce.
+tested_symbols = [
+  "lib#replay::tests::first_insert_is_fresh",
+  "lib#replay::tests::same_triple_again_is_replay",
+  "lib#replay::tests::different_audience_same_nonce_is_fresh",
+  "lib#replay::tests::different_signer_same_nonce_is_fresh",
+  "lib#replay::tests::prune_after_retain_until_readmits_triple",
+  # The split that keeps an outage from reading as a verdict, and the reverse.
+  "lib#replay::tests::operational_failure_maps_to_replay_cache_unavailable",
+  # A panic here would convert a per-request refusal into a worker-terminating failure on
+  # every later request, so the reference cache turns both of its own failures into values.
+  "lib#replay::tests::a_poisoned_lock_refuses_as_unavailable_rather_than_panicking",
+  "lib#replay::tests::a_clone_of_a_poisoned_cache_admits_nothing",
+  "lib#replay::tests::the_entry_ceiling_refuses_rather_than_growing_without_bound",
+  "lib#replay::tests::distinct_inserts_below_the_ceiling_do_not_error",
+  # The self-declaration, and its fail-closed default. A cache that said nothing about its
+  # durability would be wired as if it were shared.
+  "lib#replay::tests::in_memory_reference_declares_single_process_non_durable",
+  "lib#replay::tests::durability_class_defaults_to_single_process_reference",
+]
+
+[[unit]]
+id = "core.trust_resolver_seam"
+class = "V0"
+description = "The trust-resolver seam: (signer, key_id) to a verification key, with an unknown or revoked binding refused as an actor-binding failure and an operational failure refused as an outage — two outcomes that must not be read as each other. The composite key is injective across pairs containing the delimiter."
+paths = ["mcp-re-core/src/resolver.rs"]
+exported_contracts = []
+evidence = ["test://core/trust_resolver_seam/binding_and_outage"]
+# The injectivity control is the one that is not about the mapping's happy path: without it,
+# a signer whose name contains the delimiter could resolve under another signer's key id.
+tested_symbols = [
+  "lib#resolver::tests::insert_then_resolve_returns_matching_key",
+  "lib#resolver::tests::resolve_unknown_signer_or_key_id_maps_to_actor_binding_failed",
+  "lib#resolver::tests::revoke_then_resolve_maps_to_actor_binding_failed",
+  "lib#resolver::tests::rotation_two_key_ids_resolve_to_their_respective_keys",
+  "lib#resolver::tests::operational_failure_maps_to_trust_resolver_unavailable",
+  "lib#resolver::tests::error_mapping_is_exact_for_both_outcomes",
+  "lib#resolver::tests::composite_key_is_injective_across_delimiter_containing_pairs",
+]
+
+[[unit]]
+id = "core.content_address"
+class = "V0"
+description = "The content-address grammar: a `sha256:` prefixed, base64url-no-pad SHA-256 over exact bytes, parsed back only from that exact shape — a missing prefix, a wrong length or a bad encoding is refused rather than interpreted."
+paths = ["mcp-re-core/src/hash.rs"]
+exported_contracts = []
+evidence = ["test://core/content_address/grammar"]
+tested_symbols = [
+  "lib#hash::tests::hash_id_has_prefix_and_no_padding",
+  "lib#hash::tests::hash_id_known_answer_for_empty_object_bytes",
+  "lib#hash::tests::hash_id_is_deterministic",
+  "lib#hash::tests::round_trip_parse",
+  "lib#hash::tests::parse_rejects_missing_prefix",
+  "lib#hash::tests::parse_rejects_wrong_length",
+  "lib#hash::tests::parse_rejects_bad_base64",
+]
+
+# The deployable client's anchor refresh. `client.trust_manifest_lifecycle` (THM-0057) owns
+# the manifest LOADER in `mcp-re-client-core`; this module is the production CALLER that
+# loader never had, and the module says so in its own words: every piece existed and the
+# chain ran end to end only in tests, so restart-durable rollback protection was a property
+# the codebase could demonstrate and no deployment had.
+[[unit]]
+id = "client.anchor_refresh"
+class = "V0"
+description = "The deployable client's trust-anchor refresh against a durable rollback floor: a failed refresh keeps the last good anchors rather than withdrawing trust, and an EXPIRED manifest with no newer document accepted publishes an EMPTY set instead — so a client fails closed loudly rather than outliving its trust quietly."
+paths = ["mcp-re-client/src/anchors/mod.rs", "mcp-re-client/src/anchors/refresher.rs"]
+exported_contracts = []
+evidence = ["test://client/anchor_refresh/last_good_and_expiry"]
+# The first three are the FLOOR: a published manifest raises it, a restart still refuses a
+# rolled-back one, and the ephemeral floor forgets — which is the control that keeps the
+# second from passing for a reason that has nothing to do with durability.
+#
+# The last two are the refresh disposition, and they are opposite on purpose. A transient
+# read failure must not withdraw trust; an EXPIRED document must, because "keep serving under
+# the anchors from the document that expired yesterday" is the stale trust picture
+# `load_signed_manifest` fails closed to prevent, reached by another route.
+tested_symbols = [
+  "lib#anchors::tests::a_published_manifest_loads_and_raises_the_durable_floor",
+  "lib#anchors::tests::a_restarted_client_refuses_a_rolled_back_manifest",
+  "lib#anchors::tests::an_ephemeral_floor_forgets_the_rollback_across_a_restart",
+  "lib#anchors::tests::a_refreshed_manifest_reaches_a_running_client",
+  "lib#anchors::tests::a_failed_refresh_keeps_the_anchors_in_force",
+  "lib#anchors::tests::an_expired_manifest_withdraws_the_anchors_rather_than_serving_on_them",
+  # The end-to-end witness: the rollback refusal reaching the RUNNING listener, not only the
+  # loader. Without it the controls above are about a module rather than about the deployable.
+  "tests/local_leg_e2e_test#a_replayed_older_manifest_cannot_restore_service_through_the_listener",
+  "tests/local_leg_e2e_test#a_published_revocation_reaches_the_running_listener",
+]
+
+# The durable rollback floor the client's anchor refresh rests on. Its own unit and not part
+# of `client.anchor_refresh`, because the two answer different questions: the floor is a
+# storage discipline that is monotone BY CONSTRUCTION, and the refresh is what a deployment
+# does with the answer. THM-0057 owns the loader that consults it; neither owns this.
+[[unit]]
+id = "client.manifest_floor"
+class = "V0"
+description = "A durable rollback floor that is monotone by construction rather than by comparison: a directory of one marker per accepted version, whose maximum only grows. An operator-declared bootstrap minimum survives deleting the whole directory, and a declared ceiling FAIL-STOPS on a fast-forwarded floor rather than clamping it."
+paths = ["mcp-re-client-proxy/src/manifest_floor.rs"]
+exported_contracts = []
+evidence = ["test://client/manifest_floor/monotone_by_construction"]
+# Three groups, and each is a defence in a different direction.
+#
+# DOWNWARD, which is what a floor is for: a recorded version survives a reopen, the maximum
+# never walks back, and a late lower write cannot lower it. The concurrency control is the
+# one the single-file design would have failed — two writers that both read 5 and persist 10
+# and 7 leave the floor at 7.
+#
+# THE DELETION PATH, which is a cheaper capability than corrupting a file: an empty directory
+# honestly reads 0, so the bootstrap minimum is what an attacker cannot reach.
+#
+# UPWARD, the TUF fast-forward shape: markers are unauthenticated by construction, so a
+# directory writer can pin the floor at u64::MAX and refuse every manifest including a
+# break-glass revocation. The ceiling FAIL-STOPS and never clamps — `min(floor, ceiling)`
+# would lower a floor on the say-so of the storage that just proved untrustworthy.
+tested_symbols = [
+  "lib#manifest_floor::tests::a_missing_floor_is_zero",
+  "lib#manifest_floor::tests::a_recorded_version_survives_reopen",
+  "lib#manifest_floor::tests::the_floor_is_monotonic",
+  "lib#manifest_floor::tests::a_late_lower_write_cannot_walk_the_floor_back",
+  "lib#manifest_floor::tests::a_concurrent_raise_makes_the_accepted_version_unrecordable",
+  "lib#manifest_floor::tests::a_floor_raised_by_another_writer_is_honoured",
+  "lib#manifest_floor::tests::a_non_marker_entry_is_ignored_and_does_not_lower_the_floor",
+  "lib#manifest_floor::tests::an_equal_version_record_still_establishes_durability",
+  "lib#manifest_floor::tests::an_already_existing_marker_still_syncs_the_directory",
+  "lib#manifest_floor::tests::superseded_markers_are_pruned",
+  "lib#manifest_floor::tests::the_bootstrap_minimum_survives_deleting_the_whole_floor",
+  "lib#manifest_floor::tests::a_declared_bootstrap_does_not_suppress_the_durable_record",
+  "lib#manifest_floor::tests::a_fast_forwarded_floor_fails_stop_against_the_ceiling",
+  "lib#manifest_floor::tests::the_ceiling_never_clamps_the_floor_downward",
+  "lib#manifest_floor::tests::a_floor_within_its_ceiling_is_untouched",
+  "lib#manifest_floor::tests::recording_above_the_ceiling_is_refused_before_it_bricks_the_floor",
+  "lib#manifest_floor::tests::a_bootstrap_above_the_ceiling_is_refused_at_construction",
+  "lib#manifest_floor::tests::without_a_ceiling_the_floor_is_unbounded_upward",
+]
+
+# v0.17 assurance-closure mandate, priority 5, the remaining `mcp-re-core` half. The audit
+# vocabulary is its own authority: `http_profile.verifier_results` owns error.rs — what a
+# verdict IS — and this owns what a RECORD may say about one.
+[[unit]]
+id = "core.audit_vocabulary"
+class = "V0"
+description = "What a security record may say: a rejection reason is a frozen Core token by TYPE, since no constructor takes a string; the success set is exactly two events the error enum cannot express and the key-lifecycle set exactly three; and the non-normative display label is never a token."
+paths = ["mcp-re-core/src/audit.rs", "mcp-re-core/src/audit/reason_label.rs"]
+exported_contracts = []
+evidence = ["test://core/audit_vocabulary/frozen_reasons"]
+# The in-crate controls state the type property. The conformance guard is what makes it a
+# property of the TREE rather than of this file: it reads both sources from disk and fails on
+# any drift, including a producer elsewhere minting a token of its own.
+tested_symbols = [
+  "lib#audit::tests::rejection_reason_is_exact_wire_code",
+  "lib#audit::tests::success_events_are_the_two_item_allowlist",
+  # Core BINDS the authorization artifact and never interprets it, so a "mismatch" reason
+  # here would claim a comparison Core did not make.
+  "lib#audit::tests::no_authorization_hash_mismatch_audit_reason",
+  # The label is display text. A label that WAS a token would let a reader treat prose as a
+  # machine verdict, and a verdict sharing a sentence with another would make two outcomes
+  # indistinguishable in a record.
+  "lib#audit::reason_label::tests::a_label_is_never_a_wire_token",
+  "lib#audit::reason_label::tests::every_verdict_has_its_own_sentence",
+]
+
+# The deployable client's local serving pipeline. `client.local_ingress_authority` (THM-0091)
+# owns WHOSE requests are admitted — the bind scope, the accepted authority, the head fields;
+# this owns what happens to one that is.
+[[unit]]
+id = "client.local_serving_pipeline"
+class = "V0"
+description = "What the local listener does with an admitted request: an in-flight ceiling whose slot is returned by a refusal and by a panicking worker alike, a route named by the path rather than guessed, host and content-type guards, read/write deadlines, a verified pause rendered as a pause rather than a finished call, and a close that lets the caller see the refusal it was given."
+paths = [
+  "mcp-re-client/src/serve/admission.rs",
+  "mcp-re-client/src/serve/exchange.rs",
+  "mcp-re-client/src/serve/guards.rs",
+  "mcp-re-client/src/serve/deadlines.rs",
+  "mcp-re-client/src/serve/render.rs",
+  "mcp-re-client/src/serve/response.rs",
+  "mcp-re-client/src/serve/close.rs",
+]
+exported_contracts = []
+evidence = ["test://client/local_serving_pipeline/admitted_request"]
+# The panicking-worker control is the one an ordinary battery does not reach: a slot that a
+# panic leaks is a ceiling that ratchets down to zero over a process's life, which is a local
+# denial of service nothing reports.
+tested_symbols = [
+  "lib#serve::admission::tests::a_refused_claim_is_released",
+  "lib#serve::admission::tests::a_zero_ceiling_admits_nothing",
+  "lib#serve::admission::tests::a_panicking_worker_returns_its_in_flight_slot",
+  "lib#serve::exchange::tests::a_path_names_its_route",
+  "lib#serve::exchange::tests::a_nested_or_empty_path_names_no_route",
+  "lib#serve::exchange::tests::any_other_path_falls_to_the_default_route_only_when_one_is_configured",
+  "lib#serve::guards::tests::only_loopback_literals_and_localhost_are_accepted_hosts",
+  "lib#serve::guards::tests::only_json_content_types_are_accepted",
+  "lib#serve::deadlines::tests::a_peer_that_never_reads_hits_the_write_deadline",
+  # A pause rendered as a finished call would report a call that has not run as one that has.
+  "lib#serve::render::tests::a_verified_pause_is_not_rendered_as_a_finished_call",
+  "lib#serve::response::tests::the_response_writer_emits_one_content_length_and_closes",
+  # The end-to-end witnesses. Without them the controls above are about the pieces rather
+  # than about the listener a deployment runs.
+  "tests/local_leg_e2e_test#a_plain_mcp_call_round_trips_through_the_listener_and_comes_back_verified",
+  "tests/local_leg_e2e_test#a_path_that_names_no_route_is_refused_rather_than_guessed",
+  "tests/local_leg_e2e_test#a_configured_default_route_serves_a_fixed_path",
+  "tests/local_leg_e2e_test#the_local_http_surface_refuses_everything_it_does_not_implement",
+  "tests/local_leg_e2e_test#concurrent_local_callers_are_served_in_parallel",
+  "tests/local_leg_e2e_test#shutdown_waits_for_an_accepted_exchange_instead_of_dropping_it",
+  "tests/local_leg_e2e_test#a_notification_is_acknowledged_with_a_bodyless_202",
+  "tests/local_leg_e2e_test#a_verified_rejection_carries_its_execution_contract_to_the_local_client",
+]
+
+# What a deployment may DECLARE. `client.local_ingress_authority` owns the bind scope and its
+# validation; this owns the rest of the document — the artifact bindings, the skew and cadence
+# bounds, the routes, and the floor.
+[[unit]]
+id = "client.deployment_config"
+class = "V0"
+description = "What a client deployment may declare: an unknown field fails rather than defaulting, a binding on a header the client does not send is refused, a DPoP binding digests what the verifier digests and only on a bearer `authorization`, the clock-skew bound matches the profile's, a disabled or unbounded reload cadence is refused, route ids are unique, the org-key pin set is non-empty and the rollback floor must be named."
+paths = ["mcp-re-client/src/config/mod.rs"]
+exported_contracts = []
+evidence = ["test://client/deployment_config/declared_document"]
+# The binding controls are the sharp ones. A binding over a header the client never sends
+# commits the request to a digest of nothing; a DPoP binding that digests the value verbatim
+# rather than what the verifier digests produces evidence no verifier can reproduce; and a
+# literal or file-sourced DPoP proof is a credential the operator, not the client, minted.
+tested_symbols = [
+  "lib#config::tests::an_unknown_field_fails_rather_than_defaulting",
+  "lib#config::tests::a_binding_on_an_unsent_header_is_refused",
+  "lib#config::tests::a_dpop_binding_digests_what_the_verifier_digests",
+  "lib#config::tests::a_non_dpop_header_binding_digests_the_value_verbatim",
+  "lib#config::tests::a_literal_or_file_dpop_binding_is_refused",
+  "lib#config::tests::a_dpop_binding_on_another_header_is_refused",
+  "lib#config::tests::a_dpop_binding_on_a_non_bearer_authorization_is_refused",
+  "lib#config::tests::a_literal_mtls_binding_is_refused",
+  # The two bounds a deployment could otherwise widen silently.
+  "lib#config::tests::a_config_skew_bound_matches_the_profile_bound",
+  "lib#config::tests::an_out_of_range_clock_skew_is_refused",
+  "lib#config::tests::a_disabled_or_unbounded_reload_cadence_is_refused",
+  # Identity and rollback: a duplicate route id makes two audiences one, an empty pin set
+  # trusts every issuer, and an unnamed floor is rollback protection that resets on restart.
+  "lib#config::tests::a_duplicate_route_id_is_refused",
+  "lib#config::tests::an_empty_org_key_pin_set_is_refused",
+  "lib#config::tests::the_floor_must_be_named",
+  # The bind scope's own two arms are `client.local_ingress_authority`'s; named here because
+  # they live in this file and this unit measures it.
+  "lib#config::tests::a_loopback_bind_is_accepted",
+  "lib#config::tests::a_non_loopback_bind_is_refused_unless_declared",
+]
+
+# The request-construction half of the client seam. `client.response_acceptance` owns what a
+# client will accept back; nothing owned what it puts on the wire, and both SDKs and the
+# client proxy build every signed request through this file.
+[[unit]]
+id = "client.request_construction"
+class = "V0"
+description = "What a client puts on the wire: the caller's own `params._meta` survives signing, the evidence block lands at the body root, a request with no artifact binding or a structurally invalid one is refused LOCALLY rather than sent, a signed notification carries no `id` key at all rather than a null one, a continuation on a notification is refused, and both custody classes emit identical notification bytes."
+paths = [
+  "mcp-re-client-core/src/request.rs",
+  "mcp-re-client-core/src/request_signing_inputs.rs",
+]
+exported_contracts = []
+evidence = ["test://client/request_construction/signed_request_shape"]
+# The two local refusals are the load-bearing pair: an unbindable request refused HERE never
+# reaches a verifier, so a deployment learns at the call site rather than from a remote
+# rejection it cannot attribute. The notification controls are about a different failure —
+# an `id` present as null is a REQUEST with no id, which a server may answer, and a client
+# that sent a notification would not be waiting.
+tested_symbols = [
+  "lib#request::evidence_precondition_tests::caller_params_meta_survives_signing",
+  "lib#request::evidence_precondition_tests::the_evidence_block_still_lands_at_the_body_root",
+  "lib#request::evidence_precondition_tests::signing_with_no_artifact_binding_is_refused_locally",
+  "lib#request::evidence_precondition_tests::signing_with_a_structurally_invalid_binding_is_refused_locally",
+  "lib#request::evidence_precondition_tests::a_valid_binding_still_signs",
+  "lib#request::notification_tests::a_signed_notification_carries_no_id_at_all",
+  "lib#request::notification_tests::the_id_key_is_absent_rather_than_null",
+  "lib#request::notification_tests::a_signed_notification_carries_the_ordinary_rfc_9421_evidence",
+  "lib#request::notification_tests::a_continuation_on_a_notification_is_refused_locally",
+  # Two custody classes emitting different bytes for the same notification would make the
+  # signing mechanism observable on the wire.
+  "lib#request::notification_tests::both_custody_classes_emit_identical_notification_bytes",
+  # The decision binding is minted over the EXACT bytes presented, and a caller presenting
+  # none authors a block without one rather than an empty or placeholder binding.
+  "lib#request_signing_inputs::tests::a_decision_mints_its_own_binding_over_the_exact_bytes",
+  "lib#request_signing_inputs::tests::a_caller_that_presents_no_decision_authors_a_block_without_one",
+]

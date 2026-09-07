@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:eada2af3d54aa942d99d430ced48df2a7a727f0491bfa7ddfeb1f7571ff16990",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0124",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Recorded under the owner's v0.17 assurance-closure mandate of 2026-09-07, priority 5: register owners and existing evidence first, state a theorem only where the surface has an independently meaningful security proposition, and do not manufacture theorem IDs. Recorded by the implementing agent as routine owner-review maintenance, not as a transcription of a ruling naming this fingerprint. The measurement record is verification/reviews/packets/ownership-remainder-2026-09-07.md.\n\nAN ARTIFACT BINDING IS A COMMITMENT THE REQUEST SIGNS, so a binding the client cannot produce is a deployment that comes up and then fails every exchange. A binding over a header the client does not send commits to the digest of NOTHING, which no verifier can reproduce.\n\nTHE DPoP CONJUNCTS ARE SHARPER. Digesting the header VALUE where the verifier digests the PROOF produces evidence that is well-formed, correctly signed, and about the wrong bytes \u2014 the failure mode with no error anywhere. A DPoP binding on a non-bearer authorization, or on another header entirely, names a credential the profile does not put there. A literal or file-sourced DPoP proof is a credential the OPERATOR minted rather than the client, which is a different actor than the one the signature attributes it to.\n\nEVERY REMAINING REFUSAL closes a way for a deployment to come up claiming a control it does not have: an unknown field that defaulted, an unbounded reload cadence (a trust picture that never refreshes), a duplicate route id (two audiences made one), an empty org-key pin set (every issuer trusted), an unnamed floor (rollback protection that resets on restart), and a clock skew outside the profile's own bound.\n\nTHE DOCUMENT, NOT THE DEPLOYMENT. What the values mean at runtime belongs to client.anchor_refresh, client.manifest_floor and client.proxy_request_correspondence. The bind scope's own rule is THM-0091's; its two arms live in this file and are measured by this unit.",
+  "reviewed_fingerprint": "sha256:bdb2a8b7294f3f0efa39161d221a98bc3450530a00dd00ad77539ed14999da31",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0124"
+}

@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:3ae48f870dde08954e80ff655df5aedd24342b4075e1fbedda9e2486e059a4c6",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0122",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Recorded under the owner's v0.17 assurance-closure mandate of 2026-09-07, priority 5: register owners and existing evidence first, state a theorem only where the surface has an independently meaningful security proposition, and do not manufacture theorem IDs. Recorded by the implementing agent as routine owner-review maintenance, not as a transcription of a ruling naming this fingerprint. The measurement record is verification/reviews/packets/ownership-remainder-2026-09-07.md.\n\nA RECORD WHOSE REASON COULD BE ANY STRING is a record in which one authority's verdict passes for another's. That is #637 exactly: a PolicyError token reached AuditEvent.reason, and from the record alone nobody could tell which authority had spoken. Removing the string-taking constructors made the containment a property of the TYPE, so there is no producer graph left to discover.\n\nTHE LABEL CONJUNCTS ARE THE MIRROR of that. A label that WAS a token would let a reader treat display prose as a machine verdict; two verdicts sharing a sentence would make two different outcomes indistinguishable in the record an investigation reads.\n\nNO authorization_hash_mismatch REASON, because 'mismatch' would report a semantic comparison as Core's when Core only BINDS the artifact \u2014 attributing a decision to the layer that binds rather than the one that interprets.\n\nTHE TREE-WIDE HALF IS THM-0111's: that exactly two files decide what an mcp-re.* verdict token says is measured there. What is established here is what the audit layer may SAY with them. Not the emission: nothing here establishes a record is written, reaches a sink, or is durable.",
+  "reviewed_fingerprint": "sha256:85a2af79ab2729c562822a449f61faa1c8d08b50acf2aca2fb11387c6695953e",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0122"
+}

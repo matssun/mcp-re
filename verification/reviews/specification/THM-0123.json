@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:fba9e8af48ca009e86b5ba03004c04cb35f4b28f803644d804c220236625ce98",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0123",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Recorded under the owner's v0.17 assurance-closure mandate of 2026-09-07, priority 5: register owners and existing evidence first, state a theorem only where the surface has an independently meaningful security proposition, and do not manufacture theorem IDs. Recorded by the implementing agent as routine owner-review maintenance, not as a transcription of a ruling naming this fingerprint. The measurement record is verification/reviews/packets/ownership-remainder-2026-09-07.md.\n\nTHE PANIC CONJUNCT IS THE ONE AN ORDINARY BATTERY DOES NOT REACH. A slot leaked by a panicking worker ratchets the in-flight ceiling down over the process's life until the listener admits nothing \u2014 a local denial of service that no error path reports, reached by whatever input made the worker panic.\n\nA PATH GUESSED ONTO A ROUTE sends a request to an audience it does not name, and the audience is what the signature binds; a default route reached by a path that names none would do that silently. The host and content-type guards keep a browser or a non-loopback peer from driving the operator's signing identity.\n\nA PAUSE RENDERED AS A FINISHED CALL reports a call that has NOT run as one that has \u2014 the same class of error the execution contract exists for, at the last hop before the local client acts.\n\nTHE CLOSE AND THE CONTENT-LENGTH are how a refusal reaches the caller as an unexplained broken pipe instead of the refusal it was given: closing on top of unread bytes turns a 405 into an RST, and the refusal path may therefore WAIT, bounded in both bytes and wall clock, while the success path may not \u2014 what a reset discards there is a VERIFIED reply to a call the server already ran.\n\nWHAT HAPPENS TO AN ADMITTED REQUEST, NOT WHOSE ARE ADMITTED: the bind scope, the accepted authority and the head fields are client.local_ingress_authority's under THM-0091. No number is asserted sufficient.",
+  "reviewed_fingerprint": "sha256:d49622174412a7122cc6758effe64e8862e9cbe47e733382415d6c2b5bf244ce",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0123"
+}

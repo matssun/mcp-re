@@ -157,6 +157,18 @@ on:
       # HTTP authority names reach signing, and the head guards that run before a byte is
       # signed. A subtree pattern for the same reason as client-core's.
       - "mcp-re-client/src/**"
+      # THM-0120 / THM-0123: the deployable's e2e battery is the witness that the anchor
+      # refresh and the local pipeline hold for the LISTENER, not only for the modules.
+      - "mcp-re-client/tests/**"
+      # v0.17 priority 5, the provider adapters beneath the KMS seam (THM-0116, THM-0117)
+      # and the token custody THM-0116 covers. Each exists only under its own non-default
+      # feature, so none of their units runs in the default lane and a change here must
+      # still re-trigger every one of them.
+      - "mcp-re-proxy/src/aws_kms_keysource.rs"
+      - "mcp-re-proxy/src/aws_sigv4.rs"
+      - "mcp-re-proxy/src/aws_sts.rs"
+      - "mcp-re-proxy/src/gcp_kms_keysource.rs"
+      - "mcp-re-proxy/src/pkcs11_keysource/**"
       - "mcp-re-client/Cargo.toml"
       # #740: the retained-evidence corpus this implementation produced. The ARTIFACTS are in
       # the fingerprint, not just the test that reads them — a frozen vector whose bytes can
@@ -416,6 +428,18 @@ on:
       # HTTP authority names reach signing, and the head guards that run before a byte is
       # signed. A subtree pattern for the same reason as client-core's.
       - "mcp-re-client/src/**"
+      # THM-0120 / THM-0123: the deployable's e2e battery is the witness that the anchor
+      # refresh and the local pipeline hold for the LISTENER, not only for the modules.
+      - "mcp-re-client/tests/**"
+      # v0.17 priority 5, the provider adapters beneath the KMS seam (THM-0116, THM-0117)
+      # and the token custody THM-0116 covers. Each exists only under its own non-default
+      # feature, so none of their units runs in the default lane and a change here must
+      # still re-trigger every one of them.
+      - "mcp-re-proxy/src/aws_kms_keysource.rs"
+      - "mcp-re-proxy/src/aws_sigv4.rs"
+      - "mcp-re-proxy/src/aws_sts.rs"
+      - "mcp-re-proxy/src/gcp_kms_keysource.rs"
+      - "mcp-re-proxy/src/pkcs11_keysource/**"
       - "mcp-re-client/Cargo.toml"
       # #740: the retained-evidence corpus this implementation produced. The ARTIFACTS are in
       # the fingerprint, not just the test that reads them — a frozen vector whose bytes can

@@ -145,19 +145,28 @@ mod tests {
     /// The production source fills the WHOLE buffer. A partial fill would leave the tail at
     /// its initial value — zeros, in every caller — which is a nonce with less entropy than
     /// its length advertises and no way to notice from the outside.
+    ///
+    /// Asserted over EIGHT draws rather than two, and that is not caution: two draws of ONE
+    /// byte collide once in 256, so the two-draw form is a control that fails on a correct
+    /// implementation roughly every four hundredth run. Eight draws of the shortest buffer
+    /// agree only with probability 256^-7.
     #[test]
     fn the_production_source_fills_every_byte_it_is_given() {
+        const DRAWS: usize = 8;
         let mut source = SystemNonceSource::new();
         for len in [1usize, NONCE_BYTES, 64] {
-            let mut filled = vec![0u8; len];
-            let mut sentinel = vec![0xAAu8; len];
-            source.fill(&mut filled);
-            source.fill(&mut sentinel);
-            // Two draws over two different initial buffers cannot both be left untouched,
-            // and cannot be equal to each other except with negligible probability.
-            assert_ne!(
-                filled, sentinel,
-                "two draws of {len} bytes were identical — the buffer is not being filled"
+            let mut seen: BTreeSet<Vec<u8>> = BTreeSet::new();
+            for seed in 0..DRAWS {
+                // A different initial byte each time, so a buffer left UNTOUCHED yields a
+                // distinct value and could not be mistaken for a fresh draw.
+                let mut out = vec![u8::try_from(seed).unwrap_or(0); len];
+                source.fill(&mut out);
+                seen.insert(out);
+            }
+            assert!(
+                seen.len() > 1,
+                "{DRAWS} draws of {len} byte(s) were all identical — the buffer is not \
+                 being filled"
             );
         }
     }

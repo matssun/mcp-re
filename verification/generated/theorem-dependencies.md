@@ -115,8 +115,12 @@ graph BT
     THM_0103["THM-0103<br/>The epoch-bound session store resumes a session under the epoch that tagged it, and under no other"]
     THM_0106["THM-0106<br/>The Redis replay backend refuses a server that may drop a nonce, and turns every non-answer into an outage"]
     THM_0107["THM-0107<br/>The etcd replay backend records a nonce only under a bounded lease through a linearized put-if-absent, and turns every non-answer into an outage"]
+    THM_0108["THM-0108<br/>The KMS seam admits only a raw preimage, emits only a 64-byte signature, and verifies every one of them under the signer's own advertised key first"]
     THM_0111["THM-0111<br/>Two vocabularies decide what an mcp-re.* verdict token says, and every other producer names a verdict rather than spelling one"]
     THM_0113["THM-0113<br/>An attestation is checked against the bytes it was issued over, and says which binding it established"]
+    THM_0116["THM-0116<br/>A non-exporting signer's advertised key is established at construction, and a signature it cannot verify is never emitted"]
+    THM_0120["THM-0120<br/>A client that cannot establish current anchors publishes none, rather than serving on expired ones"]
+    THM_0121["THM-0121<br/>The rollback floor only rises, and a floor that has been pushed too high stops the client rather than lowering itself"]
     THM_0007 --> THM_0008
     THM_0010 --> THM_0009
     THM_0001 --> THM_0014
@@ -260,6 +264,10 @@ graph BT
     THM_0043 --> THM_0101
     THM_0046 --> THM_0111
     THM_0088 --> THM_0113
+    THM_0089 --> THM_0116
+    THM_0108 --> THM_0116
+    THM_0057 --> THM_0120
+    THM_0121 --> THM_0120
     classDef root stroke-width:3px;
     class THM_0071,THM_0074,THM_0075,THM_0076,THM_0077,THM_0078 root;
 ```
@@ -347,40 +355,82 @@ graph BT
 
 ```mermaid
 graph BT
-    THM_0108["THM-0108<br/>The KMS seam admits only a raw preimage, emits only a 64-byte signature, and verifies every one of them under the signer's own advertised key first"]
+    THM_0109["THM-0109<br/>The client transport verifies the proxy's server certificate against the configured CA, and a request body is never sent to a server it did not authenticate"]
 ```
 
 ## Component 12
 
 ```mermaid
 graph BT
-    THM_0109["THM-0109<br/>The client transport verifies the proxy's server certificate against the configured CA, and a request body is never sent to a server it did not authenticate"]
+    THM_0110["THM-0110<br/>The client transport refuses an ambiguous message rather than repairing it, and reads nothing unbounded"]
 ```
 
 ## Component 13
 
 ```mermaid
 graph BT
-    THM_0110["THM-0110<br/>The client transport refuses an ambiguous message rather than repairing it, and reads nothing unbounded"]
+    THM_0112["THM-0112<br/>A retained hop is exactly what re-verifies it, and nothing a sender could widen it to"]
 ```
 
 ## Component 14
 
 ```mermaid
 graph BT
-    THM_0112["THM-0112<br/>A retained hop is exactly what re-verifies it, and nothing a sender could widen it to"]
+    THM_0114["THM-0114<br/>A signed request's freshness inputs are real, and the deterministic ones cannot reach a production build"]
 ```
 
 ## Component 15
 
 ```mermaid
 graph BT
-    THM_0114["THM-0114<br/>A signed request's freshness inputs are real, and the deterministic ones cannot reach a production build"]
+    THM_0115["THM-0115<br/>The quota window is armed by a typed wire fact, and a failure that states no quota arms nothing"]
 ```
 
 ## Component 16
 
 ```mermaid
 graph BT
-    THM_0115["THM-0115<br/>The quota window is armed by a typed wire fact, and a failure that states no quota arms nothing"]
+    THM_0117["THM-0117<br/>An acquired credential is never used past the lifetime its issuer stated, and a lifetime that cannot be read is not a long one"]
+```
+
+## Component 17
+
+```mermaid
+graph BT
+    THM_0118["THM-0118<br/>A replay verdict and a replay-tier outage are different answers, and neither is an allow"]
+```
+
+## Component 18
+
+```mermaid
+graph BT
+    THM_0119["THM-0119<br/>A trust binding that does not exist and a resolver that cannot answer are different refusals, and the key that names one binding names no other"]
+```
+
+## Component 19
+
+```mermaid
+graph BT
+    THM_0122["THM-0122<br/>A security record says what a Core verdict says, and its display text is never a verdict"]
+```
+
+## Component 20
+
+```mermaid
+graph BT
+    THM_0123["THM-0123<br/>An admitted local request cannot leak its slot, cannot be guessed onto a route, and a pause is never rendered as a finished call"]
+```
+
+## Component 21
+
+```mermaid
+graph BT
+    THM_0124["THM-0124<br/>A declared binding commits to what the verifier will digest, or the deployment does not start"]
+```
+
+## Component 22
+
+```mermaid
+graph BT
+    THM_0125["THM-0125<br/>A request a verifier could not bind is refused before it is sent, and a notification is not a request with no id"]
 ```

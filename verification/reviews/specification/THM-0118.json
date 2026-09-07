@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:3d9b07be31664b7700d425426543b21687b60bbae1fdec3fee7041dfe76875ad",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0118",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Recorded under the owner's v0.17 assurance-closure mandate of 2026-09-07, priority 5: register owners and existing evidence first, state a theorem only where the surface has an independently meaningful security proposition, and do not manufacture theorem IDs. Recorded by the implementing agent as routine owner-review maintenance, not as a transcription of a ruling naming this fingerprint. The measurement record is verification/reviews/packets/ownership-remainder-2026-09-07.md.\n\nTHE SEAM THE WHOLE PIPELINE RESTS ON, and it had no owner. Twelve controls existed.\n\nTHE EXCLUDED OUTCOME is a replayed request served because the tier could not answer. That is what a bare boolean produces: 'not found' and 'could not look up' collapse into one value, and the safe reading of the collapsed value is whichever the caller happened to choose. Here the caller cannot choose \u2014 the type has no arm for it.\n\nTHE PANIC CONJUNCT is a different failure with the same effect: a poisoned lock that panicked would turn a per-request refusal into a worker-terminating panic on every LATER request, so one bad request takes the tier out for all of them. Both failures the reference cache owns \u2014 the poisoned lock and the entry ceiling \u2014 are error VALUES.\n\nTHE FAIL-CLOSED DEFAULT on the durability class is what keeps a new backend from being wired as though it were shared. A per-node in-memory cache does not prevent cross-node replays, and a backend that forgot to declare would otherwise be indistinguishable from one that had.\n\nNOT A DEPLOYMENT'S TIER: InMemoryReplayCache declares itself single-process, and whether any deployed cache is shared, durable or linearizable is THM-0106's and THM-0107's; the tier's fail-closed ORDERING is THM-0092's. Not the pipeline's ordering either \u2014 that the cache is consulted only AFTER the signature verifies, so invalid-signature garbage cannot burn a legitimate nonce, is the verification pipeline's to state.",
+  "reviewed_fingerprint": "sha256:ae356e50885063c1d7d1090378d11ff5c2719107deb7da2a70a8cb50e51dfbc0",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0118"
+}
