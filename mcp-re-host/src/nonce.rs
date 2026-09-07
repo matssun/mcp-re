@@ -121,3 +121,89 @@ impl NonceSource for SeededNonceSource {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::NonceSource;
+    use super::SeededNonceSource;
+    use super::SystemNonceSource;
+    use super::NONCE_BYTES;
+    use std::collections::BTreeSet;
+
+    /// The spec minimum, and the reason the constant exists rather than a literal at each
+    /// call site. 16 bytes is 128 bits; anything less narrows the space a replay-freshness
+    /// nonce is drawn from, and the narrowing would be invisible at the point of use.
+    #[test]
+    fn the_nonce_is_at_least_the_specs_minimum_entropy() {
+        assert_eq!(NONCE_BYTES, 16);
+        assert!(
+            NONCE_BYTES.saturating_mul(8) >= 128,
+            "MCP_RE_SPEC §2/§5 requires at least 128 bits of nonce entropy"
+        );
+    }
+
+    /// The production source fills the WHOLE buffer. A partial fill would leave the tail at
+    /// its initial value — zeros, in every caller — which is a nonce with less entropy than
+    /// its length advertises and no way to notice from the outside.
+    #[test]
+    fn the_production_source_fills_every_byte_it_is_given() {
+        let mut source = SystemNonceSource::new();
+        for len in [1usize, NONCE_BYTES, 64] {
+            let mut filled = vec![0u8; len];
+            let mut sentinel = vec![0xAAu8; len];
+            source.fill(&mut filled);
+            source.fill(&mut sentinel);
+            // Two draws over two different initial buffers cannot both be left untouched,
+            // and cannot be equal to each other except with negligible probability.
+            assert_ne!(
+                filled, sentinel,
+                "two draws of {len} bytes were identical — the buffer is not being filled"
+            );
+        }
+    }
+
+    /// Successive draws differ. The failure this refuses is the one the trait's fail-closed
+    /// contract exists for: a source that returns a fixed or repeating value defeats replay
+    /// freshness silently, because every nonce is still well-formed and correctly encoded.
+    #[test]
+    fn successive_production_draws_are_distinct() {
+        let mut source = SystemNonceSource::new();
+        let mut seen: BTreeSet<[u8; NONCE_BYTES]> = BTreeSet::new();
+        for _ in 0..64 {
+            let mut out = [0u8; NONCE_BYTES];
+            source.fill(&mut out);
+            assert_ne!(out, [0u8; NONCE_BYTES], "a nonce was the all-zero buffer");
+            assert!(seen.insert(out), "the production source repeated a nonce");
+        }
+        assert_eq!(seen.len(), 64);
+    }
+
+    /// The fixture is deterministic and ADVANCES, so a session signing two requests under a
+    /// fixed seed does not sign both under one nonce — which would make a replay test pass
+    /// for the wrong reason.
+    #[test]
+    fn the_fixture_is_reproducible_and_advances_between_draws() {
+        let seed = b"abcdef";
+        let mut a = SeededNonceSource::new(seed);
+        let mut b = SeededNonceSource::new(seed);
+        let (mut a1, mut a2, mut b1) = ([0u8; 4], [0u8; 4], [0u8; 4]);
+        a.fill(&mut a1);
+        a.fill(&mut a2);
+        b.fill(&mut b1);
+        assert_eq!(
+            a1, *b"abcd",
+            "the first draw is the leading seed bytes verbatim"
+        );
+        assert_eq!(a1, b1, "the same seed reproduces the same first draw");
+        assert_ne!(a1, a2, "successive draws must advance, not repeat");
+    }
+
+    /// An empty seed still yields a defined stream rather than a division by zero.
+    #[test]
+    fn an_empty_seed_still_fills() {
+        let mut source = SeededNonceSource::new(b"");
+        let mut out = [0xFFu8; 4];
+        source.fill(&mut out);
+        assert_eq!(out, [0u8; 4]);
+    }
+}

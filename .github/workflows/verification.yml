@@ -87,6 +87,17 @@ on:
       # control reads, so it is a fingerprint input and must re-trigger the lane.
       - "mcp-re-test-paths/src/**"
       - "mcp-re-test-paths/Cargo.toml"
+      # The v0.17 measured-remainder slice.
+      #   - THM-0114: the deployable client's two freshness inputs, and the audit #81
+      #     boundary that keeps their deterministic fixtures off a production build. The
+      #     MANIFEST is a fingerprint input because `default = ["test-fixtures"]` would
+      #     satisfy every `#[cfg]` in the crate with no source line changing.
+      - "mcp-re-host/src/**"
+      - "mcp-re-host/Cargo.toml"
+      #   - THM-0115: the remote-signer failure value and the quota rule that reads it.
+      #     Compiled under `any(aws_kms_keysource, gcp_kms_keysource)`, so neither of its two
+      #     units runs in the default lane and a change here must still re-trigger both.
+      - "mcp-re-proxy/src/remote_signer_call/**"
       - "mcp-re-proxy/src/continuation_store/**"
       - "mcp-re-proxy/src/redis_continuation_store.rs"
       # Issue #744, D1b′: the continuation MATERIALIZATION owners — which capability the
@@ -335,6 +346,17 @@ on:
       # control reads, so it is a fingerprint input and must re-trigger the lane.
       - "mcp-re-test-paths/src/**"
       - "mcp-re-test-paths/Cargo.toml"
+      # The v0.17 measured-remainder slice.
+      #   - THM-0114: the deployable client's two freshness inputs, and the audit #81
+      #     boundary that keeps their deterministic fixtures off a production build. The
+      #     MANIFEST is a fingerprint input because `default = ["test-fixtures"]` would
+      #     satisfy every `#[cfg]` in the crate with no source line changing.
+      - "mcp-re-host/src/**"
+      - "mcp-re-host/Cargo.toml"
+      #   - THM-0115: the remote-signer failure value and the quota rule that reads it.
+      #     Compiled under `any(aws_kms_keysource, gcp_kms_keysource)`, so neither of its two
+      #     units runs in the default lane and a change here must still re-trigger both.
+      - "mcp-re-proxy/src/remote_signer_call/**"
       - "mcp-re-proxy/src/continuation_store/**"
       - "mcp-re-proxy/src/redis_continuation_store.rs"
       # Issue #744, D1b′: the continuation MATERIALIZATION owners — which capability the

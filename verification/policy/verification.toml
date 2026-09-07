@@ -3246,6 +3246,13 @@ paths = [
   "mcp-re-proxy/src/transparency/reserved_before_dispatch.rs",
   "mcp-re-proxy/src/transparency/dispatch_committed.rs",
   "mcp-re-proxy/src/transparency/reservation_marker.rs",
+  # The three numbers, and the module that holds `RetentionError`. Added in the v0.17
+  # transparency slice: both were fingerprint inputs to this unit's mechanism and belonged to
+  # no unit, so `MAX_RESERVATIONS` could be changed to 1 and this claim would still read
+  # FRESH. The bounds ARE this unit's argument — the queue is twice the ceiling so `complete`
+  # is never refused for capacity — rather than a separate authority.
+  "mcp-re-proxy/src/transparency/durability_bounds.rs",
+  "mcp-re-proxy/src/transparency/mod.rs",
 ]
 exported_contracts = []
 evidence = [
@@ -4407,4 +4414,194 @@ tested_symbols = [
   "tests/audit_vocabulary_guard_test#the_scanned_crate_set_is_the_workspace",
   "tests/audit_vocabulary_guard_test#no_producer_outside_core_mints_a_wire_token",
   "tests/audit_vocabulary_guard_test#guard_inputs_are_non_empty",
+]
+
+# v0.17 assurance-closure mandate, priority 2: `mcp-re-host`, four files and zero tests in
+# both lanes. The measurement changed what the slice is about.
+#
+# `signer.rs` is DORMANT and is not here. `HostSigner` has no consumer anywhere — not the
+# deployable client, not the client proxy, not either SDK, not a test, not the demo surface.
+# Every real signing site calls `mcp_re_client_core::build_signed_request` directly, and the
+# ADR-MCPS-003 property `HostSigner` documents — a private key with no accessor — is held on
+# the live path by `mcp_re_client_proxy::McpReProxy`, whose `signing_key` field is private and
+# which `client.proxy_request_correspondence` owns. Excluded on the same precedent as
+# `trust_plane/window_policy.rs` and `async_replay/l1_fast_reject.rs`: never state a theorem
+# over code no deployment runs. Recorded as a finding rather than deleted, because retiring a
+# documented signing-locus expression is an architectural decision and not an audit's to take.
+#
+# What the deployable client actually uses this crate for is the two FRESHNESS INPUTS, and its
+# own manifest says so: "the clock and the OS-CSPRNG nonce source".
+[[unit]]
+id = "host.request_freshness_inputs"
+class = "V0"
+description = "The two injected inputs a signed request's freshness rests on: a nonce drawn from the OS CSPRNG at the spec's minimum entropy, filled whole and never repeating, and a clock that reports a pre-epoch reading faithfully rather than fabricating a plausible time. Both have deterministic fixtures, and both fixtures are compiled out of a default build."
+paths = [
+  "mcp-re-host/src/nonce.rs",
+  "mcp-re-host/src/clock.rs",
+  "mcp-re-host/src/fixture_boundary.rs",
+  "mcp-re-host/Cargo.toml",
+]
+exported_contracts = []
+evidence = ["test://host/request_freshness_inputs"]
+# Three groups. The entropy controls are about the production source; the gating controls are
+# about the fixtures NOT being on the production surface, which is a two-part boundary — the
+# `#[cfg]` on each item AND the feature not being default and not being a normal dependency.
+# The manifest half is why `Cargo.toml` is a path: enabling `test-fixtures` by default would
+# satisfy every `#[cfg]` in the crate with no source line changing.
+tested_symbols = [
+  "lib#nonce::tests::the_nonce_is_at_least_the_specs_minimum_entropy",
+  "lib#nonce::tests::the_production_source_fills_every_byte_it_is_given",
+  "lib#nonce::tests::successive_production_draws_are_distinct",
+  "lib#nonce::tests::the_fixture_is_reproducible_and_advances_between_draws",
+  "lib#nonce::tests::an_empty_seed_still_fills",
+
+  "lib#clock::tests::a_pre_epoch_instant_is_reported_negative_never_fabricated",
+  "lib#clock::tests::the_epoch_itself_is_zero",
+  "lib#clock::tests::a_magnitude_past_the_i64_boundary_saturates_before_the_epoch_never_after_it",
+  "lib#clock::tests::the_production_clock_reads_a_real_time",
+  "lib#clock::tests::the_fixture_clock_is_frozen_at_its_value",
+  "lib#fixture_boundary::tests::every_fixture_item_is_compiled_only_under_test_or_the_explicit_feature",
+  "lib#fixture_boundary::tests::the_fixture_feature_is_not_a_default_feature",
+  "lib#fixture_boundary::tests::the_fixture_feature_is_enabled_only_as_a_dev_dependency",
+]
+
+# v0.17 assurance-closure mandate, priority 3: the transparency remainder. Five files were
+# unowned, and the census's instruction was explicit — do not absorb them into an existing
+# unit simply for coverage; create evidence around the actual authority boundaries. Measured,
+# they are not one remainder but three different things.
+#
+# `proxy.retention_commitment` already states WHEN the deployment became answerable, and its
+# own declaration says in as many words that WHAT a hop contains is a different authority.
+# That is the boundary these two units sit on.
+[[unit]]
+id = "proxy.retained_record_content"
+class = "V0"
+description = "WHAT a retained exchange contains: exactly the headers its own signature base names, plus the two that carry the signature itself, in a schema-tagged encoding that refuses a record it does not recognize. Retaining less makes a valid hop unre-verifiable; retaining more leaves a live credential in a store with no expiry."
+paths = [
+  "mcp-re-proxy/src/transparency/retained_record.rs",
+  "mcp-re-proxy/src/transparency/covered_set.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/transparency/retained_record_content"]
+# The covered-set controls are the three ways a sender can make `signature-input` LOOK like
+# it names more than it does — a signature PARAMETER, a decoy dictionary MEMBER, and a
+# component's own PARAMETERS. The third was named in the module's own documentation and was
+# unmeasured until this slice; a scan that split on quotes rather than on the component
+# grammar would read `cookie` out of `("@method";key="cookie")` and retain the live header.
+#
+# The record controls are the two directions of the same rule, and the round trip is what
+# makes the exclusion control non-vacuous: delete everything and "no uncovered credential is
+# retained" holds trivially.
+tested_symbols = [
+  "lib#transparency::covered_set::tests::a_signature_parameter_cannot_widen_the_covered_set",
+  "lib#transparency::covered_set::tests::a_decoy_dictionary_member_cannot_widen_the_covered_set",
+  "lib#transparency::covered_set::tests::a_components_own_parameter_cannot_widen_the_covered_set",
+  "lib#transparency::covered_set::tests::the_covered_set_is_read_from_this_labels_member_only",
+  "lib#transparency::retained_record::tests::a_record_round_trips_the_bytes_a_reconstruction_re_verifies",
+  "lib#transparency::retained_record::tests::an_uncovered_credential_header_is_not_retained_in_either_direction",
+  "lib#transparency::retained_record::tests::every_covered_header_and_the_signature_itself_survive",
+  "lib#transparency::retained_record::tests::a_record_of_an_unknown_schema_is_refused_rather_than_interpreted",
+  "lib#transparency::retained_record::tests::an_unknown_field_is_refused_at_parse",
+  "lib#transparency::retained_record::tests::a_body_that_is_not_base64url_is_malformed_not_empty",
+  "lib#transparency::retained_record::tests::the_written_schema_is_the_accepted_one",
+  # The end-to-end witness that the record a served call actually produces is the one an
+  # auditor reconstructs from. Without it the controls above are about a type rather than
+  # about what the serving path writes.
+  "tests/integration_async#transparency_e2e_test::a_served_notification_is_retained_like_any_other_accepted_exchange",
+]
+
+# The auditor's half, and it is deliberately NOT on the request path — for three reasons the
+# transparency module states: a chain is not whole until its last hop, the audit posture is
+# the auditor's to choose, and registering against a transparency service would make an audit
+# dependency an availability dependency. A separate authority from both retention units.
+[[unit]]
+id = "proxy.evidence_attestation"
+class = "V0"
+description = "Turning retained evidence into a portable SCITT record: the statement is issued over a reconstruction, the reconstruction is handed back with it so an INCOMPLETE verdict cannot be discovered by decoding what was just published, and the self-check against the retained bytes runs on every record — including the ones with no verified hop, which are exactly the records an auditor investigates."
+paths = ["mcp-re-proxy/src/transparency/attestation.rs"]
+exported_contracts = []
+evidence = ["test://proxy/transparency/evidence_attestation"]
+# The third member is the one R9-C103/C128 exist for. The self-check used to be SKIPPED for a
+# reconstruction that broke at hop 0, on the reasoning that such a record names no call. That
+# reasoning is right about the identity fields and wrong about the submission, which is
+# call-specific there too — so the check was absent on precisely the records an audit is
+# about.
+tested_symbols = [
+  "tests/integration_async#transparency_e2e_test::a_served_call_becomes_an_offline_verifiable_receipt",
+  "tests/integration_async#transparency_e2e_test::the_statement_is_verifiable_against_the_bytes_the_store_kept",
+  "tests/integration_async#transparency_e2e_test::a_chain_with_no_verified_hop_is_still_attested",
+]
+
+# v0.17 assurance-closure mandate, priority 4. `remote_signer_call/` is compiled under
+# `any(aws_kms_keysource, gcp_kms_keysource)` — the shape ADR-MCPRE-061's a-shared-module rule
+# names — and two of `RemoteSignerFailure`'s members are `gcp_kms_keysource`-only. The two
+# realizations are therefore different types, and the mandate's instruction is literal: a
+# green result under one feature is not evidence about the other, so both configurations are
+# explicitly represented before a unit is registered.
+#
+# TWO UNITS AND NOT ONE `test_features` LIST, on the precedent of
+# `proxy.continuation_materialization` / `_shared`: whichever lane runs, the other's control
+# does not exist, so a single unit would name a battery member that is absent half the time.
+[[unit]]
+id = "proxy.remote_signer_call_aws"
+class = "V0"
+description = "A failed remote-signer call kept as a value — status and the service's own body, side by side — and the one rule that reads it for what it says about the QUOTA: shed-load statuses first, then the stated error name against that provider's exhausted set, with a body that states nothing treated as nothing. The AWS realization, in which the type has no chained-cause member because SigV4 re-signs per call and has no refused-token round."
+paths = [
+  "mcp-re-proxy/src/remote_signer_call/mod.rs",
+  "mcp-re-proxy/src/remote_signer_call/quota_signals.rs",
+  "mcp-re-proxy/src/remote_signer_call/wire_limits.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/remote_signer_call/quota_verdict_aws"]
+# The lane this arm is compiled by. Named rather than left to another lane: the module does
+# not exist in the default crate at all, so a plain `cargo test --workspace` compiles it to
+# ZERO tests and would report a green that measured nothing.
+test_features = ["aws_kms_keysource"]
+tested_symbols = [
+  "lib#remote_signer_call::tests::a_status_failure_keeps_both_halves_and_renders_with_them",
+  "lib#remote_signer_call::tests::a_rendered_failure_passes_its_own_diagnosis_through_unchanged",
+  # The composed rule, over BOTH providers' data. Until this slice the module tested only
+  # its parts — `is_load_shedding_status` and `json_string_field` — and the rule that puts
+  # them together had no control at all.
+  "lib#remote_signer_call::quota_signals::tests::a_shed_load_status_is_exhaustion_on_either_provider_whatever_the_body_says",
+  "lib#remote_signer_call::quota_signals::tests::a_stated_exhaustion_name_arms_the_window_at_each_providers_own_path",
+  "lib#remote_signer_call::quota_signals::tests::a_failure_that_states_no_quota_arms_nothing",
+  "lib#remote_signer_call::quota_signals::tests::one_providers_vocabulary_does_not_arm_the_others_window",
+  "lib#remote_signer_call::quota_signals::tests::a_transport_failure_arms_nothing",
+  # The parts, kept: they are where an off-by-one in the status set or a lenient JSON read
+  # would show up as itself rather than as a verdict.
+  "lib#remote_signer_call::quota_signals::tests::only_the_shared_load_shedding_statuses_are_load_shedding",
+  "lib#remote_signer_call::quota_signals::tests::a_nested_json_field_is_read_at_its_path",
+  "lib#remote_signer_call::quota_signals::tests::a_body_that_states_nothing_yields_nothing",
+  "lib#remote_signer_call::quota_signals::tests::a_transport_failure_states_no_status",
+  # The read bound: an error body is truncated rather than read unbounded, and the timeout
+  # refuses rather than queues.
+  "lib#remote_signer_call::wire_limits::tests::an_over_long_error_body_is_truncated_to_the_cap",
+  "lib#remote_signer_call::wire_limits::tests::a_short_error_body_is_returned_intact",
+  "lib#remote_signer_call::wire_limits::tests::the_network_timeout_is_short_enough_to_refuse_rather_than_queue",
+]
+
+# The Cloud-KMS arm of the same claim. What it adds is the chained cause: a bearer token
+# refused with 401 is retried once with a fresh one, and when the SECOND call fails an
+# operator needs both. The cause travels ALONGSIDE the body rather than appended to it, which
+# is the conjunct this lane — and only this lane — can measure.
+[[unit]]
+id = "proxy.remote_signer_call_gcp"
+class = "V0"
+description = "The Cloud-KMS realization of the same failure value, in which a preceding failure can be chained onto a retry. The chained cause renders for an operator and never enters the body a classifier reads."
+paths = [
+  "mcp-re-proxy/src/remote_signer_call/mod.rs",
+  "mcp-re-proxy/src/remote_signer_call/quota_signals.rs",
+  "mcp-re-proxy/src/remote_signer_call/wire_limits.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/remote_signer_call/quota_verdict_gcp"]
+test_features = ["gcp_kms_keysource"]
+# ONE control beyond the shared ones, deliberately. Everything the two arms share is measured
+# by the AWS unit with controls that are not `cfg`-gated and therefore run in this lane too;
+# restating them would put one fact under two owners. What is measured here is only what this
+# realization adds and the other cannot: that appending the cause to the body — the obvious
+# way to keep both — would put prose into the field the classifier reads, and does not happen.
+tested_symbols = [
+  "lib#remote_signer_call::tests::a_chained_cause_renders_but_never_enters_the_body",
 ]

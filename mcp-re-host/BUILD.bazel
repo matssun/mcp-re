@@ -49,3 +49,29 @@ nt_rust_library(
         "@crates_mcp_re//:serde_json",
     ],
 )
+
+# The crate's in-source controls. Registered as a target because it had NONE: `mcp-re-host`
+# was four files and zero tests in BOTH lanes, and a crate with no test target is a crate the
+# Bazel lane says nothing about. Built as the `test-fixtures` flavor because the controls
+# compare the production source against the fixtures it gates — under `cfg(test)` the gate is
+# satisfied either way, and the SOURCE-shape and MANIFEST controls are what establish the
+# boundary for a production build.
+nt_rust_test(
+    name = "mcp_re_host_test",
+    crate = ":mcp_re_host_test_fixtures",
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    compile_data = [
+        "Cargo.toml",
+        "src/clock.rs",
+        "src/nonce.rs",
+    ],
+    crate_features = ["test-fixtures"],
+    edition = "2021",
+    deps = [
+        "//mcp-re-client-core:mcp_re_client_core",
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:getrandom",
+        "@crates_mcp_re//:serde_json",
+    ],
+)

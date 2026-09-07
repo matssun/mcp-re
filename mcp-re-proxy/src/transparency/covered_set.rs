@@ -162,4 +162,57 @@ mod tests {
             "the verified member's own covered header must still be kept: {names:?}"
         );
     }
+
+    /// R8-C042/C121, third form: a COMPONENT'S OWN PARAMETERS are not component names.
+    ///
+    /// Named in this module's documentation and, until now, unmeasured. `("@method";key="cookie")`
+    /// is one component carrying a parameter, not two components — and a scan that split on
+    /// quotes rather than on the component grammar would read `cookie` out of it and retain
+    /// the live header. The two controls above cover a signature parameter and a decoy
+    /// dictionary member; this is the third way a sender can make the header LOOK like it
+    /// names more than it does.
+    #[test]
+    fn a_components_own_parameter_cannot_widen_the_covered_set() {
+        let headers = vec![
+            (
+                "Signature-Input".to_owned(),
+                format!(
+                    "{}=(\"@method\";key=\"cookie\" \"content-digest\")",
+                    mcp_re_http_profile::REQUEST_LABEL
+                ),
+            ),
+            ("cookie".to_owned(), "session=secret".to_owned()),
+            ("content-digest".to_owned(), "sha-256=:AAAA:".to_owned()),
+        ];
+        let kept = covered_headers(&headers, mcp_re_http_profile::REQUEST_LABEL);
+        let names: Vec<&str> = kept.iter().map(|(name, _)| name.as_str()).collect();
+        assert!(
+            !names.contains(&"cookie"),
+            "a component's own parameter was read as a component name: {names:?}"
+        );
+        assert!(
+            names.contains(&"content-digest"),
+            "the genuinely covered header must still be kept: {names:?}"
+        );
+    }
+
+    /// The label decides. A request's covered set is read from the REQUEST label's member,
+    /// so asking under the response label finds nothing to widen from — which is what keeps
+    /// a response's own covered set from deciding what a request retains.
+    #[test]
+    fn the_covered_set_is_read_from_this_labels_member_only() {
+        let headers = vec![
+            (
+                "Signature-Input".to_owned(),
+                format!("{}=(\"cookie\")", mcp_re_http_profile::RESPONSE_LABEL),
+            ),
+            ("cookie".to_owned(), "session=secret".to_owned()),
+        ];
+        let kept = covered_headers(&headers, mcp_re_http_profile::REQUEST_LABEL);
+        let names: Vec<&str> = kept.iter().map(|(name, _)| name.as_str()).collect();
+        assert!(
+            !names.contains(&"cookie"),
+            "the other label's member decided what this one retains: {names:?}"
+        );
+    }
 }
