@@ -60,7 +60,9 @@ from _seams import (  # noqa: E402
     MECHANISMS,
     PRODUCTION_MECHANISMS,
     code_of,
+    declared_items,
     production_lines,
+    site_key,
 )
 from _manifest import (  # noqa: E402
     REPO_ROOT,
@@ -115,34 +117,68 @@ SCANNED_SUFFIXES = {".rs", ".lean", ".v"}
 EXCLUDED = ("verification/lean/generated/", "verification/reproducers/")
 
 
-def registered_by_unit() -> dict[str, set[str]]:
-    """Mechanism kinds the registry accounts for, PER UNIT the assumption is scoped to.
+def registered_by_unit() -> dict[str, set[tuple[str, str]]]:
+    """`(mechanism kind, SITE)` pairs the registry accounts for, per unit in `scope`.
 
-    Scope is what makes registration mean something. `verus:external_body` trusted inside
-    `core.time_rfc3339` is a statement about that unit's trusted computing base and no
-    other; collapsing the registry to a set of names would hand every unit in the
-    repository whatever any one assumption happened to need.
+    Scope is what makes registration mean something, and the SITE is what makes it mean one
+    thing. `verus:external_body` trusted inside `core.time_rfc3339` is a statement about
+    that unit's trusted computing base and no other; collapsing the registry to a set of
+    names would hand every unit in the repository whatever any one assumption happened to
+    need. Kind-level registration inside a unit had the same defect one level down —
+    R9-C037 / R9-C067 / R9-C068: `scope` names whole crates, so one entry licensed every
+    present and future site of that mechanism in every file those units declare. The
+    registry recorded *"this unit trusts uninterpreted spec functions"*, which is not a fact
+    about any seam.
+
+    An assumption with NO `sites` therefore registers NOTHING. That is the fail-closed
+    direction and the only one available: the alternative — absent means all — is the rule
+    being replaced.
     """
     doc = load_assumptions()
-    out: dict[str, set[str]] = {}
+    out: dict[str, set[tuple[str, str]]] = {}
     for entry in doc.get("assumption", []):
         mechanism = entry["tool_specific_mechanism"].split(":", 1)[-1]
+        sites = [str(site) for site in entry.get("sites", [])]
         for target in entry.get("scope", []):
             target = str(target)
             if target.startswith("unit://"):
-                out.setdefault(target.removeprefix("unit://"), set()).add(mechanism)
+                unit_id = target.removeprefix("unit://")
+                out.setdefault(unit_id, set()).update((mechanism, site) for site in sites)
     return out
 
 
+def registered_sites() -> dict[str, set[str]]:
+    """Every site each assumption registers — for detecting entries that name no seam."""
+    doc = load_assumptions()
+    return {
+        entry["id"]: {str(site) for site in entry.get("sites", [])}
+        for entry in doc.get("assumption", [])
+        if entry.get("sites")
+    }
+
+
 def is_registered(
-    mechanism: str, owners: frozenset[str] | set[str], registered: dict[str, set[str]]
+    mechanism: str,
+    site: str | None,
+    owners: frozenset[str] | set[str],
+    registered: dict[str, set[tuple[str, str]]],
 ) -> bool:
-    """Is this mechanism registered for a unit that declares the file it sits in?
+    """Is THIS SEAM registered by an assumption scoped to a unit that declares its file?
+
+    Three conjuncts, and each one is a way registration could say more than it means: the
+    MECHANISM, because trusting an uninterpreted spec function is not trusting an
+    `external_body`; the UNIT, because a trusted computing base belongs to the unit whose
+    proofs rest on it; and the SITE, because a seam is a place a proof stops proving, and
+    the registry is a statement about places.
 
     A file no unit declares has no owning trusted computing base, so nothing can register a
-    mechanism there — which is why the empty owner set answers no rather than yes.
+    mechanism there — which is why the empty owner set answers no rather than yes. A seam
+    whose item cannot be named (`site is None`) is likewise unregistrable: it has no
+    identity to register.
     """
-    return any(mechanism in registered.get(unit_id, set()) for unit_id in owners)
+    if site is None:
+        return False
+    return any((mechanism, site) in registered.get(unit_id, set()) for unit_id in owners)
 
 
 def unit_files() -> dict[Path, set[str]]:
@@ -185,15 +221,21 @@ def scan_paths() -> list[tuple[Path, bool, frozenset[str]]]:
 
 #: A test region opens here — ADR-MCPRE-061 §5.1, the same definition
 #: `scripts/module_size_gate.py` reads.
-def scan() -> list[tuple[Path, int, str, str, frozenset[str]]]:
-    hits: list[tuple[Path, int, str, str, frozenset[str]]] = []
+def scan() -> list[tuple[Path, int, str, str, frozenset[str], str | None]]:
+    hits: list[tuple[Path, int, str, str, frozenset[str], str | None]] = []
     for path, is_production, owners in scan_paths():
         mechanisms = PRODUCTION_MECHANISMS if is_production else MECHANISMS
         text = path.read_text(encoding="utf-8")
+        lines = text.splitlines()
+        rel = path.relative_to(REPO_ROOT).as_posix()
+        # One declaration pass per file, shared by every seam in it: the qualifier of an item
+        # is decided by the blocks open above it, and re-deriving that per seam is quadratic
+        # in exactly the specification files that carry the most seams.
+        items = declared_items(lines)
         numbered = (
             production_lines(text)
             if is_production
-            else list(enumerate(text.splitlines(), start=1))
+            else list(enumerate(lines, start=1))
         )
         for lineno, line in numbered:
             # Comments are not code. Prose mentioning a mechanism counted as an escape-hatch
@@ -204,7 +246,14 @@ def scan() -> list[tuple[Path, int, str, str, frozenset[str]]]:
             for name, pattern in mechanisms.items():
                 if re.search(pattern, code):
                     hits.append(
-                        (path.relative_to(REPO_ROOT), lineno, name, line.strip(), owners)
+                        (
+                            path.relative_to(REPO_ROOT),
+                            lineno,
+                            name,
+                            line.strip(),
+                            owners,
+                            site_key(rel, lines, lineno, items),
+                        )
                     )
     return hits
 
@@ -370,23 +419,49 @@ def main() -> int:
         )
         return 1
 
-    def covered(mechanism: str, owners: frozenset[str]) -> bool:
-        return is_registered(mechanism, owners, registered)
+    def covered(mechanism: str, site: str | None, owners: frozenset[str]) -> bool:
+        return is_registered(mechanism, site, owners, registered)
 
     hits = scan()
-    unregistered = [hit for hit in hits if not covered(hit[2], hit[4])]
+    unregistered = [hit for hit in hits if not covered(hit[2], hit[5], hit[4])]
+
+    # A registration naming no seam is the same defect read backwards. A site key is derived
+    # from the ITEM, so it survives formatting — but not a rename or a deletion, and an entry
+    # left pointing at a seam that no longer exists reads as trust the tree no longer needs.
+    # Refusing it is what keeps the registry a measurement rather than a memory.
+    live_sites = {hit[5] for hit in hits if hit[5]}
+    stale = {
+        asm_id: sorted(sites - live_sites)
+        for asm_id, sites in registered_sites().items()
+        if sites - live_sites
+    }
 
     if not hits:
         print("check-assumptions: PASS — no proof escape hatch in scope")
         print("VERDICT: PASS")
-        print(f"  registered assumptions: {sum(len(m) for m in registered.values())}")
+        print(f"  registered sites: {sum(len(m) for m in registered.values())}")
         return 0
 
     print(f"check-assumptions: {len(hits)} escape-hatch site(s) found")
-    for path, lineno, name, text, owners in hits:
-        status = "registered" if covered(name, owners) else "UNREGISTERED"
+    for path, lineno, name, text, owners, site in hits:
+        status = "registered" if covered(name, site, owners) else "UNREGISTERED"
         where = ", ".join(sorted(owners)) or "no unit"
-        print(f"  [{status}] {path}:{lineno}  {name}  ({where})  |  {text}")
+        identity = site or "UNNAMEABLE"
+        print(f"  [{status}] {identity}  {name}  ({where})  |  {path}:{lineno}  {text}")
+
+    if stale:
+        print(
+            "\nFAIL: an assumption registers a site that no longer exists. A site key names "
+            "the\nITEM a seam sits on, so it survives formatting — an entry that has stopped "
+            "resolving\nnames a seam that was renamed or removed, and the trust it records "
+            "is trust nothing\nin the tree still needs. Discharge the entry, or point it at "
+            "the seam that replaced it:",
+            file=sys.stderr,
+        )
+        for asm_id, sites in sorted(stale.items()):
+            for site in sites:
+                print(f"  {asm_id}: {site}", file=sys.stderr)
+        return 1
 
     if unregistered:
         # R9-C120. The remedy depends on whether the site HAS an owning unit, and naming
@@ -403,14 +478,17 @@ def main() -> int:
         )
         if owned:
             print(
-                "\nRegistration is per UNIT: an assumption trusted in one unit does not "
-                "excuse the\nsame mechanism in another. Register each of these in "
-                "verification/policy/assumptions.toml\nwith a justification, an owner, and "
-                "a `scope` naming the unit that declares the file —\nor discharge it:",
+                "\nRegistration is per SITE, inside a unit: an assumption trusted in one "
+                "unit does not\nexcuse the same mechanism in another, and trusting one seam "
+                "does not excuse the next\none added beside it. Register each of these in "
+                "verification/policy/assumptions.toml with a\njustification, an owner, a "
+                "`scope` naming the unit that declares the file, and a `sites`\nentry naming "
+                "the seam below — or discharge it:",
                 file=sys.stderr,
             )
-            for path, lineno, name, _text, owners in owned:
-                print(f"  {path}:{lineno}  {name}  in {', '.join(sorted(owners))}", file=sys.stderr)
+            for path, lineno, name, _text, owners, site in owned:
+                identity = site or f"{path}:{lineno} (NO NAMEABLE ITEM)"
+                print(f"  {identity}  {name}  in {', '.join(sorted(owners))}", file=sys.stderr)
         if unowned:
             print(
                 "\nThese sit in files NO unit declares, so they cannot be registered at "
@@ -419,7 +497,7 @@ def main() -> int:
                 "mechanism is the step after that,\nnot instead of it:",
                 file=sys.stderr,
             )
-            for path, lineno, name, _text, _owners in unowned:
+            for path, lineno, name, _text, _owners, _site in unowned:
                 print(f"  {path}:{lineno}  {name}  (no unit declares this file)", file=sys.stderr)
         print(
             "\nA green proof created by an unregistered assumption is not MCP-RE evidence.",
@@ -427,7 +505,7 @@ def main() -> int:
         )
         return 1
 
-    print("\ncheck-assumptions: PASS — every mechanism is registered")
+    print("\ncheck-assumptions: PASS — every SITE is registered")
     print("VERDICT: PASS")
     return 0
 

@@ -276,8 +276,16 @@ _ASSUMPTION_KEYS = {
     "review_requirement",
     "affected_contracts",
     "tool_specific_mechanism",
+    "sites",
 }
-_ASSUMPTION_REQUIRED = set(_ASSUMPTION_KEYS)
+#: `sites` is the one OPTIONAL key, and its absence is not a default — it is the
+#: fail-closed direction. An assumption with no `sites` registers no seam, so a premise
+#: whose sites nobody has decided reads as trusting nothing rather than as trusting
+#: whatever the mechanism kind happens to appear in next. It is therefore excluded from
+#: the required set: making it required would force an entry to name a seam before the
+#: decision about which seams it covers has been taken, which is how the kind-level rule
+#: it replaces came to license every future site.
+_ASSUMPTION_REQUIRED = set(_ASSUMPTION_KEYS) - {"sites"}
 
 _BOUNDARY_KEYS = {
     "id",
@@ -547,8 +555,50 @@ def load_assumptions() -> dict:
                     f"`boundary://<id>`. A scope the tooling cannot resolve trusts the "
                     f"assumption nowhere while reading as a registration."
                 )
+        _validate_sites(awhere, entry)
         _require_boundary_edge(awhere, entry)
     return doc
+
+
+def _validate_sites(where: str, entry: dict) -> None:
+    """`sites` names SEAMS, as `<repo-relative path>#<item>`.
+
+    The path half is checked to exist, because a registration against a file that is not
+    there registers nothing while reading as a registration — and the escape-hatch gate,
+    which refuses a site key that resolves to no seam, cannot distinguish "the file moved"
+    from "the entry was always wrong" once it is only reporting a missing key.
+
+    A duplicate inside one entry is refused too: two identical rows say one thing, and the
+    count of registered seams is read.
+    """
+    declared = entry.get("sites")
+    if declared is None:
+        return
+    if not isinstance(declared, list) or not declared:
+        raise ManifestError(
+            f"{where}: `sites` must be a non-empty list. Omit the key entirely to register "
+            f"nothing — an EMPTY list and an absent one would be the same fact written two "
+            f"ways."
+        )
+    seen: set[str] = set()
+    for site in declared:
+        site = str(site)
+        path, separator, item = site.partition("#")
+        if not separator or not path or not item:
+            raise ManifestError(
+                f"{where}: site {site!r} is not `<path>#<item>`. A seam is identified by "
+                f"the item it sits on, never by a line number: a line number moves when a "
+                f"comment is added above it, and a registry that goes stale on formatting "
+                f"is one people regenerate without reading."
+            )
+        if site in seen:
+            raise ManifestError(f"{where}: site {site!r} is registered twice in one entry.")
+        seen.add(site)
+        if not (REPO_ROOT / path).is_file():
+            raise ManifestError(
+                f"{where}: site {site!r} names {path}, which does not exist. A registration "
+                f"against a missing file registers nothing while reading as a registration."
+            )
 
 
 def _require_boundary_edge(where: str, entry: dict) -> None:
