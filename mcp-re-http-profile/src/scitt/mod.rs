@@ -103,7 +103,10 @@
 //!
 //! **`PrototypeTransparencyService` is not deleted.** It is `pub` and re-exported at the
 //! crate root, so it is a compatibility surface whatever its in-repo callers are; zero
-//! production callers is not a deletion argument (#657 ruling 4).
+//! production callers is not a deletion argument (#657 ruling 4). #841 item 1 took the
+//! classification decision that ruling left open: it stays a RETAINED PUBLIC API with the
+//! contract stated on the type — not a `test-support` feature, not a separate crate, and
+//! not deprecated.
 
 mod commitment;
 mod cose_key;
@@ -123,6 +126,8 @@ pub use cose_key::CoseVerificationKey;
 pub use cose_key::P256Point;
 pub use merkle::StatementLeafProfile;
 pub use offline::verify_receipt_offline;
+/// The in-process prototype log. Its contract is on the type: using it successfully is
+/// NOT evidence that a statement was registered with an external Transparency Service.
 pub use prototype::PrototypeTransparencyService;
 pub use receipt::Receipt;
 pub use retained::verify_retained_evidence;
