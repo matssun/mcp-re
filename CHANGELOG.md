@@ -56,10 +56,14 @@ build; the live lane itself is opt-in and deliberately off the merge path, becau
 must never mean somebody else's server is down. With its variables unset it prints that it
 MEASURED NOTHING rather than passing quietly.
 
-**What is still not earned.** SCRAPI interoperability. Implementations exist — DataTrails,
-Tradeverifyd and Microsoft all ship one — and the remaining gap is an ACCESS dependency, a
-credential to obtain, which is categorically different from "no peer exists". Nothing in the
-tree needs to change for it: `--registration-protocol scrapi-11` is the default.
+**What is still not earned.** SCRAPI interoperability. Implementations exist — DataTrails
+ships one with a published GitHub Action, and Microsoft's Signing Transparency is GA, open
+source and SCITT-compliant — so the remaining gap is reachability rather than absence. It is
+an ACCESS question: DataTrails' surface is account-gated, and whether MST admits a third
+party's Signed Statement was not established. Nothing in the tree needs to change for such a
+run: `--registration-protocol scrapi-11` is the default and is proved against a hermetic
+SCRAPI service through the shipped binary. The census records what each peer was confirmed
+at, and at what strength.
 
 `tools/scitt_fetch_service_key.py` grew a `did-web` discovery method, because that is how this
 service publishes its authority key. It reads the DID document as a KEY SET and nothing more —

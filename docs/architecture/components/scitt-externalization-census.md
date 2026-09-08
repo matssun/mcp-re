@@ -217,7 +217,7 @@ question.
 
 | level | reached |
 |---|---|
-| implementation exists | yes — DataTrails, Tradeverifyd and Microsoft all ship SCITT/SCRAPI implementations, and capsule-anchor is Apache-2.0 |
+| implementation exists | yes — see the survey below |
 | foreign implementation exercised | yes, since #501: capsule-anchor run locally, its receipt verified offline |
 | externally operated service exercised | **yes, 2026-09-08**: `witness.agentactioncapsule.org`, end to end through the shipped `mcp-re-auditor` |
 
@@ -241,8 +241,20 @@ says so in the corpus a reader would cite.
 
 ### The SCRAPI claim is an ACCESS dependency, not an absence
 
-The remaining gap is a credential, not a missing implementation. DataTrails' SCRAPI surface
-is behind an account; that is a thing to obtain, and it is categorically different from "no
-peer exists", which is what the addendum's first line read as. A SCRAPI run against any of
-the three named implementations would earn the stronger sentence, and nothing in the tree
-needs to change for it — `--registration-protocol scrapi-11` is the shipped default.
+The remaining gap is reachability, not a missing implementation. What this pass could confirm
+from public sources, stated at the strength it was confirmed at:
+
+| peer | confirmed | what it does not yet establish |
+|---|---|---|
+| **DataTrails** | ships a SCITT/SCRAPI implementation, with a published GitHub Action driving it | its SCRAPI surface is account-gated — a **credential to obtain** |
+| **Microsoft Signing Transparency (MST)** | GA, open source, SCITT-standard-compliant ledger | it records Microsoft's own production builds. Whether it accepts a Signed Statement from a third party was NOT established here, and a run needs that before it is planned |
+| **Tradeverifyd** | named in the owner's ruling; **this pass did not independently confirm it** from public sources | everything |
+
+That is categorically different from "no peer exists", which is what the addendum's first line
+read as. A SCRAPI run against any peer that will accept a submission earns the stronger
+sentence, and nothing in the tree needs to change for it —
+`--registration-protocol scrapi-11` is the shipped default and is proved against a hermetic
+SCRAPI service through the shipped binary.
+
+The next step is therefore an ACCESS question — obtain a credential, or establish that a peer
+admits third-party registration — and not a code question.
