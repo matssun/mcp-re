@@ -8,9 +8,12 @@ MCP-RE is an experimental third-party security extension proposal for MCP.
 
 It is not an official MCP extension unless accepted through the official MCP governance and proposal process.
 
-**v0.17.0 — prepared, not yet released (2026-09-07).** The version is bumped and the
-changelog written; a release exists once it is merged, tagged and the images are built at
-that tag, and only the first of those has happened.
+**v0.17.0 — RELEASED and tagged 2026-09-08** at `c1365e22`, tag object `38fcdd5f`. All
+four images are published at `0.17.0` in
+`us-central1-docker.pkg.dev/project-b19bbb5e-9be8-4fcb-a2f/mcp-re` by Cloud Build
+`dde02033`, digests recorded in
+[`releases/v0.17.0-provenance.md`](releases/v0.17.0-provenance.md). The tag points at the
+qualified release object, not at the provenance commit that records it.
 
 v0.17 is an **assurance closure** release rather than a feature one: the declared theorem
 registry goes 95 → 126 claims over 76 → 111 evidence units, under an unchanged set of twelve
@@ -58,12 +61,15 @@ found the cloud SLO lane had always measured a **debug** build, so the declared 
 targets are marked `invalidated-pending-remeasurement` — see
 [`docs/security/gke-slo-baseline-runbook.md`](security/gke-slo-baseline-runbook.md).
 
-**Current release: v0.16.0** (2026-09-04) — the exchange-lifecycle release summarised
-above, whose accepted GKE performance figures and their three non-comparable measurement
-classes are in [`CHANGELOG.md`](../CHANGELOG.md) and
-[`bench/v016-performance-rounds.md`](bench/v016-performance-rounds.md). This line read
-v0.14.0 through both the v0.15.0 and v0.16.0 tags; it is corrected here and the two releases
-it skipped are summarised above and below rather than dropped.
+**Current release: v0.17.0** (2026-09-08) — the assurance-closure release summarised
+above.
+
+**v0.16.0** (2026-09-04) — the exchange-lifecycle release, whose accepted GKE performance
+figures and their three non-comparable measurement classes are in
+[`CHANGELOG.md`](../CHANGELOG.md) and
+[`bench/v016-performance-rounds.md`](bench/v016-performance-rounds.md). The "current
+release" line read v0.14.0 through both the v0.15.0 and v0.16.0 tags; that was corrected on
+2026-09-07 and the two releases it skipped are summarised rather than dropped.
 
 **v0.14.0** (2026-07-28) — a security-audit release: fourteen rounds
 of the audit funnel closed 57 finding clusters, each fix carrying a negative control,
