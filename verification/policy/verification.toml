@@ -1881,6 +1881,11 @@ paths = [
   "mcp-re-http-profile/src/scitt/receipt/mod.rs",
   "mcp-re-http-profile/src/scitt/receipt/parse.rs",
   "mcp-re-http-profile/src/scitt/statement/mod.rs",
+  # MCPRE-180 moved `from_cose` — the statement's shape-and-attribution check, which is half
+  # of what this unit's first conjunct is about — into its own child. A path list that did not
+  # follow it would leave the unit measuring a file the code had left, and the fingerprint
+  # would stay FRESH across an edit to the very check being attested.
+  "mcp-re-http-profile/src/scitt/statement/parse.rs",
   "mcp-re-http-profile/src/scitt/statement/issuance.rs",
   "mcp-re-http-profile/src/scitt/cose_key/mod.rs",
   "mcp-re-http-profile/src/scitt/cose_key/verify.rs",

@@ -1626,6 +1626,9 @@ fn the_auditor_binary_registers_with_a_live_external_service() {
         );
         return;
     };
+    // Named, never guessed — the same rule the auditor itself applies. The default is the
+    // contract the one operated peer this project has reached actually speaks; pointing the
+    // lane at a SCRAPI peer is a matter of setting this and the pin.
     let protocol = std::env::var("MCP_RE_LIVE_TRANSPARENCY_PROTOCOL")
         .unwrap_or_else(|_| "capsule-anchor".to_owned());
 
@@ -1691,8 +1694,10 @@ fn the_auditor_binary_registers_with_a_live_external_service() {
          SCRAPI interoperability only if {recorded} is a SCRAPI revision.",
         pin_path.display(),
     );
-    assert!(!recorded.is_empty());
-    let _ = protocol;
+    assert!(
+        !recorded.is_empty(),
+        "a registered artifact must name a contract",
+    );
 }
 
 /// The asynchronous path — `202` → `204` → `204` → `200` — through the same binary.
