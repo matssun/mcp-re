@@ -1306,10 +1306,26 @@ fn a_tampered_archive_object_is_refused() {
 /// How the hermetic service answers a submission.
 #[derive(Clone, Copy)]
 enum ServiceMode {
-    /// `201 Created` with the receipt in the body.
+    /// SCRAPI, `201 Created` with the receipt in the body.
     Synchronous,
-    /// `202 Accepted` + `Location`, then `n` × `204`, then `200` with the receipt.
+    /// SCRAPI, `202 Accepted` + `Location`, then `n` × `204`, then `200` with the receipt.
     Asynchronous { pending: u32 },
+    /// The `capsule-anchor` contract: `200` with JSON `{"receipt_b64": …}`, no polling.
+    ///
+    /// A separate mode rather than a status variation, because the difference is the whole
+    /// reason there is a second mechanism leaf: a different resource, a different request
+    /// media type, and the receipt arriving base64 inside JSON rather than as the body.
+    CapsuleAnchor,
+}
+
+impl ServiceMode {
+    /// The `--registration-protocol` token an operator names for this service.
+    fn protocol(self) -> &'static str {
+        match self {
+            ServiceMode::Synchronous | ServiceMode::Asynchronous { .. } => "scrapi-11",
+            ServiceMode::CapsuleAnchor => "capsule-anchor",
+        }
+    }
 }
 
 /// A transparency service on a loopback socket, speaking the registration exchange.
@@ -1329,7 +1345,7 @@ fn spawn_transparency_service(mode: ServiceMode) -> (String, std::thread::JoinHa
         let mut receipt: Vec<u8> = Vec::new();
         let mut pending = match mode {
             ServiceMode::Asynchronous { pending } => pending,
-            ServiceMode::Synchronous => 0,
+            ServiceMode::Synchronous | ServiceMode::CapsuleAnchor => 0,
         };
         // One submission plus at most `pending + 1` polls; the loop ends when the receipt
         // has been handed over.
@@ -1368,9 +1384,32 @@ fn spawn_transparency_service(mode: ServiceMode) -> (String, std::thread::JoinHa
 
             let mut delivered = false;
             let response: Vec<u8> = if is_post {
-                let statement =
-                    mcp_re_http_profile::scitt::SignedStatement::from_cose(&raw[head_end..])
-                        .expect("the auditor submits a Signed Statement");
+                // The two contracts put the statement in different places, and the service
+                // reads it the way the contract it is speaking says to. Accepting either
+                // shape on either path would let a mechanism pass this lane while sending
+                // the other one's request.
+                let submitted: Vec<u8> = match mode {
+                    ServiceMode::CapsuleAnchor => {
+                        assert!(
+                            text.starts_with("POST /transparency/register-statement "),
+                            "the capsule-anchor leaf must POST that contract's resource: {}",
+                            text.lines().next().unwrap_or_default(),
+                        );
+                        let body: serde_json::Value = serde_json::from_slice(&raw[head_end..])
+                            .expect("the capsule-anchor leaf submits JSON");
+                        use base64::Engine;
+                        base64::engine::general_purpose::STANDARD
+                            .decode(
+                                body["signed_statement_b64"]
+                                    .as_str()
+                                    .expect("signed_statement_b64"),
+                            )
+                            .expect("standard base64")
+                    }
+                    _ => raw[head_end..].to_vec(),
+                };
+                let statement = mcp_re_http_profile::scitt::SignedStatement::from_cose(&submitted)
+                    .expect("the auditor submits a Signed Statement");
                 let mut log = PrototypeTransparencyService::new(TS_KID);
                 receipt = log
                     .register(&statement, sign_with(ts_key()))
@@ -1378,6 +1417,10 @@ fn spawn_transparency_service(mode: ServiceMode) -> (String, std::thread::JoinHa
                     .to_cose()
                     .to_vec();
                 match mode {
+                    ServiceMode::CapsuleAnchor => {
+                        delivered = true;
+                        http_json_receipt(&receipt)
+                    }
                     ServiceMode::Synchronous => {
                         delivered = true;
                         http_cose(201, &receipt)
@@ -1410,6 +1453,28 @@ fn spawn_transparency_service(mode: ServiceMode) -> (String, std::thread::JoinHa
     (base, handle)
 }
 
+/// A `capsule-anchor` `200`: the receipt base64 inside this contract's JSON, beside the
+/// unsigned log coordinates the leaf must NOT consume.
+fn http_json_receipt(receipt: &[u8]) -> Vec<u8> {
+    use base64::Engine;
+    let body = serde_json::to_vec(&serde_json::json!({
+        "receipt_b64": base64::engine::general_purpose::STANDARD.encode(receipt),
+        "entry_hash": "unused-by-the-leaf",
+        "entry_hash_scheme": "sig_structure",
+        "leaf_index": 0,
+        "tree_size": 1,
+    }))
+    .expect("json");
+    let mut out = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+         Content-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len(),
+    )
+    .into_bytes();
+    out.extend_from_slice(&body);
+    out
+}
+
 /// An HTTP response carrying COSE bytes.
 fn http_cose(status: u16, body: &[u8]) -> Vec<u8> {
     let reason = if status == 201 { "Created" } else { "OK" };
@@ -1438,6 +1503,8 @@ fn audit_and_register(
     args.extend([
         "--register-to".to_owned(),
         base,
+        "--registration-protocol".to_owned(),
+        mode.protocol().to_owned(),
         "--registration-timeout-secs".to_owned(),
         "20".to_owned(),
         "--registration-poll-interval-secs".to_owned(),
@@ -1471,6 +1538,161 @@ fn the_auditor_binary_registers_a_statement_and_keeps_a_verified_receipt() {
         ServiceMode::Synchronous,
     );
     assert_receipt_verifies_offline(&artifact);
+}
+
+/// The SECOND mechanism, through the same binary: the `capsule-anchor` contract.
+///
+/// The hermetic service refuses to read this submission the SCRAPI way — it asserts the
+/// resource and parses the JSON envelope — so a leaf that sent the other contract's request
+/// fails here rather than passing on a family resemblance. What comes back is a receipt
+/// inside JSON, and the artifact carries it only because it verified offline.
+///
+/// It also records WHICH contract answered, which is what stops the claim exceeding the
+/// peer: this run is external Transparency Service interoperability, not SCRAPI.
+#[test]
+fn the_auditor_binary_registers_over_the_second_mechanism_and_records_which_one() {
+    let artifact = audit_and_register(
+        "auditor-register-capsule",
+        "nonce-transparency-auditor-register-capsule-1",
+        ServiceMode::CapsuleAnchor,
+    );
+    assert_receipt_verifies_offline(&artifact);
+    assert_eq!(
+        artifact.registration_protocol(),
+        Some("capsule-anchor /transparency"),
+        "the artifact must name the contract that answered, not merely that one did",
+    );
+}
+
+/// And the SCRAPI path records its own revision, so the two are distinguishable in the
+/// artifact rather than only in whoever ran the command.
+#[test]
+fn a_scrapi_registration_records_the_draft_revision_it_spoke() {
+    let artifact = audit_and_register(
+        "auditor-register-names-scrapi",
+        "nonce-transparency-auditor-register-names-scrapi-1",
+        ServiceMode::Synchronous,
+    );
+    assert_eq!(
+        artifact.registration_protocol(),
+        Some("draft-ietf-scitt-scrapi-11"),
+    );
+}
+
+// ---- the LIVE external lane, deliberately off the merge path ----------------
+//
+// Everything above is hermetic. This one needs a third party's service and a network, so
+// it cannot be a merge gate: a red build would then mean "somebody else's server is down".
+// It is opt-in, and it is the ONLY thing in this repository that earns the external
+// interoperability sentence — the frozen corpus in
+// `mcp-re-conformance/tests/vectors/scitt/interop/capsule-anchor-live/` is what one of its
+// runs produced.
+//
+// The reason it is a test rather than a script: the property is about the SHIPPED BINARY
+// end to end — serve a call, retain it, attest it, register it, verify the receipt — and a
+// script would re-implement the half that matters.
+
+/// The live service's base URL, when an operator asked for the live lane.
+fn live_transparency_service() -> Option<(String, std::path::PathBuf)> {
+    let url = std::env::var("MCP_RE_LIVE_TRANSPARENCY_SERVICE").ok()?;
+    let pin = std::env::var("MCP_RE_LIVE_TRANSPARENCY_PIN").expect(
+        "MCP_RE_LIVE_TRANSPARENCY_SERVICE without MCP_RE_LIVE_TRANSPARENCY_PIN: a \
+                 receipt is not accepted until it verifies against a pin cut out of band, \
+                 so the live lane cannot run without one",
+    );
+    Some((url, pin.into()))
+}
+
+/// THE external-interoperability property: the shipped auditor registers with a
+/// Transparency Service SOMEBODY ELSE OPERATES, and keeps a receipt that verified offline
+/// against a pin cut before the run.
+///
+/// Opt-in, via `MCP_RE_LIVE_TRANSPARENCY_SERVICE` and `MCP_RE_LIVE_TRANSPARENCY_PIN`. With
+/// them unset this lane MEASURES NOTHING and says so on stdout rather than passing quietly
+/// — a green that measured nothing is worse than a red one. With them set nothing about it
+/// is tolerant: a service that will not answer, or a receipt that will not verify, fails.
+///
+/// What a passing run earns is *external Transparency Service interoperability* and exactly
+/// that. Whether it also earns *SCRAPI interoperability* depends on which peer answered, and
+/// the artifact records which — this lane asserts the artifact says so rather than assuming.
+#[test]
+fn the_auditor_binary_registers_with_a_live_external_service() {
+    let Some((base, pin_path)) = live_transparency_service() else {
+        println!(
+            "SKIPPED and therefore MEASURED NOTHING: set \
+             MCP_RE_LIVE_TRANSPARENCY_SERVICE=<base url> and \
+             MCP_RE_LIVE_TRANSPARENCY_PIN=<pin path> to run the live external lane. \
+             Do not read this lane's absence as evidence of interoperability."
+        );
+        return;
+    };
+    let protocol = std::env::var("MCP_RE_LIVE_TRANSPARENCY_PROTOCOL")
+        .unwrap_or_else(|_| "capsule-anchor".to_owned());
+
+    let (scratch, retention, token) =
+        served_archive("auditor-live", "nonce-transparency-auditor-live-1");
+    drop(retention);
+    let live_pin: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&pin_path).expect("the live pin is readable"))
+            .expect("the live pin parses");
+    let fixtures = AuditFixtures::write(&scratch, audit_profile_json(), live_pin.clone());
+
+    let mut args = fixtures.args(&scratch.join("evidence"), &[token]);
+    args.extend([
+        "--register-to".to_owned(),
+        base.clone(),
+        "--registration-protocol".to_owned(),
+        protocol.clone(),
+        "--registration-timeout-secs".to_owned(),
+        "120".to_owned(),
+        "--registration-poll-interval-secs".to_owned(),
+        "2".to_owned(),
+    ]);
+    let output = run_auditor(&args);
+    assert!(
+        output.status.success(),
+        "the live registration with {base} did not succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let artifact = mcp_re_proxy::transparency::auditor::AttestationArtifact::parse(
+        &std::fs::read(&fixtures.out).expect("the artifact was written"),
+    )
+    .expect("the artifact parses");
+
+    // The receipt is present ONLY because the auditor verified it offline against the pin
+    // above; that is the whole meaning of the field. Re-derived here so the lane states the
+    // property rather than trusting the process that just ran.
+    let receipt = artifact
+        .receipt()
+        .expect("a live registration must carry a receipt")
+        .expect("the receipt decodes");
+    let statement = mcp_re_http_profile::scitt::SignedStatement::from_cose(
+        &artifact.signed_statement().expect("the statement decodes"),
+    )
+    .expect("a Signed Statement");
+    let pin: mcp_re_http_profile::scitt::ScittServiceTrustPin =
+        serde_json::from_value(live_pin).expect("the pin deserializes");
+    mcp_re_http_profile::scitt::verify_receipt_offline(
+        &statement,
+        &mcp_re_http_profile::scitt::Receipt::from_cose(&receipt).expect("a Receipt"),
+        |kid| (kid == ISSUER_KID).then(|| CoseVerificationKey::Ed25519(issuer_key().public_key())),
+        |kid| pin.resolve(kid),
+    )
+    .expect("the live service's receipt verifies offline against the pre-cut pin");
+
+    // The claim may not exceed the peer, so the artifact has to name it.
+    let recorded = artifact
+        .registration_protocol()
+        .expect("a registered artifact names the contract that answered");
+    println!(
+        "LIVE EXTERNAL RUN: {base} answered over {recorded}; receipt verified offline \
+         against {}. This earns external Transparency Service interoperability; it earns \
+         SCRAPI interoperability only if {recorded} is a SCRAPI revision.",
+        pin_path.display(),
+    );
+    assert!(!recorded.is_empty());
+    let _ = protocol;
 }
 
 /// The asynchronous path — `202` → `204` → `204` → `200` — through the same binary.

@@ -14,7 +14,8 @@
   "refusals": {
     "forged-inclusion-path-valid-service-signature": "mcp-re.request_binding_mismatch",
     "kid-not-covered-by-the-pin": "mcp-re.actor_binding_failed",
-    "wrong-leaf-profile": "mcp-re.request_binding_mismatch",
+    "wrong-leaf-profile:sig-structure-digest": "mcp-re.request_binding_mismatch",
+    "wrong-leaf-profile:statement-digest": "mcp-re.request_binding_mismatch",
     "wrong-pinned-service-key": "mcp-re.invalid_signature"
   },
   "refusal_note": "attached payload: a forged inclusion path is refused as an inclusion              mismatch while the service's signature remains valid — the fold is doing              the work, not the signature check"

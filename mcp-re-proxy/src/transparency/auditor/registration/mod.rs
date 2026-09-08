@@ -13,8 +13,17 @@
 //!   ↓
 //! TransparencyRegistration        semantic capability — "this statement was registered,
 //!   ↓                             and here is a receipt that verifies against it"
-//! Scrapi11RegistrationClient      mechanism leaf — one protocol revision's state machine
+//!   ├─ Scrapi11RegistrationClient      mechanism leaf — one draft revision's state machine
+//!   └─ CapsuleAnchorRegistrationClient mechanism leaf — one operated service's contract
 //! ```
+//!
+//! **Two leaves, not one leaf with a path flag.** The second peer differs from the first on
+//! every axis a leaf owns — resource, request media type, success shape, and whether there
+//! is any polling at all — so it is a second leaf. A `--registration-path` would have let
+//! one client reach the other service by coincidence of shape while calling a different
+//! contract by SCRAPI's name. The operator therefore NAMES the protocol
+//! ([`protocol::RegistrationProtocol`]), the selection is made once in [`target`], and it
+//! travels into the artifact so a claim can never exceed the peer that answered.
 //!
 //! **SCRAPI is a DRAFT.** As of this writing the protocol is
 //! `draft-ietf-scitt-scrapi-11` — an Internet-Draft, **not** a published RFC. Drafts are
@@ -51,11 +60,30 @@
 /// WHAT registering establishes, and what it refuses in.
 mod capability;
 
+/// ONE HTTP EXCHANGE — the seam both mechanism leaves are built on.
+///
+/// Here rather than inside either leaf because it carries no protocol vocabulary: its
+/// types are `method`, `url`, `headers`, `body` and `status`, which is what HTTP is. It sat
+/// inside the SCRAPI leaf while that was the only mechanism, and the second one reaching
+/// across for it would have made a sibling's internals a dependency.
+mod exchange;
+
+/// The `capsule-anchor` mechanism leaf — one operated service's contract.
+mod capsule_anchor;
+
+/// WHICH registration protocol this run speaks.
+mod protocol;
+
 /// HOW LONG a registration may take, and how often it may ask.
 mod policy;
 
 /// The SCRAPI mechanism leaf — one draft revision's state machine.
 mod scrapi;
+
+/// The `ureq` transport. Behind the feature that links an HTTP client, for the reason
+/// `outbound_fetch::binding` states: the default serving closure links none.
+#[cfg(feature = "scitt_registration")]
+mod ureq_exchange;
 
 /// WHICH service this run registers with, and the mechanism that selects.
 mod target;
@@ -68,6 +96,7 @@ mod target;
 // mechanism a selection made here rather than a type the layer above can name.
 pub use capability::RegisteredStatement;
 pub use capability::RegistrationError;
+pub(super) use protocol::RegistrationProtocol;
 pub(super) use target::RegistrationTarget;
 
 #[cfg(test)]

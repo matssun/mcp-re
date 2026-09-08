@@ -22,17 +22,15 @@
 use serde::Deserialize;
 use serde::Serialize;
 
-use mcp_re_http_profile::scitt::EvidenceDigest;
-use mcp_re_http_profile::scitt::RetainedCorrespondence;
-
 /// The chain verdict as the artifact spells it.
 mod verdict;
+
+/// Deriving the artifact from one completed attestation.
+mod derivation;
 
 pub use verdict::ChainVerdict;
 pub use verdict::CorrespondenceVerdict;
 pub use verdict::IncompleteAt;
-
-use crate::transparency::Attestation;
 
 /// The schema token an artifact carries.
 pub(super) const ATTESTATION_SCHEMA: &str = "mcp-re-attestation/v1";
@@ -78,51 +76,18 @@ pub struct AttestationArtifact {
     /// nothing about whether the statement reached a log.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     receipt: Option<String>,
+    /// WHICH contract established the registration, present exactly when `receipt` is.
+    ///
+    /// Written because the two mechanisms do not earn the same sentence: a run against a
+    /// SCRAPI peer is SCRAPI interoperability, a run against `capsule-anchor` is external
+    /// Transparency Service interoperability, and a reader of this file has no other way to
+    /// tell which one produced the receipt beside it. Set by the same method, from the same
+    /// `RegisteredStatement`, so the two facts cannot disagree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    registration_protocol: Option<String>,
 }
 
 impl AttestationArtifact {
-    /// Build the artifact for one completed attestation.
-    ///
-    /// Refuses when the SIGNED commitment and the reconstruction disagree about whether
-    /// the record is complete. They are derived from the same reconstruction in the same
-    /// run, so a disagreement is not an operator error — it is the label inside the
-    /// statement having drifted from the label the auditor read, and an artifact that
-    /// summarized one while carrying the other would misdescribe exactly the records this
-    /// distinction exists for.
-    pub(super) fn of(
-        attestation: &Attestation,
-        hops: &[EvidenceDigest],
-        service: AttestedService,
-    ) -> Result<Self, String> {
-        let chain = ChainVerdict::of(attestation.reconstruction.label());
-        if chain.is_complete() != attestation.statement.commitment().is_complete_record() {
-            return Err(
-                "the signed commitment and the reconstruction disagree about whether this \
-                 record is complete; refusing to write an artifact that describes one and \
-                 carries the other"
-                    .to_owned(),
-            );
-        }
-        Ok(AttestationArtifact {
-            schema: ATTESTATION_SCHEMA.to_owned(),
-            issuer_kid: attestation.statement.issuer_kid().to_owned(),
-            issued_at: attestation.statement.issued_at(),
-            signed_statement: mcp_re_core::b64url_encode(attestation.statement.to_cose()),
-            hops: hops.iter().map(|d| d.as_str().to_owned()).collect(),
-            chain,
-            correspondence: match attestation.correspondence {
-                RetainedCorrespondence::BoundToVerifiedCall => {
-                    CorrespondenceVerdict::BoundToVerifiedCall
-                }
-                RetainedCorrespondence::BoundToSubmissionOnly => {
-                    CorrespondenceVerdict::BoundToSubmissionOnly
-                }
-            },
-            transparency_service: service,
-            receipt: None,
-        })
-    }
-
     /// The same artifact, now carrying the receipt of a VERIFIED registration.
     ///
     /// The argument is the proof: a `RegisteredStatement` is constructible only by the
@@ -134,7 +99,15 @@ impl AttestationArtifact {
         registered: &crate::transparency::auditor::registration::RegisteredStatement,
     ) -> Self {
         self.receipt = Some(mcp_re_core::b64url_encode(registered.receipt_bytes()));
+        // Set HERE, from the same value, so a receipt and the contract that produced it
+        // arrive together or not at all.
+        self.registration_protocol = Some(registered.protocol().to_owned());
         self
+    }
+
+    /// The contract that established the registration, if this attestation was registered.
+    pub fn registration_protocol(&self) -> Option<&str> {
+        self.registration_protocol.as_deref()
     }
 
     /// The verified receipt, if this attestation was registered.
@@ -194,6 +167,7 @@ impl AttestationArtifact {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mcp_re_http_profile::scitt::EvidenceDigest;
 
     fn service() -> AttestedService {
         AttestedService {
@@ -213,6 +187,7 @@ mod tests {
             correspondence: CorrespondenceVerdict::BoundToVerifiedCall,
             transparency_service: service(),
             receipt: None,
+            registration_protocol: None,
         }
     }
 

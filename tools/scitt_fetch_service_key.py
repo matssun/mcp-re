@@ -18,6 +18,12 @@ and falsifiable instead of resting on a key nobody wrote down.
 Supported discovery:
   * `well-known-scitt-keys` — SCRAPI `GET /.well-known/scitt-keys`, a CBOR COSE_Key Set.
   * `jwks` — `GET <uri>`, an RFC 7517 JWK Set, for services that expose JOSE discovery.
+  * `did-web` — `GET <uri>`, a W3C DID document whose `verificationMethod` entries carry
+    `publicKeyJwk`. Added for `capsule-anchor`, which publishes its authority key that way
+    and no other. The DID document is read as a KEY SET and nothing more: no DID
+    resolution, no `did:` URL dereferencing, no controller check. Those are claims about
+    an identifier, and a pin is a record of one key at one moment — the tool must not look
+    as though it established more than it fetched.
 
     pip install cbor2 requests
     python tools/scitt_fetch_service_key.py \
@@ -57,7 +63,7 @@ SCHEMA = "mcp-re-scitt-service-trust-pin/v1"
 # `ScittServiceTrustPin` reads (`ReceiptPositionProfile` and `StatementLeafProfile`), so
 # a value this tool accepts is a value the verifier accepts.
 POSITION_PROFILES = ("unbound", "bound")
-LEAF_PROFILES = ("statement-bytes", "statement-digest")
+LEAF_PROFILES = ("statement-bytes", "statement-digest", "sig-structure-digest")
 
 # COSE_Key parameters (RFC 9052 §7) and algorithms (RFC 9053).
 KTY, KID, ALG, CRV, X, Y = 1, 2, 3, -1, -2, -3
@@ -184,6 +190,43 @@ def key_from_cose(entry: dict) -> dict:
     )
 
 
+def did_verification_keys(document: bytes) -> list:
+    """The JWKs a W3C DID document's `verificationMethod` entries carry.
+
+    Read as a KEY SET and no more. A DID document also asserts a controller, a set of
+    verification RELATIONSHIPS and an identifier that a resolver is supposed to have
+    dereferenced — none of which this tool establishes, and pretending otherwise would put
+    an unearned claim in the pin. What comes out is "these are the public keys that
+    document listed", which is exactly what the `jwks` method produces and what a pin
+    records.
+
+    A method's `id` fragment is NOT read as a `kid`. It identifies a verification method
+    inside a DID document; a COSE `kid` is the label a receipt's protected header names,
+    and the two are only ever equal by a service's choice. Taking the fragment would have
+    written a `kid` into the pin that no receipt from this service carries — and the pin's
+    `kid` field means "the one the receipt names". A JWK that carries its own `kid` keeps
+    it, because that one is the JOSE label and does correspond.
+    """
+    parsed = json.loads(document)
+    methods = parsed.get("verificationMethod")
+    if not isinstance(methods, list) or not methods:
+        raise SystemExit("the DID document has no verificationMethod entries")
+    keys = []
+    for method in methods:
+        jwk = method.get("publicKeyJwk")
+        if not isinstance(jwk, dict):
+            # Multibase and PEM forms are legal DID material and are not JWKs. Refusing
+            # to guess is the point: a key this tool cannot read must not become a pin.
+            continue
+        keys.append(dict(jwk))
+    if not keys:
+        raise SystemExit(
+            "the DID document lists no verificationMethod carrying a publicKeyJwk; this "
+            "tool reads JWK material only"
+        )
+    return keys
+
+
 def key_from_jwk(entry: dict) -> dict:
     """Normalize one JWK into pin fields."""
     kty, crv = entry.get("kty"), entry.get("crv")
@@ -288,7 +331,39 @@ def selftest() -> int:
         failures += 1
     except SystemExit:
         pass
-    for position, leaf in (("bound", "statement-bytes"), ("unbound", "statement-digest")):
+    # `did-web` reads a DID document as a key set — and reads NOTHING else out of it.
+    did_document = json.dumps({
+        "@context": ["https://www.w3.org/ns/did/v1"],
+        "id": "did:web:service.example",
+        "verificationMethod": [
+            {"id": "did:web:service.example#multibase-only", "type": "Ed25519VerificationKey2020",
+             "publicKeyMultibase": "z6Mk..."},
+            {"id": "did:web:service.example#abc123", "type": "JsonWebKey2020",
+             "publicKeyJwk": {"kty": "OKP", "crv": "Ed25519", "x": b64u(bytes(32))}},
+        ],
+    }).encode()
+    keys = did_verification_keys(did_document)
+    if len(keys) != 1 or keys[0].get("crv") != "Ed25519" or "kid" in keys[0]:
+        print(f"SELFTEST FAIL: did-web read {keys!r}; it must take the JWK method only, "
+              "and must not read the method id fragment as a COSE kid")
+        failures += 1
+    for document, why in (
+        (b'{"id": "did:web:service.example"}', "no verificationMethod"),
+        (b'{"verificationMethod": [{"id": "x#1", "publicKeyMultibase": "z6Mk..."}]}',
+         "no JWK material"),
+    ):
+        try:
+            did_verification_keys(document)
+        except SystemExit:
+            continue
+        print(f"SELFTEST FAIL: a DID document with {why} was accepted as a key set")
+        failures += 1
+
+    for position, leaf in (
+        ("bound", "statement-bytes"),
+        ("unbound", "statement-digest"),
+        ("unbound", "sig-structure-digest"),
+    ):
         args = parser.parse_args(
             base + ["--position-profile", position, "--leaf-profile", leaf]
         )
@@ -306,15 +381,15 @@ def selftest() -> int:
     if failures:
         print(f"{failures} case(s) failed — the https-only guard is not trustworthy.")
         return 1
-    print("selftest ok: 11 cases (redirect scheme guard, first-hop scheme guard, opener "
-          "wiring, pin profile fields)")
+    print("selftest ok: 17 cases (redirect scheme guard, first-hop scheme guard, opener "
+          "wiring, did-web key-set reading, pin profile fields)")
     return 0
 
 
 def _parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--service-uri", required=True, help="service base URI, or the full JWKS URI")
-    ap.add_argument("--method", choices=("well-known-scitt-keys", "jwks"),
+    ap.add_argument("--method", choices=("well-known-scitt-keys", "jwks", "did-web"),
                     default="well-known-scitt-keys")
     ap.add_argument("--kid", help="the kid the receipt names")
     ap.add_argument("--any-single-key", action="store_true",
@@ -407,7 +482,11 @@ def main() -> int:
         entry, kid = select(entries, args.kid, args.any_single_key, key_from_cose, kid_of)
         fields = key_from_cose(entry)
     else:
-        entries = json.loads(document).get("keys", [])
+        entries = (
+            did_verification_keys(document)
+            if args.method == "did-web"
+            else json.loads(document).get("keys", [])
+        )
         entry, kid = select(entries, args.kid, args.any_single_key, key_from_jwk,
                             lambda e: e.get("kid"))
         fields = key_from_jwk(entry)

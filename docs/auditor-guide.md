@@ -171,22 +171,59 @@ mcp-re-auditor \
   --issuer-key-seed /etc/mcp-re/auditor.seed \
   --out ./attestation.json \
   --register-to https://ts.example.com/scitt \
+  --registration-protocol scrapi-11 \
   --registration-timeout-secs 300 \
   --registration-poll-interval-secs 2
 ```
 
-### The protocol
+### Which protocol, and why you have to say
 
-SCRAPI — **`draft-ietf-scitt-scrapi-11`, an Internet-Draft and not a published RFC.** That
+A URL does not say what it speaks, so `--registration-protocol` is **named, never guessed**.
+Inferring it from the endpoint — or from the shape of an answer — would let this auditor reach
+one service by coincidence while calling a different contract by another's name. Two are
+shipped:
+
+| `--registration-protocol` | the exchange |
+| --- | --- |
+| `scrapi-11` (default) | `POST <base>/entries`, the statement as `application/cose`. `201 Created` returns the receipt; `202 Accepted` names a receipt resource in `Location`, which is polled — `204` means *still working*, `200` yields the receipt. |
+| `capsule-anchor` | `POST <base>/transparency/register-statement`, JSON `{"signed_statement_b64": …}`. `200 OK` returns JSON `{"receipt_b64": …}`. No polling: registration is synchronous. |
+
+**SCRAPI is `draft-ietf-scitt-scrapi-11`, an Internet-Draft and not a published RFC.** That
 matters operationally: drafts are renumbered, restructured and withdrawn, and this one names
-its own media types and status semantics. Every refusal message states the revision it was
+its own media types and status semantics. Every refusal message states the contract it was
 performed under, because "SCITT" alone does not identify a protocol anyone can reproduce.
 
-The exchange: `POST <base>/entries` with the exact Signed Statement as `application/cose`;
-`201 Created` returns the receipt; `202 Accepted` names a receipt resource in `Location`,
-which is polled — `204` means *still working*, and a `200` yields the receipt. `--register-to`
-is HTTPS; plaintext is admitted only to the loopback interface, where there is no network to
-observe it.
+`--register-to` is HTTPS; plaintext is admitted only to the loopback interface, where there is
+no network to observe it.
+
+### What a successful registration lets you say
+
+The two do not earn the same sentence, and the artifact records which one answered so you do
+not have to remember.
+
+| the run | what it establishes |
+| --- | --- |
+| against a SCRAPI peer | **SCRAPI interoperability** |
+| against capsule-anchor | **external Transparency Service interoperability** — a real service accepted your exact octets and its receipt verifies offline. Not SCRAPI: that service does not speak it. |
+
+Read `registration_protocol` in the artifact rather than inferring from the endpoint. A claim
+stronger than the peer that actually answered is the one mistake this field exists to prevent.
+
+#### Reproducing the live external run
+
+The claim above is earned by one lane, and it is deliberately **not** a merge gate — a red
+build must never mean somebody else's server is down:
+
+```sh
+MCP_RE_LIVE_TRANSPARENCY_SERVICE=https://witness.agentactioncapsule.org \
+MCP_RE_LIVE_TRANSPARENCY_PIN=mcp-re-conformance/tests/vectors/scitt/interop/capsule-anchor-live/service-key-pin.json \
+bazel test //mcp-re-proxy:integration_async_test \
+  --test_env=MCP_RE_LIVE_TRANSPARENCY_SERVICE --test_env=MCP_RE_LIVE_TRANSPARENCY_PIN \
+  --test_arg=the_auditor_binary_registers_with_a_live_external_service --test_arg=--nocapture
+```
+
+With those variables unset the lane prints that it **measured nothing** and returns. Do not
+read its absence as evidence: a green run that skipped it says nothing about interoperability.
 
 ### The receipt is not accepted because the HTTP succeeded
 

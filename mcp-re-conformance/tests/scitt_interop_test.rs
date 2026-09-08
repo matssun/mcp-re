@@ -514,6 +514,165 @@ fn the_capsule_anchor_corpus_records_the_exchange_and_its_limits() {
 }
 
 // ---------------------------------------------------------------------------
+// capsule-anchor, OPERATED — the same service, run by somebody else.
+// ---------------------------------------------------------------------------
+//
+// The corpus above is a LOCAL run of open-source code, and it says so: it establishes that
+// two implementations agree, and nothing about a service anybody operates. This one is the
+// public instance at `witness.agentactioncapsule.org`, which we do not run, do not
+// configure and cannot restart. Our exact Signed Statement went to it over the network and
+// its receipt is frozen here, so the verification is reproducible with the network gone.
+//
+// It is also where a documented finding turned out to be stale. The externalization census
+// recorded this contract's response as `{entry_hash, leaf_index, tree_size}` and NO
+// receipt; the service's published OpenAPI now makes `receipt_b64` REQUIRED, and the
+// exchange returned one. And the live instance uses a leaf rule neither corpus had:
+// `SHA256(0x00 ‖ SHA256(Sig_structure))`, which it calls `sig_structure` and which is a
+// third reading of RFC 9162 §2.1's entry.
+
+/// The frozen exchange with the OPERATED instance.
+fn operated_capsule_dir() -> PathBuf {
+    interop_dir().join("capsule-anchor-live")
+}
+
+fn operated_capsule(name: &str) -> Vec<u8> {
+    std::fs::read(operated_capsule_dir().join(name)).unwrap_or_else(|e| panic!("{name}: {e}"))
+}
+
+/// THE external-interoperability property: a Transparency Service somebody else operates
+/// accepted our exact octets, and its receipt verifies here with no network at all.
+#[test]
+fn an_operated_transparency_services_receipt_verifies_offline() {
+    let statement =
+        SignedStatement::from_cose(&operated_capsule("signed-statement.cbor")).expect("parses");
+    let receipt = Receipt::from_cose(&operated_capsule("receipt.cbor")).expect("parses");
+    let pin: ScittServiceTrustPin =
+        serde_json::from_slice(&operated_capsule("service-key-pin.json")).expect("pin parses");
+    let issuer = issuer();
+
+    verify_receipt_offline(
+        &statement,
+        &receipt,
+        |_| Some(issuer.clone().into()),
+        |kid| pin.resolve(kid),
+    )
+    .expect("the operated service's receipt verifies offline against the pinned key");
+}
+
+/// The third leaf profile is doing real work: NEITHER of the other two verifies this
+/// receipt, so nothing is falling back and nothing is being tried in turn.
+#[test]
+fn neither_older_leaf_profile_verifies_the_operated_services_receipt() {
+    use mcp_re_http_profile::scitt::StatementLeafProfile;
+
+    let statement =
+        SignedStatement::from_cose(&operated_capsule("signed-statement.cbor")).expect("parses");
+    let receipt = Receipt::from_cose(&operated_capsule("receipt.cbor")).expect("parses");
+    let pinned: ScittServiceTrustPin =
+        serde_json::from_slice(&operated_capsule("service-key-pin.json")).expect("pin parses");
+    assert_eq!(
+        pinned.leaf_profile(),
+        StatementLeafProfile::SigStructureDigest,
+        "the operated instance logs a digest of the signing act",
+    );
+
+    let issuer = issuer();
+    for wrong in ["statement-bytes", "statement-digest"] {
+        let pin = pin_document_with(&operated_capsule("service-key-pin.json"), |d| {
+            d.insert("leaf_profile".into(), wrong.into());
+        });
+        assert_eq!(
+            verify_receipt_offline(
+                &statement,
+                &receipt,
+                |_| Some(issuer.clone().into()),
+                |kid| pin.resolve(kid)
+            )
+            .expect_err("a leaf rule this service does not use must not verify its receipt"),
+            HttpProfileError::ReceiptInvalid,
+            "{wrong}",
+        );
+    }
+}
+
+/// And the same receipt does NOT verify against the LOCAL instance's pin, or the local
+/// receipt against this one's. Two deployments of one codebase are two services, and a
+/// corpus that let either stand in for the other would be claiming more than it measured.
+#[test]
+fn the_two_capsule_anchor_deployments_do_not_verify_for_each_other() {
+    let issuer = issuer();
+    let operated_statement =
+        SignedStatement::from_cose(&operated_capsule("signed-statement.cbor")).expect("parses");
+    let operated_receipt = Receipt::from_cose(&operated_capsule("receipt.cbor")).expect("parses");
+    let local_receipt = Receipt::from_cose(&capsule("receipt.cbor")).expect("parses");
+    let local_pin: ScittServiceTrustPin =
+        serde_json::from_slice(&capsule("service-key-pin.json")).expect("pin parses");
+    let operated_pin: ScittServiceTrustPin =
+        serde_json::from_slice(&operated_capsule("service-key-pin.json")).expect("pin parses");
+
+    assert!(
+        verify_receipt_offline(
+            &operated_statement,
+            &operated_receipt,
+            |_| Some(issuer.clone().into()),
+            |kid| local_pin.resolve(kid)
+        )
+        .is_err(),
+        "the operated receipt must not verify under the local deployment's key",
+    );
+    assert!(
+        verify_receipt_offline(
+            &operated_statement,
+            &local_receipt,
+            |_| Some(issuer.clone().into()),
+            |kid| operated_pin.resolve(kid)
+        )
+        .is_err(),
+        "the local receipt must not verify under the operated deployment's key",
+    );
+}
+
+/// The corpus states WHAT was exercised and what it does not earn — in particular that
+/// this is not SCRAPI interoperability, and that the earlier "no receipt" finding is
+/// superseded by an exchange rather than by a re-reading.
+#[test]
+fn the_operated_corpus_records_the_exchange_its_limits_and_what_it_supersedes() {
+    let meta: serde_json::Value =
+        serde_json::from_slice(&operated_capsule("exchange-metadata.json")).expect("parses");
+    assert_eq!(meta["leaf_profile"], "sig-structure-digest");
+    assert_eq!(
+        meta["registration_response"]["entry_hash_scheme"],
+        "sig_structure"
+    );
+    assert!(meta["peer_kind"]
+        .as_str()
+        .expect("peer_kind")
+        .contains("OPERATED BY A THIRD PARTY"));
+    let limits = meta["limits"].as_str().expect("limits");
+    assert!(
+        limits.contains("NOT SCRAPI interoperability"),
+        "the corpus must not let this be read as the stronger claim: {limits}",
+    );
+    assert!(meta["supersedes"]
+        .as_str()
+        .expect("supersedes")
+        .contains("NO RECEIPT"));
+
+    use sha2::Digest;
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&operated_capsule("manifest.json")).expect("manifest parses");
+    assert_eq!(manifest["schema"], "mcp-re-scitt-interop/v1");
+    for (name, expected) in manifest["artifacts"].as_object().expect("artifacts") {
+        let actual = mcp_re_core::b64url_encode(&sha2::Sha256::digest(operated_capsule(name)));
+        assert_eq!(
+            &actual,
+            expected.as_str().expect("digest"),
+            "{name} drifted"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // verification-report.json — emitted by the verifier, re-checked by a test.
 // ---------------------------------------------------------------------------
 
@@ -558,6 +717,26 @@ fn cbor_payload_is_absent(receipt: &[u8]) -> bool {
 fn digest_of(bytes: &[u8]) -> String {
     use sha2::Digest;
     mcp_re_core::b64url_encode(&sha2::Sha256::digest(bytes))
+}
+
+/// Every leaf rule this verifier implements, by the token a pin writes.
+///
+/// Enumerated once, here, so a fourth reading of RFC 9162 §2.1's entry cannot be added to
+/// the profile without the reports that exercise the wrong ones noticing.
+const LEAF_PROFILE_TOKENS: &[&str] = &[
+    "statement-bytes",
+    "statement-digest",
+    "sig-structure-digest",
+];
+
+/// The token a pin writes for a leaf profile.
+fn leaf_profile_token(profile: mcp_re_http_profile::scitt::StatementLeafProfile) -> &'static str {
+    use mcp_re_http_profile::scitt::StatementLeafProfile as P;
+    match profile {
+        P::StatementBytes => "statement-bytes",
+        P::StatementDigest => "statement-digest",
+        P::SigStructureDigest => "sig-structure-digest",
+    }
 }
 
 /// Verdict as the report records it: `verify_ok` or the wire code.
@@ -614,18 +793,22 @@ fn build_report(dir: &std::path::Path, peer: &str) -> VerificationReport {
         verdict_token(verify(&statement, &receipt, &wrong_kid)),
     );
 
-    // The other leaf profile — exactly one can be right.
-    let other_profile = pin_document_with(&read("service-key-pin.json"), |d| {
-        let other = match pin.leaf_profile() {
-            mcp_re_http_profile::scitt::StatementLeafProfile::StatementBytes => "statement-digest",
-            mcp_re_http_profile::scitt::StatementLeafProfile::StatementDigest => "statement-bytes",
-        };
-        d.insert("leaf_profile".into(), other.into());
-    });
-    refusals.insert(
-        "wrong-leaf-profile".to_owned(),
-        verdict_token(verify(&statement, &receipt, &other_profile)),
-    );
+    // EVERY leaf profile this verifier implements except the pinned one. Exactly one can
+    // be right, and with three readings of "the entry" in the registry the singular "the
+    // other profile" stopped being a well-formed question: a report that exercised one of
+    // the two wrong ones would leave the other unexercised and look the same.
+    for wrong in LEAF_PROFILE_TOKENS
+        .iter()
+        .filter(|token| **token != leaf_profile_token(pin.leaf_profile()))
+    {
+        let wrong_profile = pin_document_with(&read("service-key-pin.json"), |d| {
+            d.insert("leaf_profile".into(), (*wrong).into());
+        });
+        refusals.insert(
+            format!("wrong-leaf-profile:{wrong}"),
+            verdict_token(verify(&statement, &receipt, &wrong_profile)),
+        );
+    }
 
     // A sibling hash flipped in the unprotected inclusion path — the service's own
     // signature stays valid, so only the fold refuses it.
@@ -669,6 +852,8 @@ fn corpora() -> Vec<(PathBuf, String)> {
         serde_json::from_slice(&artifact("manifest.json")).expect("manifest");
     let capsule: serde_json::Value =
         serde_json::from_slice(&capsule("manifest.json")).expect("manifest");
+    let operated: serde_json::Value =
+        serde_json::from_slice(&operated_capsule("manifest.json")).expect("manifest");
     vec![
         (
             interop_dir(),
@@ -677,6 +862,10 @@ fn corpora() -> Vec<(PathBuf, String)> {
         (
             capsule_dir(),
             capsule["peer"].as_str().expect("peer").to_owned(),
+        ),
+        (
+            operated_capsule_dir(),
+            operated["peer"].as_str().expect("peer").to_owned(),
         ),
     ]
 }

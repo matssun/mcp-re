@@ -184,3 +184,58 @@ recorded here unresolved.
 The interoperability CLAIM is not licensed by either. It is earned by one live run against a
 real external Transparency Service whose receipt still verifies offline, against a previously
 captured pin, after network access is removed.
+
+## Resolution, 2026-09-08 (MCPRE-180): the decision was taken, and the addendum was partly stale
+
+The decision above is **resolved: a second mechanism leaf**, and it is built. Two of the
+addendum's own findings were re-measured first, and one of them was wrong.
+
+### What re-measuring found
+
+| the addendum said | the measurement |
+|---|---|
+| capsule-anchor's response carries `{entry_hash, leaf_index, tree_size}` — **no receipt at all** | **Superseded.** Its published OpenAPI makes `receipt_b64` a REQUIRED field of `RegisterStatementResponse`, and a live submission returned one. |
+| *(not asked)* | The OPERATED instance uses a leaf rule neither corpus had: `SHA-256(0x00 ‖ SHA-256(Sig_structure))`, which it calls `sig_structure`. `StatementLeafProfile::SigStructureDigest` is that reading, and the pin selects it. |
+| the peer was a LOCAL run of open-source code | An instance at `witness.agentactioncapsule.org` that we do not run, configure or restart accepted our exact octets. |
+
+Everything else in the addendum stands, and the boundary it praised held: **no semantic type
+above `TransparencyRegistration` changed.** The second leaf is a sibling of the SCRAPI one,
+the verifying layer is the same function, and the certainty vocabulary is untouched.
+
+### The three evidence levels, kept apart
+
+An implementation existing, a foreign implementation being exercised, and an externally
+OPERATED service being exercised are three different things, and only the third was in
+question.
+
+| level | reached |
+|---|---|
+| implementation exists | yes — DataTrails, Tradeverifyd and Microsoft all ship SCITT/SCRAPI implementations, and capsule-anchor is Apache-2.0 |
+| foreign implementation exercised | yes, since #501: capsule-anchor run locally, its receipt verified offline |
+| externally operated service exercised | **yes, 2026-09-08**: `witness.agentactioncapsule.org`, end to end through the shipped `mcp-re-auditor` |
+
+The third row is one lane —
+`transparency_e2e_test::the_auditor_binary_registers_with_a_live_external_service` — and it is
+opt-in (`MCP_RE_LIVE_TRANSPARENCY_SERVICE`, `MCP_RE_LIVE_TRANSPARENCY_PIN`), deliberately off
+the merge path, because a red build must never mean somebody else's server is down. With the
+variables unset it prints that it MEASURED NOTHING rather than passing quietly. What survives
+a run is frozen in `.../interop/capsule-anchor-live/`, verified offline by
+`scitt_interop_test` on every build.
+
+### What that earns, exactly
+
+> **external Transparency Service interoperability.**
+
+It does **not** earn *SCRAPI interoperability*. That service does not speak SCRAPI, and only
+a run against a SCRAPI peer earns that sentence. `AttestationArtifact` records which contract
+answered, so an artifact cannot be read as the stronger claim, and
+`mcp-re-conformance/tests/vectors/scitt/interop/capsule-anchor-live/exchange-metadata.json`
+says so in the corpus a reader would cite.
+
+### The SCRAPI claim is an ACCESS dependency, not an absence
+
+The remaining gap is a credential, not a missing implementation. DataTrails' SCRAPI surface
+is behind an account; that is a thing to obtain, and it is categorically different from "no
+peer exists", which is what the addendum's first line read as. A SCRAPI run against any of
+the three named implementations would earn the stronger sentence, and nothing in the tree
+needs to change for it — `--registration-protocol scrapi-11` is the shipped default.

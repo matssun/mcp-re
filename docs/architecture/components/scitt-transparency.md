@@ -101,6 +101,10 @@ Signing (`issue_signed_statement` takes an external signer closure — the issue
 
 **`StatementLeafProfile::StatementDigest`** exists for one named external service (`capsule-anchor`). It is legitimate — a verifier cannot infer the leaf rule — but it is reachable only through a pin, and no shipped pin selects it.
 
+> **Update, MCPRE-180.** A third reading exists: `SigStructureDigest`, `SHA-256(0x00 ‖ SHA-256(Sig_structure))`. It is not speculative and it is not unused — the OPERATED `capsule-anchor` instance at `witness.agentactioncapsule.org` applies it to every parseable `COSE_Sign1`, and the pin in `tests/vectors/scitt/interop/capsule-anchor-live/` selects it over a receipt that service really issued. The reason is a property rather than a quirk: a COSE envelope is malleable, so a log keyed on the transmitted octets can hold two entries for one signing act while one keyed on the `Sig_structure` cannot.
+>
+> The count of readings is now three, and the corpus reports exercise every wrong one for each peer rather than "the other" — with three, the singular stopped being a well-formed question.
+
 ### 9. What branches are unreachable under the current legality model?
 
 `ReceiptPositionProfile::Bound` is never selected by any pin in the tree: the field defaults to `Unbound` and no committed pin artifact sets it. The stronger contract is implemented and tested, and no deployment currently requires it — a gap in configuration, not in the code.

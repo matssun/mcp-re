@@ -295,11 +295,13 @@ _PROXY_LIB_SRCS = [
     "src/transparency/auditor/invocation/mod.rs",
     "src/transparency/auditor/invocation/flag.rs",
     "src/transparency/auditor/invocation/instant.rs",
+    "src/transparency/auditor/invocation/usage.rs",
     "src/transparency/auditor/profile/mod.rs",
     "src/transparency/auditor/profile/document.rs",
     "src/transparency/auditor/trust_view.rs",
     "src/transparency/auditor/artifact/mod.rs",
     "src/transparency/auditor/artifact/verdict.rs",
+    "src/transparency/auditor/artifact/derivation.rs",
     "src/transparency/auditor/inputs.rs",
     "src/transparency/auditor/refusal.rs",
     "src/transparency/auditor/run.rs",
@@ -308,14 +310,19 @@ _PROXY_LIB_SRCS = [
     # behind `scitt_registration`, and a `#[cfg]`-ed module still needs its source listed.
     "src/transparency/auditor/registration/mod.rs",
     "src/transparency/auditor/registration/capability.rs",
+    "src/transparency/auditor/registration/exchange.rs",
     "src/transparency/auditor/registration/policy.rs",
-    "src/transparency/auditor/registration/target.rs",
+    "src/transparency/auditor/registration/protocol.rs",
+    "src/transparency/auditor/registration/ureq_exchange.rs",
+    "src/transparency/auditor/registration/target/mod.rs",
+    "src/transparency/auditor/registration/target/flags.rs",
+    "src/transparency/auditor/registration/capsule_anchor/mod.rs",
+    "src/transparency/auditor/registration/capsule_anchor/fault.rs",
+    "src/transparency/auditor/registration/capsule_anchor/wire.rs",
     "src/transparency/auditor/registration/scrapi/mod.rs",
     "src/transparency/auditor/registration/scrapi/answer.rs",
     "src/transparency/auditor/registration/scrapi/fault.rs",
-    "src/transparency/auditor/registration/scrapi/exchange.rs",
     "src/transparency/auditor/registration/scrapi/wire.rs",
-    "src/transparency/auditor/registration/scrapi/ureq_exchange.rs",
     # Trust-document interpretation: the authoritative rules over the bytes, owned apart
     # from the parser that was merely their first caller.
     "src/trust_document.rs",
@@ -611,6 +618,15 @@ _PROXY_ASYNC_CRATES = [
 # pointing at a removed `rustls-pemfile` and missing `zeroize`).
 _PROXY_LIB_DEPS = [
     "//mcp-re-core:mcp_re_core",
+    # MCPRE-180: the capsule-anchor registration leaf's wire convention is STANDARD
+    # base64 (`{"signed_statement_b64": …}` / `{"receipt_b64": …}`), which is that
+    # contract's and not this workspace's — mcp-re-core's encoding choke point is
+    # base64url-no-pad and stays that way. Here in LIB rather than EXT because the
+    # MECHANISM compiles unconditionally: only the socket-opening transport is behind
+    # `scitt_registration`, so a build without it still typechecks and tests the leaf.
+    # `base64` is already a non-optional cargo dependency of this crate, so the cargo
+    # closure is unchanged by it.
+    "@crates_mcp_re//:base64",
     "//mcp-re-policy:mcp_re_policy",
     # MCPRE-104 (#308): the pure HTTP-profile dispatcher the proxy replay-tier
     # adapter (src/http_profile_dispatch.rs) wraps. Pure crate — mcp-re-core only,
@@ -651,10 +667,11 @@ _PROXY_EXT_CRATES = [
     "@crates_mcp_re//:cryptoki-sys",
     "@crates_mcp_re//:redis",
     "@crates_mcp_re//:ureq",
-    # ADR-MCPS-028 §B: SigV4 HMAC-SHA256 + KMS standard-base64 message/signature
-    # encoding for the AWS KMS Ed25519 signer (feature aws_kms_keysource).
+    # ADR-MCPS-028 §B: SigV4 HMAC-SHA256 for the AWS KMS Ed25519 signer (feature
+    # aws_kms_keysource). NOTE: base64 moved to _PROXY_LIB_DEPS — the registration
+    # leaf below the auditor now uses it unconditionally, so ext inherits it via LIB
+    # (avoids a duplicate-dep error).
     "@crates_mcp_re//:hmac",
-    "@crates_mcp_re//:base64",
     "@crates_mcp_re//:x509-ocsp",
     # NOTE: der + x509-cert moved to _PROXY_LIB_DEPS — the base crate's static-CRL
     # freshness gate (MCPS-58, tls.rs) now uses them, so ext inherits them via LIB.
@@ -1105,6 +1122,9 @@ nt_rust_test(
         "MCP_RE_AUDITOR_CLI": "$(rlocationpath :mcp_re_auditor_cli)",
     },
     deps = [
+        # The hermetic capsule-anchor service in `transparency_e2e_test` reads and writes
+        # that contract's STANDARD-base64 JSON envelope, the way the real one does.
+        "@crates_mcp_re//:base64",
         "//mcp-re-client-core:mcp_re_client_core",
         "//mcp-re-client-proxy:mcp_re_client_proxy",
         "//mcp-re-core:mcp_re_core",

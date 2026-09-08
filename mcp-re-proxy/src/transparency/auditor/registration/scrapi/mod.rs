@@ -33,6 +33,9 @@ use super::capability::RegistrationResponse;
 use super::capability::TransparencyRegistration;
 use super::policy::RegistrationPolicy;
 
+use super::exchange::HttpExchange;
+use super::exchange::HttpRequest;
+
 use answer::Polled;
 use answer::Submitted;
 use fault::fault_to_error;
@@ -41,21 +44,9 @@ use fault::Scrapi11Fault;
 
 /// WHAT ONE ANSWER from the service says.
 mod answer;
-mod exchange;
 /// WHAT can go wrong in this protocol, and how certain each one is.
 mod fault;
 mod wire;
-
-/// The `ureq` transport. Behind the feature that links an HTTP client, for the reason
-/// `outbound_fetch::binding` states: the default serving closure links none.
-#[cfg(feature = "scitt_registration")]
-mod ureq_exchange;
-
-pub(super) use exchange::HttpExchange;
-pub(super) use exchange::HttpRequest;
-
-#[cfg(feature = "scitt_registration")]
-pub(super) use ureq_exchange::UreqExchange;
 
 /// Registering a Signed Statement over `draft-ietf-scitt-scrapi-11`.
 pub struct Scrapi11RegistrationClient<E> {
@@ -135,6 +126,10 @@ impl<E: HttpExchange> Scrapi11RegistrationClient<E> {
 }
 
 impl<E: HttpExchange> TransparencyRegistration for Scrapi11RegistrationClient<E> {
+    fn protocol(&self) -> &'static str {
+        wire::SCRAPI_REVISION
+    }
+
     fn register(&self, signed_statement: &[u8]) -> Result<RegistrationResponse, RegistrationError> {
         // Before anything is sent. A budget whose end is not representable is a run with
         // no bound, and refusing here is a definitive negative: nothing went out.
@@ -172,7 +167,7 @@ mod tests {
     use std::cell::Cell;
     use std::cell::RefCell;
 
-    use super::exchange::HttpResponse;
+    use super::super::exchange::HttpResponse;
     use super::wire::SCRAPI_REVISION;
     use super::*;
     use crate::transparency::auditor::registration::capability::register_and_verify;

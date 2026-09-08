@@ -20,6 +20,10 @@ use mcp_re_http_profile::scitt::SignedStatement;
 use super::policy::RegistrationPolicy;
 use super::RegisteredStatement;
 use super::RegistrationError;
+use super::RegistrationProtocol;
+
+/// WHAT the operator's registration flags say.
+mod flags;
 
 /// Where this run registers, and how long it may take doing it.
 ///
@@ -32,6 +36,12 @@ use super::RegistrationError;
 pub struct RegistrationTarget {
     base_url: String,
     policy: RegistrationPolicy,
+    /// WHICH contract the operator said this endpoint speaks.
+    ///
+    /// Named, never inferred from the URL: reaching a service by coincidence of shape
+    /// while calling a different contract by another's name is the laundering the
+    /// mechanism-leaf boundary exists to prevent.
+    protocol: RegistrationProtocol,
 }
 
 /// Whether `url` names the loopback interface, the one host plaintext is admitted to.
@@ -51,7 +61,12 @@ impl RegistrationTarget {
     /// specific octets reaching a specific service, and a receipt is only worth what
     /// knowing who answered is worth; over plaintext an operator knows neither, and the
     /// pin cannot recover it because the pin is checked against whatever came back.
-    pub fn new(base_url: &str, timeout: Duration, interval: Duration) -> Result<Self, String> {
+    pub fn new(
+        base_url: &str,
+        protocol: RegistrationProtocol,
+        timeout: Duration,
+        interval: Duration,
+    ) -> Result<Self, String> {
         if crate::outbound_fetch::VettedDestination::operator_configured(base_url).is_none() {
             return Err(format!(
                 "--register-to {base_url:?}: not a destination this proxy may fetch from",
@@ -67,34 +82,8 @@ impl RegistrationTarget {
         Ok(RegistrationTarget {
             base_url: base_url.trim_end_matches('/').to_owned(),
             policy,
+            protocol,
         })
-    }
-
-    /// The target the auditor's registration FLAGS name, if they name one.
-    ///
-    /// A budget given without `--register-to` is REFUSED rather than ignored. An operator who
-    /// wrote down how long a registration may take has said they expect one, and a run that
-    /// quietly performed no registration under that budget would be answering a question they
-    /// did not ask.
-    pub(in crate::transparency::auditor) fn from_flags(
-        url: Option<String>,
-        timeout: Option<String>,
-        interval: Option<String>,
-    ) -> Result<Option<RegistrationTarget>, String> {
-        let Some(url) = url else {
-            return no_registration(timeout.is_some() || interval.is_some());
-        };
-        let timeout = seconds(
-            "--registration-timeout-secs",
-            timeout,
-            DEFAULT_REGISTRATION_TIMEOUT_SECS,
-        )?;
-        let interval = seconds(
-            "--registration-poll-interval-secs",
-            interval,
-            DEFAULT_POLL_INTERVAL_SECS,
-        )?;
-        RegistrationTarget::new(&url, timeout, interval).map(Some)
     }
 
     /// The service this run registers with.
@@ -115,17 +104,40 @@ impl RegistrationTarget {
         issuer_key: &mcp_re_core::VerificationKey,
         pin: &ScittServiceTrustPin,
     ) -> Result<RegisteredStatement, RegistrationError> {
-        let exchange =
-            super::scrapi::UreqExchange::operator_configured(&self.base_url, self.policy.timeout())
-                .ok_or_else(|| {
-                    RegistrationError::Refused(format!(
-                        "{:?} is not a destination this proxy may fetch from",
-                        self.base_url,
-                    ))
-                })?;
-        let client =
-            super::scrapi::Scrapi11RegistrationClient::new(exchange, &self.base_url, self.policy);
-        super::capability::register_and_verify(&client, statement, issuer_key, pin)
+        let exchange = super::ureq_exchange::UreqExchange::operator_configured(
+            &self.base_url,
+            self.policy.timeout(),
+        )
+        .ok_or_else(|| {
+            RegistrationError::Refused(format!(
+                "{:?} is not a destination this proxy may fetch from",
+                self.base_url,
+            ))
+        })?;
+        // The one place a target becomes a protocol. Which arm runs is the operator's
+        // stated choice, and both arms hand the SAME verifying function a mechanism —
+        // there is no second path to a `RegisteredStatement`.
+        match self.protocol {
+            RegistrationProtocol::Scrapi11 => super::capability::register_and_verify(
+                &super::scrapi::Scrapi11RegistrationClient::new(
+                    exchange,
+                    &self.base_url,
+                    self.policy,
+                ),
+                statement,
+                issuer_key,
+                pin,
+            ),
+            RegistrationProtocol::CapsuleAnchor => super::capability::register_and_verify(
+                &super::capsule_anchor::CapsuleAnchorRegistrationClient::new(
+                    exchange,
+                    &self.base_url,
+                ),
+                statement,
+                issuer_key,
+                pin,
+            ),
+        }
     }
 
     /// The build with no registration transport refuses, and says which build it is.
@@ -151,44 +163,17 @@ impl RegistrationTarget {
     }
 }
 
-/// The default whole-registration budget, in seconds.
-const DEFAULT_REGISTRATION_TIMEOUT_SECS: u64 = 300;
-
-/// The default wait between polls, in seconds.
-const DEFAULT_POLL_INTERVAL_SECS: u64 = 2;
-
-/// The answer when no `--register-to` was given: no target, unless a bound was.
-///
-/// A bound with nothing to bound is refused rather than ignored. An operator who wrote
-/// down how long a registration may take has said they expect one, and a run that quietly
-/// performed none under that budget would be answering a question they did not ask.
-fn no_registration(bounded: bool) -> Result<Option<RegistrationTarget>, String> {
-    if bounded {
-        return Err(
-            "--registration-timeout-secs and --registration-poll-interval-secs \
-                    bound a registration, and this invocation has no --register-to"
-                .to_owned(),
-        );
-    }
-    Ok(None)
-}
-
-/// A duration in whole seconds, or the default.
-fn seconds(flag: &str, stated: Option<String>, default: u64) -> Result<Duration, String> {
-    let Some(text) = stated else {
-        return Ok(Duration::from_secs(default));
-    };
-    text.parse::<u64>()
-        .map(Duration::from_secs)
-        .map_err(|_| format!("{flag} {text:?}: not a whole number of seconds"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn target(url: &str) -> Result<RegistrationTarget, String> {
-        RegistrationTarget::new(url, Duration::from_secs(60), Duration::from_secs(1))
+        RegistrationTarget::new(
+            url,
+            RegistrationProtocol::default(),
+            Duration::from_secs(60),
+            Duration::from_secs(1),
+        )
     }
 
     #[test]
@@ -236,12 +221,14 @@ mod tests {
     fn an_unterminating_budget_is_not_a_target() {
         assert!(RegistrationTarget::new(
             "https://ts.example.test",
+            RegistrationProtocol::default(),
             Duration::from_secs(60),
             Duration::ZERO,
         )
         .is_err());
         assert!(RegistrationTarget::new(
             "https://ts.example.test",
+            RegistrationProtocol::default(),
             Duration::from_secs(7_200),
             Duration::from_secs(1),
         )
