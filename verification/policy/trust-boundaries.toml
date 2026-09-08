@@ -310,6 +310,11 @@ paths = [
   "mcp-re-transport/src/limits.rs",
   "mcp-re-proxy/src/stage_timers/**/*.rs",
   "mcp-re-proxy/src/managed_worker/**/*.rs",
+  # #841 G-1: the registration budget. An auditor polling a transparency service bounds
+  # the whole exchange on `Instant`, and that bound is the only thing that makes a `202`
+  # terminate — so it is a production deadline, and it trusts exactly what this boundary
+  # names.
+  "mcp-re-proxy/src/transparency/auditor/registration/scrapi/mod.rs",
 ]
 beyond = "That the monotonic clock advances, and that it advances at a rate which makes an elapsed measurement a duration. It is not comparable to any peer's clock, which is why it is not boundary.clock."
 max_class_without_assumption = "V0"

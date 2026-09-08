@@ -296,7 +296,22 @@ _PROXY_LIB_SRCS = [
     "src/transparency/auditor/trust_view.rs",
     "src/transparency/auditor/artifact/mod.rs",
     "src/transparency/auditor/artifact/verdict.rs",
+    "src/transparency/auditor/inputs.rs",
+    "src/transparency/auditor/refusal.rs",
     "src/transparency/auditor/run.rs",
+    # #841 G-1: the registration capability, its budget, its target, and the SCRAPI
+    # mechanism leaf. Every file is compiled by every flavor; only `ureq_exchange` is
+    # behind `scitt_registration`, and a `#[cfg]`-ed module still needs its source listed.
+    "src/transparency/auditor/registration/mod.rs",
+    "src/transparency/auditor/registration/capability.rs",
+    "src/transparency/auditor/registration/policy.rs",
+    "src/transparency/auditor/registration/target.rs",
+    "src/transparency/auditor/registration/scrapi/mod.rs",
+    "src/transparency/auditor/registration/scrapi/answer.rs",
+    "src/transparency/auditor/registration/scrapi/fault.rs",
+    "src/transparency/auditor/registration/scrapi/exchange.rs",
+    "src/transparency/auditor/registration/scrapi/wire.rs",
+    "src/transparency/auditor/registration/scrapi/ureq_exchange.rs",
     # Trust-document interpretation: the authoritative rules over the bytes, owned apart
     # from the parser that was merely their first caller.
     "src/trust_document.rs",
@@ -693,18 +708,62 @@ nt_rust_binary(
     ] + _PROXY_ASYNC_CRATES,
 )
 
+# ADR-MCPRE-054 / #841 G-1: the library flavor the AUDITOR links.
+#
+# The same `_PROXY_LIB_SRCS` as every other flavor, differing only by `crate_features` —
+# and the one feature it adds compiles the registration TRANSPORT. The capability, the
+# protocol state machine and every one of its typed refusals are unconditional and are in
+# the default flavor already; what rides the feature is the `ureq` client, for the reason
+# `outbound_fetch::binding` gives: the default `:mcp_re_proxy` deliberately links no HTTP
+# client at all, and the SERVING closure is the one ADR-MCPS-018 keeps lean.
+#
+# An auditor is not the serving proxy. It runs off the request path, on an operator's
+# machine, and registering is the whole of what it exists to finish.
+nt_rust_library(
+    name = "mcp_re_proxy_auditor",
+    srcs = _PROXY_LIB_SRCS,
+    crate_features = ["scitt_registration"],
+    crate_name = "mcp_re_proxy",
+    edition = "2021",
+    deps = _PROXY_LIB_DEPS + ["@crates_mcp_re//:ureq"],
+)
+
 # ADR-MCPRE-054 / #841 G-2: the AUDITOR executable. A separate binary rather than a mode
 # of `:mcp_re_proxy_cli`, so a deployment that runs one need not run the other and an
 # auditor can run against an archive long after the proxy that wrote it is gone. It links
-# the DEFAULT `:mcp_re_proxy` library flavor: reading an archive and issuing a statement
-# needs neither the async serving path nor an external backend, and a binary that linked
-# them would carry a closure it cannot use.
+# the auditor flavor above: reading an archive and issuing a statement needs neither the
+# async serving path nor an external backend, and a binary that linked them would carry a
+# closure it cannot use.
 nt_rust_binary(
     name = "mcp_re_auditor_cli",
     srcs = ["src/bin/mcp-re-auditor.rs"],
     edition = "2021",
     deps = [
-        ":mcp_re_proxy",
+        ":mcp_re_proxy_auditor",
+    ],
+)
+
+# The auditor library flavor's own unit tests — the registration transport among them.
+#
+# `:proxy_unit_test` runs the DEFAULT flavor, which does not compile the transport, so it
+# would report green over a socket lane that was never built. A feature-gated lane is a
+# separate measurement (ADR-MCPRE-061); this is that measurement.
+nt_rust_test(
+    name = "proxy_auditor_unit_test",
+    crate = ":mcp_re_proxy_auditor",
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-policy:mcp_re_policy",
+        "@crates_mcp_re//:libc",
+        "@crates_mcp_re//:rcgen",
+        "@crates_mcp_re//:rustls-pki-types",
+        "@crates_mcp_re//:serde",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:ureq",
+        "@crates_mcp_re//:zeroize",
     ],
 )
 

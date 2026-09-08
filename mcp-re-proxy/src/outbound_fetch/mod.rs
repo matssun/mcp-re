@@ -63,7 +63,8 @@ pub use address::resolved_ip_is_public;
 #[cfg(any(
     feature = "online_ocsp",
     feature = "aws_kms_keysource",
-    feature = "gcp_kms_keysource"
+    feature = "gcp_kms_keysource",
+    feature = "scitt_registration"
 ))]
 mod binding;
 #[cfg(any(feature = "aws_kms_keysource", feature = "gcp_kms_keysource"))]
@@ -71,7 +72,8 @@ mod credential_egress;
 #[cfg(any(
     feature = "online_ocsp",
     feature = "aws_kms_keysource",
-    feature = "gcp_kms_keysource"
+    feature = "gcp_kms_keysource",
+    feature = "scitt_registration"
 ))]
 mod resolver;
 

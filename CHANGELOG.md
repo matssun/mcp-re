@@ -12,6 +12,62 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Added — external transparency-service registration, with the receipt verified before it counts
+
+The externalization census's G-1, and the last hop of ADR-MCPRE-054. Everything either side
+of it was already real; the hop itself did not exist, and the only producer of a Receipt
+anywhere in this workspace was an in-process prototype log.
+
+**Two layers, and the boundary is where it is on purpose.** A `TransparencyRegistration`
+capability sits under the auditor; a `Scrapi11RegistrationClient` sits under that. SCRAPI is
+`draft-ietf-scitt-scrapi-11` — an Internet-Draft, **not** a published RFC — and drafts are
+renumbered, restructured and withdrawn, which is exactly why the revision is a leaf. No
+SCRAPI term crosses upward into retained evidence, the attestation, receipt semantics or the
+auditor's durable products; what the layer above holds is a vocabulary that would read the
+same against a successor protocol, and what changes when the draft moves is one module.
+
+**A receipt is not accepted because HTTP succeeded.** The mechanism can return receipt BYTES
+and nothing more — the trait's signature says so. The only thing that produces a
+`RegisteredStatement` is `register_and_verify`, which puts those bytes through the existing
+OFFLINE verifier against the exact statement submitted and the operator's already-loaded
+pin. No key is fetched or refreshed during that check. An artifact carrying a `receipt`
+field is therefore one whose receipt verified, and there is no other way for that field to
+appear.
+
+**Certainty is preserved rather than collapsed.** Only an explicit refusal status and an
+explicit rate limit are definitive negatives — in both, the service read the submission and
+declined it. A transport failure while submitting, a `201` whose body will not parse, a `202`
+with no `Location`, a `Location` outside the configured service, and an exhausted polling
+budget all leave the statement possibly held by the service, and are reported as UNKNOWN in
+those words. Reporting them as failures would send an operator to re-submit a record already
+in a log. `fault_to_error` is the single function that makes that decision, and the test
+that states the rule over every variant is the one to read.
+
+**Where the client may be sent.** The service base URL is operator configuration and goes
+through this workspace's existing outbound-network policy — there is no second egress policy.
+The POLL url is not operator configuration: the service chooses it, so a `Location` must sit
+under the configured base, or an answer of `202 Location: http://169.254.169.254/` would turn
+every transparency service into an SSRF primitive against its operator's network. Redirects
+are refused by the same agent that already refuses them for revocation and KMS fetches.
+Plaintext is admitted only to the loopback interface.
+
+Registration runs AFTER the attestation is durable, so a service that is down costs the
+receipt and nothing else — and re-running the audit with the same `--at` reproduces the same
+statement byte for byte.
+
+Proved against a hermetic transparency service that parses what it is sent, registers it in a
+real RFC 9162 log and answers with a real RFC 9942 receipt: the synchronous `201` path, the
+asynchronous `202`→`204`→`204`→`200` path with its request sequence asserted, every typed
+refusal, and both paths again over a SOCKET through the shipped binary. The `ureq` transport
+is behind `scitt_registration` because the default Bazel serving closure links no HTTP client;
+`:mcp_re_proxy_auditor` and `:proxy_auditor_unit_test` are the flavor and the lane that
+measure it, because a lane compiling a transport to nothing is not evidence about a transport.
+
+**What this does not earn.** The external-registration interoperability claim. That is one
+live run against a real external SCITT Transparency Service whose receipt still verifies
+offline against the previously captured pin after network access is removed. Until then the
+honest statement is: the mechanism exists and interoperates with a hermetic peer.
+
 ### Added — `mcp-re-auditor`: the auditor's half becomes something an operator can run
 
 `transparency::attest_chain` has been the auditor authority since ADR-MCPRE-054, and its
