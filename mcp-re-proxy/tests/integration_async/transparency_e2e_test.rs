@@ -1031,7 +1031,8 @@ fn the_auditor_binary_turns_a_served_call_into_a_verifiable_attestation() {
     drop(retention);
 
     let fixtures = AuditFixtures::write(&scratch, audit_profile_json(), service_pin_json());
-    let output = run_auditor(&fixtures.args(&scratch.join("evidence"), &[token.clone()]));
+    let output =
+        run_auditor(&fixtures.args(&scratch.join("evidence"), std::slice::from_ref(&token)));
     assert!(
         output.status.success(),
         "the auditor refused a record it should attest: {}",

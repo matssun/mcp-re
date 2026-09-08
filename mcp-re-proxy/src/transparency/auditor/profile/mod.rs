@@ -184,6 +184,9 @@ mod tests {
         })
     }
 
+    /// One way of breaking a document, applied to a copy of the legal one.
+    type Break = fn(&mut serde_json::Value);
+
     fn parse(value: &serde_json::Value) -> Result<AuditProfile, String> {
         AuditProfile::parse(&serde_json::to_vec(value).expect("json"))
     }
@@ -206,7 +209,7 @@ mod tests {
     /// call happens to trip over. That is the seal, stated as the operational test.
     #[test]
     fn an_incoherent_document_never_becomes_a_profile() {
-        let cases: [(&str, fn(&mut serde_json::Value)); 7] = [
+        let cases: [(&str, Break); 7] = [
             ("schema", |d| d["schema"] = "something-else/v1".into()),
             ("audience_id", |d| {
                 d["expected_audience"]["audience_id"] = "".into()

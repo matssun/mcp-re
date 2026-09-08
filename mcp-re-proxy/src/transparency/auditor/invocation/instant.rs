@@ -32,14 +32,29 @@ pub(super) fn audit_instant(stated: Option<String>) -> Result<i64, String> {
     Ok(seconds)
 }
 
-/// The system clock as Unix seconds, or a refusal. A clock that will not read is not an
-/// audit at instant zero.
+/// The host clock as Unix seconds, or a refusal.
+///
+/// Read through [`crate::clock::now_unix`] rather than from the OS here: wall-clock
+/// acquisition is an authority with one owner in this crate
+/// (`boundary.clock` in `verification/policy/trust-boundaries.toml`), and a second
+/// acquisition site would widen a declared trust boundary to buy nothing.
+///
+/// What this adds is the refusal that owner deliberately does not make. It CLAMPS a
+/// pre-epoch reading to zero, which fails closed for per-request freshness; here zero
+/// fails OPEN in the way that matters, because every retained message would compare as
+/// created in the future and the reconstruction would report the archive as broken when
+/// the host is. So a non-positive reading is refused, exactly as a stated `--at` of zero
+/// is.
 fn now_unix() -> Result<i64, String> {
-    let elapsed = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|_| "the system clock reads before the Unix epoch".to_owned())?;
-    i64::try_from(elapsed.as_secs())
-        .map_err(|_| "the system clock does not fit a Unix timestamp".to_owned())
+    let now = crate::clock::now_unix();
+    if now <= 0 {
+        return Err(
+            "the host clock reads at or before the Unix epoch, so no audit \
+                    instant can be established; fix the clock or pass --at"
+                .to_owned(),
+        );
+    }
+    Ok(now)
 }
 
 #[cfg(test)]
