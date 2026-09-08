@@ -22,11 +22,6 @@ use super::RegistrationTarget;
 
 impl RegistrationTarget {
     /// The target the auditor's registration FLAGS name, if they name one.
-    ///
-    /// A budget given without `--register-to` is REFUSED rather than ignored. An operator who
-    /// wrote down how long a registration may take has said they expect one, and a run that
-    /// quietly performed no registration under that budget would be answering a question they
-    /// did not ask.
     pub(in crate::transparency::auditor) fn from_flags(
         url: Option<String>,
         protocol: Option<String>,
@@ -34,7 +29,18 @@ impl RegistrationTarget {
         interval: Option<String>,
     ) -> Result<Option<RegistrationTarget>, String> {
         let Some(url) = url else {
-            return no_registration(timeout.is_some() || interval.is_some() || protocol.is_some());
+            // The flags that were given, so the refusal names what the operator actually
+            // typed. A message listing the budget flags to somebody who typed
+            // `--registration-protocol` sends them to look at the wrong line.
+            let orphaned: Vec<&str> = [
+                ("--registration-protocol", protocol.is_some()),
+                ("--registration-timeout-secs", timeout.is_some()),
+                ("--registration-poll-interval-secs", interval.is_some()),
+            ]
+            .into_iter()
+            .filter_map(|(flag, given)| given.then_some(flag))
+            .collect();
+            return no_registration(&orphaned);
         };
         let protocol = match protocol {
             Some(token) => RegistrationProtocol::parse(&token)?,
@@ -60,20 +66,24 @@ const DEFAULT_REGISTRATION_TIMEOUT_SECS: u64 = 300;
 /// The default wait between polls, in seconds.
 const DEFAULT_POLL_INTERVAL_SECS: u64 = 2;
 
-/// The answer when no `--register-to` was given: no target, unless a bound was.
+/// The answer when no `--register-to` was given: no target, unless a registration TERM was.
 ///
-/// A bound with nothing to bound is refused rather than ignored. An operator who wrote
-/// down how long a registration may take has said they expect one, and a run that quietly
-/// performed none under that budget would be answering a question they did not ask.
-fn no_registration(bounded: bool) -> Result<Option<RegistrationTarget>, String> {
-    if bounded {
-        return Err(
-            "--registration-timeout-secs and --registration-poll-interval-secs \
-                    bound a registration, and this invocation has no --register-to"
-                .to_owned(),
-        );
+/// A term with nothing to apply it to is refused rather than ignored. An operator who wrote
+/// down which protocol to speak, or how long a registration may take, has said they expect
+/// one, and a run that quietly performed none under those terms would be answering a question
+/// they did not ask.
+///
+/// The refusal names the flags actually given, not the whole family: it is read by somebody
+/// looking for the line they typed.
+fn no_registration(orphaned: &[&str]) -> Result<Option<RegistrationTarget>, String> {
+    if orphaned.is_empty() {
+        return Ok(None);
     }
-    Ok(None)
+    Err(format!(
+        "{} describe{} a registration, and this invocation has no --register-to",
+        orphaned.join(" and "),
+        if orphaned.len() == 1 { "s" } else { "" },
+    ))
 }
 
 /// A duration in whole seconds, or the default.
@@ -122,6 +132,15 @@ mod tests {
             let refused = from(None, protocol, timeout, interval)
                 .expect_err("a term with nothing to bound must refuse");
             assert!(refused.contains("--register-to"), "{refused}");
+            let typed = protocol
+                .map(|_| "--registration-protocol")
+                .or(timeout.map(|_| "--registration-timeout-secs"))
+                .or(interval.map(|_| "--registration-poll-interval-secs"))
+                .expect("one of them was given");
+            assert!(
+                refused.contains(typed),
+                "the refusal must name the line the operator typed, not the family: {refused}",
+            );
         }
     }
 
