@@ -46,6 +46,24 @@ ENTRY = "scripts/local_gate.sh"
 #: the set because the fleet harness lives there and is invoked like any other script.
 INVOCATION = re.compile(r"(?:^|[\s`\"'./])((?:scripts|tools|docs)/[A-Za-z0-9_./-]+?\.(?:py|sh))")
 
+#: The closure is followed through SHELL scripts only, and that is a correctness
+#: requirement rather than a simplification. This gate's own docstring names
+#: `tools/slo/run_slo_job.sh` — it has to, it is what the gate is about — so following
+#: references out of `.py` files would let the gate satisfy its own requirement by
+#: describing it. Every hop in the chain it polices is a shell invocation
+#: (`local_gate.sh` -> `rehearse_job_spec.sh` -> `run_slo_job.sh`), so nothing real is lost;
+#: a Python control that shells out to a registered target would need its own hop declared.
+CLOSURE_GLOBS = ("scripts/*.sh", "tools/**/*.sh", "docs/**/*.sh")
+
+#: The repository's inline-comment idiom inside a `&&` chain: `` `# …` ``. It is a command
+#: substitution, so it sits in command position and a path named inside one would read as an
+#: invocation.
+BACKTICK_COMMENT = re.compile(r"`[^`]*`")
+
+#: Words that may precede the script in command position without being the command.
+RUNNERS = {"python3", "python", "bash", "sh", "zsh", "exec", "time", ".", "source"}
+ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
 #: document -> (the literal claim it makes, the invocation that claim asserts)
 #:
 #: The marker is a literal substring rather than a regex: a claim this gate can only match
@@ -67,19 +85,48 @@ CLAIMS: dict[str, tuple[str, str]] = {
 }
 
 
+def invocations(text: str) -> set[str]:
+    """The scripts this text actually CALLS — not the ones it mentions.
+
+    A comment is not a caller, and the distinction is load-bearing rather than pedantic:
+    this gate's own docstring names `tools/slo/run_slo_job.sh`, and so does the comment in
+    `local_gate.sh` explaining why the rehearsal exists. Under a mention-based reading both
+    of those satisfied the requirement — the gate passed while the invocation it polices had
+    been deleted, which is precisely the false green it was written to prevent. Measured:
+    with the rehearsal line removed, a mention-based closure still reported OK.
+
+    So a reference counts only in COMMAND POSITION: first word of a command, after any
+    leading environment assignments and any interpreter that runs it.
+    """
+    found: set[str] = set()
+    for line in BACKTICK_COMMENT.sub(" ", text).splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        for segment in re.split(r"&&|\|\||[;|]", line):
+            words = segment.strip().split()
+            while words and (ASSIGNMENT.match(words[0]) or words[0] in RUNNERS):
+                words.pop(0)
+            if not words:
+                continue
+            candidate = words[0].lstrip("./") if words[0].startswith("./") else words[0]
+            match = INVOCATION.fullmatch(" " + candidate)
+            if match:
+                found.add(match.group(1))
+    return found
+
+
 def closure(read: dict[str, str], entry: str) -> set[str]:
     """Every script reachable from `entry` by invocation, `entry` included.
 
-    Reachability, not a call graph: a name inside a comment counts. That is deliberate and
-    conservative in the safe direction for THIS question — a commented-out invocation would
-    make the gate pass while the rehearsal is dead, so the registry entry and the wiring are
-    reviewed together in the same diff rather than trusted to a parser.
+    Reachability over INVOCATIONS, not over mentions — see `invocations`. A path named in a
+    comment or a docstring is not a caller, and treating it as one made this gate pass with
+    the rehearsal deleted.
     """
     seen = {entry}
     queue = deque([entry])
     while queue:
         current = queue.popleft()
-        for found in INVOCATION.findall(read.get(current, "")):
+        for found in invocations(read.get(current, "")):
             if found not in seen:
                 seen.add(found)
                 queue.append(found)
@@ -110,7 +157,7 @@ def adjudicate(claims: dict[str, tuple[str, str]], docs: dict[str, str], reachab
 
 def _read_repo() -> tuple[dict[str, str], dict[str, str]]:
     scripts: dict[str, str] = {}
-    for pattern in ("scripts/*.sh", "scripts/*.py", "tools/**/*.sh", "docs/**/*.sh"):
+    for pattern in CLOSURE_GLOBS:
         for path in REPO.glob(pattern):
             scripts[str(path.relative_to(REPO))] = path.read_text(encoding="utf-8", errors="replace")
     docs = {
@@ -142,12 +189,12 @@ def main() -> int:
 
 def selftest() -> int:
     scripts = {
-        "scripts/local_gate.sh": "runs docs/h.sh and scripts/other.py",
-        "docs/h.sh": "calls tools/slo/run_slo_job.sh",
-        "scripts/other.py": "",
+        "scripts/local_gate.sh": "  PROVIDER=kind docs/h.sh\n  scripts/other.sh --flag\n",
+        "docs/h.sh": "  tools/slo/run_slo_job.sh - kind-local 1 out.json\n",
+        "scripts/other.sh": "  # tools/slo/run_slo_job.sh is only mentioned here\n",
     }
     reachable = closure(scripts, "scripts/local_gate.sh")
-    assert reachable == {"scripts/local_gate.sh", "docs/h.sh", "scripts/other.py", "tools/slo/run_slo_job.sh"}, reachable
+    assert reachable == {"scripts/local_gate.sh", "docs/h.sh", "scripts/other.sh", "tools/slo/run_slo_job.sh"}, reachable
 
     claim = {"d.md": ("CLAIM", "tools/slo/run_slo_job.sh")}
     assert adjudicate(claim, {"d.md": "we CLAIM it"}, reachable) == []
@@ -161,9 +208,28 @@ def selftest() -> int:
     # A one-hop closure must not be mistaken for a transitive one: the invocation this gate
     # exists for is two hops away, and a direct-reference-only check would have passed the
     # whole time the sentence was false.
-    assert "tools/slo/run_slo_job.sh" not in closure(scripts, "scripts/other.py")
+    assert "tools/slo/run_slo_job.sh" not in closure(scripts, "scripts/other.sh")
 
-    print("rehearsal_claim_gate selftest: OK — 4 adjudication cases, 2 closure cases")
+    # THE SELF-DESCRIPTION HAZARD. This file's own docstring names the target it requires.
+    # The real closure must not include this gate as a source, or it would satisfy its own
+    # requirement by talking about it.
+    # A MENTION is not an invocation, and both real shapes that fooled the first version of
+    # this gate are pinned here: a `#` comment, and the repository's `` `# …` `` idiom
+    # inside a `&&` chain, which is a command substitution and therefore sits in command
+    # position.
+    assert invocations("  tools/slo/run_slo_job.sh - kind-local 1 out.json") == {"tools/slo/run_slo_job.sh"}
+    assert invocations("  # tools/slo/run_slo_job.sh was invoked by nothing") == set()
+    assert invocations("    `# see tools/slo/run_slo_job.sh` \\") == set()
+    assert invocations("    && python3 scripts/x.py --selftest \\") == {"scripts/x.py"}
+    assert invocations("  PROVIDER=kind docs/security/h.sh || return $?") == {"docs/security/h.sh"}
+    assert invocations(". scripts/use_pinned_toolchain.sh || exit 1") == {"scripts/use_pinned_toolchain.sh"}
+    assert invocations('  echo "run tools/slo/run_slo_job.sh yourself"') == set()
+
+    real, _ = _read_repo()
+    assert "scripts/rehearsal_claim_gate.py" not in real, "the gate reads itself as a closure source"
+    assert all(name.endswith(".sh") for name in real), "a non-shell file entered the closure"
+
+    print("rehearsal_claim_gate selftest: OK — 4 adjudication cases, 4 closure cases, 7 invocation cases")
     return 0
 
 
