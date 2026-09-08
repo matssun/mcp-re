@@ -69,6 +69,44 @@ at, and at what strength.
 service publishes its authority key. It reads the DID document as a KEY SET and nothing more —
 no resolution, no controller check, and the method `id` fragment is NOT read as a COSE `kid`,
 because a pin's `kid` means "the one the receipt names" and this service's receipts name none.
+### Fixed — the extraction container's identity is computed, not remembered
+
+`verification/policy/toolchains.lock.toml` records a `tag` derived from the pinned Charon,
+Aeneas, Lean and mathlib revisions **and the Dockerfile that assembles them**. The Dockerfile
+is in that hash for a stated reason: "the same commits assembled differently are a different
+instrument. Omitting it would let a build-step change slip in under an unchanged tag."
+
+One slipped in anyway — three times. `verification/extraction/Dockerfile` gained the elan
+Lean toolchain and the mathlib backend build across #719, #720 and #723, and the pin went on
+naming an image built from none of them. Every prover pin is unchanged; only the definition
+moved. The recorded tag `tc-09eedf0aaf503302` reproduces *only* with the Dockerfile as it was
+on 2026-08-11, where this tree computes `tc-017b1c2016b0ba7a`.
+
+It was invisible because nothing recomputed the tag. The lock's own note says it is "for human
+navigation only — nothing resolves through it", which is true of RESOLUTION and was taken as
+true of CHECKING.
+
+Two questions, now asked separately and by different parties:
+
+* **Does the recorded identity follow from its own inputs?** The entry gains
+  `definition_digest`, the Dockerfile the pinned image was built from, and `load_toolchains`
+  refuses a lock whose `tag` does not follow from its pins and that definition. Validating in
+  the LOADER binds every consumer at once rather than one script remembering to ask.
+* **Is the pinned image a build of the definition this tree declares?** Reported by
+  `verify-lean` on every run, and fatal exactly where it can mislead — when a unit asks the
+  extraction lane for evidence. Publishing is deliberately operator-only (`workflow_dispatch`;
+  "publishing an image is minting a new evidence identity"), so a tree red for as long as a
+  human takes to run a workflow would be a gate that gets disabled.
+
+Today the second answer is **no**, and the lane says so on every run. That is the honest state
+of #541: the definition is right, the published image is not it yet, and the remaining step is
+one dispatch of `.github/workflows/extraction-image.yml` plus the reviewed lock update — which
+the publisher now prints in full, `definition_digest` included, because the digest and the
+definition it was built from are one fact.
+
+The identity function moved to `tools/verification/_extraction_identity.py` so the publisher
+and the validator cannot disagree about it. They never did disagree; nothing validated at all.
+
 
 ### Added — external transparency-service registration, with the receipt verified before it counts
 

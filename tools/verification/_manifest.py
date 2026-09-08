@@ -16,6 +16,7 @@ import tomllib
 from collections.abc import Iterable
 from pathlib import Path
 
+from _extraction_identity import identity_problems
 from _seams import files_with_seams
 from _ecosystems import CARGO
 from _ecosystems import test_project_for
@@ -911,6 +912,12 @@ def load_toolchains() -> dict:
                     f"{where}: [{name}.{sub_name}] state must be 'resolved' or "
                     f"'unresolved'"
                 )
+    # The extraction container's identity is COMPUTABLE from the inputs recorded beside it,
+    # so it is computed here rather than trusted. Validating in the loader binds every
+    # consumer at once — the gate, the Lean lane, the graph — instead of one script
+    # remembering to ask.
+    for problem in identity_problems(doc):
+        raise ManifestError(problem)
     return doc
 
 

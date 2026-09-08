@@ -140,6 +140,13 @@ state = "resolved"
 image = "ghcr.io/matssun/mcp-re-verification-extraction"
 digest = "sha256:42318bba386ace68eb1b5ff7173259d3e485fc506cab76d6e40970dc987f7dce"
 tag = "tc-09eedf0aaf503302"
+# The Dockerfile the pinned image was BUILT FROM, as opposed to the one this tree declares.
+# Recovered rather than assumed: this is the only value for which `tag` above reproduces from
+# the pins beside it, and it is `verification/extraction/Dockerfile` as of 1adeda55 (the commit
+# that wrote this entry). Without it the recorded tag could not be checked against anything,
+# which is how three Dockerfile changes — #719, #720, #723 — left the pin naming an image
+# built from none of them.
+definition_digest = "790b65c1bf3c2c8134945e998857c8e3f1b228e7d6910197980ca2b5592cee9d"
 platform = "linux/arm64"
 definition = "verification/extraction/Dockerfile"
 note = """
