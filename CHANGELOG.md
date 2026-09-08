@@ -12,6 +12,64 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Added — a SECOND mechanism leaf, and the first exchange with a Transparency Service somebody else operates
+
+The externalization census recorded the live interoperability claim as blocked on "an
+architecture decision", and it recorded two facts about the only external Transparency
+Service this project had exchanged bytes with. Re-measuring found the decision was a second
+mechanism leaf, and that one of the two facts had gone stale.
+
+**What re-measuring found.** The census said `capsule-anchor`'s registration response carried
+`{entry_hash, leaf_index, tree_size}` and **no receipt at all**. Its published OpenAPI now
+makes `receipt_b64` a REQUIRED response field, and a live submission returned one. That
+finding is superseded by an exchange, not by a re-reading of it. The operated instance also
+uses a leaf rule neither corpus had.
+
+**A third `StatementLeafProfile`.** `SigStructureDigest` —
+`SHA-256(0x00 ‖ SHA-256(Sig_structure))` — is what the live service applies to every parseable
+`COSE_Sign1`, and it is a property rather than a quirk: a COSE envelope is malleable, so a log
+keyed on the transmitted octets can hold two entries for one signing act while one keyed on
+the `Sig_structure` cannot. Like the other two readings it cannot be inferred from a receipt
+and comes from the pin. `SignedStatement` now carries the structure `coset` built at
+construction, so the value knows it rather than callers recomputing it.
+
+**A second leaf, not a path flag.** `CapsuleAnchorRegistrationClient` sits beside
+`Scrapi11RegistrationClient` under the unchanged `TransparencyRegistration` capability. The
+two agree on nothing a leaf owns — resource, request media type, success shape, and whether
+there is polling at all — so a `--registration-path` would have let one client reach the other
+service by coincidence of shape while calling a different contract by SCRAPI's name. The
+operator NAMES it: `--registration-protocol scrapi-11|capsule-anchor`, defaulting to the one
+that was the only one. No semantic type above the boundary changed.
+
+**The claim may not exceed the peer.** A run against a SCRAPI peer earns *SCRAPI
+interoperability*; a run against `capsule-anchor` earns *external Transparency Service
+interoperability* and no more. `AttestationArtifact` records which contract answered, set from
+the same `RegisteredStatement` that carries the receipt, so the two arrive together or not at
+all.
+
+**What actually ran, 2026-09-08.** The shipped `mcp-re-auditor` served a call, retained it,
+attested it, registered the Signed Statement with `witness.agentactioncapsule.org` — a service
+this project does not run, configure or restart — and the returned COSE receipt verified
+OFFLINE against a pin cut beforehand. The exchange is frozen in
+`mcp-re-conformance/tests/vectors/scitt/interop/capsule-anchor-live/` and re-verified on every
+build; the live lane itself is opt-in and deliberately off the merge path, because a red build
+must never mean somebody else's server is down. With its variables unset it prints that it
+MEASURED NOTHING rather than passing quietly.
+
+**What is still not earned.** SCRAPI interoperability. Implementations exist — DataTrails
+ships one with a published GitHub Action, and Microsoft's Signing Transparency is GA, open
+source and SCITT-compliant — so the remaining gap is reachability rather than absence. It is
+an ACCESS question: DataTrails' surface is account-gated, and whether MST admits a third
+party's Signed Statement was not established. Nothing in the tree needs to change for such a
+run: `--registration-protocol scrapi-11` is the default and is proved against a hermetic
+SCRAPI service through the shipped binary. The census records what each peer was confirmed
+at, and at what strength.
+
+`tools/scitt_fetch_service_key.py` grew a `did-web` discovery method, because that is how this
+service publishes its authority key. It reads the DID document as a KEY SET and nothing more —
+no resolution, no controller check, and the method `id` fragment is NOT read as a COSE `kid`,
+because a pin's `kid` means "the one the receipt names" and this service's receipts name none.
+
 ### Added — external transparency-service registration, with the receipt verified before it counts
 
 The externalization census's G-1, and the last hop of ADR-MCPRE-054. Everything either side

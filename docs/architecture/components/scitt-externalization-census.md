@@ -68,6 +68,11 @@ code rather than a decision.
 > offline against the previously captured pin after network access is removed. Until that
 > run happens, the honest statement is *the mechanism exists and interoperates with a
 > hermetic peer*.
+>
+> **That run happened on 2026-09-08** (MCPRE-180), over a SECOND mechanism leaf and against a
+> service this project does not operate. The claim it earns is *external Transparency Service
+> interoperability*; *SCRAPI interoperability* is still unearned, because the peer that
+> answered does not speak SCRAPI. See the resolution section at the end of this document.
 
 ### G-2 · The auditor half has no entry point *(implemented, unreachable)*
 
@@ -135,8 +140,10 @@ Both are #841's, both are recorded at the code they govern rather than only here
 A v0.18-C product step exists, and it is **G-2 then G-1** in that order: turn the auditor
 authority into a runnable artifact, then give it a registration mechanism. G-3 stays out.
 
-G-2 is done. G-1's mechanism is done; its interoperability CLAIM waits on a live external
-service, and nothing but that run can produce it.
+G-2 is done. G-1's mechanism is done, and its interoperability claim is EARNED for an
+externally operated peer as of 2026-09-08 — but only the one the run reached: see the
+resolution section, which keeps *external Transparency Service interoperability* and *SCRAPI
+interoperability* apart because only the first was measured.
 
 ## Addendum, 2026-09-08: which external service, measured
 
@@ -184,3 +191,70 @@ recorded here unresolved.
 The interoperability CLAIM is not licensed by either. It is earned by one live run against a
 real external Transparency Service whose receipt still verifies offline, against a previously
 captured pin, after network access is removed.
+
+## Resolution, 2026-09-08 (MCPRE-180): the decision was taken, and the addendum was partly stale
+
+The decision above is **resolved: a second mechanism leaf**, and it is built. Two of the
+addendum's own findings were re-measured first, and one of them was wrong.
+
+### What re-measuring found
+
+| the addendum said | the measurement |
+|---|---|
+| capsule-anchor's response carries `{entry_hash, leaf_index, tree_size}` — **no receipt at all** | **Superseded.** Its published OpenAPI makes `receipt_b64` a REQUIRED field of `RegisterStatementResponse`, and a live submission returned one. |
+| *(not asked)* | The OPERATED instance uses a leaf rule neither corpus had: `SHA-256(0x00 ‖ SHA-256(Sig_structure))`, which it calls `sig_structure`. `StatementLeafProfile::SigStructureDigest` is that reading, and the pin selects it. |
+| the peer was a LOCAL run of open-source code | An instance at `witness.agentactioncapsule.org` that we do not run, configure or restart accepted our exact octets. |
+
+Everything else in the addendum stands, and the boundary it praised held: **no semantic type
+above `TransparencyRegistration` changed.** The second leaf is a sibling of the SCRAPI one,
+the verifying layer is the same function, and the certainty vocabulary is untouched.
+
+### The three evidence levels, kept apart
+
+An implementation existing, a foreign implementation being exercised, and an externally
+OPERATED service being exercised are three different things, and only the third was in
+question.
+
+| level | reached |
+|---|---|
+| implementation exists | yes — see the survey below |
+| foreign implementation exercised | yes, since #501: capsule-anchor run locally, its receipt verified offline |
+| externally operated service exercised | **yes, 2026-09-08**: `witness.agentactioncapsule.org`, end to end through the shipped `mcp-re-auditor` |
+
+The third row is one lane —
+`transparency_e2e_test::the_auditor_binary_registers_with_a_live_external_service` — and it is
+opt-in (`MCP_RE_LIVE_TRANSPARENCY_SERVICE`, `MCP_RE_LIVE_TRANSPARENCY_PIN`), deliberately off
+the merge path, because a red build must never mean somebody else's server is down. With the
+variables unset it prints that it MEASURED NOTHING rather than passing quietly. What survives
+a run is frozen in `.../interop/capsule-anchor-live/`, verified offline by
+`scitt_interop_test` on every build.
+
+### What that earns, exactly
+
+> **external Transparency Service interoperability.**
+
+It does **not** earn *SCRAPI interoperability*. That service does not speak SCRAPI, and only
+a run against a SCRAPI peer earns that sentence. `AttestationArtifact` records which contract
+answered, so an artifact cannot be read as the stronger claim, and
+`mcp-re-conformance/tests/vectors/scitt/interop/capsule-anchor-live/exchange-metadata.json`
+says so in the corpus a reader would cite.
+
+### The SCRAPI claim is an ACCESS dependency, not an absence
+
+The remaining gap is reachability, not a missing implementation. What this pass could confirm
+from public sources, stated at the strength it was confirmed at:
+
+| peer | confirmed | what it does not yet establish |
+|---|---|---|
+| **DataTrails** | ships a SCITT/SCRAPI implementation, with a published GitHub Action driving it | its SCRAPI surface is account-gated — a **credential to obtain** |
+| **Microsoft Signing Transparency (MST)** | GA, open source, SCITT-standard-compliant ledger | it records Microsoft's own production builds. Whether it accepts a Signed Statement from a third party was NOT established here, and a run needs that before it is planned |
+| **Tradeverifyd** | named in the owner's ruling; **this pass did not independently confirm it** from public sources | everything |
+
+That is categorically different from "no peer exists", which is what the addendum's first line
+read as. A SCRAPI run against any peer that will accept a submission earns the stronger
+sentence, and nothing in the tree needs to change for it —
+`--registration-protocol scrapi-11` is the shipped default and is proved against a hermetic
+SCRAPI service through the shipped binary.
+
+The next step is therefore an ACCESS question — obtain a credential, or establish that a peer
+admits third-party registration — and not a code question.

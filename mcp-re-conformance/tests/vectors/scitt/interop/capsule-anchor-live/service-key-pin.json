@@ -1,0 +1,16 @@
+{
+  "algorithm": "EdDSA",
+  "discovery_document_digest": "vntKXuHGQgHpcZr1OgFSui5H-l_th_ViW5oTmEOMPTA",
+  "discovery_method": "did-web",
+  "discovery_uri": "https://witness.agentactioncapsule.org/.well-known/did.json",
+  "fetched_at": "2026-09-08T19:15:40Z",
+  "kid": "",
+  "leaf_profile": "sig-structure-digest",
+  "position_profile": "unbound",
+  "public_key": {
+    "x": "ObtlTJ3Ar-HA7e8N7_qmkJm4UYg2ybom4EkVNYQPlrU"
+  },
+  "public_key_thumbprint": "x_hOIkp2dyartJbjCCYJEszW-L7BGwN7MXdEM2RTJzY",
+  "schema": "mcp-re-scitt-service-trust-pin/v1",
+  "service_identifier": "capsule-anchor (witness.agentactioncapsule.org, operated)"
+}

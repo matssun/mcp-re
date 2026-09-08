@@ -9,6 +9,13 @@
 //! different every run. Folding the hops into the profile would make attesting a second
 //! record require editing the document that says what the deployment's posture was.
 //!
+//! `--registration-protocol` is NAMED rather than guessed from the endpoint. A URL does not
+//! say what it speaks, and inferring it would let a client reach one service by coincidence
+//! of shape while calling a different contract by another's name. It also decides what a
+//! successful run may CLAIM — a SCRAPI peer earns *SCRAPI interoperability*, `capsule-anchor`
+//! earns *external Transparency Service interoperability* — which is why the artifact records
+//! which one answered rather than only that something did.
+//!
 //! Everything here is REQUIRED except the audit instant. There is no default archive, no
 //! default profile and no default output path: an auditor that guessed any of them would
 //! be attesting a record the operator did not name.
@@ -23,10 +30,13 @@ use super::registration::RegistrationTarget;
 mod flag;
 /// The moment this audit is taken to have been performed at.
 mod instant;
+/// WHAT an operator may type, as they read it.
+mod usage;
 
 use flag::Filled;
 use flag::Slot;
 use instant::audit_instant;
+use usage::USAGE;
 
 /// What one audit run was asked to do.
 ///
@@ -63,31 +73,6 @@ pub struct AuditInvocation {
     /// everything up to the submission.
     pub(super) registration: Option<RegistrationTarget>,
 }
-
-/// The usage text, which is also the flag list this parser accepts.
-pub(super) const USAGE: &str = "\
-mcp-re-auditor — turn retained MCP-RE evidence into a portable SCITT attestation.
-
-Runs OFF the request path, against an archive a serving proxy wrote with
---retained-evidence-dir. The attestation is always produced and written; registering it
-with a transparency service is opt-in and happens afterwards.
-
-  --retained-evidence-dir <dir>   the archive to read
-  --hop <digest>                  one hop of the record, repeated IN ORDER (>= 1)
-  --audit-profile <path>          what this auditor asserts about the deployment
-  --trust-document <path>         the deployment's request-signer trust document
-  --service-trust-pin <path>      the transparency service this attestation is for
-  --issuer-kid <kid>              the kid this auditor signs its statement under
-  --issuer-key-seed <path>        base64url Ed25519 seed for that key
-  --out <path>                    where to write the attestation artifact
-  --at <unix-seconds>             the audit instant (default: the system clock)
-
-Registration (opt-in). Without --register-to nothing is submitted anywhere.
-
-  --register-to <url>                    an HTTPS transparency-service base URL
-  --registration-timeout-secs <n>        the whole registration budget (default 300)
-  --registration-poll-interval-secs <n>  wait between polls (default 2)
-";
 
 impl AuditInvocation {
     /// The usage text: what this auditor accepts, and nothing it does not.
@@ -128,6 +113,7 @@ impl AuditInvocation {
         let mut out = Slot::new("--out");
         let mut at = Slot::new("--at");
         let mut register_to = Slot::new("--register-to");
+        let mut reg_protocol = Slot::new("--registration-protocol");
         let mut reg_timeout = Slot::new("--registration-timeout-secs");
         let mut reg_interval = Slot::new("--registration-poll-interval-secs");
         let mut hops: Vec<EvidenceDigest> = Vec::new();
@@ -147,6 +133,7 @@ impl AuditInvocation {
                 "--out" => Filled::Once(&mut out),
                 "--at" => Filled::Once(&mut at),
                 "--register-to" => Filled::Once(&mut register_to),
+                "--registration-protocol" => Filled::Once(&mut reg_protocol),
                 "--registration-timeout-secs" => Filled::Once(&mut reg_timeout),
                 "--registration-poll-interval-secs" => Filled::Once(&mut reg_interval),
                 other => return Err(format!("unknown argument {other:?}\n\n{USAGE}")),
@@ -176,6 +163,7 @@ impl AuditInvocation {
             out: out.required()?.into(),
             registration: RegistrationTarget::from_flags(
                 register_to.value,
+                reg_protocol.value,
                 reg_timeout.value,
                 reg_interval.value,
             )?,

@@ -101,6 +101,14 @@ impl std::error::Error for RegistrationError {}
 /// media types and status codes; what it owes the layer above is bytes and a refusal in
 /// this module's vocabulary.
 pub trait TransparencyRegistration {
+    /// WHICH contract this mechanism speaks, as a durable record rather than a log line.
+    ///
+    /// Mechanism-NEUTRAL even though its values are not: "which one ran" is a fact about
+    /// the capability, and it is the fact a claim rests on. A run against a peer speaking
+    /// one contract does not license a sentence about another, so the answer travels into
+    /// the artifact instead of being spent at the call site.
+    fn protocol(&self) -> &'static str;
+
     /// Register `signed_statement` — the exact octets — and return what the service
     /// answered with.
     fn register(&self, signed_statement: &[u8]) -> Result<RegistrationResponse, RegistrationError>;
@@ -115,12 +123,22 @@ pub trait TransparencyRegistration {
 #[derive(Debug, Clone)]
 pub struct RegisteredStatement {
     receipt_bytes: Vec<u8>,
+    protocol: &'static str,
 }
 
 impl RegisteredStatement {
     /// The receipt, as the bytes an operator archives beside the statement.
     pub fn receipt_bytes(&self) -> &[u8] {
         &self.receipt_bytes
+    }
+
+    /// WHICH contract established this registration.
+    ///
+    /// Carried on the value because the value is what a claim is written from. A reader
+    /// holding one of these can say what was interoperated with; a reader holding only a
+    /// receipt would have to ask the invocation, which is not archived beside it.
+    pub fn protocol(&self) -> &'static str {
+        self.protocol
     }
 }
 
@@ -155,6 +173,7 @@ pub fn register_and_verify(
     .map_err(|e| RegistrationError::ReceiptUnverified(e.wire_code().to_owned()))?;
     Ok(RegisteredStatement {
         receipt_bytes: response.bytes().to_vec(),
+        protocol: mechanism.protocol(),
     })
 }
 
@@ -167,6 +186,10 @@ mod tests {
     struct Canned(Result<Vec<u8>, ()>);
 
     impl TransparencyRegistration for Canned {
+        fn protocol(&self) -> &'static str {
+            "canned"
+        }
+
         fn register(&self, _: &[u8]) -> Result<RegistrationResponse, RegistrationError> {
             match &self.0 {
                 Ok(bytes) => Ok(RegistrationResponse::of(bytes.clone())),
@@ -188,6 +211,11 @@ mod tests {
         )
         .expect("the receipt verifies against the statement and the pin");
         assert_eq!(registered.receipt_bytes(), receipt.as_slice());
+        assert_eq!(
+            registered.protocol(),
+            "canned",
+            "the established registration records WHICH mechanism established it",
+        );
     }
 
     /// A receipt for a DIFFERENT statement is refused, however well the HTTP went.

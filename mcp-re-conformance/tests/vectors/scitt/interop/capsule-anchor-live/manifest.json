@@ -1,0 +1,12 @@
+{
+  "artifacts": {
+    "exchange-metadata.json": "j7oORiIjlXkSUfb8_tVdWfm_gvVBRlqyNGz6X5_kA1o",
+    "receipt.cbor": "iShPnfc66b5JBBxQuDbcqIcoXmTSFm4d7LF5wz395jU",
+    "retained-evidence.bin": "oDvX7K1MRiqLKo1-ovD9nOYXO53wQkPWqzeU5AzzzlY",
+    "service-key-pin.json": "RgUKVnIew65bMyvypyiKjAKLxswIA09F8Amodj69050",
+    "signed-statement.cbor": "44DBxLYj-0VWsLqm5u8Wlq6OSToZFm2R7TVtdTP7wJI"
+  },
+  "expected_verdict": "verify_ok",
+  "peer": "capsule-anchor (action-state-group), Apache-2.0, operated at witness.agentactioncapsule.org",
+  "schema": "mcp-re-scitt-interop/v1"
+}

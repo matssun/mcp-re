@@ -9,7 +9,7 @@
 //! whole contract be stated as two functions with no client, no budget and no clock in
 //! sight.
 
-use super::exchange::HttpResponse;
+use super::super::exchange::HttpResponse;
 use super::fault::Phase;
 use super::fault::Scrapi11Fault;
 use super::wire;

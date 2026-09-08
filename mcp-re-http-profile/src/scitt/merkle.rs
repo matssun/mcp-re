@@ -32,6 +32,9 @@ pub(super) fn leaf_hash(statement: &SignedStatement, profile: StatementLeafProfi
     match profile {
         StatementLeafProfile::StatementBytes => h.update(statement.to_cose()),
         StatementLeafProfile::StatementDigest => h.update(Sha256::digest(statement.to_cose())),
+        StatementLeafProfile::SigStructureDigest => {
+            h.update(Sha256::digest(statement.sig_structure()))
+        }
     }
     h.finalize().into()
 }
@@ -61,10 +64,27 @@ pub enum StatementLeafProfile {
     StatementBytes,
     /// The entry is a digest of the statement: `SHA-256(0x00 ‖ SHA-256(statement))`.
     ///
-    /// Used by services that log digests rather than documents — `capsule-anchor` does,
-    /// and its source calls it a deliberate exception to its own leaf rule. Verifiable,
-    /// but only if a verifier is told; it cannot be inferred.
+    /// Used by services that log digests rather than documents, and by `capsule-anchor`
+    /// under the name `legacy` — the scheme it applies to input it cannot parse as a
+    /// `COSE_Sign1`. Verifiable, but only if a verifier is told; it cannot be inferred.
     StatementDigest,
+    /// The entry is a digest of the RFC 9052 §4.4 `Sig_structure` the statement was signed
+    /// over: `SHA-256(0x00 ‖ SHA-256(["Signature1", protected, external_aad, payload]))`.
+    ///
+    /// A THIRD reading of "the entry", not a variation of the other two, and measured
+    /// against a live service rather than inferred: the operated `capsule-anchor` instance
+    /// calls it `sig_structure` and applies it to every parseable `COSE_Sign1` with an
+    /// embedded payload.
+    ///
+    /// Its reason is a real property rather than a quirk. A COSE envelope is malleable —
+    /// the same signing act can be re-encoded — so a log keyed on the transmitted octets
+    /// can hold two entries for one act, while one keyed on the `Sig_structure` cannot.
+    /// That is also why registering the same act twice there is idempotent.
+    ///
+    /// Like the other two it comes from the pin. Nothing in a receipt says which of the
+    /// three a service used, and trying them in turn would hand an attacker three chances
+    /// at the fold.
+    SigStructureDigest,
 }
 /// An interior Merkle node hash (RFC 6962 node prefix `0x01`).
 pub(super) fn node_hash(left: &[u8], right: &[u8]) -> [u8; 32] {

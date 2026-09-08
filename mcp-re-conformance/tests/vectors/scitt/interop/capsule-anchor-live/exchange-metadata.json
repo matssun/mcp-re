@@ -1,0 +1,31 @@
+{
+  "exchanged_at": "2026-09-08T19:05Z",
+  "how_this_corpus_was_obtained": "The Signed Statement in this directory was submitted to the live endpoint over the contract recorded above, and receipt.cbor is what came back. The corpus exists so the verification is reproducible with the network gone \u2014 that is what it establishes, and it does not by itself establish that any particular client produced the request.",
+  "kid": "The receipt's protected header carries NO kid, so the pin answers for the empty one. The service publishes a key_id (19a9ab3e02fad55c) at /anchor/authority-pubkey and as a DID verification-method fragment; neither is the COSE label a receipt names, and the pin does not pretend otherwise.",
+  "leaf_profile": "sig-structure-digest",
+  "leaf_profile_reason": "The service hashes SHA256(0x00||SHA256(Sig_structure)) \u2014 it calls the scheme `sig_structure` and applies it to every parseable COSE_Sign1 with an embedded payload, because a COSE envelope is malleable and a log keyed on the transmitted octets can hold two entries for one signing act. `entry_hash` above is SHA256(Sig_structure) of signed-statement.cbor, byte for byte. This is a THIRD reading of RFC 9162 \u00a72.1's entry, distinct from both statement-bytes and statement-digest, and like them it cannot be inferred from the receipt: it is recorded in the pin.",
+  "limits": "An operated third-party service accepted our exact octets and its receipt verifies offline against a previously pinned key. That is external Transparency Service interoperability and NOT SCRAPI interoperability: this service does not speak SCRAPI, and only a run against a SCRAPI peer earns that sentence. It also says nothing about split-view resistance, witnessing, or operator independence beyond the fact that we do not run it. The receipts carry NO position commitment, so the pin is `unbound`: tree_size and leaf_index remain unauthenticated hints and a relayer may restate this receipt at another position.",
+  "peer": "capsule-anchor (action-state-group), Apache-2.0",
+  "peer_kind": "SCITT Transparency Service (HTTP), OPERATED BY A THIRD PARTY at witness.agentactioncapsule.org \u2014 not a local run of its source",
+  "receipt_form": "detached payload (RFC 9942 \u00a74.4); alg=EdDSA; vds=395:1 (RFC9162_SHA256); vdp=396:{-1:[bstr]} carrying [tree_size, leaf_index, path]",
+  "registration_request": {
+    "body": {
+      "signed_statement_b64": "<standard base64 of signed-statement.cbor>"
+    },
+    "content_type": "application/json",
+    "method": "POST",
+    "path": "/transparency/register-statement"
+  },
+  "registration_response": {
+    "content_type": "application/json",
+    "entry_hash": "d827006a29faba3efaf5681d5941075077dc3476c880e2b63de4ef2ec452790a",
+    "entry_hash_scheme": "sig_structure",
+    "leaf_index": 991,
+    "receipt_b64": "<standard base64 of receipt.cbor>",
+    "status": 200,
+    "tree_size": 992
+  },
+  "shipped_binary_live_run": "SEPARATELY, on 2026-09-08, the shipped `mcp-re-auditor` performed a complete live run against this same endpoint through `CapsuleAnchorRegistrationClient`: a served call was retained, reconstructed, attested, registered, and the returned receipt verified OFFLINE against the pin in this directory before the artifact was allowed to carry it. That lane is `transparency_e2e_test::the_auditor_binary_registers_with_a_live_external_service`, opt-in via MCP_RE_LIVE_TRANSPARENCY_SERVICE and MCP_RE_LIVE_TRANSPARENCY_PIN, and it is deliberately OFF the merge path: a red build must never mean somebody else's server is down. The artifact it wrote recorded `registration_protocol: \"capsule-anchor /transparency\"`.",
+  "supersedes": "The 2026-09-08 externalization-census addendum recorded this service's registration response as carrying `{entry_hash, leaf_index, tree_size}` and NO RECEIPT. Its published OpenAPI now makes `receipt_b64` a REQUIRED response field, and this exchange returned one. That finding is superseded by this corpus, not by a re-reading of it.",
+  "verified_offline_after_the_network_was_removed": true
+}
