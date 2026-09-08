@@ -7,7 +7,9 @@
 //!
 //! It is `pub` and re-exported at the crate root, so it is a COMPATIBILITY SURFACE whatever
 //! its in-repo consumers are. #657 ruling 4 governs: zero production callers is not a
-//! deletion argument, and classifying it is its own decision.
+//! deletion argument, and #841's classification decision has now been taken — it is a
+//! RETAINED PUBLIC API carrying the contract stated on the type below. Not feature-gated,
+//! not moved to a separate crate, not deprecated.
 //!
 //! Its tree BUILDER is one of the two independent RFC 6962 implementations; the fold is
 //! [`super::merkle`]'s. See that module for why they stay two.
@@ -38,6 +40,28 @@ use super::wire::VDS_RFC9162_SHA256;
 /// A minimal in-process Merkle transparency log — the PROTOTYPE stand-in for a real
 /// SCITT Transparency Service, so the mapping and offline receipt verification are
 /// demonstrable without an external service. NOT a production ledger.
+///
+/// # Contract
+///
+/// > An in-process prototype/test-support Transparency Service and independent
+/// > implementation used for conformance/cross-checking. **Successful use of it is NOT
+/// > evidence that a statement was registered with an external SCITT Transparency
+/// > Service.**
+///
+/// That sentence is the whole of what a caller may conclude from a receipt this type
+/// produced. The receipt is a real RFC 9942 `COSE_Sign1` and it verifies offline against
+/// whatever key signed its tree head — which is exactly why the contract has to be stated
+/// rather than inferred from the bytes: nothing in a receipt distinguishes a log that
+/// exists only inside this process from one an independent operator runs. What separates
+/// them is the ORIGIN of the key it was verified against, and only an operator-reviewed
+/// [`super::ScittServiceTrustPin`] records that. This type has no pin, and
+/// [`ResolvedTransparencyService::stated`](super::ResolvedTransparencyService::stated) is
+/// the named provenance its callers must use.
+///
+/// It is a retained public API under that contract (#841 item 1). Its second job is
+/// architectural: its tree builder is the independent RFC 6962 implementation that keeps
+/// [`super::merkle`]'s fold honest, so deleting it would make a bug in the only remaining
+/// implementation invisible to the corpus that exists to see it.
 pub struct PrototypeTransparencyService {
     kid: String,
     leaves: Vec<[u8; 32]>,

@@ -81,6 +81,14 @@ pub(super) struct PinDocument {
     /// In the PIN for the same reason as `leaf_profile`: it is a property of the service
     /// that cannot be inferred from the receipt under attack, and requiring it must be a
     /// thing an operator wrote down.
+    ///
+    /// The `default` is a LEGACY-DESERIALIZATION allowance, deliberately kept (#841 item
+    /// 2): pins cut before the field existed — the two in
+    /// `mcp-re-conformance/tests/vectors/scitt/interop/` among them — must keep reading as
+    /// the pre-v2 contract they were cut under, because retroactively strengthening them
+    /// would invalidate an archived interoperability run rather than improve it. The WRITE
+    /// side has no such allowance: `tools/scitt_fetch_service_key.py` requires
+    /// `--position-profile`, so a NEW pin always records the operator's choice explicitly.
     #[serde(default)]
     pub(super) position_profile: ReceiptPositionProfile,
 }
