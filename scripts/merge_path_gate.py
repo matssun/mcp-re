@@ -65,6 +65,13 @@ EXEMPT: dict[str, str] = {
     # own — one needs a quiet box, the other a live process — and neither decides whether
     # a change is admissible.
     "scripts/local_slo_lane.sh": "an SLO measurement; refuses to measure on a loaded box",
+    # A PLUMBING rehearsal, and the only lane that needs a live kind cluster plus a 3 GB
+    # bench image — neither exists on a CI runner. What keeps it wired is not this gate but
+    # `rehearsal_claim_gate.py`, which IS unconditional: it fails if the runbooks' sentence
+    # about this rehearsal stops being backed by a reachable invocation.
+    "tools/slo/rehearse_job_spec.sh": (
+        "a kind-cluster Job-spec rehearsal; its wiring is policed by rehearsal_claim_gate.py"
+    ),
     "scripts/demo-local.sh": "a demo runner, not a control",
     # An environment shim consumed by `.` before anything runs. CI pins its toolchain in
     # the workflow instead, so there is nothing here for a job to invoke.

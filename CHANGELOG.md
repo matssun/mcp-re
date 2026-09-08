@@ -12,6 +12,34 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Added — stage 5 rehearses the SLO Job spec, and a gate that keeps the sentence true
+
+Both cloud SLO runbooks stated that local-gate stage 5 *"additionally rehearses the **exact**
+SLO Job spec this runbook schedules"*. It did not. `tools/slo/run_slo_job.sh` was invoked by
+no gate and no harness — zero callers — so the Job manifest, the Redis sidecar wiring, the
+bench image and the marker-delimited report extraction had never been exercised anywhere but
+by hand. This is `merge_path_gate.py`'s failure class one layer up: there a control exists
+and nothing required runs it; here a control is **described** and nothing invokes it.
+
+- `tools/slo/rehearse_job_spec.sh` runs after the eight fleet proofs, on the kind cluster
+  they leave up: it builds the bench image, side-loads it, and runs the runbooks' exact
+  command unmodified.
+- `scripts/rehearsal_claim_gate.py` (stage 1 and the unconditional CI job) fails when a
+  registered claim's invocation stops being reachable from `local_gate.sh`, **and** when the
+  sentence is deleted without its registry entry.
+
+### Changed — `slo_gate.py` refuses a non-declarable hardware class
+
+The rule *"this number must never be fed to `slo_gate.py`"* lived in a comment in
+`run_slo_job.sh` and in runbook prose. It is structural now: a report whose
+`config.hardware_class` is `kind-local` or `smoke` is refused by raising, before any check
+runs. Such a report is not a run that missed its targets — it is a run that was never about
+them, and reporting it as a FAIL would invite re-running it until it passed.
+
+The two verdicts are kept apart at both ends. The rehearsal decides a plumbing proposition
+(the Job applies, runs, produces a readable summary, completes); `slo_gate.py` decides the
+SLO regression verdict, and only for a declared hardware class.
+
 ### Added — a disk preflight for the heavy local lanes
 
 `scripts/heavy_lane_disk_preflight.py`, called by `scripts/local_gate.sh` before stage 4

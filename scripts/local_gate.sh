@@ -191,6 +191,10 @@ stage_static() {
     && python3 tools/verification/verify --gate \
     && python3 tools/scitt_fetch_service_key.py --selftest \
     && python3 scripts/slo_gate.py --selftest \
+    `# A runbook sentence is a claim. Both cloud runbooks said stage 5 rehearses the` \
+    `# exact SLO Job spec; run_slo_job.sh had zero callers, so it had never been true.` \
+    && python3 scripts/rehearsal_claim_gate.py --selftest \
+    && python3 scripts/rehearsal_claim_gate.py \
     `# The heavy lanes refuse below a declared free-space floor. The floors need a box;` \
     `# the ADJUDICATION does not, and it is the whole decision — so it is pinned here,` \
     `# in the stage that runs on every --fast, rather than only where the lanes live.` \
@@ -442,7 +446,21 @@ stage_kind() {
   export MCP_RE_TLS_KEY="${MCP_RE_TLS_KEY:-$fx/client_key_short.pem}"
   export MCP_RE_SERVER_CA="${MCP_RE_SERVER_CA:-$fx/server_ca.pem}"
 
-  PROVIDER=kind docs/security/gke-multi-replica-validation.sh
+  PROVIDER=kind docs/security/gke-multi-replica-validation.sh || return $?
+
+  # The cloud runbooks state that this stage rehearses the EXACT SLO Job spec they
+  # schedule. That sentence was false for as long as it existed — `tools/slo/run_slo_job.sh`
+  # was invoked by no gate and no harness. This is the invocation that makes it true;
+  # `scripts/rehearsal_claim_gate.py` is what refuses the claim if it comes loose again.
+  #
+  # It is a PLUMBING verdict and not an SLO one. The two are kept apart at both ends: this
+  # script asserts only that the Job ran and produced a readable report, and `slo_gate.py`
+  # refuses a `kind-local` report by hardware class, so the throughput it prints cannot
+  # become an SLO result by being pasted into a gate invocation.
+  #
+  # The fleet harness leaves the cluster up (teardown is explicit), so the Job runs on the
+  # cluster the proofs just used.
+  tools/slo/rehearse_job_spec.sh
 }
 
 run "static gates (tags, ports, secrets, chart, vocabulary)" stage_static

@@ -53,6 +53,37 @@ It is not hygiene. Each stage exists because skipping it has already cost someth
 - **Stage 5** — running the *same* harness on kind before GKE found six deploy
   defects, three of which would have failed the cloud run outright.
 
+## Stage 5 rehearses the SLO Job spec — and did not, for months
+
+After the eight fleet proofs, stage 5 rehearses the **exact** SLO Job spec the cloud
+runbooks schedule: `tools/slo/rehearse_job_spec.sh` builds the bench image, side-loads it
+into the kind cluster the proofs left up, and runs
+`PROVIDER=kind tools/slo/run_slo_job.sh - kind-local 1 …` — the same manifest, the same
+Redis sidecars, the same marker-delimited report extraction.
+
+Both cloud runbooks said this all along. **It was not true.** `tools/slo/run_slo_job.sh`
+was invoked by no gate and no harness, so the manifest, the sidecar wiring and the report
+extraction had never been exercised anywhere except by hand. That is
+[`merge_path_gate.py`](../../scripts/merge_path_gate.py)'s failure class one layer up: there
+a control exists and nothing required runs it; here a control is *described* and nothing
+invokes it. `scripts/rehearsal_claim_gate.py` is what refuses the claim if its caller comes
+loose again — it fails both when the invocation stops being reachable and when the sentence
+is deleted without the registry entry.
+
+**Two verdicts, never combined.**
+
+| verdict | decided by | proposition |
+|---|---|---|
+| job-spec rehearsal | `tools/slo/rehearse_job_spec.sh` | the Job applies, runs, produces a readable summary, and completes |
+| SLO regression | `scripts/slo_gate.py` | the throughput and latency of a **declared hardware class** meet their targets |
+
+The rehearsal prints a throughput figure, and it is a plumbing figure: a single unpinned
+node on a developer box, with `CPU_REQUEST` lowered so the pod is schedulable at all, is
+not a hardware class. That rule used to live in a comment. It is now structural —
+`slo_gate.py` refuses any report whose `config.hardware_class` is `kind-local` or `smoke`,
+by raising rather than by recording a failure, because such a report is not a run that
+missed its targets but a run that was never about them.
+
 ## Before stages 4 and 5: the disk preflight
 
 Both heavy lanes call `scripts/heavy_lane_disk_preflight.py` **before** they start, and
