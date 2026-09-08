@@ -23,23 +23,33 @@
 //! document — lives here. A separate crate would depend on this one for all of it and buy
 //! nothing but a directory.
 //!
-//! ## The four authorities
+//! ## The authorities
 //!
 //! ```text
 //! auditor                the facade — this file re-exports, and owns nothing
 //!   ├─ invocation    A   WHICH record this run attests, and where its inputs are
 //!   ├─ profile       B   WHAT this auditor asserts about the deployment it audits
 //!   ├─ trust_view    C   WHICH keys were legitimate signers, frozen for this run
-//!   ├─ artifact      D   the portable product, and the C2 registration interface
-//!   └─ run               the composition: open, load, reconstruct, attest, write
+//!   ├─ artifact      D   the portable product, and the registration interface
+//!   ├─ inputs        E   every document this run is asserted by, in hand before signing
+//!   ├─ refusal           WHICH stage did not complete, and what survived it
+//!   ├─ registration      submitting the attestation, and verifying what comes back
+//!   └─ run               the composition: load, open, reconstruct, attest, write, submit
 //! ```
 //!
-//! ## What this half deliberately does NOT do
+//! ## Two outcomes, in that order
 //!
-//! **No transparency-service network registration.** Producing the Signed Statement and
-//! submitting it are separate authorities with separate failures, and the artifact written
-//! here is the exact input the registration step consumes. An auditor with no external
-//! service still gets everything up to the submission.
+//! Producing the Signed Statement and submitting it are separate authorities with separate
+//! failures, so they are separate steps and the attestation is durable before anything is
+//! submitted. An auditor with no transparency service still gets everything up to the
+//! submission; one whose service is down loses the receipt and nothing else, because
+//! re-running with the same audit instant reproduces the statement byte for byte.
+//!
+//! Registration is opt-in and lives in [`registration`], where the certainty of a failure
+//! is decided: *definitely not registered* and *may be registered* are different answers,
+//! and only an explicit refusal from the service is the first.
+//!
+//! ## What this half deliberately does NOT do
 //!
 //! **No out-of-band credential material.** [`mcp_re_http_profile::ChainAudit`] takes an
 //! `artifact_material` seam for credentials a retained request cannot supply; this auditor
@@ -67,8 +77,17 @@ mod trust_view;
 /// The portable product of one audit — and the interface the registration step consumes.
 mod artifact;
 
+/// The documents one run is asserted by, loaded before anything is signed.
+mod inputs;
+
+/// WHAT a run refuses in, and which refusal still leaves an attestation behind.
+mod refusal;
+
 /// The composition: open the archive, load the posture, reconstruct, attest, write.
 mod run;
+
+/// Registering an attestation with an external Transparency Service.
+mod registration;
 
 pub use artifact::AttestationArtifact;
 pub use artifact::AttestedService;
@@ -77,5 +96,7 @@ pub use artifact::CorrespondenceVerdict;
 pub use artifact::IncompleteAt;
 pub use invocation::AuditInvocation;
 pub use profile::AuditProfile;
+pub use refusal::AuditError;
+pub use registration::RegisteredStatement;
+pub use registration::RegistrationError;
 pub use run::attest;
-pub use run::AuditError;

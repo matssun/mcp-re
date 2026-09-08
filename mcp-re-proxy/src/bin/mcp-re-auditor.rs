@@ -32,11 +32,17 @@ fn run(args: Vec<String>) -> Result<String, String> {
     }
     let invocation = AuditInvocation::parse(args)?;
     let out = invocation.output_path().display().to_string();
+    // Named before the run, so a refusal's context is the invocation's rather than the
+    // artifact's — an audit that failed to register wrote no line naming where it tried.
+    let registered_with = invocation.registration_endpoint().map_or_else(
+        || "not registered (no --register-to)".to_owned(),
+        str::to_owned,
+    );
     let artifact = mcp_re_proxy::transparency::auditor::attest(&invocation)
         .map_err(|e: mcp_re_proxy::transparency::auditor::AuditError| e.to_string())?;
 
     Ok(format!(
-        "wrote {out}\n  chain         {:?}\n  correspondence {:?}\n  service        {}",
+        "wrote {out}\n  chain          {:?}\n  correspondence {:?}\n           service        {}\n  registration   {registered_with}",
         artifact.chain(),
         artifact.correspondence(),
         artifact.transparency_service().service_identifier,

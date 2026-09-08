@@ -292,10 +292,13 @@ MCP-RE does not currently claim:
 - **portable audit receipts end-to-end.** ADR-MCPRE-054 is implemented: retained
   evidence, RFC 9942 COSE receipts, RFC 9943 Signed Statements, and
   `transparency::attest_chain` reconstructing a chain from retained hops — now reachable
-  as a shipped executable, `mcp-re-auditor`
-  ([guide](auditor-guide.md)). What is **not** claimed is the last hop — submission to a
-  real Transparency Service, which remains the ADR's open external dependency. Interop is
-  proven against two independent implementations, not against a production TS;
+  as a shipped executable, `mcp-re-auditor` ([guide](auditor-guide.md)), which also
+  implements `draft-ietf-scitt-scrapi-11` registration and verifies the returned receipt
+  offline before reporting success. What is **not** claimed is a LIVE run of that last hop:
+  no statement has been registered with a real external Transparency Service, and only such
+  a run — whose receipt still verifies offline against the previously captured pin with the
+  network removed — earns the external-registration interoperability claim. Interop today is
+  proven against two independent implementations and a hermetic service, not a production TS;
 - full SIEM / Security Command Center integration (the audit taxonomy is frozen
   and SCC-mappable, but the integration itself is unbuilt);
 - **uniform multi-cloud live validation.** Non-exporting delegated-root custody is

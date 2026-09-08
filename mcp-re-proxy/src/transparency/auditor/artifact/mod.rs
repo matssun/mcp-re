@@ -29,24 +29,13 @@ use mcp_re_http_profile::scitt::RetainedCorrespondence;
 mod verdict;
 
 pub use verdict::ChainVerdict;
+pub use verdict::CorrespondenceVerdict;
 pub use verdict::IncompleteAt;
 
 use crate::transparency::Attestation;
 
 /// The schema token an artifact carries.
 pub(super) const ATTESTATION_SCHEMA: &str = "mcp-re-attestation/v1";
-
-/// Which binding the issuer's self-check established, as a stable token.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum CorrespondenceVerdict {
-    /// The retained bytes are the ones the statement was issued over, and the statement
-    /// identifies a verified call.
-    BoundToVerifiedCall,
-    /// The statement identifies NO verified call. These are the bytes the issuer saw; that
-    /// any hop verified is NOT among the things this says.
-    BoundToSubmissionOnly,
-}
 
 /// The transparency service this attestation was cut for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -78,6 +67,17 @@ pub struct AttestationArtifact {
     correspondence: CorrespondenceVerdict,
     /// The service this attestation is for.
     transparency_service: AttestedService,
+    /// The transparency-service Receipt, base64url — present only when registration
+    /// happened AND the receipt verified offline against the statement above and the
+    /// operator's pin.
+    ///
+    /// That is the field's whole meaning, and it is why nothing can set it but
+    /// [`AttestationArtifact::with_verified_receipt`], which takes a `RegisteredStatement`
+    /// — a value that exists only on the far side of the verification. An artifact
+    /// carrying a receipt is one whose receipt verified; an artifact without one says
+    /// nothing about whether the statement reached a log.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    receipt: Option<String>,
 }
 
 impl AttestationArtifact {
@@ -119,6 +119,29 @@ impl AttestationArtifact {
                 }
             },
             transparency_service: service,
+            receipt: None,
+        })
+    }
+
+    /// The same artifact, now carrying the receipt of a VERIFIED registration.
+    ///
+    /// The argument is the proof: a `RegisteredStatement` is constructible only by the
+    /// function that put the service's answer through the offline verifier against the
+    /// exact statement submitted and the operator's pin. There is no way to attach a
+    /// receipt that merely arrived.
+    pub fn with_verified_receipt(
+        mut self,
+        registered: &crate::transparency::auditor::registration::RegisteredStatement,
+    ) -> Self {
+        self.receipt = Some(mcp_re_core::b64url_encode(registered.receipt_bytes()));
+        self
+    }
+
+    /// The verified receipt, if this attestation was registered.
+    pub fn receipt(&self) -> Option<Result<Vec<u8>, String>> {
+        self.receipt.as_ref().map(|encoded| {
+            mcp_re_core::b64url_decode(encoded)
+                .map_err(|_| "attestation artifact: receipt is not base64url".to_owned())
         })
     }
 
@@ -132,9 +155,12 @@ impl AttestationArtifact {
                 artifact.schema,
             ));
         }
-        // Decoded on the way in, so holding an artifact means its statement is recoverable
-        // rather than recoverable-if-asked.
+        // Decoded on the way in, so holding an artifact means its statement — and its
+        // receipt, when it has one — are recoverable rather than recoverable-if-asked.
         artifact.signed_statement()?;
+        if let Some(receipt) = artifact.receipt() {
+            receipt?;
+        }
         Ok(artifact)
     }
 
@@ -186,6 +212,7 @@ mod tests {
             chain,
             correspondence: CorrespondenceVerdict::BoundToVerifiedCall,
             transparency_service: service(),
+            receipt: None,
         }
     }
 

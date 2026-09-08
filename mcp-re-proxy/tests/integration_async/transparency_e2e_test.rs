@@ -1220,3 +1220,287 @@ fn a_tampered_archive_object_is_refused() {
     );
     assert!(!fixtures.out.exists(), "and must leave no artifact");
 }
+
+// ---- registration, over a socket, through the shipped binary -----------------
+//
+// Everything above stops at the artifact. This is the last hop: a transparency service on
+// a loopback socket, the SHIPPED auditor pointed at it, and an artifact that comes back
+// carrying a receipt — which it can only do if that receipt verified offline against the
+// exact statement submitted and the pin the operator loaded.
+//
+// The service below is hermetic and it is not a canned-response table. It parses the
+// Signed Statement it is sent, registers it in a real RFC 9162 log, and answers with a
+// real RFC 9942 receipt about those exact bytes.
+
+/// How the hermetic service answers a submission.
+#[derive(Clone, Copy)]
+enum ServiceMode {
+    /// `201 Created` with the receipt in the body.
+    Synchronous,
+    /// `202 Accepted` + `Location`, then `n` × `204`, then `200` with the receipt.
+    Asynchronous { pending: u32 },
+}
+
+/// A transparency service on a loopback socket, speaking the registration exchange.
+///
+/// Returns the base URL and a join handle. It serves exactly the exchanges one
+/// registration needs and then stops.
+fn spawn_transparency_service(mode: ServiceMode) -> (String, std::thread::JoinHandle<()>) {
+    use std::io::Read;
+    use std::io::Write;
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind the service");
+    let port = listener.local_addr().expect("addr").port();
+    let base = format!("http://127.0.0.1:{port}");
+    let operation = format!("{base}/operations/1");
+
+    let handle = std::thread::spawn(move || {
+        let mut receipt: Vec<u8> = Vec::new();
+        let mut pending = match mode {
+            ServiceMode::Asynchronous { pending } => pending,
+            ServiceMode::Synchronous => 0,
+        };
+        // One submission plus at most `pending + 1` polls; the loop ends when the receipt
+        // has been handed over.
+        loop {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut raw = Vec::new();
+            let mut buf = [0_u8; 4096];
+            // Read until the headers are complete, then the declared body.
+            loop {
+                let Ok(n) = stream.read(&mut buf) else { return };
+                if n == 0 {
+                    break;
+                }
+                raw.extend_from_slice(&buf[..n]);
+                let text = String::from_utf8_lossy(&raw).to_string();
+                let Some(head_end) = text.find("\r\n\r\n") else {
+                    continue;
+                };
+                let declared: usize = text
+                    .lines()
+                    .find_map(|l| {
+                        l.to_ascii_lowercase()
+                            .strip_prefix("content-length:")
+                            .and_then(|v| v.trim().parse().ok())
+                    })
+                    .unwrap_or(0);
+                if raw.len() >= head_end + 4 + declared {
+                    break;
+                }
+            }
+            let text = String::from_utf8_lossy(&raw).to_string();
+            let head_end = text.find("\r\n\r\n").map(|i| i + 4).unwrap_or(raw.len());
+            let is_post = text.starts_with("POST ");
+
+            let mut delivered = false;
+            let response: Vec<u8> = if is_post {
+                let statement =
+                    mcp_re_http_profile::scitt::SignedStatement::from_cose(&raw[head_end..])
+                        .expect("the auditor submits a Signed Statement");
+                let mut log = PrototypeTransparencyService::new(TS_KID);
+                receipt = log
+                    .register(&statement, sign_with(ts_key()))
+                    .expect("the log registers it")
+                    .to_cose()
+                    .to_vec();
+                match mode {
+                    ServiceMode::Synchronous => {
+                        delivered = true;
+                        http_cose(201, &receipt)
+                    }
+                    ServiceMode::Asynchronous { .. } => format!(
+                        "HTTP/1.1 202 Accepted\r\nLocation: {operation}\r\n\
+                         Content-Length: 0\r\nConnection: close\r\n\r\n"
+                    )
+                    .into_bytes(),
+                }
+            } else if pending > 0 {
+                pending -= 1;
+                b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    .to_vec()
+            } else {
+                delivered = true;
+                http_cose(200, &receipt)
+            };
+
+            let _ = stream.write_all(&response);
+            let _ = stream.flush();
+            // The service stops once it has handed the receipt over, and not before: a
+            // loop that ended when the pending count reached zero would close on the poll
+            // BEFORE the one that answers.
+            if delivered {
+                return;
+            }
+        }
+    });
+    (base, handle)
+}
+
+/// An HTTP response carrying COSE bytes.
+fn http_cose(status: u16, body: &[u8]) -> Vec<u8> {
+    let reason = if status == 201 { "Created" } else { "OK" };
+    let mut out = format!(
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/cose\r\n\
+         Content-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len(),
+    )
+    .into_bytes();
+    out.extend_from_slice(body);
+    out
+}
+
+/// Run one audit that also registers, and return the artifact it wrote.
+fn audit_and_register(
+    name: &str,
+    nonce: &str,
+    mode: ServiceMode,
+) -> mcp_re_proxy::transparency::auditor::AttestationArtifact {
+    let (scratch, retention, token) = served_archive(name, nonce);
+    drop(retention);
+    let fixtures = AuditFixtures::write(&scratch, audit_profile_json(), service_pin_json());
+    let (base, service) = spawn_transparency_service(mode);
+
+    let mut args = fixtures.args(&scratch.join("evidence"), &[token]);
+    args.extend([
+        "--register-to".to_owned(),
+        base,
+        "--registration-timeout-secs".to_owned(),
+        "20".to_owned(),
+        "--registration-poll-interval-secs".to_owned(),
+        "1".to_owned(),
+    ]);
+    let output = run_auditor(&args);
+    assert!(
+        output.status.success(),
+        "the registration did not succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let _ = service.join();
+
+    mcp_re_proxy::transparency::auditor::AttestationArtifact::parse(
+        &std::fs::read(&fixtures.out).expect("the artifact was written"),
+    )
+    .expect("the artifact parses")
+}
+
+/// THE C2 property, synchronously: the shipped binary registers a real attestation with a
+/// service over a socket, and the artifact comes back carrying the receipt.
+///
+/// The receipt is then re-verified here, WITH NO NETWORK — the service thread has already
+/// exited — against the previously captured pin. That is the shape the external
+/// interoperability claim is earned in, run against a hermetic service.
+#[test]
+fn the_auditor_binary_registers_a_statement_and_keeps_a_verified_receipt() {
+    let artifact = audit_and_register(
+        "auditor-register",
+        "nonce-transparency-auditor-register-1",
+        ServiceMode::Synchronous,
+    );
+    assert_receipt_verifies_offline(&artifact);
+}
+
+/// The asynchronous path — `202` → `204` → `204` → `200` — through the same binary.
+#[test]
+fn the_auditor_binary_polls_an_asynchronous_registration_to_its_receipt() {
+    let artifact = audit_and_register(
+        "auditor-register-async",
+        "nonce-transparency-auditor-register-async-2",
+        ServiceMode::Asynchronous { pending: 2 },
+    );
+    assert_receipt_verifies_offline(&artifact);
+}
+
+/// The receipt an artifact carries verifies offline against the statement beside it and
+/// the pin the operator captured — contacting nobody.
+fn assert_receipt_verifies_offline(
+    artifact: &mcp_re_proxy::transparency::auditor::AttestationArtifact,
+) {
+    let statement = mcp_re_http_profile::scitt::SignedStatement::from_cose(
+        &artifact.signed_statement().expect("the statement decodes"),
+    )
+    .expect("a Signed Statement");
+    let receipt_bytes = artifact
+        .receipt()
+        .expect("a registered artifact carries a receipt")
+        .expect("the receipt decodes");
+    let receipt =
+        mcp_re_http_profile::scitt::Receipt::from_cose(&receipt_bytes).expect("a Receipt");
+
+    mcp_re_http_profile::scitt::verify_receipt_offline(
+        &statement,
+        &receipt,
+        |kid| (kid == ISSUER_KID).then(|| CoseVerificationKey::Ed25519(issuer_key().public_key())),
+        |kid| {
+            (kid == TS_KID).then(|| {
+                ResolvedTransparencyService::stated(
+                    CoseVerificationKey::Ed25519(ts_key().public_key()),
+                    StatementLeafProfile::StatementBytes,
+                    ReceiptPositionProfile::Bound,
+                )
+            })
+        },
+    )
+    .expect("the archived receipt verifies with no service running");
+}
+
+/// A registration that does not succeed does NOT cost the attestation.
+///
+/// The auditor writes the artifact before it submits anything, so an operator who cannot
+/// reach a transparency service still holds a portable, offline-verifiable record. The
+/// exit status is non-zero and the artifact is on disk with no receipt — which is the
+/// honest pair of facts.
+#[test]
+fn a_failed_registration_leaves_the_attestation_behind() {
+    let (scratch, retention, token) =
+        served_archive("auditor-register-down", "nonce-transparency-auditor-down-3");
+    drop(retention);
+    let fixtures = AuditFixtures::write(&scratch, audit_profile_json(), service_pin_json());
+
+    // A port nothing is listening on: bind it, learn the number, drop the listener.
+    let port = {
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        probe.local_addr().expect("addr").port()
+    };
+
+    let mut args = fixtures.args(&scratch.join("evidence"), &[token]);
+    args.extend([
+        "--register-to".to_owned(),
+        format!("http://127.0.0.1:{port}"),
+        "--registration-timeout-secs".to_owned(),
+        "2".to_owned(),
+        "--registration-poll-interval-secs".to_owned(),
+        "1".to_owned(),
+    ]);
+    let output = run_auditor(&args);
+
+    assert!(
+        !output.status.success(),
+        "a registration that did not happen must not read as success",
+    );
+    let artifact = mcp_re_proxy::transparency::auditor::AttestationArtifact::parse(
+        &std::fs::read(&fixtures.out).expect("the attestation survives a failed submission"),
+    )
+    .expect("the artifact parses");
+    assert!(
+        artifact.receipt().is_none(),
+        "no receipt was verified, so the artifact must carry none",
+    );
+    assert!(
+        artifact.chain().is_complete(),
+        "and the attestation itself is unaffected",
+    );
+
+    // The message must preserve the certainty: the statement went nowhere we can prove.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("the attestation was written"),
+        "an operator must be told the record survived: {stderr}",
+    );
+    assert!(
+        stderr.contains("draft-ietf-scitt-scrapi-11"),
+        "and which protocol revision was attempted: {stderr}",
+    );
+}

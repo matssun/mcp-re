@@ -56,6 +56,19 @@ hop itself does not exist.
 **Kind: unimplemented.** This is the residue #841 predicted and the one item that requires
 code rather than a decision.
 
+> **The MECHANISM is closed; the CLAIM is not.** `mcp-re-auditor --register-to` implements
+> `draft-ietf-scitt-scrapi-11` — submission of the exact Signed Statement, `201` and the
+> asynchronous `202`→`204`→`200`, bounded polling, typed refusals, and offline verification
+> of the receipt against the submitted statement and the operator's pin before anything is
+> reported as registered. It is proved against a hermetic transparency service, including
+> over a socket through the shipped binary.
+>
+> What that does NOT earn is the external-registration interoperability claim. That is one
+> live run against a real external SCITT Transparency Service, whose receipt still verifies
+> offline against the previously captured pin after network access is removed. Until that
+> run happens, the honest statement is *the mechanism exists and interoperates with a
+> hermetic peer*.
+
 ### G-2 · The auditor half has no entry point *(implemented, unreachable)*
 
 `mcp_re_proxy::transparency::attest_chain` is a `pub` library function with **zero non-test
@@ -117,7 +130,51 @@ Both are #841's, both are recorded at the code they govern rather than only here
 A v0.18-C product step exists, and it is **G-2 then G-1** in that order: turn the auditor
 authority into a runnable artifact, then give it a registration mechanism. G-3 stays out.
 
-G-2 is done; G-1 is what remains.
+G-2 is done. G-1's mechanism is done; its interoperability CLAIM waits on a live external
+service, and nothing but that run can produce it.
+
+## Addendum, 2026-09-08: which external service, measured
+
+The live run needs a peer, and the census above did not ask which. Asking it changes the
+shape of the remaining work, so the measurement is recorded here rather than discovered
+during the run.
+
+**There is no SCRAPI peer available today.** #501's finding 4 surveyed the pre-RFC
+ecosystem and none of it speaks `draft-ietf-scitt-scrapi-11`:
+`scitt-community/scitt-api-emulator` is archived and expects CWT claims at label 14 (RFC
+9597/9943 assign 15); `scitt-ccf-ledger` targets Architecture draft 11; DataTrails
+advertises draft 10 and MMRIVER, which RFC 9942's registry does not list.
+
+**The one external Transparency Service this project has actually exchanged bytes with
+does not speak SCRAPI either.** `capsule-anchor` (action-state-group, Apache-2.0, commit
+`a918ba8`) is a real SCITT Transparency Service and it was run locally for #501. Its
+registration contract, recorded in
+`mcp-re-conformance/tests/vectors/scitt/interop/capsule-anchor/exchange-metadata.json` and
+hash-pinned by that corpus's manifest, differs from SCRAPI on every axis the mechanism leaf
+owns:
+
+| | `draft-ietf-scitt-scrapi-11` | capsule-anchor |
+|---|---|---|
+| path | `POST <base>/entries` | `POST /transparency/register-statement` |
+| request | the Signed Statement's octets, `application/cose` | JSON `{"signed_statement_b64": …}` |
+| response | `201` + Receipt, or `202` + `Location` | JSON `{entry_hash, leaf_index, tree_size}` — **no receipt at all** |
+
+That is not a path this deployment could configure. A `--registration-path` flag would let
+a SCRAPI client reach capsule-anchor by coincidence of shape while calling a different
+protocol by SCRAPI's name, which is the laundering the mechanism-leaf boundary exists to
+prevent.
+
+**What the measurement says about the boundary is good news.** The semantic capability —
+*submit these octets, come back with receipt bytes, and the receipt is not accepted until it
+verifies* — is unchanged by any of the differences above. A second leaf fetches the receipt
+however that service says to and returns bytes; the verifying layer, the certainty
+vocabulary and the artifact do not move. The boundary was drawn in the right place; what it
+does not do is make one leaf speak two protocols.
+
+**So the live claim needs a decision, not more code against the current leaf.** Either a
+second mechanism leaf for a specific non-SCRAPI service, or a SCRAPI-conforming peer that
+does not exist yet in the open-source ecosystem. That is an architecture decision and it is
+recorded here unresolved.
 
 The interoperability CLAIM is not licensed by either. It is earned by one live run against a
 real external Transparency Service whose receipt still verifies offline, against a previously

@@ -101,7 +101,18 @@ bytes = { workspace = true }
 # is gated behind this NON-DEFAULT feature. In a default (production) build the
 # `EnvKeySource` type is NOT compiled at all and `--key-source env` fails closed at
 # construction. Build with `--features dev_env_key_source` ONLY for local dev/CI.
-default = []
+# ADR-MCPRE-054 / #841 G-1: the SCITT registration transport. Gates ONLY the leaf that
+# opens a socket — the capability, the protocol state machine and every one of its typed
+# refusals compile unconditionally and are proved against a hermetic service.
+#
+# ON by default under cargo, and deliberately: `ureq` is already a non-optional cargo
+# dependency, so the cargo closure is unchanged by it, and a lane that did not compile the
+# transport would be a lane saying nothing about the auditor an operator runs. It is OFF in
+# Bazel's default `:mcp_re_proxy` — which sets features explicitly and links no HTTP client
+# — so the SERVING closure stays lean (ADR-MCPS-018). The `:mcp_re_auditor_cli` binary
+# links the flavor that turns it on.
+default = ["scitt_registration"]
+scitt_registration = []
 dev_env_key_source = []
 # MCPS-079 (audit gap G-6, "test of the tests" / fault injection). The
 # `fault_accept_any_client` feature is a DELIBERATE BREAK of the CLIENT-

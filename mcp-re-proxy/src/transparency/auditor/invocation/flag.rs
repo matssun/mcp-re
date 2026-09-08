@@ -3,7 +3,12 @@
 //!
 //! One fact: **whether a single-valued argument was supplied, and supplied once.**
 //!
-//! Its own type rather than an `Option<String>` per flag because the rule it enforces is
+//! [`Filled`] is the other half of the same job: which of the two shapes a flag has. It is
+//! here rather than in the parser because the parser's loop should read as *resolve the
+//! flag, then take its value*, and the shapes it resolves to are this module's.
+//!
+//! [`Slot`] is its own type rather than an `Option<String>` per flag because the rule it
+//! enforces is
 //! not "the last one wins". An operator who passed `--out` twice did not express a
 //! preference between them, and resolving that silently is how a run writes its artifact
 //! somewhere nobody meant. The refusal names the flag, so the message is about the command
@@ -35,6 +40,17 @@ impl Slot {
         self.value
             .ok_or_else(|| format!("{} is required", self.flag))
     }
+}
+
+/// WHAT the flag just read fills: the one repeatable list, or one single-valued slot.
+///
+/// Resolved BEFORE the flag's value is taken, so an unknown argument is reported as one
+/// rather than as a value that is missing.
+pub(super) enum Filled<'a> {
+    /// `--hop`, the only flag an invocation may give more than once.
+    Hop,
+    /// A slot that refuses a second value.
+    Once(&'a mut Slot),
 }
 
 #[cfg(test)]

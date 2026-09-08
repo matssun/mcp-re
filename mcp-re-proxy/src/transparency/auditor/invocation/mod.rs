@@ -17,11 +17,14 @@ use std::path::PathBuf;
 
 use mcp_re_http_profile::scitt::EvidenceDigest;
 
+use super::registration::RegistrationTarget;
+
 /// A flag given exactly once.
 mod flag;
 /// The moment this audit is taken to have been performed at.
 mod instant;
 
+use flag::Filled;
 use flag::Slot;
 use instant::audit_instant;
 
@@ -53,6 +56,12 @@ pub struct AuditInvocation {
     pub(super) at: i64,
     /// Where to write the attestation artifact.
     pub(super) out: PathBuf,
+    /// Where to register the attestation, if this run registers at all.
+    ///
+    /// `None` is the default and is not a lesser audit: producing the attestation and
+    /// submitting it are separate outcomes, and an operator with no service still gets
+    /// everything up to the submission.
+    pub(super) registration: Option<RegistrationTarget>,
 }
 
 /// The usage text, which is also the flag list this parser accepts.
@@ -60,8 +69,8 @@ pub(super) const USAGE: &str = "\
 mcp-re-auditor — turn retained MCP-RE evidence into a portable SCITT attestation.
 
 Runs OFF the request path, against an archive a serving proxy wrote with
---retained-evidence-dir. It contacts no transparency service; what it writes is the
-artifact a registration step submits.
+--retained-evidence-dir. The attestation is always produced and written; registering it
+with a transparency service is opt-in and happens afterwards.
 
   --retained-evidence-dir <dir>   the archive to read
   --hop <digest>                  one hop of the record, repeated IN ORDER (>= 1)
@@ -72,6 +81,12 @@ artifact a registration step submits.
   --issuer-key-seed <path>        base64url Ed25519 seed for that key
   --out <path>                    where to write the attestation artifact
   --at <unix-seconds>             the audit instant (default: the system clock)
+
+Registration (opt-in). Without --register-to nothing is submitted anywhere.
+
+  --register-to <url>                    an HTTPS transparency-service base URL
+  --registration-timeout-secs <n>        the whole registration budget (default 300)
+  --registration-poll-interval-secs <n>  wait between polls (default 2)
 ";
 
 impl AuditInvocation {
@@ -88,6 +103,11 @@ impl AuditInvocation {
     /// it as one would print eight refusals where an operator asked one question.
     pub fn is_help_request(args: &[String]) -> bool {
         args.is_empty() || args.iter().any(|a| a == "--help" || a == "-h")
+    }
+
+    /// The transparency service this run will register with, if it will.
+    pub fn registration_endpoint(&self) -> Option<&str> {
+        self.registration.as_ref().map(RegistrationTarget::base_url)
     }
 
     /// Where the artifact will be written.
@@ -107,21 +127,34 @@ impl AuditInvocation {
         let mut seed = Slot::new("--issuer-key-seed");
         let mut out = Slot::new("--out");
         let mut at = Slot::new("--at");
+        let mut register_to = Slot::new("--register-to");
+        let mut reg_timeout = Slot::new("--registration-timeout-secs");
+        let mut reg_interval = Slot::new("--registration-poll-interval-secs");
         let mut hops: Vec<EvidenceDigest> = Vec::new();
 
         let mut args = args.into_iter();
         while let Some(flag) = args.next() {
-            match flag.as_str() {
-                "--retained-evidence-dir" => dir.set(value_for(&flag, &mut args)?)?,
-                "--audit-profile" => profile.set(value_for(&flag, &mut args)?)?,
-                "--trust-document" => trust.set(value_for(&flag, &mut args)?)?,
-                "--service-trust-pin" => pin.set(value_for(&flag, &mut args)?)?,
-                "--issuer-kid" => kid.set(value_for(&flag, &mut args)?)?,
-                "--issuer-key-seed" => seed.set(value_for(&flag, &mut args)?)?,
-                "--out" => out.set(value_for(&flag, &mut args)?)?,
-                "--at" => at.set(value_for(&flag, &mut args)?)?,
-                "--hop" => hops.push(hop_digest(&value_for(&flag, &mut args)?)?),
+            // The flag is resolved to what it fills BEFORE its value is taken, so an
+            // unknown argument is reported as one rather than as a value that is missing.
+            let target = match flag.as_str() {
+                "--hop" => Filled::Hop,
+                "--retained-evidence-dir" => Filled::Once(&mut dir),
+                "--audit-profile" => Filled::Once(&mut profile),
+                "--trust-document" => Filled::Once(&mut trust),
+                "--service-trust-pin" => Filled::Once(&mut pin),
+                "--issuer-kid" => Filled::Once(&mut kid),
+                "--issuer-key-seed" => Filled::Once(&mut seed),
+                "--out" => Filled::Once(&mut out),
+                "--at" => Filled::Once(&mut at),
+                "--register-to" => Filled::Once(&mut register_to),
+                "--registration-timeout-secs" => Filled::Once(&mut reg_timeout),
+                "--registration-poll-interval-secs" => Filled::Once(&mut reg_interval),
                 other => return Err(format!("unknown argument {other:?}\n\n{USAGE}")),
+            };
+            let value = value_for(&flag, &mut args)?;
+            match target {
+                Filled::Hop => hops.push(hop_digest(&value)?),
+                Filled::Once(slot) => slot.set(value)?,
             }
         }
 
@@ -141,6 +174,11 @@ impl AuditInvocation {
             issuer_key_seed: seed.required()?.into(),
             at: audit_instant(at.value)?,
             out: out.required()?.into(),
+            registration: RegistrationTarget::from_flags(
+                register_to.value,
+                reg_timeout.value,
+                reg_interval.value,
+            )?,
         })
     }
 }
@@ -294,6 +332,73 @@ mod tests {
             assert!(refused.contains("--at"), "{refused}");
         }
         assert!(AuditInvocation::parse(args(&["--hop", &hop, "--at", "later"])).is_err());
+    }
+
+    /// Registration is opt-in, and its absence is not a lesser audit.
+    #[test]
+    fn an_invocation_without_a_registration_target_registers_nowhere() {
+        let hop = token(b"hop-0");
+        let parsed = AuditInvocation::parse(args(&["--hop", &hop])).expect("parses");
+        assert!(parsed.registration.is_none());
+    }
+
+    #[test]
+    fn a_registration_target_carries_the_service_and_its_budget() {
+        let hop = token(b"hop-0");
+        let parsed = AuditInvocation::parse(args(&[
+            "--hop",
+            &hop,
+            "--register-to",
+            "https://ts.example.test/scitt/",
+            "--registration-timeout-secs",
+            "60",
+            "--registration-poll-interval-secs",
+            "3",
+        ]))
+        .expect("parses");
+        let target = parsed.registration.expect("a target");
+        assert_eq!(target.base_url(), "https://ts.example.test/scitt");
+    }
+
+    /// A budget without a target is refused rather than ignored. An operator who wrote
+    /// down how long a registration may take has said they expect one.
+    #[test]
+    fn a_registration_budget_without_a_target_is_refused() {
+        let hop = token(b"hop-0");
+        for bound in [
+            ["--registration-timeout-secs", "60"],
+            ["--registration-poll-interval-secs", "3"],
+        ] {
+            let refused = AuditInvocation::parse(args(&["--hop", &hop, bound[0], bound[1]]))
+                .expect_err("a bound with nothing to bound");
+            assert!(refused.contains("--register-to"), "{refused}");
+        }
+    }
+
+    /// The target's own refusals surface at parse time, before an archive is opened.
+    #[test]
+    fn an_inadmissible_registration_target_is_refused_at_parse_time() {
+        let hop = token(b"hop-0");
+        for url in ["http://ts.example.test", "file:///etc/passwd"] {
+            assert!(
+                AuditInvocation::parse(args(&["--hop", &hop, "--register-to", url])).is_err(),
+                "{url}",
+            );
+        }
+        for bad in ["later", "-1"] {
+            assert!(
+                AuditInvocation::parse(args(&[
+                    "--hop",
+                    &hop,
+                    "--register-to",
+                    "https://ts.example.test",
+                    "--registration-timeout-secs",
+                    bad,
+                ]))
+                .is_err(),
+                "{bad}",
+            );
+        }
     }
 
     /// Asking what the tool does is answered, not refused — and a bare invocation is the

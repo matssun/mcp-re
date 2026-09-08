@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The CHAIN VERDICT as the artifact spells it.
+//! The ATTESTATION'S VERDICTS as the artifact spells them.
 //!
-//! One fact: **how a reconstruction's outcome is written down for a reader who has not
+//! One fact: **how an attestation's outcome is written down for a reader who has not
 //! decoded the statement.**
+//!
+//! Two enums, because an attestation reports two things — whether the record is whole,
+//! and which binding the issuer's self-check established — and they are one fact here
+//! because the fact is the SPELLING, not either verdict. A reader of an artifact needs
+//! both or neither.
 //!
 //! It is a PROJECTION of `mcp_re_http_profile::ChainLabel`, not a second opinion about it.
 //! The source enum carries `HttpProfileError` payloads and is not a wire type; what a
@@ -16,6 +21,18 @@ use serde::Serialize;
 
 use mcp_re_http_profile::ChainLabel;
 use mcp_re_http_profile::IncompleteReason;
+
+/// Which binding the issuer's self-check established, as a stable token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CorrespondenceVerdict {
+    /// The retained bytes are the ones the statement was issued over, and the statement
+    /// identifies a verified call.
+    BoundToVerifiedCall,
+    /// The statement identifies NO verified call. These are the bytes the issuer saw; that
+    /// any hop verified is NOT among the things this says.
+    BoundToSubmissionOnly,
+}
 
 /// WHY a reconstruction stopped being whole — the artifact's serializable projection of
 /// `mcp_re_http_profile::IncompleteReason`.

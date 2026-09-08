@@ -6,9 +6,9 @@
 attestation. It runs **off the request path**, as a separate executable, against an
 archive written by a proxy started with `--retained-evidence-dir`.
 
-It contacts no transparency service. What it produces is the artifact a registration step
-submits — and everything either side of that submission is already real: the archive, the
-reconstruction, the Signed Statement, and the offline verification of a receipt about it.
+It produces a portable attestation and, if you ask it to, registers that attestation with a
+transparency service and keeps the verified receipt beside it. Registration is opt-in and
+strictly after the attestation is durable.
 
 ## Why it is a separate binary
 
@@ -120,7 +120,8 @@ Run `mcp-re-auditor` with no arguments for the flag list.
   "hops": ["8xJ2h1t0d2n1r6QpVQ9r2mBz3nQ0y7hK1sVc5vJ4wXk"],
   "chain": { "label": "complete" },
   "correspondence": "bound-to-verified-call",
-  "transparency_service": { "service_identifier": "example-ts", "kid": "ts-2026-09" }
+  "transparency_service": { "service_identifier": "example-ts", "kid": "ts-2026-09" },
+  "receipt": "<base64url COSE_Sign1, present only after a VERIFIED registration>"
 }
 ```
 
@@ -155,12 +156,67 @@ This distinction is the whole design, so it is worth stating plainly.
   records — the truncated ones, the ones with a hop that did not verify — with no portable
   evidence at all, which is exactly what the chain label exists to prevent.
 
-## What this half does not do
+## Registering with a transparency service
 
-* **It does not register anything.** No transparency service is contacted. The service pin
-  is loaded as a precondition and named in the artifact, so a registration step cannot
-  submit the attestation to a service the auditor did not cut it for; verifying a receipt
-  against that pin is the registration step's job.
+Opt-in, and it happens **after** the attestation is on disk:
+
+```sh
+mcp-re-auditor \
+  --retained-evidence-dir /var/lib/mcp-re/evidence \
+  --hop 8xJ2h1t0d2n1r6QpVQ9r2mBz3nQ0y7hK1sVc5vJ4wXk \
+  --audit-profile /etc/mcp-re/audit-profile.json \
+  --trust-document /etc/mcp-re/trust.json \
+  --service-trust-pin /etc/mcp-re/service-key-pin.json \
+  --issuer-kid auditor-1 \
+  --issuer-key-seed /etc/mcp-re/auditor.seed \
+  --out ./attestation.json \
+  --register-to https://ts.example.com/scitt \
+  --registration-timeout-secs 300 \
+  --registration-poll-interval-secs 2
+```
+
+### The protocol
+
+SCRAPI — **`draft-ietf-scitt-scrapi-11`, an Internet-Draft and not a published RFC.** That
+matters operationally: drafts are renumbered, restructured and withdrawn, and this one names
+its own media types and status semantics. Every refusal message states the revision it was
+performed under, because "SCITT" alone does not identify a protocol anyone can reproduce.
+
+The exchange: `POST <base>/entries` with the exact Signed Statement as `application/cose`;
+`201 Created` returns the receipt; `202 Accepted` names a receipt resource in `Location`,
+which is polled — `204` means *still working*, and a `200` yields the receipt. `--register-to`
+is HTTPS; plaintext is admitted only to the loopback interface, where there is no network to
+observe it.
+
+### The receipt is not accepted because the HTTP succeeded
+
+Before reporting success the receipt is verified with the **offline** verifier against two
+things: the exact statement that was submitted, and the `ScittServiceTrustPin` you passed at
+the start of the run. No key is fetched or refreshed during that check — the pin was loaded
+before the audit began, and a verifier that reached out for a key while checking a receipt
+would be verifying against whatever the network offered at that moment.
+
+So an artifact that carries a `receipt` field is one whose receipt verified. There is no
+other way for that field to appear.
+
+### What a failed registration means, exactly
+
+The attestation is written **before** anything is submitted, so a registration that does not
+succeed costs you nothing but the receipt: the artifact is on disk, offline-verifiable, and
+re-running the audit with the same `--at` reproduces the same statement byte for byte.
+
+The exit status is non-zero, and the message distinguishes three states that must not be
+confused:
+
+| the message says | what it means |
+| --- | --- |
+| *the transparency service refused the statement* | Definitively **not** registered. The service read the submission and declined it. |
+| *the transparency service is not accepting registrations* | Definitively not registered — rate limiting or over capacity. Retry later. |
+| *the outcome is UNKNOWN — it may be registered* | The statement went out and what happened next is not knowable from here: a transport failure, an unreadable answer, a `202` whose polling budget ran out. **Do not treat this as a negative.** Re-submitting may put a second copy of the record in the log. |
+| *a receipt came back and does not verify* | The service answered and its answer is unusable — either it is not the service your pin names, or the receipt is not about the statement you sent. This is a trust problem, not an availability one. |
+
+## What this tool does not do
+
 * **It supplies no out-of-band credential material.** A DPoP binding resolves from the
   covered `authorization` header the archive keeps verbatim. Anything else is not derivable
   from the archive, and a hop that needs it is reported unverifiable rather than verified
@@ -169,6 +225,9 @@ This distinction is the whole design, so it is worth stating plainly.
   constructor proves the directory writable — it writes and removes a probe object — so the
   auditor cannot currently run against a read-only mount or a snapshot. Copy the archive to
   a writable path.
+* **It does not discover a service key.** The pin is cut out of band by
+  `tools/scitt_fetch_service_key.py`, reviewed, and passed in. That split is what makes the
+  offline property reproducible after the service is gone.
 
 ## Handling the archive
 
