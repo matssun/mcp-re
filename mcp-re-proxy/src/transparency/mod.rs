@@ -115,6 +115,9 @@ mod reserved_before_dispatch;
 /// Turning retained evidence into a portable SCITT record — the auditor's half.
 mod attestation;
 
+/// The auditor's RUNNABLE half: the composition an operator can actually execute.
+pub mod auditor;
+
 pub use attestation::attest_chain;
 pub use attestation::AttestError;
 pub use attestation::Attestation;

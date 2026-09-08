@@ -12,6 +12,61 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Added — `mcp-re-auditor`: the auditor's half becomes something an operator can run
+
+`transparency::attest_chain` has been the auditor authority since ADR-MCPRE-054, and its
+only callers were five call sites in one integration test. A deployment could therefore turn
+`--retained-evidence-dir` on and accumulate evidence it had no shipped way to attest: the
+serving half was a product, the auditing half was a library driven from a harness. That is
+the gap `docs/architecture/components/scitt-externalization-census.md` records as G-2.
+
+`mcp-re-auditor` is a SEPARATE executable, not a mode of the serving proxy. The three
+reasons attestation stays off the request path are reasons about *when* it runs; a mode flag
+would honour all three and still put the auditor's trust inputs, signing key and audit
+posture inside the process that answers requests. A deployment that runs one need not run
+the other, and an auditor can run against an archive long after the proxy that wrote it is
+gone. It is an additional binary in `mcp-re-proxy` rather than a new crate because the
+authority it composes lives there.
+
+It reads an archive, loads the three documents an audit is asserted by, reconstructs the
+chain, issues the Signed Statement, and writes an attestation artifact carrying the EXACT
+statement bytes plus the two verdicts a reader must not have to decode COSE to see: whether
+the record is COMPLETE, and which binding the issuer's self-check established. The
+completeness half is read from the SIGNED commitment rather than recomputed beside it, and
+construction refuses if the two disagree.
+
+**The audit posture is a document, not a pile of flags.** An archive of retained messages
+does not describe the posture they were served under — which audience tuple was expected,
+which epochs were live, which key anchored the responses — and a verdict resting on values
+nobody wrote down is not reproducible. The audit profile is refused outright when its
+verifier-audience list or epoch set is empty, or its clock skew is unbounded: those do not
+audit more strictly, they report a verdict with the check switched off.
+
+**Refusals and verdicts are kept apart.** A hop the archive does not hold, an object whose
+bytes do not hash to the name they are stored under, an incoherent profile, an illegal
+service pin and an unreadable signing seed all refuse *before anything is signed* and leave
+no artifact. An INCOMPLETE record is not a refusal: it is attested and labelled, because
+refusing there would leave the most interesting records with no portable evidence at all.
+
+The auditor supplies **no** out-of-band credential material. A DPoP binding resolves from
+the covered `authorization` header the archive keeps verbatim; anything else is not
+derivable from the archive, and a hop that needs it is reported unverifiable rather than
+verified against material an operator typed in.
+
+Two limitations are stated rather than left to be discovered: the auditor needs WRITE access
+to the archive directory, because the retention store's only constructor proves it writable;
+and it registers nothing — the service trust pin is a precondition and a witness here, and
+verifying a receipt against it belongs to the registration step.
+
+Proved over the SHIPPED PATH, not in-process: the transparency suite serves a real call,
+then runs the binary as a child process and puts the statement it wrote through a
+transparency log and RFC 9942 offline verification. Four more lanes pin the refusals and the
+incomplete verdict. `scripts/proxy_flag_doc_gate.py` now checks each tool's documented flags
+against ITS OWN parser — pooling the two vocabularies would accept `--bind` on an auditor
+command line, which is a command that does not run.
+
+Operator guide: [`docs/auditor-guide.md`](docs/auditor-guide.md).
+
 ### Added — the SLO lane's evidence is content-addressed, on two identities
 
 The SLO lane was the only evidence in this repository that was not content-addressed.

@@ -147,13 +147,12 @@ impl ResponseSigner for Box<dyn KeySource + Send + Sync> {
 
 /// Decode a Base64URL-no-pad 32-byte Ed25519 seed into a [`SigningKey`].
 ///
-/// MCPS-076 (audit gap G-3) secret hygiene: every OWNED temporary that holds the
-/// raw private seed is wrapped in [`zeroize::Zeroizing`], so its bytes are scrubbed
-/// from memory the instant it drops. `SigningKey::from_seed_bytes` only BORROWS the
-/// seed (the resulting dalek key is itself `ZeroizeOnDrop` via the `zeroize`
-/// feature), so the key is built first and the `Zeroizing` temporaries then drop
-/// scrubbed at the end of this function.
-fn signing_key_from_seed_b64url(seed_b64url: &str) -> Result<SigningKey, KeyError> {
+/// `pub(crate)` for one further consumer — `transparency::auditor`, whose statement-issuing
+/// key is a seed file too. A second copy would be a second copy of the MCPS-076 hygiene
+/// below, the one thing here that must not drift: every OWNED temporary holding the raw
+/// seed is [`zeroize::Zeroizing`] and scrubbed on drop, and `from_seed_bytes` only BORROWS
+/// it, so the key is built first and those temporaries drop scrubbed afterwards.
+pub(crate) fn signing_key_from_seed_b64url(seed_b64url: &str) -> Result<SigningKey, KeyError> {
     let bytes: Zeroizing<Vec<u8>> = Zeroizing::new(
         b64url_decode(seed_b64url.trim())
             .map_err(|_| KeyError::Malformed("signing-key seed is not Base64URL".to_string()))?,

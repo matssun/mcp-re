@@ -25,9 +25,17 @@ use source_fallbacks::SOURCE_FALLBACKS;
 use std::path::Path;
 use std::path::PathBuf;
 
-/// The one env key that resolves to a built binary rather than a source file,
-/// so it is looked up under `target/<profile>/` instead of the source tree.
-const PROXY_CLI_KEY: &str = "MCP_RE_PROXY_CLI";
+/// The env keys that resolve to a built BINARY rather than a source file, and the bin
+/// name each one names. Looked up under `target/<profile>/` instead of the source tree.
+///
+/// A table rather than a constant because the workspace ships more than one executable:
+/// the serving proxy, and the auditor that reads what it retained. A second special case
+/// spelled out in `cargo_fallback` would be the point at which the two stop being one
+/// rule.
+const BINARY_KEYS: &[(&str, &str)] = &[
+    ("MCP_RE_PROXY_CLI", "mcp-re-proxy"),
+    ("MCP_RE_AUDITOR_CLI", "mcp-re-auditor"),
+];
 
 /// Resolve a runfile-style path. Under Bazel `env_key` is set; under Cargo we
 /// fall back to the canonical workspace layout.
@@ -63,8 +71,8 @@ pub fn resolve_runfile(env_key: &str) -> PathBuf {
 /// bin (looked up at `target/<profile>/<bin>`) or a source-tree file.
 fn cargo_fallback(env_key: &str) -> PathBuf {
     let workspace_root = workspace_root();
-    if env_key == PROXY_CLI_KEY {
-        return find_bin(&workspace_root, "mcp-re-proxy");
+    if let Some((_, bin)) = BINARY_KEYS.iter().find(|(key, _)| *key == env_key) {
+        return find_bin(&workspace_root, bin);
     }
     if let Some(sentinel) = source_trees::sentinel_for(env_key) {
         return workspace_root.join(sentinel);
@@ -178,16 +186,25 @@ mod tests {
         assert_eq!(before, keys.len(), "SOURCE_FALLBACKS declares a key twice");
     }
 
-    /// The binary key must not also be in the source table: it resolves under
-    /// `target/`, and a source-tree entry would silently shadow that.
+    /// No binary key is also in the source table: they resolve under `target/`, and a
+    /// source-tree entry would silently shadow that.
+    ///
+    /// Over the whole table rather than the one key it used to name. The workspace ships
+    /// two executables now, and a check that covered the first would have said nothing
+    /// about the second.
     #[test]
-    fn the_binary_key_is_not_also_a_source_fallback() {
-        assert!(
-            !SOURCE_FALLBACKS
-                .iter()
-                .any(|(key, _)| *key == PROXY_CLI_KEY),
-            "{PROXY_CLI_KEY} resolves under target/, not the source tree"
-        );
+    fn no_binary_key_is_also_a_source_fallback() {
+        for (key, _) in BINARY_KEYS {
+            assert!(
+                !SOURCE_FALLBACKS.iter().any(|(other, _)| other == key),
+                "{key} resolves under target/, not the source tree"
+            );
+        }
+        let mut names: Vec<&str> = BINARY_KEYS.iter().map(|(key, _)| *key).collect();
+        let before = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(before, names.len(), "BINARY_KEYS declares a key twice");
     }
 
     #[test]

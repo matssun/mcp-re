@@ -74,6 +74,14 @@ harness.
 an artifact an operator can run. This is a precondition for G-1 being usable — a registration
 client with nothing to register is not a product step either.
 
+> **Closed.** `mcp-re-auditor` is a shipped executable, exercised as a child process by the
+> transparency suite. The measurement above stands as the reason it exists; do not read it as
+> the current tree. One limitation it left behind, and it is the retention owner's to decide:
+> the auditor needs WRITE access to the archive, because
+> `EvidenceRetention::open` proves the directory writable by writing a probe. So it cannot run
+> against a read-only mount or a snapshot, and splitting a read-only projection out of that
+> authority is a separate slice.
+
 ### G-3 · Retained-**store** deployment semantics *(deliberately out of scope, restated)*
 
 `FsRetainedEvidenceStore` is an immutable content-addressed object store over one directory:
@@ -108,6 +116,8 @@ Both are #841's, both are recorded at the code they govern rather than only here
 
 A v0.18-C product step exists, and it is **G-2 then G-1** in that order: turn the auditor
 authority into a runnable artifact, then give it a registration mechanism. G-3 stays out.
+
+G-2 is done; G-1 is what remains.
 
 The interoperability CLAIM is not licensed by either. It is earned by one live run against a
 real external Transparency Service whose receipt still verifies offline, against a previously

@@ -47,6 +47,37 @@ impl EvidenceDigest {
         EvidenceDigest(b64url_encode(&Sha256::digest(evidence)))
     }
 
+    /// The digest a base64url TOKEN names, or a refusal.
+    ///
+    /// The auditor's entry point is where a store address stops being computed and starts
+    /// being READ — from a command line, an audit stream, a directory listing. That is the
+    /// only place this type meets a value it did not derive, and admitting an arbitrary
+    /// string would make [`of`](Self::of) merely the usual way to build one rather than the
+    /// invariant. So the token is decoded and its length checked: every inhabitant is a
+    /// SHA-256 in base64url, whichever constructor produced it, and a caller holding one
+    /// cannot be holding a path fragment.
+    ///
+    /// It does NOT say the store holds the object. Absence is the store's answer, not this
+    /// type's, and conflating them would make a missing record look malformed.
+    ///
+    /// The token is re-encoded from the bytes rather than kept as written, so that
+    /// `as_str` is the canonical spelling by this type's own construction. It matters
+    /// because the store addresses objects BY the string: a second spelling of one digest
+    /// would name real bytes and look up a file that is not there. Today's decoder also
+    /// refuses the alias — `b64url_decode` rejects non-canonical trailing bits — but that
+    /// is a property of its configuration, and an invariant that holds because a
+    /// dependency is configured a certain way is remembered rather than owned.
+    pub fn from_token(token: &str) -> Result<Self, HttpProfileError> {
+        let bytes = mcp_re_core::b64url_decode(token)
+            .map_err(|_| HttpProfileError::MalformedEvidence("evidence digest is not base64url"))?;
+        if bytes.len() != 32 {
+            return Err(HttpProfileError::MalformedEvidence(
+                "evidence digest is not a sha-256",
+            ));
+        }
+        Ok(EvidenceDigest(b64url_encode(&bytes)))
+    }
+
     /// The digest as the base64url token a commitment carries.
     pub fn as_str(&self) -> &str {
         &self.0
@@ -452,5 +483,72 @@ mod tests {
         // And the evidence check still fails when the bytes are not the committed ones.
         let other = recon(ChainLabel::Complete, 2);
         assert!(verify_retained_evidence(&commitment, &other, None, None).is_err());
+    }
+
+    /// A READ token names the same digest a COMPUTED one does, and nothing else becomes
+    /// an `EvidenceDigest` at all.
+    ///
+    /// The second half is the invariant. `of` is infallible and derives the token, so
+    /// before there was a reader every inhabitant was a SHA-256 by construction; a reader
+    /// that took the caller's string on trust would have made that merely usual.
+    #[test]
+    fn a_token_names_a_digest_only_when_it_is_one() {
+        let computed = EvidenceDigest::of(b"some retained hop record");
+        assert_eq!(
+            EvidenceDigest::from_token(computed.as_str()).expect("its own token"),
+            computed,
+        );
+
+        for token in [
+            "",                                               // nothing
+            "not base64url!",                                 // not the alphabet
+            "c2hvcnQ",                                        // legal base64url, 5 bytes
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", // legal base64url, 33 bytes
+        ] {
+            assert!(
+                EvidenceDigest::from_token(token).is_err(),
+                "{token:?} must not become a digest",
+            );
+        }
+    }
+
+    /// One digest, one spelling: an alternative encoding of the same 32 bytes never
+    /// becomes a second `EvidenceDigest`.
+    ///
+    /// The store addresses objects BY the token, so two strings naming one digest would
+    /// mean a value that names real bytes and looks up a file that is not there. Both
+    /// mechanisms that prevent it are asserted, because they are independent: the decoder
+    /// refuses a non-canonical spelling outright, and `from_token` re-encodes what it
+    /// accepted, so the canonical form does not depend on the decoder staying strict.
+    #[test]
+    fn one_digest_has_one_spelling() {
+        let computed = EvidenceDigest::of(b"a hop");
+        let canonical = computed.as_str();
+
+        // The final character of a 43-character token carries 2 significant bits, so
+        // three of its four spellings differ only in bits nobody reads.
+        let alias = format!(
+            "{}{}",
+            &canonical[..canonical.len() - 1],
+            if canonical.ends_with('A') { 'B' } else { 'A' },
+        );
+        assert_ne!(
+            alias,
+            canonical.to_owned(),
+            "the alias is a different string"
+        );
+        assert!(
+            EvidenceDigest::from_token(&alias).is_err(),
+            "a non-canonical spelling is refused, not normalized silently",
+        );
+
+        // And what a legal token produces is the canonical spelling, re-derived here
+        // rather than carried over from the caller's string.
+        assert_eq!(
+            EvidenceDigest::from_token(canonical)
+                .expect("the canonical token")
+                .as_str(),
+            canonical,
+        );
     }
 }

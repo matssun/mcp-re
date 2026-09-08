@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Proxy-flag documentation gate — a guide cannot teach a flag the CLI does not have.
+"""CLI-flag documentation gate — a guide cannot teach a flag the CLI does not have.
 
 WHAT THIS PROVES, exactly: every `--flag` appearing in a fenced code block that invokes
-`mcp_re_proxy_cli` (or `mcp-re-proxy`) is a flag `cli.rs` actually parses. That is a
-syntactic check over the documentation and one source file, and the claim stops there.
+one of this workspace's executables is a flag THAT executable's parser actually accepts.
+That is a syntactic check over the documentation and each tool's parser source, and the
+claim stops there.
+
+There are two tools, and they are checked against DIFFERENT parsers. `mcp-re-proxy` serves
+and `mcp-re-auditor` reads what it retained; they share no flag vocabulary, so a gate that
+pooled their flags would accept `--bind` in an auditor command line — a command that does
+not run — while reporting green.
 
 WHAT IT DOES NOT PROVE: that the flag's VALUE is accepted. `--authz reference`,
 `--revocation-list <path>`, `--client-ocsp require`,
@@ -36,6 +42,7 @@ import re
 import sys
 import tempfile
 from pathlib import Path
+from typing import NamedTuple
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -45,6 +52,8 @@ CLI_MODULE = "mcp-re-proxy/src/cli.rs"
 # delegating arm states its spellings there, and a gate reading only `cli.rs` would report
 # every one of those flags as non-existent. The set is the parser, wherever the parser is.
 CLI_MODULE_DIR = "mcp-re-proxy/src/cli"
+
+AUDITOR_MODULE = "mcp-re-proxy/src/transparency/auditor/invocation/mod.rs"
 
 # Documentation roots. `docs/archive/` is history by definition and records the surface as
 # it was; `docs/security/round-*/` holds captured gate logs, not instructions.
@@ -58,10 +67,10 @@ SKIP_PATTERNS = (re.compile(r"docs/security/round-"),)
 
 # Floors on what the scan actually selected. A gate whose document set collapses to zero
 # reports the same green as one that examined everything, so the size of the set is part
-# of what has to hold. `MIN_LAUNCH_DOCS` is the load-bearing one: markdown files exist in
-# quantity, documents that actually LAUNCH the proxy are the population under test.
+# of what has to hold. Each tool's `min_launch_docs` is the load-bearing one: markdown
+# files exist in quantity, documents that actually LAUNCH a tool are the population under
+# test.
 MIN_SCANNED_DOCS = 40
-MIN_LAUNCH_DOCS = 2
 
 # A fenced block: ```[lang]\n ... \n```
 FENCE = re.compile(r"```[^\n]*\n(.*?)```", re.S)
@@ -72,15 +81,43 @@ FENCE = re.compile(r"```[^\n]*\n(.*?)```", re.S)
 # — is the proxy's own argv. Anchoring on the invocation rather than on the block keeps
 # `helm --set`, `kubectl`, `gcloud` and `cargo test -- --nocapture` out, all of which
 # appear in blocks that also mention the proxy.
-LAUNCHES_PROXY = re.compile(
-    r"(?:"
-    # The Bazel target or the built CLI, wherever it appears in the command.
-    r"[\w./${}-]*mcp_re_proxy_cli"
-    # The installed binary, only as the command being run. Anywhere else it is a crate
-    # name (`cargo test -p mcp-re-proxy`), a chart name (`helm upgrade mcp-re-proxy`) or
-    # a directory, and the flags around it are some other tool's.
-    r"|^\s*(?:\$\s+)?(?:[A-Z_][A-Z0-9_]*=\S+\s+)*(?:\./|/\S*/)?mcp-re-proxy"
-    r")(?:\s+--(?=\s)|)(?=\s)"
+def launches(target: str, binary: str) -> re.Pattern[str]:
+    return re.compile(
+        r"(?:"
+        # The Bazel target or the built CLI, wherever it appears in the command.
+        rf"[\w./${{}}-]*{re.escape(target)}"
+        # The installed binary, only as the command being run. Anywhere else it is a crate
+        # name (`cargo test -p mcp-re-proxy`), a chart name (`helm upgrade mcp-re-proxy`)
+        # or a directory, and the flags around it are some other tool's.
+        rf"|^\s*(?:\$\s+)?(?:[A-Z_][A-Z0-9_]*=\S+\s+)*(?:\./|/\S*/)?{re.escape(binary)}"
+        r")(?:\s+--(?=\s)|)(?=\s)"
+    )
+
+
+class Tool(NamedTuple):
+    """One executable, its parser, and the floor its documentation must clear."""
+
+    binary: str
+    target: str
+    #: Files whose `"--flag"` literals ARE this tool's accepted set.
+    sources: tuple[str, ...]
+    #: Directories every `*.rs` of which is also part of the parser.
+    source_dirs: tuple[str, ...]
+    #: Below this many literals the gate is no longer reading the parser it thinks it is.
+    min_flags: int
+    #: A tool nothing documents is a tool whose guide silently left the scan.
+    min_launch_docs: int
+
+    def launch_pattern(self) -> re.Pattern[str]:
+        return launches(self.target, self.binary)
+
+
+TOOLS = (
+    Tool("mcp-re-proxy", "mcp_re_proxy_cli", (CLI_MODULE,), (CLI_MODULE_DIR,), 20, 2),
+    # The auditor's parser is one file and its surface is deliberately small: nine flags,
+    # every one required except the audit instant. The floor is set below that so a flag
+    # being removed is a gate failure rather than a floor failure.
+    Tool("mcp-re-auditor", "mcp_re_auditor_cli", (AUDITOR_MODULE,), (), 8, 1),
 )
 
 # `--flag` but not `--` alone and not a `--flag=` fragment inside a URL.
@@ -105,21 +142,30 @@ LAUNCHER_FLAGS = frozenset(
 )
 
 
-def known_cli_flags(cli_source: str) -> set[str]:
-    return set(CLI_FLAG_LITERAL.findall(cli_source))
+def known_flags(repo: Path, tool: Tool) -> set[str]:
+    """Every `"--flag"` literal in `tool`'s parser."""
+    source = ""
+    for rel in tool.sources:
+        path = repo / rel
+        if path.exists():
+            source += path.read_text(encoding="utf-8")
+    for rel in tool.source_dirs:
+        for child in sorted((repo / rel).glob("*.rs")):
+            source += child.read_text(encoding="utf-8")
+    return set(CLI_FLAG_LITERAL.findall(source))
 
 
-def documented_flags(markdown: str) -> set[str]:
-    """Every flag on a command line that launches the proxy.
+def documented_flags(markdown: str, launch: re.Pattern[str]) -> set[str]:
+    """Every flag on a command line that launches one tool.
 
     Shell continuations are joined first, so a multi-line invocation is one command. Only
-    the argv AFTER the proxy binary counts: `bazel run //t:mcp_re_proxy_cli --features x --
+    the argv AFTER the binary counts: `bazel run //t:mcp_re_proxy_cli --features x --
     --bind y` gives `--bind`, not `--features`.
     """
     found: set[str] = set()
     for block in FENCE.findall(markdown):
         for command in re.sub(r"\\\n\s*", " ", block).splitlines():
-            match = LAUNCHES_PROXY.search(command)
+            match = launch.search(command)
             if not match:
                 continue
             argv = command[match.end() :]
@@ -172,18 +218,19 @@ def check(repo: Path, skipped: list[str] | None = None, floors: bool = True) -> 
     own case.
     """
     skipped = skipped if skipped is not None else []
-    cli = (repo / CLI_MODULE).read_text(encoding="utf-8")
-    for child in sorted((repo / CLI_MODULE_DIR).glob("*.rs")):
-        cli += child.read_text(encoding="utf-8")
-    known = known_cli_flags(cli)
-    if len(known) < 20:
-        return [
-            f"{CLI_MODULE}: found only {len(known)} flag literals — the parser's shape "
-            f"changed and this gate is no longer reading it. Fix the gate, do not skip it."
-        ]
+    known: dict[str, set[str]] = {}
+    for tool in TOOLS:
+        flags = known_flags(repo, tool)
+        if len(flags) < tool.min_flags:
+            return [
+                f"{tool.binary}: found only {len(flags)} flag literals in "
+                f"{', '.join(tool.sources)} — the parser's shape changed and this gate is "
+                f"no longer reading it. Fix the gate, do not skip it."
+            ]
+        known[tool.binary] = flags
     problems: list[str] = []
     files = doc_files(repo)
-    launch_docs = 0
+    launch_docs: dict[str, int] = {tool.binary: 0 for tool in TOOLS}
     for path in files:
         rel = path.relative_to(repo).as_posix()
         text = path.read_text(encoding="utf-8")
@@ -203,32 +250,49 @@ def check(repo: Path, skipped: list[str] | None = None, floors: bool = True) -> 
                 f"{rel}: is in SUPERSEDED_DOCS but no longer declares itself superseded. "
                 f"Remove the entry so the document is scanned again."
             )
-        flags = documented_flags(text)
-        if flags:
-            launch_docs += 1
-        for flag in sorted(flags - known):
-            problems.append(
-                f"{rel}: `{flag}` is used in a proxy command line but {CLI_MODULE} does "
-                f"not parse it. Remove it, or say in the surrounding prose that it was "
-                f"removed (prose is not scanned; command lines are)."
-            )
+        for tool in TOOLS:
+            flags = documented_flags(text, tool.launch_pattern())
+            if flags:
+                launch_docs[tool.binary] += 1
+            for flag in sorted(flags - known[tool.binary]):
+                problems.append(
+                    f"{rel}: `{flag}` is used in a {tool.binary} command line but "
+                    f"{', '.join(tool.sources)} does not parse it. Remove it, or say in "
+                    f"the surrounding prose that it was removed (prose is not scanned; "
+                    f"command lines are)."
+                )
     if floors and len(files) < MIN_SCANNED_DOCS:
         problems.append(
             f"the scan selected only {len(files)} documents (floor {MIN_SCANNED_DOCS}) — "
             f"the document set collapsed, so a green here measured nothing. Fix the "
             f"selection, do not lower the floor."
         )
-    if floors and launch_docs < MIN_LAUNCH_DOCS:
-        problems.append(
-            f"only {launch_docs} scanned document launches the proxy (floor "
-            f"{MIN_LAUNCH_DOCS}) — either the invocation pattern stopped matching or the "
-            f"guides moved out of scope. Fix the selection, do not lower the floor."
-        )
+    for tool in TOOLS:
+        if floors and launch_docs[tool.binary] < tool.min_launch_docs:
+            problems.append(
+                f"only {launch_docs[tool.binary]} scanned document launches "
+                f"{tool.binary} (floor {tool.min_launch_docs}) — either the invocation "
+                f"pattern stopped matching or the guides moved out of scope. Fix the "
+                f"selection, do not lower the floor."
+            )
     return problems
 
 
 SELFTEST_CLI = "\n".join(f'    "{f}" => x,' for f in [f"--flag{i}" for i in range(25)])
 SELFTEST_CLI += '\n    "--bind" => x,\n    "--trust" => x,\n'
+
+SELFTEST_AUDITOR = "\n".join(
+    f'    "{f}" => x,'
+    for f in [f"--aud-flag{i}" for i in range(8)] + ["--retained-evidence-dir", "--hop"]
+)
+
+
+def _write_parsers(repo: Path) -> None:
+    """Every tool's parser source, so a case exercises the tool it names and not a gate
+    that fell back to reading one file for both."""
+    for rel, text in ((CLI_MODULE, SELFTEST_CLI), (AUDITOR_MODULE, SELFTEST_AUDITOR)):
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(text, encoding="utf-8")
 
 
 def selftest() -> int:
@@ -277,6 +341,29 @@ def selftest() -> int:
             False,
             "README.md",
         ),
+        (
+            "an auditor block using a known auditor flag passes",
+            "```sh\nmcp-re-auditor --retained-evidence-dir /archive --hop abc\n```\n",
+            True,
+        ),
+        (
+            "an auditor block using an unknown flag fails",
+            "```sh\nmcp-re-auditor --retained-evidence-dir /archive --gone-flag x\n```\n",
+            False,
+        ),
+        # The point of checking each tool against its OWN parser: `--bind` exists, and
+        # the auditor does not take it. A gate that pooled the two vocabularies would
+        # report this command line — which does not run — as green.
+        (
+            "a proxy flag in an auditor command line fails",
+            "```sh\nmcp-re-auditor --bind 127.0.0.1:8600\n```\n",
+            False,
+        ),
+        (
+            "an auditor flag in a proxy command line fails",
+            "```sh\nmcp_re_proxy_cli --retained-evidence-dir /archive\n```\n",
+            False,
+        ),
     ]
     failures = 0
     for case in cases:
@@ -284,8 +371,7 @@ def selftest() -> int:
         where = case[3] if len(case) > 3 else "docs/case.md"
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
-            (repo / CLI_MODULE).parent.mkdir(parents=True)
-            (repo / CLI_MODULE).write_text(SELFTEST_CLI, encoding="utf-8")
+            _write_parsers(repo)
             (repo / "docs").mkdir()
             (repo / "deploy").mkdir()
             target = repo / where
@@ -317,8 +403,7 @@ def selftest() -> int:
     ):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
-            (repo / CLI_MODULE).parent.mkdir(parents=True)
-            (repo / CLI_MODULE).write_text(SELFTEST_CLI, encoding="utf-8")
+            _write_parsers(repo)
             (repo / "docs").mkdir()
             (repo / "deploy").mkdir()
             target = repo / listed
@@ -335,12 +420,11 @@ def selftest() -> int:
     # The floors: an empty corpus must not read as a pass.
     with tempfile.TemporaryDirectory() as tmp:
         repo = Path(tmp)
-        (repo / CLI_MODULE).parent.mkdir(parents=True)
-        (repo / CLI_MODULE).write_text(SELFTEST_CLI, encoding="utf-8")
+        _write_parsers(repo)
         (repo / "docs").mkdir()
         (repo / "deploy").mkdir()
         problems = check(repo)
-        if len(problems) != 2 or not any("collapsed" in p for p in problems):
+        if len(problems) != 1 + len(TOOLS) or not any("collapsed" in p for p in problems):
             failures += 1
             print(f"SELFTEST FAIL: an empty document set was not refused: {problems}")
         else:
@@ -357,13 +441,14 @@ def main() -> int:
     for rel in skipped:
         print(f"skipped (declares itself superseded): {rel}")
     if problems:
-        print("proxy-flag documentation gate FAILED:", file=sys.stderr)
+        print("cli-flag documentation gate FAILED:", file=sys.stderr)
         for p in problems:
             print(f"  - {p}", file=sys.stderr)
         return 1
     print(
-        f"proxy-flag documentation gate: every documented proxy flag exists "
-        f"({len(doc_files(REPO))} documents scanned, {len(skipped)} skipped)"
+        f"cli-flag documentation gate: every documented flag exists for the tool whose "
+        f"command line it is on ({', '.join(t.binary for t in TOOLS)}; "
+        f"{len(doc_files(REPO))} documents scanned, {len(skipped)} skipped)"
     )
     return 0
 

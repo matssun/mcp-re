@@ -193,6 +193,16 @@ path = "src/lib.rs"
 name = "mcp-re-proxy"
 path = "src/main.rs"
 
+# The auditor's runnable half (ADR-MCPRE-054 / #841 G-2). A SEPARATE executable rather
+# than a mode of the proxy: a deployment that runs one need not run the other, and an
+# auditor runs against an archive long after the proxy that wrote it is gone. It lives in
+# this crate because the authority it composes — `transparency::attest_chain`,
+# `EvidenceRetention`, the trust document — does; a crate of its own would depend on this
+# one for all of it.
+[[bin]]
+name = "mcp-re-auditor"
+path = "src/bin/mcp-re-auditor.rs"
+
 # Uses the feature-gated async Redis store directly, so it cannot build in the default
 # feature set the way the other examples can.
 [[example]]
