@@ -53,6 +53,53 @@ It is not hygiene. Each stage exists because skipping it has already cost someth
 - **Stage 5** — running the *same* harness on kind before GKE found six deploy
   defects, three of which would have failed the cloud run outright.
 
+## Stage 4 is content-addressed now: two identities, not one
+
+The SLO lane was the **only** evidence in this repository that was not content-addressed.
+`.verification/attestations` are keyed on a fingerprint and are never re-derived while their
+inputs are unchanged; `scripts/local_slo_lane.sh` re-measured unconditionally. So an
+unchanged tree object was asked to prove itself twice, and the second attempt failed on host
+contention — hours lost on a release with no code delta. The measured proof that it *was*
+contention: tree `d8a53be9…` gave 6/6 PASS at median 15,282.6 rps on a quiet box, and the
+re-run gave 4/6 FAIL with rep 2 at p99 262,944 us, while 48,000/48,000 requests succeeded
+across both rounds. Descheduling, not serving.
+
+`scripts/slo_evidence_identity.py` keys the result. **On two identities, because a
+performance result is not a proof result.** A proof is a theorem about the tree, so
+`(tree, toolchain)` identifies it completely. A throughput number is a claim about a tree
+*running on something*, and the something drifts under an unchanged source tree.
+
+| identity | what it covers | what a change means |
+|---|---|---|
+| **performance surface** | the inputs declared in [`config/performance-surface.toml`](../../config/performance-surface.toml) — serving source, build configuration, harness, envelope, image definition | the result is **invalid**; measure again |
+| **measurement context** | hardware class, OS class, container-runtime class, CPU count, benchmark configuration | the old result is **about a different question**; measure this one |
+
+Reuse needs all three of: same surface, same context, and a record inside the declared
+freshness window (90 days). Anything else re-measures **and says which of the three moved** —
+a re-measurement with no stated reason is how unconditional re-measurement comes back.
+
+Two rules that keep it honest:
+
+- **Every declared surface input must be git-tracked**, and the script refuses an untracked
+  one. A fingerprint input outside the tree makes one commit fingerprint two ways depending
+  on whose working copy computed it — a defect this repository has already had once.
+- **Only a PASS is attested.** An `INCONCLUSIVE` (contended box) or a `FAIL` is precisely
+  what must not become a cache hit; recording one would let a contended run answer for the
+  tree until the window expired.
+
+The store is `.verification/slo/`, which — like the attestation store beside it — is
+derived evidence and is **not tracked**. Reuse is therefore per-box, which is the right
+scope: the measurement context is a class, and a class is not a promise about someone
+else's machine.
+
+`SLO_FORCE_REMEASURE=1` bypasses the cache. `--max-age-days N` narrows the window for a
+release that wants a fresher number than the standing policy.
+
+**Still open:** the ruling that settled this also said to move the lane to the dev1
+self-hosted runner, so contention is structurally impossible and the numbers are comparable
+across runs. Keying the evidence does not do that; it removes the re-measurements that had
+no reason to happen.
+
 ## Stage 5 rehearses the SLO Job spec — and did not, for months
 
 After the eight fleet proofs, stage 5 rehearses the **exact** SLO Job spec the cloud

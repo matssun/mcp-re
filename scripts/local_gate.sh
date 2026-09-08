@@ -195,6 +195,11 @@ stage_static() {
     `# exact SLO Job spec; run_slo_job.sh had zero callers, so it had never been true.` \
     && python3 scripts/rehearsal_claim_gate.py --selftest \
     && python3 scripts/rehearsal_claim_gate.py \
+    `# The SLO lane's evidence identity: the declared performance surface must exist and` \
+    `# be git-tracked, and every attested result must derive its filename from the identity` \
+    `# it carries. No measurement and no Docker — this is the declaration, not the lane.` \
+    && python3 scripts/slo_evidence_identity.py --selftest \
+    && python3 scripts/slo_evidence_identity.py \
     `# The heavy lanes refuse below a declared free-space floor. The floors need a box;` \
     `# the ADJUDICATION does not, and it is the whole decision — so it is pinned here,` \
     `# in the stage that runs on every --fast, rather than only where the lanes live.` \
@@ -362,6 +367,28 @@ disk_preflight() {
 # ADR-MCPRE-051 §7, free, same envelope as the GKE Job. A red lane here means the
 # declared-hardware run would only pay money to reproduce the same regression.
 stage_slo() {
+  # CONTENT-ADDRESSED FIRST. This lane used to be the only evidence in the repository
+  # that was not: attestations are keyed on a fingerprint and never re-derived while
+  # their inputs are unchanged, while this one re-measured every time. So an unchanged
+  # tree was asked to prove itself twice, and the second attempt failed on host
+  # contention — hours lost on a release with no code delta.
+  #
+  # Two identities decide it, because a performance result is not a proof result: the
+  # declared performance SURFACE (source, build config, harness, envelope, image) and the
+  # measurement CONTEXT (hardware, OS and container-runtime classes, benchmark config).
+  # Same surface + same context + inside the freshness window = reuse the attested
+  # result. Anything else re-measures, and says which of the three moved.
+  if [[ "${SLO_FORCE_REMEASURE:-0}" != 1 ]]; then
+    python3 scripts/slo_evidence_identity.py --decide
+    local decision=$?
+    if (( decision == 0 )); then return 0; fi
+    if (( decision != 10 )); then
+      echo "the SLO evidence identity could not be computed — see above. 'Could not" >&2
+      echo "decide' is not 'reuse': fix the declaration rather than measuring blind." >&2
+      return "$decision"
+    fi
+  fi
+
   # Before the lane, not after it: a full container-runtime disk kills the Redis tier
   # mid-run and the lane reports that as a measurement failure. Twice in v0.17.
   disk_preflight slo || return $?
@@ -377,6 +404,13 @@ stage_slo() {
   elif (( rc == 3 )); then
     echo "stage 4 was INCONCLUSIVE — it measured, but on a loaded box, and contention" >&2
     echo "alone produces that result. Re-run on a quiet box: scripts/local_gate.sh --from 4" >&2
+  fi
+  # Attest ONLY a pass. An INCONCLUSIVE or FAIL result is exactly the thing that must not
+  # become a cache hit — recording it would let a contended run answer for the tree until
+  # the freshness window expired.
+  if (( rc == 0 )); then
+    python3 scripts/slo_evidence_identity.py \
+      --record "${OUTDIR:-target/slo-local}"/rep*.json --verdict PASS || return 1
   fi
   return $rc
 }

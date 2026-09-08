@@ -1,0 +1,116 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The declared PERFORMANCE SURFACE, and the shape of a measurement's CONTEXT.
+#
+# WHY THIS FILE EXISTS. The SLO lane was the only evidence in this repository that was not
+# content-addressed. `.verification/attestations` are keyed on a fingerprint and are never
+# re-derived while their inputs are unchanged; `scripts/local_slo_lane.sh` re-measured
+# unconditionally. So an unchanged tree object was asked to prove itself twice, and the
+# second attempt failed on host contention — the measured proof that it WAS contention is in
+# the v0.17 record: tree `d8a53be9…` gave 6/6 PASS at median 15,282.6 rps on a quiet box,
+# and the re-run gave 4/6 FAIL with rep 2 at p99 262,944 us, while 48,000/48,000 requests
+# succeeded across both rounds. Descheduling, not serving.
+#
+# WHY TWO IDENTITIES AND NOT ONE. A performance result is not a proof result. A proof is a
+# theorem about the tree and nothing else, so `(tree, toolchain)` is a complete identity for
+# it. A throughput number is a claim about a tree RUNNING ON SOMETHING, and the something
+# drifts: kernels, container runtimes, and the benchmark harness's own configuration all
+# move under an unchanged source tree. Keying a performance result on the source alone would
+# make an old number permanently reusable, which is the opposite error to re-measuring
+# unconditionally.
+#
+# So a recorded SLO result carries two:
+#
+#   performance surface   the declared inputs below — source that can change how fast the
+#                         serving path runs, the build configuration that compiles it, the
+#                         harness that measures it, the envelope it measures under, and the
+#                         toolchain. A change here INVALIDATES the result.
+#
+#   measurement context   hardware class, OS/kernel class, container-runtime class and the
+#                         benchmark configuration, captured at measurement time. A DIFFERENT
+#                         context does not invalidate the old result; it means the old result
+#                         is about a different question, so this one has to be measured.
+#
+# Reuse requires: same surface, same context, and a record no older than `max_age_days`.
+# Anything else is a re-measurement, and the decision says which of the three it was.
+#
+# EVERY DECLARED INPUT MUST BE GIT-TRACKED. `scripts/slo_evidence_identity.py` refuses an
+# untracked one: a fingerprint input that is not in the tree makes one commit fingerprint
+# two ways depending on whose working copy computed it.
+
+[surface]
+# The serving path and everything it links. `mcp-re-proxy` is what is measured;
+# `mcp-re-core`, `mcp-re-policy` and `mcp-re-http-profile` are its dependencies and are on
+# the per-request path — a change in signature verification or policy evaluation moves
+# throughput as surely as a change in the accept loop. `mcp-re-client-core` is here because
+# the harness's load generator builds its signed requests through it, so it sets the cost of
+# the OFFERED load rather than of serving it; a change there moves the number either way.
+source = [
+  "mcp-re-proxy/src",
+  "mcp-re-core/src",
+  "mcp-re-policy/src",
+  "mcp-re-http-profile/src",
+  "mcp-re-client-core/src",
+]
+
+# What compiles it. `Cargo.lock` is the reason a dependency bump is not invisible here, and
+# `rust-toolchain.toml` is why a compiler change is not either.
+build_configuration = [
+  "Cargo.toml",
+  "Cargo.lock",
+  "rust-toolchain.toml",
+  "mcp-re-proxy/Cargo.toml",
+  "mcp-re-core/Cargo.toml",
+  "mcp-re-policy/Cargo.toml",
+  "mcp-re-http-profile/Cargo.toml",
+  "mcp-re-client-core/Cargo.toml",
+]
+
+# The instrument. A harness change is not a code regression, but it absolutely changes the
+# number — and a result measured by a different instrument is not comparable to one that is
+# not. The lane script and the two gates are here for the same reason: they decide what is
+# measured and what counts as passing.
+harness = [
+  "mcp-re-proxy/tests/tls_load_harness_bench.rs",
+  "scripts/local_slo_lane.sh",
+  "scripts/adr051_slo_gate.py",
+  "scripts/slo_gate.py",
+  "tools/slo/run_slo_job.sh",
+]
+
+# The envelope and the anchor. The envelope says what load is applied; the anchor says what
+# the result is compared against. Either moving makes an old verdict a verdict about a
+# question nobody asked.
+envelope = [
+  "docs/bench/adr-051-benchmark-envelope.json",
+  "docs/bench/adr-051-baseline-local.json",
+  "docs/bench/adr-051-slo-targets.json",
+]
+
+# The image the cloud Job measures inside. It has no effect on the LOCAL lane and every
+# effect on the declared-hardware one, and both are keyed by this same surface so that a
+# result cannot be reused across a change to the thing that built the binary.
+images = ["deploy/docker/Dockerfile.bench"]
+
+[freshness]
+# A performance result ages even with the surface and the context unchanged, because the
+# context is a CLASS and not a machine: "arm64, 14 cores, macOS 25" is the same class before
+# and after a firmware update, a thermal-paste year, or a background daemon nobody declared.
+# 90 days is the reuse window; a release may demand a shorter one with --max-age-days.
+max_age_days = 90
+
+[context]
+# The fields that constitute the measurement context. Named here rather than hardcoded so
+# that adding one is a declared change to the identity, not an invisible one — adding a
+# field necessarily makes every existing record's context differ, which is the correct and
+# visible consequence.
+fields = [
+  "hardware_class",
+  "os_class",
+  "container_runtime_class",
+  "cpu_count",
+  "concurrency",
+  "requests",
+  "connection_mode",
+  "declared_cores",
+]
