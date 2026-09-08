@@ -39,14 +39,15 @@
 //! exists, and collapsing the two would have an operator discard a portable record because
 //! a network was down.
 //!
-//! # One limitation, stated rather than discovered
+//! # It opens the archive for READING, and holds no more than that
 //!
-//! [`crate::transparency::EvidenceRetention::open`] proves the archive WRITABLE — it
-//! writes and removes a probe object, and starts the writer thread the serving path hands
-//! jobs to. So this auditor needs write access to the directory it reads, and cannot run
-//! against a read-only mount or a snapshot. That is a property of the retention
-//! authority's only constructor, not of auditing, and splitting a read-only projection out
-//! of it is that owner's decision rather than this one's.
+//! [`crate::transparency::RetainedArchive::open_read_only`] takes no write authority,
+//! creates nothing and starts no thread, so an audit runs against a read-only mount or a
+//! filesystem snapshot — the ordinary way an archive is handed to somebody meant to audit
+//! it and not to add to it. This process never constructs an
+//! [`crate::transparency::EvidenceRetention`]: the serving authority still proves its
+//! directory writable at startup, and that is a claim only a replica that will write needs
+//! to make (MCPRE-179).
 
 use std::path::Path;
 
@@ -59,7 +60,7 @@ use mcp_re_http_profile::VerifierPolicy;
 
 use crate::transparency::attest_chain;
 use crate::transparency::AttestError;
-use crate::transparency::EvidenceRetention;
+use crate::transparency::RetainedArchive;
 use crate::trust_document::TrustDocument;
 
 use super::artifact::AttestationArtifact;
@@ -76,14 +77,14 @@ pub fn attest(invocation: &AuditInvocation) -> Result<AttestationArtifact, Audit
     // before a statement exists, not after one has been signed and possibly submitted.
     let inputs = AuditInputs::load(invocation).map_err(AuditError::Input)?;
 
-    let retention =
-        EvidenceRetention::open(&invocation.retained_evidence_dir).map_err(AuditError::Archive)?;
+    let archive = RetainedArchive::open_read_only(&invocation.retained_evidence_dir)
+        .map_err(AuditError::Archive)?;
 
     let attestation = reconstruct_and_issue(
         invocation,
         &inputs.profile,
         &inputs.trust,
-        &retention,
+        &archive,
         &inputs.issuer,
     )
     .map_err(AuditError::Attest)?;
@@ -131,7 +132,7 @@ fn reconstruct_and_issue(
     invocation: &AuditInvocation,
     profile: &AuditProfile,
     trust: &TrustDocument,
-    retention: &EvidenceRetention,
+    archive: &RetainedArchive,
     issuer: &mcp_re_core::SigningKey,
 ) -> Result<crate::transparency::Attestation, AttestError> {
     let view = AuditorTrustView::new(trust, profile);
@@ -152,7 +153,7 @@ fn reconstruct_and_issue(
     let revoked = |kid: &str| -> bool { profile.is_revoked(kid) };
     profile.with_delegation(|expect| {
         attest_chain(
-            retention,
+            archive,
             &invocation.hops,
             &verifier,
             expect,

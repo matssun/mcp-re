@@ -1,20 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Filesystem-backed retained-evidence store (MCPRE-501 slice 3).
+//! The WRITE half of a retained-evidence directory.
 //!
-//! The SCITT commitment (`mcp-re-http-profile::scitt`) names evidence it does not
-//! carry: the receipt is small and portable, the request/response bytes stay retained.
-//! `mcp-re-http-profile` is pure — no fs — so it declares the
-//! [`RetainedEvidenceStore`] interface and this module supplies the implementation.
-//!
-//! **Scope, stated so nobody mistakes it for a platform.** This is an immutable
-//! content-addressed object store, sufficient for the SCITT vertical: `put` and `get`
-//! over SHA-256-named blobs. It is not an evidence-retention product — no lifecycle, no
-//! expiry, no index, no query. Those belong to whatever retention policy a deployment
-//! has, and inventing them here to close an interoperability issue would be building
-//! the wrong thing.
-//!
-//! The interface is the seam that keeps an object-store implementation possible later:
-//! nothing in the SCITT path knows a filesystem is behind it.
+//! One fact: **this process may add objects to this archive, and an acknowledged object is
+//! on disk under its own name.** Retrieval is not here — the store HOLDS a
+//! [`FsRetainedArchive`] and reads through it, so the re-addressing rule that makes a name
+//! determine its bytes exists exactly once and a writer's `get` is the same `get` an
+//! auditor runs.
 
 use std::io::Write;
 use std::path::Path;
@@ -23,9 +14,14 @@ use std::path::PathBuf;
 use mcp_re_http_profile::scitt::EvidenceDigest;
 use mcp_re_http_profile::scitt::RetainedEvidenceStore;
 
+use super::private_file::create_root;
+use super::private_file::open_private;
+use super::private_file::unique_suffix;
+use super::FsRetainedArchive;
+
 /// A retained-evidence store over a directory, one file per object named by digest.
 pub struct FsRetainedEvidenceStore {
-    root: PathBuf,
+    archive: FsRetainedArchive,
 }
 
 impl FsRetainedEvidenceStore {
@@ -41,22 +37,26 @@ impl FsRetainedEvidenceStore {
     /// This is a startup gate, not a guarantee about any later write — nothing can give
     /// that, which is why the serving path takes a durable reservation before the
     /// backend runs instead of trusting a probe.
+    ///
+    /// A process that only READS the archive must not come through here: opening for
+    /// reading is [`FsRetainedArchive::open_read_only`], which takes no write authority
+    /// and works against a read-only mount or a snapshot.
     pub fn open(root: impl AsRef<Path>) -> std::io::Result<Self> {
         let root = root.as_ref().to_path_buf();
         create_root(&root)?;
-        let store = FsRetainedEvidenceStore { root };
+        let store = FsRetainedEvidenceStore {
+            archive: FsRetainedArchive::over_created_root(root),
+        };
         store.probe_writable()?;
         Ok(store)
     }
 
-    /// The directory every object and marker lives in.
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-
     /// Create, write, make durable and remove one probe object.
     fn probe_writable(&self) -> std::io::Result<()> {
-        let probe = self.root.join(format!(".writable.{}", unique_suffix()));
+        let probe = self
+            .archive
+            .root()
+            .join(format!(".writable.{}", unique_suffix()));
         let outcome = (|| {
             let mut file = open_private(&probe)?;
             file.write_all(b"mcp-re retained-evidence writability probe\n")?;
@@ -64,29 +64,6 @@ impl FsRetainedEvidenceStore {
         })();
         let _ = std::fs::remove_file(&probe);
         outcome
-    }
-
-    /// The path for a digest.
-    ///
-    /// base64url is used for the digest everywhere in this profile, and it contains `-`
-    /// and `_` but never `/`, `.` or NUL — so it is already a safe single path segment.
-    /// The check is kept anyway: a filename derived from a value that arrived from
-    /// outside is exactly where path traversal gets in, and "the encoding cannot produce
-    /// a separator" is a property of the encoder, not of the string in hand.
-    fn path_for(&self, digest: &EvidenceDigest) -> std::io::Result<PathBuf> {
-        let name = digest.as_str();
-        let safe = !name.is_empty()
-            && name.len() <= 64
-            && name
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
-        if !safe {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "evidence digest is not a base64url token",
-            ));
-        }
-        Ok(self.root.join(name))
     }
 
     /// Write `bytes` to `path` durably EXCEPT for the directory entry.
@@ -98,8 +75,8 @@ impl FsRetainedEvidenceStore {
     /// directory `fsync` has no per-entry granularity, so N renames followed by one
     /// `fsync` are exactly as durable as N `fsync`-per-rename pairs).
     ///
-    /// `path` MUST be directly under [`FsRetainedEvidenceStore::root`], or the barrier
-    /// the caller takes is over the wrong directory.
+    /// `path` MUST be directly under the archive root, or the barrier the caller takes is
+    /// over the wrong directory.
     pub fn stage_at(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         // Unique PER WRITE. A name that is only unique per process is not: the pid is
         // constant for the process lifetime and is 1 in a container, so crash residue
@@ -141,96 +118,15 @@ impl FsRetainedEvidenceStore {
     /// interrupted rewrite leaves whatever was there untouched.
     pub fn stage(&self, evidence: &[u8]) -> std::io::Result<EvidenceDigest> {
         let digest = EvidenceDigest::of(evidence);
-        let path = self.path_for(&digest)?;
+        let path = self.archive.object_path(&digest)?;
         self.stage_at(&path, evidence)?;
         Ok(digest)
     }
 
     /// The directory barrier: makes every rename staged into the root so far durable.
     pub fn sync_root(&self) -> std::io::Result<()> {
-        std::fs::File::open(&self.root)?.sync_all()
+        std::fs::File::open(self.archive.root())?.sync_all()
     }
-}
-
-/// Create the store root readable, writable and searchable by the OWNER ONLY.
-///
-/// A retained record contains the request's covered headers verbatim, and this profile
-/// requires `authorization` and `dpop` to be covered when present — so the store holds
-/// live bearer tokens and DPoP proofs. The object files are 0600; a directory created at
-/// the ambient umask would still let anyone with search access enumerate and stat them,
-/// and on a shared mount that is the whole exposure.
-#[cfg(unix)]
-fn create_root(root: &Path) -> std::io::Result<()> {
-    use std::os::unix::fs::DirBuilderExt;
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(root)?;
-    // An existing directory keeps the mode its operator gave it — silently tightening a
-    // path a sidecar or an auditor may share is not this module's call. It is stated
-    // instead, because "the store holds credentials" is not inferable from the flag.
-    let mode = std::fs::metadata(root)?.permissions().mode();
-    if mode & 0o077 != 0 {
-        eprintln!(
-            "mcp-re-proxy: retained-evidence store {} is mode {:o}: readable or writable \
-             beyond its owner. Retained records contain the covered request headers \
-             verbatim, which for this profile includes `authorization` and `dpop` — live \
-             bearer tokens and DPoP proofs. Restrict it to 0700.",
-            root.display(),
-            mode & 0o7777
-        );
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn create_root(root: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(root)
-}
-
-/// A suffix no other write in this process, or any concurrent one, will choose again.
-///
-/// pid alone is not unique per write and is not unique across restarts in a container
-/// (always 1); the clock alone can repeat under a coarse timer; the counter alone
-/// repeats across processes. All three together do not.
-fn unique_suffix() -> String {
-    use std::sync::atomic::AtomicU64;
-    use std::sync::atomic::Ordering;
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    format!(
-        "{}.{nanos}.{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    )
-}
-
-/// Create `path` readable and writable by the OWNER ONLY.
-///
-/// Retained evidence is the request and response signature bases of real calls —
-/// enough to reconstruct who asked for what — and the store wrote them at whatever
-/// the process umask happened to allow, typically world-readable. Every other
-/// sensitive file this proxy touches is permission-checked; this one was not.
-#[cfg(unix)]
-fn open_private(path: &std::path::Path) -> std::io::Result<std::fs::File> {
-    use std::os::unix::fs::OpenOptionsExt;
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)
-}
-
-#[cfg(not(unix))]
-fn open_private(path: &std::path::Path) -> std::io::Result<std::fs::File> {
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
 }
 
 impl RetainedEvidenceStore for FsRetainedEvidenceStore {
@@ -247,59 +143,16 @@ impl RetainedEvidenceStore for FsRetainedEvidenceStore {
         Ok(digest)
     }
 
+    /// Through the archive, so the re-addressing check has exactly one implementation.
     fn get(&self, digest: &EvidenceDigest) -> Result<Option<Vec<u8>>, Self::Error> {
-        let path = self.path_for(digest)?;
-        match std::fs::read(&path) {
-            Ok(bytes) => {
-                // Re-address what came back. The file could have been replaced on disk
-                // by something outside this store, and returning bytes that do not hash
-                // to the requested digest would break the one property a
-                // content-addressed store has.
-                if EvidenceDigest::of(&bytes) != *digest {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "retained evidence does not hash to the digest it is stored under",
-                    ));
-                }
-                Ok(Some(bytes))
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(e),
-        }
+        self.archive.get(digest)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::fixtures::TempDir;
     use super::*;
-
-    /// A unique temporary directory that removes itself. The workspace carries no
-    /// `tempfile` dependency and this is not a reason to add one.
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new() -> Self {
-            use std::sync::atomic::AtomicU32;
-            use std::sync::atomic::Ordering;
-            static NEXT: AtomicU32 = AtomicU32::new(0);
-            let path = std::env::temp_dir().join(format!(
-                "mcp-re-retained-{}-{}",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
-            std::fs::create_dir_all(&path).expect("temp dir");
-            TempDir(path)
-        }
-        fn path(&self) -> &Path {
-            &self.0
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
 
     fn store() -> (TempDir, FsRetainedEvidenceStore) {
         let dir = TempDir::new();
@@ -351,19 +204,6 @@ mod tests {
         assert_eq!(first, second);
         let files = std::fs::read_dir(dir.path()).expect("read dir").count();
         assert_eq!(files, 1, "one object, not two copies");
-    }
-
-    /// A file swapped underneath the store is refused rather than returned. The one
-    /// property a content-addressed store has is that the name determines the bytes.
-    #[test]
-    fn bytes_replaced_on_disk_are_refused_not_returned() {
-        let (dir, mut store) = store();
-        let digest = store.put(b"authentic").expect("put");
-        std::fs::write(dir.path().join(digest.as_str()), b"swapped").expect("tamper");
-        assert!(
-            store.get(&digest).is_err(),
-            "bytes that do not hash to the requested digest are not this object"
-        );
     }
 
     /// R7-C069/C070/C115: `create_dir_all` succeeds on an existing directory whatever
@@ -485,14 +325,5 @@ mod tests {
             .map(|e| e.file_name().to_string_lossy().into_owned())
             .collect();
         assert_eq!(names, vec![digests[0].as_str().to_owned()]);
-    }
-
-    /// A digest that is not a base64url token never reaches the filesystem.
-    #[test]
-    fn a_non_token_digest_cannot_escape_the_root() {
-        let (_dir, store) = store();
-        let traversal: EvidenceDigest =
-            serde_json::from_str("\"../../etc/passwd\"").expect("deserialize");
-        assert!(store.get(&traversal).is_err());
     }
 }

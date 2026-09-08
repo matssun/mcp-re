@@ -656,11 +656,14 @@ baseline_prod_loc = 275
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
-[[debt]]
-path = "mcp-re-proxy/src/retained_evidence.rs"
-baseline_prod_loc = 271
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
+# MCPRE-179 retired `mcp-re-proxy/src/retained_evidence.rs` (271) by splitting the
+# authorities its ADR-MCPRE-061 §8 census found: WHICH bytes the archive holds
+# (`retained_evidence/archive.rs`), WHAT it takes to create a file here — owner-only,
+# under a name nothing will reuse (`retained_evidence/private_file.rs`), and the write
+# half itself (`retained_evidence/store.rs`). Every resulting file is under the
+# threshold, so the entry is REMOVED rather than moved: the registry may not name a file
+# that no longer describes debt. The census is EX-012 in
+# docs/architecture/review-dispositions.md.
 
 [[debt]]
 path = "mcp-re-proxy/src/kms_endpoint_policy/mod.rs"

@@ -89,11 +89,16 @@ client with nothing to register is not a product step either.
 
 > **Closed.** `mcp-re-auditor` is a shipped executable, exercised as a child process by the
 > transparency suite. The measurement above stands as the reason it exists; do not read it as
-> the current tree. One limitation it left behind, and it is the retention owner's to decide:
-> the auditor needs WRITE access to the archive, because
-> `EvidenceRetention::open` proves the directory writable by writing a probe. So it cannot run
-> against a read-only mount or a snapshot, and splitting a read-only projection out of that
-> authority is a separate slice.
+> the current tree.
+>
+> **The write-access limitation it left behind is also closed** (MCPRE-179 / #849). The
+> retention owner's census — EX-012 in
+> [`../review-dispositions.md`](../review-dispositions.md) — found that *which bytes this
+> archive holds* and *at what instant this deployment became answerable for them* are two
+> authorities that shared one constructor. They no longer do: `RetainedArchive` is the read
+> projection, `attest_chain` takes it, and the auditor opens it read-only. An audit runs
+> against a read-only mount or a snapshot, and the serving constructor still proves its
+> directory writable at startup.
 
 ### G-3 · Retained-**store** deployment semantics *(deliberately out of scope, restated)*
 

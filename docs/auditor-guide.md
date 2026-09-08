@@ -221,10 +221,12 @@ confused:
   covered `authorization` header the archive keeps verbatim. Anything else is not derivable
   from the archive, and a hop that needs it is reported unverifiable rather than verified
   against material somebody typed in.
-* **It needs WRITE access to the archive directory.** The retention store's only
-  constructor proves the directory writable — it writes and removes a probe object — so the
-  auditor cannot currently run against a read-only mount or a snapshot. Copy the archive to
-  a writable path.
+* **It never writes to the archive.** The directory is opened through the retention
+  owner's READ projection: no writability probe, no writer thread, nothing created. So an
+  audit runs directly against a read-only mount, a `0555` directory or a filesystem
+  snapshot, and the auditor holds no write access to the evidence it attests. (The SERVING
+  proxy still proves its retention directory writable at startup — that gate is on the
+  half that will write.)
 * **It does not discover a service key.** The pin is cut out of band by
   `tools/scitt_fetch_service_key.py`, reviewed, and passed in. That split is what makes the
   offline property reproducible after the service is gone.
