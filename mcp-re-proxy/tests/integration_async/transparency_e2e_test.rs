@@ -554,7 +554,10 @@ fn the_statement_is_verifiable_against_the_bytes_the_store_kept() {
 
     // Re-derived independently from the store, as an auditor holding only the retained
     // bytes and the statement would.
-    let hops = retention.archive().load_chain(&[digest]).expect("load the chain");
+    let hops = retention
+        .archive()
+        .load_chain(&[digest])
+        .expect("load the chain");
     let reconstruction = mcp_re_http_profile::reconstruct_chain(
         &hops,
         &Verifier::new(&VerifierPolicy::default(), &resolver()),
@@ -583,7 +586,10 @@ fn the_statement_is_verifiable_against_the_bytes_the_store_kept() {
     let other_digest = mcp_re_http_profile::scitt::EvidenceDigest::of(
         &std::fs::read(scratch.join("evidence").join(&names[0])).expect("read"),
     );
-    let other_hops = retention.archive().load_chain(&[other_digest]).expect("load");
+    let other_hops = retention
+        .archive()
+        .load_chain(&[other_digest])
+        .expect("load");
     let other_reconstruction = mcp_re_http_profile::reconstruct_chain(
         &other_hops,
         &Verifier::new(&VerifierPolicy::default(), &resolver()),

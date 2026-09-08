@@ -31,7 +31,6 @@ use mcp_re_http_profile::HttpResponse;
 use crate::retained_evidence::FsRetainedArchive;
 use crate::retained_evidence::FsRetainedEvidenceStore;
 
-
 use super::dispatch_committed::PENDING_EXTENSION;
 use super::durable_job::JobFault;
 use super::durable_job::JobKind;
@@ -454,7 +453,11 @@ mod tests {
         let (request, response) = exchange();
 
         let digest = retention.retain(&request, &response).await.expect("retain");
-        let hop = retention.archive().load(&digest).expect("load").expect("present");
+        let hop = retention
+            .archive()
+            .load(&digest)
+            .expect("load")
+            .expect("present");
 
         assert_eq!(hop.request.method, request.method);
         assert_eq!(hop.request.target_uri, request.target_uri);
@@ -488,7 +491,11 @@ mod tests {
         let (request, response) = exchange();
 
         let digest = retention.retain(&request, &response).await.expect("retain");
-        let hop = retention.archive().load(&digest).expect("load").expect("present");
+        let hop = retention
+            .archive()
+            .load(&digest)
+            .expect("load")
+            .expect("present");
 
         let names: Vec<&str> = hop
             .request

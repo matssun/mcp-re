@@ -126,8 +126,8 @@ pub use attestation::AttestError;
 pub use attestation::Attestation;
 pub use dispatch_committed::DispatchCommitted;
 pub use durability::EvidenceRetention;
-pub use retained_archive::RetainedArchive;
 pub use reserved_before_dispatch::ReservedBeforeDispatch;
+pub use retained_archive::RetainedArchive;
 
 /// A retention failure. Every variant refuses the exchange.
 #[derive(Debug)]

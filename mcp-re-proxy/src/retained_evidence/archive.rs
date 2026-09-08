@@ -121,9 +121,9 @@ impl FsRetainedArchive {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::fixtures::TempDir;
     use super::super::FsRetainedEvidenceStore;
+    use super::*;
     use mcp_re_http_profile::scitt::RetainedEvidenceStore;
 
     /// The property the whole split rests on: an archive nobody may write to still reads.
@@ -149,7 +149,10 @@ mod tests {
             write_open.is_err(),
             "the write half must still refuse a directory it cannot write"
         );
-        assert!(opened.is_ok(), "the read half must not need write authority");
+        assert!(
+            opened.is_ok(),
+            "the read half must not need write authority"
+        );
         assert_eq!(
             read_back.expect("opened").expect("get").as_deref(),
             Some(b"a retained hop".as_slice())
