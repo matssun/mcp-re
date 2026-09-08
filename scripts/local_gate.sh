@@ -191,6 +191,10 @@ stage_static() {
     && python3 tools/verification/verify --gate \
     && python3 tools/scitt_fetch_service_key.py --selftest \
     && python3 scripts/slo_gate.py --selftest \
+    `# The heavy lanes refuse below a declared free-space floor. The floors need a box;` \
+    `# the ADJUDICATION does not, and it is the whole decision — so it is pinned here,` \
+    `# in the stage that runs on every --fast, rather than only where the lanes live.` \
+    && python3 scripts/heavy_lane_disk_preflight.py --selftest \
     `# ADR-MCPRE-061 §6.3 — the file-size ratchet. Clippy has no file-length lint at all,` \
     `# so the one threshold the project states about FILES had no mechanical form until` \
     `# this gate. Pure text: it belongs in the no-build stage.` \
@@ -331,10 +335,32 @@ stage_bazel() {
   python3 scripts/bazel_gazelle_gate.py && bazel test //... --test_output=errors
 }
 
+# --- shared: the heavy-lane disk preflight ---------------------------------------
+# An environmental condition that presents as a lane verdict is the "green that measured
+# nothing" class inverted, and it is read as a code regression. Both heavy lanes ask
+# first. The floors and their derivations live in config/heavy-lane-floors.toml; nothing
+# here restates a number.
+disk_preflight() {
+  python3 scripts/heavy_lane_disk_preflight.py --lane "$1"
+  local rc=$?
+  if (( rc == 20 )); then
+    echo "stage refused BEFORE measuring: INFRASTRUCTURE_UNAVAILABLE. This is an" >&2
+    echo "environment fact, not a code result — free space and resume, or pass" >&2
+    echo "--reclaim to drop superseded mcp-re images." >&2
+  elif (( rc == 21 )); then
+    echo "the disk preflight could not MEASURE a declared floor. 'Could not decide' is" >&2
+    echo "not 'passed': fix the probe (see the reason above) rather than skipping it." >&2
+  fi
+  return $rc
+}
+
 # --- stage 4: the local SLO lane ------------------------------------------------
 # ADR-MCPRE-051 §7, free, same envelope as the GKE Job. A red lane here means the
 # declared-hardware run would only pay money to reproduce the same regression.
 stage_slo() {
+  # Before the lane, not after it: a full container-runtime disk kills the Redis tier
+  # mid-run and the lane reports that as a measurement failure. Twice in v0.17.
+  disk_preflight slo || return $?
   scripts/local_slo_lane.sh --reps "${SLO_REPS:-6}"
   local rc=$?
   # Neither 2 (could not measure: no Docker) nor 3 (measured, missed tolerance on a
@@ -356,6 +382,11 @@ stage_slo() {
 # differs. This is what caught six deploy defects before a single cloud charge.
 stage_kind() {
   if [[ "$WITH_KIND" != 1 ]]; then echo "not requested (pass --with-kind)."; return 0; fi
+
+  # The widest lane on the box, and the one whose failure mode is documented: with the
+  # Docker VM full, the fleet rolls out, the Redis sidecars cannot create their AOF
+  # directories, and the harness prints `PROOF FAILED` about a proof that never ran.
+  disk_preflight kind || return $?
 
   # The proof client is reached only AFTER a full three-replica fleet rollout, so a
   # client that cannot start costs an entire cluster deploy before it surfaces — and

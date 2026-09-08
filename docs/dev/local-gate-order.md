@@ -53,6 +53,40 @@ It is not hygiene. Each stage exists because skipping it has already cost someth
 - **Stage 5** — running the *same* harness on kind before GKE found six deploy
   defects, three of which would have failed the cloud run outright.
 
+## Before stages 4 and 5: the disk preflight
+
+Both heavy lanes call `scripts/heavy_lane_disk_preflight.py` **before** they start, and
+refuse with `INFRASTRUCTURE_UNAVAILABLE` when a declared free-space floor is not met.
+
+The floors, and the derivation of each number, are in
+[`config/heavy-lane-floors.toml`](../../config/heavy-lane-floors.toml). Two filesystems are
+measured, because one of them cannot be seen from the host: on Docker Desktop the container
+runtime lives inside a VM, so its free space is measured by running `df` inside a container
+— using an image that is **already present locally**, since pulling an image to find out
+whether there is room to pull images fails on exactly the state this exists to catch.
+
+It is not a control and decides nothing about a change. It decides whether a measurement is
+worth starting, and it exists because the alternative already happened twice during v0.17:
+with the Docker VM at 100%, the Redis sidecars could not create their append-only
+directories, the SLO bench's Redis fleet died, and the kind harness printed
+`PROOF FAILED: load generator did not complete` about a proof that had never run.
+`docs/releases/v0.17.0-provenance.md` records the measurement — 98 GB, 0 available.
+
+**A red that measured nothing is the inverse of a green that measured nothing, and it costs
+more**: it is read as a regression in the code under test, and it was, for a day.
+
+Three exit codes, and the middle one is the point:
+
+| code | verdict | meaning |
+|---:|---|---|
+| 0 | `PASS` | every declared floor is met |
+| 20 | `INFRASTRUCTURE_UNAVAILABLE` | a floor is not met — an environment fact, not a code result |
+| 21 | `UNMEASURED` | a floor could not be measured at all; "could not decide" is not "passed" |
+
+`--reclaim` is opt-in and deliberately narrow: it removes `mcp-re-*` images at versions
+`VERSION` no longer names, and nothing else. A full disk is not a licence to prune another
+project's images, and the running kind cluster's node image is not ephemeral.
+
 ## The two traps in the SLO lane
 
 Both produce a lane that **looks green while having measured nothing**, which is

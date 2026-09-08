@@ -12,7 +12,27 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added — a disk preflight for the heavy local lanes
+
+`scripts/heavy_lane_disk_preflight.py`, called by `scripts/local_gate.sh` before stage 4
+(the SLO lane) and stage 5 (the kind fleet proofs). Both refuse with
+`INFRASTRUCTURE_UNAVAILABLE` when a free-space floor declared in
+`config/heavy-lane-floors.toml` is not met.
+
+Twice during the v0.17 release the Docker VM disk reached 100% and the condition surfaced
+as a **lane verdict**: the Redis sidecars could not create their append-only directories,
+the SLO bench's Redis fleet died, and the kind harness reported `PROOF FAILED` about a proof
+that had never run. A red that measured nothing is the inverse of the green that measured
+nothing, and it is more expensive — it is read as a regression in the code under test.
+
+Two filesystems are measured, because one is invisible from the host: the container runtime
+lives inside a VM on Docker Desktop, so its free space is read by running `df` inside a
+container, using an image already present locally. Pulling an image to discover whether
+there is room to pull images fails on precisely the state this exists to catch.
+
+`UNMEASURED` (exit 21) is kept distinct from `INFRASTRUCTURE_UNAVAILABLE` (exit 20) and from
+`PASS`: a floor that could not be measured is not a floor that was met. `--reclaim` is
+opt-in and removes only `mcp-re-*` images at versions `VERSION` no longer names.
 
 
 ## [0.17.0] — 2026-09-07
