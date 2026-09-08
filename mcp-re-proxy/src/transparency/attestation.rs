@@ -14,7 +14,7 @@
 
 use mcp_re_http_profile::scitt::EvidenceDigest;
 
-use super::durability::EvidenceRetention;
+use super::retained_archive::RetainedArchive;
 use super::RetentionError;
 
 /// What an attestation produced: the portable statement, and the chain verdict it
@@ -82,7 +82,7 @@ impl std::error::Error for AttestError {}
 /// with the same call, and a statement that fails it must never leave this process.
 #[allow(clippy::too_many_arguments)]
 pub fn attest_chain<R: Into<mcp_re_http_profile::ResolverOutcome>>(
-    retention: &EvidenceRetention,
+    archive: &RetainedArchive,
     hops: &[EvidenceDigest],
     verifier: &mcp_re_http_profile::Verifier<'_, R>,
     expect: &mcp_re_http_profile::DelegationExpectations<'_>,
@@ -94,7 +94,7 @@ pub fn attest_chain<R: Into<mcp_re_http_profile::ResolverOutcome>>(
     verified_context_commitment: Option<String>,
     sign: impl FnOnce(&[u8]) -> Result<Vec<u8>, mcp_re_http_profile::HttpProfileError>,
 ) -> Result<Attestation, AttestError> {
-    let retained = retention.load_chain(hops).map_err(AttestError::Retention)?;
+    let retained = archive.load_chain(hops).map_err(AttestError::Retention)?;
     let reconstruction =
         mcp_re_http_profile::reconstruct_chain(&retained, verifier, expect, audit, is_revoked, now);
     let commitment = mcp_re_http_profile::scitt::EvidenceCommitment::from_reconstruction(

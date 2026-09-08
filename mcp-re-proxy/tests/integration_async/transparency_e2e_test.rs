@@ -466,7 +466,7 @@ fn a_served_call_becomes_an_offline_verifiable_receipt() {
     let audiences = [AUD];
     let epochs = [EPOCH];
     let attestation = attest_chain(
-        &retention,
+        retention.archive(),
         &[digest],
         &Verifier::new(&VerifierPolicy::default(), &resolver()),
         &expectations(&audiences, &epochs),
@@ -538,7 +538,7 @@ fn the_statement_is_verifiable_against_the_bytes_the_store_kept() {
     let audiences = [AUD];
     let epochs = [EPOCH];
     let attestation = attest_chain(
-        &retention,
+        retention.archive(),
         std::slice::from_ref(&digest),
         &Verifier::new(&VerifierPolicy::default(), &resolver()),
         &expectations(&audiences, &epochs),
@@ -554,7 +554,7 @@ fn the_statement_is_verifiable_against_the_bytes_the_store_kept() {
 
     // Re-derived independently from the store, as an auditor holding only the retained
     // bytes and the statement would.
-    let hops = retention.load_chain(&[digest]).expect("load the chain");
+    let hops = retention.archive().load_chain(&[digest]).expect("load the chain");
     let reconstruction = mcp_re_http_profile::reconstruct_chain(
         &hops,
         &Verifier::new(&VerifierPolicy::default(), &resolver()),
@@ -583,7 +583,7 @@ fn the_statement_is_verifiable_against_the_bytes_the_store_kept() {
     let other_digest = mcp_re_http_profile::scitt::EvidenceDigest::of(
         &std::fs::read(scratch.join("evidence").join(&names[0])).expect("read"),
     );
-    let other_hops = retention.load_chain(&[other_digest]).expect("load");
+    let other_hops = retention.archive().load_chain(&[other_digest]).expect("load");
     let other_reconstruction = mcp_re_http_profile::reconstruct_chain(
         &other_hops,
         &Verifier::new(&VerifierPolicy::default(), &resolver()),
@@ -777,7 +777,7 @@ fn a_chain_with_no_verified_hop_is_still_attested() {
         Box::new(|_key_id: &str, _slot: SignerSlot| Option::<ResolvedActor>::None.into());
 
     let attestation = attest_chain(
-        &retention,
+        retention.archive(),
         std::slice::from_ref(&digest),
         &Verifier::new(&VerifierPolicy::default(), &nobody),
         &expectations(&audiences, &epochs),
@@ -817,7 +817,7 @@ fn a_chain_with_no_verified_hop_is_still_attested() {
 
     // The empty chain is the same class and must behave the same way.
     let empty = attest_chain(
-        &retention,
+        retention.archive(),
         &[],
         &Verifier::new(&VerifierPolicy::default(), &nobody),
         &expectations(&audiences, &epochs),
@@ -835,7 +835,7 @@ fn a_chain_with_no_verified_hop_is_still_attested() {
     // The self-check is still applied where it means something: a statement about a
     // chain that DID verify is checked against the retained bytes.
     let complete = attest_chain(
-        &retention,
+        retention.archive(),
         std::slice::from_ref(&digest),
         &Verifier::new(&VerifierPolicy::default(), &resolver()),
         &expectations(&audiences, &epochs),
@@ -1087,6 +1087,71 @@ fn the_auditor_binary_turns_a_served_call_into_a_verifiable_attestation() {
         },
     )
     .expect("the receipt over the binary's statement verifies offline");
+}
+
+/// MCPRE-179: the SHIPPED BINARY audits an archive it has no write access to.
+///
+/// This is the whole point of splitting a read projection out of the retention authority.
+/// Before it, `EvidenceRetention::open` was the only way in and it proves the directory
+/// writable BY WRITING a probe object — so an auditor could not run against a read-only
+/// mount or a filesystem snapshot, which is the ordinary way an archive is handed to
+/// somebody meant to audit it and not to add to it.
+///
+/// The directory is `0555` for the whole child run, so a probe write, a `create_dir_all`
+/// on a missing root, or any staged object would fail. The audit succeeding is the
+/// evidence that none of them is attempted.
+#[test]
+#[cfg(unix)]
+fn the_auditor_binary_audits_an_archive_it_cannot_write_to() {
+    use std::os::unix::fs::PermissionsExt;
+    let (scratch, retention, token) = served_archive(
+        "auditor-read-only",
+        "nonce-transparency-auditor-read-only-1",
+    );
+    drop(retention);
+    let fixtures = AuditFixtures::write(&scratch, audit_profile_json(), service_pin_json());
+    let evidence = scratch.join("evidence");
+    std::fs::set_permissions(&evidence, std::fs::Permissions::from_mode(0o555)).expect("chmod");
+
+    let output = run_auditor(&fixtures.args(&evidence, std::slice::from_ref(&token)));
+
+    // Restore before asserting, so the scratch can be removed either way.
+    std::fs::set_permissions(&evidence, std::fs::Permissions::from_mode(0o700)).expect("chmod");
+    assert!(
+        output.status.success(),
+        "auditing must not require write access to the evidence it attests: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let artifact = mcp_re_proxy::transparency::auditor::AttestationArtifact::parse(
+        &std::fs::read(&fixtures.out).expect("the artifact was written"),
+    )
+    .expect("the artifact parses");
+    assert!(artifact.chain().is_complete());
+}
+
+/// And the SERVING constructor still refuses the same directory, at startup.
+///
+/// The narrowing is on the read side only. A replica that starts on a read-only volume, a
+/// `0555` directory or a mismatched `fsGroup` would otherwise refuse every call it then
+/// accepted, and that failure has to surface where an operator is looking.
+#[test]
+#[cfg(unix)]
+fn the_serving_constructor_still_proves_the_archive_writable() {
+    use std::os::unix::fs::PermissionsExt;
+    let scratch = Scratch::new("retention-writability-gate");
+    let evidence = scratch.join("evidence");
+    std::fs::create_dir_all(&evidence).expect("create");
+    std::fs::set_permissions(&evidence, std::fs::Permissions::from_mode(0o555)).expect("chmod");
+
+    let serving = EvidenceRetention::open(&evidence);
+    let reading = mcp_re_proxy::transparency::RetainedArchive::open_read_only(&evidence);
+
+    std::fs::set_permissions(&evidence, std::fs::Permissions::from_mode(0o700)).expect("chmod");
+    assert!(
+        serving.is_err(),
+        "a serving replica must not start on an archive it cannot write",
+    );
+    assert!(reading.is_ok(), "reading needs no write authority");
 }
 
 /// A hop the archive does not hold is a REFUSAL, and nothing is written.

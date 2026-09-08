@@ -19,7 +19,7 @@
 //! an archive long after the proxy that produced it is gone.
 //!
 //! It is an additional binary in THIS crate rather than a new one because the authority it
-//! composes — `attest_chain`, [`super::EvidenceRetention`], the deployment's trust
+//! composes — `attest_chain`, [`super::RetainedArchive`], the deployment's trust
 //! document — lives here. A separate crate would depend on this one for all of it and buy
 //! nothing but a directory.
 //!
@@ -36,6 +36,13 @@
 //!   ├─ registration      submitting the attestation, and verifying what comes back
 //!   └─ run               the composition: load, open, reconstruct, attest, write, submit
 //! ```
+//!
+//! ## It reads the archive, and holds nothing that could write to it
+//!
+//! The archive is opened through [`super::RetainedArchive`], the retention owner's READ
+//! projection: no writability probe, no writer thread, no create. An audit therefore runs
+//! against a read-only mount or a snapshot, and an auditor never holds write access to the
+//! evidence it attests (MCPRE-179).
 //!
 //! ## Two outcomes, in that order
 //!

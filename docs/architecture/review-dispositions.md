@@ -2191,3 +2191,101 @@ decomposed without duplicating it. `Recognised::classify` came closest — a tot
 request to every machine's verdict — and it split on a distinction the code already
 documented three times: a machine that CAN refuse and one that cannot are different kinds.
 
+
+---
+
+## EX-012 — `mcp-re-proxy/src/retained_evidence.rs` and the retention read side — **census complete, disposition: DECOMPOSED, no exception sought**
+
+**Status:** census complete; the work it identified is done in the same slice, and the
+registry entry is removed rather than re-based. **Measured:** 271 production lines on `main`
+@ `e59effa4` for `retained_evidence.rs`; 498 registered for `transparency/durability.rs`.
+**Occasioned by:** MCPRE-179 (#849) — the auditor shipped in #847 needed WRITE access to the
+archive it merely reads.
+
+The unit was over the threshold, but size is not why it was censused. #847 recorded a cost
+in three separate places — `transparency/auditor/run.rs`, `docs/auditor-guide.md` and the
+externalization census — and all three said the same thing: an auditor could not run against
+a read-only mount or a filesystem snapshot, and held write access to the evidence it was
+attesting. That is a §8 question 2 answer, not a limitation of auditing.
+
+### §8 question 1 — what single security/control fact does each unit own?
+
+Neither answer came out singular.
+
+`EvidenceRetention`'s module documentation says *when responsibility for retaining an
+exchange has been durably established* — and then the type also carried `load`, `load_chain`
+and its own `object_path`. *At what instant may this deployment serve* and *what is in this
+directory* are two facts, and the second one's consumer needs none of the first's authority.
+
+`FsRetainedEvidenceStore` says *an immutable content-addressed object store*, and its one
+constructor **proves the directory writable by writing** a probe object. So *which bytes are
+here* and *may this process add more* were one fact with one door.
+
+### §8 question 2 — how many independently describable authorities?
+
+Four, and each is now a file:
+
+| authority | fact | needs |
+|---|---|---|
+| `retained_evidence/archive.rs` | WHICH bytes this directory holds; a name determines its bytes | read |
+| `retained_evidence/private_file.rs` | what it takes to CREATE a file here: owner-only, under a name nothing will reuse | write |
+| `retained_evidence/store.rs` | this process may ADD objects, and an acknowledged one is on disk | write, proved at startup |
+| `transparency/retained_archive.rs` | WHICH retained HOPS an archive holds — the byte archive plus the record schema | read |
+
+`EvidenceRetention` keeps its own fact and nothing else: it HOLDS a `RetainedArchive` and
+hands it out through `archive()`. `attest_chain` takes the projection.
+
+### §8 question 6 — facts reconstructed that another owner already decided
+
+`durability.rs::object_path` re-derived the digest→path rule that `FsRetainedEvidenceStore`
+already owned, base64url token guard and all — two copies of *which object names are legal*,
+in the two halves that must agree about it. There is now one, in the owner that reads them
+back; the write path asks for it.
+
+### §8 question 8 — public interface existing only because tests need it
+
+`FsRetainedEvidenceStore::root()` had no production caller in the workspace. It is gone;
+the root is private to the archive and reached through the projections that need it.
+
+### §8 question 9 — branches unreachable under the current legality model
+
+For an auditor holding an `EvidenceRetention`: the whole reserve/commit/complete surface and
+the writer thread. Live for the serving path, unreachable-by-legality for the consumer that
+was nevertheless handed the authority. That is what the narrowing removes.
+
+### §8 question 11 — inconsistent values a caller can construct
+
+The risk the split creates, and how it is closed: a reader that skipped re-addressing would
+return bytes that do not hash to the name they are stored under. The check is **not**
+duplicated into an auditor-specific reader — it lives in `FsRetainedArchive::get`, and the
+write half's `get` delegates to it, so the auditor's re-addressing is the same code the
+serving replica's is. Deleting it is a single deletion with a single failing test in each
+half.
+
+### §8 question 12 — which lane establishes each property
+
+| property | lane |
+|---|---|
+| a read-only (`0555`) archive opens for reading and serves its objects | `retained_evidence::archive::tests` (cargo lib) |
+| the SERVING constructor still refuses a directory it cannot write | `retained_evidence::store::tests`, `transparency::retained_archive::tests` (cargo lib) |
+| re-addressing refuses swapped bytes THROUGH THE READ VIEW | `retained_evidence::archive::tests` (cargo lib) |
+| the SHIPPED `mcp-re-auditor` binary audits a `0555` archive end to end | `transparency_e2e_test::the_auditor_binary_audits_an_archive_it_cannot_write_to` (**Bazel** `//mcp-re-proxy:integration_async_test`) |
+| the serving constructor still proves writability, in the same lane | `transparency_e2e_test::the_serving_constructor_still_proves_the_archive_writable` (**Bazel**) |
+
+The two shipped-binary lanes are Bazel-only: `MCP_RE_AUDITOR_CLI` is a runfile, so a cargo
+run compiles them to nothing. Stated here because a green cargo lane says nothing about
+either.
+
+### Why no exception was sought
+
+Every one of the four authorities above is separately describable in one sentence with no
+"and", and the compile failures that appeared while making `FsRetainedEvidenceStore`'s root
+private were the boundary detector working: each one named a consumer that wanted a narrower
+projection than the representation it had been destructuring. Nothing here needed locality.
+
+### What this record does NOT close
+
+The retention authority's own census. `transparency/durability.rs` shrank in this slice and
+remains registered and `unreviewed`: the reservation/commitment/completion state machine, the
+bounded write queue and the writer thread have not been examined, and losing the read side
+does not adjudicate them.

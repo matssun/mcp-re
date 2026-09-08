@@ -269,13 +269,17 @@ _PROXY_LIB_SRCS = [
     # ADR-MCPRE-063 Slice 3: the correspondence gate. Its own file so module privacy can
     # make "assemble a resolver without consulting the authority" inexpressible.
     "src/delegated_tls/resolver.rs",
-    "src/retained_evidence.rs",
+    "src/retained_evidence/mod.rs",
+    "src/retained_evidence/archive.rs",
+    "src/retained_evidence/private_file.rs",
+    "src/retained_evidence/store.rs",
     # ADR-MCPRE-066 Slice 0: what a stage decided when it refused, and which authority
     # decided it. Split from the serving path so the cause outlives the stage.
     "src/refusal/mod.rs",
     "src/refusal/cause.rs",
     "src/transparency/mod.rs",
     "src/transparency/retained_record.rs",
+    "src/transparency/retained_archive.rs",
     "src/transparency/covered_set.rs",
     "src/transparency/durability.rs",
     "src/transparency/durable_job.rs",

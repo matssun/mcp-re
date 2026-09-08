@@ -25,13 +25,12 @@ use std::sync::mpsc::SyncSender;
 use std::sync::Arc;
 
 use mcp_re_http_profile::scitt::EvidenceDigest;
-use mcp_re_http_profile::scitt::RetainedEvidenceStore;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
 
+use crate::retained_evidence::FsRetainedArchive;
 use crate::retained_evidence::FsRetainedEvidenceStore;
 
-use mcp_re_http_profile::chain::RetainedHop;
 
 use super::dispatch_committed::PENDING_EXTENSION;
 use super::durable_job::JobFault;
@@ -40,6 +39,7 @@ use super::durable_job::WriteJob;
 use super::durable_writer::write_loop;
 use super::reservation_marker::ReservationMarker;
 use super::reserved_before_dispatch::RESERVED_EXTENSION;
+use super::retained_archive::RetainedArchive;
 use super::retained_record::retained_request;
 use super::retained_record::RetainedHopRecord;
 use super::DispatchCommitted;
@@ -60,8 +60,13 @@ use super::RetentionError;
 /// where refusing is free (before dispatch, HTTP 503, retry-safe), never dropped after
 /// the backend has run.
 pub struct EvidenceRetention {
-    /// Read side. `get` needs no mutable state and never contends with the writer.
-    reader: FsRetainedEvidenceStore,
+    /// The READ projection this authority holds and hands out.
+    ///
+    /// Held rather than reimplemented, and handed out rather than wrapped: a consumer that
+    /// only reads — [`super::attest_chain`], the auditor — takes
+    /// [`EvidenceRetention::archive`] and never acquires the write authority this type
+    /// proved at startup (MCPRE-179).
+    archive: RetainedArchive,
     root: PathBuf,
     /// Hand-off to the writer thread.
     jobs: SyncSender<WriteJob>,
@@ -98,15 +103,18 @@ impl EvidenceRetention {
         max_reservations: usize,
     ) -> std::io::Result<Self> {
         let root = dir.as_ref().to_path_buf();
-        let reader = FsRetainedEvidenceStore::open(&root)?;
+        // The writable open FIRST: it creates the root and proves it writable, which is the
+        // startup gate a serving replica must not start without. The read projection is
+        // then a view over a root this call has already established.
         let writer_store = FsRetainedEvidenceStore::open(&root)?;
+        let archive = RetainedArchive::over(FsRetainedArchive::open_read_only(&root)?);
         let (jobs, receiver) =
             std::sync::mpsc::sync_channel(write_queue_capacity(max_reservations));
         let writer = std::thread::Builder::new()
             .name("mcp-re-retention".to_owned())
             .spawn(move || write_loop(writer_store, receiver))?;
         Ok(EvidenceRetention {
-            reader,
+            archive,
             root,
             jobs,
             permits: Arc::new(tokio::sync::Semaphore::new(max_reservations)),
@@ -349,51 +357,21 @@ impl EvidenceRetention {
         Ok(digest)
     }
 
-    /// The content-addressed path for `digest`, refusing a name that is not a base64url
-    /// token — the store's own guard, applied on the write side too.
+    /// The content-addressed path for `digest`, asked of the owner that reads it back.
+    ///
+    /// Deriving it here as well would be two rules about which object names are legal, in
+    /// the two halves that must agree about it.
     fn object_path(&self, digest: &EvidenceDigest) -> Result<PathBuf, RetentionError> {
-        let name = digest.as_str();
-        let safe = !name.is_empty()
-            && name.len() <= 64
-            && name
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
-        if !safe {
-            return Err(RetentionError::Malformed("evidence digest is not a token"));
-        }
-        Ok(self.root.join(name))
+        self.archive.object_path(digest)
     }
 
-    /// Read back one retained exchange.
+    /// The READ projection over this archive.
     ///
-    /// `Ok(None)` means the store does not hold it — an auditor, not the store, decides
-    /// whether a missing hop is fatal for the reconstruction being attempted.
-    pub fn load(&self, digest: &EvidenceDigest) -> Result<Option<RetainedHop>, RetentionError> {
-        let Some(bytes) = self.reader.get(digest).map_err(RetentionError::Store)? else {
-            return Ok(None);
-        };
-        let record: RetainedHopRecord = serde_json::from_slice(&bytes)
-            .map_err(|_| RetentionError::Malformed("retained hop does not parse"))?;
-        record.into_hop().map(Some)
-    }
-
-    /// Read back an ordered chain, refusing rather than reconstructing from a gap.
-    ///
-    /// A missing hop is fatal HERE because the caller asked for a specific ordered
-    /// chain: silently reconstructing from the hops that happen to be present would
-    /// produce a `Complete` label for a record with a hole in it, which is the quiet
-    /// truncation the chain seam exists to prevent.
-    pub fn load_chain(
-        &self,
-        digests: &[EvidenceDigest],
-    ) -> Result<Vec<RetainedHop>, RetentionError> {
-        digests
-            .iter()
-            .map(|digest| {
-                self.load(digest)?
-                    .ok_or(RetentionError::Malformed("retained chain is missing a hop"))
-            })
-            .collect()
+    /// What a consumer that only reads is given, instead of this whole authority. Reading
+    /// costs no write access and no writer thread, and a consumer holding one of these
+    /// cannot reserve, commit or retain anything.
+    pub fn archive(&self) -> &RetainedArchive {
+        &self.archive
     }
 }
 
@@ -401,6 +379,7 @@ impl EvidenceRetention {
 mod tests {
     use super::*;
     use crate::transparency::covered_set::covered_headers;
+    use mcp_re_http_profile::scitt::RetainedEvidenceStore;
 
     struct TempDir(std::path::PathBuf);
 
@@ -475,7 +454,7 @@ mod tests {
         let (request, response) = exchange();
 
         let digest = retention.retain(&request, &response).await.expect("retain");
-        let hop = retention.load(&digest).expect("load").expect("present");
+        let hop = retention.archive().load(&digest).expect("load").expect("present");
 
         assert_eq!(hop.request.method, request.method);
         assert_eq!(hop.request.target_uri, request.target_uri);
@@ -509,7 +488,7 @@ mod tests {
         let (request, response) = exchange();
 
         let digest = retention.retain(&request, &response).await.expect("retain");
-        let hop = retention.load(&digest).expect("load").expect("present");
+        let hop = retention.archive().load(&digest).expect("load").expect("present");
 
         let names: Vec<&str> = hop
             .request
@@ -551,7 +530,7 @@ mod tests {
         };
         assert!(
             matches!(
-                retention.load(&digest),
+                retention.archive().load(&digest),
                 Err(RetentionError::Malformed("unknown retained-hop schema"))
             ),
             "an unrecognized schema is refused, not reinterpreted"
@@ -570,6 +549,7 @@ mod tests {
 
         assert_eq!(
             retention
+                .archive()
                 .load_chain(std::slice::from_ref(&present))
                 .expect("the present hop loads")
                 .len(),
@@ -577,7 +557,7 @@ mod tests {
         );
         assert!(
             matches!(
-                retention.load_chain(&[present, absent]),
+                retention.archive().load_chain(&[present, absent]),
                 Err(RetentionError::Malformed("retained chain is missing a hop"))
             ),
             "a missing hop refuses the whole chain"

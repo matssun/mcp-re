@@ -97,6 +97,9 @@ mod retained_record;
 /// WHICH headers a retained hop keeps: exactly the ones the signature base names.
 mod covered_set;
 
+/// WHICH retained hops an archive holds — the read projection, needing no write authority.
+mod retained_archive;
+
 /// WHEN responsibility for retaining an exchange has been durably established.
 mod durability;
 mod durability_bounds;
@@ -123,6 +126,7 @@ pub use attestation::AttestError;
 pub use attestation::Attestation;
 pub use dispatch_committed::DispatchCommitted;
 pub use durability::EvidenceRetention;
+pub use retained_archive::RetainedArchive;
 pub use reserved_before_dispatch::ReservedBeforeDispatch;
 
 /// A retention failure. Every variant refuses the exchange.
