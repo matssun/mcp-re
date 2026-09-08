@@ -12,6 +12,30 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Added — the SLO lane's evidence is content-addressed, on two identities
+
+The SLO lane was the only evidence in this repository that was not content-addressed.
+Attestations are keyed on a fingerprint and never re-derived while their inputs are
+unchanged; `scripts/local_slo_lane.sh` re-measured unconditionally. An unchanged tree object
+was therefore asked to prove itself twice, and the second attempt failed on host contention.
+
+`scripts/slo_evidence_identity.py` keys the result on **two** identities, because a
+performance result is not a proof result. A proof is a theorem about the tree, so
+`(tree, toolchain)` identifies it. A throughput number is a claim about a tree *running on
+something*, and the something drifts underneath an unchanged source tree.
+
+- **performance surface** — the inputs declared in `config/performance-surface.toml`
+  (serving source, build configuration, harness, envelope, bench image definition). A change
+  invalidates the result.
+- **measurement context** — hardware class, OS class, container-runtime class, CPU count and
+  the benchmark configuration. A different context does not invalidate the old result; it
+  means the old result answers a different question.
+
+Reuse requires the same surface, the same context, and a record inside the declared 90-day
+window; anything else re-measures and names which of the three moved. Every declared input
+must be git-tracked, and the script refuses an untracked one. Only a `PASS` is attested — an
+`INCONCLUSIVE` from a contended box is exactly what must not become a cache hit.
+
 ### Added — stage 5 rehearses the SLO Job spec, and a gate that keeps the sentence true
 
 Both cloud SLO runbooks stated that local-gate stage 5 *"additionally rehearses the **exact**

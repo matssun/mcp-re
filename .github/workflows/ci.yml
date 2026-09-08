@@ -309,6 +309,18 @@ jobs:
           python3 scripts/rehearsal_claim_gate.py --selftest
           python3 scripts/rehearsal_claim_gate.py
 
+      # The SLO lane was the ONLY evidence here that was not content-addressed, so an
+      # unchanged tree was asked to prove itself twice and the second attempt failed on
+      # host contention. It is keyed now — on a declared performance surface AND a
+      # measurement context, because a throughput number is a claim about a tree running
+      # on something, not a theorem about the tree. This validates the declaration: every
+      # declared input exists and is git-tracked, and every stored record derives its
+      # filename from the identity it carries. No measurement happens here.
+      - name: SLO evidence identity (declaration + records)
+        run: |
+          python3 scripts/slo_evidence_identity.py --selftest
+          python3 scripts/slo_evidence_identity.py
+
       # ADR-MCPRE-059. The verification workflow is `paths:`-filtered, and its filter list
       # and the units' fingerprint closures are ONE dependency set written down twice. When
       # the closure grows past the filter, the workflow does not go red — it stops running,
