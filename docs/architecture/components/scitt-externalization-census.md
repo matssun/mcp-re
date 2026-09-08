@@ -68,6 +68,11 @@ code rather than a decision.
 > offline against the previously captured pin after network access is removed. Until that
 > run happens, the honest statement is *the mechanism exists and interoperates with a
 > hermetic peer*.
+>
+> **That run happened on 2026-09-08** (MCPRE-180), over a SECOND mechanism leaf and against a
+> service this project does not operate. The claim it earns is *external Transparency Service
+> interoperability*; *SCRAPI interoperability* is still unearned, because the peer that
+> answered does not speak SCRAPI. See the resolution section at the end of this document.
 
 ### G-2 · The auditor half has no entry point *(implemented, unreachable)*
 
@@ -135,8 +140,10 @@ Both are #841's, both are recorded at the code they govern rather than only here
 A v0.18-C product step exists, and it is **G-2 then G-1** in that order: turn the auditor
 authority into a runnable artifact, then give it a registration mechanism. G-3 stays out.
 
-G-2 is done. G-1's mechanism is done; its interoperability CLAIM waits on a live external
-service, and nothing but that run can produce it.
+G-2 is done. G-1's mechanism is done, and its interoperability claim is EARNED for an
+externally operated peer as of 2026-09-08 — but only the one the run reached: see the
+resolution section, which keeps *external Transparency Service interoperability* and *SCRAPI
+interoperability* apart because only the first was measured.
 
 ## Addendum, 2026-09-08: which external service, measured
 
