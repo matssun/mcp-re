@@ -21,12 +21,24 @@ get found.
 scripts/local_gate.sh --with-kind    # stages 1-5, including the fleet proofs on kind
 ```
 
-Stage 5 additionally rehearses the **exact** SLO Job spec this runbook schedules —
-`PROVIDER=kind tools/slo/run_slo_job.sh - kind-local 1 kind_1core.json` runs the same
-manifest, the same Redis sidecars, the same bench image and the same marker-based
-report extraction on a local kind node. Its throughput number is **not** a baseline
-and must never be fed to `slo_gate.py`; its value is that every piece of plumbing
-between `kubectl apply` and a parsed report is proven before an EC2 instance exists.
+Stage 5 additionally rehearses the **exact** SLO Job spec this runbook schedules.
+`tools/slo/rehearse_job_spec.sh` builds the bench image, side-loads it into the kind
+cluster the fleet proofs just used, and runs
+`PROVIDER=kind tools/slo/run_slo_job.sh - kind-local 1 kind_1core.json` — the same
+manifest, the same Redis sidecars, the same bench image and the same marker-based report
+extraction on a local kind node. Its value is that every piece of plumbing between
+`kubectl apply` and a parsed report is proven before an EC2 instance exists.
+
+Its throughput number is **not** a baseline, and it can no longer become one by being
+pasted into a gate invocation: `scripts/slo_gate.py` refuses any report whose
+`config.hardware_class` is `kind-local`. The rehearsal decides a *plumbing* proposition —
+the Job started, ran, produced a readable summary and completed — and the SLO regression
+verdict stays with the gate and a declared hardware class. They are two verdicts and are
+never combined.
+
+> This sentence was false until v0.18. `tools/slo/run_slo_job.sh` was invoked by no gate
+> and no harness, so the rehearsal both runbooks described had never run.
+> `scripts/rehearsal_claim_gate.py` now refuses the claim if its caller comes loose again.
 
 Two things the kind rehearsal structurally cannot cover, and which therefore fail
 first on a real cluster if they are wrong:

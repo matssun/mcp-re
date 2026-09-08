@@ -299,6 +299,16 @@ jobs:
       - name: Heavy-lane disk preflight (adjudication selftest)
         run: python3 scripts/heavy_lane_disk_preflight.py --selftest
 
+      # Prose is a claim. Both cloud SLO runbooks stated that local-gate stage 5 rehearses
+      # the exact SLO Job spec they schedule, while `tools/slo/run_slo_job.sh` had zero
+      # callers anywhere in the tree — `merge_path_gate.py`'s class one layer up, where a
+      # control is DESCRIBED and nothing invokes it. This refuses the sentence when its
+      # caller comes loose, and refuses the registry entry when the sentence is deleted.
+      - name: Documented-rehearsal claim gate
+        run: |
+          python3 scripts/rehearsal_claim_gate.py --selftest
+          python3 scripts/rehearsal_claim_gate.py
+
       # ADR-MCPRE-059. The verification workflow is `paths:`-filtered, and its filter list
       # and the units' fingerprint closures are ONE dependency set written down twice. When
       # the closure grows past the filter, the workflow does not go red — it stops running,

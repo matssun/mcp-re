@@ -38,6 +38,19 @@ REPORT_SCHEMA = "mcp-re-load-harness-report/v1"
 ACCEPTED_REPORT_SCHEMAS = ("mcp-re-load-harness-report/v1", "mcp-re-load-harness-report/v2")
 TARGETS_SCHEMA = "mcp-re-slo-targets/v1"
 
+#: Hardware classes a report may carry that can NEVER be an SLO verdict, with the reason.
+#:
+#: An SLO number is a claim about the hardware it ran on. Two classes are structurally
+#: incapable of being one, and BOTH produce a perfectly well-formed report with a real
+#: throughput figure in it — which is exactly why the refusal has to be structural. The
+#: kind Job-spec rehearsal prints ~7,400 rps and `tools/slo/run_slo_job.sh` warns in prose
+#: that it "must never be fed to scripts/slo_gate.py as one". A warning in prose is a rule
+#: enforced by remembering; this is the same rule enforced by the gate that would be lied to.
+NON_DECLARABLE_HW_CLASSES = {
+    "kind-local": "a single unpinned node on a developer box (PROVIDER=kind — a plumbing rehearsal)",
+    "smoke": "the harness default when MCP_RE_LOADGEN_HW_CLASS is unset — no class was declared at all",
+}
+
 
 class Gate:
     def __init__(self) -> None:
@@ -126,6 +139,27 @@ def _load(path: str, schema) -> dict:
     return doc
 
 
+def _load_report(path: str) -> dict:
+    """Load a report and refuse one whose hardware class cannot carry an SLO claim.
+
+    Refused before any check runs, and by raising rather than by adding a failure: a
+    non-declarable class is not a run that missed its targets, it is a run that was never
+    about the targets. Reporting it as a FAIL would invite re-running it until it passes.
+    """
+    doc = _load(path, ACCEPTED_REPORT_SCHEMAS)
+    hw = doc.get("config", {}).get("hardware_class")
+    if hw in NON_DECLARABLE_HW_CLASSES:
+        raise SystemExit(
+            f"error: {path} was measured on hardware_class {hw!r} — "
+            f"{NON_DECLARABLE_HW_CLASSES[hw]}.\n"
+            "       Such a report is a plumbing result, not an SLO measurement, and this "
+            "gate refuses it outright.\n"
+            "       A declared-hardware run comes from PROVIDER=gke|eks with a pinned node "
+            "pool (docs/security/gke-slo-baseline-runbook.md)."
+        )
+    return doc
+
+
 def _report_gate(gate: Gate, targets: dict) -> int:
     status = _prod(targets).get("status", "unset")
     print(f"SLO gate (production_slo) — status: {status}; checks run: {gate.checks}")
@@ -147,13 +181,13 @@ def run(args: argparse.Namespace) -> int:
         if not (args.baseline and args.scaled):
             raise SystemExit("error: --baseline and --scaled must be given together")
         check_scaling(
-            _load(args.baseline, ACCEPTED_REPORT_SCHEMAS),
-            _load(args.scaled, ACCEPTED_REPORT_SCHEMAS),
+            _load_report(args.baseline),
+            _load_report(args.scaled),
             targets,
             gate,
         )
     if args.report:
-        check_report(_load(args.report, ACCEPTED_REPORT_SCHEMAS), targets, gate)
+        check_report(_load_report(args.report), targets, gate)
     if not (args.report or args.baseline):
         raise SystemExit("error: give --report and/or --baseline/--scaled (or --selftest)")
     return _report_gate(gate, targets)
@@ -210,6 +244,30 @@ def selftest() -> int:
     g = Gate(); check_scaling(_synth_report(1, 0, 1000.0, 0, 0, 0, cores=1),
                               _synth_report(1, 0, 3400.0, 0, 0, 0, cores=4), scal, g)
     ok &= not g.failures  # 0.85 >= 0.8
+
+    # 5. A non-declarable hardware class is REFUSED, and a declared one is not — through
+    #    the real loader, because the refusal lives there and a synthetic dict would skip it.
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        for hw, refused in (("kind-local", True), ("smoke", True), ("e2-standard-8", False)):
+            doc = _synth_report(1000, 0, 5000.0, 100, 900, 3000)
+            doc["config"]["hardware_class"] = hw
+            path = str(Path(tmp) / f"{hw}.json")
+            Path(path).write_text(json.dumps(doc))
+            try:
+                _load_report(path)
+                ok &= not refused
+            except SystemExit as exc:
+                ok &= refused and hw in str(exc)
+        # A report with NO hardware_class at all is not refused: absence is the pre-v2
+        # shape, and inventing a refusal for it would fail reports the gate has always
+        # accepted. The two named classes are the ones that assert a non-class.
+        path = str(Path(tmp) / "absent.json")
+        Path(path).write_text(json.dumps(_synth_report(1000, 0, 5000.0, 100, 900, 3000)))
+        try:
+            _load_report(path)
+        except SystemExit:
+            ok = False
 
     print("slo_gate selftest:", "OK" if ok else "FAILED")
     return 0 if ok else 1

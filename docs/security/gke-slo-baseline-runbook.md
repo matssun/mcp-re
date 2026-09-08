@@ -51,6 +51,18 @@ have run and while a cluster was billing. Stage 4 is the local SLO lane; if it i
 red, the declared-hardware run below can only pay money to reproduce the same
 regression.
 
+Stage 5 also rehearses the **exact** SLO Job spec this runbook schedules —
+`tools/slo/rehearse_job_spec.sh` builds the bench image, side-loads it into the kind
+cluster the proofs just used, and runs
+`PROVIDER=kind tools/slo/run_slo_job.sh - kind-local 1 …`: the same manifest, the same
+Redis sidecars, the same marker-delimited report extraction. Every piece of plumbing
+between `kubectl apply` and a parsed report is therefore proven before a cloud node exists.
+
+**Its throughput number is not a baseline, and cannot become one.** `scripts/slo_gate.py`
+refuses a report whose `config.hardware_class` is `kind-local` outright — a single unpinned
+node on a developer box is not a hardware class. The rehearsal decides a *plumbing*
+proposition; the SLO verdict stays with the gate and a declared class.
+
 The order is: local gate → kind → **only then** anything in this document.
 
 ## 0. One-time project setup (idempotent)
