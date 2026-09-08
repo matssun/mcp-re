@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from _extraction_identity import definition_drift  # noqa: E402
 from _manifest import (  # noqa: E402
     REPO_ROOT,
     ManifestError,
@@ -39,6 +40,10 @@ def main() -> int:
         return 1
 
     missing = sorted(REQUIRED & set(unresolved_pins(toolchains)))
+    # A pin can be RESOLVED and still not name a build of the definition this tree declares.
+    # That is not an unresolved pin and `unresolved_pins` will never report it, so it is
+    # asked separately.
+    drift = definition_drift(toolchains)
     absent = [
         name
         for name in ("lean-toolchain", "lakefile.toml")
@@ -54,6 +59,8 @@ def main() -> int:
         # that passed.
         if missing:
             state = "not pinned"
+        elif drift:
+            state = "pinned, but the pin is not a build of the declared definition"
         elif absent:
             state = "pinned, Lean package not established"
         else:
@@ -62,9 +69,21 @@ def main() -> int:
         print("VERDICT: NOT_REQUIRED")
         if missing:
             print(f"  unresolved pins: {', '.join(missing)}")
+        # Printed even here, where it is not fatal. The whole failure it describes is a fact
+        # that nothing said out loud, and a lane that knows it and stays quiet until somebody
+        # declares a V2 unit would be repeating that.
+        if drift:
+            print(f"  pin currency:    {drift}")
         if absent:
             print(f"  absent files:    {', '.join(absent)} (created by toolchain setup)")
         return 0
+
+    if drift:
+        # Fatal HERE, and only here: a unit is asking this lane for evidence, and the image
+        # that would produce it is not a build of the toolchain the tree declares. Evidence
+        # from an undeclared instrument is not evidence about the declared one.
+        print(f"FAIL: {drift}", file=sys.stderr)
+        return 1
 
     if missing or absent:
         print(

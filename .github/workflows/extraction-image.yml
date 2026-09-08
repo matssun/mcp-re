@@ -12,7 +12,10 @@
 # identity; that is a deliberate act, not something a push to a branch should perform.
 #
 # WHAT IT DOES NOT DO. It does not update `verification/policy/toolchains.lock.toml`. The
-# digest is REPORTED, and moving the pin onto it is a separate reviewed commit — the lock
+# digest is REPORTED — together with the `definition_digest` of the Dockerfile it was built
+# from, because those two are one fact and recording only the first is what let a pin go on
+# naming an old image through three Dockerfile changes (MCPRE-181) — and moving the pin onto
+# it is a separate reviewed commit; the lock
 # is what says which prover the repository's formal evidence was produced by, and a
 # workflow that could rewrite it would be a workflow that can change what every lean://
 # claim means.

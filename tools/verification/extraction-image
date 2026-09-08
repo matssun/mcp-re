@@ -33,6 +33,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from _extraction_identity import content_tag  # noqa: E402
+from _extraction_identity import definition_digest  # noqa: E402
 from _manifest import ManifestError, load_toolchains  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent.parent
@@ -45,27 +47,9 @@ PLATFORM = "linux/arm64"
 DEFAULT_IMAGE = "ghcr.io/matssun/mcp-re-verification-extraction"
 
 
-def content_tag(toolchains: dict) -> str:
-    """A tag that changes exactly when the pinned extraction toolchain changes."""
-    charon = toolchains.get("charon", {})
-    aeneas = toolchains.get("aeneas", {})
-    lean = toolchains.get("lean", {})
-    backend = toolchains.get("aeneas_lean_backend", {})
-
-    # The Dockerfile is an input: the same commits assembled differently are a different
-    # instrument. Omitting it would let a build-step change slip in under an unchanged tag.
-    parts = [
-        f"charon={charon.get('commit', '')}",
-        f"charon_rustc={charon.get('rust_toolchain', '')}",
-        f"aeneas={aeneas.get('commit', '')}",
-        f"ocaml={aeneas.get('ocaml_compiler', '')}",
-        f"lean={lean.get('toolchain', '')}",
-        f"mathlib={backend.get('mathlib_revision', '')}",
-        f"dockerfile={hashlib.sha256(DOCKERFILE.read_bytes()).hexdigest()}",
-        f"platform={PLATFORM}",
-    ]
-    digest = hashlib.sha256("\n".join(parts).encode()).hexdigest()
-    return f"tc-{digest[:16]}"
+# The identity function lives in `_extraction_identity` so the PUBLISHER and the VALIDATOR
+# cannot disagree about it. They did not disagree — nothing validated at all, which is how a
+# pin came to name an image built from a Dockerfile the tree had replaced.
 
 
 def _run(cmd: list[str]) -> str:
@@ -125,6 +109,12 @@ def main() -> int:
         print('  state = "resolved"')
         print(f'  image = "{args.image}"')
         print(f'  digest = "{digest}"')
+        print(f'  tag = "{content_tag(toolchains)}"')
+        # Printed WITH the digest, because the two are one fact: this digest is a build of
+        # THIS definition. Recording the digest without it is the state the lock was in for
+        # four weeks — a pin that could not be checked against anything, and that went on
+        # naming an old image through three Dockerfile changes.
+        print(f'  definition_digest = "{definition_digest()}"')
         print(f'  platform = "{PLATFORM}"')
         print("\nThen flip charon/aeneas/lean/aeneas_lean_backend to resolved: their")
         print("commits are only meaningful once the image that built them is identified.")

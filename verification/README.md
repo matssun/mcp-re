@@ -116,6 +116,27 @@ expected identity in repository  ==  actual identity inside pinned image
 
 — rather than trusting the image tag to mean what it meant last week.
 
+#### The half that was trusted anyway (MCPRE-181)
+
+That last line described a defence the tree did not have. The lock recorded a `tag` derived
+from the pinned toolchain **and the Dockerfile**, precisely so a build-step change could not
+slip in under an unchanged tag — and one did, three times. Nothing recomputed the tag, so
+`verification/extraction/Dockerfile` gained the Lean toolchain and the mathlib backend build
+while the pin went on naming an image built from none of them. The lock's own note explains
+why it was invisible: the tag is "for human navigation only — nothing resolves through it",
+which is true of resolution and was taken as true of checking.
+
+The entry now records `definition_digest` — the Dockerfile the pinned image was **built
+from** — and `tools/verification/_extraction_identity.py` asks two separate questions:
+
+| question | when it is fatal |
+|---|---|
+| does the recorded `tag` follow from the pins and `definition_digest`? | **always** — an identity that does not follow from its own inputs is not an identity, so `load_toolchains` refuses the lock and every consumer inherits the refusal |
+| is `definition_digest` the Dockerfile this tree declares? | **when a unit asks the extraction lane for evidence** — otherwise reported by `verify-lean` on every run, because publishing is deliberately operator-only and a tree red for as long as a human takes to run a workflow is a gate that gets disabled |
+
+Today the second answer is *no*, and it says so out loud. That is the honest state of #541:
+the definition is right, the published image is not it yet.
+
 ### Reproducibility and CI trust are different concerns
 
 Two things the container is easy to conflate:

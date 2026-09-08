@@ -157,6 +157,7 @@ stage_static() {
     && python3 tools/verification/test_theorem_review.py \
     && python3 tools/verification/test_views.py \
     && python3 tools/verification/test_evidence_bundle.py \
+    && python3 tools/verification/test_extraction_identity.py \
     `# In NEITHER aggregate until the v0.17 Slice B sweep: mutation-probe.yml names it and` \
     `# that workflow is paths:-filtered, so the mutation lane's verdict semantics were` \
     `# established only on the pull requests that tripped its filter.` \
