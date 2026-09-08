@@ -291,6 +291,14 @@ jobs:
           python3 scripts/module_size_gate.py --selftest
           python3 scripts/module_size_gate.py
 
+      # The heavy local lanes (SLO, kind) refuse to start below a declared free-space
+      # floor, so that a full Docker VM stops presenting itself as `PROOF FAILED` on a
+      # proof that never ran — twice during v0.17. Only the `--selftest` runs here: the
+      # floors describe a developer box, and this runner holds none of the probe images.
+      # What CI establishes is that the ADJUDICATION still adjudicates.
+      - name: Heavy-lane disk preflight (adjudication selftest)
+        run: python3 scripts/heavy_lane_disk_preflight.py --selftest
+
       # ADR-MCPRE-059. The verification workflow is `paths:`-filtered, and its filter list
       # and the units' fingerprint closures are ONE dependency set written down twice. When
       # the closure grows past the filter, the workflow does not go red — it stops running,

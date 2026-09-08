@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Declared free-space floors for the heavy local lanes.
+#
+# WHY THIS FILE EXISTS. Twice during the v0.17 release the Docker VM disk reached 100%
+# and the failure surfaced as a SECURITY-LANE result: the Redis sidecars could not create
+# their append-only directories, so the SLO bench's Redis fleet died, and the kind fleet
+# proofs reported `PROOF FAILED` on a proof nothing had run. `docs/releases/v0.17.0-provenance.md`
+# records it — "the Docker VM disk was 98 GB, 100% full, 0 available".
+#
+# An environmental condition that presents as a code verdict is the "do not report a green
+# that measured nothing" class in its inverse form: a RED that measured nothing. The lanes
+# must refuse BEFORE they start, and say INFRASTRUCTURE_UNAVAILABLE rather than FAIL.
+#
+# HOW THE NUMBERS WERE DERIVED — measured, not guessed. Each floor is the lane's resident
+# footprint plus the scratch it needs while producing it, rounded up to a whole GiB.
+# `scripts/heavy_lane_disk_preflight.py` reads this file; nothing restates these numbers.
+
+[probe]
+# The container runtime's own filesystem cannot be measured from the host: on Docker
+# Desktop it lives inside a VM. It is measured by running `df` inside a container, using an
+# image that is ALREADY PRESENT locally — pulling one to find out whether there is room to
+# pull things is the wrong order. First match wins; `redis:7-alpine` is first because every
+# heavy lane in this repository already requires it.
+images = ["redis:7-alpine", "busybox:latest", "alpine:latest"]
+
+[lanes.slo]
+description = "scripts/local_slo_lane.sh — the ADR-MCPRE-051 §7 anchor"
+host_free_gib = 25
+container_runtime_free_gib = 12
+# The lane runs a three-node Redis tier in Docker and writes append-only files for the
+# whole run, against a release build of the workspace on the host. 12 GiB is the Redis
+# images and their AOF growth with room for the run to finish rather than truncate; 25 GiB
+# is the host-side `target/` release tree.
+derivation = "redis tier + AOF growth (container runtime); release target/ tree (host)"
+
+[lanes.kind]
+description = "docs/security/gke-multi-replica-validation.sh + the SLO Job-spec rehearsal"
+host_free_gib = 25
+container_runtime_free_gib = 20
+# The widest lane, and the one that failed. Resident: kindest/node 1.27 GB, mcp-re-proxy
+# 159 MB, mcp-re-inner-fastmcp 283 MB, mcp-re-loadgen 233 MB, mcp-re-slo-bench 2.95 GB,
+# redis 55 MB. `kind load docker-image` then writes a SECOND copy of each image into the
+# node's own containerd, on the same VM filesystem — so the images are paid for twice —
+# and the three Redis sidecars write AOF on top of that. 20 GiB covers both copies with
+# build scratch; below it the rollout completes and the sidecars fail.
+derivation = "images + a second copy inside the kind node's containerd + sidecar AOF"
