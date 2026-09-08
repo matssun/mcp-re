@@ -106,7 +106,11 @@ paths = [
   "mcp-re-proxy/src/gcp_kms_keysource.rs",
   "mcp-re-proxy/src/ocsp.rs",
   "mcp-re-proxy/src/redis_store.rs",
-  "mcp-re-proxy/src/retained_evidence.rs",
+  # MCPRE-179: the retained-evidence clock read is `unique_suffix`, which exists so a temp
+  # name is never chosen twice — and it moved to the owner of what it takes to create a
+  # file in the archive. Named precisely, per the note above: the authority, not the
+  # module tree. The read side reads no clock at all.
+  "mcp-re-proxy/src/retained_evidence/private_file.rs",
   "mcp-re-proxy/src/shared_replay.rs",
   "mcp-re-proxy/src/tls.rs",
   "mcp-re-proxy/src/trust_plane/trust_cache.rs",
