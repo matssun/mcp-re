@@ -285,6 +285,18 @@ _PROXY_LIB_SRCS = [
     "src/transparency/reservation_marker.rs",
     "src/transparency/attestation.rs",
     "src/transparency/durability_bounds.rs",
+    # ADR-MCPRE-054 / #841 G-2: the auditor's runnable half. Library sources — the
+    # executable itself is `:mcp_re_auditor_cli` below and is deliberately NOT here.
+    "src/transparency/auditor/mod.rs",
+    "src/transparency/auditor/invocation/mod.rs",
+    "src/transparency/auditor/invocation/flag.rs",
+    "src/transparency/auditor/invocation/instant.rs",
+    "src/transparency/auditor/profile/mod.rs",
+    "src/transparency/auditor/profile/document.rs",
+    "src/transparency/auditor/trust_view.rs",
+    "src/transparency/auditor/artifact/mod.rs",
+    "src/transparency/auditor/artifact/verdict.rs",
+    "src/transparency/auditor/run.rs",
     # Trust-document interpretation: the authoritative rules over the bytes, owned apart
     # from the parser that was merely their first caller.
     "src/trust_document.rs",
@@ -681,6 +693,21 @@ nt_rust_binary(
     ] + _PROXY_ASYNC_CRATES,
 )
 
+# ADR-MCPRE-054 / #841 G-2: the AUDITOR executable. A separate binary rather than a mode
+# of `:mcp_re_proxy_cli`, so a deployment that runs one need not run the other and an
+# auditor can run against an archive long after the proxy that wrote it is gone. It links
+# the DEFAULT `:mcp_re_proxy` library flavor: reading an archive and issuing a statement
+# needs neither the async serving path nor an external backend, and a binary that linked
+# them would carry a closure it cannot use.
+nt_rust_binary(
+    name = "mcp_re_auditor_cli",
+    srcs = ["src/bin/mcp-re-auditor.rs"],
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy",
+    ],
+)
+
 # MCPS-015/016: server-side sidecar library. Pure — depends only on the
 # verification crate plus serde_json. Transport is layered on by the conformance
 # harnesses (MCPS-017); the stdio-first binary entry arrives there too.
@@ -1004,7 +1031,16 @@ nt_rust_test(
     crate_root = "tests/integration_async/main.rs",
     bazel_build_cfg = False,
     crate_features = ["async_serve"],
+    # The transparency suite runs the SHIPPED auditor as a child process. A composition
+    # root proved only in-process is a composition root nobody can run, so the lane needs
+    # the executable itself rather than the library behind it.
+    data = [
+        ":mcp_re_auditor_cli",
+    ],
     edition = "2021",
+    env = {
+        "MCP_RE_AUDITOR_CLI": "$(rlocationpath :mcp_re_auditor_cli)",
+    },
     deps = [
         "//mcp-re-client-core:mcp_re_client_core",
         "//mcp-re-client-proxy:mcp_re_client_proxy",
@@ -1013,6 +1049,8 @@ nt_rust_test(
         # ADR-MCPRE-065 Slice 1: the frozen `mcp-re.authorization_*` denial taxonomy the
         # authorization controls refuse in.
         "//mcp-re-policy:mcp_re_policy",
+        # Resolves the auditor binary under Bazel runfiles OR a plain cargo build.
+        "//mcp-re-test-paths:mcp_re_test_paths",
         "//mcp-re-transport:mcp_re_transport",
         ":mcp_re_proxy_async",
         "@crates_mcp_re//:bytes",

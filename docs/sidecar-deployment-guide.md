@@ -217,12 +217,15 @@ carrying the frozen wire code. So a full store supports "we can account for what
 served" — not "we can account for everything that was attempted."
 
 Attestation is **not** on the request path. An auditor reconstructs the chain from
-retained hops, issues the Signed Statement, and registers it — see
-`mcp_re_proxy::transparency::attest_chain`. A PEP attesting per hop could only ever
-commit to a one-hop record, which for a continuation is a truncated one; registering
-inline would put an audit dependency in front of every response. Submission to a real
-SCITT Transparency Service remains ADR-MCPRE-054's open external dependency; the shipped
-`PrototypeTransparencyService` is an in-process Merkle log, not a service.
+retained hops, issues the Signed Statement, and registers it. A PEP attesting per hop
+could only ever commit to a one-hop record, which for a continuation is a truncated one;
+registering inline would put an audit dependency in front of every response.
+
+That auditor is a **separate executable**, `mcp-re-auditor` — see
+[`docs/auditor-guide.md`](auditor-guide.md). Submission to a real SCITT Transparency
+Service remains ADR-MCPRE-054's open external dependency; the shipped
+`PrototypeTransparencyService` is an in-process Merkle log, not a service, and using it
+successfully is not evidence that anything was registered anywhere.
 
 ### Connection limits (DoS defense)
 

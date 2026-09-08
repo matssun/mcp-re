@@ -291,10 +291,11 @@ MCP-RE does not currently claim:
 - an EMA (enterprise-managed authorization) implementation;
 - **portable audit receipts end-to-end.** ADR-MCPRE-054 is implemented: retained
   evidence, RFC 9942 COSE receipts, RFC 9943 Signed Statements, and
-  `transparency::attest_chain` reconstructing a chain from retained hops. What is
-  **not** claimed is the last hop — submission to a real Transparency Service, which
-  remains the ADR's open external dependency. Interop is proven against two
-  independent implementations, not against a production TS;
+  `transparency::attest_chain` reconstructing a chain from retained hops — now reachable
+  as a shipped executable, `mcp-re-auditor`
+  ([guide](auditor-guide.md)). What is **not** claimed is the last hop — submission to a
+  real Transparency Service, which remains the ADR's open external dependency. Interop is
+  proven against two independent implementations, not against a production TS;
 - full SIEM / Security Command Center integration (the audit taxonomy is frozen
   and SCC-mappable, but the integration itself is unbuilt);
 - **uniform multi-cloud live validation.** Non-exporting delegated-root custody is

@@ -869,3 +869,353 @@ fn signing_plan(
         TrustEpochPlan::from_validated(&validated),
     )
 }
+
+// ---- the auditor BINARY -----------------------------------------------------
+//
+// Everything above drives `attest_chain` in-process. What an operator runs is
+// `mcp-re-auditor`, and until #841's G-2 that executable did not exist: the serving half
+// was a product and the auditing half was a library with no callers outside this file.
+// These lanes exercise the SHIPPED PATH — a child process, real files, an exit status —
+// because a composition root proved only in-process is a composition root nobody can run.
+
+/// The documents one audit run is asserted by, written into a scratch directory.
+struct AuditFixtures {
+    profile: std::path::PathBuf,
+    trust: std::path::PathBuf,
+    pin: std::path::PathBuf,
+    seed: std::path::PathBuf,
+    out: std::path::PathBuf,
+}
+
+/// The audit profile matching the posture `build_server` serves under.
+fn audit_profile_json() -> serde_json::Value {
+    serde_json::json!({
+        "schema": "mcp-re-audit-profile/v1",
+        "trust_domain": "example.com",
+        "expected_audience": {
+            "audience_id": AUD,
+            "target_uri": TARGET,
+            "route": "a",
+        },
+        "delegation": {
+            "verifier_audiences": [AUD],
+            "expected_audience_hash": AUD,
+            "accepted_epochs": [EPOCH],
+            "max_clock_skew_secs": 60,
+        },
+        "response_anchor": {
+            "subject": "did:example:server",
+            "key_id": ROOT_KID,
+            "public_key": root_key().public_key().to_b64url(),
+        },
+    })
+}
+
+/// A legal transparency-service trust pin. Its key is never used in this half — the
+/// auditor loads it as a precondition and names the service in the artifact — so the pin
+/// is the prototype log's key, which is the one a receipt from it would verify under.
+fn service_pin_json() -> serde_json::Value {
+    serde_json::json!({
+        "schema": "mcp-re-scitt-service-trust-pin/v1",
+        "service_identifier": "prototype-log",
+        "discovery_method": "well-known-scitt-keys",
+        "discovery_uri": "https://ts.example.test/.well-known/scitt-keys",
+        "fetched_at": "2026-09-08T00:00:00Z",
+        "kid": TS_KID,
+        "algorithm": "EdDSA",
+        "public_key": { "x": ts_key().public_key().to_b64url() },
+        "public_key_thumbprint": "unused-by-this-lane",
+        "discovery_document_digest": "unused-by-this-lane",
+        "leaf_profile": "statement-bytes",
+        "position_profile": "bound",
+    })
+}
+
+impl AuditFixtures {
+    fn write(scratch: &Scratch, profile: serde_json::Value, pin: serde_json::Value) -> Self {
+        let trust_json = serde_json::json!([{
+            "signer": "did:example:client",
+            "key_id": CLIENT_KEY_ID,
+            "public_key": client_key().public_key().to_b64url(),
+        }]);
+        let fixtures = AuditFixtures {
+            profile: scratch.join("audit-profile.json"),
+            trust: scratch.join("trust.json"),
+            pin: scratch.join("service-pin.json"),
+            seed: scratch.join("issuer.seed"),
+            out: scratch.join("attestation.json"),
+        };
+        std::fs::write(
+            &fixtures.profile,
+            serde_json::to_vec(&profile).expect("json"),
+        )
+        .expect("write profile");
+        std::fs::write(
+            &fixtures.trust,
+            serde_json::to_vec(&trust_json).expect("json"),
+        )
+        .expect("write trust");
+        std::fs::write(&fixtures.pin, serde_json::to_vec(&pin).expect("json")).expect("write pin");
+        std::fs::write(&fixtures.seed, mcp_re_core::b64url_encode(&ISSUER_SEED))
+            .expect("write seed");
+        fixtures
+    }
+
+    fn args(&self, evidence: &std::path::Path, hops: &[String]) -> Vec<String> {
+        let mut args: Vec<String> = vec![
+            "--retained-evidence-dir".into(),
+            evidence.display().to_string(),
+            "--audit-profile".into(),
+            self.profile.display().to_string(),
+            "--trust-document".into(),
+            self.trust.display().to_string(),
+            "--service-trust-pin".into(),
+            self.pin.display().to_string(),
+            "--issuer-kid".into(),
+            ISSUER_KID.into(),
+            "--issuer-key-seed".into(),
+            self.seed.display().to_string(),
+            "--out".into(),
+            self.out.display().to_string(),
+            "--at".into(),
+            NOW.to_string(),
+        ];
+        for hop in hops {
+            args.push("--hop".into());
+            args.push(hop.clone());
+        }
+        args
+    }
+}
+
+/// Run the shipped auditor as a child process.
+fn run_auditor(args: &[String]) -> std::process::Output {
+    let binary = mcp_re_test_paths::resolve_runfile("MCP_RE_AUDITOR_CLI");
+    std::process::Command::new(&binary)
+        .args(args)
+        .output()
+        .expect("the auditor binary runs")
+}
+
+/// Serve one call, and return the scratch, the retention handle and the retained hop's
+/// digest token — the three things every auditor lane below starts from.
+fn served_archive(name: &str, nonce: &str) -> (Scratch, Arc<EvidenceRetention>, String) {
+    let scratch = Scratch::new(name);
+    let retention =
+        Arc::new(EvidenceRetention::open(scratch.join("evidence")).expect("open retention"));
+    let proxy = build_server(Some(Arc::clone(&retention)));
+    assert_eq!(serve_one(&proxy, nonce), 200);
+
+    let token = std::fs::read_dir(scratch.join("evidence"))
+        .expect("the store directory exists")
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .next()
+        .expect("one retained object");
+    (scratch, retention, token)
+}
+
+/// THE C1 property: a served call, an archive on disk, and the SHIPPED BINARY turns it
+/// into an attestation whose Signed Statement registers and verifies offline.
+///
+/// The last step is what makes this more than "the process exited 0": the bytes the
+/// artifact carries are put through a transparency log and the RFC 9942 offline
+/// verification, so an artifact carrying a statement that could not be registered would
+/// fail here rather than look like a success.
+#[test]
+fn the_auditor_binary_turns_a_served_call_into_a_verifiable_attestation() {
+    let (scratch, retention, token) =
+        served_archive("auditor-vertical", "nonce-transparency-auditor-vertical-1");
+    // The retention handle owns a writer thread; the child process opens the same
+    // directory, so drop ours first and audit what is on disk.
+    drop(retention);
+
+    let fixtures = AuditFixtures::write(&scratch, audit_profile_json(), service_pin_json());
+    let output = run_auditor(&fixtures.args(&scratch.join("evidence"), &[token.clone()]));
+    assert!(
+        output.status.success(),
+        "the auditor refused a record it should attest: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let artifact = mcp_re_proxy::transparency::auditor::AttestationArtifact::parse(
+        &std::fs::read(&fixtures.out).expect("the artifact was written"),
+    )
+    .expect("the artifact parses");
+
+    assert!(
+        artifact.chain().is_complete(),
+        "a single terminal hop, fully verified, is a complete record: {:?}",
+        artifact.chain(),
+    );
+    assert_eq!(
+        artifact.correspondence(),
+        mcp_re_proxy::transparency::auditor::CorrespondenceVerdict::BoundToVerifiedCall,
+        "the statement is bound to the retained bytes of a verified call",
+    );
+    assert_eq!(
+        artifact.transparency_service().service_identifier,
+        "prototype-log",
+        "the artifact names the service the operator's pin selected",
+    );
+
+    // The statement the artifact carries is the real thing: register it and verify the
+    // receipt offline, contacting nobody.
+    let statement = mcp_re_http_profile::scitt::SignedStatement::from_cose(
+        &artifact.signed_statement().expect("the statement decodes"),
+    )
+    .expect("the artifact carries a Signed Statement");
+    assert!(statement.commitment().is_complete_record());
+
+    let mut service = PrototypeTransparencyService::new(TS_KID);
+    let receipt = service
+        .register(&statement, sign_with(ts_key()))
+        .expect("the statement registers");
+    mcp_re_http_profile::scitt::verify_receipt_offline(
+        &statement,
+        &receipt,
+        |kid| (kid == ISSUER_KID).then(|| CoseVerificationKey::Ed25519(issuer_key().public_key())),
+        |kid| {
+            (kid == TS_KID).then(|| {
+                ResolvedTransparencyService::stated(
+                    CoseVerificationKey::Ed25519(ts_key().public_key()),
+                    StatementLeafProfile::StatementBytes,
+                    ReceiptPositionProfile::Bound,
+                )
+            })
+        },
+    )
+    .expect("the receipt over the binary's statement verifies offline");
+}
+
+/// A hop the archive does not hold is a REFUSAL, and nothing is written.
+///
+/// The alternative — reconstructing from the hops that happen to be present — would
+/// produce a `Complete` label for a record with a hole in it. The absence of the output
+/// file is asserted too: a run that refused after writing would leave an artifact
+/// describing an audit that did not happen.
+#[test]
+fn a_hop_the_archive_does_not_hold_is_refused_and_writes_nothing() {
+    let (scratch, retention, token) = served_archive(
+        "auditor-missing-hop",
+        "nonce-transparency-auditor-missing-hop-2",
+    );
+    drop(retention);
+    let fixtures = AuditFixtures::write(&scratch, audit_profile_json(), service_pin_json());
+
+    let absent = mcp_re_http_profile::scitt::EvidenceDigest::of(b"a hop nobody retained")
+        .as_str()
+        .to_owned();
+    let output = run_auditor(&fixtures.args(&scratch.join("evidence"), &[token, absent]));
+
+    assert!(!output.status.success(), "a missing hop must refuse");
+    assert!(
+        !fixtures.out.exists(),
+        "a refused audit must leave no artifact behind",
+    );
+}
+
+/// An illegal service pin refuses the run BEFORE anything is signed.
+///
+/// A statement cut for a service whose pin is illegal can never be shown to have been
+/// registered with that service, so producing one would produce an artifact with no
+/// possible future. The pin is loaded first for exactly that reason.
+#[test]
+fn an_illegal_service_pin_refuses_the_audit() {
+    let (scratch, retention, token) =
+        served_archive("auditor-bad-pin", "nonce-transparency-auditor-bad-pin-3");
+    drop(retention);
+
+    // An EdDSA pin carrying an EC2 `y` coordinate is a mislabelled key, and never becomes
+    // a pin at all.
+    let mut pin = service_pin_json();
+    pin["public_key"]["y"] = ts_key().public_key().to_b64url().into();
+    let fixtures = AuditFixtures::write(&scratch, audit_profile_json(), pin);
+
+    let output = run_auditor(&fixtures.args(&scratch.join("evidence"), &[token]));
+    assert!(!output.status.success(), "an illegal pin must refuse");
+    assert!(!fixtures.out.exists(), "and must leave no artifact");
+}
+
+/// A profile asserting a posture the record was NOT served under yields an INCOMPLETE
+/// attestation — not a refusal, and not a complete one.
+///
+/// This is the §9 seam reaching the shipped binary. The auditor asserts an audience the
+/// call never had; every hop fails the full-profile comparison; and what comes out is a
+/// portable statement that says so, naming the hop and the frozen wire code. An auditor
+/// that refused here would leave the interesting record with no evidence, and one that
+/// labelled it complete would launder it.
+#[test]
+fn an_audit_posture_the_call_was_not_served_under_attests_an_incomplete_record() {
+    let (scratch, retention, token) = served_archive(
+        "auditor-wrong-posture",
+        "nonce-transparency-auditor-posture-4",
+    );
+    drop(retention);
+
+    let mut profile = audit_profile_json();
+    profile["expected_audience"]["audience_id"] = "some-other-verifier".into();
+    let fixtures = AuditFixtures::write(&scratch, profile, service_pin_json());
+
+    let output = run_auditor(&fixtures.args(&scratch.join("evidence"), &[token]));
+    assert!(
+        output.status.success(),
+        "an incomplete record is attested, not refused: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let artifact = mcp_re_proxy::transparency::auditor::AttestationArtifact::parse(
+        &std::fs::read(&fixtures.out).expect("an artifact was still written"),
+    )
+    .expect("the artifact parses");
+
+    let mcp_re_proxy::transparency::auditor::ChainVerdict::Incomplete { hop, reason, .. } =
+        artifact.chain()
+    else {
+        panic!("a record served under another audience is not complete");
+    };
+    assert_eq!(*hop, 0, "the first hop is where it broke");
+    assert_eq!(
+        *reason,
+        mcp_re_proxy::transparency::auditor::IncompleteAt::RequestUnverifiable,
+    );
+    assert_eq!(
+        artifact.correspondence(),
+        mcp_re_proxy::transparency::auditor::CorrespondenceVerdict::BoundToSubmissionOnly,
+        "nothing verified, so the statement binds the SUBMISSION and says only that",
+    );
+
+    let statement = mcp_re_http_profile::scitt::SignedStatement::from_cose(
+        &artifact.signed_statement().expect("decodes"),
+    )
+    .expect("still a Signed Statement");
+    assert!(
+        !statement.commitment().is_complete_record(),
+        "and the signed record can never read as whole",
+    );
+}
+
+/// An archive object that was replaced on disk is refused, not reconstructed from.
+///
+/// The store is content-addressed, so the tamper is detectable by the name alone — and
+/// this is the lane that proves the auditor consults that property rather than trusting
+/// the directory it was pointed at.
+#[test]
+fn a_tampered_archive_object_is_refused() {
+    let (scratch, retention, token) =
+        served_archive("auditor-tampered", "nonce-transparency-auditor-tampered-5");
+    drop(retention);
+    let fixtures = AuditFixtures::write(&scratch, audit_profile_json(), service_pin_json());
+
+    let object = scratch.join("evidence").join(&token);
+    let mut bytes = std::fs::read(&object).expect("read the retained object");
+    bytes.push(b' ');
+    std::fs::write(&object, &bytes).expect("replace the retained object");
+
+    let output = run_auditor(&fixtures.args(&scratch.join("evidence"), &[token]));
+    assert!(
+        !output.status.success(),
+        "bytes that do not hash to the digest they are stored under must refuse",
+    );
+    assert!(!fixtures.out.exists(), "and must leave no artifact");
+}
