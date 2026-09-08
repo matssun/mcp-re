@@ -85,8 +85,12 @@ mod scrapi;
 #[cfg(feature = "scitt_registration")]
 mod ureq_exchange;
 
-/// WHICH service this run registers with, and the mechanism that selects.
-mod target;
+/// WHERE this run registers, admitted — and the mechanism that selection picks.
+///
+/// The module is `endpoint`, not `target`: a source directory named `target` is swallowed by
+/// this repository's `target/` build-output ignore, silently, and `scripts/bazel_srcs_gate.py`
+/// is what found the file that never got committed.
+mod endpoint;
 
 // Only three names leave this subtree, and each one has a caller outside it: the
 // attestation artifact takes a `RegisteredStatement` as proof that a receipt verified, the
@@ -96,8 +100,8 @@ mod target;
 // mechanism a selection made here rather than a type the layer above can name.
 pub use capability::RegisteredStatement;
 pub use capability::RegistrationError;
+pub(super) use endpoint::RegistrationTarget;
 pub(super) use protocol::RegistrationProtocol;
-pub(super) use target::RegistrationTarget;
 
 #[cfg(test)]
 mod fixtures {

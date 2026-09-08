@@ -3,6 +3,14 @@
 # Nested cargo build dirs (verification reproducers, sdk crates). The anchored
 # rule above only covers the workspace root, so a reproducer's target/ was
 # stageable — 173 build artefacts nearly went into a commit.
+#
+# The cost of the unanchored form, stated because it has been paid: it matches ANY
+# directory named `target`, a Rust MODULE directory included. One was created under
+# `mcp-re-proxy/src/.../registration/` and its new file was silently unstageable — the
+# commit went out with a `mod flags;` resolving to nothing, and
+# `scripts/bazel_srcs_gate.py` is what caught it rather than a person. Name a source
+# module something else; the ignore stays unanchored because build artefacts are the
+# larger hazard.
 target/
 **/*.rs.bk
 
