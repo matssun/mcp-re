@@ -63,6 +63,11 @@ from collections import Counter
 ALLOW_NAMING_COLLISION = {
     "mcp-re-conformance",            # == conformance lib/bin, hand-named
     "mcp-re-proxy",                  # == :mcp_re_proxy_cli (bin over src/main.rs)
+    # == :mcp_re_auditor_cli, the bin over src/bin/mcp-re-auditor.rs. Hand-named for the
+    # same reason as the proxy CLI: every executable in this repo ships under a
+    # `_cli`-suffixed target, and adopting gazelle's package-derived name would duplicate
+    # the unit rather than add coverage.
+    "mcp-re-auditor",
     "mcp-re-client",                 # == :mcp_re_client_cli (bin over src/main.rs)
     "mcp_re_proxy_test",             # == :proxy_unit_test (crate=:mcp_re_proxy)
     "mcp-re-client_test",            # == :mcp_re_client_cli_test (crate=:mcp_re_client_cli)
