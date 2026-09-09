@@ -33,6 +33,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
+from _ecosystems import CARGO, unit_ecosystem, unit_projects
 from _manifest import REPO_ROOT
 
 LEAN_DIR = REPO_ROOT / "verification" / "lean"
@@ -69,17 +70,21 @@ def lakefile_roots(srcDir: str | None = None) -> list[str]:
 
 
 def unit_crate(unit: dict) -> str | None:
-    """The single project this unit's paths live in, or None.
+    """The single Cargo package this unit's paths live in, or None.
 
-    Derived from the declared paths for the reason the Verus lane derives its own: a unit
-    whose paths move to another crate must not keep extracting the crate it left.
+    Delegated to `_ecosystems.unit_projects`, which already owns "which project does this
+    unit live in" for the fingerprint, the test lane and the manifest schema. A fourth
+    implementation here would be a fourth answer, and the one that mattered would be
+    whichever the reader happened to be looking at.
+
+    The ecosystem is checked as well as the count: Charon extracts RUST, so a V2 unit whose
+    paths resolve to a Python or TypeScript project has no crate to start from — and
+    returning that project's name would have `charon cargo` run somewhere it cannot.
     """
-    crates = {
-        path.split("/", 1)[0]
-        for path in unit["paths"]
-        if "/" in path and (REPO_ROOT / path.split("/", 1)[0] / "Cargo.toml").is_file()
-    }
-    return crates.pop() if len(crates) == 1 else None
+    if unit_ecosystem(unit) is not CARGO:
+        return None
+    projects = unit_projects(unit)
+    return projects[0] if len(projects) == 1 else None
 
 
 def selection(doc: dict) -> dict[str, dict]:

@@ -394,6 +394,32 @@ def test_a_unit_spanning_two_crates_has_no_single_crate_to_extract_from():
     assert _lean_model.unit_crate(unit) is None
 
 
+def test_charon_extracts_rust_so_a_non_cargo_unit_has_no_crate():
+    """Delegating to `unit_projects` is not enough on its own.
+
+    It answers "which project", for every ecosystem. A V2 unit whose paths resolve to a
+    Python or TypeScript project would get a project NAME back, and `charon cargo` would
+    then run in a directory with no Cargo manifest — a failure some distance from its cause.
+    """
+    unit = {
+        "id": "p",
+        "class": "V2",
+        "paths": ["sdk/python/**/*.py"],
+        "extracted_symbols": ["x"],
+    }
+    assert _lean_model.unit_crate(unit) is None
+
+
+def test_the_pilot_unit_resolves_to_the_crate_it_names():
+    unit = {
+        "id": "u",
+        "class": "V2",
+        "paths": ["mcp-re-core/src/time/format.rs", "mcp-re-core/src/time/mod.rs"],
+        "extracted_symbols": ["mcp_re_core::time::format::civil_from_days"],
+    }
+    assert _lean_model.unit_crate(unit) == "mcp-re-core"
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):
