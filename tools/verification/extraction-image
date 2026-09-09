@@ -230,6 +230,13 @@ def main() -> int:
     _run([
         "docker", "buildx", "build",
         "--platform", PLATFORM,
+        # NO PROVENANCE ATTESTATION. buildx attaches one by default, it carries a build
+        # TIMESTAMP, and it goes into the manifest list — so re-exporting identical cached
+        # layers mints a DIFFERENT image id. Measured: `build` produced b119609d and the
+        # `identity` that followed it produced 789de80d from the same cache, which meant the
+        # artifact the smoke checks ran against was not the artifact being preserved. An
+        # identity that changes when nothing did cannot be an evidence identity.
+        "--provenance=false",
         "-t", ref,
         "--load",
         str(DOCKERFILE.parent),

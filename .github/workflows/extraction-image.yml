@@ -67,11 +67,16 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
           echo "computed tag: $ref"
 
+      # Through the tool, never a hand-written `docker buildx build`. The two would be two
+      # definitions of what building this image means, and they diverged the moment one of
+      # them stopped attaching a provenance attestation: buildx's default one carries a
+      # build timestamp and lands in the manifest list, so an image built one way and
+      # re-exported the other way has a DIFFERENT id for identical layers. The smoke checks
+      # below then measure an artifact that is not the one `identity` preserves.
       - name: Build
         run: |
           set -euo pipefail
-          docker buildx build --platform linux/arm64 --load \
-            -t "${{ steps.tag.outputs.ref }}" verification/extraction
+          python3 tools/verification/extraction-image build
 
       # THE SMOKE CHECKS. An image that builds is not an image that works: the pinned image
       # on 2026-08-30 built fine and could not run Lean at all. Each check below is one of
