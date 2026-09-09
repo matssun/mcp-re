@@ -671,4 +671,28 @@ process executing every lane. The refusing direction was exercised locally first
 extraction phase's two records present and the host phase's absent, the composer reported
 `INCOMPLETE` and named all six missing `verus` records.
 
-**#860 is still blocked on dev1 holding the preserved archive.** That is now the only one.
+**And with the V2 unit declared, end to end, on the machine that holds the artifact.** dev1's
+run could not show this half — it has no archive, and the lane branch declares no V2 unit —
+so it was measured here, in one fresh directory, in the order the workflow uses:
+
+```
+$ verify --phase host                       PHASE host: OK — 3 lane(s) executed
+$ regenerate-lean && verify --phase extraction
+                                            PHASE extraction: OK — 2 lane(s) executed
+$ verify --aggregate --gate
+[compose] over …/.verification/run-local-2
+    [generated-model] PASS
+    [lean] PASS
+    [mutation] PASS
+    [test] PASS
+    [verus] PASS
+VERIFICATION: PASS
+Composed from records in …/run-local-2; every required lane has one, at this fingerprint.
+```
+
+Neither phase stated a repository verdict; the composer stated one, from five lanes'
+records, two of which were produced inside the pinned artifact and three on the host. That
+is the whole change, exercised on the tree it was built for.
+
+**#860 is therefore blocked on exactly one thing: dev1 holding the preserved archive.**
+Nothing else about it is unmeasured.
