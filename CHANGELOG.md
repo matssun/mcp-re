@@ -52,6 +52,7 @@ preserved artifact supports is the honest, weaker statement — *this theorem wa
 against THIS exact preserved extraction artifact* — and not *this artifact can be
 reconstructed indefinitely from the Dockerfile*. Full build reproducibility is future
 assurance work.
+
 ### Added — THM-0128: the first theorem proved from extracted production Rust (#541)
 
 ```lean
