@@ -85,13 +85,13 @@ jobs:
           # Sources without a `.lake/build` is the state the measurement found: nothing
           # elaborates against a library that was never compiled.
           docker run --rm "${{ steps.tag.outputs.ref }}" \
-            bash -lc 'test -d /opt/aeneas/backends/lean/.lake/build && ls /opt/aeneas/backends/lean/.lake/build | head'
+            bash -c 'test -d /opt/aeneas/backends/lean/.lake/build && ls /opt/aeneas/backends/lean/.lake/build | head'
 
       - name: Smoke — mathlib is resolved at the revision the lock records
         run: |
           set -euo pipefail
           # The manifest is COPIED OUT and read on the runner, rather than parsed by a
-          # python one-liner inside a `bash -lc` inside a `$(...)` inside YAML. That form
+          # python one-liner inside a `bash -c` inside a `$(...)` inside YAML. That form
           # never ran: four levels of quoting, and the shell died on an unterminated string
           # before docker was ever reached. Reading both operands with
           # the same interpreter in the same place is also the honest shape — the comparison
@@ -116,7 +116,7 @@ jobs:
           # keeps writing after `head` exits takes SIGPIPE and fails the step — a check that
           # would go red for a reason having nothing to do with the image.
           docker run --rm "${{ steps.tag.outputs.ref }}" \
-            bash -lc '"$CHARON_EXE" --help >/dev/null && "$AENEAS_EXE" -help >/dev/null'
+            bash -c '"$CHARON_EXE" --help >/dev/null && "$AENEAS_EXE" -help >/dev/null'
 
       - name: Smoke — a tiny crate extracts and its Lean elaborates
         run: |
@@ -137,9 +137,24 @@ jobs:
           # `charon cargo --preset=aeneas`, and the 2026-08-30 pilot's `charon --preset=...`
           # was measured against a locally built image at a different Charon.
           #
-          # `2>&1` and an explicit exit report: the previous run failed with a bare exit 101
-          # and no captured diagnostic, which says the extraction stopped without saying why.
-          docker run --rm "${{ steps.tag.outputs.ref }}" bash -lc '
+          # `bash -c`, NEVER `bash -l`. That diagnostic, once captured, said:
+          #
+          #     Can't find `rustup`; please install it with your system package manager
+          #
+          # in an image that installs rustup. A LOGIN shell sources `/etc/profile`, and
+          # Debian's sets `PATH` unconditionally for root — so the image's own `ENV PATH`,
+          # which is the only thing putting `/opt/cargo/bin` on it, was discarded before
+          # Charon ran. `charon cargo` shells out to `rustup` to resolve the nightly it
+          # links against, and could not find it.
+          #
+          # The three checks above survived the same shell only because every path in them
+          # is absolute; this is the first step that needed the image's PATH to be intact,
+          # so it is the first one the login shell could break.
+          #
+          # `2>&1` and an explicit exit report: the run before that failed with a bare exit
+          # 101 and no captured diagnostic, which says the extraction stopped without
+          # saying why. It is what turned this from a guess into a reading.
+          docker run --rm "${{ steps.tag.outputs.ref }}" bash -c '
             set -euo pipefail
             mkdir -p /tmp/smoke/src && cd /tmp/smoke
             printf "[package]\nname = \"smoke\"\nversion = \"0.0.0\"\nedition = \"2021\"\n[lib]\npath = \"src/lib.rs\"\n" > Cargo.toml
