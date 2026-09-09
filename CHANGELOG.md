@@ -51,6 +51,31 @@ reason v3 added the test selection: neither is reachable from `source_inputs`, s
 could shrink in silence. Every attestation carrying an earlier encoding is UNKNOWN from this
 commit, which is the intended cost.
 
+### Fixed — two self-hosted runner defects the extraction lane could not have shown before (#541)
+
+The lane is gated on a V2/V3 unit existing, so declaring one is what executed it for the
+first time. Both failures are properties of the runner rather than of the code, and each was
+hidden behind the previous one.
+
+`docker login` cannot persist a credential there: `error saving credentials … User
+interaction is not allowed. (-25308)` is the macOS keychain refusing a background service.
+The word that matters is *saving* — the registry accepted the token, so this was never a
+credential or a package-permissions problem. Pointing `DOCKER_CONFIG` at an empty directory
+does not avoid it, because the CLI detects `osxkeychain` as the platform default whenever
+the helper is on `PATH`. The credential is written into the config instead, and
+`docker login` is never called.
+
+Doing that lost the docker CONTEXT with the credential store: a config directory carries
+`currentContext` and `contexts/`, and this runner's Docker is colima, so an isolated
+directory sent the CLI to a socket that does not exist. The endpoint is now resolved while
+the default config is still in effect and named in `DOCKER_HOST`.
+
+`scripts/self_hosted_docker_gate.py` holds both properties, because nothing else can see
+them: the lane runs only on a self-hosted macOS runner, only when a unit asks it for
+evidence, and both failures look like ordinary Docker errors. Its selftest reproduces each
+shipped form, and it was mutation-probed against the real workflow — reinstating the login,
+dropping `DOCKER_HOST`, and dropping `DOCKER_CONFIG` each turn it red.
+
 ### Fixed — the extraction publish never got past its own smoke check (#541)
 
 Four dispatches failed in the same step for two different reasons, each invisible until the

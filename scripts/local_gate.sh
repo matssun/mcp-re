@@ -135,6 +135,8 @@ stage_static() {
     `# The class this aggregate is itself the cause of: a control reachable only from` \
     `# here is enforced by remembering to run it. Five instances so far, each repaired` \
     `# only when someone noticed. It runs here too so the answer arrives before the push.` \
+    && python3 scripts/self_hosted_docker_gate.py --selftest \
+    && python3 scripts/self_hosted_docker_gate.py \
     && python3 scripts/merge_path_gate.py --selftest \
     && python3 scripts/merge_path_gate.py \
     && python3 scripts/serving_identity_provenance_gate.py --selftest \

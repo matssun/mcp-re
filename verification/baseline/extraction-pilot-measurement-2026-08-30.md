@@ -291,3 +291,50 @@ exception is exactly Hinnant's `z - 146096` adjustment: truncation toward zero o
 shifted value is floor division on the original, which is what makes `doe` the Euclidean
 remainder in both branches.
 
+### The lane's first executions — 2026-09-09, and what each one actually established
+
+Declaring a V2 unit is what executes this lane; until one existed it had never run. Three
+runs, and the classification of each is the owner's ruling of 2026-09-09: report what was
+observed, and do not pre-label the next thing.
+
+**The host gate's failing verdict is the DRIFT REFUSAL, not `UNAVAILABLE`.**
+
+```
+[manifests]   PASS   112 unit(s), 127 theorem(s)
+[assumptions] PASS   55 escape-hatch site(s), all registered
+[verus]       PASS   6 unit(s) verified
+[lean]        FAIL   the pinned extraction container was built from Dockerfile@790b65c1bf3c,
+                     and this tree declares @1d2274ca10ce
+VERIFICATION: FAIL — lean
+```
+
+`verify-lean` asks about pin currency before it asks about the environment, so the drift
+refusal is what fires. **This is a positive result as well as a negative one:** with the V2
+unit and THM-0128 declared, the manifests, the assumption registry and all six Verus units
+are green on the runner. That is independent evidence that the rest of the platform is
+healthy under this change, and it is recorded as such rather than folded into the failure.
+
+**The `UNAVAILABLE` question is LATENT, not current.** A macOS host cannot run the Lean
+lane, so once the image is published and the drift clears, the host lane will reach the
+environment check and report `UNAVAILABLE` — which forces `INCOMPLETE`, which `--gate`
+treats as not-a-pass. That is a real next-stage condition and a decision about where the
+aggregate is computed. It is not today's failing verdict and must not be described as one.
+
+**Two runner defects, each hidden behind the previous.** Both are properties of the machine
+rather than of the code, and both are now covered by `scripts/self_hosted_docker_gate.py`,
+whose selftest reproduces each shipped form and which was mutation-probed against the real
+workflow:
+
+1. `docker login` cannot persist a credential — `error saving credentials … User
+   interaction is not allowed. (-25308)`, the macOS keychain refusing a background service.
+   Note *saving*: the registry accepted the token. An isolated `DOCKER_CONFIG` does not
+   avoid it, measured on the runner and again in CI with the variable demonstrably set,
+   because the CLI detects `osxkeychain` whenever the helper is on `PATH`.
+2. An isolated config loses the docker CONTEXT with the store — `failed to connect to the
+   docker API at unix:///var/run/docker.sock`, on a runner whose Docker is colima at
+   `unix:///Users/mats/.colima/gh-runner/docker.sock`.
+
+**GHCR read access is UNMEASURED.** The lane has never reached the pull. The `write_package`
+denial on the publish workflow is a separate and confirmed fact; nothing here establishes
+anything about reads, and the next run's outcome is to be classified when it is observed.
+
