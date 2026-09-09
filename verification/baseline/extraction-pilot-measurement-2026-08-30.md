@@ -461,3 +461,85 @@ image id, preserved at
 
 on the machine that built it. A host that does not hold the archive reports UNAVAILABLE and
 refuses; it never rebuilds, because a rebuild of this definition is a different instrument.
+
+---
+
+## 8. The whole pipeline, run — 2026-09-09
+
+Production Rust met Charon, Aeneas and Lean, from the preserved artifact
+`sha256:d38738c1…`, with `core.time_civil_from_days` declared V2. Every stage reported its
+own verdict.
+
+**Extraction.** The invocation is the manifest's, not this document's: `extracted_symbols`
+becomes the `--start-from` set.
+
+```
+$ /opt/aeneas/charon/bin/charon cargo --preset=aeneas \
+      --start-from mcp_re_core::time::format::civil_from_days \
+      --dest-file …/mcp_re_core.llbc
+$ /opt/aeneas/bin/aeneas -backend lean -dest …/lean …/mcp_re_core.llbc
+regenerate-lean: 1 file(s) from 1 unit(s) — McpReCore.lean
+VERDICT: PASS
+```
+
+**The extraction is stable across two independent builds of the declared pins.** The model
+this artifact produced is BYTE-IDENTICAL to the one committed from a different build — a
+different opam resolution, a different image id. That is a measurement, not a guarantee:
+§6's finding stands, the build is still not reproducible, and the identity is still
+recorded rather than derived. What it says is that for this target the residual variation
+did not reach the output.
+
+**Freshness.** `check-generated: 1 generated file(s) reproduce from the pinned pipeline over
+1 unit(s) — VERDICT: PASS`.
+
+**The lane.**
+
+```
+verify-lean: elaborating the model and the theorems  ($ lake build)
+verify-lean: axiom discovery                         ($ lake env lean …)
+  PASS core.time_civil_from_days: 1 theorem(s) established;
+       axiom closure is the declared kernel baseline
+VERDICT: PASS
+```
+
+**The axiom closure, asked of the prover:**
+
+```
+'MCPRE.Time.civil_from_days_total' depends on axioms: [propext, Classical.choice, Quot.sound]
+```
+
+Nothing else. No `sorryAx`, no unregistered axiom, no `ASM-NNNN` — and, as §5 predicted
+rather than assumed, the closure does not reach the four `sorry`s the pinned Aeneas Lean
+library carries in `Slice`/`StringIter`. The prediction is now a checked one.
+
+**The refusals are real.** `verify-lean --activation-probe` made the prover produce a
+`sorry`, an unregistered axiom and an unresolvable theorem name, and each was still
+refused — `VERDICT: PASS`. Every check above is conditional on the prover reporting what
+the lane expects, and all three failure modes look exactly like a clean axiom closure.
+
+**The evidence record names the artifact**, which is the whole point of preserving it:
+
+```json
+{ "unit_id": "core.time_civil_from_days", "lane": "lean", "result": "pass",
+  "prover": { "lean": "leanprover/lean4:v4.31.0",
+              "aeneas": "daa85d7e…", "charon": "340b1af4…",
+              "extraction_artifact": "sha256:d38738c1…" } }
+```
+
+### One environment fact, and it is not about the code
+
+The run above was made in a **git worktree**, whose `.git` is a file pointing outside the
+bind mount, so `git ls-files` inside the container fails and the fingerprint cannot
+describe the tree. It is a property of how this measurement was hosted, not of the lane: a
+normal checkout — which is what the runner has — carries its own `.git`. Recorded so the
+next person running the lane from a worktree recognises it in one line instead of reading
+it as a lane defect.
+
+### Where the artifact is
+
+On the machine that built it. `dev1` runs the extraction lane and does not hold this
+archive, so the lane reports **UNAVAILABLE** there until it is copied or dev1 builds and
+preserves its own — at which point the pin moves onto that artifact and the model is
+regenerated against it. That is the stated cost of having no registry, and it is
+fail-closed in the right direction: a host that cannot execute the pinned environment says
+so instead of running a different one.
