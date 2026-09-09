@@ -130,3 +130,164 @@ image finding above is independent of it.
 
 Steps 2–5 are ordinary work. Step 1 is the gate, and it is the reason this document exists
 instead of a `lean://` URI.
+
+---
+
+## 5. Step 1, measured again — 2026-09-09
+
+The image definition was repaired for both halves of §3 in #719/#720/#723: the Dockerfile
+installs the pinned `leanprover/lean4:v4.31.0` via elan and builds the Aeneas Lean backend
+with mathlib. The PIN was not repaired, which #852 is what discovered — `[extraction_container]`
+went on naming a build of a Dockerfile that had changed three times, and nothing recomputed
+the tag that would have said so.
+
+Publishing the repaired definition took five dispatches, and the four that failed all failed
+in the same step for two different reasons. Both are recorded because each was invisible
+until the previous one was removed.
+
+**The invocation form.** `charon --preset=...` — the form this document's §1 recorded — is not
+the form the pinned Charon takes. It is a subcommand CLI:
+
+    Usage: charon <COMMAND>
+    Commands: rustc  cargo  ui_test  toolchain-path  toolchain-version
+              pretty-print  version  help
+
+and `--preset` is an option of `charon cargo`. The §1 measurement was made against a locally
+built image at a different Charon, and nothing had run since to notice. The preset itself is
+unchanged and still mandatory.
+
+**The shell.** With the form corrected the step still failed, at exit 101 with no captured
+diagnostic. Adding `2>&1` produced it:
+
+    thread 'main' panicked at src/bin/charon/main.rs:272:9:
+    Can't find `rustup`; please install it with your system package manager
+
+in an image that installs rustup and puts it on `PATH` with
+`ENV PATH=/opt/cargo/bin:$PATH`. The step ran `docker run … bash -lc`, and a LOGIN shell
+sources `/etc/profile`, which on Debian sets `PATH` unconditionally for root — so the image's
+own declaration was overwritten before Charon started. `charon cargo` shells out to `rustup`
+to resolve the nightly it links against.
+
+The three smoke checks above it survived the same shell only because every path in them is
+absolute (`$CHARON_EXE`, `$AENEAS_EXE`, `/opt/aeneas/...`). This was the first step that
+needed the image's `PATH` to be intact, so it was the first one the login shell could break —
+and a check that passes because it never used the thing it broke is not evidence that the
+thing works.
+
+**What this says about the image, and what it does not.** Nothing here is a defect in the
+Dockerfile; the tag is content-addressed over it and is unchanged by any of these repairs.
+What was wrong was the workflow's measurement of it, three times over, and each repair only
+exposed the next: a bad invocation hid a missing diagnostic, which hid a discarded `PATH`.
+
+### The pinned Aeneas Lean library carries four `sorry`s of its own
+
+Measured 2026-09-09 by building `/opt/verification/aeneas/backends/lean` at the pinned
+commit and toolchain, on the macOS host — the Lean half needs no container, only the
+extraction does:
+
+    warning: Aeneas/Std/Slice.lean:363:4: declaration uses `sorry`
+    warning: Aeneas/Std/Slice.lean:586:8: declaration uses `sorry`
+    warning: Aeneas/Std/StringIter.lean:12:4: declaration uses `sorry`
+    warning: Aeneas/Std/StringIter.lean:15:4: declaration uses `sorry`
+
+This is the measurement that decides how `sorry` must be detected. A token scan over
+`verification/lean/` would find nothing while a theorem beneath it rested on one of these,
+and `verification/lean/generated/` is excluded from `check-assumptions`' scan by design —
+so the only thing that can see them is the prover's own closure, which is why `verify-lean`
+asks `#print axioms` rather than reading source.
+
+It also fixes what a `sorry` MEANS for this lane. It is not registrable, and it is not
+registrable *because it is upstream* either: an `ASM` naming it would assert that an
+unproved goal is trusted. A property whose proof reaches one of these declarations is
+UNSUPPORTED at this pin — recorded as such, kept visible, and never converted into a
+premise or into a pass.
+
+The pilot proposition does not reach them: `civil_from_days` is scalar arithmetic, and
+`Slice`/`StringIter` are the slice and string-iterator models. That is a prediction the
+lane checks on every run rather than a claim resting here.
+
+### The pipeline passes; the PUSH is blocked on a package that Actions does not own
+
+With the shell corrected, run 34320254446 built the image and passed all five smoke
+checks — including *a tiny crate extracts and its Lean elaborates*, which had never
+succeeded before. So the definition is good and the toolchain composes end to end.
+
+The publish step then failed:
+
+    ERROR: denied: permission_denied: write_package
+     > pushing ghcr.io/matssun/mcp-re-verification-extraction:tc-017b1c2016b0ba7a
+
+Measured rather than guessed. `GET /user/packages/container/mcp-re-verification-extraction`
+reports the package `created_at 2026-08-10T14:57:30Z`, `visibility private`,
+`version_count 3` — all three versions from that one moment. It was pushed **by hand with a
+personal token**, so it is a user-owned package that no repository owns. `GITHUB_TOKEN`
+carries `packages: write` for packages the repository is linked to, and this one is not:
+the link is created automatically only for a package Actions itself created.
+
+**This is an owner action and there is no API for it.** GitHub's REST surface for user
+packages is list/get/versions/delete/restore; repository access management for a
+user-owned package exists only in the package's own settings — *Manage Actions access* →
+add `matssun/mcp-re` with the **Write** role.
+
+Two things that are NOT the answer, recorded so they are not tried:
+
+* **Deleting the package** so Actions recreates it and inherits the link. That destroys
+  `sha256:42318bba…`, which `[extraction_container]` still pins — the digest every existing
+  statement about this lane's instrument refers to.
+* **A personal access token in a repository secret.** It works, and it replaces a
+  scoped, per-run credential with a long-lived one for a workflow whose own header says
+  `packages: write` on `GITHUB_TOKEN` is what publishing needs.
+
+### The theorem, proved — 2026-09-09
+
+The proposition of §2 is discharged. Measured against a model extracted by the pinned
+Charon and Aeneas (their commits have never moved in any version of the Dockerfile) and
+checked by the pinned Lean 4.31.0 with the Aeneas backend at `daa85d7e…`:
+
+```
+theorem civil_from_days_total (z : Std.I64)
+    (hlo : (-106751991167301 : Int) ≤ z.val)
+    (hhi : z.val ≤ 106751991167300) :
+    ∃ y m d, mcp_re_core.time.format.civil_from_days z = ok (y, m, d)
+```
+
+The bounds are the exact image of `i64` under `unix.div_euclid(86_400)`. `ok` is total
+success: Aeneas' `spec` sends both `fail` and `div` to `False`, so this says the conversion
+neither overflows nor fails a narrowing cast, over the whole domain its caller can supply.
+
+**Extraction shape, as §2 predicted.** One transparent function, **zero opaque ones** —
+`civil_from_days` calls nothing outside itself. Every `i64` operation appears in the model
+inside the `Result` monad, and both `i64 → u32` casts appear as `lift (IScalar.hcast .U32 …)`.
+
+**The axiom closure, asked of the prover rather than of the source:**
+
+```
+'MCPRE.Time.civil_from_days_total' depends on axioms: [propext, Classical.choice, Quot.sound]
+```
+
+Exactly the declared kernel baseline. **No `ASM-NNNN` is required for this theorem** — not
+because the boundary was waived but because the model has no boundary here. In particular
+the closure does not reach the four `sorry`s the Aeneas Lean library carries in
+`Aeneas/Std/Slice.lean` and `Aeneas/Std/StringIter.lean`; `civil_from_days` is scalar
+arithmetic and touches neither model. That prediction is now a measurement, and
+`verify-lean` re-measures it on every run.
+
+**Where the proof is hard, and why that is the interesting part.** Twenty-nine of the
+thirty steps are discharged by Aeneas' `step` with `omega` on the side conditions, given
+the bound chain `format.rs` already states in prose — `era`, `doe ∈ [0, 146096]`,
+`yoe ∈ [0, 399]`, `doy ∈ [0, 365]`, `mp ∈ [0, 11]`. One is not:
+
+> the year-of-era the model computes really does bracket the day-of-era.
+
+That is Hinnant's algorithm working, and linear arithmetic cannot close it — the relation
+between the three divisions of `doe` and the two of `yoe` is not linear. It is proved by
+enumerating the four hundred years of a Gregorian era, which takes about 25 seconds and is
+a proof rather than an approximation. It is also the step the whole claim rests on: without
+it `d` and `m` are unbounded and the two `u32` casts may fail.
+
+Two truncating divisions needed a bridge to `omega`, which reasons about Euclidean
+division. Every numerator in the model is non-negative except one — `era`'s — and that
+exception is exactly Hinnant's `z - 146096` adjustment: truncation toward zero on the
+shifted value is floor division on the original, which is what makes `doe` the Euclidean
+remainder in both branches.
+

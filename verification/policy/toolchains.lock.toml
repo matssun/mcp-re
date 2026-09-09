@@ -201,6 +201,19 @@ Resolved together with [extraction_container], for the same reason as [charon].
 state = "resolved"
 toolchain = "leanprover/lean4:v4.31.0"
 source = "verification/lean/lean-toolchain"
+# The axioms that are the PROVER'S LOGIC rather than this repository's premises. Every other
+# name in a theorem's `#print axioms` closure is a proposition MCP-RE is trusting and must be
+# an ASM-NNNN scoped to the unit, or `verify-lean` refuses.
+#
+# Recorded here, against `toolchain`, because the baseline is a property of the pinned Lean:
+# these three are what Lean 4's own standard library rests on, and a Lean bump is exactly the
+# event that could change the set. A baseline hard-coded in the lane would keep reading as
+# correct across such a bump; one declared with no identity beside it would say which axioms
+# are fine without saying whose.
+#
+# `sorryAx` is deliberately not here and is not registrable anywhere. `sorry` is the ABSENCE
+# of a proof, not a premise, and Lean elaborates a file full of them and reports success.
+kernel_axioms = ["Classical.choice", "Quot.sound", "propext"]
 note = """
 NOT a free choice: this is the toolchain the pinned Aeneas Lean backend declares in its own
 `backends/lean/lean-toolchain`. A generated model is proved against the Aeneas Lean

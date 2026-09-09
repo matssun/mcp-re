@@ -763,6 +763,25 @@ jobs:
             ./tools/verification/regenerate-lean
           ./tools/verification/check-generated
 
+      # BEFORE the lane reports, and in the same container the lane will run in. Every
+      # refusal below is conditional on `#print axioms` reporting what the lane expects it
+      # to report — so a Lean release that changed the message, a lakefile that stopped
+      # building the theorems, or a parser that silently matched nothing would each turn
+      # every check into a tautology, and all three look exactly like a clean axiom closure.
+      # The probe makes the real prover produce a `sorry`, an unregistered axiom and an
+      # unresolvable name, and fails if the lane stops refusing them.
+      #
+      # Gated like the steps around it: until a unit is V2/V3 this whole job does not run,
+      # which is honest — the lane is NOT_REQUIRED and nothing has been asked of it.
+      - name: Lean lane activation probe
+        if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true'
+        run: |
+          set -euo pipefail
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD:/workspace" -w /workspace \
+            "${{ steps.image.outputs.ref }}" \
+            ./tools/verification/verify-lean --activation-probe
+
       - name: Lean proofs
         if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true'
         run: |
