@@ -14,6 +14,19 @@
 target/
 **/*.rs.bk
 
+# Lean build output. `tools/verification/verify-lean` runs `lake build` in
+# `verification/lean/`, which creates `.lake/` there — oleans and a resolved
+# `lake-manifest.json`, hundreds of megabytes.
+#
+# The manifest is a BUILD ARTIFACT here, not a pin. Dependencies resolve out of the pinned
+# extraction image's own package directory (`lakefile.toml`'s `packagesDir`), so what gets
+# resolved is decided by the image digest in `verification/policy/toolchains.lock.toml`,
+# and the publish workflow checks the image's mathlib against
+# `[aeneas_lean_backend].mathlib_revision` before that digest is ever recorded. A second
+# copy committed here would be a second answer to which mathlib a theorem was proved with.
+/verification/lean/.lake/
+/verification/lean/lake-manifest.json
+
 # Bazel convenience symlinks (they point into ~/Library/Caches/bazel/).
 #
 # A GLOB, not four names. Bazel names one of them after the workspace DIRECTORY, so a build
