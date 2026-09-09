@@ -46,8 +46,15 @@ def elaborate(source: str, what: str) -> tuple[int, str]:
     cannot resolve is an error AND the diagnostic the caller needs, so the status is
     returned rather than raised and the caller decides what the reports mean.
     """
+    # OUTSIDE the repository, deliberately. `lake env lean` takes an absolute path and sets
+    # the search path itself, so the file does not need to live in the package — and two
+    # things go wrong when it does. The activation probe's source contains `sorry` and an
+    # `axiom` on purpose, so a file leaked by a killed process would sit in
+    # `verification/lean/` where `check-assumptions` scans `.lean` for exactly those tokens,
+    # reporting an unregistered seam in a file nobody wrote. And on the runner that directory
+    # is a bind mount, so the write would cross it for no reason.
     with tempfile.NamedTemporaryFile(
-        "w", suffix=".lean", dir=LEAN_DIR, encoding="utf-8", delete=True
+        "w", suffix=".lean", encoding="utf-8", delete=True
     ) as handle:
         handle.write(source)
         handle.flush()
