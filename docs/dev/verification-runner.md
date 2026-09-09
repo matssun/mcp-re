@@ -2,8 +2,8 @@
 
 The ADR-MCPRE-059 verification lanes do not run on GitHub-hosted runners. Verus is
 pinned to an install root under `/opt/verification`, and the extraction pipeline runs a
-digest-pinned Linux container through the host's Docker. Both live on a persistent
-self-hosted Mac mini, `dev1`.
+Linux container loaded from a preserved artifact under the same tree. Both live on a
+persistent self-hosted Mac mini, `dev1`.
 
 This file records what that host must provide. It is operational configuration, not
 workstation trivia: if the runner is rebuilt or re-registered without it, the
@@ -65,6 +65,49 @@ The rustup check resolves the pinned channel rather than inspecting PATH layout.
 directory-prefix heuristic calls the developer MacBook healthy while its `cargo` is
 Homebrew's — the question is not whether the PATH looks right but whether `rustup run
 <channel> rustc` hands back the pinned compiler.
+
+## The preserved extraction artifact
+
+The extraction environment is not pulled from a registry and is not taken from Docker's
+image cache. It is a content-addressed archive on this host:
+
+```
+/opt/verification/extraction-artifacts/sha256/<artifact_digest>.tar
+```
+
+`verification/policy/toolchains.lock.toml` `[extraction_container]` records two digests —
+`artifact_digest`, the image that EXECUTES, and `archive_digest`, the exact bytes preserving
+it — and `tools/verification/extraction-image` is the only thing that builds, preserves,
+checks and loads one.
+
+```sh
+tools/verification/extraction-image identity   # build, preserve, print the lock entry
+tools/verification/extraction-image verify     # is the pinned artifact here and intact
+tools/verification/extraction-image load       # print the image id the lane executes
+```
+
+**Why not a registry.** Nothing claims cross-machine reproduction of the model; the lane
+runs here. A registry would add an outward publish and an access dependency to every
+verification run, for a storage mechanism that was never the semantic authority. Ruling:
+[`verification/reviews/rulings/extraction-artifact-storage-2026-09-09.md`](../../verification/reviews/rulings/extraction-artifact-storage-2026-09-09.md).
+
+**Why not Docker's cache.** A prune, a reset, or a full disk empties it — and this image
+cannot be rebuilt. Its Dockerfile resolves apt package versions and opam library versions at
+build time, and the opam libraries are linked into the Aeneas binary, so a rebuild is a
+different instrument under identical declared pins. An identity over cache-only bytes is a
+claim that stays identifiable and stops being reproducible the moment the cache is cleared.
+
+**What the lane does when it is missing.** `extraction-image load` reports **UNAVAILABLE**
+and stops. It never rebuilds, and it never falls back to a same-tag image. A digest mismatch
+is **FAIL**: a file under an identity it does not have is substituted or truncated.
+
+**Moving one between hosts is an operator act.** `scp` the archive into the store on the
+target machine. Nothing resolves it automatically, and a host without it cannot run the
+lane — the intended cost of having no registry, stated rather than hidden.
+
+`identity` reports the lock entry and never writes it. The lock is what says which
+environment the repository's formal evidence was produced by, and a tool that could rewrite
+it would be a tool that can change what every `lean://` claim means.
 
 ## Required-check health has two independent dimensions
 

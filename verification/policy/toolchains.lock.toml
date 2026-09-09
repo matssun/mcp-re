@@ -136,32 +136,75 @@ named while the lock read as fully pinned.
 # .rlib files and Charon builds unmodified. The host is changed rather than the tool.
 
 [extraction_container]
+# RESOLVED 2026-09-09, from a build of the definition this tree declares, whose five smoke
+# checks passed and whose exact bytes are preserved under `archive_digest`. The entry this
+# replaces named an image published to a container registry by hand on 2026-08-10 that was
+# a build of none of the three Dockerfiles that followed it and could not run Lean at all.
 state = "resolved"
-image = "ghcr.io/matssun/mcp-re-verification-extraction"
-digest = "sha256:42318bba386ace68eb1b5ff7173259d3e485fc506cab76d6e40970dc987f7dce"
-tag = "tc-09eedf0aaf503302"
-# The Dockerfile the pinned image was BUILT FROM, as opposed to the one this tree declares.
-# Recovered rather than assumed: this is the only value for which `tag` above reproduces from
-# the pins beside it, and it is `verification/extraction/Dockerfile` as of 1adeda55 (the commit
-# that wrote this entry). Without it the recorded tag could not be checked against anything,
-# which is how three Dockerfile changes — #719, #720, #723 — left the pin naming an image
-# built from none of them.
-definition_digest = "790b65c1bf3c2c8134945e998857c8e3f1b228e7d6910197980ca2b5592cee9d"
-platform = "linux/arm64"
+# Built from the definition this tree declares, smoke-checked BY IMAGE ID — the six checks
+# the build workflow asks, including the harness interpreter and a tiny crate going
+# Rust -> LLBC -> Lean — and preserved before this identity was reported, so what is
+# recorded is what the store holds.
+artifact_digest = "sha256:d38738c18a60306a1f9be0f2e225872ab3825dc408a1f4c561193579bd701d84"
+archive_digest = "sha256:88a97b6e37cdfb755cf30c48ed6099d0b2a9a4a4c1186baf9ed1a150e5681a4b"
+tag = "tc-34eb72d4f6d70d4f"
+definition_digest = "c393c8b6874d6b43f914f42284741bf5fdae231ad1d98322beef6a2e254940f7"
 definition = "verification/extraction/Dockerfile"
+platform = "linux/arm64"
 note = """
-Pinned by DIGEST, never by tag: a tag is a mutable pointer, so a lane pinned to one could
-produce two different models from the same declared toolchain. `tag` is recorded for human
-navigation only — nothing resolves through it.
+WHAT A BUILD MUST RECORD, and why each field exists.
 
-The tag is derived from the pinned toolchain contents by tools/verification/extraction-image,
-NOT from VERSION. Tying it to the product release would mint a new digest on every release
-with an unchanged prover (invalidating all formal evidence for nothing), and would leave
-the tag unmoved when a toolchain pin changed — a stale pointer to a different prover.
+  artifact_digest   the image's own content digest, as `tools/verification/extraction-image
+                    identity` reports it — what EXECUTES. REQUIRED: the declared pins do not
+                    determine the image. This definition still resolves apt package versions
+                    and opam library versions at build time, and the opam libraries build the
+                    Aeneas binary — so a different `visitors` or `zarith` can produce a
+                    different extracted model from identical Rust. An identity derived from
+                    the pins alone would say which toolchain was INTENDED and nothing about
+                    which one ran.
 
-This digest is the OCI index. It carries the linux/arm64 manifest the Apple Silicon runner
-selects; an amd64 build of identical pins is a different image with a different digest,
-which is why `platform` is part of the identity rather than an incidental detail.
+  archive_digest    SHA-256 over the PRESERVED ARCHIVE's exact bytes, under
+                    /opt/verification/extraction-artifacts/sha256/<artifact_digest>.tar.
+                    REQUIRED for the reason above, one step further: because the image
+                    cannot be rebuilt, an identity over bytes that live only in Docker's
+                    local store is a claim a `docker image prune` turns into a name for an
+                    environment nothing can execute again — still identifiable, no longer
+                    reproducible. The archive is the copy that survives, and this digest is
+                    the independent check that the file in the store is that image's
+                    preserved form. `tools/verification/extraction-image load` refuses on a
+                    mismatch and reports UNAVAILABLE when the file is absent; it never
+                    rebuilds, because a rebuild is a different instrument.
+
+  definition_digest the Dockerfile the image was built from. MCPRE-181: the pin went on
+                    naming an image built from a definition that had changed three times,
+                    because nothing compared them. `load_toolchains` now refuses a lock whose
+                    `tag` does not follow from this plus the pins, so every consumer inherits
+                    the refusal instead of one script remembering to ask.
+
+  tag               computed from the declared inputs by `_extraction_identity.content_tag`,
+                    never chosen. It is the DECLARED identity; `artifact_digest` is the one
+                    that was PRODUCED, and keeping both is what makes the two questions —
+                    "does the record follow from its own inputs" and "is the pin a build of
+                    what the tree declares" — separately answerable.
+
+  platform          an amd64 build of identical pins is a different instrument.
+
+WHERE THE BYTES ARE KEPT IS NOT PART OF THE IDENTITY, BUT THAT THEY ARE KEPT IS PART OF THE
+EVIDENCE. A content digest identifies an image whether it sits in a local image store or a
+registry, and the assurance requirement is that Lean evidence names the environment that
+produced it and is invalidated when that environment changes — not that the environment is
+published anywhere. What that leaves open is preservation: a digest is identity, and identity
+over deleted bytes is a claim nobody can re-run. So the artifact is persisted outside
+Docker's disposable state under `archive_digest`, and no registry is introduced. The
+extraction image is a formal-verification toolchain artifact; it is never a deployable
+MCP-RE product image, and its digest is an artifact identity rather than a release or
+deployment claim. Ruling:
+verification/reviews/rulings/extraction-artifact-storage-2026-09-09.md.
+
+WHAT IS NOT CLAIMED: that this artifact can be reconstructed from the Dockerfile
+indefinitely. The unpinned apt and opam inputs above are a measured limitation. What a
+preserved artifact establishes is the honest, weaker thing — this theorem was checked
+against THIS exact preserved extraction artifact.
 """
 
 [charon]
@@ -201,6 +244,19 @@ Resolved together with [extraction_container], for the same reason as [charon].
 state = "resolved"
 toolchain = "leanprover/lean4:v4.31.0"
 source = "verification/lean/lean-toolchain"
+# The axioms that are the PROVER'S LOGIC rather than this repository's premises. Every other
+# name in a theorem's `#print axioms` closure is a proposition MCP-RE is trusting and must be
+# an ASM-NNNN scoped to the unit, or `verify-lean` refuses.
+#
+# Recorded here, against `toolchain`, because the baseline is a property of the pinned Lean:
+# these three are what Lean 4's own standard library rests on, and a Lean bump is exactly the
+# event that could change the set. A baseline hard-coded in the lane would keep reading as
+# correct across such a bump; one declared with no identity beside it would say which axioms
+# are fine without saying whose.
+#
+# `sorryAx` is deliberately not here and is not registrable anywhere. `sorry` is the ABSENCE
+# of a proof, not a premise, and Lean elaborates a file full of them and reports success.
+kernel_axioms = ["Classical.choice", "Quot.sound", "propext"]
 note = """
 NOT a free choice: this is the toolchain the pinned Aeneas Lean backend declares in its own
 `backends/lean/lean-toolchain`. A generated model is proved against the Aeneas Lean

@@ -130,3 +130,334 @@ image finding above is independent of it.
 
 Steps 2–5 are ordinary work. Step 1 is the gate, and it is the reason this document exists
 instead of a `lean://` URI.
+
+---
+
+## 5. Step 1, measured again — 2026-09-09
+
+The image definition was repaired for both halves of §3 in #719/#720/#723: the Dockerfile
+installs the pinned `leanprover/lean4:v4.31.0` via elan and builds the Aeneas Lean backend
+with mathlib. The PIN was not repaired, which #852 is what discovered — `[extraction_container]`
+went on naming a build of a Dockerfile that had changed three times, and nothing recomputed
+the tag that would have said so.
+
+Publishing the repaired definition took five dispatches, and the four that failed all failed
+in the same step for two different reasons. Both are recorded because each was invisible
+until the previous one was removed.
+
+**The invocation form.** `charon --preset=...` — the form this document's §1 recorded — is not
+the form the pinned Charon takes. It is a subcommand CLI:
+
+    Usage: charon <COMMAND>
+    Commands: rustc  cargo  ui_test  toolchain-path  toolchain-version
+              pretty-print  version  help
+
+and `--preset` is an option of `charon cargo`. The §1 measurement was made against a locally
+built image at a different Charon, and nothing had run since to notice. The preset itself is
+unchanged and still mandatory.
+
+**The shell.** With the form corrected the step still failed, at exit 101 with no captured
+diagnostic. Adding `2>&1` produced it:
+
+    thread 'main' panicked at src/bin/charon/main.rs:272:9:
+    Can't find `rustup`; please install it with your system package manager
+
+in an image that installs rustup and puts it on `PATH` with
+`ENV PATH=/opt/cargo/bin:$PATH`. The step ran `docker run … bash -lc`, and a LOGIN shell
+sources `/etc/profile`, which on Debian sets `PATH` unconditionally for root — so the image's
+own declaration was overwritten before Charon started. `charon cargo` shells out to `rustup`
+to resolve the nightly it links against.
+
+The three smoke checks above it survived the same shell only because every path in them is
+absolute (`$CHARON_EXE`, `$AENEAS_EXE`, `/opt/aeneas/...`). This was the first step that
+needed the image's `PATH` to be intact, so it was the first one the login shell could break —
+and a check that passes because it never used the thing it broke is not evidence that the
+thing works.
+
+**What this says about the image, and what it does not.** Nothing here is a defect in the
+Dockerfile; the tag is content-addressed over it and is unchanged by any of these repairs.
+What was wrong was the workflow's measurement of it, three times over, and each repair only
+exposed the next: a bad invocation hid a missing diagnostic, which hid a discarded `PATH`.
+
+### The pinned Aeneas Lean library carries four `sorry`s of its own
+
+Measured 2026-09-09 by building `/opt/verification/aeneas/backends/lean` at the pinned
+commit and toolchain, on the macOS host — the Lean half needs no container, only the
+extraction does:
+
+    warning: Aeneas/Std/Slice.lean:363:4: declaration uses `sorry`
+    warning: Aeneas/Std/Slice.lean:586:8: declaration uses `sorry`
+    warning: Aeneas/Std/StringIter.lean:12:4: declaration uses `sorry`
+    warning: Aeneas/Std/StringIter.lean:15:4: declaration uses `sorry`
+
+This is the measurement that decides how `sorry` must be detected. A token scan over
+`verification/lean/` would find nothing while a theorem beneath it rested on one of these,
+and `verification/lean/generated/` is excluded from `check-assumptions`' scan by design —
+so the only thing that can see them is the prover's own closure, which is why `verify-lean`
+asks `#print axioms` rather than reading source.
+
+It also fixes what a `sorry` MEANS for this lane. It is not registrable, and it is not
+registrable *because it is upstream* either: an `ASM` naming it would assert that an
+unproved goal is trusted. A property whose proof reaches one of these declarations is
+UNSUPPORTED at this pin — recorded as such, kept visible, and never converted into a
+premise or into a pass.
+
+The pilot proposition does not reach them: `civil_from_days` is scalar arithmetic, and
+`Slice`/`StringIter` are the slice and string-iterator models. That is a prediction the
+lane checks on every run rather than a claim resting here.
+
+### The pipeline passes; the PUSH is blocked on a package that Actions does not own
+
+With the shell corrected, run 34320254446 built the image and passed all five smoke
+checks — including *a tiny crate extracts and its Lean elaborates*, which had never
+succeeded before. So the definition is good and the toolchain composes end to end.
+
+The publish step then failed:
+
+    ERROR: denied: permission_denied: write_package
+     > pushing ghcr.io/matssun/mcp-re-verification-extraction:tc-017b1c2016b0ba7a
+
+Measured rather than guessed. `GET /user/packages/container/mcp-re-verification-extraction`
+reports the package `created_at 2026-08-10T14:57:30Z`, `visibility private`,
+`version_count 3` — all three versions from that one moment. It was pushed **by hand with a
+personal token**, so it is a user-owned package that no repository owns. `GITHUB_TOKEN`
+carries `packages: write` for packages the repository is linked to, and this one is not:
+the link is created automatically only for a package Actions itself created.
+
+**This is an owner action and there is no API for it.** GitHub's REST surface for user
+packages is list/get/versions/delete/restore; repository access management for a
+user-owned package exists only in the package's own settings — *Manage Actions access* →
+add `matssun/mcp-re` with the **Write** role.
+
+Two things that are NOT the answer, recorded so they are not tried:
+
+* **Deleting the package** so Actions recreates it and inherits the link. That destroys
+  `sha256:42318bba…`, which `[extraction_container]` still pins — the digest every existing
+  statement about this lane's instrument refers to.
+* **A personal access token in a repository secret.** It works, and it replaces a
+  scoped, per-run credential with a long-lived one for a workflow whose own header says
+  `packages: write` on `GITHUB_TOKEN` is what publishing needs.
+
+### The theorem, proved — 2026-09-09
+
+The proposition of §2 is discharged. Measured against a model extracted by the pinned
+Charon and Aeneas (their commits have never moved in any version of the Dockerfile) and
+checked by the pinned Lean 4.31.0 with the Aeneas backend at `daa85d7e…`:
+
+```
+theorem civil_from_days_total (z : Std.I64)
+    (hlo : (-106751991167301 : Int) ≤ z.val)
+    (hhi : z.val ≤ 106751991167300) :
+    ∃ y m d, mcp_re_core.time.format.civil_from_days z = ok (y, m, d)
+```
+
+The bounds are the exact image of `i64` under `unix.div_euclid(86_400)`. `ok` is total
+success: Aeneas' `spec` sends both `fail` and `div` to `False`, so this says the conversion
+neither overflows nor fails a narrowing cast, over the whole domain its caller can supply.
+
+**Extraction shape, as §2 predicted.** One transparent function, **zero opaque ones** —
+`civil_from_days` calls nothing outside itself. Every `i64` operation appears in the model
+inside the `Result` monad, and both `i64 → u32` casts appear as `lift (IScalar.hcast .U32 …)`.
+
+**The axiom closure, asked of the prover rather than of the source:**
+
+```
+'MCPRE.Time.civil_from_days_total' depends on axioms: [propext, Classical.choice, Quot.sound]
+```
+
+Exactly the declared kernel baseline. **No `ASM-NNNN` is required for this theorem** — not
+because the boundary was waived but because the model has no boundary here. In particular
+the closure does not reach the four `sorry`s the Aeneas Lean library carries in
+`Aeneas/Std/Slice.lean` and `Aeneas/Std/StringIter.lean`; `civil_from_days` is scalar
+arithmetic and touches neither model. That prediction is now a measurement, and
+`verify-lean` re-measures it on every run.
+
+**Where the proof is hard, and why that is the interesting part.** Twenty-nine of the
+thirty steps are discharged by Aeneas' `step` with `omega` on the side conditions, given
+the bound chain `format.rs` already states in prose — `era`, `doe ∈ [0, 146096]`,
+`yoe ∈ [0, 399]`, `doy ∈ [0, 365]`, `mp ∈ [0, 11]`. One is not:
+
+> the year-of-era the model computes really does bracket the day-of-era.
+
+That is Hinnant's algorithm working, and linear arithmetic cannot close it — the relation
+between the three divisions of `doe` and the two of `yoe` is not linear. It is proved by
+enumerating the four hundred years of a Gregorian era, which takes about 25 seconds and is
+a proof rather than an approximation. It is also the step the whole claim rests on: without
+it `d` and `m` are unbounded and the two `u32` casts may fail.
+
+Two truncating divisions needed a bridge to `omega`, which reasons about Euclidean
+division. Every numerator in the model is non-negative except one — `era`'s — and that
+exception is exactly Hinnant's `z - 146096` adjustment: truncation toward zero on the
+shifted value is floor division on the original, which is what makes `doe` the Euclidean
+remainder in both branches.
+
+### The lane's first executions — 2026-09-09, and what each one actually established
+
+Declaring a V2 unit is what executes this lane; until one existed it had never run. Three
+runs, and the classification of each is the owner's ruling of 2026-09-09: report what was
+observed, and do not pre-label the next thing.
+
+**The host gate's failing verdict is the DRIFT REFUSAL, not `UNAVAILABLE`.**
+
+```
+[manifests]   PASS   112 unit(s), 127 theorem(s)
+[assumptions] PASS   55 escape-hatch site(s), all registered
+[verus]       PASS   6 unit(s) verified
+[lean]        FAIL   the pinned extraction container was built from Dockerfile@790b65c1bf3c,
+                     and this tree declares @1d2274ca10ce
+VERIFICATION: FAIL — lean
+```
+
+`verify-lean` asks about pin currency before it asks about the environment, so the drift
+refusal is what fires. **This is a positive result as well as a negative one:** with the V2
+unit and THM-0128 declared, the manifests, the assumption registry and all six Verus units
+are green on the runner. That is independent evidence that the rest of the platform is
+healthy under this change, and it is recorded as such rather than folded into the failure.
+
+**The `UNAVAILABLE` question is LATENT, not current.** A macOS host cannot run the Lean
+lane, so once the image is published and the drift clears, the host lane will reach the
+environment check and report `UNAVAILABLE` — which forces `INCOMPLETE`, which `--gate`
+treats as not-a-pass. That is a real next-stage condition and a decision about where the
+aggregate is computed. It is not today's failing verdict and must not be described as one.
+
+**Two runner defects, each hidden behind the previous.** Both are properties of the machine
+rather than of the code, and both are now covered by `scripts/self_hosted_docker_gate.py`,
+whose selftest reproduces each shipped form and which was mutation-probed against the real
+workflow:
+
+1. `docker login` cannot persist a credential — `error saving credentials … User
+   interaction is not allowed. (-25308)`, the macOS keychain refusing a background service.
+   Note *saving*: the registry accepted the token. An isolated `DOCKER_CONFIG` does not
+   avoid it, measured on the runner and again in CI with the variable demonstrably set,
+   because the CLI detects `osxkeychain` whenever the helper is on `PATH`.
+2. An isolated config loses the docker CONTEXT with the store — `failed to connect to the
+   docker API at unix:///var/run/docker.sock`, on a runner whose Docker is colima at
+   `unix:///Users/mats/.colima/gh-runner/docker.sock`.
+
+**GHCR read access — MEASURED 2026-09-09, and it is DENIED.** With both runner defects
+fixed, the lane reached the registry for the first time. The step's own environment shows
+the fix in effect, and the request got through to GHCR:
+
+```
+DOCKER_CONFIG: …/_work/_temp/docker-34336090521
+DOCKER_HOST:   unix:///Users/mats/.colima/gh-runner/docker.sock
+
+Error response from daemon: unknown: failed to resolve reference
+"ghcr.io/matssun/mcp-re-verification-extraction@sha256:42318bba…":
+unexpected status from HEAD request to
+https://ghcr.io/v2/matssun/mcp-re-verification-extraction/blobs/sha256:42318bba… : 403 Forbidden
+```
+
+That is the fact. The inference, stated as one: the workflow declares `packages: read` and
+the package is private and user-owned, so a 403 on a blob HEAD is what an identity that is
+not authorized for that package receives — the same missing repository link that denies
+`write_package` on the publish workflow, now shown to deny reads as well.
+
+So the ONE setting blocks both halves of this lane, not just publishing: *Manage Actions
+access* → add `matssun/mcp-re` with **Write** (which carries read). Until then the lane
+cannot pull the image it is pinned to, and the pilot cannot be regenerated by the declared
+instrument on the runner.
+
+---
+
+## 6. The registry was a mechanism, not a requirement — 2026-09-09
+
+Everything above that names GHCR as the gate is superseded. The owner's remeasurement ruling
+is `../reviews/rulings/extraction-artifact-storage-2026-09-09.md`; the finding in one line:
+
+> No ADR, theorem, unit, assumption or trust boundary names GHCR. It appeared only in the
+> lock's `image` field, the publisher's default, two workflows and one review packet — as
+> the place the first image happened to be pushed by hand on 2026-08-10.
+
+The assurance requirement is that Lean evidence identifies the environment that produced it
+and is invalidated when that environment changes. A content digest does that wherever the
+bytes are kept, so the extraction image is now BUILT on the verification runner and
+identified by its own digest, and `[extraction_container]` is storage-agnostic:
+`artifact_digest` + `definition_digest` + `tag` + `platform`, with no registry reference.
+
+**What this does not change.** MCPRE-181's invariant is untouched: a recorded identity that
+does not follow from the declared definition still fails closed, and `identity_problems` and
+`definition_drift` needed no edit to keep doing it — neither ever read the registry fields.
+
+**What it makes explicit.** The declared pins do NOT determine the image. §2's measurement of
+the Dockerfile now has a companion: it silently resolves apt package versions, the rustup
+installer, and ~15 opam library versions — and the opam libraries build the Aeneas binary, so
+a different `visitors` or `zarith` can produce a different extracted model from identical
+Rust. `debian:bookworm-slim` and the elan installer, which were also moving, are now pinned
+by digest and by commit. The rest is why an artifact identity is RECORDED rather than
+derived, and it is written down rather than implied.
+
+**The state of the pin.** `[extraction_container]` is `unresolved`. The image it used to name
+was pushed by hand, is not a build of the declared definition, and cannot run the Lean half.
+Nothing is pinned until a build of the current definition is made on the runner and its
+identity recorded — which is what `.github/workflows/extraction-image.yml` now reports.
+
+**Sections 3–5 above are superseded on the registry question only.** Their measurements of
+the pipeline, of `alloc.fmt.format`, of the invocation form and of the login shell all stand.
+
+
+---
+
+## 7. Building it, preserved — three findings from the first artifact that ran
+
+The registry is gone and the environment is now a preserved archive. Building one and
+consuming it produced three findings, each invisible until the previous was removed —
+the same shape as §5, one layer down.
+
+### The archive is the evidence, and the identity alone did not keep it
+
+Recorded in `verification/reviews/rulings/extraction-artifact-storage-2026-09-09.md` as an
+addendum, because it corrects that ruling rather than restating it. §6's own measurement —
+apt and opam resolve versions nothing pins, and the opam libraries are linked into the
+Aeneas binary — means "rebuild and re-pin" cannot restore an environment a standing
+`lean://` claim was checked against. It mints a different instrument.
+
+So the bytes are preserved outside Docker's disposable state, content-addressed, and
+`[extraction_container]` records two digests: `artifact_digest`, the image that executes,
+and `archive_digest`, the independent check on the preserved file. Exercised rather than
+asserted: image deleted from the cache, restored from the 5.6 GiB archive in 1m44s under
+the same id, pinned Lean running from it.
+
+### The image passed every component check and could not run the lane
+
+The first build of the declared definition answered all five smoke checks of §5 — pinned
+Lean, built backend, the recorded mathlib, both binaries executing, and a tiny crate going
+Rust → LLBC → Lean. Then the pipeline ran:
+
+    /usr/bin/env: 'python3': No such file or directory
+
+`regenerate-lean` and `verify-lean` are Python and they execute INSIDE this image; Debian
+bookworm-slim ships no `python3`. Every check that passed was about a COMPONENT and none
+was about the harness that drives them, so the one thing the image could not do was the
+thing it exists to do. The definition installs one — an interpreter for the lane's entry
+points, never a prover — and a sixth smoke check asks for `tomllib` FIRST, before the
+component checks, because every one of those runs a tool the image has to be able to start.
+
+### An attestation made the identity non-deterministic
+
+Measured between one command and the next, on an unchanged cache:
+
+    extraction-image build     ->  sha256:b119609d…
+    extraction-image identity  ->  sha256:789de80d…
+
+buildx attaches a provenance attestation by default, it carries a build TIMESTAMP, and it
+lands in the manifest list — so re-exporting identical layers mints a different image id.
+The consequence is not cosmetic: the smoke checks had run against the first id and the
+artifact being preserved was the second, so what was measured was not what was kept. An
+identity that changes when nothing did cannot be an evidence identity.
+
+`--provenance=false` makes it stable — two consecutive builds from one cache both report
+`d38738c1…` — and the build workflow now calls `extraction-image build` rather than writing
+its own `docker buildx build`, because two spellings of "build this image" is exactly what
+let one of them stop attaching something the other still had.
+
+### The state of the pin
+
+`[extraction_container]` is **resolved** on `sha256:d38738c1…`, built from
+`verification/extraction/Dockerfile@c393c8b6`, all six smoke checks re-run against it by
+image id, preserved at
+
+    /opt/verification/extraction-artifacts/sha256/d38738c1….tar
+
+on the machine that built it. A host that does not hold the archive reports UNAVAILABLE and
+refuses; it never rebuilds, because a rebuild of this definition is a different instrument.

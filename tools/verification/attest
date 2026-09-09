@@ -35,7 +35,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _evidence import decide_issuance, load_bundle, load_records  # noqa: E402
+from _evidence import decide_issuance, evidence_store, load_bundle, load_records  # noqa: E402
 from _fingerprint import fingerprint_unit  # noqa: E402
 from _manifest import (  # noqa: E402
     ManifestError,
@@ -46,7 +46,11 @@ from _manifest import (  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_STORE = REPO_ROOT / ".verification" / "attestations"
-DEFAULT_EVIDENCE = REPO_ROOT / ".verification" / "evidence"
+
+#: Through the one resolver, so the issuer reads the directory the lanes wrote. A second
+#: spelling of "where the records are" is how an issuer comes to stamp a tree against an
+#: empty store — every unit refused for no evidence, in a run that produced plenty.
+DEFAULT_EVIDENCE = evidence_store()
 
 
 def main() -> int:

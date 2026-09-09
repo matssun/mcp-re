@@ -830,6 +830,51 @@ def test_control_4_removing_a_registered_premise_turns_the_gate_red():
     assert len(boundary_class_violations(doc, boundaries, scoped("unit://u"))) == 1
 
 
+def test_control_5_a_lean_unit_does_not_consume_a_rust_seam():
+    """CONTROL 5. The cap is asked of the lane that can consume the seam.
+
+    `_seams` recognises VERUS mechanisms written in Rust. A V2 unit's proof is a Lean
+    theorem over a model Charon extracted from compiled Rust, and the spec items carrying
+    those mechanisms are behind the `verify` feature — never compiled into the extraction,
+    never present in the model. Reading them as premises of a Lean theorem is control 1's
+    error one lane over: a premise invented out of a source-level overlap.
+
+    The distinction is the LANE, not the file: the same file under the Verus lane still
+    fails, which is control 2. What replaces the cap for the Lean lane is the axiom closure
+    — `#print axioms`, every name outside the declared kernel baseline registered and scoped
+    — and `test_lean_axioms.py` is where that is measured.
+    """
+    boundaries = _seam_boundary("mcp-re-core/src/time/mod.rs")
+    lean = {"unit": [{"id": "u", "class": "V2", "paths": ["mcp-re-core/src/time/mod.rs"]}]}
+    verus = {"unit": [{"id": "u", "class": "V1", "paths": ["mcp-re-core/src/time/mod.rs"]}]}
+    assert boundary_class_violations(lean, boundaries, scoped()) == []
+    assert len(boundary_class_violations(verus, boundaries, scoped())) == 1
+
+
+def test_control_6_a_lean_units_invalidation_cone_is_still_the_whole_crate():
+    """CONTROL 6. Narrowing what counts as a CROSSING must not narrow what counts as an
+    INPUT — control 3's property, restated for the lane control 5 exempts.
+
+    `charon cargo --start-from <item>` compiles the whole crate and follows the named item
+    into whatever it calls, so which files the extracted model depends on is decided inside
+    the tool and is not reported by it. The cone stays the crate, and a file that
+    contributes no premise still stales the evidence.
+    """
+    from _manifest import evidence_cone
+
+    unit = {
+        "id": "u",
+        "class": "V2",
+        "paths": ["mcp-re-core/src/time/format.rs"],
+        "extracted_symbols": ["mcp_re_core::time::format::civil_from_days"],
+        "lean_theorems": ["X.y"],
+    }
+    cone = evidence_cone(unit)
+    assert "mcp-re-core/src/crypto.rs" in cone
+    assert "mcp-re-core/src/time/mod.rs" in cone
+    assert "mcp-re-core/src/time/format.rs" in cone
+
+
 def test_the_frontier_is_seams_and_the_cone_is_files():
     """The distinction stated as an assertion rather than a comment: for a formal unit the
     cone is strictly larger than the frontier's file set, and the frontier is a subset of

@@ -63,7 +63,7 @@ from _ecosystems import parse_results  # noqa: E402
 from _ecosystems import test_argv  # noqa: E402
 from _ecosystems import unit_ecosystem  # noqa: E402
 from _ecosystems import valid_target  # noqa: E402
-from _evidence import EvidenceRecord, write_record  # noqa: E402
+from _evidence import EvidenceRecord, evidence_store, write_record  # noqa: E402
 from _fingerprint import fingerprint_unit  # noqa: E402
 from _manifest import (  # noqa: E402
     REPO_ROOT,
@@ -75,7 +75,7 @@ from _manifest import (  # noqa: E402
     test_package_for,
 )
 
-EVIDENCE_STORE = REPO_ROOT / ".verification" / "evidence"
+EVIDENCE_STORE = evidence_store()
 
 # The per-runner result syntax — including the libtest false-RED lesson that decided where
 # the status is read from — lives in `_ecosystems.parse_results`, so that one rule about

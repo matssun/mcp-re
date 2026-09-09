@@ -1,47 +1,58 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# ADR-MCPRE-059 §19 — publish the extraction container.
+# ADR-MCPRE-059 §19 — build the extraction container and report its identity.
 #
-# WHY THIS EXISTS AND WHY IT IS MANUAL. The image is built and pushed by hand on a
-# developer machine, and on 2026-08-30 that stopped being possible: the local Docker VM was
-# 100% full, so the pinned image could not be rebuilt and the Lean half of the pipeline —
-# which the same measurement showed the pinned image cannot run — could not be repaired.
-# A full disk on one laptop is not a reason for an assurance lane to stay broken.
+# WHY IT IS MANUAL. Building the image mints a new evidence identity: the definition is not
+# reproducible — it still resolves apt package versions and opam library versions at build
+# time, and the opam libraries build the Aeneas binary — so a rebuild legitimately
+# invalidates the Lean evidence that named the previous one. That is a deliberate act, not
+# something a push to a branch should perform.
 #
-# It is `workflow_dispatch` and nothing else. Publishing an image is minting a new evidence
-# identity; that is a deliberate act, not something a push to a branch should perform.
+# WHY THERE IS NO REGISTRY. The assurance requirement is that Lean evidence identifies the
+# environment that produced it and is invalidated when that environment changes. A content
+# digest does that whether the bytes sit in a local image store or a registry, the lane runs
+# on one self-hosted runner, and no proposition in this repository claims cross-machine
+# reproduction of the extracted model. Publishing would add a distribution mechanism nothing
+# asks for. Ruling:
+# verification/reviews/rulings/extraction-artifact-storage-2026-09-09.md
+#
+# WHAT IT DOES DO BESIDES BUILD. It PRESERVES the artifact, because a digest is identity
+# and not preservation: the image cannot be rebuilt — see above — so an identity over bytes
+# that live only in Docker's local store is a claim a `docker image prune` turns into a name
+# for an environment nothing can execute again. `extraction-image identity` writes the
+# archive to /opt/verification/extraction-artifacts under its own digest and reports both.
 #
 # WHAT IT DOES NOT DO. It does not update `verification/policy/toolchains.lock.toml`. The
-# digest is REPORTED — together with the `definition_digest` of the Dockerfile it was built
-# from, because those two are one fact and recording only the first is what let a pin go on
-# naming an old image through three Dockerfile changes (MCPRE-181) — and moving the pin onto
-# it is a separate reviewed commit; the lock
-# is what says which prover the repository's formal evidence was produced by, and a
+# identity is REPORTED — the artifact digest, the archive digest, and the
+# `definition_digest` of the Dockerfile it was built from, because those are one fact and
+# recording only the first is what let a pin go on naming an old image through three
+# Dockerfile changes (MCPRE-181). Moving the pin onto it is a separate reviewed commit; the
+# lock is what says which prover the repository's formal evidence was produced by, and a
 # workflow that could rewrite it would be a workflow that can change what every lean://
 # claim means.
-name: Extraction image (manual publish)
+name: Extraction image (manual build)
 
 on:
   workflow_dispatch:
-    inputs:
-      push:
-        description: "Push to GHCR after the smoke checks pass (false = build and check only)"
-        type: boolean
-        default: false
 
-# Least privilege, and no long-lived credential: `packages: write` is what pushing to the
-# repository's own GHCR namespace needs, and GITHUB_TOKEN is what supplies it.
+# Nothing leaves this runner, so nothing beyond reading the tree is needed.
 permissions:
   contents: read
-  packages: write
 
 jobs:
-  publish:
-    name: build + smoke-check + publish (linux/arm64)
-    # The consumer is an Apple Silicon self-hosted runner, so the image is linux/arm64 and
-    # the identity in the lock file names that platform. Building it on an amd64 runner
-    # under emulation would produce a different image, slowly.
-    runs-on: ubuntu-24.04-arm
+  build:
+    name: build + smoke-check + report identity (linux/arm64)
+    # BUILT WHERE IT IS CONSUMED. The image is identified by its own content digest and is
+    # never transported, so it has to exist on the machine that runs the lane. That machine
+    # is an Apple Silicon self-hosted runner, which is also why the platform is linux/arm64:
+    # an amd64 build of identical pins is a different instrument.
+    #
+    # Same-repository refs only — this bind-mounts nothing but does run a build on the
+    # release verification host, and a fork ref would be arbitrary code execution there.
+    if: >-
+      github.event_name != 'pull_request'
+      || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 300
     steps:
       - uses: actions/checkout@v7
@@ -56,17 +67,35 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
           echo "computed tag: $ref"
 
+      # Through the tool, never a hand-written `docker buildx build`. The two would be two
+      # definitions of what building this image means, and they diverged the moment one of
+      # them stopped attaching a provenance attestation: buildx's default one carries a
+      # build timestamp and lands in the manifest list, so an image built one way and
+      # re-exported the other way has a DIFFERENT id for identical layers. The smoke checks
+      # below then measure an artifact that is not the one `identity` preserves.
       - name: Build
         run: |
           set -euo pipefail
-          docker buildx build --platform linux/arm64 --load \
-            -t "${{ steps.tag.outputs.ref }}" verification/extraction
+          python3 tools/verification/extraction-image build
 
       # THE SMOKE CHECKS. An image that builds is not an image that works: the pinned image
       # on 2026-08-30 built fine and could not run Lean at all. Each check below is one of
       # the things that measurement found missing, asked directly, so that a build which
       # reintroduces the defect fails here instead of being published and discovered by a
       # lane that reports nothing.
+      # FIRST, because it is the cheapest and because every step below it runs a tool
+      # this image has to be able to start. The lane's own entry points are Python and they
+      # run INSIDE this image; the first real run of the pipeline answered
+      # `/usr/bin/env: 'python3': No such file or directory`, and every check that had
+      # passed above it was about a component rather than about the harness that drives
+      # them. `tomllib` rather than a version string: what the scripts need is the module
+      # they parse the toolchain lock with.
+      - name: Smoke — the image can run the lane's own entry points
+        run: |
+          set -euo pipefail
+          docker run --rm "${{ steps.tag.outputs.ref }}" \
+            python3 -c 'import tomllib, json, hashlib; print("harness interpreter ok")'
+
       - name: Smoke — the Lean toolchain is the PINNED one
         run: |
           set -euo pipefail
@@ -85,13 +114,13 @@ jobs:
           # Sources without a `.lake/build` is the state the measurement found: nothing
           # elaborates against a library that was never compiled.
           docker run --rm "${{ steps.tag.outputs.ref }}" \
-            bash -lc 'test -d /opt/aeneas/backends/lean/.lake/build && ls /opt/aeneas/backends/lean/.lake/build | head'
+            bash -c 'test -d /opt/aeneas/backends/lean/.lake/build && ls /opt/aeneas/backends/lean/.lake/build | head'
 
       - name: Smoke — mathlib is resolved at the revision the lock records
         run: |
           set -euo pipefail
           # The manifest is COPIED OUT and read on the runner, rather than parsed by a
-          # python one-liner inside a `bash -lc` inside a `$(...)` inside YAML. That form
+          # python one-liner inside a `bash -c` inside a `$(...)` inside YAML. That form
           # never ran: four levels of quoting, and the shell died on an unterminated string
           # before docker was ever reached. Reading both operands with
           # the same interpreter in the same place is also the honest shape — the comparison
@@ -116,7 +145,7 @@ jobs:
           # keeps writing after `head` exits takes SIGPIPE and fails the step — a check that
           # would go red for a reason having nothing to do with the image.
           docker run --rm "${{ steps.tag.outputs.ref }}" \
-            bash -lc '"$CHARON_EXE" --help >/dev/null && "$AENEAS_EXE" -help >/dev/null'
+            bash -c '"$CHARON_EXE" --help >/dev/null && "$AENEAS_EXE" -help >/dev/null'
 
       - name: Smoke — a tiny crate extracts and its Lean elaborates
         run: |
@@ -137,9 +166,24 @@ jobs:
           # `charon cargo --preset=aeneas`, and the 2026-08-30 pilot's `charon --preset=...`
           # was measured against a locally built image at a different Charon.
           #
-          # `2>&1` and an explicit exit report: the previous run failed with a bare exit 101
-          # and no captured diagnostic, which says the extraction stopped without saying why.
-          docker run --rm "${{ steps.tag.outputs.ref }}" bash -lc '
+          # `bash -c`, NEVER `bash -l`. That diagnostic, once captured, said:
+          #
+          #     Can't find `rustup`; please install it with your system package manager
+          #
+          # in an image that installs rustup. A LOGIN shell sources `/etc/profile`, and
+          # Debian's sets `PATH` unconditionally for root — so the image's own `ENV PATH`,
+          # which is the only thing putting `/opt/cargo/bin` on it, was discarded before
+          # Charon ran. `charon cargo` shells out to `rustup` to resolve the nightly it
+          # links against, and could not find it.
+          #
+          # The three checks above survived the same shell only because every path in them
+          # is absolute; this is the first step that needed the image's PATH to be intact,
+          # so it is the first one the login shell could break.
+          #
+          # `2>&1` and an explicit exit report: the run before that failed with a bare exit
+          # 101 and no captured diagnostic, which says the extraction stopped without
+          # saying why. It is what turned this from a guess into a reading.
+          docker run --rm "${{ steps.tag.outputs.ref }}" bash -c '
             set -euo pipefail
             mkdir -p /tmp/smoke/src && cd /tmp/smoke
             printf "[package]\nname = \"smoke\"\nversion = \"0.0.0\"\nedition = \"2021\"\n[lib]\npath = \"src/lib.rs\"\n" > Cargo.toml
@@ -154,35 +198,26 @@ jobs:
                     reporting the Aeneas output above as the composition evidence"; }
           '
 
-      - name: Log in to GHCR
-        if: inputs.push
+      # The identity, reported and never written. Recording it in the lock is a separate
+      # reviewed commit: the lock is what says which prover the repository's formal evidence
+      # was produced by.
+      - name: Preserve the artifact and report the identity to record
         run: |
           set -euo pipefail
-          # Piped, never an argument: a token on a command line is in the process table.
-          echo '${{ secrets.GITHUB_TOKEN }}' \
-            | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
-
-      - name: Push, and report the immutable digest
-        if: inputs.push
-        run: |
-          set -euo pipefail
-          # `extraction-image push` rebuilds with --push because only a registry manifest
-          # HAS a digest; a local build's is not the digest a runner would pull. The layers
-          # are cached from the build above.
-          python3 tools/verification/extraction-image push | tee /tmp/push.out
+          # `identity` persists the archive under /opt/verification/extraction-artifacts
+          # before it prints anything, and the order is the mechanism: what is reported is
+          # what the store holds, not what the image cache happens to hold at the moment.
+          python3 tools/verification/extraction-image identity | tee /tmp/identity.out
           {
-            echo "### Extraction image published"
+            echo "### Extraction artifact built and preserved"
             echo
             echo 'Record in `verification/policy/toolchains.lock.toml` `[extraction_container]`'
             echo 'as a SEPARATE reviewed commit — this workflow deliberately does not write it.'
             echo
+            echo 'The artifact digest, the archive digest and the definition digest are ONE'
+            echo 'evidence-identity fact and must travel together.'
+            echo
             echo '```'
-            grep -E '^(built|digest):' /tmp/push.out
+            sed -n '/^  \[extraction_container\]/,/^  definition = /p' /tmp/identity.out
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Not pushed
-        if: ${{ !inputs.push }}
-        run: |
-          echo "Build and smoke checks passed. Re-run with push=true to publish." \
-            >> "$GITHUB_STEP_SUMMARY"

@@ -8,16 +8,28 @@
 # so it cannot link on the macOS host. On aarch64-unknown-linux-gnu the same component
 # ships the .rlib files and Charon builds unmodified. We change the host, not the tool.
 #
-# Build and pin by digest — never by tag:
-#
-#   docker build --platform linux/arm64 -t mcp-re/extraction verification/extraction
-#   docker inspect --format '{{index .RepoDigests 0}}' mcp-re/extraction
-#
-# Record image + digest in verification/policy/toolchains.lock.toml [extraction_container].
-# Until that digest is recorded the Lean lane refuses to run, which is the mechanism, not
-# an unfinished step.
+# Built and identified by `tools/verification/extraction-image`, which records the image's
+# own content digest in `verification/policy/toolchains.lock.toml [extraction_container]`.
+# Until an identity is recorded the Lean lane refuses to run, which is the mechanism, not
+# an unfinished step. There is no registry in that path: see
+# verification/reviews/rulings/extraction-artifact-storage-2026-09-09.md.
 
-FROM debian:bookworm-slim
+# Pinned by DIGEST, not by tag: `bookworm-slim` is a moving pointer and Debian rebuilds it,
+# so a tag would let the base change under an unchanged definition digest.
+# WHAT THIS DEFINITION STILL RESOLVES AT BUILD TIME, and therefore what the recorded
+# ARTIFACT identity — not the declared inputs — is what pins:
+#
+#   * `apt-get install` package versions, from whatever the archive holds that day;
+#   * the rustup installer at https://sh.rustup.rs, which moves;
+#   * `opam install` library versions — and these BUILD THE AENEAS BINARY, so a different
+#     `visitors` or `zarith` can produce a different extracted model from identical Rust.
+#
+# That is why `[extraction_container].artifact_digest` records the image that was actually
+# built rather than deriving one from the pins: this definition is not reproducible, and
+# saying so is the honest form. See
+# verification/reviews/rulings/extraction-artifact-storage-2026-09-09.md.
+
+FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
 
 # Charon's rust-toolchain and the Aeneas charon-pin. These are build arguments so the
 # image records which pins it was built for; they must agree with the lock file.
@@ -32,9 +44,16 @@ ENV DEBIAN_FRONTEND=noninteractive \
     OPAMROOT=/opt/opam \
     PATH=/opt/cargo/bin:/opt/opam/default/bin:$PATH
 
+# `python3` is here because the lane's own entry points are Python and they run INSIDE this
+# image: `regenerate-lean` drives Charon and Aeneas, `verify-lean` drives lake and reads
+# `#print axioms`. Without it the container answers `/usr/bin/env: 'python3': No such file
+# or directory` — measured, on the first real run of the pipeline. It parses the toolchain
+# lock with the standard library, so the requirement is `tomllib`, which is 3.11+; bookworm
+# ships 3.11. It is an interpreter for the harness and never a prover: nothing it does
+# decides a proof obligation.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential ca-certificates curl git make m4 unzip \
-        libgmp-dev pkg-config bubblewrap rsync opam \
+        libgmp-dev pkg-config bubblewrap rsync opam python3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Rust: the nightly Charon pins, with the compiler-internal components it links against.
@@ -102,7 +121,9 @@ RUN cd /opt/aeneas && eval "$(opam env)" && make \
 # own lean-toolchain and cross-checked against the build argument — if the two disagree the
 # build fails here rather than producing an image whose Lean is not the pinned Lean.
 ARG LEAN_TOOLCHAIN=leanprover/lean4:v4.31.0
-RUN curl -fsSL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+# Pinned by COMMIT. `master` is a moving ref, so the installer could change between two
+# builds of the same declared toolchain.
+RUN curl -fsSL https://raw.githubusercontent.com/leanprover/elan/0e36a07b9bbcc5381fa6250df109f9a4f94d7bac/elan-init.sh \
         | sh -s -- -y --no-modify-path --default-toolchain none \
     && test "$(cat /opt/aeneas/backends/lean/lean-toolchain)" = "${LEAN_TOOLCHAIN}" \
     && /root/.elan/bin/elan toolchain install "${LEAN_TOOLCHAIN}" \

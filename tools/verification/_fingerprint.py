@@ -68,6 +68,19 @@ in the same file invalidates the unit — and over-approximation is the safe dir
 causes extra review, never false freshness. It narrows once there is an executable
 dependency boundary to narrow to.
 
+Encoding v8 adds the EXTRACTED-MODEL selection, for the reason v3 added the test selection
+and v5 the mutation probes: a `lean://` claim rests on a selection that could otherwise
+shrink in silence.
+
+  * `extracted_symbols`      the Rust items Charon starts from. They decide what the model
+                             CONTAINS, so narrowing them narrows every theorem proved
+                             against it while the theorem text stands still.
+  * `lean_theorems`          the theorems the prover is asked about, by the name it
+                             resolves. Deleting one is a reduction in evidence exactly as
+                             deleting a `proved_symbol` is, and the source digest would not
+                             say so — the theorem lives in `verification/lean/`, not in the
+                             unit's declared `paths`.
+
 `_fingerprint.py` is deliberately NOT in `test_lane_identity`. Its identity is carried by
 `ENCODING_VERSION`, which is what a change of MEANING here must move; hashing the file
 would additionally invalidate every unit for a comment.
@@ -102,6 +115,7 @@ from _manifest import (
     claims_test_evidence,
     test_package_for,
     expand_paths,
+    FORMAL_CLASSES,
     load_trust_boundaries,
     REPO_ROOT,
 )
@@ -109,10 +123,7 @@ from _manifest import (
 # Every attestation carrying an earlier version is UNKNOWN from the moment this moves, which
 # is the intended cost: an attestation computed over a narrower set of inputs cannot answer
 # whether one of the inputs it never saw has since changed.
-ENCODING_VERSION = 7
-
-#: The classes whose evidence comes from a whole-crate prover run.
-FORMAL_CLASSES = {"V1", "V3"}
+ENCODING_VERSION = 8
 
 #: Build inputs that decide what the verified crate IS, for every unit. A dependency swap,
 #: a lockfile bump or a toolchain channel change alters what a theorem is about without
@@ -512,6 +523,12 @@ def fingerprint_unit(
         # too, but the contract digest would not, and this is the component that says the
         # CLAIM changed rather than its implementation.
         "proved_symbols": sorted(unit.get("proved_symbols", [])),
+        # The extracted-model selection, both halves. `extracted_symbols` decides what the
+        # model contains and `lean_theorems` what is claimed about it; neither is reachable
+        # from `source_inputs`, because the theorem text lives in `verification/lean/` and
+        # the selection lives in this manifest.
+        "extracted_symbols": sorted(unit.get("extracted_symbols", [])),
+        "lean_theorems": sorted(unit.get("lean_theorems", [])),
         "exported_contracts": sorted(unit.get("exported_contracts", [])),
         "consumed_contracts": sorted(unit.get("consumed_contracts", [])),
         "proof_dependencies": proof_dependencies,
