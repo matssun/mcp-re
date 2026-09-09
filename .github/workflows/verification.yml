@@ -590,11 +590,26 @@ concurrency:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Host lane: manifests, assumptions, and Verus.
+  # ONE ORDERED JOB, and the ordering is the mechanism.
+  #
+  # The repository's required evidence cannot be produced by one process: Verus and the
+  # cargo matrix run on the macOS host, and Charon links the private rustc crates so
+  # extraction and the Lean proofs run inside the pinned container. Two JOBS could not
+  # state a verdict either — each would be asked for an aggregate over lanes it cannot
+  # execute, which is exactly how declaring the first V2 unit made the host gate
+  # structurally incapable of PASS.
+  #
+  # So: a fresh evidence directory, both execution phases writing records into it, and one
+  # composer at the end that validates and composes them. The composer executes no formal
+  # lane, and neither phase states a repository verdict.
   # ---------------------------------------------------------------------------
-  host:
-    name: verification platform (macOS host)
-    # Same-repository refs only. Both lanes execute the checked-out tree's own
+  verification:
+    # Renamed from `host` with the jobs merged: it is no longer the host half of a pair.
+    # Safe to rename because neither verification job is a required status check — the
+    # `Protect main` ruleset requires three contexts, and two of them name a Rust version
+    # this repository no longer builds with, so they can never report at all.
+    name: verification platform
+    # Same-repository refs only. This job executes the checked-out tree's own
     # `tools/verification/*` on a persistent self-hosted Mac mini that holds the pinned
     # toolchains under /opt/verification and the operator's cloud credentials, so a fork
     # pull request reaching this runner is arbitrary code execution on the release
@@ -676,30 +691,44 @@ jobs:
             ./scripts/prepare_node_matrix.sh
           fi
 
-      - name: Verification platform gate
-        run: ./tools/verification/verify --gate
+      # A FRESH DIRECTORY PER INVOCATION, created before any lane runs, and named to every
+      # step below. Composition is only sound if every record it reads was written by THIS
+      # run: a global store would let a run go green on a record an earlier one left
+      # behind. `actions/checkout` cleans ignored files, so this starts empty — and it is
+      # created explicitly anyway, because "it happened to be empty" is not a control.
+      - name: A fresh evidence directory for this run
+        id: evidence
+        run: |
+          set -euo pipefail
+          # Both forms, because two environments must name ONE directory: the host uses
+          # the absolute path, and the container sees the same bytes under /workspace.
+          # Derived from a single relative name rather than by trimming the host path —
+          # a substitution that has to guess where the workspace root is would silently
+          # point the container at a different directory, and a composer reading an empty
+          # one reports INCOMPLETE without ever saying why.
+          rel=".verification/run-${{ github.run_id }}-${{ github.run_attempt }}"
+          rm -rf "$PWD/$rel"
+          mkdir -p "$PWD/$rel"
+          echo "dir=$PWD/$rel" >> "$GITHUB_OUTPUT"
+          echo "rel=$rel" >> "$GITHUB_OUTPUT"
+          echo "MCP_RE_EVIDENCE_DIR=$PWD/$rel" >> "$GITHUB_ENV"
+          echo "evidence directory: $PWD/$rel"
 
-  # ---------------------------------------------------------------------------
-  # Extraction lane: Charon -> LLBC -> Aeneas -> Lean, inside the pinned image.
-  # ---------------------------------------------------------------------------
-  extraction:
-    name: extraction pipeline (linux container)
-    # Same-repository refs only — see the `host` job. This lane bind-mounts the workspace
-    # into a container on the release verification host, so a fork ref here would hand a PR
-    # author the runner's Docker socket reach.
-    if: >-
-      github.event_name != 'pull_request'
-      || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, macOS, ARM64]
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v7
+      # PHASE 1 — the lanes this host can execute. It states no repository verdict: it
+      # cannot run the extracted-model lanes, so any aggregate here would be a claim about
+      # measurements this process did not make.
+      - name: Execute the host lanes
+        run: ./tools/verification/verify --phase host
 
-      # Same runner, same service PATH — this lane parses the same lock file with the
-      # same standard-library tomllib, and it failed the same way.
-      - name: Runner environment preflight
-        run: ./scripts/verification_runner_preflight.sh
-
+      # -----------------------------------------------------------------------
+      # PHASE 2 — the extracted-model lanes, inside the preserved artifact.
+      #
+      # Charon is a rustc driver linking the private compiler crates and does not build on
+      # macOS, so these lanes run in the pinned container and nowhere else. They write
+      # their records into the SAME fresh evidence directory phase 1 wrote into: the
+      # workspace is bind-mounted, so `MCP_RE_EVIDENCE_DIR` names one directory that both
+      # environments can reach, and the composer at the end reads exactly that one.
+      # -----------------------------------------------------------------------
       - name: Resolve the pinned extraction identity
         id: image
         run: |
@@ -708,24 +737,20 @@ jobs:
           import tomllib
           d = tomllib.load(open("verification/policy/toolchains.lock.toml", "rb"))
           c = d.get("extraction_container", {})
+          # The ARTIFACT digest and the ARCHIVE digest: the image is not reproducible from
+          # its declared inputs, so the preserved bytes are what the pin identifies, and a
+          # digest is identity rather than preservation. Ruling:
+          # verification/reviews/rulings/extraction-artifact-storage-2026-09-09.md
           resolved = (
               c.get("state") == "resolved"
               and c.get("artifact_digest")
               and c.get("archive_digest")
           )
-          # The image is identified by its own content digest, and the archive digest names
-          # the preserved bytes that carry it. There is no registry: a content digest
-          # identifies an image whether the bytes sit in a local store or elsewhere, and
-          # nothing here claims cross-machine reproduction. But a digest is identity, not
-          # preservation — the local image cache is disposable and this image cannot be
-          # rebuilt — so the artifact is persisted under /opt and both digests are pinned.
-          # Ruling: verification/reviews/rulings/extraction-artifact-storage-2026-09-09.md
           print(f"resolved={'true' if resolved else 'false'}")
 
           # The pin says the pipeline COULD run; the manifest says whether any unit asks it
-          # for evidence. `verify-lean` reports NOT_REQUIRED while no unit is V2/V3, so
-          # running the pipeline on a pin alone makes the lane permanently red — a red
-          # nobody reads is a lane that reports nothing.
+          # for evidence. Running it on a pin alone would make the lane permanently red,
+          # and a red nobody reads is a lane that reports nothing.
           v = tomllib.load(open("verification/policy/verification.toml", "rb"))
           units = [u for u in v.get("unit", []) if u.get("class") in ("V2", "V3")]
           print(f"required={'true' if units else 'false'}")
@@ -744,12 +769,10 @@ jobs:
       # cache. `load` checks that the archive under /opt/verification exists and digests to
       # the pinned value, loads it if the image is not already present, and prints the
       # IMAGE ID — which is what every step below runs. A tag would resolve through the
-      # local cache, and the cache is exactly the thing that is not the evidence store: a
-      # prune empties it, and this image cannot be rebuilt because apt and opam resolve
-      # versions nothing pins and the opam libraries are linked into the Aeneas binary.
+      # local cache, and the cache is exactly the thing that is not the evidence store.
       #
-      # A missing artifact is UNAVAILABLE and never a rebuild — a rebuild is a different
-      # instrument under the same declared pins. A digest mismatch is a FAIL.
+      # A missing artifact refuses and never rebuilds: a rebuild of this definition is a
+      # different instrument under the same declared pins.
       - name: Load the preserved extraction artifact
         id: artifact
         if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true'
@@ -759,7 +782,7 @@ jobs:
           echo "image=$image" >> "$GITHUB_OUTPUT"
           echo "executing $image"
 
-      - name: Regenerate and check the extracted model
+      - name: Regenerate the extracted model
         if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true'
         run: |
           set -euo pipefail
@@ -767,9 +790,9 @@ jobs:
             -v "$PWD:/workspace" -w /workspace \
             -e GIT_CONFIG_COUNT=1 \
             -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/workspace \
+            -e MCP_RE_EVIDENCE_DIR='/workspace/${{ steps.evidence.outputs.rel }}' \
             '${{ steps.artifact.outputs.image }}' \
             ./tools/verification/regenerate-lean
-          ./tools/verification/check-generated
 
       # BEFORE the lane reports, and in the same container the lane will run in. Every
       # refusal is conditional on `#print axioms` reporting what the lane expects it to
@@ -787,7 +810,7 @@ jobs:
             '${{ steps.artifact.outputs.image }}' \
             ./tools/verification/verify-lean --activation-probe
 
-      - name: Lean proofs
+      - name: Execute the extraction lanes
         if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true'
         run: |
           set -euo pipefail
@@ -795,25 +818,39 @@ jobs:
             -v "$PWD:/workspace" -w /workspace \
             -e GIT_CONFIG_COUNT=1 \
             -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/workspace \
+            -e MCP_RE_EVIDENCE_DIR='/workspace/${{ steps.evidence.outputs.rel }}' \
             '${{ steps.artifact.outputs.image }}' \
-            ./tools/verification/verify-lean
+            ./tools/verification/verify --phase extraction
 
-      - name: Extraction lane unpinned
+      - name: Extraction lanes unpinned
         if: steps.image.outputs.resolved != 'true'
         run: |
           echo "extraction_container is unresolved in toolchains.lock.toml."
-          echo "The Lean lane cannot produce evidence until an artifact identity and"
-          echo "its preserved archive are recorded. This is the mechanism, not an"
-          echo "unfinished step"
-          echo "(ADR-MCPRE-059 §2, §19)."
+          echo "The Lean lane cannot produce evidence until an artifact identity and its"
+          echo "preserved archive are recorded. This is the mechanism, not an unfinished"
+          echo "step (ADR-MCPRE-059 §2, §19). The composer below will report the absence"
+          echo "as a missing record, which is what INCOMPLETE means."
 
-      # NOT_REQUIRED is a distinct outcome from SKIPPED: the pipeline is pinned and could
-      # run, and no unit is asking it for evidence. `tools/verification/verify-lean`
-      # reports the same verdict, so the lane stays consistent whether it is invoked here
-      # or by hand.
-      - name: Extraction lane not required
-        if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required != 'true'
-        run: |
-          echo "No unit in verification/policy/verification.toml is declared V2 or V3."
-          echo "The extraction pipeline is pinned but no unit asks it for evidence:"
-          echo "NOT_REQUIRED (ADR-MCPRE-059 §8, §16)."
+      # -----------------------------------------------------------------------
+      # THE COMPOSER — the one place a repository verdict is stated.
+      #
+      # It executes the hygiene lanes and no formal one, and derives its requirement set
+      # from the MANIFEST rather than from what ran: a lane that silently did not execute
+      # leaves no record, and a missing record is INCOMPLETE. Every record must name this
+      # unit, this lane, this fingerprint — and, for the extracted-model lanes, the
+      # artifact the lock pins.
+      # -----------------------------------------------------------------------
+      - name: Compose the repository verdict
+        run: ./tools/verification/verify --aggregate --gate
+
+      # The records this verdict was composed from, kept whatever the verdict was. A
+      # failing run's evidence is the thing a reader needs most, and it lives in a
+      # directory the next run will not reuse.
+      - name: The records the verdict was composed from
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.evidence.outputs.dir }}
+          if-no-files-found: warn
+          retention-days: 14

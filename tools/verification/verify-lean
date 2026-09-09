@@ -40,7 +40,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _evidence import EvidenceRecord, write_record  # noqa: E402
+from _evidence import EvidenceRecord, evidence_store, write_record  # noqa: E402
 from _extraction_identity import definition_drift  # noqa: E402
 from _fingerprint import fingerprint_unit  # noqa: E402
 from _lean_axioms import (  # noqa: E402
@@ -72,7 +72,7 @@ from _manifest import (  # noqa: E402
 )
 
 REQUIRED = {"charon", "aeneas", "lean", "aeneas_lean_backend", "extraction_container"}
-EVIDENCE_STORE = REPO_ROOT / ".verification" / "evidence"
+EVIDENCE_STORE = evidence_store()
 
 def kernel_baseline(toolchains: dict) -> tuple[frozenset[str], str | None]:
     """The declared kernel axioms, or the reason there are none to compare against."""

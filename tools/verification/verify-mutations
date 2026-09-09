@@ -47,7 +47,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _evidence import EvidenceRecord, write_record  # noqa: E402
+from _evidence import EvidenceRecord, evidence_store, write_record  # noqa: E402
 from _fingerprint import fingerprint_unit  # noqa: E402
 from _manifest import (  # noqa: E402
     REPO_ROOT,
@@ -58,7 +58,7 @@ from _manifest import (  # noqa: E402
     test_package_for,
 )
 
-EVIDENCE_STORE = REPO_ROOT / ".verification" / "evidence"
+EVIDENCE_STORE = evidence_store()
 
 REGISTRY = REPO_ROOT / "verification" / "policy" / "mutation-probes.toml"
 
