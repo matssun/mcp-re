@@ -112,21 +112,27 @@ LANES = [
     ("lean", "verify-lean", True),
 ]
 
-#: Which lanes each PHASE may execute — the split the two environments force.
+#: Which FORMAL lanes each execution phase may run — the split the two environments force.
 #:
 #: Charon links the private rustc crates and does not build on macOS, so the extracted-model
 #: lanes run inside the pinned container; Verus and the cargo matrix are not in that
 #: container, so they run on the host. Neither phase can run the other's lanes, which is why
 #: neither may state the repository's aggregate: `--aggregate` does that, over records.
 #:
-#: TOTAL over `LANES` by construction, and checked below. A lane in no phase would be a lane
-#: nothing executes — and because the aggregate derives its requirements from the MANIFEST
-#: rather than from what ran, that shows up as a missing record rather than as silence.
+#: HYGIENE LANES ARE IN NEITHER, and belong to the composer. They are whole-repository
+#: propositions with no per-unit evidence to compose, they are host-capable, and running
+#: them in a phase as well would be measuring the same thing twice and recording it nowhere.
+#:
+#: TOTAL over the formal lanes by construction, and checked below. A formal lane in no phase
+#: would be a lane nothing executes — and because the aggregate derives its requirements
+#: from the MANIFEST rather than from what ran, that shows up as a missing record.
 PHASES = {
-    "host": {"assumptions", "test", "mutation", "verus"},
+    "host": {"test", "mutation", "verus"},
     "extraction": {"generated-model", "lean"},
 }
-assert set().union(*PHASES.values()) == {name for name, _s, _f in LANES}
+assert set().union(*PHASES.values()) == {
+    name for name, _s, is_formal in LANES if is_formal
+}
 assert not (PHASES["host"] & PHASES["extraction"])
 
 
