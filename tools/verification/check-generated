@@ -44,6 +44,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _lean_model import (  # noqa: E402
     AENEAS_LEAN,
     extraction_environment,
+    selection,
     read_stamp,
     stamp_defects,
 )
@@ -98,25 +99,6 @@ def committed_drift() -> list[str]:
     return [line for line in proc.stdout.splitlines() if line.strip()]
 
 
-def selection(doc: dict) -> dict[str, dict]:
-    """The extraction selection the manifest declares, in the stamp's own shape."""
-    return {
-        unit["id"]: {
-            "crate": sorted(
-                {
-                    path.split("/", 1)[0]
-                    for path in unit["paths"]
-                    if "/" in path
-                    and (REPO_ROOT / path.split("/", 1)[0] / "Cargo.toml").is_file()
-                }
-            )[0],
-            "start_from": sorted(str(s) for s in unit["extracted_symbols"]),
-        }
-        for unit in doc.get("unit", [])
-        if unit["class"] in {"V2", "V3"}
-    }
-
-
 def main() -> int:
     try:
         toolchains = load_toolchains()
@@ -169,19 +151,27 @@ def main() -> int:
         print("VERDICT: NOT_REQUIRED")
         return 0
 
-    # The same environment question `verify-lean` asks, and before the same check. Only the
-    # extraction container can produce the model, so on any other host the drift comparison
-    # has no input rather than a failing one.
-    if not extraction_environment():
+    # A STAMP, NOT A TOOLCHAIN, is what this half needs. Comparing bytes requires neither
+    # Charon nor Lean, and the extraction lane relies on that: the container regenerates,
+    # and this runs on the host immediately afterwards over the same mounted workspace.
+    #
+    # So the environment question is asked only when there is nothing to compare. With no
+    # stamp, a host that COULD have regenerated and did not is a failure — and one that
+    # never could is a missing measurement, which is a different verdict with a different
+    # remedy. Telling a macOS host to "run regenerate-lean inside the pinned extraction
+    # container" is an instruction it cannot follow.
+    stamp = read_stamp()
+    if stamp is None and not extraction_environment():
         print(
-            f"UNAVAILABLE: the Aeneas Lean library is not at {AENEAS_LEAN}, so this is not "
-            "the extraction environment and nothing here can regenerate the model.",
+            f"UNAVAILABLE: no regeneration stamp, and the Aeneas Lean library is not at "
+            f"{AENEAS_LEAN}, so this is not the extraction environment and nothing here "
+            "could have produced one.",
             file=sys.stderr,
         )
         print("VERDICT: UNAVAILABLE")
         return 1
 
-    defects = stamp_defects(read_stamp(), toolchains, wanted)
+    defects = stamp_defects(stamp, toolchains, wanted)
     if defects:
         for defect in defects:
             print(f"FAIL: {defect}", file=sys.stderr)

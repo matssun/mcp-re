@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import tomllib
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -48,6 +50,66 @@ IDENTITY_PINS = ("charon", "aeneas", "lean", "aeneas_lean_backend", "extraction_
 #: pipeline lives in the image pinned as `[extraction_container]` — and the hosts that run
 #: `verify --gate` are macOS hosts that will never have it.
 AENEAS_LEAN = Path("/opt/aeneas/backends/lean")
+
+
+def lakefile_roots(srcDir: str | None = None) -> list[str]:
+    """The Lean module roots the package builds, read from the lakefile that builds them.
+
+    `srcDir` narrows to one library — `"generated"` asks which modules the EXTRACTION is
+    expected to produce. Derived rather than listed anywhere else: the build definition is
+    the authority on what elaborates, and a second list would drift.
+    """
+    doc = tomllib.loads((LEAN_DIR / "lakefile.toml").read_text(encoding="utf-8"))
+    roots: list[str] = []
+    for lib in doc.get("lean_lib", []):
+        if srcDir is not None and lib.get("srcDir") != srcDir:
+            continue
+        roots += [str(name) for name in lib.get("roots", [lib["name"]])]
+    return sorted(set(roots))
+
+
+def unit_crate(unit: dict) -> str | None:
+    """The single project this unit's paths live in, or None.
+
+    Derived from the declared paths for the reason the Verus lane derives its own: a unit
+    whose paths move to another crate must not keep extracting the crate it left.
+    """
+    crates = {
+        path.split("/", 1)[0]
+        for path in unit["paths"]
+        if "/" in path and (REPO_ROOT / path.split("/", 1)[0] / "Cargo.toml").is_file()
+    }
+    return crates.pop() if len(crates) == 1 else None
+
+
+def selection(doc: dict) -> dict[str, dict]:
+    """The extraction selection the manifest declares — WHAT is extracted, from WHERE.
+
+    ONE implementation, because it is one fact with three readers: `regenerate-lean` writes
+    it into the stamp, and `verify-lean` and `check-generated` compare the stamp against it.
+    Three copies would agree until the first edit, and the way they would then disagree is
+    the quiet one — a stamp that matches a reader's idea of the selection while the writer
+    extracted something else.
+    """
+    out: dict[str, dict] = {}
+    for unit in doc.get("unit", []):
+        if unit["class"] not in {"V2", "V3"}:
+            continue
+        crate = unit_crate(unit)
+        out[unit["id"]] = {
+            "crate": crate,
+            "start_from": sorted(str(s) for s in unit["extracted_symbols"]),
+        }
+    return out
+
+
+def produced_roots(names: Iterable[str]) -> list[str]:
+    """The Lean module roots an extraction actually wrote, from its file list.
+
+    Aeneas emits `<Root>.lean` and, when it splits, a `<Root>/` directory beside it — so the
+    first path segment with `.lean` removed is the root either way.
+    """
+    return sorted({name.split("/", 1)[0].removesuffix(".lean") for name in names})
 
 
 def extraction_environment() -> bool:

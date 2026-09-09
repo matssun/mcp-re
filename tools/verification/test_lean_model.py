@@ -289,6 +289,111 @@ def test_a_stamp_of_another_schema_reads_as_no_stamp(subject: Tree):
         _lean_model.STAMP = saved
 
 
+# ---------------------------------------------------------------------------
+# The extraction and the build definition must agree about which modules exist
+# ---------------------------------------------------------------------------
+#
+# Two places hold one fact: Aeneas decides the module name from the LLBC file's basename —
+# measured, `m.llbc` gives `M.lean` and `mcp_re_core.llbc` gives `McpReCore.lean` — and
+# `lakefile.toml` declares which roots the package builds. They drift silently: a module the
+# package does not build elaborates for nobody, and the lane would then report a theorem it
+# could not find rather than the reason it could not find it.
+
+
+def test_the_produced_roots_are_read_off_whatever_aeneas_wrote():
+    assert _lean_model.produced_roots({"McpReCore.lean": "x"}) == ["McpReCore"]
+    # A split model: a root file plus a directory beside it. Same root, once.
+    assert _lean_model.produced_roots(
+        {"McpReCore.lean": "x", "McpReCore/Types.lean": "y", "McpReCore/Funs.lean": "z"}
+    ) == ["McpReCore"]
+    assert _lean_model.produced_roots({}) == []
+
+
+def test_a_model_named_after_the_unit_would_not_be_the_declared_root():
+    """The defect this control exists for.
+
+    Naming the LLBC after the unit id rather than the crate produces a module the lakefile
+    does not build. It looks like a successful extraction — files appear, the tool exits 0 —
+    and nothing downstream elaborates against it.
+    """
+    written = {"Core.time_civil_from_days.lean": "x"}
+    assert _lean_model.produced_roots(written) != ["McpReCore"]
+
+
+def test_the_lakefile_is_the_authority_on_which_roots_are_expected():
+    """Read from the build definition, and narrowed to the library being asked about."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        lean = Path(tmp)
+        (lean / "lakefile.toml").write_text(
+            'name = "mcpre"\n'
+            "[[lean_lib]]\n"
+            'name = "Generated"\n'
+            'srcDir = "generated"\n'
+            'roots = ["McpReCore"]\n'
+            "[[lean_lib]]\n"
+            'name = "Theorems"\n'
+            'srcDir = "theorems"\n'
+            'roots = ["CivilFromDays"]\n',
+            encoding="utf-8",
+        )
+        saved = _lean_model.LEAN_DIR
+        _lean_model.LEAN_DIR = lean
+        try:
+            assert _lean_model.lakefile_roots() == ["CivilFromDays", "McpReCore"]
+            assert _lean_model.lakefile_roots("generated") == ["McpReCore"]
+            assert _lean_model.lakefile_roots("theorems") == ["CivilFromDays"]
+        finally:
+            _lean_model.LEAN_DIR = saved
+
+
+def test_the_live_lakefile_declares_what_the_live_extraction_produces():
+    """The two live values, compared — the check the lane makes, made here over the tree."""
+    assert _lean_model.lakefile_roots("generated") == ["McpReCore"]
+
+
+# ---------------------------------------------------------------------------
+# One selection, three readers
+# ---------------------------------------------------------------------------
+
+
+def test_the_selection_is_derived_once_for_every_reader():
+    """`regenerate-lean` writes it into the stamp; `verify-lean` and `check-generated`
+    compare the stamp against it. Three copies would agree until the first edit, and the way
+    they would then disagree is the quiet one — a stamp that matches a reader's idea of the
+    selection while the writer extracted something else.
+    """
+    doc = {
+        "unit": [
+            {
+                "id": "core.time_civil_from_days",
+                "class": "V2",
+                "paths": ["mcp-re-core/src/time/format.rs"],
+                "extracted_symbols": ["mcp_re_core::time::format::civil_from_days"],
+            },
+            # V0 units are not extracted from and must not appear.
+            {"id": "other", "class": "V0", "paths": ["mcp-re-core/src/lib.rs"]},
+        ]
+    }
+    assert _lean_model.selection(doc) == {
+        "core.time_civil_from_days": {
+            "crate": "mcp-re-core",
+            "start_from": ["mcp_re_core::time::format::civil_from_days"],
+        }
+    }
+
+
+def test_a_unit_spanning_two_crates_has_no_single_crate_to_extract_from():
+    unit = {
+        "id": "u",
+        "class": "V2",
+        "paths": ["mcp-re-core/src/lib.rs", "mcp-re-http-profile/src/lib.rs"],
+        "extracted_symbols": ["x"],
+    }
+    assert _lean_model.unit_crate(unit) is None
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

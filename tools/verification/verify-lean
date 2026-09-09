@@ -36,7 +36,6 @@ hard-coded baseline here would keep reading as correct across a Lean bump that c
 from __future__ import annotations
 
 import sys
-import tomllib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -56,7 +55,9 @@ from _lean_axioms import (  # noqa: E402
 from _lean_model import (  # noqa: E402
     AENEAS_LEAN,
     extraction_environment,
+    lakefile_roots,
     read_stamp,
+    selection,
     stamp_defects,
 )
 from _lean_probe import run as run_activation_probe  # noqa: E402
@@ -72,42 +73,6 @@ from _manifest import (  # noqa: E402
 
 REQUIRED = {"charon", "aeneas", "lean", "aeneas_lean_backend", "extraction_container"}
 EVIDENCE_STORE = REPO_ROOT / ".verification" / "evidence"
-
-def selection(doc: dict) -> dict[str, dict]:
-    """The extraction selection the manifest declares, in the stamp's own shape."""
-    return {
-        unit["id"]: {
-            "crate": sorted(
-                {
-                    path.split("/", 1)[0]
-                    for path in unit["paths"]
-                    if "/" in path
-                    and (REPO_ROOT / path.split("/", 1)[0] / "Cargo.toml").is_file()
-                }
-            )[0],
-            "start_from": sorted(str(s) for s in unit["extracted_symbols"]),
-        }
-        for unit in doc.get("unit", [])
-        if unit["class"] in {"V2", "V3"}
-    }
-
-
-def package_roots() -> list[str]:
-    """Every Lean module the package builds, read from the lakefile that builds them.
-
-    Derived, never listed here or in the manifest. What the query file must import is
-    "whatever this package elaborates", and that is the build definition's fact. A second
-    list would drift, and the direction it drifts is a query that imports less than the
-    package builds — so a theorem in an unimported module reads as unresolvable and the
-    lane fails for the wrong reason, or worse, a renamed library silently narrows what is
-    asked about.
-    """
-    doc = tomllib.loads((LEAN_DIR / "lakefile.toml").read_text(encoding="utf-8"))
-    roots: list[str] = []
-    for lib in doc.get("lean_lib", []):
-        roots += [str(name) for name in lib.get("roots", [lib["name"]])]
-    return sorted(set(roots))
-
 
 def kernel_baseline(toolchains: dict) -> tuple[frozenset[str], str | None]:
     """The declared kernel axioms, or the reason there are none to compare against."""
@@ -227,7 +192,7 @@ def activation_probe() -> int:
     if code != 0:
         print(output.strip()[-4000:], file=sys.stderr)
         return refuse(f"lake build exited {code}; the probe has nothing to elaborate into")
-    defects = run_activation_probe(package_roots(), baseline)
+    defects = run_activation_probe(lakefile_roots(), baseline)
     if defects:
         for defect in defects:
             print(f"FAIL: {defect}", file=sys.stderr)
@@ -345,7 +310,7 @@ def main() -> int:
         return refuse(f"lake build exited {code}; nothing elaborated, so nothing is proved")
 
     theorems = sorted({str(name) for unit in units for name in unit["lean_theorems"]})
-    reports = axiom_reports(package_roots(), theorems)
+    reports = axiom_reports(lakefile_roots(), theorems)
 
     failures = 0
     for unit in units:

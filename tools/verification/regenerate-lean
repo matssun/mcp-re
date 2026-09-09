@@ -48,6 +48,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _extraction_identity import definition_drift  # noqa: E402
 from _lean_model import (  # noqa: E402
     GENERATED,
+    lakefile_roots,
+    produced_roots,
+    selection,
+    unit_crate,
     Stamp,
     current_written,
     digest,
@@ -63,20 +67,6 @@ from _manifest import (  # noqa: E402
 )
 
 REQUIRED = {"charon", "aeneas", "lean", "aeneas_lean_backend", "extraction_container"}
-
-
-def unit_crate(unit: dict) -> str | None:
-    """The single Cargo package this unit's paths live in, or None.
-
-    Derived from the declared paths for the reason the Verus lane derives its own: a unit
-    whose paths move to another crate must not keep extracting the crate it left.
-    """
-    crates = {
-        path.split("/", 1)[0]
-        for path in unit["paths"]
-        if "/" in path and (REPO_ROOT / path.split("/", 1)[0] / "Cargo.toml").is_file()
-    }
-    return crates.pop() if len(crates) == 1 else None
 
 
 def crate_sources(crate: str) -> dict[str, str]:
@@ -115,8 +105,18 @@ def run(argv: list[str], cwd: Path, what: str) -> None:
 
 
 def extract(unit: dict, crate: str, charon: str, aeneas: str, into: Path) -> None:
-    """One unit's Rust → LLBC → Lean, into `into`."""
-    llbc = into.parent / f"{unit['id']}.llbc"
+    """One unit's Rust → LLBC → Lean, into `into`.
+
+    THE LLBC'S BASENAME DECIDES THE LEAN MODULE NAME. Measured: `m.llbc` produces `M.lean`
+    and `mcp_re_core.llbc` produces `McpReCore.lean`. So it is named after the CRATE, which
+    is what `lakefile.toml`'s `Generated` roots declare — naming it after the unit id
+    produced a module the package does not build, and a model nothing elaborates against is
+    a model no theorem is about.
+
+    Two units extracting the same crate would write the same file, which is why the caller
+    compares what was produced against those declared roots rather than trusting this.
+    """
+    llbc = into.parent / f"{crate.replace('-', '_')}.llbc"
     argv = [charon, "cargo", "--preset=aeneas"]
     for symbol in unit["extracted_symbols"]:
         argv += ["--start-from", str(symbol)]
@@ -200,7 +200,6 @@ def main() -> int:
         )
         return 1
 
-    selection: dict[str, dict] = {}
     sources: dict[str, str] = {}
     with tempfile.TemporaryDirectory() as tmp:
         staged = Path(tmp) / "lean"
@@ -214,27 +213,49 @@ def main() -> int:
                     file=sys.stderr,
                 )
                 return 1
-            selection[unit["id"]] = {
-                "crate": crate,
-                "start_from": sorted(str(s) for s in unit["extracted_symbols"]),
-            }
             sources.update(crate_sources(crate))
             extract(unit, crate, charon, aeneas, staged)
+
+        # EVERY check runs against the STAGED output, before the repository's model is
+        # touched. A regeneration that fails must not have destroyed the model it was going
+        # to replace: the previous one is the only thing a reader still has, and a tree left
+        # holding a rejected extraction is worse than one holding a stale accepted model.
+        names = [
+            str(path.relative_to(staged))
+            for path in sorted(staged.rglob("*"))
+            if path.is_file()
+        ]
+        if not names:
+            print(
+                "FAIL: the pipeline reported success and produced no model. A regeneration "
+                "that writes nothing is not a regeneration.",
+                file=sys.stderr,
+            )
+            return 1
+
+        # The extraction and the build definition must agree about which modules exist. They
+        # are two places holding one fact — Aeneas decides it from the llbc basename,
+        # `lakefile.toml` declares it — and the direction they drift in is silent: a module
+        # the package does not build elaborates for nobody, and `verify-lean` would then
+        # report a theorem it could not find rather than the reason it could not find it.
+        produced = produced_roots(names)
+        declared = lakefile_roots("generated")
+        if produced != declared:
+            print(
+                f"FAIL: the extraction produced {produced or '[]'} and verification/lean/"
+                f"lakefile.toml's generated library declares roots {declared}. A module the "
+                "package does not build is a model nothing elaborates against.",
+                file=sys.stderr,
+            )
+            return 1
+
         replace_generated(staged)
 
     written = current_written()
-    if not written:
-        print(
-            "FAIL: the pipeline reported success and produced no model. A regeneration "
-            "that writes nothing is not a regeneration.",
-            file=sys.stderr,
-        )
-        return 1
-
     write_stamp(
         Stamp(
             identity=extraction_identity(toolchains),
-            selection=selection,
+            selection=selection(doc),
             sources=sources,
             written=written,
         )

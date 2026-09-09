@@ -753,12 +753,21 @@ jobs:
           # reviewed toolchain or fails.
           docker pull --platform linux/arm64 "${{ steps.image.outputs.ref }}"
 
+      # `safe.directory` through the ENVIRONMENT rather than a config file: git refuses a
+      # repository whose owner differs from the caller, and a bind-mounted workspace read by
+      # root inside a container is exactly where that arises. The lane reads git for two
+      # things — the tracked-file set every fingerprint is computed over, and the
+      # `git status` that IS the generated model's drift comparison — so a refusal there
+      # would surface as a fingerprint or a drift failure rather than as a permissions one.
+      # `GIT_CONFIG_*` sets it for the process only, leaving no state behind on the runner.
       - name: Regenerate and check the extracted model
         if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true'
         run: |
           set -euo pipefail
           docker run --rm --platform linux/arm64 \
             -v "$PWD:/workspace" -w /workspace \
+            -e GIT_CONFIG_COUNT=1 \
+            -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/workspace \
             "${{ steps.image.outputs.ref }}" \
             ./tools/verification/regenerate-lean
           ./tools/verification/check-generated
@@ -779,6 +788,8 @@ jobs:
           set -euo pipefail
           docker run --rm --platform linux/arm64 \
             -v "$PWD:/workspace" -w /workspace \
+            -e GIT_CONFIG_COUNT=1 \
+            -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/workspace \
             "${{ steps.image.outputs.ref }}" \
             ./tools/verification/verify-lean --activation-probe
 
@@ -788,6 +799,8 @@ jobs:
           set -euo pipefail
           docker run --rm --platform linux/arm64 \
             -v "$PWD:/workspace" -w /workspace \
+            -e GIT_CONFIG_COUNT=1 \
+            -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/workspace \
             "${{ steps.image.outputs.ref }}" \
             ./tools/verification/verify-lean
 
