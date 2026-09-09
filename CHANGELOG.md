@@ -12,6 +12,15 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Fixed — a bazel convenience symlink into `/private/tmp` was tracked
+
+`bazel-wt-capsule` entered the tree as mode 120000 pointing at a scratch worktree's Bazel
+execroot. `.gitignore` listed the convenience symlinks by name, and Bazel names one of them
+after the workspace directory, so a build run from a worktree produced a name the list did
+not predict. It dangles elsewhere — which is why CI stayed green — and crashes
+`conformance_claims_gate.py` on any machine where something exists at the path it names. The
+ignore is now a glob.
+
 ### Added — a SECOND mechanism leaf, and the first exchange with a Transparency Service somebody else operates
 
 The externalization census recorded the live interoperability claim as blocked on "an
