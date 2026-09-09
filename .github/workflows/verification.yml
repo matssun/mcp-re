@@ -708,15 +708,19 @@ jobs:
           import tomllib
           d = tomllib.load(open("verification/policy/toolchains.lock.toml", "rb"))
           c = d.get("extraction_container", {})
-          resolved = c.get("state") == "resolved" and c.get("artifact_digest")
-          # The image is identified by its own content digest, and by the tag the declared
-          # inputs compute to. There is no registry: a content digest identifies these bytes
-          # whether they sit in a local image store or elsewhere, and nothing in this
-          # repository claims cross-machine reproduction of the model. Ruling:
-          # verification/reviews/rulings/extraction-artifact-storage-2026-09-09.md
+          resolved = (
+              c.get("state") == "resolved"
+              and c.get("artifact_digest")
+              and c.get("archive_digest")
+          )
+          # The image is identified by its own content digest, and the archive digest names
+          # the preserved bytes that carry it. There is no registry: a content digest
+          # identifies an image whether the bytes sit in a local store or elsewhere, and
+          # nothing here claims cross-machine reproduction. But a digest is identity, not
+          # preservation — the local image cache is disposable and this image cannot be
+          # rebuilt — so the artifact is persisted under /opt and both digests are pinned.
+          # Ruling: verification/reviews/rulings/extraction-artifact-storage-2026-09-09.md
           print(f"resolved={'true' if resolved else 'false'}")
-          print(f"artifact={c.get('artifact_digest','')}" if resolved else "artifact=")
-          print(f"tag={c.get('tag','')}" if resolved else "tag=")
 
           # The pin says the pipeline COULD run; the manifest says whether any unit asks it
           # for evidence. `verify-lean` reports NOT_REQUIRED while no unit is V2/V3, so
@@ -736,31 +740,24 @@ jobs:
           # cannot run Linux containers natively, so this is a real host prerequisite.
           docker info --format 'server {{.ServerVersion}} {{.OSType}}/{{.Architecture}}'
 
-      # The image is BUILT here, not fetched. The identity check below is what makes that
-      # safe: a local build that produced different bytes than the lock records is refused,
-      # so "built here" never means "whatever this machine happened to produce".
+      # The environment is LOADED FROM THE PRESERVED ARTIFACT, not taken from Docker's
+      # cache. `load` checks that the archive under /opt/verification exists and digests to
+      # the pinned value, loads it if the image is not already present, and prints the
+      # IMAGE ID — which is what every step below runs. A tag would resolve through the
+      # local cache, and the cache is exactly the thing that is not the evidence store: a
+      # prune empties it, and this image cannot be rebuilt because apt and opam resolve
+      # versions nothing pins and the opam libraries are linked into the Aeneas binary.
       #
-      # UNAVAILABLE rather than FAIL when the bytes are absent or different. An extraction
-      # environment that is not present is a missing measurement, not a failed one, and the
-      # aggregate distinguishes the two.
-      - name: The pinned extraction environment is present, and is the pinned one
+      # A missing artifact is UNAVAILABLE and never a rebuild — a rebuild is a different
+      # instrument under the same declared pins. A digest mismatch is a FAIL.
+      - name: Load the preserved extraction artifact
+        id: artifact
         if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true'
         run: |
           set -euo pipefail
-          ref='${{ steps.image.outputs.tag }}'
-          want='${{ steps.image.outputs.artifact }}'
-          if ! got=$(docker image inspect "$ref" --format '{{.Id}}' 2>/dev/null); then
-            echo "UNAVAILABLE: no image tagged ${ref} on this runner."
-            echo "Build it with: tools/verification/extraction-image identity"
-            exit 1
-          fi
-          echo "recorded: ${want}"
-          echo "present:  ${got}"
-          [ "$got" = "$want" ] || {
-            echo "FAIL: the image tagged ${ref} is not the one the lock records."
-            echo "A different build of the same declared pins is a different instrument:"
-            echo "this definition still resolves apt and opam versions at build time."
-            exit 1; }
+          image="$(./tools/verification/extraction-image load)"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "executing $image"
 
       - name: Regenerate and check the extracted model
         if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true'
@@ -770,7 +767,7 @@ jobs:
             -v "$PWD:/workspace" -w /workspace \
             -e GIT_CONFIG_COUNT=1 \
             -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/workspace \
-            '${{ steps.image.outputs.tag }}' \
+            '${{ steps.artifact.outputs.image }}' \
             ./tools/verification/regenerate-lean
           ./tools/verification/check-generated
 
@@ -787,7 +784,7 @@ jobs:
             -v "$PWD:/workspace" -w /workspace \
             -e GIT_CONFIG_COUNT=1 \
             -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/workspace \
-            '${{ steps.image.outputs.tag }}' \
+            '${{ steps.artifact.outputs.image }}' \
             ./tools/verification/verify-lean --activation-probe
 
       - name: Lean proofs
@@ -798,15 +795,16 @@ jobs:
             -v "$PWD:/workspace" -w /workspace \
             -e GIT_CONFIG_COUNT=1 \
             -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/workspace \
-            '${{ steps.image.outputs.tag }}' \
+            '${{ steps.artifact.outputs.image }}' \
             ./tools/verification/verify-lean
 
       - name: Extraction lane unpinned
         if: steps.image.outputs.resolved != 'true'
         run: |
           echo "extraction_container is unresolved in toolchains.lock.toml."
-          echo "The Lean lane cannot produce evidence until an artifact identity is"
-          echo "recorded. This is the mechanism, not an unfinished step"
+          echo "The Lean lane cannot produce evidence until an artifact identity and"
+          echo "its preserved archive are recorded. This is the mechanism, not an"
+          echo "unfinished step"
           echo "(ADR-MCPRE-059 §2, §19)."
 
       # NOT_REQUIRED is a distinct outcome from SKIPPED: the pipeline is pinned and could

@@ -16,6 +16,7 @@ import tomllib
 from collections.abc import Iterable
 from pathlib import Path
 
+from _extraction_artifact import record_problems as artifact_record_problems
 from _extraction_identity import identity_problems
 from _seams import files_with_seams
 from _ecosystems import CARGO
@@ -979,6 +980,12 @@ def load_toolchains() -> dict:
     # consumer at once — the gate, the Lean lane, the graph — instead of one script
     # remembering to ask.
     for problem in identity_problems(doc):
+        raise ManifestError(problem)
+    # The same class of question one level down: not *which* environment the pin names, but
+    # whether the record says which preserved BYTES carry it. A lock that omits that cannot
+    # be checked against the store at all, so it is refused here rather than at whichever
+    # consumer happens to look first.
+    for problem in artifact_record_problems(doc):
         raise ManifestError(problem)
     return doc
 

@@ -16,13 +16,20 @@
 # asks for. Ruling:
 # verification/reviews/rulings/extraction-artifact-storage-2026-09-09.md
 #
+# WHAT IT DOES DO BESIDES BUILD. It PRESERVES the artifact, because a digest is identity
+# and not preservation: the image cannot be rebuilt — see above — so an identity over bytes
+# that live only in Docker's local store is a claim a `docker image prune` turns into a name
+# for an environment nothing can execute again. `extraction-image identity` writes the
+# archive to /opt/verification/extraction-artifacts under its own digest and reports both.
+#
 # WHAT IT DOES NOT DO. It does not update `verification/policy/toolchains.lock.toml`. The
-# identity is REPORTED — the artifact digest together with the `definition_digest` of the
-# Dockerfile it was built from, because those two are one fact and recording only the first
-# is what let a pin go on naming an old image through three Dockerfile changes (MCPRE-181).
-# Moving the pin onto it is a separate reviewed commit; the lock is what says which prover
-# the repository's formal evidence was produced by, and a workflow that could rewrite it
-# would be a workflow that can change what every lean:// claim means.
+# identity is REPORTED — the artifact digest, the archive digest, and the
+# `definition_digest` of the Dockerfile it was built from, because those are one fact and
+# recording only the first is what let a pin go on naming an old image through three
+# Dockerfile changes (MCPRE-181). Moving the pin onto it is a separate reviewed commit; the
+# lock is what says which prover the repository's formal evidence was produced by, and a
+# workflow that could rewrite it would be a workflow that can change what every lean://
+# claim means.
 name: Extraction image (manual build)
 
 on:
@@ -176,18 +183,21 @@ jobs:
       # The identity, reported and never written. Recording it in the lock is a separate
       # reviewed commit: the lock is what says which prover the repository's formal evidence
       # was produced by.
-      - name: Report the identity to record
+      - name: Preserve the artifact and report the identity to record
         run: |
           set -euo pipefail
+          # `identity` persists the archive under /opt/verification/extraction-artifacts
+          # before it prints anything, and the order is the mechanism: what is reported is
+          # what the store holds, not what the image cache happens to hold at the moment.
           python3 tools/verification/extraction-image identity | tee /tmp/identity.out
           {
-            echo "### Extraction image built"
+            echo "### Extraction artifact built and preserved"
             echo
             echo 'Record in `verification/policy/toolchains.lock.toml` `[extraction_container]`'
             echo 'as a SEPARATE reviewed commit — this workflow deliberately does not write it.'
             echo
-            echo 'The artifact digest and the definition digest are ONE evidence-identity'
-            echo 'fact and must travel together.'
+            echo 'The artifact digest, the archive digest and the definition digest are ONE'
+            echo 'evidence-identity fact and must travel together.'
             echo
             echo '```'
             sed -n '/^  \[extraction_container\]/,/^  definition = /p' /tmp/identity.out

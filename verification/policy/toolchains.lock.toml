@@ -147,13 +147,25 @@ note = """
 WHAT A BUILD MUST RECORD, and why each field exists.
 
   artifact_digest   the image's own content digest, as `tools/verification/extraction-image
-                    identity` reports it. REQUIRED: the declared pins do not determine the
-                    image. This definition still resolves apt package versions and opam
-                    library versions at build time, and the opam libraries build the Aeneas
-                    binary — so a different `visitors` or `zarith` can produce a different
-                    extracted model from identical Rust. An identity derived from the pins
-                    alone would say which toolchain was INTENDED and nothing about which one
-                    ran.
+                    identity` reports it — what EXECUTES. REQUIRED: the declared pins do not
+                    determine the image. This definition still resolves apt package versions
+                    and opam library versions at build time, and the opam libraries build the
+                    Aeneas binary — so a different `visitors` or `zarith` can produce a
+                    different extracted model from identical Rust. An identity derived from
+                    the pins alone would say which toolchain was INTENDED and nothing about
+                    which one ran.
+
+  archive_digest    SHA-256 over the PRESERVED ARCHIVE's exact bytes, under
+                    /opt/verification/extraction-artifacts/sha256/<artifact_digest>.tar.
+                    REQUIRED for the reason above, one step further: because the image
+                    cannot be rebuilt, an identity over bytes that live only in Docker's
+                    local store is a claim a `docker image prune` turns into a name for an
+                    environment nothing can execute again — still identifiable, no longer
+                    reproducible. The archive is the copy that survives, and this digest is
+                    the independent check that the file in the store is that image's
+                    preserved form. `tools/verification/extraction-image load` refuses on a
+                    mismatch and reports UNAVAILABLE when the file is absent; it never
+                    rebuilds, because a rebuild is a different instrument.
 
   definition_digest the Dockerfile the image was built from. MCPRE-181: the pin went on
                     naming an image built from a definition that had changed three times,
@@ -169,13 +181,22 @@ WHAT A BUILD MUST RECORD, and why each field exists.
 
   platform          an amd64 build of identical pins is a different instrument.
 
-WHERE THE BYTES ARE KEPT IS NOT PART OF THE IDENTITY. A content digest identifies an image
-whether it sits in a local image store or a registry, and the assurance requirement is that
-Lean evidence names the environment that produced it and is invalidated when that
-environment changes — not that the environment is published anywhere. The extraction image
-is a formal-verification toolchain artifact; it is never a deployable MCP-RE product image,
-and its digest is an artifact identity rather than a release or deployment claim. Ruling:
+WHERE THE BYTES ARE KEPT IS NOT PART OF THE IDENTITY, BUT THAT THEY ARE KEPT IS PART OF THE
+EVIDENCE. A content digest identifies an image whether it sits in a local image store or a
+registry, and the assurance requirement is that Lean evidence names the environment that
+produced it and is invalidated when that environment changes — not that the environment is
+published anywhere. What that leaves open is preservation: a digest is identity, and identity
+over deleted bytes is a claim nobody can re-run. So the artifact is persisted outside
+Docker's disposable state under `archive_digest`, and no registry is introduced. The
+extraction image is a formal-verification toolchain artifact; it is never a deployable
+MCP-RE product image, and its digest is an artifact identity rather than a release or
+deployment claim. Ruling:
 verification/reviews/rulings/extraction-artifact-storage-2026-09-09.md.
+
+WHAT IS NOT CLAIMED: that this artifact can be reconstructed from the Dockerfile
+indefinitely. The unpinned apt and opam inputs above are a measured limitation. What a
+preserved artifact establishes is the honest, weaker thing — this theorem was checked
+against THIS exact preserved extraction artifact.
 """
 
 [charon]

@@ -160,6 +160,7 @@ stage_static() {
     && python3 tools/verification/test_views.py \
     && python3 tools/verification/test_evidence_bundle.py \
     && python3 tools/verification/test_extraction_identity.py \
+    && python3 tools/verification/test_extraction_artifact.py \
     && python3 tools/verification/test_lean_axioms.py \
     && python3 tools/verification/test_lean_model.py \
     `# In NEITHER aggregate until the v0.17 Slice B sweep: mutation-probe.yml names it and` \

@@ -140,3 +140,68 @@ verifies locally on the verification runner.
 Escalate and revisit only if a proposition appears that genuinely requires a centrally
 published artifact, in which case the answer is the existing Artifact Registry rather than a
 second control plane.
+
+---
+
+## Addendum, same day — a digest is identity, not preservation
+
+The ruling above is accepted and unchanged. One consequence of §5 was stated as a durability
+cost and is corrected here, because it was larger than the sentence admitted.
+
+§5 said: *"If that machine's image store is cleared, the lane reports that it cannot run
+rather than reporting a pass — the fail-closed direction — and the remedy is to rebuild and
+re-pin, which invalidates the affected evidence exactly as any other toolchain change does."*
+
+**Rebuilding is not a remedy here, and §2 is why.** The same measurement that forces an
+artifact identity — apt and opam resolve versions nothing pins, and the opam libraries are
+linked into the Aeneas binary — means a rebuild produces a *different* instrument under
+identical declared pins. So "rebuild and re-pin" does not restore the environment a standing
+`lean://` claim was checked against. It replaces it, and every claim resting on the old one
+is invalidated by an ordinary `docker image prune`.
+
+That leaves an established claim **identifiable but no longer reproducible**: the lock names
+an environment, and nothing on earth can execute it again.
+
+### The correction
+
+The exact artifact bytes are preserved outside Docker's disposable state, in a
+content-addressed directory on the verification runner:
+
+```
+/opt/verification/extraction-artifacts/sha256/<artifact_digest>.tar
+```
+
+`[extraction_container]` records two digests, because they answer two questions:
+
+| field | question |
+|---|---|
+| `artifact_digest` | which image EXECUTES, once the archive is loaded |
+| `archive_digest` | whether the file in the store IS that image's preserved form |
+
+`tools/verification/extraction-image load` is what every consumer runs. It checks that the
+archive exists and digests to the recorded value, loads it if the image is not already
+present, and prints an **image id** — never a tag, because a tag resolves through the local
+cache, and the local cache is the thing that is not the evidence store.
+
+Fail-closed, with the two non-passing outcomes kept apart:
+
+* **absent** → UNAVAILABLE. The lane cannot run here. It never rebuilds and never falls back
+  to a same-tag image;
+* **digest mismatch** → FAIL. A file sitting under an identity it does not have is
+  substituted or truncated, and nothing may execute from it.
+
+### What this does NOT do
+
+It does not reopen the registry question — the bytes stay on one machine and moving them is
+an operator act (`scp`), exactly as §3 concluded. And it does not claim reproducibility. The
+residual unpinned apt/opam closure remains a measured limitation, deliberately not pinned as
+part of #541. The claim a preserved artifact supports is the honest, weaker one:
+
+> this theorem was checked against THIS exact preserved extraction artifact
+
+and not
+
+> this exact artifact can be reconstructed indefinitely from the Dockerfile.
+
+Full build reproducibility is future assurance work. Docker's cache is an execution
+optimisation; it was never an evidence store.
