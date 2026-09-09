@@ -55,7 +55,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _evidence import EvidenceRecord, write_record  # noqa: E402
+from _evidence import EvidenceRecord, evidence_store, write_record  # noqa: E402
 from _fingerprint import fingerprint_unit  # noqa: E402
 from _manifest import (  # noqa: E402
     REPO_ROOT,
@@ -77,7 +77,7 @@ LANE_TARGET_DIR = REPO_ROOT / "target" / "verification-verus"
 #: Where this lane deposits what it measured. The record is written for a FAILED unit too:
 #: a failure at a known fingerprint is evidence, and suppressing it would leave the last
 #: passing attestation standing while the proof is broken.
-EVIDENCE_STORE = REPO_ROOT / ".verification" / "evidence"
+EVIDENCE_STORE = evidence_store()
 
 
 def unit_target(unit: dict) -> tuple[str | None, list[str]]:

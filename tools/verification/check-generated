@@ -48,9 +48,12 @@ from _lean_model import (  # noqa: E402
     read_stamp,
     stamp_defects,
 )
+from _evidence import EvidenceRecord, evidence_store, write_record  # noqa: E402
+from _fingerprint import fingerprint_unit  # noqa: E402
 from _manifest import (  # noqa: E402
     REPO_ROOT,
     ManifestError,
+    load_assumptions,
     load_toolchains,
     load_verification,
     unresolved_pins,
@@ -97,6 +100,52 @@ def committed_drift() -> list[str]:
     if proc.returncode != 0:
         return [f"git could not report on the generated tree: {proc.stderr.strip()}"]
     return [line for line in proc.stdout.splitlines() if line.strip()]
+
+
+def record_units(doc: dict, toolchains: dict, result: str, detail: str) -> None:
+    """Write one record per unit whose model this lane just judged.
+
+    A FORMAL lane's verdict is per-unit evidence, and the aggregate composes per-unit
+    records — so a lane that only printed a line would be a lane whose result nothing can
+    compose. `fail` is recorded exactly as `pass` is: "the model was stale at this
+    fingerprint" is the fact the graph must propagate, and refusing to write it would leave
+    an earlier passing record in place for the aggregate to read.
+    """
+    try:
+        assumptions = load_assumptions()
+    except ManifestError:
+        # The manifests were already loaded successfully by the caller; if the assumption
+        # registry is unreadable HERE the fingerprint cannot be computed, and a record with
+        # no fingerprint is worse than none — the aggregate would have to guess.
+        return
+    store = evidence_store()
+    for unit in doc.get("unit", []):
+        if unit["class"] not in {"V2", "V3"}:
+            continue
+        write_record(
+            store,
+            EvidenceRecord(
+                unit_id=unit["id"],
+                lane="generated-model",
+                result=result,
+                fingerprint=fingerprint_unit(unit, doc, toolchains, assumptions)[
+                    "fingerprint"
+                ],
+                detail=detail,
+                prover={
+                    "extraction_artifact": str(
+                        toolchains.get("extraction_container", {}).get(
+                            "artifact_digest", ""
+                        )
+                    ),
+                    "extraction_archive": str(
+                        toolchains.get("extraction_container", {}).get(
+                            "archive_digest", ""
+                        )
+                    ),
+                },
+            ),
+        )
 
 
 def main() -> int:
@@ -175,6 +224,8 @@ def main() -> int:
     if defects:
         for defect in defects:
             print(f"FAIL: {defect}", file=sys.stderr)
+        record_units(doc, toolchains, "fail", "; ".join(defects)[:400])
+        print("VERDICT: FAIL")
         return 1
 
     drifted = committed_drift()
@@ -191,12 +242,18 @@ def main() -> int:
             "edit it.",
             file=sys.stderr,
         )
+        record_units(
+            doc, toolchains, "fail", "the regenerated model differs from what is committed"
+        )
+        print("VERDICT: FAIL")
         return 1
 
-    print(
-        f"check-generated: {len(present)} generated file(s) reproduce from the pinned "
-        f"pipeline over {len(wanted)} unit(s)"
+    detail = (
+        f"{len(present)} generated file(s) reproduce from the pinned pipeline over "
+        f"{len(wanted)} unit(s)"
     )
+    record_units(doc, toolchains, "pass", detail)
+    print(f"check-generated: {detail}")
     print("VERDICT: PASS")
     return 0
 

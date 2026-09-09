@@ -57,7 +57,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _evidence import write_bundle  # noqa: E402
+from _compose import compose, contradictions, requirements  # noqa: E402
+from _evidence import evidence_store, write_bundle  # noqa: E402
 from _theorems import load_theorems, unsupported_theorems  # noqa: E402
 from _manifest import (  # noqa: E402
     LANE_VERDICTS,
@@ -110,6 +111,23 @@ LANES = [
     ("verus", "verify-verus", True),
     ("lean", "verify-lean", True),
 ]
+
+#: Which lanes each PHASE may execute — the split the two environments force.
+#:
+#: Charon links the private rustc crates and does not build on macOS, so the extracted-model
+#: lanes run inside the pinned container; Verus and the cargo matrix are not in that
+#: container, so they run on the host. Neither phase can run the other's lanes, which is why
+#: neither may state the repository's aggregate: `--aggregate` does that, over records.
+#:
+#: TOTAL over `LANES` by construction, and checked below. A lane in no phase would be a lane
+#: nothing executes — and because the aggregate derives its requirements from the MANIFEST
+#: rather than from what ran, that shows up as a missing record rather than as silence.
+PHASES = {
+    "host": {"assumptions", "test", "mutation", "verus"},
+    "extraction": {"generated-model", "lean"},
+}
+assert set().union(*PHASES.values()) == {name for name, _s, _f in LANES}
+assert not (PHASES["host"] & PHASES["extraction"])
 
 
 def gate_exit_code(aggregate: str, gate: bool) -> int:
@@ -264,12 +282,99 @@ def main() -> int:
     """Run, then record. The bundle write is here and nowhere else."""
     outcome = _run()
     write_bundle(
-        REPO_ROOT / ".verification" / "evidence",
+        evidence_store(),
         outcome.aggregate,
         outcome.lanes,
         outcome.policy_revision(),
     )
     return outcome.exit_code
+
+
+
+def _phase_contradictions(verdicts: dict[str, str]) -> list[str]:
+    """Lanes in this phase that declared NOT_REQUIRED while the manifest requires them.
+
+    Asked HERE because this is where the declared verdict exists: a lane reporting
+    NOT_REQUIRED writes no record, so the composer downstream sees an absence and cannot
+    tell it from a lane that simply did not run. The two call for different actions.
+    """
+    try:
+        return contradictions(
+            verdicts,
+            requirements(load_verification(), load_toolchains(), load_assumptions()),
+        )
+    except ManifestError:
+        # Manifest validation already ran and passed before any lane executed; if the
+        # manifests have become unreadable since, that is not this function's finding to
+        # report and inventing one would obscure it.
+        return []
+
+
+def _phase_outcome(phase: str, verdicts: dict[str, str]) -> RunOutcome:
+    """What one execution phase reports: whether its own lanes ran, and nothing more.
+
+    NO REPOSITORY AGGREGATE. This process cannot execute the other phase's lanes, so any
+    verdict it stated about the repository would be a claim about measurements it did not
+    make. What it owns is narrower and checkable: every lane it was asked to run either
+    produced evidence or said why not.
+
+    A lane that FAILED here stops the phase, because the record it wrote says `fail` and a
+    later phase writing over it would be repairing a result. `UNAVAILABLE` also stops it:
+    this phase was chosen because it CAN run these lanes, so a lane reporting that it
+    cannot is an environment defect, not a missing measurement to be composed around.
+    """
+    broken = sorted(
+        name for name, verdict in verdicts.items() if verdict in {"FAIL", "UNAVAILABLE", "SKIPPED"}
+    )
+    contradicted = _phase_contradictions(verdicts)
+    print("\n" + "=" * 70)
+    for note in contradicted:
+        print(f"FAIL: {note}")
+    if broken or contradicted:
+        print(f"PHASE {phase}: FAIL — {', '.join(broken) or 'a lane contradicted the manifest'}")
+        print("This phase's lanes are the ones it can run; one of them did not.")
+    else:
+        print(f"PHASE {phase}: OK — {len(verdicts)} lane(s) executed")
+        print("No repository verdict here: `verify --aggregate` composes one.")
+    print("=" * 70)
+    # INCOMPLETE, always, and deliberately: a phase never produces a repository verdict, so
+    # the bundle it leaves must not read as one. `attest` refuses on INCOMPLETE, which is
+    # the correct posture between the phases of a run.
+    return RunOutcome(1 if (broken or contradicted) else 0, "INCOMPLETE", verdicts)
+
+
+def _composed_outcome(hygiene: dict[str, str], gate: bool) -> RunOutcome:
+    """The repository verdict, composed from the evidence records this run produced."""
+    try:
+        doc = load_verification()
+        toolchains = load_toolchains()
+        assumptions = load_assumptions()
+    except ManifestError as exc:
+        print(f"\nFAIL: {exc}", file=sys.stderr)
+        return RunOutcome(1, "FAIL", {"manifests": "FAIL"})
+
+    store = evidence_store()
+    aggregate, verdicts, refusals = compose(store, doc, toolchains, assumptions, hygiene)
+
+    print(f"\n[compose] over {store}")
+    for lane in sorted(set(verdicts) - set(hygiene)):
+        print(f"    [{lane}] {verdicts[lane]}")
+    for refusal in refusals:
+        print(f"    REFUSED {refusal}")
+
+    print("\n" + "=" * 70)
+    if aggregate == "FAIL":
+        print("VERIFICATION: FAIL — a record is not what it claims, or a lane recorded a failure")
+    elif aggregate == "INCOMPLETE":
+        print("VERIFICATION: INCOMPLETE — a required lane has no acceptable current record")
+        print("A missing or stale record is not a pass. Run the phase that produces it.")
+    else:
+        print("VERIFICATION: PASS")
+        print(f"Composed from records in {store}; every required lane has one, at this fingerprint.")
+    if not gate:
+        print("(report-only — pass --gate to make this authoritative)")
+    print("=" * 70)
+    return RunOutcome(gate_exit_code(aggregate, gate), aggregate, verdicts)
 
 
 def _run() -> RunOutcome:
@@ -284,7 +389,29 @@ def _run() -> RunOutcome:
         action="store_true",
         help="validate the manifests only, then stop",
     )
+    parser.add_argument(
+        "--phase",
+        choices=sorted(PHASES),
+        help=(
+            "execute only the lanes this environment can run, and state NO repository "
+            "aggregate. `--aggregate` composes the records afterwards."
+        ),
+    )
+    parser.add_argument(
+        "--aggregate",
+        action="store_true",
+        help=(
+            "state the repository verdict by validating and composing the evidence "
+            "records in the evidence directory. Executes the hygiene lanes; executes no "
+            "formal lane."
+        ),
+    )
     args = parser.parse_args()
+    if args.phase and args.aggregate:
+        # They are different authorities. A process that executed lanes AND composed the
+        # result would be the instrument certifying itself, which is the property the whole
+        # split exists to remove.
+        parser.error("--phase executes; --aggregate composes. Run them separately.")
 
     print("=" * 70)
     print("ADR-MCPRE-059 verification platform")
@@ -304,8 +431,20 @@ def _run() -> RunOutcome:
         # rather than to inherit a verdict from a run that no longer describes the tree.
         return RunOutcome(0, "INCOMPLETE", {"manifests": "PASS"})
 
+    selected = PHASES[args.phase] if args.phase else {name for name, _s, _f in LANES}
+    if args.aggregate:
+        # The composer executes the HYGIENE lanes and no formal one. They are whole-
+        # repository propositions with no per-unit evidence to compose, they are
+        # host-capable, and they enter the algebra as they always have: able to withhold a
+        # pass, never to carry one. Composing a formal lane's evidence and executing a
+        # formal lane in the same process is exactly what `--phase` and `--aggregate` are
+        # kept apart to prevent.
+        selected = {name for name, _s, is_formal in LANES if not is_formal}
+
     verdicts: dict[str, str] = {}
     for name, script, _is_formal in LANES:
+        if name not in selected:
+            continue
         completed = subprocess.run(
             [sys.executable, str(HERE / script)],
             capture_output=True,
@@ -323,6 +462,12 @@ def _run() -> RunOutcome:
         print(f"\n[{name}] {verdict}")
         for line in output.splitlines():
             print(f"    {line}")
+
+    if args.phase:
+        return _phase_outcome(args.phase, verdicts)
+
+    if args.aggregate:
+        return _composed_outcome(verdicts, args.gate)
 
     formal = {name for name, _script, is_formal in LANES if is_formal}
     aggregate = aggregate_verdict(
