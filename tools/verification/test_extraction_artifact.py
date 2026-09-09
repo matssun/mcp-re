@@ -27,6 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from _load_tool import load_tool  # noqa: E402
 from _extraction_artifact import (  # noqa: E402
     DEFAULT_STORE,
     STORE_ENV,
@@ -227,6 +228,30 @@ def test_the_loader_refuses_a_lock_that_records_no_preserved_bytes():
             raise AssertionError("load_toolchains returned a lock it should have refused")
     finally:
         _manifest.artifact_record_problems = original
+
+
+def test_verify_says_nothing_on_stdout():
+    """`load` prints an image id a caller substitutes into `docker run`, and it calls
+    `verify` first — so a report on stdout is read as part of that id. Measured, not feared:
+    the first real run of the lane died with `docker: invalid reference format`."""
+    import contextlib
+    import io
+
+    tool = load_tool("extraction-image")
+    for doc in (
+        resolved(f"sha256:{'2' * 64}"),          # ABSENT, on an empty store
+        {"extraction_container": {"state": "unresolved"}},
+    ):
+        out, err = io.StringIO(), io.StringIO()
+        root = Path(tempfile.mkdtemp(prefix="extraction-store-quiet-"))
+        os.environ[STORE_ENV] = str(root)
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                tool._verify(doc)
+        finally:
+            os.environ.pop(STORE_ENV, None)
+        assert out.getvalue() == "", f"verify wrote to stdout: {out.getvalue()!r}"
+        assert err.getvalue() != "", "verify said nothing at all, on either stream"
 
 
 def test_the_preserved_bytes_are_part_of_the_model_stamp_identity():

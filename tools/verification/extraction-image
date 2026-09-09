@@ -133,6 +133,14 @@ def _preserve(ref: str, image: str) -> str:
 
 
 def _verify(toolchains: dict) -> int:
+    """Whether the pinned artifact is here and intact. EVERY line of it goes to stderr.
+
+    `load` calls this, and `load`'s stdout is an image id a caller substitutes straight into
+    `docker run`. A report on stdout would be read as part of that id — measured: it produced
+    `docker: invalid reference format` on the first real run of the lane. So the rule is not
+    "be tidy", it is that this tool has exactly one thing to say on stdout and every other
+    line belongs on stderr.
+    """
     problems = record_problems(toolchains)
     for problem in problems:
         print(f"FAIL: {problem}", file=sys.stderr)
@@ -140,12 +148,16 @@ def _verify(toolchains: dict) -> int:
         return 1
     state = preservation(toolchains)
     if state is None:
-        print("extraction-image: the container pin is unresolved; nothing to preserve yet")
+        print(
+            "extraction-image: the container pin is unresolved; nothing to preserve yet",
+            file=sys.stderr,
+        )
         return 0
     if state.usable:
-        print(f"PRESENT: {state.path}")
-        print(f"  image:   {toolchains['extraction_container']['artifact_digest']}")
-        print(f"  archive: {toolchains['extraction_container']['archive_digest']}")
+        print(f"PRESENT: {state.path}", file=sys.stderr)
+        entry = toolchains["extraction_container"]
+        print(f"  image:   {entry['artifact_digest']}", file=sys.stderr)
+        print(f"  archive: {entry['archive_digest']}", file=sys.stderr)
         return 0
     # ABSENT and MISMATCH both exit non-zero here because this action is an operator asking
     # a direct question. The LANE keeps them apart, because there UNAVAILABLE and FAIL are
@@ -177,6 +189,7 @@ def _load(toolchains: dict) -> int:
             file=sys.stderr,
         )
         return 1
+    # THE ONE LINE THIS TOOL PUTS ON STDOUT.
     print(image)
     return 0
 
