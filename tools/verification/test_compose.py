@@ -311,24 +311,29 @@ def test_a_failing_hygiene_lane_outranks_complete_evidence():
 # ---------------------------------------------------------------------------
 
 
-def test_every_lane_belongs_to_exactly_one_phase():
-    """A lane in no phase is a lane nothing executes; a lane in both is two authorities for
-    one measurement. `verify` asserts the same thing over its own table."""
+def test_every_formal_lane_belongs_to_exactly_one_phase():
+    """A formal lane in no phase is a lane nothing executes; one in both is two authorities
+    for a single measurement. `verify` asserts the same over its own table."""
     verify = load_tool("verify")
-    names = {name for name, _script, _formal in verify.LANES}
-    assert set().union(*verify.PHASES.values()) == names
+    formal = {name for name, _script, is_formal in verify.LANES if is_formal}
+    assert set().union(*verify.PHASES.values()) == formal
     assert not (verify.PHASES["host"] & verify.PHASES["extraction"])
+    # And `_compose` must agree about which environment each one belongs to: two answers
+    # would let the composer demand an artifact identity of a lane no container ran.
+    assert verify.PHASES["host"] == HOST_LANES
+    assert verify.PHASES["extraction"] == EXTRACTION_LANES
     assert HOST_LANES | EXTRACTION_LANES == set(FORMAL_LANES)
 
 
 def test_the_aggregate_executes_no_formal_lane():
-    """The composer must not be able to synthesize the evidence it composes."""
+    """The composer must not be able to synthesize the evidence it composes — and the
+    hygiene lanes it does execute must be exactly the ones no phase runs."""
     verify = load_tool("verify")
     formal = {name for name, _s, is_formal in verify.LANES if is_formal}
     hygiene = {name for name, _s, is_formal in verify.LANES if not is_formal}
-    assert formal & verify.PHASES["host"] or formal & verify.PHASES["extraction"]
-    # What `--aggregate` selects, spelled the way `_run` spells it.
     assert hygiene & formal == set()
+    assert hygiene & set().union(*verify.PHASES.values()) == set()
+    assert hygiene, "a control over an empty hygiene set proves nothing"
 
 
 def test_phase_and_aggregate_are_refused_together():
