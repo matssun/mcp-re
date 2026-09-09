@@ -176,6 +176,10 @@ def extraction_identity(toolchains: dict) -> dict[str, str]:
         for field in (
             "commit",
             "artifact_digest",
+            # The PRESERVED bytes, beside the image identity they carry. A stamp naming
+            # only the image would stay valid across a store whose file had been replaced,
+            # and the archive is the only copy this repository can still execute.
+            "archive_digest",
             "definition_digest",
             "toolchain",
             "package_revision",

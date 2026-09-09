@@ -394,6 +394,7 @@ jobs:
           python3 tools/verification/test_views.py
           python3 tools/verification/test_evidence_bundle.py
           python3 tools/verification/test_extraction_identity.py
+          python3 tools/verification/test_extraction_artifact.py
           python3 tools/verification/test_lean_axioms.py
           python3 tools/verification/test_lean_model.py
           # Added by the v0.17 Slice B sweep. It was in NEITHER local_gate.sh nor any

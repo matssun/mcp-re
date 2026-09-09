@@ -51,7 +51,9 @@ WORKFLOW_DIR = Path(".github") / "workflows"
 
 #: The runner label set that identifies the machine this contract is about. A GitHub-hosted
 #: Linux runner has no keychain and a working default socket, so `docker login` there is
-#: correct and must not be flagged — `extraction-image.yml` publishes from one.
+#: correct and must not be flagged; no workflow here does one any more, and the pattern
+#: stays scoped so that adding a GitHub-hosted job that legitimately logs in does not
+#: trip a contract about this Mac.
 SELF_HOSTED = re.compile(r"runs-on:\s*\[\s*self-hosted[^\]]*\]")
 
 _JOB = re.compile(r"^  (?P<name>[A-Za-z0-9_-]+):\s*$")

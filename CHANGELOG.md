@@ -12,6 +12,46 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Added — the extraction artifact is PRESERVED, not merely identified (#541)
+
+Removing the registry left the pinned environment living in Docker's local image store, and
+that store is disposable: `docker image prune`, a reset, or a full disk empties it. The
+storage ruling called that a durability cost with "rebuild and re-pin" as the remedy. It is
+not one — the same measurement that forces an artifact identity says why. `apt` and `opam`
+resolve versions nothing pins, and the opam libraries are linked into the Aeneas binary, so
+a rebuild is a **different instrument** under identical declared pins. An identity over
+cache-only bytes is therefore a claim that stays *identifiable* and stops being
+*reproducible* the moment the cache is cleared: the lock names an environment nothing can
+execute again.
+
+The exact bytes are now persisted outside Docker's state, content-addressed, on the
+verification runner:
+
+```
+/opt/verification/extraction-artifacts/sha256/<artifact_digest>.tar
+```
+
+`[extraction_container]` records two digests because they answer two questions —
+`artifact_digest` is the image that EXECUTES once the archive is loaded, `archive_digest` is
+the independent check that the file in the store is that image's preserved form. One digest
+could not do both: the archive is a container format around the image, and checking a file by
+loading it would mean loading several gigabytes to discover they were the wrong ones.
+
+**Every consumer runs `extraction-image load`, and it hands back an image id.** Never a tag: a
+tag resolves through the local cache, and the local cache is precisely the thing that is not
+the evidence store. The two non-passing outcomes stay apart — an absent archive is
+**UNAVAILABLE** (this host cannot run the lane, and it never rebuilds, because a rebuild is a
+different instrument), a digest mismatch is **FAIL** (a file under an identity it does not
+have). `load_toolchains` refuses a resolved entry that records no preserved bytes, so every
+consumer inherits the refusal rather than one script remembering to ask.
+
+**No registry is reintroduced.** The bytes live on one machine and moving them is an operator
+act, exactly as the ruling concluded. **And no reproducibility is claimed:** the residual
+unpinned apt/opam closure remains a measured limitation, deliberately not pinned here. What a
+preserved artifact supports is the honest, weaker statement — *this theorem was checked
+against THIS exact preserved extraction artifact* — and not *this artifact can be
+reconstructed indefinitely from the Dockerfile*. Full build reproducibility is future
+assurance work.
 ### Added — THM-0128: the first theorem proved from extracted production Rust (#541)
 
 ```lean

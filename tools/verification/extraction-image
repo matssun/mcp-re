@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Build and identify the ADR-MCPRE-059 extraction container.
+"""Build, identify, preserve, and load the ADR-MCPRE-059 extraction container.
 
 The image's identity is a function of the TOOLCHAIN IT CONTAINS, never of the product
 release in VERSION. Both directions of that choice matter:
@@ -16,7 +16,9 @@ checkouts with the same pins compute the same tag; changing any pin changes it.
 
   tools/verification/extraction-image tag       # the tag the declared inputs compute to
   tools/verification/extraction-image build     # build it (arm64)
-  tools/verification/extraction-image identity  # build + print the lock entry to record
+  tools/verification/extraction-image identity  # build + preserve + print the lock entry
+  tools/verification/extraction-image verify    # the pinned artifact is here, and intact
+  tools/verification/extraction-image load      # ensure it is loaded; print the image id
 
 THERE IS NO REGISTRY IN THIS PATH. The assurance requirement is that Lean evidence names
 the environment that produced it and is invalidated when that environment changes, and a
@@ -24,6 +26,14 @@ content digest does that whether the bytes sit in a local image store or a regis
 lane runs on one self-hosted runner and no proposition claims cross-machine reproduction,
 so publishing would add a distribution mechanism nothing asks for. Ruling:
 verification/reviews/rulings/extraction-artifact-storage-2026-09-09.md.
+
+BUT A DIGEST IS IDENTITY, NOT PRESERVATION. The local image store is disposable, and this
+image cannot be rebuilt — apt and opam resolve versions nothing pins, and the opam
+libraries are linked into the Aeneas binary, so a rebuild is a different instrument. An
+identity over bytes a prune can delete leaves a claim that is still identifiable and no
+longer reproducible. So `identity` also PERSISTS the artifact outside Docker's state,
+under its own digest, and `load` is what every consumer runs: it checks the preserved bytes
+and hands back an image id, never a tag. See `_extraction_artifact`.
 
 The platform is linux/arm64 because the consumer is a self-hosted Apple Silicon runner.
 An amd64 build of the same pins is a DIFFERENT image with a different digest, and the lock
@@ -33,13 +43,20 @@ file records one platform for that reason.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from _extraction_artifact import (  # noqa: E402
+    artifact_path,
+    file_digest,
+    preservation,
+    record_problems,
+    store_root,
+)
 from _extraction_identity import content_tag  # noqa: E402
 from _extraction_identity import definition_digest  # noqa: E402
 from _manifest import ManifestError, load_toolchains  # noqa: E402
@@ -60,22 +77,124 @@ DEFAULT_IMAGE = "mcp-re-verification-extraction"
 # pin came to name an image built from a Dockerfile the tree had replaced.
 
 
-def _run(cmd: list[str]) -> str:
+def _run(cmd: list[str], *, capture: bool = True) -> str:
     """Run a command, failing loudly on non-zero.
 
     Status is taken from the process itself, never from a shell pipeline: a pipeline
-    reports its last stage, so a failed build can exit 0 and be published as a good one.
+    reports its last stage, so a failed build can exit 0 and be recorded as a good one.
+
+    `capture=False` streams instead, for the two commands that take minutes and whose
+    progress is the only sign they are alive.
     """
-    completed = subprocess.run(cmd, text=True, capture_output=True, check=False)
-    sys.stderr.write(completed.stderr)
+    completed = subprocess.run(cmd, text=True, capture_output=capture, check=False)
+    if capture:
+        sys.stderr.write(completed.stderr)
     if completed.returncode != 0:
         raise SystemExit(f"FAIL: {' '.join(cmd[:3])}… exited {completed.returncode}")
-    return completed.stdout.strip()
+    return (completed.stdout or "").strip()
+
+
+def _preserve(ref: str, image: str) -> str:
+    """Persist this image's exact bytes outside Docker's state; return the archive digest.
+
+    Written through a staging file in the store's own directory and renamed into place,
+    never at the content-addressed path directly. A digest-named file must be either absent
+    or complete: an interrupted save at the final path would leave a truncated artifact
+    under a valid identity, which is the one state the addressing exists to make impossible.
+    """
+    root = store_root()
+    (root / "sha256").mkdir(parents=True, exist_ok=True)
+    final = artifact_path(image, root)
+    with tempfile.NamedTemporaryFile(
+        dir=root / "sha256", prefix=".incoming-", suffix=".tar", delete=False
+    ) as handle:
+        staging = Path(handle.name)
+    try:
+        print(f"preserving {ref} ({image[:19]}…) → {final}")
+        _run(["docker", "save", "-o", str(staging), ref], capture=False)
+        digest = file_digest(staging)
+        if final.exists():
+            # Content-addressed by the IMAGE, so an existing file claims to be this same
+            # image's preserved form. Whether it IS is a question about bytes, and it is
+            # asked rather than assumed: a stale or truncated file here would otherwise be
+            # kept in preference to the one just produced.
+            if file_digest(final) == digest:
+                print("already preserved, byte-identical")
+                return digest
+            print("replacing a preserved file that does not match this save")
+        staging.replace(final)
+    finally:
+        if staging.exists():
+            staging.unlink()
+    # Read back from the store rather than trusting the digest of the staging file: what
+    # the lock will record has to be what a later run will measure, and those are the same
+    # bytes only if the rename actually produced them.
+    return file_digest(final)
+
+
+def _verify(toolchains: dict) -> int:
+    problems = record_problems(toolchains)
+    for problem in problems:
+        print(f"FAIL: {problem}", file=sys.stderr)
+    if problems:
+        return 1
+    state = preservation(toolchains)
+    if state is None:
+        print("extraction-image: the container pin is unresolved; nothing to preserve yet")
+        return 0
+    if state.usable:
+        print(f"PRESENT: {state.path}")
+        print(f"  image:   {toolchains['extraction_container']['artifact_digest']}")
+        print(f"  archive: {toolchains['extraction_container']['archive_digest']}")
+        return 0
+    # ABSENT and MISMATCH both exit non-zero here because this action is an operator asking
+    # a direct question. The LANE keeps them apart, because there UNAVAILABLE and FAIL are
+    # different verdicts with different remedies.
+    print(f"{state.status}: {state.detail}", file=sys.stderr)
+    return 1
+
+
+def _load(toolchains: dict) -> int:
+    """Make the PRESERVED artifact executable here, and print the image id to run.
+
+    An id, never a tag. A tag resolves through the local image store, which is the thing
+    that is not the evidence store: a same-tag entry from another build would run silently.
+    """
+    if _verify(toolchains) != 0:
+        return 1
+    state = preservation(toolchains)
+    if state is None or not state.usable:
+        return 1
+    image = str(toolchains["extraction_container"]["artifact_digest"])
+    if not _present(image):
+        print(f"loading {state.path}", file=sys.stderr)
+        _run(["docker", "load", "-i", str(state.path)], capture=False)
+    if not _present(image):
+        print(
+            f"FAIL: loading {state.path} did not produce image {image}. The preserved "
+            "archive does not contain the pinned image, so nothing here can execute the "
+            "pinned environment.",
+            file=sys.stderr,
+        )
+        return 1
+    print(image)
+    return 0
+
+
+def _present(ref: str) -> bool:
+    return (
+        subprocess.run(
+            ["docker", "image", "inspect", ref], capture_output=True, check=False
+        ).returncode
+        == 0
+    )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["tag", "build", "identity"])
+    parser.add_argument(
+        "action", choices=["tag", "build", "identity", "verify", "load"]
+    )
     parser.add_argument("--image", default=DEFAULT_IMAGE)
     args = parser.parse_args()
 
@@ -90,6 +209,10 @@ def main() -> int:
     if args.action == "tag":
         print(ref)
         return 0
+    if args.action == "verify":
+        return _verify(toolchains)
+    if args.action == "load":
+        return _load(toolchains)
 
     _run([
         "docker", "buildx", "build",
@@ -97,7 +220,7 @@ def main() -> int:
         "-t", ref,
         "--load",
         str(DOCKERFILE.parent),
-    ])
+    ], capture=False)
     print(f"\nbuilt: {ref}")
 
     if args.action == "identity":
@@ -105,11 +228,17 @@ def main() -> int:
         # config, which commits to every layer, so it identifies these bytes exactly as a
         # registry manifest digest does — and it exists without one.
         artifact = _run(["docker", "image", "inspect", ref, "--format", "{{.Id}}"])
+        # PERSISTED before it is reported, and the order is the mechanism: a lock entry
+        # naming an image that exists only in Docker's cache is an identity a prune can
+        # orphan. What is recorded below is what the store holds.
+        archive = _preserve(ref, artifact)
         print(f"artifact_digest: {artifact}")
+        print(f"archive_digest:  {archive}")
         print("\nRecord in verification/policy/toolchains.lock.toml:")
         print("\n  [extraction_container]")
         print('  state = "resolved"')
         print(f'  artifact_digest = "{artifact}"')
+        print(f'  archive_digest = "{archive}"')
         print(f'  tag = "{content_tag(toolchains)}"')
         # Printed WITH the artifact digest, because the two are one fact: this image is a
         # build of THIS definition. Recording one without the other is the state the lock
@@ -117,9 +246,9 @@ def main() -> int:
         # that went on naming an old image through three Dockerfile changes.
         print(f'  definition_digest = "{definition_digest()}"')
         print(f'  platform = "{PLATFORM}"')
-        print(f'  definition = "verification/extraction/Dockerfile"')
-        print("\nTranscribe it exactly. The artifact digest and the definition digest are")
-        print("one evidence-identity fact and must travel together.")
+        print('  definition = "verification/extraction/Dockerfile"')
+        print("\nTranscribe it exactly. The artifact digest, the archive digest and the")
+        print("definition digest are one evidence-identity fact and must travel together.")
 
     return 0
 
