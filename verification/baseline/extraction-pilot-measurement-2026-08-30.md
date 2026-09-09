@@ -694,5 +694,33 @@ Neither phase stated a repository verdict; the composer stated one, from five la
 records, two of which were produced inside the pinned artifact and three on the host. That
 is the whole change, exercised on the tree it was built for.
 
+### One more finding, from the run that was supposed to just fail
+
+Putting the V2 unit in front of dev1 produced the expected refusal and one thing nobody had
+asked about. The load step refused — `ABSENT`, correctly, never a rebuild — and every step
+after it was skipped by default, **including the composer**:
+
+```
+Load the preserved extraction artifact: failure
+Execute the extraction lanes:           skipped
+Compose the repository verdict:         SKIPPED
+```
+
+The job was red, which is honest, and it said nothing about *which* evidence was missing.
+A phase failure is precisely the case the composer describes, so it now runs after one
+(`!cancelled()`, not `always()`: a cancelled run measured nothing). The same run then said:
+
+```
+[compose] over …/.verification/run-34379114249-1
+    REFUSED generated-model/core.time_civil_from_days: no evidence record. The manifest
+            requires this lane for a V2 unit, and absence of measurement is not measurement.
+    REFUSED lean/core.time_civil_from_days: no evidence record. …
+VERIFICATION: INCOMPLETE — a required lane has no acceptable current record
+```
+
+The job stays red either way. What changed is that the run now states a verdict and names
+the two records that would satisfy it.
+
 **#860 is therefore blocked on exactly one thing: dev1 holding the preserved archive.**
-Nothing else about it is unmeasured.
+Nothing else about it is unmeasured — the refusing direction is measured on dev1, the
+passing direction on the machine that holds the artifact.
