@@ -108,6 +108,24 @@ def selection(doc: dict) -> dict[str, dict]:
     return out
 
 
+def unwritable(directory: Path) -> str | None:
+    """Why `directory` cannot be written, or None.
+
+    Asked before an extraction rather than discovered during one. The regeneration's whole
+    output is a write into the mounted workspace, and a read-only container mount — the
+    default in some colima configurations — would otherwise let the pipeline run to
+    completion and fail at the last step, a long way from its cause.
+    """
+    probe = directory / ".writable-probe"
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        probe.write_bytes(b"")
+        probe.unlink()
+    except OSError as exc:
+        return exc.strerror or str(exc)
+    return None
+
+
 def produced_roots(names: Iterable[str]) -> list[str]:
     """The Lean module roots an extraction actually wrote, from its file list.
 

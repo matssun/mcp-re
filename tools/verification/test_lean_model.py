@@ -420,6 +420,45 @@ def test_the_pilot_unit_resolves_to_the_crate_it_names():
     assert _lean_model.unit_crate(unit) == "mcp-re-core"
 
 
+# ---------------------------------------------------------------------------
+# The write has to be possible before the extraction is worth starting
+# ---------------------------------------------------------------------------
+
+
+def test_a_writable_directory_reports_nothing():
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        assert _lean_model.unwritable(Path(tmp) / "generated") is None
+
+
+def test_a_read_only_mount_is_named_before_the_pipeline_runs():
+    """The failure a read-only container mount would otherwise produce at the last step.
+
+    dev1's Docker is colima, where a read-only mount is a real configuration rather than a
+    hypothetical, and the regeneration's whole output is a write into the mounted workspace.
+    Discovering that after Charon and Aeneas have run is discovering it twenty minutes from
+    its cause.
+    """
+    import os
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        target = Path(tmp) / "generated"
+        target.mkdir()
+        os.chmod(target, 0o500)
+        try:
+            why = _lean_model.unwritable(target)
+            # Root ignores the mode bits, so a container running as root would still write.
+            # The control is that a refusal is REPORTED rather than raised; where the write
+            # is genuinely possible there is nothing to report.
+            assert why is None or isinstance(why, str)
+            if os.geteuid() != 0:
+                assert why is not None
+        finally:
+            os.chmod(target, 0o700)
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

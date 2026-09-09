@@ -51,6 +51,7 @@ from _lean_model import (  # noqa: E402
     lakefile_roots,
     produced_roots,
     selection,
+    unwritable,
     unit_crate,
     Stamp,
     current_written,
@@ -87,7 +88,7 @@ def crate_sources(crate: str) -> dict[str, str]:
     }
 
 
-def run(argv: list[str], cwd: Path, what: str) -> None:
+def run(argv: list[str], cwd: Path, what: str, env: dict[str, str] | None = None) -> None:
     """Run one pipeline stage, and fail on ITS status.
 
     Streams are merged and printed whole on failure: the previous form of this pipeline
@@ -96,7 +97,13 @@ def run(argv: list[str], cwd: Path, what: str) -> None:
     """
     print(f"regenerate-lean: {what}\n  $ {' '.join(argv)}")
     proc = subprocess.run(
-        argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False
+        argv,
+        cwd=cwd,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
     )
     if proc.returncode != 0:
         print(proc.stdout.strip(), file=sys.stderr)
@@ -117,11 +124,17 @@ def extract(unit: dict, crate: str, charon: str, aeneas: str, into: Path) -> Non
     compares what was produced against those declared roots rather than trusting this.
     """
     llbc = into.parent / f"{crate.replace('-', '_')}.llbc"
+    # Charon drives a real cargo build, and cargo writes into the workspace by default. On
+    # the runner the workspace is a BIND MOUNT, so every regeneration would leave gigabytes
+    # of build artifacts in the checkout — on a machine whose heavy lanes already have a
+    # disk preflight because its container disk has hit 100% twice. Directed into the
+    # temporary directory the staged model lives in, so it goes away with the run.
+    env = {**os.environ, "CARGO_TARGET_DIR": str(into.parent / "cargo-target")}
     argv = [charon, "cargo", "--preset=aeneas"]
     for symbol in unit["extracted_symbols"]:
         argv += ["--start-from", str(symbol)]
     argv += ["--dest-file", str(llbc)]
-    run(argv, REPO_ROOT / crate, f"{unit['id']}: Charon over {crate}")
+    run(argv, REPO_ROOT / crate, f"{unit['id']}: Charon over {crate}", env)
     if not llbc.is_file():
         print(
             f"FAIL: Charon reported success but wrote no {llbc}. A regeneration that "
@@ -133,6 +146,7 @@ def extract(unit: dict, crate: str, charon: str, aeneas: str, into: Path) -> Non
         [aeneas, "-backend", "lean", "-dest", str(into), str(llbc)],
         REPO_ROOT,
         f"{unit['id']}: Aeneas to Lean",
+        env,
     )
 
 
@@ -188,6 +202,21 @@ def main() -> int:
     drift = definition_drift(toolchains)
     if drift:
         print(f"FAIL: {drift}", file=sys.stderr)
+        return 1
+
+    # ASKED BEFORE THE EXTRACTION, not after it. This script's whole output is a write into
+    # the mounted workspace, and a container mount that is read-only — the default in some
+    # colima configurations, and dev1's Docker is colima — would let Charon and Aeneas run
+    # for twenty minutes and then fail in `replace_generated` with a traceback some distance
+    # from its cause.
+    why = unwritable(GENERATED)
+    if why is not None:
+        print(
+            f"FAIL: cannot write to {GENERATED} ({why}). This script's only output is a "
+            "write into the mounted workspace, so a read-only mount means it can produce "
+            "nothing.\nCheck how the workspace is mounted into the container.",
+            file=sys.stderr,
+        )
         return 1
 
     charon, aeneas = os.environ.get("CHARON_EXE", ""), os.environ.get("AENEAS_EXE", "")
