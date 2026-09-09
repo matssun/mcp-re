@@ -86,8 +86,14 @@ def parse_print_axioms(output: str) -> dict[str, tuple[str, ...]]:
     return reports
 
 
-def registered_axioms(assumptions: list[dict], unit_id: str) -> dict[str, str]:
+def registered_axioms(assumptions: dict, unit_id: str) -> dict[str, str]:
     """`{lean axiom name: ASM id}` — the premises registered as trusted FOR THIS UNIT.
+
+    Takes the loaded REGISTRY DOCUMENT and reads the rows out of it, the way
+    `_manifest.boundary_class_violations` does. Taking a list instead is what let the lane
+    hand this function a dict and iterate its keys: the unit tests passed rows, the caller
+    passed the document, and nothing compared the two until the lane was reached with a
+    unit actually asking for it.
 
     Scoped, never global. An assumption registered against one unit does not license the
     same axiom under another: the whole content of an `ASM` is the argument for why
@@ -96,7 +102,7 @@ def registered_axioms(assumptions: list[dict], unit_id: str) -> dict[str, str]:
     `verification/policy/assumptions.toml` describes for its own `sites` field.
     """
     out: dict[str, str] = {}
-    for entry in assumptions:
+    for entry in assumptions.get("assumption", []):
         mechanism = str(entry.get("tool_specific_mechanism", ""))
         if not mechanism.startswith("lean:axiom:"):
             continue
@@ -106,7 +112,7 @@ def registered_axioms(assumptions: list[dict], unit_id: str) -> dict[str, str]:
     return out
 
 
-def sorry_registrations(assumptions: list[dict]) -> list[str]:
+def sorry_registrations(assumptions: dict) -> list[str]:
     """Every `ASM` that tries to register `sorry` as a trusted premise.
 
     Checked over the WHOLE registry rather than per unit, and reported wherever it is
@@ -116,7 +122,7 @@ def sorry_registrations(assumptions: list[dict]) -> list[str]:
     """
     return sorted(
         str(entry["id"])
-        for entry in assumptions
+        for entry in assumptions.get("assumption", [])
         if str(entry.get("tool_specific_mechanism", "")).endswith(f":{SORRY_AXIOM}")
     )
 

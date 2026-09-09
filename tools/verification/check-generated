@@ -41,7 +41,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _lean_model import read_stamp, stamp_defects  # noqa: E402
+from _lean_model import (  # noqa: E402
+    AENEAS_LEAN,
+    extraction_environment,
+    read_stamp,
+    stamp_defects,
+)
 from _manifest import (  # noqa: E402
     REPO_ROOT,
     ManifestError,
@@ -163,6 +168,18 @@ def main() -> int:
         print("check-generated: no generated model — nothing to drift")
         print("VERDICT: NOT_REQUIRED")
         return 0
+
+    # The same environment question `verify-lean` asks, and before the same check. Only the
+    # extraction container can produce the model, so on any other host the drift comparison
+    # has no input rather than a failing one.
+    if not extraction_environment():
+        print(
+            f"UNAVAILABLE: the Aeneas Lean library is not at {AENEAS_LEAN}, so this is not "
+            "the extraction environment and nothing here can regenerate the model.",
+            file=sys.stderr,
+        )
+        print("VERDICT: UNAVAILABLE")
+        return 1
 
     defects = stamp_defects(read_stamp(), toolchains, wanted)
     if defects:

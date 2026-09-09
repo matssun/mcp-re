@@ -53,7 +53,12 @@ from _lean_axioms import (  # noqa: E402
     sorry_registrations,
     unused_registrations,
 )
-from _lean_model import read_stamp, stamp_defects  # noqa: E402
+from _lean_model import (  # noqa: E402
+    AENEAS_LEAN,
+    extraction_environment,
+    read_stamp,
+    stamp_defects,
+)
 from _lean_probe import run as run_activation_probe  # noqa: E402
 from _lean_query import LEAN_DIR, elaborate, lake  # noqa: E402
 from _manifest import (  # noqa: E402
@@ -67,13 +72,6 @@ from _manifest import (  # noqa: E402
 
 REQUIRED = {"charon", "aeneas", "lean", "aeneas_lean_backend", "extraction_container"}
 EVIDENCE_STORE = REPO_ROOT / ".verification" / "evidence"
-
-#: The Lean library the generated model and the theorems both elaborate against. Its path
-#: is the container's layout, which is part of the pinned identity — this lane runs inside
-#: the image pinned as `[extraction_container]` and nowhere else, because Charon does not
-#: build on the macOS host.
-AENEAS_LEAN = Path("/opt/aeneas/backends/lean")
-
 
 def selection(doc: dict) -> dict[str, dict]:
     """The extraction selection the manifest declares, in the stamp's own shape."""
@@ -216,7 +214,7 @@ def activation_probe() -> int:
     baseline, why = kernel_baseline(toolchains)
     if why:
         return refuse(why)
-    if not (LEAN_DIR / "lakefile.toml").exists() or not AENEAS_LEAN.is_dir():
+    if not (LEAN_DIR / "lakefile.toml").exists() or not extraction_environment():
         print(
             "UNAVAILABLE: the Lean package or the Aeneas library is absent, so the probe "
             "cannot elaborate anything. An absent toolchain is a missing measurement, not "
@@ -293,23 +291,27 @@ def main() -> int:
             "a defect wherever it is scoped."
         )
 
+    # BEFORE the model's freshness. A macOS host cannot regenerate — Charon links the
+    # private rustc crates and does not build there — so "no regeneration stamp" would be a
+    # false instruction, and FAIL would say *something is here and it is wrong* about a
+    # measurement that is simply absent.
+    if not extraction_environment():
+        print(
+            f"UNAVAILABLE: the Aeneas Lean library is not at {AENEAS_LEAN}, so this is not "
+            "the extraction environment. The lane runs inside the image pinned as "
+            "[extraction_container] and nowhere else.\n"
+            "Not a FAIL — an absent toolchain is a missing measurement, not a failed one —\n"
+            "and not a PASS, because nothing was elaborated.",
+            file=sys.stderr,
+        )
+        print("VERDICT: UNAVAILABLE")
+        return 1
+
     model = stamp_defects(read_stamp(), toolchains, selection(doc))
     if model:
         for defect in model:
             print(f"FAIL: {defect}", file=sys.stderr)
         print("VERDICT: FAIL")
-        return 1
-
-    if not AENEAS_LEAN.is_dir():
-        # UNAVAILABLE, not FAIL: the measurement is missing rather than failed. It is also
-        # not a PASS, and it holds the aggregate at INCOMPLETE.
-        print(
-            f"UNAVAILABLE: the Aeneas Lean library is not at {AENEAS_LEAN}. This lane runs "
-            "inside the image pinned as [extraction_container] and nowhere else — Charon "
-            "links the private rustc crates and does not build on macOS.",
-            file=sys.stderr,
-        )
-        print("VERDICT: UNAVAILABLE")
         return 1
 
     fingerprints = {

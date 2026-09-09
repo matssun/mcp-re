@@ -47,6 +47,16 @@ def test_the_declared_baseline_is_the_three_kernel_axioms_and_not_sorry():
     assert BASELINE == {"Classical.choice", "Quot.sound", "propext"}
 
 
+def registry(*entries: dict) -> dict:
+    """The registry DOCUMENT, in the shape `load_assumptions()` returns.
+
+    The tests build what the lane passes, not what the function would like to receive. The
+    two diverged once — the lane handed a document to a function written for a list, and
+    every test here passed while the live call iterated dict keys.
+    """
+    return {"schema_version": 1, "assumption": list(entries)}
+
+
 def asm(
     identifier: str,
     mechanism: str,
@@ -149,7 +159,7 @@ def test_an_unregistered_axiom_is_refused():
 
 def test_a_registered_axiom_scoped_to_this_unit_may_stand():
     registered = registered_axioms(
-        [asm("ASM-0100", "lean:axiom:core.num.I64.div_euclid")], UNIT
+        registry(asm("ASM-0100", "lean:axiom:core.num.I64.div_euclid")), UNIT
     )
     assert registered == {"core.num.I64.div_euclid": "ASM-0100"}
     report = AxiomReport("Thm.a", ("core.num.I64.div_euclid",))
@@ -166,7 +176,7 @@ def test_a_registration_scoped_to_another_unit_licenses_nothing_here():
     entry = asm(
         "ASM-0100", "lean:axiom:core.num.I64.div_euclid", scope=["unit://other.unit"]
     )
-    assert registered_axioms([entry], UNIT) == {}
+    assert registered_axioms(registry(entry), UNIT) == {}
     assert classify(AxiomReport("Thm.a", ("core.num.I64.div_euclid",)), BASELINE, {})
 
 
@@ -180,7 +190,7 @@ def test_an_assumption_of_a_different_mechanism_kind_licenses_no_axiom():
         asm("ASM-0101", "lean:external-model"),
         asm("ASM-0102", "verus:external_body"),
     ]
-    assert registered_axioms(entries, UNIT) == {}
+    assert registered_axioms(registry(*entries), UNIT) == {}
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +210,7 @@ def test_sorry_is_not_registrable_even_when_someone_registers_it():
     Registering `sorryAx` would convert "nobody has proved this" into "we have decided to
     trust it". Those are different statements, and the registry may only make the second.
     """
-    registered = registered_axioms([asm("ASM-0103", "lean:axiom:sorryAx")], UNIT)
+    registered = registered_axioms(registry(asm("ASM-0103", "lean:axiom:sorryAx")), UNIT)
     assert registered == {"sorryAx": "ASM-0103"}
     defects = classify(AxiomReport("Thm.a", ("sorryAx",)), BASELINE, registered)
     assert len(defects) == 1
@@ -223,7 +233,7 @@ def test_the_registry_itself_reports_a_sorry_row():
         asm("ASM-0103", "lean:axiom:sorryAx", scope=["unit://somewhere.else"]),
         asm("ASM-0104", "lean:axiom:propext"),
     ]
-    assert sorry_registrations(entries) == ["ASM-0103"]
+    assert sorry_registrations(registry(*entries)) == ["ASM-0103"]
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +254,29 @@ def test_an_unused_registration_is_reported_and_not_fatal():
     stale = unused_registrations(reports, registered)
     assert len(stale) == 1
     assert "ASM-0100" in stale[0]
+
+
+# ---------------------------------------------------------------------------
+# The shape the LANE passes, not the shape the function would prefer
+# ---------------------------------------------------------------------------
+
+
+def test_the_live_registry_is_the_shape_these_functions_take():
+    """The seam that broke once, asserted against the real loader.
+
+    Every case above builds its own registry, so all of them passed while the lane handed
+    these functions the loaded DOCUMENT and they iterated its string keys — a crash that
+    could only appear once a unit actually asked the lane for evidence, which is the last
+    moment anyone wants to discover a caller mismatch. Calling the real loader is what ties
+    the tests to the caller.
+    """
+    from _manifest import load_assumptions
+
+    live = load_assumptions()
+    assert isinstance(live, dict) and "assumption" in live
+    # Neither call may raise, and the live registry registers no Lean axiom and no `sorry`.
+    assert registered_axioms(live, UNIT) == {}
+    assert sorry_registrations(live) == []
 
 
 # ---------------------------------------------------------------------------

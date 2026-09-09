@@ -43,6 +43,26 @@ STAMP = REPO_ROOT / ".verification" / "lean" / "regeneration-stamp.json"
 IDENTITY_PINS = ("charon", "aeneas", "lean", "aeneas_lean_backend", "extraction_container")
 
 
+#: The Aeneas Lean library, and the tell for whether this is the extraction environment at
+#: all. Charon links the private rustc crates and does not build on macOS, so the whole
+#: pipeline lives in the image pinned as `[extraction_container]` — and the hosts that run
+#: `verify --gate` are macOS hosts that will never have it.
+AENEAS_LEAN = Path("/opt/aeneas/backends/lean")
+
+
+def extraction_environment() -> bool:
+    """Whether this process can regenerate and elaborate at all.
+
+    Asked BEFORE the model's freshness, and the order is the point. "No regeneration stamp"
+    is the right message for somebody who could have run `regenerate-lean` and did not; on a
+    macOS host it is a false instruction, and it reports FAIL — *something is here and it is
+    wrong* — for what is actually UNAVAILABLE — *the measurement is missing because the lane
+    cannot run here*. Those are different verdicts with different remedies, and the
+    aggregate treats them differently.
+    """
+    return AENEAS_LEAN.is_dir()
+
+
 def digest(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
