@@ -600,12 +600,75 @@ So: one job, ordered — host preflight, the extraction steps, then `verify --ga
 consuming this run's own records instead of reporting `UNAVAILABLE`, and refusing any
 record whose fingerprint is not the current one.
 
-It is written here rather than implemented because it **changes what `VERIFICATION: PASS`
-means** — from "this process executed every lane" to "this process executed some and read
-records for the rest at the same fingerprint" — and because it cannot be exercised on dev1
-until dev1 holds the artifact. A change to the central gate, unvalidatable in the
-environment it governs, is the shape this repository has twice repaired rather than
-shipped. It is an owner decision.
+It was written here rather than implemented because it **changes what `VERIFICATION: PASS`
+means**, which is an owner decision.
 
-**Until it is taken, #860 is blocked on two independent things:** dev1 holding the
-preserved archive, and this job split.
+### Ruled and taken — 2026-09-09
+
+The change is approved, in a stronger form than the sketch above:
+
+> from **one process must EXECUTE every required lane**
+> to **every required lane must have valid EVIDENCE for the current fingerprint**.
+
+And with one constraint the sketch did not have: **no lane may report PASS by reading
+somebody else's record.** Lane executors stay the authorities for execution — `verify-lean`
+on a macOS host still reports `UNAVAILABLE` — and only the central aggregate composes.
+Putting the composition inside a lane would have hidden it where no control could see it.
+
+`tools/verification/_compose.py` holds the acceptance rules. It derives its requirement set
+from the **manifest**, never from what ran, so a lane that silently did not execute leaves
+no record and a missing record is `INCOMPLETE` — the old shape could not express that at
+all, which is why this is not a relaxation. Per (lane, unit) it requires exactly one
+acceptable current record: right unit, right lane, `pass`, the **exact** current
+fingerprint, and — for the extracted-model lanes — the extraction artifact the lock pins.
+
+| refused | verdict |
+|---|---|
+| no record for a required lane/unit | UNAVAILABLE → INCOMPLETE |
+| record at another fingerprint | UNAVAILABLE → INCOMPLETE, reported as STALE |
+| record naming another unit or lane | FAIL |
+| record from a different extraction artifact, or naming none | FAIL |
+| two records for one unit | FAIL |
+| an unreadable record in the directory | FAIL |
+| a recorded `fail` | FAIL |
+| a lane declaring `NOT_REQUIRED` where the manifest requires it | FAIL, in the execution phase |
+
+That last one is refused where the declared verdict still exists. A `NOT_REQUIRED` lane
+writes no record, so the composer would see an absence and could not tell it from a lane
+that simply did not run — and the two call for different actions.
+
+**The fingerprint is the load-bearing clause,** and the artifact store is what made it
+sufficient: a unit fingerprint carries the whole toolchain identity, including
+`artifact_digest` and `archive_digest`, so a record produced by a different tree, a
+different prover, or a *different build of the same declared pins* cannot be composed into
+a verdict about this one.
+
+**Current-run isolation.** `MCP_RE_EVIDENCE_DIR` names one directory, created fresh per CI
+invocation and reached from both environments through the bind mount. No global store is
+searched: a run must not go green on a record an earlier one left behind. Fingerprint-bound
+reuse across runs is a separate question about the evidence system, and it is not what
+solves this one.
+
+**One ordered job** — host preflight, host lanes, the preserved artifact, extraction lanes,
+composer — replacing the two that could each only answer half the question. The evidence
+directory is uploaded whatever the verdict, because a failing run's records are what a
+reader needs most.
+
+Sixteen controls in `tools/verification/test_compose.py`, each handing the composer a store
+that looks complete and asking it to refuse, plus the positive — a control set in which
+nothing ever passes proves nothing.
+
+**Exercised on the runner, 2026-09-09.** The composed workflow ran on dev1 against the lane
+branch: fresh evidence directory created, host lanes executed and recorded, the extraction
+steps correctly skipped because that branch declares no V2 unit, and
+
+```
+Compose the repository verdict: success        (under --gate, which exits 0 only on PASS)
+```
+
+so the repository verdict was stated by validating and composing records rather than by one
+process executing every lane. The refusing direction was exercised locally first: with the
+extraction phase's two records present and the host phase's absent, the composer reported
+`INCOMPLETE` and named all six missing `verus` records.
+
+**#860 is still blocked on dev1 holding the preserved archive.** That is now the only one.
