@@ -543,3 +543,69 @@ preserves its own — at which point the pin moves onto that artifact and the mo
 regenerated against it. That is the stated cost of having no registry, and it is
 fail-closed in the right direction: a host that cannot execute the pinned environment says
 so instead of running a different one.
+
+---
+
+## 9. Declaring the first V2 unit makes the HOST gate structurally unable to pass
+
+Found by the CI run of the branch that declares one, and it is **independent of where the
+artifact lives**. `.github/workflows/verification.yml` has two jobs:
+
+| job | environment | lanes it can execute |
+|---|---|---|
+| `verification platform (macOS host)` | dev1, macOS | assumptions, test, mutation, **verus** |
+| `extraction pipeline (linux container)` | the pinned artifact | **generated-model**, **lean** |
+
+The host job runs `tools/verification/verify --gate`, whose lane table is **all six**. With
+no V2 unit both extracted-model lanes report `NOT_REQUIRED` and the aggregate is `PASS`.
+Declaring one makes them required, and on macOS neither can run:
+
+```
+[generated-model] UNAVAILABLE
+    no regeneration stamp, and the Aeneas Lean library is not at /opt/aeneas/backends/lean,
+    so this is not the extraction environment and nothing here could have produced one.
+[lean] UNAVAILABLE
+    the Aeneas Lean library is not at /opt/aeneas/backends/lean …
+VERIFICATION: INCOMPLETE — required and missing: generated-model, lean
+```
+
+Every verdict there is correct. `UNAVAILABLE` forcing `INCOMPLETE` is the algebra doing its
+job — a lane that cannot run is never a lane that passed — and softening it is not the fix.
+**What is wrong is that a process is asked for an aggregate over lanes it cannot execute.**
+Charon links the private rustc crates and does not build on macOS; Verus and the cargo
+matrix are not in the container. No single process can run all six.
+
+> The repository's aggregate verdict has evidence from two environments, and neither
+> environment can compute it.
+
+### What this is NOT
+
+* Not the missing archive. dev1 holding `d38738c1…` fixes the extraction job and changes
+  nothing here: `/opt/aeneas` is inside the image, not on the host.
+* Not a regression from the artifact store. The host job would report the same on any
+  arrangement where the extracted-model lanes live in a container.
+* Not fixable by `NOT_REQUIRED`. "The manifest asked nothing of Lean" and "Lean proved
+  something" are different claims and only the second is evidence.
+
+### The recommended fix, and why it is not taken here
+
+`verify-lean` already writes an `EvidenceRecord` per unit, carrying the **unit fingerprint
+it measured at** — and since the artifact store landed, that fingerprint includes
+`artifact_digest` and `archive_digest`. So a record cannot be replayed across a different
+tree *or a different extraction artifact*. That is exactly the property an aggregate over
+persisted records needs, and `_evidence.load_records` already reads them.
+
+So: one job, ordered — host preflight, the extraction steps, then `verify --gate` — with
+`verify-lean` and `check-generated`, when they are not in the extraction environment,
+consuming this run's own records instead of reporting `UNAVAILABLE`, and refusing any
+record whose fingerprint is not the current one.
+
+It is written here rather than implemented because it **changes what `VERIFICATION: PASS`
+means** — from "this process executed every lane" to "this process executed some and read
+records for the rest at the same fingerprint" — and because it cannot be exercised on dev1
+until dev1 holds the artifact. A change to the central gate, unvalidatable in the
+environment it governs, is the shape this repository has twice repaired rather than
+shipped. It is an owner decision.
+
+**Until it is taken, #860 is blocked on two independent things:** dev1 holding the
+preserved archive, and this job split.
