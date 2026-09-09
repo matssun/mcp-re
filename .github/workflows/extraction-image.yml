@@ -78,6 +78,19 @@ jobs:
       # the things that measurement found missing, asked directly, so that a build which
       # reintroduces the defect fails here instead of being published and discovered by a
       # lane that reports nothing.
+      # FIRST, because it is the cheapest and because every step below it runs a tool
+      # this image has to be able to start. The lane's own entry points are Python and they
+      # run INSIDE this image; the first real run of the pipeline answered
+      # `/usr/bin/env: 'python3': No such file or directory`, and every check that had
+      # passed above it was about a component rather than about the harness that drives
+      # them. `tomllib` rather than a version string: what the scripts need is the module
+      # they parse the toolchain lock with.
+      - name: Smoke — the image can run the lane's own entry points
+        run: |
+          set -euo pipefail
+          docker run --rm "${{ steps.tag.outputs.ref }}" \
+            python3 -c 'import tomllib, json, hashlib; print("harness interpreter ok")'
+
       - name: Smoke — the Lean toolchain is the PINNED one
         run: |
           set -euo pipefail

@@ -140,11 +140,13 @@ named while the lock read as fully pinned.
 # checks passed and whose exact bytes are preserved under `archive_digest`. The entry this
 # replaces named an image published to a container registry by hand on 2026-08-10 that was
 # a build of none of the three Dockerfiles that followed it and could not run Lean at all.
-state = "resolved"
-artifact_digest = "sha256:a030c315e88172dde7396bfe73e6cbe607e5d1a681ddd3c916397fc0ffafdb24"
-archive_digest = "sha256:48203224058e50ae3e79779b41696287fddec1c8bec62dd645fe2f27fd082931"
-tag = "tc-5a2c815ed0914b57"
-definition_digest = "00e6c0a43031f9a333358fce1eacb87d060e33d745c353364525961de40f79fa"
+state = "unresolved"
+# The first build of the declared definition passed every component smoke check and then
+# could not run the lane at all: `regenerate-lean` and `verify-lean` are Python and execute
+# INSIDE this image, and bookworm-slim ships no `python3`. The definition now installs one,
+# which mints a different image — so the pin is unresolved again until a build of THAT
+# definition exists. That is the mechanism working, not a regression: the recorded identity
+# may only ever name a build of the definition this tree declares.
 definition = "verification/extraction/Dockerfile"
 platform = "linux/arm64"
 note = """
