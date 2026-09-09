@@ -762,14 +762,25 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          # RESOLVED FIRST, while the default config is still in effect. A config directory
+          # carries more than credentials: it carries `currentContext` and the context
+          # definitions under `contexts/`. This runner's Docker is colima, on
+          # `colima-gh-runner`, so a fresh directory sends the CLI to the default
+          # `unix:///var/run/docker.sock`, which does not exist here — measured, as
+          # `failed to connect to the docker API at unix:///var/run/docker.sock`. Naming the
+          # endpoint outright takes context resolution out of the question entirely.
+          host=$(docker context inspect --format '{{.Endpoints.docker.Host}}')
+
           config="${RUNNER_TEMP}/docker-${GITHUB_RUN_ID}"
           mkdir -p "$config"
           auth=$( { printf '%s:' '${{ github.actor }}'; printf '%s' "$GHCR_TOKEN"; } \
                   | base64 | tr -d '\n' )
           printf '{"auths":{"ghcr.io":{"auth":"%s"}}}\n' "$auth" > "$config/config.json"
           chmod 600 "$config/config.json"
-          # Every later step — the pull and both container runs — must read this config.
+
+          # Every later step — the pull and both container runs — reads both of these.
           echo "DOCKER_CONFIG=$config" >> "$GITHUB_ENV"
+          echo "DOCKER_HOST=$host" >> "$GITHUB_ENV"
 
       - name: Pull the pinned image and confirm its digest
         if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true'
