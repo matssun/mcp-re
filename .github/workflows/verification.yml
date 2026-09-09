@@ -684,9 +684,9 @@ jobs:
   # ---------------------------------------------------------------------------
   extraction:
     name: extraction pipeline (linux container)
-    # Same-repository refs only — see the `host` job. This lane additionally pipes
-    # `secrets.GITHUB_TOKEN` into `docker login` and bind-mounts the workspace into a
-    # container, so a fork ref here would hand a PR author both the token and the
+    # Same-repository refs only — see the `host` job. This lane additionally writes
+    # `secrets.GITHUB_TOKEN` into a registry credential and bind-mounts the workspace into
+    # a container, so a fork ref here would hand a PR author both the token and the
     # runner's Docker socket reach.
     if: >-
       github.event_name != 'pull_request'
