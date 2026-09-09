@@ -735,34 +735,41 @@ jobs:
           # prerequisite (Docker Desktop or colima), not a formality.
           docker info --format 'server {{.ServerVersion}} {{.OSType}}/{{.Architecture}}'
 
-      # `docker login` stores credentials through the macOS KEYCHAIN on this runner, and the
-      # runner is a background service whose session cannot unlock one:
+      # NOT `docker login`. On this runner it authenticates successfully and then fails to
+      # PERSIST the credential:
       #
-      #     error storing credentials - err: exit status 1,
+      #     error saving credentials - err: exit status 1,
       #     out: `User interaction is not allowed. (-25308)`
       #
-      # -25308 is errSecInteractionNotAllowed. Not a permissions problem with the package
-      # and not a bad token — the login never got as far as being rejected.
+      # -25308 is errSecInteractionNotAllowed — the macOS keychain refusing a background
+      # service. "error SAVING" is the important half: the registry accepted the token, so
+      # this is neither a bad credential nor a package-permissions problem.
       #
-      # DOCKER_CONFIG points the CLI at a per-run directory, where it writes a plain config
-      # instead of consulting the keychain. Set through GITHUB_ENV rather than as a job
-      # `env:` because the path comes from RUNNER_TEMP, and it must reach every later step:
-      # the pull and both container runs have to read the same config the login wrote.
-      - name: A credential store this runner can actually write
+      # Pointing DOCKER_CONFIG at an empty directory does NOT avoid it, which was measured
+      # on the runner rather than assumed: the CLI detects `osxkeychain` as the platform
+      # default whenever the helper is on PATH, so a fresh empty config detects the same
+      # store. Writing the credential into the config ourselves skips the store entirely,
+      # and `docker manifest inspect` against the private pinned image under exactly this
+      # config was verified to succeed on dev1.
+      #
+      # The credential lives in a per-run directory for the length of the job, is never
+      # written to the keychain or to the shared `~/.docker/config.json`, and never appears
+      # as a process argument: `printf` is a bash BUILTIN, so no process is created and
+      # nothing reaches the process table; `base64` receives it on stdin.
+      - name: Authenticate to GHCR without a credential helper
         if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true'
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-${GITHUB_RUN_ID}" >> "$GITHUB_ENV"
-
-      - name: Log in to GHCR
-        if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true'
-        run: |
-          set -euo pipefail
-          # Piped, never passed as an argument: a token on a command line is visible in
-          # the process table and trivially echoed into a log.
-          mkdir -p "$DOCKER_CONFIG"
-          echo '${{ secrets.GITHUB_TOKEN }}' \
-            | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
+          config="${RUNNER_TEMP}/docker-${GITHUB_RUN_ID}"
+          mkdir -p "$config"
+          auth=$( { printf '%s:' '${{ github.actor }}'; printf '%s' "$GHCR_TOKEN"; } \
+                  | base64 | tr -d '\n' )
+          printf '{"auths":{"ghcr.io":{"auth":"%s"}}}\n' "$auth" > "$config/config.json"
+          chmod 600 "$config/config.json"
+          # Every later step — the pull and both container runs — must read this config.
+          echo "DOCKER_CONFIG=$config" >> "$GITHUB_ENV"
 
       - name: Pull the pinned image and confirm its digest
         if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true'
