@@ -205,3 +205,29 @@ and not
 
 Full build reproducibility is future assurance work. Docker's cache is an execution
 optimisation; it was never an evidence store.
+
+### Measured, not asserted
+
+The proposition this correction rests on is that the preserved archive can bring the pinned
+environment back after the cache has lost it. That was exercised on the first preserved
+artifact rather than argued:
+
+```
+$ docker rmi mcp-re-verification-extraction:tc-5a2c815ed0914b57
+Untagged: mcp-re-verification-extraction:tc-5a2c815ed0914b57
+Deleted: sha256:a030c315e88172dde7396bfe73e6cbe607e5d1a681ddd3c916397fc0ffafdb24
+
+$ docker image inspect sha256:a030c315…        →  GONE from the cache
+
+$ docker load -i /opt/verification/extraction-artifacts/sha256/a030c315….tar
+Loaded image: mcp-re-verification-extraction:tc-5a2c815ed0914b57      (1m44s, 5.6 GiB)
+
+$ docker image inspect --format '{{.Id}}' sha256:a030c315…
+sha256:a030c315e88172dde7396bfe73e6cbe607e5d1a681ddd3c916397fc0ffafdb24
+
+$ docker run --rm sha256:a030c315… lean --version
+Lean (version 4.31.0, aarch64-unknown-linux-gnu, commit 68218e876d…, Release)
+```
+
+The same image id comes back, and the pinned prover runs from it. A store that is never
+read from is a store nobody knows works.
