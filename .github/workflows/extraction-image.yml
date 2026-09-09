@@ -1,47 +1,51 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# ADR-MCPRE-059 §19 — publish the extraction container.
+# ADR-MCPRE-059 §19 — build the extraction container and report its identity.
 #
-# WHY THIS EXISTS AND WHY IT IS MANUAL. The image is built and pushed by hand on a
-# developer machine, and on 2026-08-30 that stopped being possible: the local Docker VM was
-# 100% full, so the pinned image could not be rebuilt and the Lean half of the pipeline —
-# which the same measurement showed the pinned image cannot run — could not be repaired.
-# A full disk on one laptop is not a reason for an assurance lane to stay broken.
+# WHY IT IS MANUAL. Building the image mints a new evidence identity: the definition is not
+# reproducible — it still resolves apt package versions and opam library versions at build
+# time, and the opam libraries build the Aeneas binary — so a rebuild legitimately
+# invalidates the Lean evidence that named the previous one. That is a deliberate act, not
+# something a push to a branch should perform.
 #
-# It is `workflow_dispatch` and nothing else. Publishing an image is minting a new evidence
-# identity; that is a deliberate act, not something a push to a branch should perform.
+# WHY THERE IS NO REGISTRY. The assurance requirement is that Lean evidence identifies the
+# environment that produced it and is invalidated when that environment changes. A content
+# digest does that whether the bytes sit in a local image store or a registry, the lane runs
+# on one self-hosted runner, and no proposition in this repository claims cross-machine
+# reproduction of the extracted model. Publishing would add a distribution mechanism nothing
+# asks for. Ruling:
+# verification/reviews/rulings/extraction-artifact-storage-2026-09-09.md
 #
 # WHAT IT DOES NOT DO. It does not update `verification/policy/toolchains.lock.toml`. The
-# digest is REPORTED — together with the `definition_digest` of the Dockerfile it was built
-# from, because those two are one fact and recording only the first is what let a pin go on
-# naming an old image through three Dockerfile changes (MCPRE-181) — and moving the pin onto
-# it is a separate reviewed commit; the lock
-# is what says which prover the repository's formal evidence was produced by, and a
-# workflow that could rewrite it would be a workflow that can change what every lean://
-# claim means.
-name: Extraction image (manual publish)
+# identity is REPORTED — the artifact digest together with the `definition_digest` of the
+# Dockerfile it was built from, because those two are one fact and recording only the first
+# is what let a pin go on naming an old image through three Dockerfile changes (MCPRE-181).
+# Moving the pin onto it is a separate reviewed commit; the lock is what says which prover
+# the repository's formal evidence was produced by, and a workflow that could rewrite it
+# would be a workflow that can change what every lean:// claim means.
+name: Extraction image (manual build)
 
 on:
   workflow_dispatch:
-    inputs:
-      push:
-        description: "Push to GHCR after the smoke checks pass (false = build and check only)"
-        type: boolean
-        default: false
 
-# Least privilege, and no long-lived credential: `packages: write` is what pushing to the
-# repository's own GHCR namespace needs, and GITHUB_TOKEN is what supplies it.
+# Nothing leaves this runner, so nothing beyond reading the tree is needed.
 permissions:
   contents: read
-  packages: write
 
 jobs:
-  publish:
-    name: build + smoke-check + publish (linux/arm64)
-    # The consumer is an Apple Silicon self-hosted runner, so the image is linux/arm64 and
-    # the identity in the lock file names that platform. Building it on an amd64 runner
-    # under emulation would produce a different image, slowly.
-    runs-on: ubuntu-24.04-arm
+  build:
+    name: build + smoke-check + report identity (linux/arm64)
+    # BUILT WHERE IT IS CONSUMED. The image is identified by its own content digest and is
+    # never transported, so it has to exist on the machine that runs the lane. That machine
+    # is an Apple Silicon self-hosted runner, which is also why the platform is linux/arm64:
+    # an amd64 build of identical pins is a different instrument.
+    #
+    # Same-repository refs only — this bind-mounts nothing but does run a build on the
+    # release verification host, and a fork ref would be arbitrary code execution there.
+    if: >-
+      github.event_name != 'pull_request'
+      || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 300
     steps:
       - uses: actions/checkout@v7
@@ -169,35 +173,23 @@ jobs:
                     reporting the Aeneas output above as the composition evidence"; }
           '
 
-      - name: Log in to GHCR
-        if: inputs.push
+      # The identity, reported and never written. Recording it in the lock is a separate
+      # reviewed commit: the lock is what says which prover the repository's formal evidence
+      # was produced by.
+      - name: Report the identity to record
         run: |
           set -euo pipefail
-          # Piped, never an argument: a token on a command line is in the process table.
-          echo '${{ secrets.GITHUB_TOKEN }}' \
-            | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
-
-      - name: Push, and report the immutable digest
-        if: inputs.push
-        run: |
-          set -euo pipefail
-          # `extraction-image push` rebuilds with --push because only a registry manifest
-          # HAS a digest; a local build's is not the digest a runner would pull. The layers
-          # are cached from the build above.
-          python3 tools/verification/extraction-image push | tee /tmp/push.out
+          python3 tools/verification/extraction-image identity | tee /tmp/identity.out
           {
-            echo "### Extraction image published"
+            echo "### Extraction image built"
             echo
             echo 'Record in `verification/policy/toolchains.lock.toml` `[extraction_container]`'
             echo 'as a SEPARATE reviewed commit — this workflow deliberately does not write it.'
             echo
+            echo 'The artifact digest and the definition digest are ONE evidence-identity'
+            echo 'fact and must travel together.'
+            echo
             echo '```'
-            grep -E '^(built|digest):' /tmp/push.out
+            sed -n '/^  \[extraction_container\]/,/^  definition = /p' /tmp/identity.out
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Not pushed
-        if: ${{ !inputs.push }}
-        run: |
-          echo "Build and smoke checks passed. Re-run with push=true to publish." \
-            >> "$GITHUB_STEP_SUMMARY"

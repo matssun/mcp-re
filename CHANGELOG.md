@@ -51,6 +51,41 @@ reason v3 added the test selection: neither is reachable from `source_inputs`, s
 could shrink in silence. Every attestation carrying an earlier encoding is UNKNOWN from this
 commit, which is the intended cost.
 
+### Changed — the extraction container is identified, not published (#541)
+
+A container registry had become load-bearing without ever being decided on. Remeasuring #541
+from first principles found that **no ADR, theorem, unit, assumption or trust boundary names
+GHCR** — it appeared only in the lock's `image` field, the publisher's default, two workflows
+and one review packet, as the place the first image happened to be pushed by hand.
+
+The requirement is that Lean evidence identifies the environment that produced it and is
+invalidated when that environment changes. A content digest does that wherever the bytes are
+kept. So the image is now built on the verification runner and identified by its own digest,
+`[extraction_container]` is storage-agnostic — `artifact_digest`, `definition_digest`, `tag`,
+`platform`, no registry reference — and the publish workflow became a build workflow that
+reports an identity instead of pushing one.
+
+**The declared pins do not determine the image, and that is now stated rather than implied.**
+The definition still resolves apt package versions, the rustup installer and ~15 opam library
+versions at build time — and the opam libraries build the Aeneas binary, so a different
+`visitors` or `zarith` can produce a different extracted model from identical Rust. That is
+why an artifact identity is RECORDED rather than derived. `debian:bookworm-slim` and the elan
+installer, which were also moving, are now pinned by digest and by commit.
+
+**MCPRE-181's invariant is untouched.** A recorded identity that does not follow from the
+declared definition still fails closed; `identity_problems` and `definition_drift` needed no
+edit, because neither ever read the registry fields. The check gained one clause: a resolved
+entry that names no artifact is refused, since an identity derived from pins alone says which
+toolchain was *intended* and nothing about which one ran.
+
+`[extraction_container]` is `unresolved` until a build of the current definition is made on
+the runner, which is the mechanism rather than an unfinished step.
+
+Two runner defects found while the registry was still in the path — a `docker login` that
+cannot persist to the macOS keychain, and an isolated docker config that loses the daemon
+context — disappeared with it. `scripts/self_hosted_docker_gate.py` keeps the durable half:
+no self-hosted job may try to log in to a registry.
+
 ### Fixed — two self-hosted runner defects the extraction lane could not have shown before (#541)
 
 The lane is gated on a V2/V3 unit existing, so declaring one is what executed it for the

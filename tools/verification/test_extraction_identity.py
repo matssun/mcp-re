@@ -35,9 +35,54 @@ def lock() -> dict:
     return tomllib.load(open(LOCK, "rb"))
 
 
+def resolved() -> dict:
+    """The live pins with a RESOLVED extraction container built on top of them.
+
+    The lock is `unresolved` whenever no build has been pinned yet, and `identity_problems`
+    short-circuits on that — correctly, since there is no record to check. Every mutation
+    below would then be measuring nothing, so they are applied to a synthetic resolved entry
+    derived from the real pins instead. The check is what is under test; whether a build
+    happens to be pinned today is not.
+    """
+    doc = copy.deepcopy(lock())
+    definition = definition_digest()
+    doc["extraction_container"] = {
+        "state": "resolved",
+        "artifact_digest": "sha256:" + "a" * 64,
+        "definition_digest": definition,
+        "platform": "linux/arm64",
+        "definition": "verification/extraction/Dockerfile",
+    }
+    doc["extraction_container"]["tag"] = content_tag(doc, definition)
+    return doc
+
+
 def test_the_committed_lock_is_internally_consistent():
-    """The recorded tag follows from the pins and the definition beside it."""
-    assert identity_problems(lock()) == [], identity_problems(lock())
+    """Whatever state the lock is in, it is a legitimate one.
+
+    Resolved: the recorded tag follows from the pins and the definition beside it.
+    Unresolved: there is no record, which fails closed everywhere downstream rather than
+    describing an image nobody built.
+    """
+    doc = lock()
+    assert identity_problems(doc) == [], identity_problems(doc)
+    entry = doc["extraction_container"]
+    if entry["state"] == "resolved":
+        assert entry.get("artifact_digest"), "a resolved container names no artifact"
+        assert entry.get("definition_digest"), "a resolved container names no definition"
+
+
+def test_a_resolved_pin_with_no_artifact_digest_is_refused():
+    """The declared pins do not determine the image, so an identity must name one.
+
+    This definition still resolves apt and opam versions at build time, and the opam
+    libraries build the Aeneas binary — so a record derived from the pins alone would say
+    which toolchain was INTENDED and nothing about which one ran.
+    """
+    doc = resolved()
+    del doc["extraction_container"]["artifact_digest"]
+    problems = identity_problems(doc)
+    assert problems and "artifact_digest" in problems[0], problems
 
 
 def test_the_real_loader_accepts_the_real_lock():
@@ -50,7 +95,7 @@ def test_a_resolved_pin_with_no_definition_digest_is_refused():
 
     This is the state the lock was in: resolved, tagged, and uncheckable.
     """
-    doc = copy.deepcopy(lock())
+    doc = resolved()
     del doc["extraction_container"]["definition_digest"]
     problems = identity_problems(doc)
     assert problems and "definition_digest" in problems[0], problems
@@ -64,7 +109,7 @@ def test_moving_a_prover_pin_without_republishing_is_caught():
         ("lean", "toolchain", "leanprover/lean4:v4.99.0"),
         ("aeneas_lean_backend", "mathlib_revision", "2" * 40),
     ]:
-        doc = copy.deepcopy(lock())
+        doc = resolved()
         doc[key][field] = value
         problems = identity_problems(doc)
         assert problems, f"moving {key}.{field} left the recorded identity unchallenged"
@@ -72,7 +117,7 @@ def test_moving_a_prover_pin_without_republishing_is_caught():
 
 
 def test_a_hand_edited_tag_is_caught():
-    doc = copy.deepcopy(lock())
+    doc = resolved()
     doc["extraction_container"]["tag"] = "tc-0000000000000000"
     assert identity_problems(doc), "an arbitrary tag was accepted"
 
@@ -80,7 +125,7 @@ def test_a_hand_edited_tag_is_caught():
 def test_an_unresolved_container_is_not_asked_to_be_consistent():
     """An unresolved pin has no identity to check; refusing it here would be the wrong
     complaint, and `unresolved_pins` is what reports it."""
-    doc = copy.deepcopy(lock())
+    doc = resolved()
     doc["extraction_container"]["state"] = "unresolved"
     assert identity_problems(doc) == []
 
@@ -100,7 +145,7 @@ def test_the_dockerfile_is_load_bearing_in_the_identity():
 
 def test_drift_is_reported_when_the_pin_is_not_a_build_of_the_declared_definition():
     """A CURRENCY question, not a consistency one: the record is fine, the image is old."""
-    doc = copy.deepcopy(lock())
+    doc = resolved()
     doc["extraction_container"]["definition_digest"] = "e" * 64
     drift = definition_drift(doc)
     assert drift is not None
@@ -111,7 +156,7 @@ def test_drift_is_reported_when_the_pin_is_not_a_build_of_the_declared_definitio
 
 
 def test_no_drift_when_the_pin_names_the_declared_definition():
-    doc = copy.deepcopy(lock())
+    doc = resolved()
     doc["extraction_container"]["definition_digest"] = definition_digest()
     doc["extraction_container"]["tag"] = content_tag(doc, definition_digest())
     assert definition_drift(doc) is None

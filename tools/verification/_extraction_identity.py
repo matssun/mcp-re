@@ -92,11 +92,26 @@ def identity_problems(toolchains: dict) -> list[str]:
         return []
     where = "toolchains.lock.toml: [extraction_container]"
     problems: list[str] = []
+
+    # An identity with no ARTIFACT is not an identity. The declared inputs do not determine
+    # the image — this definition still resolves apt and opam versions at build time, and
+    # those build the Aeneas binary — so the bytes that were actually produced have to be
+    # recorded rather than derived. WHERE they are kept is not this module's business:
+    # `artifact_digest` is a content digest over the image, and a local image store and a
+    # registry give the same immutability. See
+    # verification/reviews/rulings/extraction-artifact-storage-2026-09-09.md.
+    if not entry.get("artifact_digest"):
+        problems.append(
+            f"{where} is resolved but records no `artifact_digest`. The declared pins do "
+            "not determine the image, so an identity that names none says which toolchain "
+            "was INTENDED and nothing about which one ran."
+        )
+
     built_from = entry.get("definition_digest")
     if not built_from:
         return [
-            f"{where} is resolved but records no `definition_digest`. The digest names an "
-            "image somebody built from SOME Dockerfile; without saying which, nothing can "
+            f"{where} is resolved but records no `definition_digest`. The identity names "
+            "an image somebody built from SOME Dockerfile; without saying which, nothing can "
             "check that the recorded tag follows from it, and a build-step change slips in "
             "under an unchanged tag — which is the failure this field exists to make "
             "impossible."
@@ -131,9 +146,9 @@ def definition_drift(toolchains: dict) -> str | None:
     return (
         "the pinned extraction container was built from "
         f"verification/extraction/Dockerfile@{built_from[:12]}, and this tree declares "
-        f"@{current[:12]}. The pinned digest is therefore NOT a build of the declared "
+        f"@{current[:12]}. The pinned artifact is therefore NOT a build of the declared "
         f"definition: it computes tag {content_tag(toolchains, built_from)!r} where the "
-        f"tree computes {content_tag(toolchains)!r}. Publish the current definition "
-        "(.github/workflows/extraction-image.yml, push=true) and move the pin onto the "
-        "digest it reports."
+        f"tree computes {content_tag(toolchains)!r}. Rebuild the current definition "
+        "(.github/workflows/extraction-image.yml) and move the pin onto the identity it "
+        "reports."
     )

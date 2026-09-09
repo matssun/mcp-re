@@ -684,10 +684,9 @@ jobs:
   # ---------------------------------------------------------------------------
   extraction:
     name: extraction pipeline (linux container)
-    # Same-repository refs only — see the `host` job. This lane additionally writes
-    # `secrets.GITHUB_TOKEN` into a registry credential and bind-mounts the workspace into
-    # a container, so a fork ref here would hand a PR author both the token and the
-    # runner's Docker socket reach.
+    # Same-repository refs only — see the `host` job. This lane bind-mounts the workspace
+    # into a container on the release verification host, so a fork ref here would hand a PR
+    # author the runner's Docker socket reach.
     if: >-
       github.event_name != 'pull_request'
       || github.event.pull_request.head.repo.full_name == github.repository
@@ -701,7 +700,7 @@ jobs:
       - name: Runner environment preflight
         run: ./scripts/verification_runner_preflight.sh
 
-      - name: Resolve the pinned extraction image
+      - name: Resolve the pinned extraction identity
         id: image
         run: |
           set -euo pipefail
@@ -709,17 +708,20 @@ jobs:
           import tomllib
           d = tomllib.load(open("verification/policy/toolchains.lock.toml", "rb"))
           c = d.get("extraction_container", {})
-          resolved = c.get("state") == "resolved" and c.get("digest")
-          # Pinned by digest, never by tag: a tag is a mutable pointer, so the same
-          # declared toolchain could produce two different models.
+          resolved = c.get("state") == "resolved" and c.get("artifact_digest")
+          # The image is identified by its own content digest, and by the tag the declared
+          # inputs compute to. There is no registry: a content digest identifies these bytes
+          # whether they sit in a local image store or elsewhere, and nothing in this
+          # repository claims cross-machine reproduction of the model. Ruling:
+          # verification/reviews/rulings/extraction-artifact-storage-2026-09-09.md
           print(f"resolved={'true' if resolved else 'false'}")
-          print(f"ref={c.get('image','')}@{c.get('digest','')}" if resolved else "ref=")
+          print(f"artifact={c.get('artifact_digest','')}" if resolved else "artifact=")
+          print(f"tag={c.get('tag','')}" if resolved else "tag=")
 
-          # The pin says the pipeline COULD run; the manifest says whether any unit asks
-          # it for evidence. `verify-lean` reports NOT_REQUIRED while no unit is V2/V3,
-          # and `regenerate-lean` refuses outright because the Charon → Aeneas → Lean
-          # invocation is unimplemented, so running the pipeline on a pin alone makes the
-          # lane permanently red — a red nobody reads is a lane that reports nothing.
+          # The pin says the pipeline COULD run; the manifest says whether any unit asks it
+          # for evidence. `verify-lean` reports NOT_REQUIRED while no unit is V2/V3, so
+          # running the pipeline on a pin alone makes the lane permanently red — a red
+          # nobody reads is a lane that reports nothing.
           v = tomllib.load(open("verification/policy/verification.toml", "rb"))
           units = [u for u in v.get("unit", []) if u.get("class") in ("V2", "V3")]
           print(f"required={'true' if units else 'false'}")
@@ -730,74 +732,36 @@ jobs:
         run: |
           set -euo pipefail
           # An unavailable runtime is a lane that CANNOT run. On the authoritative runner
-          # that is a failure, never a SKIP — silence must not read as evidence.
-          # macOS cannot run Linux containers natively, so this is a real host
-          # prerequisite (Docker Desktop or colima), not a formality.
+          # that is a failure, never a SKIP — silence must not read as evidence. macOS
+          # cannot run Linux containers natively, so this is a real host prerequisite.
           docker info --format 'server {{.ServerVersion}} {{.OSType}}/{{.Architecture}}'
 
-      # NOT `docker login`. On this runner it authenticates successfully and then fails to
-      # PERSIST the credential:
+      # The image is BUILT here, not fetched. The identity check below is what makes that
+      # safe: a local build that produced different bytes than the lock records is refused,
+      # so "built here" never means "whatever this machine happened to produce".
       #
-      #     error saving credentials - err: exit status 1,
-      #     out: `User interaction is not allowed. (-25308)`
-      #
-      # -25308 is errSecInteractionNotAllowed — the macOS keychain refusing a background
-      # service. "error SAVING" is the important half: the registry accepted the token, so
-      # this is neither a bad credential nor a package-permissions problem.
-      #
-      # Pointing DOCKER_CONFIG at an empty directory does NOT avoid it, which was measured
-      # on the runner rather than assumed: the CLI detects `osxkeychain` as the platform
-      # default whenever the helper is on PATH, so a fresh empty config detects the same
-      # store. Writing the credential into the config ourselves skips the store entirely,
-      # and `docker manifest inspect` against the private pinned image under exactly this
-      # config was verified to succeed on dev1.
-      #
-      # The credential lives in a per-run directory for the length of the job, is never
-      # written to the keychain or to the shared `~/.docker/config.json`, and never appears
-      # as a process argument: `printf` is a bash BUILTIN, so no process is created and
-      # nothing reaches the process table; `base64` receives it on stdin.
-      - name: Authenticate to GHCR without a credential helper
-        if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true'
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          # RESOLVED FIRST, while the default config is still in effect. A config directory
-          # carries more than credentials: it carries `currentContext` and the context
-          # definitions under `contexts/`. This runner's Docker is colima, on
-          # `colima-gh-runner`, so a fresh directory sends the CLI to the default
-          # `unix:///var/run/docker.sock`, which does not exist here — measured, as
-          # `failed to connect to the docker API at unix:///var/run/docker.sock`. Naming the
-          # endpoint outright takes context resolution out of the question entirely.
-          host=$(docker context inspect --format '{{.Endpoints.docker.Host}}')
-
-          config="${RUNNER_TEMP}/docker-${GITHUB_RUN_ID}"
-          mkdir -p "$config"
-          auth=$( { printf '%s:' '${{ github.actor }}'; printf '%s' "$GHCR_TOKEN"; } \
-                  | base64 | tr -d '\n' )
-          printf '{"auths":{"ghcr.io":{"auth":"%s"}}}\n' "$auth" > "$config/config.json"
-          chmod 600 "$config/config.json"
-
-          # Every later step — the pull and both container runs — reads both of these.
-          echo "DOCKER_CONFIG=$config" >> "$GITHUB_ENV"
-          echo "DOCKER_HOST=$host" >> "$GITHUB_ENV"
-
-      - name: Pull the pinned image and confirm its digest
+      # UNAVAILABLE rather than FAIL when the bytes are absent or different. An extraction
+      # environment that is not present is a missing measurement, not a failed one, and the
+      # aggregate distinguishes the two.
+      - name: The pinned extraction environment is present, and is the pinned one
         if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true'
         run: |
           set -euo pipefail
-          # Pulling BY DIGEST is what makes the pin mean something: the registry cannot
-          # hand back different content under the same digest, so this either fetches the
-          # reviewed toolchain or fails.
-          docker pull --platform linux/arm64 "${{ steps.image.outputs.ref }}"
+          ref='${{ steps.image.outputs.tag }}'
+          want='${{ steps.image.outputs.artifact }}'
+          if ! got=$(docker image inspect "$ref" --format '{{.Id}}' 2>/dev/null); then
+            echo "UNAVAILABLE: no image tagged ${ref} on this runner."
+            echo "Build it with: tools/verification/extraction-image identity"
+            exit 1
+          fi
+          echo "recorded: ${want}"
+          echo "present:  ${got}"
+          [ "$got" = "$want" ] || {
+            echo "FAIL: the image tagged ${ref} is not the one the lock records."
+            echo "A different build of the same declared pins is a different instrument:"
+            echo "this definition still resolves apt and opam versions at build time."
+            exit 1; }
 
-      # `safe.directory` through the ENVIRONMENT rather than a config file: git refuses a
-      # repository whose owner differs from the caller, and a bind-mounted workspace read by
-      # root inside a container is exactly where that arises. The lane reads git for two
-      # things — the tracked-file set every fingerprint is computed over, and the
-      # `git status` that IS the generated model's drift comparison — so a refusal there
-      # would surface as a fingerprint or a drift failure rather than as a permissions one.
-      # `GIT_CONFIG_*` sets it for the process only, leaving no state behind on the runner.
       - name: Regenerate and check the extracted model
         if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true'
         run: |
@@ -806,20 +770,15 @@ jobs:
             -v "$PWD:/workspace" -w /workspace \
             -e GIT_CONFIG_COUNT=1 \
             -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/workspace \
-            "${{ steps.image.outputs.ref }}" \
+            '${{ steps.image.outputs.tag }}' \
             ./tools/verification/regenerate-lean
           ./tools/verification/check-generated
 
       # BEFORE the lane reports, and in the same container the lane will run in. Every
-      # refusal below is conditional on `#print axioms` reporting what the lane expects it
-      # to report — so a Lean release that changed the message, a lakefile that stopped
+      # refusal is conditional on `#print axioms` reporting what the lane expects it to
+      # report — so a Lean release that changed the message, a lakefile that stopped
       # building the theorems, or a parser that silently matched nothing would each turn
       # every check into a tautology, and all three look exactly like a clean axiom closure.
-      # The probe makes the real prover produce a `sorry`, an unregistered axiom and an
-      # unresolvable name, and fails if the lane stops refusing them.
-      #
-      # Gated like the steps around it: until a unit is V2/V3 this whole job does not run,
-      # which is honest — the lane is NOT_REQUIRED and nothing has been asked of it.
       - name: Lean lane activation probe
         if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true'
         run: |
@@ -828,7 +787,7 @@ jobs:
             -v "$PWD:/workspace" -w /workspace \
             -e GIT_CONFIG_COUNT=1 \
             -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/workspace \
-            "${{ steps.image.outputs.ref }}" \
+            '${{ steps.image.outputs.tag }}' \
             ./tools/verification/verify-lean --activation-probe
 
       - name: Lean proofs
@@ -839,15 +798,16 @@ jobs:
             -v "$PWD:/workspace" -w /workspace \
             -e GIT_CONFIG_COUNT=1 \
             -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/workspace \
-            "${{ steps.image.outputs.ref }}" \
+            '${{ steps.image.outputs.tag }}' \
             ./tools/verification/verify-lean
 
       - name: Extraction lane unpinned
         if: steps.image.outputs.resolved != 'true'
         run: |
           echo "extraction_container is unresolved in toolchains.lock.toml."
-          echo "The Lean lane cannot produce evidence until the image digest is pinned."
-          echo "This is the mechanism, not an unfinished step (ADR-MCPRE-059 §2, §19)."
+          echo "The Lean lane cannot produce evidence until an artifact identity is"
+          echo "recorded. This is the mechanism, not an unfinished step"
+          echo "(ADR-MCPRE-059 §2, §19)."
 
       # NOT_REQUIRED is a distinct outcome from SKIPPED: the pipeline is pinned and could
       # run, and no unit is asking it for evidence. `tools/verification/verify-lean`
@@ -858,5 +818,4 @@ jobs:
         run: |
           echo "No unit in verification/policy/verification.toml is declared V2 or V3."
           echo "The extraction pipeline is pinned but no unit asks it for evidence:"
-          echo "NOT_REQUIRED (ADR-MCPRE-059 §8, §16). Promoting a unit to V2 turns this"
-          echo "lane on, and the Charon -> Aeneas -> Lean invocation must exist by then."
+          echo "NOT_REQUIRED (ADR-MCPRE-059 §8, §16)."

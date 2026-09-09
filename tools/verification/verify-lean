@@ -297,7 +297,7 @@ def main() -> int:
                     "lean": str(toolchains["lean"]["toolchain"]),
                     "aeneas": str(toolchains["aeneas"]["commit"]),
                     "charon": str(toolchains["charon"]["commit"]),
-                    "image": str(toolchains["extraction_container"]["digest"]),
+                    "extraction_artifact": str(toolchains["extraction_container"]["artifact_digest"]),
                 },
             ),
         )

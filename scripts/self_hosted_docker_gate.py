@@ -18,19 +18,19 @@ than of the code, and each was hidden behind the previous one:
    default whenever the helper is on `PATH`, so a fresh config detects the same store.
    Measured on the runner, and then again in CI with `DOCKER_CONFIG` demonstrably set.
 
-2. **An isolated config loses the docker CONTEXT as well as the store.**
+2. **An isolated config loses the docker CONTEXT as well as the store**, which is what
+   working around (1) then produced: `failed to connect to the docker API at
+   unix:///var/run/docker.sock`, on a runner whose Docker is colima.
 
-       failed to connect to the docker API at unix:///var/run/docker.sock
+Both went away entirely when the registry did. The extraction image is now built where it
+is consumed and identified by its own content digest, so there is no login, no isolated
+config, and no endpoint to name — the ordinary default context is correct. What survives is
+the one durable rule, which is the FIRST defect and not the second: a self-hosted runner
+here cannot persist a registry credential at all, so no job on one may try.
 
-   A config directory carries `currentContext` and the definitions under `contexts/`, not
-   just `auths`. This runner's Docker is colima on `colima-gh-runner`, so a fresh directory
-   sends the CLI to a socket that does not exist. The step that had passed two steps
-   earlier passed *because* it ran before the switch.
-
-Both are now fixed by writing the credential and naming `DOCKER_HOST`. This gate exists
-because nothing else can see either property: the lane runs only on a self-hosted macOS
-runner, only when a unit asks it for evidence, and both failures look like ordinary Docker
-errors rather than like a contract being broken.
+This gate exists because nothing else can see that: the lane runs only on a self-hosted
+macOS runner, only when a unit asks it for evidence, and the failure looks like an ordinary
+Docker error rather than like a contract being broken.
 
 Run:  python3 scripts/self_hosted_docker_gate.py
       python3 scripts/self_hosted_docker_gate.py --selftest
@@ -55,10 +55,11 @@ WORKFLOW_DIR = Path(".github") / "workflows"
 SELF_HOSTED = re.compile(r"runs-on:\s*\[\s*self-hosted[^\]]*\]")
 
 _JOB = re.compile(r"^  (?P<name>[A-Za-z0-9_-]+):\s*$")
-_DOCKER_LOGIN = re.compile(r"^\s*(?:\||.*\|\s*)?docker\s+login\b")
-_DOCKER_DAEMON = re.compile(r"\bdocker\s+(pull|run|manifest|image|save|load)\b")
-_SETS_HOST = re.compile(r'echo\s+"DOCKER_HOST=')
-_SETS_CONFIG = re.compile(r'echo\s+"DOCKER_CONFIG=')
+#: `docker login` ANYWHERE on an executable line. The first form of this pattern anchored
+#: at the start of the line and so matched only a block scalar's body — a mutation probe
+#: against the real workflow then walked straight past `run: docker login …` on one line.
+#: A gate whose rule is narrower than the thing it forbids is a gate that reports nothing.
+_DOCKER_LOGIN = re.compile(r"\bdocker\s+login\b")
 
 
 def jobs(text: str) -> dict[str, list[str]]:
@@ -93,92 +94,76 @@ def findings(root: Path) -> list[str]:
                 for line in body_lines
                 if not line.lstrip().startswith("#") and line.strip()
             ]
-            code_text = "\n".join(code)
-
             if any(_DOCKER_LOGIN.search(line) for line in code):
                 out.append(
                     f"{path.relative_to(root)}: job `{name}` runs on a self-hosted runner "
                     f"and calls `docker login`. It cannot persist a credential there — the "
                     f"macOS keychain refuses a background service (-25308) — and an "
-                    f"isolated DOCKER_CONFIG does not avoid it. Write the credential into "
-                    f"the config instead."
+                    f"isolated DOCKER_CONFIG does not avoid it, because the CLI detects "
+                    f"`osxkeychain` whenever the helper is on PATH. The extraction image is "
+                    f"built where it is consumed and needs no registry at all."
                 )
-
-            if _DOCKER_DAEMON.search(code_text):
-                if not _SETS_CONFIG.search(code_text):
-                    out.append(
-                        f"{path.relative_to(root)}: job `{name}` talks to the Docker daemon "
-                        f"on a self-hosted runner without setting DOCKER_CONFIG. The "
-                        f"credential has nowhere to live that the keychain will not claim."
-                    )
-                if not _SETS_HOST.search(code_text):
-                    out.append(
-                        f"{path.relative_to(root)}: job `{name}` sets DOCKER_CONFIG but not "
-                        f"DOCKER_HOST. An isolated config carries no `currentContext`, so "
-                        f"the CLI falls back to unix:///var/run/docker.sock, which this "
-                        f"runner does not have."
-                    )
     return out
 
 
-def _workflow(*, login: bool, config: bool, host: bool, self_hosted: bool = True) -> str:
+def _workflow(*, login: bool, self_hosted: bool = True) -> str:
     runs_on = "[self-hosted, macOS, ARM64]" if self_hosted else "ubuntu-24.04-arm"
     steps = ["      - name: creds", "        run: |"]
-    if config:
-        steps.append('          echo "DOCKER_CONFIG=$x" >> "$GITHUB_ENV"')
-    if host:
-        steps.append('          echo "DOCKER_HOST=$y" >> "$GITHUB_ENV"')
     if login:
         steps.append("          docker login ghcr.io -u u --password-stdin")
-    steps += ["      - name: use", "        run: |", "          docker pull x@sha256:y"]
-    return "jobs:\n  extraction:\n    runs-on: " + runs_on + "\n    steps:\n" + "\n".join(steps) + "\n"
+    steps += ["      - name: use", "        run: |", "          docker run --rm x"]
+    return (
+        "jobs:\n  extraction:\n    runs-on: " + runs_on + "\n    steps:\n"
+        + "\n".join(steps)
+        + "\n"
+    )
 
 
 def selftest() -> int:
-    """Both shipped defects, as mutations the gate must catch.
+    """The form that shipped, as a mutation the gate must catch.
 
-    A gate that only ever passes proves nothing, and these two are the exact forms that
-    reached the runner — not hypotheticals.
+    A gate that only ever passes proves nothing, and this is the exact form that reached the
+    runner rather than a hypothetical.
     """
-    cases: list[tuple[str, str, int]] = [
-        # The form that shipped first: a plain `docker login`, no isolation at all.
-        ("the original docker login", _workflow(login=True, config=False, host=False), 3),
-        # The form that shipped second: DOCKER_CONFIG set, login still present, no HOST.
-        ("DOCKER_CONFIG plus a login", _workflow(login=True, config=True, host=False), 2),
-        # The third form: login gone, but the context lost with it.
-        ("a written credential with no DOCKER_HOST", _workflow(login=False, config=True, host=False), 1),
-        # The contract satisfied.
-        ("the current form", _workflow(login=False, config=True, host=True), 0),
-    ]
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / WORKFLOW_DIR).mkdir(parents=True)
         target = root / WORKFLOW_DIR / "probe.yml"
-        for label, text, expected in cases:
-            target.write_text(text, encoding="utf-8")
-            got = findings(root)
-            if len(got) != expected:
-                print(f"SELFTEST FAILED: {label} — expected {expected} finding(s), got {got}")
-                return 1
 
-        # A GitHub-hosted runner has no keychain and a working default socket, so the same
-        # `docker login` there is correct. `extraction-image.yml` publishes from one, and a
-        # gate that flagged it would be telling the truth about the wrong machine.
-        target.write_text(
-            _workflow(login=True, config=False, host=False, self_hosted=False), encoding="utf-8"
-        )
+        target.write_text(_workflow(login=True), encoding="utf-8")
+        got = findings(root)
+        if len(got) != 1:
+            print(f"SELFTEST FAILED: a self-hosted docker login was not caught: {got}")
+            return 1
+
+        target.write_text(_workflow(login=False), encoding="utf-8")
+        if findings(root):
+            print("SELFTEST FAILED: a job that never logs in was flagged")
+            return 1
+
+        # A GitHub-hosted runner has no keychain, so the same call there is correct. A gate
+        # that told the truth about the wrong machine would be worse than none.
+        target.write_text(_workflow(login=True, self_hosted=False), encoding="utf-8")
         if findings(root):
             print("SELFTEST FAILED: a GitHub-hosted runner's docker login was flagged")
+            return 1
+
+        # The INLINE form, which the first version of this rule walked past.
+        target.write_text(
+            "jobs:\n  extraction:\n    runs-on: [self-hosted, macOS, ARM64]\n    steps:\n"
+            "      - name: sneak\n        run: docker login ghcr.io -u u --password-stdin\n",
+            encoding="utf-8",
+        )
+        if len(findings(root)) != 1:
+            print("SELFTEST FAILED: an inline `run: docker login` was not caught")
             return 1
 
         # A comment explaining the contract is not a breach of it.
         target.write_text(
             "jobs:\n  extraction:\n    runs-on: [self-hosted, macOS, ARM64]\n    steps:\n"
-            "      - name: creds\n        run: |\n"
+            "      - name: note\n        run: |\n"
             "          # NOT `docker login`: it cannot persist here.\n"
-            '          echo "DOCKER_CONFIG=$x" >> "$GITHUB_ENV"\n'
-            '          echo "DOCKER_HOST=$y" >> "$GITHUB_ENV"\n'
-            "      - name: use\n        run: |\n          docker pull x\n",
+            "          docker run --rm x\n",
             encoding="utf-8",
         )
         if findings(root):
@@ -198,10 +183,7 @@ def main() -> int:
         for entry in found:
             print(f"  {entry}", file=sys.stderr)
         return 1
-    print(
-        "self-hosted docker gate: OK — no self-hosted job logs in to a registry, and every "
-        "one that reaches the daemon names both its config and its endpoint"
-    )
+    print("self-hosted docker gate: OK — no self-hosted job tries to log in to a registry")
     return 0
 
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Build, tag, and publish the ADR-MCPRE-059 extraction container.
+"""Build and identify the ADR-MCPRE-059 extraction container.
 
 The image's identity is a function of the TOOLCHAIN IT CONTAINS, never of the product
 release in VERSION. Both directions of that choice matter:
@@ -14,9 +14,16 @@ release in VERSION. Both directions of that choice matter:
 So the tag is derived from the pinned inputs, and the lock file pins the digest. Two
 checkouts with the same pins compute the same tag; changing any pin changes it.
 
-  tools/verification/extraction-image tag      # print the content tag
-  tools/verification/extraction-image build    # build locally (arm64)
-  tools/verification/extraction-image push     # build + push + print the digest
+  tools/verification/extraction-image tag       # the tag the declared inputs compute to
+  tools/verification/extraction-image build     # build it (arm64)
+  tools/verification/extraction-image identity  # build + print the lock entry to record
+
+THERE IS NO REGISTRY IN THIS PATH. The assurance requirement is that Lean evidence names
+the environment that produced it and is invalidated when that environment changes, and a
+content digest does that whether the bytes sit in a local image store or a registry. The
+lane runs on one self-hosted runner and no proposition claims cross-machine reproduction,
+so publishing would add a distribution mechanism nothing asks for. Ruling:
+verification/reviews/rulings/extraction-artifact-storage-2026-09-09.md.
 
 The platform is linux/arm64 because the consumer is a self-hosted Apple Silicon runner.
 An amd64 build of the same pins is a DIFFERENT image with a different digest, and the lock
@@ -41,10 +48,11 @@ REPO = Path(__file__).resolve().parent.parent.parent
 DOCKERFILE = REPO / "verification" / "extraction" / "Dockerfile"
 PLATFORM = "linux/arm64"
 
-# Not `mcp-re-<something>:<semver>`: scripts/deploy_image_tag_gate.py requires any literal
-# semver tag on an mcp-re-* image to equal VERSION, and this image must NOT track VERSION.
-# The content tag keeps it outside that rule by construction rather than by exemption.
-DEFAULT_IMAGE = "ghcr.io/matssun/mcp-re-verification-extraction"
+# A LOCAL reference, with no registry host. Not `mcp-re-<something>:<semver>` either:
+# scripts/deploy_image_tag_gate.py requires any literal semver tag on an mcp-re-* image to
+# equal VERSION, and this image must NOT track VERSION — the content tag keeps it outside
+# that rule by construction rather than by exemption.
+DEFAULT_IMAGE = "mcp-re-verification-extraction"
 
 
 # The identity function lives in `_extraction_identity` so the PUBLISHER and the VALIDATOR
@@ -67,7 +75,7 @@ def _run(cmd: list[str]) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["tag", "build", "push"])
+    parser.add_argument("action", choices=["tag", "build", "identity"])
     parser.add_argument("--image", default=DEFAULT_IMAGE)
     args = parser.parse_args()
 
@@ -83,41 +91,35 @@ def main() -> int:
         print(ref)
         return 0
 
-    build = [
+    _run([
         "docker", "buildx", "build",
         "--platform", PLATFORM,
         "-t", ref,
+        "--load",
         str(DOCKERFILE.parent),
-    ]
-    if args.action == "push":
-        # --push makes the registry manifest — and therefore the digest — exist. A local
-        # `docker build` digest is not the digest the runner would pull.
-        build.append("--push")
-    else:
-        build.append("--load")
-
-    _run(build)
+    ])
     print(f"\nbuilt: {ref}")
 
-    if args.action == "push":
-        digest = _run(
-            ["docker", "buildx", "imagetools", "inspect", ref, "--format", "{{.Manifest.Digest}}"]
-        )
-        print(f"digest: {digest}")
+    if args.action == "identity":
+        # The image's OWN content digest. `docker inspect .Id` is a digest over the image
+        # config, which commits to every layer, so it identifies these bytes exactly as a
+        # registry manifest digest does — and it exists without one.
+        artifact = _run(["docker", "image", "inspect", ref, "--format", "{{.Id}}"])
+        print(f"artifact_digest: {artifact}")
         print("\nRecord in verification/policy/toolchains.lock.toml:")
         print("\n  [extraction_container]")
         print('  state = "resolved"')
-        print(f'  image = "{args.image}"')
-        print(f'  digest = "{digest}"')
+        print(f'  artifact_digest = "{artifact}"')
         print(f'  tag = "{content_tag(toolchains)}"')
-        # Printed WITH the digest, because the two are one fact: this digest is a build of
-        # THIS definition. Recording the digest without it is the state the lock was in for
-        # four weeks — a pin that could not be checked against anything, and that went on
-        # naming an old image through three Dockerfile changes.
+        # Printed WITH the artifact digest, because the two are one fact: this image is a
+        # build of THIS definition. Recording one without the other is the state the lock
+        # was in for four weeks — a pin that could not be checked against anything, and
+        # that went on naming an old image through three Dockerfile changes.
         print(f'  definition_digest = "{definition_digest()}"')
         print(f'  platform = "{PLATFORM}"')
-        print("\nThen flip charon/aeneas/lean/aeneas_lean_backend to resolved: their")
-        print("commits are only meaningful once the image that built them is identified.")
+        print(f'  definition = "verification/extraction/Dockerfile"')
+        print("\nTranscribe it exactly. The artifact digest and the definition digest are")
+        print("one evidence-identity fact and must travel together.")
 
     return 0
 

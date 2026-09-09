@@ -173,7 +173,14 @@ def extraction_identity(toolchains: dict) -> dict[str, str]:
     out: dict[str, str] = {}
     for pin in IDENTITY_PINS:
         entry = toolchains.get(pin, {})
-        for field in ("commit", "digest", "definition_digest", "toolchain", "package_revision", "mathlib_revision"):
+        for field in (
+            "commit",
+            "artifact_digest",
+            "definition_digest",
+            "toolchain",
+            "package_revision",
+            "mathlib_revision",
+        ):
             if field in entry:
                 out[f"{pin}.{field}"] = str(entry[field])
     return out

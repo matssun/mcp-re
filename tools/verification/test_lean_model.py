@@ -35,7 +35,7 @@ TOOLCHAINS = {
     },
     "extraction_container": {
         "state": "resolved",
-        "digest": "sha256:" + "d" * 64,
+        "artifact_digest": "sha256:" + "d" * 64,
         "definition_digest": "f" * 64,
     },
 }
@@ -235,13 +235,13 @@ def test_a_model_from_a_different_pipeline_is_refused(subject: Tree):
         **TOOLCHAINS,
         "extraction_container": {
             **TOOLCHAINS["extraction_container"],
-            "digest": "sha256:" + "e" * 64,
+            "artifact_digest": "sha256:" + "e" * 64,
         },
     }
     defects = stamp_defects(stamp, moved, SELECTION)
     assert len(defects) == 1
     assert "different pipeline" in defects[0]
-    assert "extraction_container.digest" in defects[0]
+    assert "extraction_container.artifact_digest" in defects[0]
 
 
 @tree

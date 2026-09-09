@@ -136,32 +136,46 @@ named while the lock read as fully pinned.
 # .rlib files and Charon builds unmodified. The host is changed rather than the tool.
 
 [extraction_container]
-state = "resolved"
-image = "ghcr.io/matssun/mcp-re-verification-extraction"
-digest = "sha256:42318bba386ace68eb1b5ff7173259d3e485fc506cab76d6e40970dc987f7dce"
-tag = "tc-09eedf0aaf503302"
-# The Dockerfile the pinned image was BUILT FROM, as opposed to the one this tree declares.
-# Recovered rather than assumed: this is the only value for which `tag` above reproduces from
-# the pins beside it, and it is `verification/extraction/Dockerfile` as of 1adeda55 (the commit
-# that wrote this entry). Without it the recorded tag could not be checked against anything,
-# which is how three Dockerfile changes — #719, #720, #723 — left the pin naming an image
-# built from none of them.
-definition_digest = "790b65c1bf3c2c8134945e998857c8e3f1b228e7d6910197980ca2b5592cee9d"
-platform = "linux/arm64"
+# UNRESOLVED, and that is the mechanism rather than an unfinished step. The image this
+# entry used to name was published to a container registry by hand on 2026-08-10, is not a
+# build of the definition this tree declares, and cannot run the Lean half at all. Nothing
+# is pinned until a build of the CURRENT definition is made and its identity recorded here.
+state = "unresolved"
 definition = "verification/extraction/Dockerfile"
+platform = "linux/arm64"
 note = """
-Pinned by DIGEST, never by tag: a tag is a mutable pointer, so a lane pinned to one could
-produce two different models from the same declared toolchain. `tag` is recorded for human
-navigation only — nothing resolves through it.
+WHAT A BUILD MUST RECORD, and why each field exists.
 
-The tag is derived from the pinned toolchain contents by tools/verification/extraction-image,
-NOT from VERSION. Tying it to the product release would mint a new digest on every release
-with an unchanged prover (invalidating all formal evidence for nothing), and would leave
-the tag unmoved when a toolchain pin changed — a stale pointer to a different prover.
+  artifact_digest   the image's own content digest, as `tools/verification/extraction-image
+                    identity` reports it. REQUIRED: the declared pins do not determine the
+                    image. This definition still resolves apt package versions and opam
+                    library versions at build time, and the opam libraries build the Aeneas
+                    binary — so a different `visitors` or `zarith` can produce a different
+                    extracted model from identical Rust. An identity derived from the pins
+                    alone would say which toolchain was INTENDED and nothing about which one
+                    ran.
 
-This digest is the OCI index. It carries the linux/arm64 manifest the Apple Silicon runner
-selects; an amd64 build of identical pins is a different image with a different digest,
-which is why `platform` is part of the identity rather than an incidental detail.
+  definition_digest the Dockerfile the image was built from. MCPRE-181: the pin went on
+                    naming an image built from a definition that had changed three times,
+                    because nothing compared them. `load_toolchains` now refuses a lock whose
+                    `tag` does not follow from this plus the pins, so every consumer inherits
+                    the refusal instead of one script remembering to ask.
+
+  tag               computed from the declared inputs by `_extraction_identity.content_tag`,
+                    never chosen. It is the DECLARED identity; `artifact_digest` is the one
+                    that was PRODUCED, and keeping both is what makes the two questions —
+                    "does the record follow from its own inputs" and "is the pin a build of
+                    what the tree declares" — separately answerable.
+
+  platform          an amd64 build of identical pins is a different instrument.
+
+WHERE THE BYTES ARE KEPT IS NOT PART OF THE IDENTITY. A content digest identifies an image
+whether it sits in a local image store or a registry, and the assurance requirement is that
+Lean evidence names the environment that produced it and is invalidated when that
+environment changes — not that the environment is published anywhere. The extraction image
+is a formal-verification toolchain artifact; it is never a deployable MCP-RE product image,
+and its digest is an artifact identity rather than a release or deployment claim. Ruling:
+verification/reviews/rulings/extraction-artifact-storage-2026-09-09.md.
 """
 
 [charon]
