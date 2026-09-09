@@ -735,12 +735,32 @@ jobs:
           # prerequisite (Docker Desktop or colima), not a formality.
           docker info --format 'server {{.ServerVersion}} {{.OSType}}/{{.Architecture}}'
 
+      # `docker login` stores credentials through the macOS KEYCHAIN on this runner, and the
+      # runner is a background service whose session cannot unlock one:
+      #
+      #     error storing credentials - err: exit status 1,
+      #     out: `User interaction is not allowed. (-25308)`
+      #
+      # -25308 is errSecInteractionNotAllowed. Not a permissions problem with the package
+      # and not a bad token — the login never got as far as being rejected.
+      #
+      # DOCKER_CONFIG points the CLI at a per-run directory, where it writes a plain config
+      # instead of consulting the keychain. Set through GITHUB_ENV rather than as a job
+      # `env:` because the path comes from RUNNER_TEMP, and it must reach every later step:
+      # the pull and both container runs have to read the same config the login wrote.
+      - name: A credential store this runner can actually write
+        if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true'
+        run: |
+          set -euo pipefail
+          echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-${GITHUB_RUN_ID}" >> "$GITHUB_ENV"
+
       - name: Log in to GHCR
         if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true'
         run: |
           set -euo pipefail
           # Piped, never passed as an argument: a token on a command line is visible in
           # the process table and trivially echoed into a log.
+          mkdir -p "$DOCKER_CONFIG"
           echo '${{ secrets.GITHUB_TOKEN }}' \
             | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
 
