@@ -141,10 +141,14 @@ named while the lock read as fully pinned.
 # replaces named an image published to a container registry by hand on 2026-08-10 that was
 # a build of none of the three Dockerfiles that followed it and could not run Lean at all.
 state = "resolved"
-artifact_digest = "sha256:a030c315e88172dde7396bfe73e6cbe607e5d1a681ddd3c916397fc0ffafdb24"
-archive_digest = "sha256:48203224058e50ae3e79779b41696287fddec1c8bec62dd645fe2f27fd082931"
-tag = "tc-5a2c815ed0914b57"
-definition_digest = "00e6c0a43031f9a333358fce1eacb87d060e33d745c353364525961de40f79fa"
+# Built from the definition this tree declares, smoke-checked BY IMAGE ID — the six checks
+# the build workflow asks, including the harness interpreter and a tiny crate going
+# Rust -> LLBC -> Lean — and preserved before this identity was reported, so what is
+# recorded is what the store holds.
+artifact_digest = "sha256:d38738c18a60306a1f9be0f2e225872ab3825dc408a1f4c561193579bd701d84"
+archive_digest = "sha256:88a97b6e37cdfb755cf30c48ed6099d0b2a9a4a4c1186baf9ed1a150e5681a4b"
+tag = "tc-34eb72d4f6d70d4f"
+definition_digest = "c393c8b6874d6b43f914f42284741bf5fdae231ad1d98322beef6a2e254940f7"
 definition = "verification/extraction/Dockerfile"
 platform = "linux/arm64"
 note = """

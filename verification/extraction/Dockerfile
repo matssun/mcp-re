@@ -44,9 +44,16 @@ ENV DEBIAN_FRONTEND=noninteractive \
     OPAMROOT=/opt/opam \
     PATH=/opt/cargo/bin:/opt/opam/default/bin:$PATH
 
+# `python3` is here because the lane's own entry points are Python and they run INSIDE this
+# image: `regenerate-lean` drives Charon and Aeneas, `verify-lean` drives lake and reads
+# `#print axioms`. Without it the container answers `/usr/bin/env: 'python3': No such file
+# or directory` — measured, on the first real run of the pipeline. It parses the toolchain
+# lock with the standard library, so the requirement is `tomllib`, which is 3.11+; bookworm
+# ships 3.11. It is an interpreter for the harness and never a prover: nothing it does
+# decides a proof obligation.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential ca-certificates curl git make m4 unzip \
-        libgmp-dev pkg-config bubblewrap rsync opam \
+        libgmp-dev pkg-config bubblewrap rsync opam python3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Rust: the nightly Charon pins, with the compiler-internal components it links against.
