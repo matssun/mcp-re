@@ -114,3 +114,76 @@ fields = [
   "connection_mode",
   "declared_cores",
 ]
+
+# ---------------------------------------------------------------------------------------
+# The declared HARDWARE CLASSES — the named measurement contexts a result may be about.
+#
+# `hardware_class` is the field of the context that decides WHICH QUESTION a number answers,
+# and it was the one field with no declared vocabulary: a class was whatever
+# `MCP_RE_LOADGEN_HW_CLASS` happened to hold, `scripts/adr051_slo_gate.py` compared any
+# report against the one committed anchor whatever class it carried, and
+# `scripts/slo_gate.py` carried its own private list of two classes that may never be an
+# SLO verdict. Three consumers, no shared vocabulary, and the middle one performed a
+# cross-class comparison silently.
+#
+# A comparison across classes is not a stricter or looser gate — it is a gate about a
+# different question. So each class names its own regression anchor, and a class with none
+# has nothing to be compared against until a deliberate run declares one.
+#
+#   name                the value the harness records in `config.hardware_class`
+#   kind                what sort of machine the class describes
+#   slo_declarable      may a report on this class be an absolute production-SLO verdict?
+#   regression_anchor   the committed baseline `adr051_slo_gate.py` compares it against,
+#                       or "" when no anchor has been declared for this class yet
+#   github_actions_runner
+#                       true on the ONE class the self-hosted Actions runner measures as.
+#                       `.github/workflows/slo.yml` resolves the value from here rather than
+#                       restating it, for the reason `config/ports.toml` exists.
+#   reason              why `slo_declarable = false`, printed by the gate that refuses
+
+[[context.class]]
+name = "apple-m4-pro-14c-dev"
+kind = "developer-workstation"
+slo_declarable = false
+regression_anchor = "docs/bench/adr-051-baseline-local.json"
+github_actions_runner = false
+reason = "a developer workstation with the load generator CO-LOCATED on the same cores; docs/bench/adr-051-baseline-local.json declares itself NOT authoritative for production release SLOs"
+
+[[context.class]]
+name = "dev1-macos-arm64"
+kind = "self-hosted-actions-runner"
+slo_declarable = false
+regression_anchor = ""
+github_actions_runner = true
+reason = "a self-hosted Actions runner; the load generator is co-located exactly as it is on a developer workstation, so this class detects REGRESSION and states no capacity"
+note = "No anchor is declared for this class, and none may be inferred from another one. The runner is a Mac mini whose chip, core count and thermal envelope are not the developer workstation's, so its numbers are a different question — that is the two-identity model working, not a gap in it. The first deliberate `workflow_dispatch` run produces the reports an operator commits as this class's anchor; until then the lane measures, enforces the hardware-independent correctness check, and reports UNANCHORED rather than a pass."
+
+[[context.class]]
+name = "kind-local"
+kind = "plumbing-rehearsal"
+slo_declarable = false
+regression_anchor = ""
+github_actions_runner = false
+reason = "a single unpinned node on a developer box (PROVIDER=kind — a plumbing rehearsal)"
+
+[[context.class]]
+name = "smoke"
+kind = "unclassified"
+slo_declarable = false
+regression_anchor = ""
+github_actions_runner = false
+reason = "the harness default when MCP_RE_LOADGEN_HW_CLASS is unset — no class was declared at all"
+
+[[context.class]]
+name = "e2-standard-8"
+kind = "declared-production"
+slo_declarable = true
+regression_anchor = ""
+github_actions_runner = false
+
+[[context.class]]
+name = "c3-standard-8"
+kind = "declared-production"
+slo_declarable = true
+regression_anchor = ""
+github_actions_runner = false

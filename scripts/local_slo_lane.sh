@@ -10,8 +10,14 @@
 # kind proof harness and before anything that costs money on GKE
 # (docs/security/gke-slo-baseline-runbook.md). It measures the same canonical v2
 # envelope the GKE Job measures (concurrency 128 / 8000 requests / cold TLS1.3-mTLS)
-# and gates the result against the committed local anchor
-# (docs/bench/adr-051-baseline-local.json) via scripts/adr051_slo_gate.py.
+# and gates each rep with scripts/adr051_slo_gate.py, which resolves the anchor FROM
+# the run's own hardware class — one anchor per class, never a comparison across two.
+# A class with no declared anchor yields UNANCHORED (exit 4), which is neither a pass
+# nor a regression: nothing has been recorded for that class to be compared against.
+#
+# Release-grade runs happen on the self-hosted runner (.github/workflows/slo.yml),
+# where nothing else is scheduled on the box. Run here for a pre-flight, or when that
+# runner is the machine you are on.
 #
 # WHY A SCRIPT AND NOT A DOCUMENTED COMMAND: `tls_load_harness_bench` is NOT
 # `#[ignore]` — the whole file is gated to the `redis_replay` feature lane instead,
@@ -26,7 +32,9 @@
 # Env:
 #   REPS                     (default 6)      — anchor reps; the committed anchor is a 6-rep median
 #   OUTDIR                   (default target/slo-local)
-#   MCP_RE_LOADGEN_HW_CLASS  (default: the anchor's hardware_class)
+#   MCP_RE_LOADGEN_HW_CLASS  (default: the class the committed anchor was recorded on;
+#                             REQUIRED under GitHub Actions, where defaulting would make
+#                             another machine claim to be that one)
 #   MCP_RE_LOADGEN_REDIS_URL (default: unset — the bench starts Docker Redis itself)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -47,17 +55,32 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-BASELINE=docs/bench/adr-051-baseline-local.json
+ENVELOPE_REF=docs/bench/adr-051-baseline-local.json
 # ABSOLUTE. cargo runs the test binary with cwd = the PACKAGE root (mcp-re-proxy/),
 # so a relative MCP_RE_LOADGEN_OUT lands under mcp-re-proxy/ and the gate reads nothing.
 OUTDIR="$(mkdir -p "${OUTDIR:-target/slo-local}" && cd "${OUTDIR:-target/slo-local}" && pwd)"
 
-# The anchor config is READ FROM the committed baseline, never restated here: a
-# literal that drifts from the baseline would gate a fresh run against numbers
-# measured under a different envelope, which is worse than not gating at all.
+# The envelope is READ FROM the committed anchor, never restated here: a literal that
+# drifts would measure under a different envelope than the recorded numbers describe,
+# which is worse than not gating at all. The class this anchor was recorded on is also
+# the default class, so a bare run on the machine that recorded it stays comparable.
 read -r ANCHOR_HW CONCURRENCY REQUESTS MODE <<<"$(python3 -c "
-import json; c = json.load(open('$BASELINE'))['anchor']['config']
+import json; c = json.load(open('$ENVELOPE_REF'))['anchor']['config']
 print(c['hardware_class'], c['concurrency'], c['requests'], c['connection_mode'])")"
+
+# A CI RUN MAY NOT INHERIT THE DEFAULT. Defaulting to the recorded anchor's class is
+# right for a hand-run on the machine that recorded it and wrong everywhere else: it
+# makes any other box CLAIM to be that box, and the whole cross-class refusal in
+# adr051_slo_gate.py then never fires because the report says what the anchor says.
+# On a runner, the class is a declared fact the caller must state.
+if [[ -n "${GITHUB_ACTIONS:-}" && -z "${MCP_RE_LOADGEN_HW_CLASS:-}" ]]; then
+  echo "local-slo-lane: FAIL — running under GitHub Actions with no MCP_RE_LOADGEN_HW_CLASS." >&2
+  echo "                Defaulting would record this machine's numbers under '$ANCHOR_HW'," >&2
+  echo "                the class the committed anchor was recorded on. Set the class from" >&2
+  echo "                config/performance-surface.toml (scripts/slo_evidence_identity.py" >&2
+  echo "                --runner-class prints the runner's)." >&2
+  exit 2
+fi
 HW="${MCP_RE_LOADGEN_HW_CLASS:-$ANCHOR_HW}"
 
 if [[ -z "${MCP_RE_LOADGEN_REDIS_URL:-}" ]] && ! docker info >/dev/null 2>&1; then
@@ -103,8 +126,10 @@ if ! quiet_enough "$LOAD1"; then
 fi
 
 if [[ "$HW" != "$ANCHOR_HW" ]]; then
-  echo "local-slo-lane: NOTE hardware_class '$HW' != anchor '$ANCHOR_HW' — the relative"
-  echo "                regression gate still applies, but the anchor was not recorded here."
+  echo "local-slo-lane: NOTE hardware_class '$HW' != '$ANCHOR_HW', the class $ENVELOPE_REF"
+  echo "                was recorded on. The envelope is the same; the reference numbers are"
+  echo "                not. scripts/adr051_slo_gate.py resolves this class's own anchor and"
+  echo "                reports UNANCHORED if none is declared — it never compares across two."
 fi
 
 FEATURES=async_serve,redis_replay
@@ -153,10 +178,19 @@ for i in $(seq 1 "$REPS"); do
 done
 
 echo
-echo "=== gate: each rep vs $BASELINE ==="
+echo "=== gate: each rep vs the anchor declared for hardware class '$HW' ==="
 fails=0
+unanchored=0
 for r in "${reports[@]}"; do
-  python3 scripts/adr051_slo_gate.py --report "$r" || fails=$((fails + 1))
+  # Three outcomes, not two. Exit 4 is NOT COMPARABLE — this class has no committed
+  # anchor, so the rep measured cleanly and there is nothing to adjudicate it against.
+  # Counting it as a regression would report a code verdict about a missing baseline.
+  python3 scripts/adr051_slo_gate.py --report "$r"
+  case $? in
+    0) ;;
+    4) unanchored=$((unanchored + 1)) ;;
+    *) fails=$((fails + 1)) ;;
+  esac
 done
 
 python3 - "${reports[@]}" <<'PY'
@@ -187,6 +221,16 @@ if (( fails > 0 )); then
   fi
   echo "RESULT: FAIL — $fails of ${#reports[@]} rep(s) outside local-regression tolerances." >&2
   exit 1
+fi
+if (( unanchored > 0 )); then
+  echo "RESULT: UNANCHORED — ${#reports[@]} rep(s) measured cleanly on hardware class '$HW'," >&2
+  echo "        which has no committed regression anchor. The hardware-independent" >&2
+  echo "        correctness check passed on every rep; the regression band is not" >&2
+  echo "        established for this class and cannot be borrowed from another one." >&2
+  echo "        Declare one: take the reports under $OUTDIR/ from a deliberate quiet-box" >&2
+  echo "        run and commit them as this class's anchor, then point" >&2
+  echo "        [[context.class]].regression_anchor in config/performance-surface.toml at it." >&2
+  exit 4
 fi
 if (( NOISY == 1 )); then
   echo "RESULT: PASS — ${#reports[@]}/${#reports[@]} rep(s) within tolerance DESPITE a loaded box"

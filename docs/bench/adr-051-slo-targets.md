@@ -42,9 +42,15 @@ release **SLO targets** and the gate that enforces them, per ADR-MCPRE-051 §7
 The machine-readable targets are [`adr-051-slo-targets.json`](adr-051-slo-targets.json),
 split into three blocks with **two complementary gates**:
 
-- **`local_regression`** (active) — a hardware-independent day-to-day gate: a fresh
-  run vs the committed dev-box anchor [`adr-051-baseline-local.json`](adr-051-baseline-local.json),
-  enforced by [`scripts/adr051_slo_gate.py`](../../scripts/adr051_slo_gate.py) (MCPRE-110).
+- **`local_regression`** (active) — a day-to-day gate whose *tolerances* are
+  hardware-independent fractions but whose *anchor* is not: a fresh run is compared against
+  the anchor declared for that run's own `config.hardware_class` in
+  [`config/performance-surface.toml`](../../config/performance-surface.toml), and
+  [`scripts/adr051_slo_gate.py`](../../scripts/adr051_slo_gate.py) refuses a comparison
+  across two classes (MCPRE-110). The developer-workstation class is anchored by
+  [`adr-051-baseline-local.json`](adr-051-baseline-local.json); the self-hosted runner class
+  is declared with no anchor, so a run there reports `UNANCHORED` until a deliberate
+  quiet-box run declares one.
 - **`production_slo`** (**invalidated-pending-remeasurement**) — the absolute
   per-hardware SLO, to be measured on the declared GKE class and enforced by
   [`scripts/slo_gate.py`](../../scripts/slo_gate.py) (MCPRE-123 + the MCPRE-110

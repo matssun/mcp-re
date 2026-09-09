@@ -12,6 +12,40 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Changed — the SLO lane runs where nothing else does, and one anchor per hardware class
+
+A minor release does not owe a whole SLO run; it owes a green build and a green test
+battery. A whole SLO run belongs where the performance surface moved. Both halves of that
+now have a mechanism.
+
+**The lane runs on the self-hosted runner.** The load generator is co-located with the proxy
+it measures, so an unrelated build on the same box halves throughput and triples the tail —
+an environmental FAIL that says nothing about the code, and one that cost a full A/B/B/A
+investigation before anyone could say so. `.github/workflows/slo.yml` schedules the lane
+through `scripts/local_gate.sh --from 4`, so stage 4 keeps one definition. It triggers on a
+change to the declared performance surface — the filter is derived from
+`config/performance-surface.toml`, and `scripts/slo_evidence_identity.py` fails the build if
+it is ever narrower than the surface — and on `workflow_dispatch`. It does not run on every
+push.
+
+**What that establishes, and what it does not.** A self-hosted runner application executes
+one job at a time, and the workflow's `concurrency` group serialises it against itself
+without cancelling a measurement in flight. Neither amounts to "the host is idle": how many
+runner applications are registered is runner-host configuration and is not readable from the
+tree. So idleness stays *measured* — the lane's load-average handling is unchanged, and
+there is no override for it.
+
+**One anchor per hardware class.** `hardware_class` decides which question a number answers,
+and it had no declared vocabulary: `scripts/adr051_slo_gate.py` compared every report against
+the single committed anchor whatever class it carried, and `scripts/slo_gate.py` kept its own
+private list of classes that may never be an SLO verdict. The classes are now declared once,
+in `[[context.class]]`; both gates read them; the workflow resolves the runner's class from
+them rather than restating the name. The comparator refuses a cross-class comparison and
+reports `UNANCHORED` for a class with no committed anchor — measured, hardware-independent
+correctness still enforced, regression band not established. The self-hosted runner's class
+is declared with no anchor: it is a different machine, and an anchor from another class
+answers a different question.
+
 ### Added — a SECOND mechanism leaf, and the first exchange with a Transparency Service somebody else operates
 
 The externalization census recorded the live interoperability claim as blocked on "an

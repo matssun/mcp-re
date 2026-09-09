@@ -64,7 +64,20 @@ EXEMPT: dict[str, str] = {
     # Measurement lanes, not controls. Both refuse to run unattended for reasons of their
     # own — one needs a quiet box, the other a live process — and neither decides whether
     # a change is admissible.
-    "scripts/local_slo_lane.sh": "an SLO measurement; refuses to measure on a loaded box",
+    #
+    # The SLO lane DOES run in CI now: `.github/workflows/slo.yml` schedules it on the
+    # self-hosted runner. It stays exempt for two reasons, and both are the shape this list
+    # is for rather than a way around it. That workflow is `paths:`-filtered on the declared
+    # performance surface deliberately — a whole SLO run belongs where perf-relevant code was
+    # touched, and `slo_evidence_identity.py` refuses a filter narrower than that surface, so
+    # the filter is policed rather than trusted. And the workflow invokes the lane through
+    # `scripts/local_gate.sh --from 4`, because stage 4 is a procedure (decide, refuse below
+    # the disk floor, measure, attest only a PASS) with one definition; so this path is not
+    # named literally there either.
+    "scripts/local_slo_lane.sh": (
+        "an SLO measurement, not an admissibility control; scheduled by the surface-filtered "
+        ".github/workflows/slo.yml via local_gate.sh stage 4"
+    ),
     # A PLUMBING rehearsal, and the only lane that needs a live kind cluster plus a 3 GB
     # bench image — neither exists on a CI runner. What keeps it wired is not this gate but
     # `rehearsal_claim_gate.py`, which IS unconditional: it fails if the runbooks' sentence

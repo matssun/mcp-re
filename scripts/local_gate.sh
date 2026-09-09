@@ -192,13 +192,22 @@ stage_static() {
     && python3 tools/verification/verify --gate \
     && python3 tools/scitt_fetch_service_key.py --selftest \
     && python3 scripts/slo_gate.py --selftest \
+    `# The local-regression gate's COMPARABILITY rules. They almost never fire on a` \
+    `# developer box — the default class there IS the anchor's class — so without this` \
+    `# they would be established only by a run on the one machine where they cannot be` \
+    `# wrong. It resolves a report's anchor from the report's own hardware class and` \
+    `# refuses a comparison across two, which is what makes a self-hosted-runner number` \
+    `# a result about that runner rather than a verdict on a developer workstation.` \
+    && python3 scripts/adr051_slo_gate.py --selftest \
     `# A runbook sentence is a claim. Both cloud runbooks said stage 5 rehearses the` \
     `# exact SLO Job spec; run_slo_job.sh had zero callers, so it had never been true.` \
     && python3 scripts/rehearsal_claim_gate.py --selftest \
     && python3 scripts/rehearsal_claim_gate.py \
     `# The SLO lane's evidence identity: the declared performance surface must exist and` \
-    `# be git-tracked, and every attested result must derive its filename from the identity` \
-    `# it carries. No measurement and no Docker — this is the declaration, not the lane.` \
+    `# be git-tracked, every attested result must derive its filename from the identity it` \
+    `# carries, every declared hardware class must name an anchor measured on ITSELF, and` \
+    `# the surface-filtered .github/workflows/slo.yml must trigger on every surface input.` \
+    `# No measurement and no Docker — this is the declaration, not the lane.` \
     && python3 scripts/slo_evidence_identity.py --selftest \
     && python3 scripts/slo_evidence_identity.py \
     `# The heavy lanes refuse below a declared free-space floor. The floors need a box;` \
@@ -405,6 +414,12 @@ stage_slo() {
   elif (( rc == 3 )); then
     echo "stage 4 was INCONCLUSIVE — it measured, but on a loaded box, and contention" >&2
     echo "alone produces that result. Re-run on a quiet box: scripts/local_gate.sh --from 4" >&2
+  elif (( rc == 4 )); then
+    echo "stage 4 was UNANCHORED — it measured cleanly, on a hardware class that has no" >&2
+    echo "committed regression anchor. Not a code regression and not a pass: there is" >&2
+    echo "nothing recorded for this class to compare against, and an anchor from another" >&2
+    echo "class answers a different question. Declaring one is a deliberate act on a quiet" >&2
+    echo "box — see the reports the lane just wrote and config/performance-surface.toml." >&2
   fi
   # Attest ONLY a pass. An INCONCLUSIVE or FAIL result is exactly the thing that must not
   # become a cache hit — recording it would let a contended run answer for the tree until
