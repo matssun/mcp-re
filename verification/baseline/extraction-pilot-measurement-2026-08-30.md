@@ -395,3 +395,69 @@ identity recorded — which is what `.github/workflows/extraction-image.yml` now
 **Sections 3–5 above are superseded on the registry question only.** Their measurements of
 the pipeline, of `alloc.fmt.format`, of the invocation form and of the login shell all stand.
 
+
+---
+
+## 7. Building it, preserved — three findings from the first artifact that ran
+
+The registry is gone and the environment is now a preserved archive. Building one and
+consuming it produced three findings, each invisible until the previous was removed —
+the same shape as §5, one layer down.
+
+### The archive is the evidence, and the identity alone did not keep it
+
+Recorded in `verification/reviews/rulings/extraction-artifact-storage-2026-09-09.md` as an
+addendum, because it corrects that ruling rather than restating it. §6's own measurement —
+apt and opam resolve versions nothing pins, and the opam libraries are linked into the
+Aeneas binary — means "rebuild and re-pin" cannot restore an environment a standing
+`lean://` claim was checked against. It mints a different instrument.
+
+So the bytes are preserved outside Docker's disposable state, content-addressed, and
+`[extraction_container]` records two digests: `artifact_digest`, the image that executes,
+and `archive_digest`, the independent check on the preserved file. Exercised rather than
+asserted: image deleted from the cache, restored from the 5.6 GiB archive in 1m44s under
+the same id, pinned Lean running from it.
+
+### The image passed every component check and could not run the lane
+
+The first build of the declared definition answered all five smoke checks of §5 — pinned
+Lean, built backend, the recorded mathlib, both binaries executing, and a tiny crate going
+Rust → LLBC → Lean. Then the pipeline ran:
+
+    /usr/bin/env: 'python3': No such file or directory
+
+`regenerate-lean` and `verify-lean` are Python and they execute INSIDE this image; Debian
+bookworm-slim ships no `python3`. Every check that passed was about a COMPONENT and none
+was about the harness that drives them, so the one thing the image could not do was the
+thing it exists to do. The definition installs one — an interpreter for the lane's entry
+points, never a prover — and a sixth smoke check asks for `tomllib` FIRST, before the
+component checks, because every one of those runs a tool the image has to be able to start.
+
+### An attestation made the identity non-deterministic
+
+Measured between one command and the next, on an unchanged cache:
+
+    extraction-image build     ->  sha256:b119609d…
+    extraction-image identity  ->  sha256:789de80d…
+
+buildx attaches a provenance attestation by default, it carries a build TIMESTAMP, and it
+lands in the manifest list — so re-exporting identical layers mints a different image id.
+The consequence is not cosmetic: the smoke checks had run against the first id and the
+artifact being preserved was the second, so what was measured was not what was kept. An
+identity that changes when nothing did cannot be an evidence identity.
+
+`--provenance=false` makes it stable — two consecutive builds from one cache both report
+`d38738c1…` — and the build workflow now calls `extraction-image build` rather than writing
+its own `docker buildx build`, because two spellings of "build this image" is exactly what
+let one of them stop attaching something the other still had.
+
+### The state of the pin
+
+`[extraction_container]` is **resolved** on `sha256:d38738c1…`, built from
+`verification/extraction/Dockerfile@c393c8b6`, all six smoke checks re-run against it by
+image id, preserved at
+
+    /opt/verification/extraction-artifacts/sha256/d38738c1….tar
+
+on the machine that built it. A host that does not hold the archive reports UNAVAILABLE and
+refuses; it never rebuilds, because a rebuild of this definition is a different instrument.
