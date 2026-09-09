@@ -12,6 +12,51 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Changed — the verification aggregate composes evidence instead of executing every lane
+
+`VERIFICATION: PASS` meant *one process executed every required lane*. That was
+unsatisfiable and had only looked otherwise: Verus and the cargo matrix run on the macOS
+host, Charon links the private rustc crates and does not build there, so extraction and the
+Lean proofs run in the pinned container. While no V2 unit existed both extracted-model lanes
+reported `NOT_REQUIRED` and the host gate passed. Declaring one made them required, and a
+process was being asked for an aggregate over lanes it cannot run — permanently
+`INCOMPLETE`, with every individual verdict correct.
+
+It now means *every required lane has valid evidence for the current fingerprint*.
+
+**Not a relaxation.** The requirement set comes from the MANIFEST, never from what ran, so a
+lane that silently did not execute leaves no record and a missing record is `INCOMPLETE` —
+something the previous shape could not express at all. Per (lane, unit) exactly one
+acceptable current record is required: right unit, right lane, `pass`, the **exact** current
+fingerprint, and for the extracted-model lanes the extraction artifact the lock pins. Stale
+is `UNAVAILABLE`; a duplicate, unreadable, misfiled or wrong-instrument record is `FAIL`; a
+lane declaring `NOT_REQUIRED` where the manifest requires it is refused in the execution
+phase, where the declared verdict still exists.
+
+**No lane reports PASS by reading another's record.** `verify-lean` on a macOS host still
+reports `UNAVAILABLE`. Lane executors remain the authorities for execution and only the
+central aggregate composes — `--phase` and `--aggregate` are refused together, because a
+process that executed lanes and composed the result would be the instrument certifying
+itself.
+
+**The fingerprint is what makes this sound, and the artifact store is what made the
+fingerprint sufficient:** it carries the whole toolchain identity including `artifact_digest`
+and `archive_digest`, so a record from a different tree, a different prover, or a different
+build of the same declared pins cannot be composed into a verdict about this one.
+
+`MCP_RE_EVIDENCE_DIR` names one directory, created fresh per CI invocation and reached from
+both environments through the bind mount; no global store is searched, because a run must
+not go green on a record an earlier one left behind. `check-generated` writes per-unit
+records like every other formal lane, and `attest` resolves the same directory the lanes
+wrote — its old default would have made the issuer refuse every unit in a run that produced
+plenty.
+
+The two verification jobs become one ordered job: host lanes, the preserved artifact,
+extraction lanes, composer. Renaming it is safe, and that is its own finding — the `Protect
+main` ruleset requires three status checks and two of them name Rust `1.94.1`, a version
+this repository no longer builds with, so those contexts can never report and neither
+verification job was ever required.
+
 ### Added — the extraction artifact is PRESERVED, not merely identified (#541)
 
 Removing the registry left the pinned environment living in Docker's local image store, and
