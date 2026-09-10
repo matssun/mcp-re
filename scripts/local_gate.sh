@@ -84,7 +84,18 @@ fmt_check() {
   done
 }
 
+# ONE FRESH EVIDENCE DIRECTORY PER GATE RUN, exported before any lane executes.
+#
+# The repository's required evidence comes from two environments — Verus and the cargo
+# matrix here, Charon/Aeneas/Lean inside the pinned artifact — so no process states the
+# verdict by executing every lane. It is composed from records, and composition is only
+# sound over records THIS run wrote: a directory left by an earlier run could carry one
+# forward and make a red tree read green.
+EVIDENCE_REL=".verification/local-gate-$$"
+export MCP_RE_EVIDENCE_DIR="$PWD/$EVIDENCE_REL"
+
 stage_static() {
+  rm -rf "$MCP_RE_EVIDENCE_DIR" && mkdir -p "$MCP_RE_EVIDENCE_DIR" || return 1
   python3 scripts/jcs_vocabulary_gate.py --selftest \
     && python3 scripts/jcs_vocabulary_gate.py \
     && python3 scripts/check_port_registry.py \
@@ -190,12 +201,16 @@ stage_static() {
     `# one both places depend on, and it names the fix instead of surfacing as a TOML` \
     `# import error or a missing rustup deep inside Verus.` \
     && ./scripts/verification_runner_preflight.sh \
-    `# --gate, not --manifests: the manifests-only form validates the registry's shape` \
-    `# and stops, so it never reads the code. Three uninterpreted spec functions sat` \
+    `# --phase host, not --gate: this box cannot run the extracted-model lanes at all —` \
+    `# Charon links the private rustc crates and does not build on macOS — so a process` \
+    `# here asked for the REPOSITORY's verdict is being asked about measurements it` \
+    `# cannot make. It executes the lanes it can and records them; \`stage_verdict\`` \
+    `# composes. Not --manifests either: that form validates the registry's shape and` \
+    `# stops, so it never reads the code. Three uninterpreted spec functions sat` \
     `# unregistered in the TCB while this lane reported PASS, because the half that` \
     `# scans for escape hatches and runs Verus only ever ran in a CI job whose runner` \
-    `# is scoped to another repository. ~26s warm, which buys the whole verdict.` \
-    && python3 tools/verification/verify --gate \
+    `# is scoped to another repository. ~26s warm.` \
+    && python3 tools/verification/verify --phase host \
     && python3 tools/scitt_fetch_service_key.py --selftest \
     && python3 scripts/slo_gate.py --selftest \
     `# A runbook sentence is a claim. Both cloud runbooks said stage 5 rehearses the` \
@@ -245,7 +260,47 @@ stage_suites() {
     && cargo test -p mcp-re-proxy --features "$FEATURES" \
     && stage_demo \
     && stage_sat_liveness \
-    && stage_sdk
+    && stage_sdk \
+    && stage_verdict
+}
+
+# The extracted-model lanes, and then the one place a repository verdict is stated.
+#
+# HERE rather than in a stage of its own, so that `--fast` still ends in a verdict: it did
+# when stage 1 ran `verify --gate`, and a gate that stopped saying whether the repository
+# verifies would be a smaller gate wearing the same name.
+#
+# The lanes run INSIDE the preserved artifact because they cannot run anywhere else, and
+# they write into the same evidence directory the host phase wrote into — the workspace is
+# bind-mounted, so one directory is reachable from both environments.
+#
+# A HOST WITHOUT THE ARTIFACT FAILS HERE, and that is correct rather than harsh. This gate
+# already requires a provisioned box — Verus under /opt/verification, a rustup that resolves
+# the pinned channel, `uv` and `npx` for the SDK batteries — and the extraction artifact is
+# one more thing the machine must have to state the verdict. It is never rebuilt to get
+# past this: a rebuild of that definition resolves apt and opam afresh, and the opam
+# libraries are linked into the Aeneas binary, so it would be a different instrument.
+stage_verdict() {
+  local image
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "docker is not installed, so the extracted-model lanes cannot run here." >&2
+    echo "They are the container's; the repository verdict cannot be stated." >&2
+    return 1
+  fi
+  image="$(python3 tools/verification/extraction-image load)" || return 1
+  echo "extraction lanes in $image"
+  local mounts=(-v "$PWD:/workspace" -w /workspace
+                -e GIT_CONFIG_COUNT=1
+                -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/workspace
+                -e "MCP_RE_EVIDENCE_DIR=/workspace/$EVIDENCE_REL")
+  docker run --rm --platform linux/arm64 "${mounts[@]}" "$image" \
+      ./tools/verification/regenerate-lean \
+    && docker run --rm --platform linux/arm64 "${mounts[@]}" "$image" \
+      ./tools/verification/verify --phase extraction \
+    `# The composer executes no formal lane. It validates every record against the` \
+    `# current fingerprint — which carries the extraction artifact's identity — and` \
+    `# refuses a missing, stale, duplicated or misfiled one.` \
+    && python3 tools/verification/verify --aggregate --gate
 }
 
 # The standardized capacity instrument builds its own fixtures and signs its own corpus,
