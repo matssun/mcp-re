@@ -115,6 +115,85 @@ def test_a_complete_current_store_composes_to_PASS():
     assert refusals == []
 
 
+def test_the_composer_and_the_ISSUER_require_the_same_lanes():
+    """Two authorities read "what does this unit require", and they must read one fact.
+
+    `_evidence.required_lanes` derives it from the declared evidence URIs; the composer's
+    requirement set derives it here. They agreed only while every V2/V3 unit happened to
+    declare `lean://`, and nothing made it — a unit with `extracted_symbols` and
+    `lean_theorems` but no `lean://` entry would have been ISSUED an attestation on its test
+    battery alone while claiming extracted-model evidence, because the issuer would have
+    seen no lean lane to check. The manifest now requires the entry, and this pins the
+    agreement rather than trusting it.
+    """
+    from _evidence import required_lanes
+
+    doc, tc, asm = world()
+    wanted = requirements(doc, tc, asm)
+    for unit in doc["unit"]:
+        issuer = required_lanes(unit)
+        composed = {r.lane for r in wanted if r.unit_id == unit["id"]}
+        # `generated-model` has no URI of its own: it is the freshness precondition of
+        # `lean://`, so the composer asks for it exactly where the issuer asks for lean.
+        assert composed - {"generated-model"} == issuer, (unit["id"], composed, issuer)
+        assert ("generated-model" in composed) == ("lean" in issuer), unit["id"]
+
+
+def _validated(unit: dict):
+    """Run the REAL manifest validator over a tree carrying `unit`, and return or raise.
+
+    `_load` is replaced rather than the file, because the validator's refusals are what is
+    under test and writing a synthetic TOML would test a parser instead. The rest of the
+    document is the repository's own, so the unit is judged in the world it would live in.
+    """
+    import _manifest
+
+    doc = _manifest.load_verification()
+    doc = {**doc, "unit": [*doc.get("unit", []), unit]}
+    original = _manifest._load
+    try:
+        _manifest._load = lambda _path: doc
+        return _manifest.load_verification()
+    finally:
+        _manifest._load = original
+
+
+def _v2_unit(**overrides) -> dict:
+    unit = {
+        "id": "synthetic.extracted",
+        "class": "V2",
+        "description": "a synthetic extracted-model unit",
+        "paths": ["tools/verification/_compose.py"],
+        "evidence": ["lean://synthetic/theorem"],
+        "extracted_symbols": ["crate::item"],
+        "lean_theorems": ["Synthetic.theorem"],
+    }
+    unit.update(overrides)
+    return unit
+
+
+def test_a_V2_unit_that_declares_no_lean_evidence_is_refused_by_the_manifest():
+    """THE rule that makes the two authorities agree, asked of the real validator.
+
+    Exercised against the repository's own manifest rather than asserted over its units:
+    on a tree with no V2 unit an assertion over the declared ones passes while measuring
+    nothing, which is the shape of control this platform exists to refuse.
+    """
+    from _manifest import ManifestError
+
+    try:
+        _validated(_v2_unit(evidence=["test://synthetic/battery"], tested_symbols=["lib#a::b"]))
+    except ManifestError as exc:
+        assert "no `lean://` evidence entry" in str(exc), exc
+    else:
+        raise AssertionError("a V2 unit with no lean:// evidence was accepted")
+
+
+def test_a_V2_unit_that_declares_lean_evidence_is_accepted():
+    """The positive half. A control that refuses everything is not a control."""
+    _validated(_v2_unit())
+
+
 def test_the_requirement_set_comes_from_the_manifest_not_from_the_store():
     """A requirement derived from what a lane reported would shrink exactly when a lane
     stopped running — which is the shape of every false green here.

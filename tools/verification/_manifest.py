@@ -472,6 +472,23 @@ def load_verification() -> dict:
                         f"unit claiming extracted-model evidence with an empty selection "
                         f"asks the lane to measure nothing, and nothing measured passes."
                     )
+            # AND IT MUST SAY SO IN ITS EVIDENCE. Two authorities read "what does this unit
+            # require": `_evidence.required_lanes` derives it from the declared URIs, and the
+            # aggregate's requirement set derives it from the class. They agree only while
+            # every V2/V3 unit declares `lean://` — and nothing made it. A unit with the
+            # selection keys above and no `lean://` entry would be ISSUED an attestation on
+            # its test battery alone while claiming extracted-model evidence, because the
+            # issuer would see no lean lane to check.
+            if not any(
+                str(entry).startswith("lean://") for entry in unit.get("evidence", [])
+            ):
+                raise ManifestError(
+                    f"{uwhere}: class {unit['class']} declares an extraction selection but "
+                    f"no `lean://` evidence entry. The class says the Lean lane must "
+                    f"measure this unit and the evidence list is where a unit says which "
+                    f"lanes are asked about it, so the two must agree — otherwise the "
+                    f"issuer checks a lane the class requires and the manifest never named."
+                )
         elif unit.get("extracted_symbols") or unit.get("lean_theorems"):
             raise ManifestError(
                 f"{uwhere}: declares extraction selection but is class {unit['class']}, so "
