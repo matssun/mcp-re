@@ -318,7 +318,17 @@ jobs:
       # on something, not a theorem about the tree. This validates the declaration: every
       # declared input exists and is git-tracked, and every stored record derives its
       # filename from the identity it carries. No measurement happens here.
-      - name: SLO evidence identity (declaration + records)
+      #
+      # It validates two more halves of the same declaration. The hardware-class vocabulary:
+      # `hardware_class` is the context field that decides WHICH QUESTION a number answers,
+      # and an anchor declared for a class must be a measurement OF that class — a
+      # cross-class comparison is not a stricter gate, it is a gate about something else.
+      # And the trigger set of `.github/workflows/slo.yml`, which runs the lane on the
+      # self-hosted runner: that workflow is `paths:`-filtered on the performance surface, so
+      # the filter and the surface are one dependency set written twice. When the surface
+      # grows past the filter the workflow does not go red, it stops running — the same class
+      # `verification_trigger_gate.py` exists for, one lane over.
+      - name: SLO evidence identity (declaration + classes + records + trigger set)
         run: |
           python3 scripts/slo_evidence_identity.py --selftest
           python3 scripts/slo_evidence_identity.py
@@ -802,6 +812,16 @@ jobs:
       # hardware class per docs/bench/adr-051-slo-targets.md — the one HITL step.
       - name: Release gate — SLO gate mechanism (self-test)
         run: python3 scripts/slo_gate.py --selftest
+
+      # §7 — the LOCAL-REGRESSION gate's comparability rules. One anchor per hardware
+      # class, and never a comparison across two: the gate resolves a report's anchor from
+      # the report's own `config.hardware_class`, and a class with no committed anchor
+      # yields NOT COMPARABLE rather than a pass or a regression. It matters here because
+      # the lane now also runs on the self-hosted runner, which is a different measurement
+      # context from the developer workstation the committed anchor was recorded on — and
+      # because on that workstation these rules never fire, so nothing else establishes them.
+      - name: Release gate — local-regression gate comparability (self-test)
+        run: python3 scripts/adr051_slo_gate.py --selftest
 
       # LIVENESS of the standardized capacity instrument, not a measurement.
       #

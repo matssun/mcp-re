@@ -12,6 +12,90 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Changed — the SLO lane runs where nothing else does, and one anchor per hardware class
+
+A minor release does not owe a whole SLO run; it owes a green build and a green test
+battery. A whole SLO run belongs where the performance surface moved. Both halves of that
+now have a mechanism.
+
+**The lane runs on the self-hosted runner.** The load generator is co-located with the proxy
+it measures, so an unrelated build on the same box halves throughput and triples the tail —
+an environmental FAIL that says nothing about the code, and one that cost a full A/B/B/A
+investigation before anyone could say so. `.github/workflows/slo.yml` schedules the lane
+through `scripts/local_gate.sh --from 4`, so stage 4 keeps one definition. It triggers on a
+change to the declared performance surface — the filter is derived from
+`config/performance-surface.toml`, and `scripts/slo_evidence_identity.py` fails the build if
+it is ever narrower than the surface — and on `workflow_dispatch`. It does not run on every
+push.
+
+**What that establishes, and what it does not.** A self-hosted runner application executes
+one job at a time, and the workflow's `concurrency` group serialises it against itself
+without cancelling a measurement in flight. Neither amounts to "the host is idle": how many
+runner applications are registered is runner-host configuration and is not readable from the
+tree. So idleness stays *measured* — the lane's load-average handling is unchanged, and
+there is no override for it.
+
+**One anchor per hardware class.** `hardware_class` decides which question a number answers,
+and it had no declared vocabulary: `scripts/adr051_slo_gate.py` compared every report against
+the single committed anchor whatever class it carried, and `scripts/slo_gate.py` kept its own
+private list of classes that may never be an SLO verdict. The classes are now declared once,
+in `[[context.class]]`; both gates read them; the workflow resolves the runner's class from
+them rather than restating the name. The comparator refuses a cross-class comparison and
+reports `UNANCHORED` for a class with no committed anchor — measured, hardware-independent
+correctness still enforced, regression band not established. An anchor from another class
+answers a different question and may not be read into one that has none.
+
+**The self-hosted class now has its own anchor.** The lane's first run on that host reported
+`UNANCHORED` exactly as designed; `docs/bench/adr-051-baseline-dev1.json` is the anchor
+declared from the six reps it retained — every one 8000/8000 successes, throughput median
+16,252.6 rps within ±3.4%, p50 7,232us. It records the box state it was measured at (1-minute
+load settled to 3.83 on 14 cpus, no other Actions job on the host in the window) and says
+what that leaves: the throughput half is a tight regression band, and the tail ceilings are
+loose, because the six reps span p99 19,498–31,604us where a developer-workstation run spans
+±6%. Tightening them is a re-declaration from an idle host, not an edit to the tolerances.
+`baseline_ref` in the targets file no longer names one baseline — the anchor has one owner,
+the class registry, and a second name for it is wrong for every run measured elsewhere.
+
+### Added — a transferred extraction artifact can be smoke-checked where it lands
+
+The six checks that establish an extraction image WORKS — the harness interpreter, the
+pinned Lean, a BUILT Aeneas backend, the recorded mathlib revision, both binaries executing,
+and a tiny crate going Rust → LLBC → Lean — existed only as steps in the build workflow. So
+they could only ever be asked on the build path.
+
+That is the wrong half. The artifact is preserved on the machine that built it and moved to
+other hosts by hand, and a host handed 5.6 GiB has to establish that what it received works
+— **without rebuilding**, because a rebuild of this definition is a different instrument
+under identical declared pins. There was no way to ask.
+
+`tools/verification/extraction-image smoke` runs them against the preserved artifact,
+resolved and loaded exactly as the lane resolves it, by image id rather than tag. The build
+workflow calls the same code with `--built`, since nothing is pinned to a new image yet —
+one spelling of "does this artifact work", where there were previously one and a half.
+
+Splitting `load`'s stdout contract out of the shared resolution came with it: `smoke` was
+printing `load`'s image-id line into the middle of its own report.
+
+### Fixed — two authorities disagreed about what an extracted-model unit requires
+
+`_evidence.required_lanes` derives a unit's required lanes from its declared evidence URIs;
+the aggregate's requirement set derived `generated-model` from the unit's CLASS. They agreed
+only while every V2/V3 unit happened to declare `lean://`, and nothing in the manifest made
+it — a unit with `extracted_symbols` and `lean_theorems` but no `lean://` entry would have
+been ISSUED an attestation on its test battery alone while claiming extracted-model
+evidence, because the issuer would have seen no lean lane to check. The hole predates the
+aggregate; the composer inherited it.
+
+The manifest now requires what the class already implies: a V2/V3 unit must declare
+`lean://` evidence. Both authorities then read one fact, and the composer derives
+`generated-model` from that same URI — it has none of its own, and it is the FRESHNESS
+PRECONDITION of exactly that evidence, since a Lean theorem about a stale model is a theorem
+about a different tree. `check-generated` records for the same set, spelled the same way.
+
+Found by auditing #541's own done criteria rather than by a failure, and pinned by three
+controls: the two authorities agree unit by unit, the validator refuses a V2 unit with no
+`lean://` entry, and it accepts one that has it.
+
 ### Changed — the verification aggregate composes evidence instead of executing every lane
 
 `VERIFICATION: PASS` meant *one process executed every required lane*. That was

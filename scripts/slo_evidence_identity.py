@@ -34,10 +34,25 @@ EVERY DECLARED INPUT MUST BE GIT-TRACKED, and this refuses an untracked one. A f
 input outside the tree makes one commit fingerprint two ways depending on whose working copy
 computed it — already a real defect in this repository once.
 
+THE DECLARED HARDWARE CLASSES live here too, in `[[context.class]]`. `hardware_class` is
+the context field that decides WHICH QUESTION a number answers, so the vocabulary of legal
+values, each class's own regression anchor, and whether a class may ever carry an absolute
+production-SLO verdict are declared once and read by every consumer:
+`scripts/adr051_slo_gate.py` resolves a report's anchor from it, `scripts/slo_gate.py`
+resolves its refusal set from it, and `.github/workflows/slo.yml` resolves the class the
+self-hosted runner measures as from it.
+
+THE TRIGGER SET IS PART OF THE DECLARATION. `.github/workflows/slo.yml` is `paths:`-filtered,
+and its filter and the declared surface are one dependency set written down twice. When the
+surface grows past the filter the workflow does not go red — it stops running, and every
+check stays green while nothing re-measures the changed serving path. `check()` therefore
+refuses a filter narrower than the surface, on both the `pull_request` and `push` triggers.
+
 Run:  python3 scripts/slo_evidence_identity.py                 # validate the declaration
       python3 scripts/slo_evidence_identity.py --emit
       python3 scripts/slo_evidence_identity.py --decide        # 0 = REUSE, 10 = REMEASURE
       python3 scripts/slo_evidence_identity.py --record target/slo-local/rep1.json ...
+      python3 scripts/slo_evidence_identity.py --runner-class
       python3 scripts/slo_evidence_identity.py --selftest
 """
 
@@ -58,6 +73,7 @@ REPO = Path(__file__).resolve().parent.parent
 SURFACE_TOML = REPO / "config" / "performance-surface.toml"
 STORE = REPO / ".verification" / "slo"
 BASELINE = REPO / "docs" / "bench" / "adr-051-baseline-local.json"
+WORKFLOW = REPO / ".github" / "workflows" / "slo.yml"
 SCHEMA = "mcp-re-slo-evidence/v1"
 
 REUSE, REMEASURE = 0, 10
@@ -250,6 +266,107 @@ def record(report_paths: list[str], verdict: str) -> int:
     return 0
 
 
+#: The keys every `[[context.class]]` entry must carry. Named rather than inferred so that
+#: a half-written entry fails here instead of at the gate that reads the missing key.
+CLASS_KEYS = ("name", "kind", "slo_declarable", "regression_anchor", "github_actions_runner")
+
+
+def hardware_classes() -> dict[str, dict[str, object]]:
+    """The declared measurement contexts, by `hardware_class` value.
+
+    The one vocabulary. `adr051_slo_gate.py` asks it which anchor a report may be compared
+    against, `slo_gate.py` asks it which classes can never be an absolute SLO verdict, and
+    the workflow asks it what the self-hosted runner measures as. A class absent from here
+    is not an error in itself — an unrecognised class simply has no anchor and no
+    declarability — but it is what those gates read instead of each keeping its own list.
+    """
+    declared = tomllib.loads(SURFACE_TOML.read_text(encoding="utf-8"))["context"]["class"]
+    return {entry["name"]: entry for entry in declared}
+
+
+def runner_class() -> str:
+    """The class the self-hosted Actions runner measures as.
+
+    Exactly one entry may claim it. The workflow reads this rather than restating the name,
+    for the reason `config/ports.toml` exists: a literal in a second place is a fact that
+    can drift, and a drifted class name would key a record to a context nobody declared.
+    """
+    claimed = [name for name, entry in hardware_classes().items() if entry["github_actions_runner"]]
+    if len(claimed) != 1:
+        raise SystemExit(
+            f"error: exactly one [[context.class]] must set github_actions_runner = true; "
+            f"{len(claimed)} do ({claimed})"
+        )
+    return claimed[0]
+
+
+def class_defects() -> list[str]:
+    """Shape problems in the declared class vocabulary."""
+    declared = tomllib.loads(SURFACE_TOML.read_text(encoding="utf-8"))["context"]["class"]
+    found: list[str] = []
+    seen: set[str] = set()
+    for entry in declared:
+        missing = [key for key in CLASS_KEYS if key not in entry]
+        if missing:
+            found.append(f"[[context.class]] {entry.get('name', '?')!r} is missing {missing}")
+            continue
+        name = entry["name"]
+        if name in seen:
+            found.append(f"[[context.class]] declares {name!r} twice")
+        seen.add(name)
+        if not entry["slo_declarable"] and not entry.get("reason"):
+            found.append(f"{name!r} is not slo_declarable and states no reason")
+        anchor = entry["regression_anchor"]
+        if anchor and not (REPO / anchor).is_file():
+            found.append(f"{name!r} names regression_anchor {anchor!r}, which does not exist")
+        elif anchor:
+            anchor_class = json.loads((REPO / anchor).read_text(encoding="utf-8"))["anchor"]["config"]["hardware_class"]
+            if anchor_class != name:
+                found.append(
+                    f"{name!r} names an anchor recorded on hardware_class {anchor_class!r} — "
+                    f"an anchor for a class must be a measurement of that class"
+                )
+    claimed = [entry["name"] for entry in declared if entry.get("github_actions_runner")]
+    if len(claimed) != 1:
+        found.append(f"exactly one class must set github_actions_runner = true; {claimed} do")
+    return found
+
+
+def trigger_defects() -> list[str]:
+    """Declared surface inputs the SLO workflow's `paths:` filters do not cover.
+
+    The GitHub path-matching semantics come from `verification_trigger_gate.py` rather than
+    from a second copy here: `**` crosses a separator and `*` does not, and two
+    implementations of that rule are two chances to accept a filter narrower than GitHub
+    actually applies. Imported inside the function so that the ordinary identity commands
+    stay dependency-free.
+    """
+    if not WORKFLOW.is_file():
+        return [f"{WORKFLOW.relative_to(REPO)} does not exist — the declared surface has no lane"]
+    sys.path.insert(0, str(REPO / "scripts"))
+    from verification_trigger_gate import glob_matches, trigger_paths  # noqa: PLC0415
+
+    triggers = trigger_paths(WORKFLOW.read_text(encoding="utf-8"))
+    inputs = [str(path.relative_to(REPO)) for path in declared_inputs()]
+    found: list[str] = []
+    for trigger in ("pull_request", "push"):
+        patterns = triggers.get(trigger)
+        if patterns is None:
+            found.append(f"{WORKFLOW.name} declares no `{trigger}` trigger")
+            continue
+        if not patterns:
+            continue  # no `paths:` filter at all means every change triggers it
+        uncovered = [p for p in inputs if not any(glob_matches(g, p) for g in patterns)]
+        found.extend(
+            f"{trigger}: no path filter matches {path!r}, which is a declared performance-"
+            f"surface input — a change to it would move the surface with nothing re-measuring"
+            for path in uncovered[:5]
+        )
+        if len(uncovered) > 5:
+            found.append(f"{trigger}: …and {len(uncovered) - 5} more uncovered surface input(s)")
+    return found
+
+
 def check() -> int:
     """Validate the declaration and every stored record. No measurement, no Docker."""
     surface, digests = performance_surface()
@@ -265,14 +382,20 @@ def check() -> int:
             bad.append(f"{path.name}: schema {doc.get('schema')!r}, expected {SCHEMA!r}")
         elif record_path(doc["performance_surface"], doc["measurement_context_digest"]).name != path.name:
             bad.append(f"{path.name}: filename does not derive from the identity it carries")
+    bad.extend(class_defects())
+    bad.extend(trigger_defects())
     for line in bad:
         print(f"  ✗ {line}")
     if bad:
-        print(f"slo-evidence-identity: FAILED ({len(bad)} bad record(s))")
+        print(f"slo-evidence-identity: FAILED ({len(bad)} defect(s))")
         return 1
+    classes = hardware_classes()
+    anchored = sum(1 for entry in classes.values() if entry["regression_anchor"])
     print(
         f"slo-evidence-identity: OK — {len(digests)} declared input(s), all git-tracked; "
-        f"surface {surface[:23]}…; {len(stored)} attested result(s)"
+        f"surface {surface[:23]}…; {len(stored)} attested result(s); {len(classes)} declared "
+        f"hardware class(es), {anchored} anchored; the {WORKFLOW.name} trigger set covers "
+        f"every surface input on both triggers"
     )
     return 0
 
@@ -312,7 +435,33 @@ def selftest() -> int:
 
     a = record_path("sha256:" + "a" * 64, "sha256:" + "b" * 64)
     assert a != record_path("sha256:" + "a" * 64, "sha256:" + "c" * 64), "one surface collapses two contexts"
-    print(f"slo_evidence_identity selftest: OK — {len(digests)} declared inputs, 9 identity cases")
+
+    # The class vocabulary. The runner's class must resolve to exactly one name, and a class
+    # that claims an anchor must claim one measured on ITSELF — the cross-class comparison
+    # `adr051_slo_gate.py` now refuses is the same error one level up, made in the
+    # declaration instead of in the gate.
+    classes = hardware_classes()
+    assert classes, "the declaration names no hardware class"
+    assert runner_class() in classes, "the runner's class is not declared"
+    assert not classes[runner_class()]["slo_declarable"], (
+        "a co-located self-hosted runner was declared able to carry an absolute SLO verdict"
+    )
+    assert not class_defects(), f"the declared classes are malformed: {class_defects()}"
+
+    # The trigger check must be sensitive to a NARROWER filter, not merely parse one: a
+    # coverage check that passes on every input it is handed reports OK for having compared
+    # nothing. Run against the real matcher with a filter that covers one input only.
+    sys.path.insert(0, str(REPO / "scripts"))
+    from verification_trigger_gate import glob_matches  # noqa: PLC0415
+
+    assert glob_matches("mcp-re-proxy/src/**", "mcp-re-proxy/src/app.rs"), "`**` stopped matching"
+    assert not glob_matches("mcp-re-proxy/*", "mcp-re-proxy/src/app.rs"), "`*` crossed a separator"
+    assert not trigger_defects(), f"the SLO workflow's trigger set is narrower than the surface: {trigger_defects()}"
+
+    print(
+        f"slo_evidence_identity selftest: OK — {len(digests)} declared inputs, 9 identity "
+        f"cases, {len(classes)} hardware classes, trigger coverage on both triggers"
+    )
     return 0
 
 
@@ -323,11 +472,16 @@ def main() -> int:
     parser.add_argument("--record", nargs="+", metavar="REPORT", help="attest these reports at the current identity")
     parser.add_argument("--verdict", default="PASS", choices=("PASS", "FAIL", "INCONCLUSIVE"))
     parser.add_argument("--max-age-days", type=int, help="override the declared reuse window")
+    parser.add_argument("--runner-class", action="store_true",
+                        help="print the hardware_class the self-hosted Actions runner measures as")
     parser.add_argument("--selftest", action="store_true")
     args = parser.parse_args()
 
     if args.selftest:
         return selftest()
+    if args.runner_class:
+        print(runner_class())
+        return 0
     if args.emit:
         surface, _ = performance_surface()
         context = measurement_context()

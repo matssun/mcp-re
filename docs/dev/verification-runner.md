@@ -84,7 +84,22 @@ checks and loads one.
 tools/verification/extraction-image identity   # build, preserve, print the lock entry
 tools/verification/extraction-image verify     # is the pinned artifact here and intact
 tools/verification/extraction-image load       # print the image id the lane executes
+tools/verification/extraction-image smoke      # does the preserved artifact WORK here
 ```
+
+**Receiving an artifact from another host.** Copy the archive into the store at the path
+`artifact_digest` names, then:
+
+```sh
+tools/verification/extraction-image verify   # the bytes are here and are the pinned bytes
+tools/verification/extraction-image smoke    # loads it and runs all six checks against it
+```
+
+`smoke` is the same six checks the build workflow runs, against an image id rather than a
+tag: the pinned Lean, a BUILT Aeneas backend, the recorded mathlib revision, both binaries
+executing, the harness interpreter, and a tiny crate going Rust → LLBC → Lean. A receiving
+host needs them as much as a building one does, and it must not rebuild to get them — a
+rebuild of this definition is a different instrument.
 
 **Why not a registry.** Nothing claims cross-machine reproduction of the model; the lane
 runs here. A registry would add an outward publish and an access dependency to every

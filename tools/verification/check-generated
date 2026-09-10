@@ -120,7 +120,13 @@ def record_units(doc: dict, toolchains: dict, result: str, detail: str) -> None:
         return
     store = evidence_store()
     for unit in doc.get("unit", []):
-        if unit["class"] not in {"V2", "V3"}:
+        # The units the aggregate will ASK for a generated-model record, spelled the same
+        # way it spells it: a declared `lean://` entry, whose freshness precondition this
+        # lane is. Recording by class instead would write records for units the composer
+        # does not require and miss any it does.
+        if not any(
+            str(entry).startswith("lean://") for entry in unit.get("evidence", [])
+        ):
             continue
         write_record(
             store,

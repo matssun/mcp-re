@@ -3,7 +3,8 @@
 """ADR-MCPRE-051 §7 PRODUCTION-SLO release gate (MCPRE-123 + MCPRE-110 production half).
 
 The companion to `scripts/adr051_slo_gate.py`: that one is the *local-regression*
-gate (a fresh run vs the committed dev-box anchor, hardware-independent). THIS one
+gate — a fresh run against the anchor declared for that run's own hardware class,
+under tolerances expressed as fractions rather than as absolute numbers. THIS one
 is the *absolute production SLO* gate — it enforces the `production_slo` block of
 `docs/bench/adr-051-slo-targets.json`, whose numbers are measured on the DECLARED
 hardware class (the GKE fleet run, MCPRE-110 production half).
@@ -31,6 +32,14 @@ import json
 import sys
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# The declared class vocabulary has ONE owner (the file that declares the measurement
+# context). This gate used to carry its own two-entry list, which is how a third class that
+# also cannot carry an SLO verdict would have been admitted by silence.
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+from slo_evidence_identity import hardware_classes  # noqa: E402
+
 REPORT_SCHEMA = "mcp-re-load-harness-report/v1"
 # The load harness bumped its report schema to v2 (RFC 9421 v2 canonical envelope);
 # the report body shape (results.throughput_rps / added_latency_us / failures,
@@ -38,18 +47,26 @@ REPORT_SCHEMA = "mcp-re-load-harness-report/v1"
 ACCEPTED_REPORT_SCHEMAS = ("mcp-re-load-harness-report/v1", "mcp-re-load-harness-report/v2")
 TARGETS_SCHEMA = "mcp-re-slo-targets/v1"
 
-#: Hardware classes a report may carry that can NEVER be an SLO verdict, with the reason.
-#:
-#: An SLO number is a claim about the hardware it ran on. Two classes are structurally
-#: incapable of being one, and BOTH produce a perfectly well-formed report with a real
-#: throughput figure in it — which is exactly why the refusal has to be structural. The
-#: kind Job-spec rehearsal prints ~7,400 rps and `tools/slo/run_slo_job.sh` warns in prose
-#: that it "must never be fed to scripts/slo_gate.py as one". A warning in prose is a rule
-#: enforced by remembering; this is the same rule enforced by the gate that would be lied to.
-NON_DECLARABLE_HW_CLASSES = {
-    "kind-local": "a single unpinned node on a developer box (PROVIDER=kind — a plumbing rehearsal)",
-    "smoke": "the harness default when MCP_RE_LOADGEN_HW_CLASS is unset — no class was declared at all",
-}
+
+def non_declarable_hw_classes() -> dict[str, str]:
+    """Hardware classes a report may carry that can NEVER be an SLO verdict, with the reason.
+
+    An SLO number is a claim about the hardware it ran on. Several declared classes are
+    structurally incapable of being one, and every one of them produces a perfectly
+    well-formed report with a real throughput figure in it — which is exactly why the
+    refusal has to be structural. The kind Job-spec rehearsal prints ~7,400 rps and
+    `tools/slo/run_slo_job.sh` warns in prose that it "must never be fed to
+    scripts/slo_gate.py as one". A warning in prose is a rule enforced by remembering; this
+    is the same rule enforced by the gate that would be lied to.
+
+    Read from `config/performance-surface.toml`, where the class vocabulary is declared, so
+    that adding a class states its declarability once instead of in each gate that cares.
+    """
+    return {
+        name: str(entry["reason"])
+        for name, entry in hardware_classes().items()
+        if not entry["slo_declarable"]
+    }
 
 
 class Gate:
@@ -148,10 +165,11 @@ def _load_report(path: str) -> dict:
     """
     doc = _load(path, ACCEPTED_REPORT_SCHEMAS)
     hw = doc.get("config", {}).get("hardware_class")
-    if hw in NON_DECLARABLE_HW_CLASSES:
+    refused = non_declarable_hw_classes()
+    if hw in refused:
         raise SystemExit(
             f"error: {path} was measured on hardware_class {hw!r} — "
-            f"{NON_DECLARABLE_HW_CLASSES[hw]}.\n"
+            f"{refused[hw]}.\n"
             "       Such a report is a plumbing result, not an SLO measurement, and this "
             "gate refuses it outright.\n"
             "       A declared-hardware run comes from PROVIDER=gke|eks with a pinned node "
@@ -247,9 +265,21 @@ def selftest() -> int:
 
     # 5. A non-declarable hardware class is REFUSED, and a declared one is not — through
     #    the real loader, because the refusal lives there and a synthetic dict would skip it.
+    #    The set is DERIVED from the declaration, so an empty one would refuse nothing
+    #    while every case below still passed for the wrong reason.
     import tempfile
+    ok &= bool(non_declarable_hw_classes())
     with tempfile.TemporaryDirectory() as tmp:
-        for hw, refused in (("kind-local", True), ("smoke", True), ("e2-standard-8", False)):
+        for hw, refused in (
+            ("kind-local", True),
+            ("smoke", True),
+            # The two co-located developer-class contexts: a self-hosted Actions runner is
+            # still a machine whose load generator shares the proxy's cores, so it detects
+            # regression and states no capacity.
+            ("apple-m4-pro-14c-dev", True),
+            ("dev1-macos-arm64", True),
+            ("e2-standard-8", False),
+        ):
             doc = _synth_report(1000, 0, 5000.0, 100, 900, 3000)
             doc["config"]["hardware_class"] = hw
             path = str(Path(tmp) / f"{hw}.json")

@@ -95,10 +95,51 @@ else's machine.
 `SLO_FORCE_REMEASURE=1` bypasses the cache. `--max-age-days N` narrows the window for a
 release that wants a fresher number than the standing policy.
 
-**Still open:** the ruling that settled this also said to move the lane to the dev1
-self-hosted runner, so contention is structurally impossible and the numbers are comparable
-across runs. Keying the evidence does not do that; it removes the re-measurements that had
-no reason to happen.
+## The release-grade run is on the self-hosted runner
+
+Keying the evidence removed the re-measurements that had no reason to happen. It did not
+make the remaining ones comparable — this machine runs editors, other workspaces and a
+multi-gigabyte container VM, and none of that is declared anywhere.
+[`.github/workflows/slo.yml`](../../.github/workflows/slo.yml) runs the same lane on the
+self-hosted runner, through `scripts/local_gate.sh --from 4`, so stage 4 has one definition
+and the workflow schedules it rather than re-typing it.
+
+**What that buys, and what it does not.** A self-hosted runner application executes one job
+at a time, so no other Actions job runs on the host while the lane measures; the workflow's
+`concurrency` group serialises it against itself and never cancels a measurement in flight.
+Both stop short of "the host is idle": how many runner applications are registered is
+runner-host configuration and is not readable from this tree, and nothing in Actions can
+speak for what a person started on the box by hand. So idleness is **measured, not
+asserted** — the lane reads the 1-minute load average, waits for the box to settle, and
+reports a missed tolerance under load as `INCONCLUSIVE` rather than as a regression. There
+is no override for that handling and none may be added.
+
+**Stage 4 stays.** The two run in different measurement contexts, which the identity model
+already keeps apart: different `hardware_class`, different context digest, separate records.
+Run it here as a pre-flight; read the runner's for a release.
+
+## One anchor per hardware class
+
+`hardware_class` is the context field that decides *which question* a number answers, and it
+had no declared vocabulary: a class was whatever `MCP_RE_LOADGEN_HW_CLASS` happened to hold,
+`adr051_slo_gate.py` compared every report against the one committed anchor whatever class
+it carried, and `slo_gate.py` kept a private list of two classes that may never be an SLO
+verdict. Three consumers, no shared vocabulary — and the middle one performed a cross-class
+comparison silently.
+
+The classes are declared in `[[context.class]]` in
+[`config/performance-surface.toml`](../../config/performance-surface.toml), with each class's
+own anchor and whether it may ever carry an absolute production-SLO verdict. The gates read
+it; the workflow resolves the runner's class from it rather than restating the name, for the
+reason [`config/ports.toml`](../../config/ports.toml) exists.
+
+A comparison across classes is not a stricter or a looser gate — it is a gate about a
+different question. So the runner's class is declared **with no anchor**, and a run there
+reports `UNANCHORED` (exit 4 from the lane, stage 4, and the comparator): measured,
+hardware-independent correctness clean, regression band not established. Declaring the
+anchor is a deliberate act — a `workflow_dispatch` run on the quiet runner, its reports
+committed as that class's anchor, and `regression_anchor` pointed at the file. Until then,
+nothing borrows a developer workstation's numbers to adjudicate a different machine's.
 
 ## Stage 5 rehearses the SLO Job spec — and did not, for months
 
@@ -212,9 +253,13 @@ and inflate latency, never flatter them.** So `local_slo_lane.sh` waits up to
 | loaded | pass | **valid** — it cleared the bar while handicapped, which is conservative |
 | loaded | fail | **INCONCLUSIVE** (exit 3), not a regression — re-run quiet to decide |
 
+| any | unanchored class | **UNANCHORED** (exit 4) — measured, correctness clean, no anchor for this class |
+
 Declaring or refreshing a baseline still requires a quiet box: a conservative pass is
 good enough to gate a change, not to set the number everything else is measured
-against.
+against. The self-hosted runner is the quiet box — see *The release-grade run is on the
+self-hosted runner* above, and note that "quiet" there is still measured by this same
+handling rather than assumed.
 
 ### If the gate appears to hang at `Running tests/…`
 
