@@ -71,7 +71,13 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 SURFACE_TOML = REPO / "config" / "performance-surface.toml"
-STORE = REPO / ".verification" / "slo"
+#: Where a developer's records live when nothing else is configured. Inside the checkout,
+#: which is right for a local run and WRONG for self-hosted Actions -- see evidence_store().
+LOCAL_STORE = REPO / ".verification" / "slo"
+
+#: The one authority naming the durable store. Named consistently with the existing
+#: MCP_RE_LOADGEN_HW_CLASS convention in this file.
+STORE_ENV = "MCP_RE_SLO_EVIDENCE_STORE"
 BASELINE = REPO / "docs" / "bench" / "adr-051-baseline-local.json"
 WORKFLOW = REPO / ".github" / "workflows" / "slo.yml"
 SCHEMA = "mcp-re-slo-evidence/v1"
@@ -179,8 +185,85 @@ def stale(recorded: datetime, window_days: int, now: datetime) -> bool:
     return (now - recorded) > timedelta(days=window_days)
 
 
+
+
+def _write_atomic(path: Path, text: str, encoding: str = "utf-8") -> None:
+    """Write a durable record so a reader never observes a partial one.
+
+    The store now outlives the process that writes it and is read by later, unrelated CI
+    runs, so a truncated record is not a transient -- it is a permanently corrupt piece of
+    evidence. `os.replace` is atomic within a filesystem, so a concurrent reader sees the
+    old file or the new one.
+    """
+    tmp = path.with_name(path.name + f".tmp.{os.getpid()}")
+    tmp.write_text(text, encoding=encoding)
+    os.replace(tmp, path)
+
+
+def is_authoritative_actions_slo() -> bool:
+    """Is this the self-hosted Actions run of the SLO workflow itself?
+
+    Identified by workflow IDENTITY rather than by a job title or a bare GITHUB_ACTIONS
+    check, so that an unrelated workflow in CI keeps the ordinary developer default and
+    only the authoritative lane is held to the durable-store requirement.
+    """
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        return False
+    ref = os.environ.get("GITHUB_WORKFLOW_REF", "")
+    return ref.split("@", 1)[0].endswith("/" + str(WORKFLOW.relative_to(REPO)))
+
+
+def evidence_store() -> Path:
+    """The one resolved SLO evidence-store path.
+
+    WHY THIS IS NOT SIMPLY A CONSTANT
+    =================================
+
+    The store used to be `REPO/.verification/slo`, inside the checkout. On self-hosted
+    Actions that directory is DISPOSABLE: the workspace is cleaned between runs, so a PASS
+    was written and then destroyed, and the next run with an identical performance-surface
+    fingerprint said REMEASURE where it should have said REUSE. The identity model was
+    never wrong -- its storage was.
+
+    Two callers, two correct answers, one authority:
+
+        local developer run          -> REPO/.verification/slo   (the default)
+        authoritative Actions SLO    -> whatever MCP_RE_SLO_EVIDENCE_STORE names, and it
+                                        must be outside GITHUB_WORKSPACE
+
+    The authoritative lane FAILS CLOSED rather than falling back. A silent fallback to the
+    disposable path is precisely the defect being repaired: it would look like it worked,
+    publish a record, and lose it -- indistinguishable from success until a later run
+    re-measured for no reason.
+    """
+    configured = os.environ.get(STORE_ENV)
+    store = Path(configured).expanduser() if configured else LOCAL_STORE
+    if not is_authoritative_actions_slo():
+        return store
+
+    if not configured:
+        raise SystemExit(
+            f"error: the authoritative self-hosted SLO must name a durable store in "
+            f"{STORE_ENV}. Refusing to write evidence into the Actions checkout, which is "
+            f"cleaned between runs."
+        )
+    workspace = os.environ.get("GITHUB_WORKSPACE")
+    if workspace:
+        try:
+            store.resolve().relative_to(Path(workspace).resolve())
+        except ValueError:
+            pass  # outside the workspace, which is what we require
+        else:
+            raise SystemExit(
+                f"error: {STORE_ENV}={store} resolves INSIDE GITHUB_WORKSPACE "
+                f"({workspace}), which Actions cleans between runs. A record written there "
+                f"cannot survive to be reused."
+            )
+    return store
+
+
 def record_path(surface: str, context: str) -> Path:
-    return STORE / f"{surface.split(':')[1][:16]}-{context.split(':')[1][:16]}.json"
+    return evidence_store() / f"{surface.split(':')[1][:16]}-{context.split(':')[1][:16]}.json"
 
 
 def decide(max_age_days: int | None) -> tuple[str, str, int]:
@@ -190,7 +273,8 @@ def decide(max_age_days: int | None) -> tuple[str, str, int]:
     digest = context_digest(context)
     path = record_path(surface, digest)
     if not path.is_file():
-        prior = sorted(STORE.glob("*.json")) if STORE.is_dir() else []
+        store = evidence_store()
+        prior = sorted(store.glob("*.json")) if store.is_dir() else []
         same_surface = [
             p for p in prior
             if json.loads(p.read_text())["performance_surface"] == surface
@@ -241,9 +325,9 @@ def record(report_paths: list[str], verdict: str) -> int:
         raise SystemExit("error: --record needs at least one report")
     rates = sorted(rep["throughput_rps"] for rep in reps)
     median = rates[len(rates) // 2] if len(rates) % 2 else (rates[len(rates) // 2 - 1] + rates[len(rates) // 2]) / 2
-    STORE.mkdir(parents=True, exist_ok=True)
+    evidence_store().mkdir(parents=True, exist_ok=True)
     path = record_path(surface, digest)
-    path.write_text(
+    _write_atomic(path, 
         json.dumps(
             {
                 "schema": SCHEMA,
@@ -262,7 +346,8 @@ def record(report_paths: list[str], verdict: str) -> int:
         + "\n",
         encoding="utf-8",
     )
-    print(f"recorded {verdict} for {surface[:23]}… / context {digest[:23]}… -> {path.relative_to(REPO)}")
+    shown = path if not path.is_relative_to(REPO) else path.relative_to(REPO)
+    print(f"recorded {verdict} for {surface[:23]}… / context {digest[:23]}… -> {shown}")
     return 0
 
 
@@ -370,7 +455,8 @@ def trigger_defects() -> list[str]:
 def check() -> int:
     """Validate the declaration and every stored record. No measurement, no Docker."""
     surface, digests = performance_surface()
-    stored = sorted(STORE.glob("*.json")) if STORE.is_dir() else []
+    store = evidence_store()
+    stored = sorted(store.glob("*.json")) if store.is_dir() else []
     bad = []
     for path in stored:
         try:
