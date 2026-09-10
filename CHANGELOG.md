@@ -56,6 +56,26 @@ loose, because the six reps span p99 19,498–31,604us where a developer-worksta
 `baseline_ref` in the targets file no longer names one baseline — the anchor has one owner,
 the class registry, and a second name for it is wrong for every run measured elsewhere.
 
+### Added — a transferred extraction artifact can be smoke-checked where it lands
+
+The six checks that establish an extraction image WORKS — the harness interpreter, the
+pinned Lean, a BUILT Aeneas backend, the recorded mathlib revision, both binaries executing,
+and a tiny crate going Rust → LLBC → Lean — existed only as steps in the build workflow. So
+they could only ever be asked on the build path.
+
+That is the wrong half. The artifact is preserved on the machine that built it and moved to
+other hosts by hand, and a host handed 5.6 GiB has to establish that what it received works
+— **without rebuilding**, because a rebuild of this definition is a different instrument
+under identical declared pins. There was no way to ask.
+
+`tools/verification/extraction-image smoke` runs them against the preserved artifact,
+resolved and loaded exactly as the lane resolves it, by image id rather than tag. The build
+workflow calls the same code with `--built`, since nothing is pinned to a new image yet —
+one spelling of "does this artifact work", where there were previously one and a half.
+
+Splitting `load`'s stdout contract out of the shared resolution came with it: `smoke` was
+printing `load`'s image-id line into the middle of its own report.
+
 ### Fixed — two authorities disagreed about what an extracted-model unit requires
 
 `_evidence.required_lanes` derives a unit's required lanes from its declared evidence URIs;
