@@ -12,6 +12,26 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Fixed — two authorities disagreed about what an extracted-model unit requires
+
+`_evidence.required_lanes` derives a unit's required lanes from its declared evidence URIs;
+the aggregate's requirement set derived `generated-model` from the unit's CLASS. They agreed
+only while every V2/V3 unit happened to declare `lean://`, and nothing in the manifest made
+it — a unit with `extracted_symbols` and `lean_theorems` but no `lean://` entry would have
+been ISSUED an attestation on its test battery alone while claiming extracted-model
+evidence, because the issuer would have seen no lean lane to check. The hole predates the
+aggregate; the composer inherited it.
+
+The manifest now requires what the class already implies: a V2/V3 unit must declare
+`lean://` evidence. Both authorities then read one fact, and the composer derives
+`generated-model` from that same URI — it has none of its own, and it is the FRESHNESS
+PRECONDITION of exactly that evidence, since a Lean theorem about a stale model is a theorem
+about a different tree. `check-generated` records for the same set, spelled the same way.
+
+Found by auditing #541's own done criteria rather than by a failure, and pinned by three
+controls: the two authorities agree unit by unit, the validator refuses a V2 unit with no
+`lean://` entry, and it accepts one that has it.
+
 ### Changed — the verification aggregate composes evidence instead of executing every lane
 
 `VERIFICATION: PASS` meant *one process executed every required lane*. That was
