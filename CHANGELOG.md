@@ -12,6 +12,50 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Changed — the SLO lane runs where nothing else does, and one anchor per hardware class
+
+A minor release does not owe a whole SLO run; it owes a green build and a green test
+battery. A whole SLO run belongs where the performance surface moved. Both halves of that
+now have a mechanism.
+
+**The lane runs on the self-hosted runner.** The load generator is co-located with the proxy
+it measures, so an unrelated build on the same box halves throughput and triples the tail —
+an environmental FAIL that says nothing about the code, and one that cost a full A/B/B/A
+investigation before anyone could say so. `.github/workflows/slo.yml` schedules the lane
+through `scripts/local_gate.sh --from 4`, so stage 4 keeps one definition. It triggers on a
+change to the declared performance surface — the filter is derived from
+`config/performance-surface.toml`, and `scripts/slo_evidence_identity.py` fails the build if
+it is ever narrower than the surface — and on `workflow_dispatch`. It does not run on every
+push.
+
+**What that establishes, and what it does not.** A self-hosted runner application executes
+one job at a time, and the workflow's `concurrency` group serialises it against itself
+without cancelling a measurement in flight. Neither amounts to "the host is idle": how many
+runner applications are registered is runner-host configuration and is not readable from the
+tree. So idleness stays *measured* — the lane's load-average handling is unchanged, and
+there is no override for it.
+
+**One anchor per hardware class.** `hardware_class` decides which question a number answers,
+and it had no declared vocabulary: `scripts/adr051_slo_gate.py` compared every report against
+the single committed anchor whatever class it carried, and `scripts/slo_gate.py` kept its own
+private list of classes that may never be an SLO verdict. The classes are now declared once,
+in `[[context.class]]`; both gates read them; the workflow resolves the runner's class from
+them rather than restating the name. The comparator refuses a cross-class comparison and
+reports `UNANCHORED` for a class with no committed anchor — measured, hardware-independent
+correctness still enforced, regression band not established. An anchor from another class
+answers a different question and may not be read into one that has none.
+
+**The self-hosted class now has its own anchor.** The lane's first run on that host reported
+`UNANCHORED` exactly as designed; `docs/bench/adr-051-baseline-dev1.json` is the anchor
+declared from the six reps it retained — every one 8000/8000 successes, throughput median
+16,252.6 rps within ±3.4%, p50 7,232us. It records the box state it was measured at (1-minute
+load settled to 3.83 on 14 cpus, no other Actions job on the host in the window) and says
+what that leaves: the throughput half is a tight regression band, and the tail ceilings are
+loose, because the six reps span p99 19,498–31,604us where a developer-workstation run spans
+±6%. Tightening them is a re-declaration from an idle host, not an edit to the tolerances.
+`baseline_ref` in the targets file no longer names one baseline — the anchor has one owner,
+the class registry, and a second name for it is wrong for every run measured elsewhere.
+
 ### Added — a transferred extraction artifact can be smoke-checked where it lands
 
 The six checks that establish an extraction image WORKS — the harness interpreter, the

@@ -70,7 +70,17 @@ production hardware:
    requires a fresh anchor run to hold ≥ 85 % of baseline throughput and stay
    within stated multiples of baseline p50/p99/p999 added latency.
    [`scripts/adr051_slo_gate.py`](../../scripts/adr051_slo_gate.py) is the
-   comparator (exit 0 = within tolerance, 1 = regression).
+   comparator (exit 0 = within tolerance, 1 = regression, 4 = not comparable).
+
+   **One anchor per hardware class.** The comparator resolves a report's anchor
+   from that report's own `config.hardware_class`, using the class vocabulary in
+   [`config/performance-surface.toml`](../../config/performance-surface.toml),
+   and refuses a comparison across two classes. A class with no committed anchor
+   — the self-hosted runner is one — yields `UNANCHORED`: the run measured, the
+   hardware-independent correctness check still bit, and there is nothing
+   recorded for that class to adjudicate the numbers against. That is neither a
+   pass nor a regression, and an anchor from another class cannot stand in for
+   the missing one: it answers a different question.
 
 2. **Pending — production SLOs + authoritative scaling.** The `production_slo`
    block holds the absolute per-hardware-class thresholds and the per-core
@@ -91,6 +101,11 @@ it is the ONLY supported entry point:
 scripts/local_slo_lane.sh          # 6 anchor reps + the gate on each
 scripts/local_slo_lane.sh --reps 1 # quick pre-flight
 ```
+
+The release-grade run is the same lane on the self-hosted runner
+([`.github/workflows/slo.yml`](../../.github/workflows/slo.yml)), where nothing else is
+scheduled on the box while it measures. It triggers on a change to the declared
+performance surface and on `workflow_dispatch`; it does not run on every push.
 
 It reads the anchor config out of `docs/bench/adr-051-baseline-local.json`, builds
 both the test AND the `mcp-re-proxy` bin the harness spawns, refuses to measure on a

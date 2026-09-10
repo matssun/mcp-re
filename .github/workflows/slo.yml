@@ -1,0 +1,217 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# ADR-MCPRE-051 §7 SLO lane, on the self-hosted runner.
+#
+# WHY THE LANE MOVED. The load generator is CO-LOCATED with the proxy: it shares the
+# machine's cores with the process it measures, so an unrelated build on the same box halves
+# throughput and triples the tail. That is not a hypothesis. Tree `d8a53be9…` gave 6/6 PASS
+# at a median 15,282.6 rps on a quiet box; the re-run gave 4/6 FAIL with rep 2 at p99
+# 262,944 us and max 445,764 us, while 48,000/48,000 requests succeeded across both rounds.
+# Descheduling, not serving — an environmental FAIL that says nothing about the code, and it
+# cost a full A/B/B/A investigation before anyone could say so.
+#
+# `scripts/slo_evidence_identity.py` removed the re-measurements that had no reason to
+# happen. It did not make the remaining ones comparable: a developer workstation runs
+# editors, other workspaces and a multi-gigabyte container VM, and none of that is declared
+# anywhere. This job moves the measurement to a machine that is not doing those things.
+#
+# WHAT THIS JOB RELIES ON, stated plainly because the exclusivity claim is the point:
+#
+#   * A self-hosted runner APPLICATION executes one job at a time, so no other Actions job
+#     runs on this host while the lane measures. That property holds while exactly one
+#     runner is registered on the host. How many are registered is runner-host
+#     configuration, and it is NOT readable from this tree — the same limit
+#     `scripts/merge_path_gate.py` states about branch protection.
+#   * The `concurrency` group below serialises this workflow against itself, so a push and a
+#     deliberate operator run cannot interleave two measurements. `cancel-in-progress` is
+#     false: cancelling a measurement mid-run is how a release ends up with no number at all.
+#
+# WHAT IT DOES NOT ESTABLISH: that the host is idle. Nothing in GitHub Actions can assert
+# that, so the lane MEASURES it instead — `scripts/local_slo_lane.sh` reads the 1-minute load
+# average, waits for the box to settle, and reports a missed tolerance under load as
+# INCONCLUSIVE rather than as a regression. The "measured box state" step below records the
+# same numbers in the log, so a verdict can always be read against the box that produced it.
+# There is no override for the noisy-box handling and none may be added.
+#
+# WHAT IT MEASURES IS UNCHANGED. Same harness, same canonical v2 envelope (concurrency 128 /
+# 8000 requests / cold TLS1.3-mTLS), same gates. Only the machine is different — which makes
+# this a different MEASUREMENT CONTEXT under the two-identity model in
+# `config/performance-surface.toml`, not a different or a better verdict about the old one.
+# The class is `[[context.class]] github_actions_runner = true`, it has no committed
+# regression anchor yet, and `scripts/adr051_slo_gate.py` reports UNANCHORED rather than
+# comparing this machine's numbers against a developer workstation's.
+
+name: slo
+
+on:
+  # NOT on every push. The owner's ruling: a whole SLO run belongs where perf-relevant code
+  # was touched, not on every change. "Perf-relevant" already has an owner — the declared
+  # performance surface — so this filter is derived from it rather than being a second
+  # opinion about it, and `scripts/slo_evidence_identity.py` FAILS the build when this list
+  # is narrower than the surface. A filter and a content-addressed fingerprint are one
+  # dependency set written down twice; when they diverge the workflow does not go red, it
+  # stops running, and every check stays green while nothing re-measures.
+  pull_request:
+    paths:
+      # surface.source — the serving path and everything on the per-request path.
+      - "mcp-re-proxy/src/**"
+      - "mcp-re-core/src/**"
+      - "mcp-re-policy/src/**"
+      - "mcp-re-http-profile/src/**"
+      - "mcp-re-client-core/src/**"
+      # surface.build_configuration — what compiles it.
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "mcp-re-proxy/Cargo.toml"
+      - "mcp-re-core/Cargo.toml"
+      - "mcp-re-policy/Cargo.toml"
+      - "mcp-re-http-profile/Cargo.toml"
+      - "mcp-re-client-core/Cargo.toml"
+      # surface.harness — the instrument and the two gates that decide what passes.
+      - "mcp-re-proxy/tests/tls_load_harness_bench.rs"
+      - "scripts/local_slo_lane.sh"
+      - "scripts/adr051_slo_gate.py"
+      - "scripts/slo_gate.py"
+      - "tools/slo/run_slo_job.sh"
+      # surface.envelope — the load applied and the numbers it is compared against.
+      - "docs/bench/adr-051-benchmark-envelope.json"
+      - "docs/bench/adr-051-baseline-local.json"
+      - "docs/bench/adr-051-baseline-dev1.json"
+      - "docs/bench/adr-051-slo-targets.json"
+      # surface.images — the image the cloud Job measures inside.
+      - "deploy/docker/Dockerfile.bench"
+      # The declaration itself, the aggregate this job invokes, and this file. None of them
+      # is a surface input — they decide WHEN and WHERE, not how fast the code runs — but a
+      # change to any of them changes what this lane does, so it re-runs.
+      - "config/performance-surface.toml"
+      - "config/heavy-lane-floors.toml"
+      - "scripts/slo_evidence_identity.py"
+      - "scripts/heavy_lane_disk_preflight.py"
+      - "scripts/local_gate.sh"
+      - ".github/workflows/slo.yml"
+  push:
+    branches: [main]
+    paths:
+      - "mcp-re-proxy/src/**"
+      - "mcp-re-core/src/**"
+      - "mcp-re-policy/src/**"
+      - "mcp-re-http-profile/src/**"
+      - "mcp-re-client-core/src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "mcp-re-proxy/Cargo.toml"
+      - "mcp-re-core/Cargo.toml"
+      - "mcp-re-policy/Cargo.toml"
+      - "mcp-re-http-profile/Cargo.toml"
+      - "mcp-re-client-core/Cargo.toml"
+      - "mcp-re-proxy/tests/tls_load_harness_bench.rs"
+      - "scripts/local_slo_lane.sh"
+      - "scripts/adr051_slo_gate.py"
+      - "scripts/slo_gate.py"
+      - "tools/slo/run_slo_job.sh"
+      - "docs/bench/adr-051-benchmark-envelope.json"
+      - "docs/bench/adr-051-baseline-local.json"
+      - "docs/bench/adr-051-baseline-dev1.json"
+      - "docs/bench/adr-051-slo-targets.json"
+      - "deploy/docker/Dockerfile.bench"
+      - "config/performance-surface.toml"
+      - "config/heavy-lane-floors.toml"
+      - "scripts/slo_evidence_identity.py"
+      - "scripts/heavy_lane_disk_preflight.py"
+      - "scripts/local_gate.sh"
+      - ".github/workflows/slo.yml"
+  # The deliberate operator run: a release that wants a number, or the run that produces the
+  # reports an anchor is declared from.
+  workflow_dispatch:
+    inputs:
+      reps:
+        description: "anchor reps (the committed anchor is a 6-rep median)"
+        required: false
+        default: "6"
+      force_remeasure:
+        description: "measure even when the attested result for this identity is reusable"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+# Serialised against itself, never cancelled. Two measurements interleaved on one host is
+# the contention this workflow exists to remove, and a cancelled measurement is a release
+# with no number rather than a fast one.
+concurrency:
+  group: slo-self-hosted
+  cancel-in-progress: false
+
+jobs:
+  lane:
+    name: ADR-MCPRE-051 §7 SLO lane (self-hosted)
+    # Same-repository refs only, exactly as both `verification.yml` jobs are. This job
+    # executes the checked-out tree's own `scripts/*` on a persistent self-hosted Mac mini
+    # that holds the pinned toolchains and the operator's cloud credentials, so a fork pull
+    # request reaching this runner is arbitrary code execution on the release verification
+    # host, not a sandboxed CI job. The runner is not ephemeral: anything a run leaves behind
+    # is read by every later run.
+    if: >-
+      github.event_name != 'pull_request'
+      || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, macOS, ARM64]
+    # A release build of the workspace plus six reps of 8,000 requests, on a box that may
+    # have to settle first.
+    timeout-minutes: 90
+    env:
+      SLO_REPS: ${{ github.event.inputs.reps || '6' }}
+      SLO_FORCE_REMEASURE: ${{ github.event.inputs.force_remeasure == 'true' && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # The class is resolved FROM the declaration, never typed here. A literal in a second
+      # place is a fact that can drift, and a drifted class name would key the record to a
+      # measurement context nobody declared — the same rule `config/ports.toml` exists for.
+      - name: Resolve the declared measurement context
+        id: context
+        run: |
+          set -euo pipefail
+          hw="$(python3 scripts/slo_evidence_identity.py --runner-class)"
+          echo "hardware_class=$hw" >> "$GITHUB_OUTPUT"
+          echo "This runner measures as hardware_class '$hw'."
+
+      # The exclusivity this job relies on cannot be asserted from inside Actions, so it is
+      # measured and recorded. A verdict read months later without the box state beside it is
+      # a number with no context, and that is how a contended run became a "33% regression".
+      - name: Measured box state before the lane
+        run: |
+          set -euo pipefail
+          echo "cpus:   $(sysctl -n hw.ncpu)"
+          echo "load:   $(uptime)"
+          echo "runner: ${RUNNER_NAME:-<unset>}"
+          df -h . | tail -2
+
+      # The aggregate, not the lane script directly. Stage 4 is a PROCEDURE — decide against
+      # the evidence identity, refuse below the declared disk floor, measure, then attest a
+      # PASS and only a PASS — and `scripts/local_gate.sh` is where that procedure is
+      # defined. Re-typing it here would be the same fact in two places, and the copy would
+      # be the one that stopped attesting or stopped refusing.
+      #
+      # `--from 4` selects exactly stage 4: stages 1-3 report SKIPPED and stage 5 is outside
+      # the range. The run prints exactly one `LOCAL GATE:` line; the step's exit status is
+      # the gate's own, unpiped.
+      - name: SLO lane (local_gate.sh stage 4)
+        env:
+          MCP_RE_LOADGEN_HW_CLASS: ${{ steps.context.outputs.hardware_class }}
+        run: scripts/local_gate.sh --from 4
+
+      # The reports are what an operator declares this class's anchor from, and what a later
+      # reader compares a regression against. Kept on `always()`: a FAIL, an INCONCLUSIVE and
+      # an UNANCHORED run all produce reports worth reading, and the failing one most of all.
+      - name: Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: slo-reports-${{ steps.context.outputs.hardware_class }}-${{ github.run_id }}
+          path: target/slo-local/
+          if-no-files-found: warn
+          retention-days: 90
