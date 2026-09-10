@@ -108,14 +108,20 @@ def requirements(doc: dict, toolchains: dict, assumptions: dict) -> list[Require
         for lane, classes in sorted(FORMAL_LANES.items()):
             if unit["class"] not in classes:
                 continue
-            # `test` and `mutation` are declared per unit by evidence URI rather than by
-            # class alone: a V0 unit with no battery claims none, and requiring one would
-            # make the aggregate demand evidence the manifest never promised.
-            if lane == "test" and not _claims(unit, "test://"):
+            # EVERY LANE IS DERIVED FROM THE DECLARED EVIDENCE URI, never from the class
+            # alone. A V0 unit with no battery claims none, and requiring one would make the
+            # aggregate demand evidence the manifest never promised.
+            #
+            # `generated-model` has no URI of its own and is derived from `lean://` because
+            # it is the FRESHNESS PRECONDITION of that same evidence: a Lean theorem about a
+            # stale model is a theorem about a different tree. Deriving it from the class
+            # instead made this the second authority over "what does this unit require" —
+            # `_evidence.required_lanes` reads the URIs, and the two agreed only while every
+            # V2/V3 unit happened to declare `lean://`. The manifest now requires that, so
+            # both authorities read one fact.
+            if lane in {"test", "mutation"} and not _claims(unit, f"{lane}://"):
                 continue
-            if lane == "mutation" and not _claims(unit, "mutation://"):
-                continue
-            if lane == "lean" and not _claims(unit, "lean://"):
+            if lane in {"lean", "generated-model"} and not _claims(unit, "lean://"):
                 continue
             out.append(Requirement(lane, unit["id"], fingerprint))
     return out
