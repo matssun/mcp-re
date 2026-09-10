@@ -42,9 +42,19 @@ private list of classes that may never be an SLO verdict. The classes are now de
 in `[[context.class]]`; both gates read them; the workflow resolves the runner's class from
 them rather than restating the name. The comparator refuses a cross-class comparison and
 reports `UNANCHORED` for a class with no committed anchor — measured, hardware-independent
-correctness still enforced, regression band not established. The self-hosted runner's class
-is declared with no anchor: it is a different machine, and an anchor from another class
-answers a different question.
+correctness still enforced, regression band not established. An anchor from another class
+answers a different question and may not be read into one that has none.
+
+**The self-hosted class now has its own anchor.** The lane's first run on that host reported
+`UNANCHORED` exactly as designed; `docs/bench/adr-051-baseline-dev1.json` is the anchor
+declared from the six reps it retained — every one 8000/8000 successes, throughput median
+16,252.6 rps within ±3.4%, p50 7,232us. It records the box state it was measured at (1-minute
+load settled to 3.83 on 14 cpus, no other Actions job on the host in the window) and says
+what that leaves: the throughput half is a tight regression band, and the tail ceilings are
+loose, because the six reps span p99 19,498–31,604us where a developer-workstation run spans
+±6%. Tightening them is a re-declaration from an idle host, not an edit to the tolerances.
+`baseline_ref` in the targets file no longer names one baseline — the anchor has one owner,
+the class registry, and a second name for it is wrong for every run measured elsewhere.
 
 ### Added — a SECOND mechanism leaf, and the first exchange with a Transparency Service somebody else operates
 

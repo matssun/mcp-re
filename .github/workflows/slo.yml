@@ -77,6 +77,7 @@ on:
       # surface.envelope — the load applied and the numbers it is compared against.
       - "docs/bench/adr-051-benchmark-envelope.json"
       - "docs/bench/adr-051-baseline-local.json"
+      - "docs/bench/adr-051-baseline-dev1.json"
       - "docs/bench/adr-051-slo-targets.json"
       # surface.images — the image the cloud Job measures inside.
       - "deploy/docker/Dockerfile.bench"
@@ -112,6 +113,7 @@ on:
       - "tools/slo/run_slo_job.sh"
       - "docs/bench/adr-051-benchmark-envelope.json"
       - "docs/bench/adr-051-baseline-local.json"
+      - "docs/bench/adr-051-baseline-dev1.json"
       - "docs/bench/adr-051-slo-targets.json"
       - "deploy/docker/Dockerfile.bench"
       - "config/performance-surface.toml"

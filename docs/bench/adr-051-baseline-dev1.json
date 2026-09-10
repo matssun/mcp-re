@@ -1,0 +1,86 @@
+{
+  "schema": "mcp-re-load-harness-baseline/v2",
+  "envelope_ref": "docs/bench/adr-051-benchmark-envelope.json",
+  "envelope_version": 2,
+  "carrier": "rfc9421+rfc9530",
+  "classification": "provisional-local-regression-baseline",
+  "authoritative_for": [
+    "local-regression-detection on hardware_class dev1-macos-arm64"
+  ],
+  "NOT_authoritative_for": [
+    "production release SLOs (absolute throughput/latency thresholds)",
+    "per-core linear-scaling acceptance",
+    "any other hardware class — scripts/adr051_slo_gate.py refuses a cross-class comparison"
+  ],
+  "supersedes": "nothing. This is the FIRST anchor declared for hardware_class dev1-macos-arm64, and no anchor from another class may be read into it: docs/bench/adr-051-baseline-local.json was recorded on a developer workstation, which is a different measurement context under config/performance-surface.toml and therefore an answer to a different question.",
+  "caveat": "Recorded on the self-hosted Actions runner with the load generator CO-LOCATED with the proxy on the same cores, exactly as the developer-workstation anchor is. It is a REGRESSION anchor and states no capacity; config/performance-surface.toml declares this class slo_declarable = false for that reason.\n\nBOX STATE, stated because it bounds what these numbers are worth. The lane's own settle check admitted the run: 1-minute load 4.97 on 14 cpus at job start, settled to 3.83 after 60s, and the measurement window (07:24:08-07:25:20Z) overlapped no other Actions job on this host. That is quieter than the box the lane refuses to measure on and NOT as quiet as the ~2.5/14 the developer-workstation anchor was recorded at. It shows in the tail: the six reps span p99 19,498-31,604us (+/-24%) against +/-6% for the developer-workstation anchor, while throughput spans 15,483.0-16,599.6 (+/-3.4%). So the throughput floor below is a tight regression band and the TAIL CEILINGS ARE LOOSE — a tail regression smaller than the spread will not be caught here. Re-declare this anchor from a deliberate workflow_dispatch run on an idle host to tighten them; the throughput half does not need it.",
+  "recorded": {
+    "date": "2026-09-09",
+    "harness": "mcp-re-proxy/tests/tls_load_harness_bench.rs",
+    "build_profile": "release",
+    "rust_toolchain": "1.97.1 (pinned in rust-toolchain.toml and MODULE.bazel)",
+    "serving_mode": "delegated-required-only (ADR-MCPRE-052; delegated-credential-backed response signature per request)",
+    "carrier": "RFC 9421 HTTP Message Signatures + RFC 9530 Content-Digest",
+    "commit": "035d5649",
+    "provenance": "GitHub Actions run 34323483201, job 'SLO lane (local_gate.sh stage 4)' on runner dev1-mcp-re, reports retained as artifact slo-reports-dev1-macos-arm64-34323483201. The run reported UNANCHORED and was red, which is what this file answers.",
+    "host": "self-hosted macOS ARM64 Actions runner 'dev1-mcp-re', 14 cpus",
+    "serving_topology": "ADR-MCPRE-051 §1 as amended 2026-08-06: sharded work-stealing runtimes. This anchor declares 1 core, so it runs ONE shard whose pool is the auto default min(8, cpus) = 8 workers."
+  },
+  "anchor": {
+    "comment": "MEDIAN of 6 reps at the canonical v2 envelope (concurrency 128 / 8000 requests / cold TLS1.3-mTLS, 1 declared core), every rep 8000/8000 successes and 0 failures. scripts/adr051_slo_gate.py compares a fresh run of THIS config on THIS class against these numbers, under the tolerances in docs/bench/adr-051-slo-targets.json.",
+    "config": {
+      "hardware_class": "dev1-macos-arm64",
+      "declared_cores": 1,
+      "concurrency": 128,
+      "requests": 8000,
+      "connection_mode": "cold",
+      "replay_backend": "redis-wait-quorum:2:2000",
+      "tls_mode": "TLS1.3-mTLS"
+    },
+    "results": {
+      "throughput_rps": 16252.6,
+      "added_latency_us": {
+        "p50": 7232,
+        "p99": 26394,
+        "p999": 32483,
+        "mean": 7701,
+        "min": 3412,
+        "max": 34749
+      },
+      "reps": {
+        "throughput_rps": [
+          15483.0,
+          15975.5,
+          15990.6,
+          16514.5,
+          16518.6,
+          16599.6
+        ],
+        "p50_us": [
+          7027,
+          7178,
+          7214,
+          7250,
+          7338,
+          7418
+        ],
+        "p99_us": [
+          19498,
+          19620,
+          23616,
+          29172,
+          30163,
+          31604
+        ],
+        "p999_us": [
+          23282,
+          25963,
+          30148,
+          34818,
+          35757,
+          37451
+        ]
+      }
+    }
+  }
+}

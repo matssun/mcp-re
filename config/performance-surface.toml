@@ -84,6 +84,7 @@ harness = [
 envelope = [
   "docs/bench/adr-051-benchmark-envelope.json",
   "docs/bench/adr-051-baseline-local.json",
+  "docs/bench/adr-051-baseline-dev1.json",
   "docs/bench/adr-051-slo-targets.json",
 ]
 
@@ -153,10 +154,10 @@ reason = "a developer workstation with the load generator CO-LOCATED on the same
 name = "dev1-macos-arm64"
 kind = "self-hosted-actions-runner"
 slo_declarable = false
-regression_anchor = ""
+regression_anchor = "docs/bench/adr-051-baseline-dev1.json"
 github_actions_runner = true
 reason = "a self-hosted Actions runner; the load generator is co-located exactly as it is on a developer workstation, so this class detects REGRESSION and states no capacity"
-note = "No anchor is declared for this class, and none may be inferred from another one. The runner is a Mac mini whose chip, core count and thermal envelope are not the developer workstation's, so its numbers are a different question — that is the two-identity model working, not a gap in it. The first deliberate `workflow_dispatch` run produces the reports an operator commits as this class's anchor; until then the lane measures, enforces the hardware-independent correctness check, and reports UNANCHORED rather than a pass."
+note = "The anchor is this class's own, and none may be inferred from another one. The runner's chip, core count and thermal envelope are not the developer workstation's, so its numbers are a different question — that is the two-identity model working. It was declared from run 34323483201, the first run of this lane on this host, which reported UNANCHORED exactly as designed and whose retained reports are the six reps the anchor records. Its `caveat` states the box state it was measured at and which half of the band that leaves loose."
 
 [[context.class]]
 name = "kind-local"

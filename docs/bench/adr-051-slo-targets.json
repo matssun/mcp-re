@@ -4,7 +4,7 @@
   "section": "§7 proof obligation — benchmark-first, SLO-gated releases",
   "issue": "MCPRE-110 (#317) + MCPRE-123",
   "description": "The declared release-gate thresholds for ADR-051 §7. Split into (1) ACTIVE local-regression tolerances that gate day-to-day changes against the committed provisional baseline (scripts/adr051_slo_gate.py), (2) the production SLOs whose absolute numbers are measured on the declared hardware class via the GKE fleet run and enforced by scripts/slo_gate.py, and (3) the ALWAYS-ON absolute correctness gates that are hardware-independent.",
-  "baseline_ref": "docs/bench/adr-051-baseline-local.json",
+  "baseline_ref": "config/performance-surface.toml [[context.class]].regression_anchor — ONE anchor per hardware class, resolved from the report's own config.hardware_class by scripts/adr051_slo_gate.py. A single name here would be a second authority over which numbers a run is compared against, and a wrong one whenever the run was not measured on that class.",
   "envelope_ref": "docs/bench/adr-051-benchmark-envelope.json",
   "local_regression_gate": "scripts/adr051_slo_gate.py",
   "production_slo_gate": "scripts/slo_gate.py",
