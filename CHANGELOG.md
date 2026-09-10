@@ -56,6 +56,231 @@ loose, because the six reps span p99 19,498–31,604us where a developer-worksta
 `baseline_ref` in the targets file no longer names one baseline — the anchor has one owner,
 the class registry, and a second name for it is wrong for every run measured elsewhere.
 
+### Fixed — two authorities disagreed about what an extracted-model unit requires
+
+`_evidence.required_lanes` derives a unit's required lanes from its declared evidence URIs;
+the aggregate's requirement set derived `generated-model` from the unit's CLASS. They agreed
+only while every V2/V3 unit happened to declare `lean://`, and nothing in the manifest made
+it — a unit with `extracted_symbols` and `lean_theorems` but no `lean://` entry would have
+been ISSUED an attestation on its test battery alone while claiming extracted-model
+evidence, because the issuer would have seen no lean lane to check. The hole predates the
+aggregate; the composer inherited it.
+
+The manifest now requires what the class already implies: a V2/V3 unit must declare
+`lean://` evidence. Both authorities then read one fact, and the composer derives
+`generated-model` from that same URI — it has none of its own, and it is the FRESHNESS
+PRECONDITION of exactly that evidence, since a Lean theorem about a stale model is a theorem
+about a different tree. `check-generated` records for the same set, spelled the same way.
+
+Found by auditing #541's own done criteria rather than by a failure, and pinned by three
+controls: the two authorities agree unit by unit, the validator refuses a V2 unit with no
+`lean://` entry, and it accepts one that has it.
+
+### Changed — the verification aggregate composes evidence instead of executing every lane
+
+`VERIFICATION: PASS` meant *one process executed every required lane*. That was
+unsatisfiable and had only looked otherwise: Verus and the cargo matrix run on the macOS
+host, Charon links the private rustc crates and does not build there, so extraction and the
+Lean proofs run in the pinned container. While no V2 unit existed both extracted-model lanes
+reported `NOT_REQUIRED` and the host gate passed. Declaring one made them required, and a
+process was being asked for an aggregate over lanes it cannot run — permanently
+`INCOMPLETE`, with every individual verdict correct.
+
+It now means *every required lane has valid evidence for the current fingerprint*.
+
+**Not a relaxation.** The requirement set comes from the MANIFEST, never from what ran, so a
+lane that silently did not execute leaves no record and a missing record is `INCOMPLETE` —
+something the previous shape could not express at all. Per (lane, unit) exactly one
+acceptable current record is required: right unit, right lane, `pass`, the **exact** current
+fingerprint, and for the extracted-model lanes the extraction artifact the lock pins. Stale
+is `UNAVAILABLE`; a duplicate, unreadable, misfiled or wrong-instrument record is `FAIL`; a
+lane declaring `NOT_REQUIRED` where the manifest requires it is refused in the execution
+phase, where the declared verdict still exists.
+
+**No lane reports PASS by reading another's record.** `verify-lean` on a macOS host still
+reports `UNAVAILABLE`. Lane executors remain the authorities for execution and only the
+central aggregate composes — `--phase` and `--aggregate` are refused together, because a
+process that executed lanes and composed the result would be the instrument certifying
+itself.
+
+**The fingerprint is what makes this sound, and the artifact store is what made the
+fingerprint sufficient:** it carries the whole toolchain identity including `artifact_digest`
+and `archive_digest`, so a record from a different tree, a different prover, or a different
+build of the same declared pins cannot be composed into a verdict about this one.
+
+`MCP_RE_EVIDENCE_DIR` names one directory, created fresh per CI invocation and reached from
+both environments through the bind mount; no global store is searched, because a run must
+not go green on a record an earlier one left behind. `check-generated` writes per-unit
+records like every other formal lane, and `attest` resolves the same directory the lanes
+wrote — its old default would have made the issuer refuse every unit in a run that produced
+plenty.
+
+The two verification jobs become one ordered job: host lanes, the preserved artifact,
+extraction lanes, composer. Renaming it is safe, and that is its own finding — the `Protect
+main` ruleset requires three status checks and two of them name Rust `1.94.1`, a version
+this repository no longer builds with, so those contexts can never report and neither
+verification job was ever required.
+
+### Added — the extraction artifact is PRESERVED, not merely identified (#541)
+
+Removing the registry left the pinned environment living in Docker's local image store, and
+that store is disposable: `docker image prune`, a reset, or a full disk empties it. The
+storage ruling called that a durability cost with "rebuild and re-pin" as the remedy. It is
+not one — the same measurement that forces an artifact identity says why. `apt` and `opam`
+resolve versions nothing pins, and the opam libraries are linked into the Aeneas binary, so
+a rebuild is a **different instrument** under identical declared pins. An identity over
+cache-only bytes is therefore a claim that stays *identifiable* and stops being
+*reproducible* the moment the cache is cleared: the lock names an environment nothing can
+execute again.
+
+The exact bytes are now persisted outside Docker's state, content-addressed, on the
+verification runner:
+
+```
+/opt/verification/extraction-artifacts/sha256/<artifact_digest>.tar
+```
+
+`[extraction_container]` records two digests because they answer two questions —
+`artifact_digest` is the image that EXECUTES once the archive is loaded, `archive_digest` is
+the independent check that the file in the store is that image's preserved form. One digest
+could not do both: the archive is a container format around the image, and checking a file by
+loading it would mean loading several gigabytes to discover they were the wrong ones.
+
+**Every consumer runs `extraction-image load`, and it hands back an image id.** Never a tag: a
+tag resolves through the local cache, and the local cache is precisely the thing that is not
+the evidence store. The two non-passing outcomes stay apart — an absent archive is
+**UNAVAILABLE** (this host cannot run the lane, and it never rebuilds, because a rebuild is a
+different instrument), a digest mismatch is **FAIL** (a file under an identity it does not
+have). `load_toolchains` refuses a resolved entry that records no preserved bytes, so every
+consumer inherits the refusal rather than one script remembering to ask.
+
+**No registry is reintroduced.** The bytes live on one machine and moving them is an operator
+act, exactly as the ruling concluded. **And no reproducibility is claimed:** the residual
+unpinned apt/opam closure remains a measured limitation, deliberately not pinned here. What a
+preserved artifact supports is the honest, weaker statement — *this theorem was checked
+against THIS exact preserved extraction artifact* — and not *this artifact can be
+reconstructed indefinitely from the Dockerfile*. Full build reproducibility is future
+assurance work.
+
+### Added — the Lean lane measures something (#541)
+
+`verify-lean`, `regenerate-lean` and the Lean half of `check-generated` were stubs that
+refused. They now measure. Nothing is promoted by this change: no unit is V2, so the lane
+still reports `NOT_REQUIRED` — what changed is what it will do the moment one is.
+
+**A green `lake build` is not a proof.** On its own it is compatible with the theorem being
+absent, being about a stale model, being about a model somebody edited, and being proved by
+`sorry`. Each is now asked separately, and none of the four is asked by reading source.
+
+**Premises are discovered, not read.** The lane runs `#print axioms` and takes the kernel's
+own closure over each declared theorem. Three names — `propext`, `Classical.choice`,
+`Quot.sound` — are the declared kernel baseline, recorded in `[lean].kernel_axioms` beside
+the `toolchain` it is a property of; a lock that declares none is a refusal, because a
+baseline written into the lane would keep reading as correct across the one event that could
+change it. Every other name must be an `ASM-NNNN` scoped to that unit. `sorryAx` is neither,
+at any scope, under any registration: registering it would convert "nobody has proved this"
+into "we have decided to trust it".
+
+**The model's identity is a stamp.** `regenerate-lean` records what it read, under which
+pinned pipeline, and what it wrote. `check-generated` refuses a tree without one, because a
+drift check that nothing regenerated compares the checked-in model against itself and passes
+for every model, a hand-written one included.
+
+**An activation probe, because every refusal above is conditional on the prover.** A Lean
+release that changed the `#print axioms` message, a lakefile that stopped building the
+theorems, or a parser that silently matched nothing would each turn every check into a
+tautology — and all three look exactly like a clean axiom closure, which is what a passing
+lane looks like. `verify-lean --activation-probe` makes the real prover produce a `sorry`, an
+unregistered axiom and an unresolvable name, and fails if the lane stops refusing them. It
+runs in the extraction lane, in the same container the lane runs in. This is the shape
+`scripts/clippy_ratchet_gate.py --activation-probe` exists for, one tool along.
+
+**Two unit keys and fingerprint encoding v8.** `extracted_symbols` decides what the model
+contains; `lean_theorems` what is claimed about it. Both enter the fingerprint, for the
+reason v3 added the test selection: neither is reachable from `source_inputs`, so either
+could shrink in silence. Every attestation carrying an earlier encoding is UNKNOWN from this
+commit, which is the intended cost.
+
+### Changed — the extraction container is identified, not published (#541)
+
+A container registry had become load-bearing without ever being decided on. Remeasuring #541
+from first principles found that **no ADR, theorem, unit, assumption or trust boundary names
+GHCR** — it appeared only in the lock's `image` field, the publisher's default, two workflows
+and one review packet, as the place the first image happened to be pushed by hand.
+
+The requirement is that Lean evidence identifies the environment that produced it and is
+invalidated when that environment changes. A content digest does that wherever the bytes are
+kept. So the image is now built on the verification runner and identified by its own digest,
+`[extraction_container]` is storage-agnostic — `artifact_digest`, `definition_digest`, `tag`,
+`platform`, no registry reference — and the publish workflow became a build workflow that
+reports an identity instead of pushing one.
+
+**The declared pins do not determine the image, and that is now stated rather than implied.**
+The definition still resolves apt package versions, the rustup installer and ~15 opam library
+versions at build time — and the opam libraries build the Aeneas binary, so a different
+`visitors` or `zarith` can produce a different extracted model from identical Rust. That is
+why an artifact identity is RECORDED rather than derived. `debian:bookworm-slim` and the elan
+installer, which were also moving, are now pinned by digest and by commit.
+
+**MCPRE-181's invariant is untouched.** A recorded identity that does not follow from the
+declared definition still fails closed; `identity_problems` and `definition_drift` needed no
+edit, because neither ever read the registry fields. The check gained one clause: a resolved
+entry that names no artifact is refused, since an identity derived from pins alone says which
+toolchain was *intended* and nothing about which one ran.
+
+`[extraction_container]` is `unresolved` until a build of the current definition is made on
+the runner, which is the mechanism rather than an unfinished step.
+
+Two runner defects found while the registry was still in the path — a `docker login` that
+cannot persist to the macOS keychain, and an isolated docker config that loses the daemon
+context — disappeared with it. `scripts/self_hosted_docker_gate.py` keeps the durable half:
+no self-hosted job may try to log in to a registry.
+
+### Fixed — two self-hosted runner defects the extraction lane could not have shown before (#541)
+
+The lane is gated on a V2/V3 unit existing, so declaring one is what executed it for the
+first time. Both failures are properties of the runner rather than of the code, and each was
+hidden behind the previous one.
+
+`docker login` cannot persist a credential there: `error saving credentials … User
+interaction is not allowed. (-25308)` is the macOS keychain refusing a background service.
+The word that matters is *saving* — the registry accepted the token, so this was never a
+credential or a package-permissions problem. Pointing `DOCKER_CONFIG` at an empty directory
+does not avoid it, because the CLI detects `osxkeychain` as the platform default whenever
+the helper is on `PATH`. The credential is written into the config instead, and
+`docker login` is never called.
+
+Doing that lost the docker CONTEXT with the credential store: a config directory carries
+`currentContext` and `contexts/`, and this runner's Docker is colima, so an isolated
+directory sent the CLI to a socket that does not exist. The endpoint is now resolved while
+the default config is still in effect and named in `DOCKER_HOST`.
+
+`scripts/self_hosted_docker_gate.py` holds both properties, because nothing else can see
+them: the lane runs only on a self-hosted macOS runner, only when a unit asks it for
+evidence, and both failures look like ordinary Docker errors. Its selftest reproduces each
+shipped form, and it was mutation-probed against the real workflow — reinstating the login,
+dropping `DOCKER_HOST`, and dropping `DOCKER_CONFIG` each turn it red.
+
+### Fixed — the extraction publish never got past its own smoke check (#541)
+
+Four dispatches failed in the same step for two different reasons, each invisible until the
+previous was removed. `charon --preset=…` is not the form the pinned Charon takes — it is a
+subcommand CLI and the preset belongs to `charon cargo`. With that corrected the step still
+exited 101 with no diagnostic; capturing stderr produced `Can't find rustup` from an image
+that installs rustup. The step ran `docker run … bash -lc`, and a login shell sources
+`/etc/profile`, which on Debian sets `PATH` unconditionally for root — discarding the image's
+own `ENV PATH` before Charon started. The three checks above it survived the same shell only
+because every path in them is absolute.
+
+### Fixed — a bazel convenience symlink into `/private/tmp` was tracked
+
+`bazel-wt-capsule` entered the tree as mode 120000 pointing at a scratch worktree's Bazel
+execroot. `.gitignore` listed the convenience symlinks by name, and Bazel names one of them
+after the workspace directory, so a build run from a worktree produced a name the list did
+not predict. It dangles elsewhere — which is why CI stayed green — and crashes
+`conformance_claims_gate.py` on any machine where something exists at the path it names. The
+ignore is now a glob.
+
 ### Added — a SECOND mechanism leaf, and the first exchange with a Transparency Service somebody else operates
 
 The externalization census recorded the live interoperability claim as blocked on "an

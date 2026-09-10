@@ -135,6 +135,8 @@ stage_static() {
     `# The class this aggregate is itself the cause of: a control reachable only from` \
     `# here is enforced by remembering to run it. Five instances so far, each repaired` \
     `# only when someone noticed. It runs here too so the answer arrives before the push.` \
+    && python3 scripts/self_hosted_docker_gate.py --selftest \
+    && python3 scripts/self_hosted_docker_gate.py \
     && python3 scripts/merge_path_gate.py --selftest \
     && python3 scripts/merge_path_gate.py \
     && python3 scripts/serving_identity_provenance_gate.py --selftest \
@@ -158,6 +160,10 @@ stage_static() {
     && python3 tools/verification/test_views.py \
     && python3 tools/verification/test_evidence_bundle.py \
     && python3 tools/verification/test_extraction_identity.py \
+    && python3 tools/verification/test_extraction_artifact.py \
+    && python3 tools/verification/test_compose.py \
+    && python3 tools/verification/test_lean_axioms.py \
+    && python3 tools/verification/test_lean_model.py \
     `# In NEITHER aggregate until the v0.17 Slice B sweep: mutation-probe.yml names it and` \
     `# that workflow is paths:-filtered, so the mutation lane's verdict semantics were` \
     `# established only on the pull requests that tripped its filter.` \

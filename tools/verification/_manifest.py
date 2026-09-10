@@ -16,6 +16,7 @@ import tomllib
 from collections.abc import Iterable
 from pathlib import Path
 
+from _extraction_artifact import record_problems as artifact_record_problems
 from _extraction_identity import identity_problems
 from _seams import files_with_seams
 from _ecosystems import CARGO
@@ -95,6 +96,8 @@ _UNIT_KEYS = {
     "tested_symbols",
     "test_package",
     "test_features",
+    "extracted_symbols",
+    "lean_theorems",
 }
 _EDGE_KEYS = {"kind", "from", "to", "contract", "sealed", "sealed_by", "rationale"}
 
@@ -450,6 +453,48 @@ def load_verification() -> dict:
                 f"claims formal evidence must name the symbols proved, or nothing "
                 f"distinguishes a deleted specification from a passing one."
             )
+        # The extracted-model lane's two halves of the same argument, and they are separate
+        # keys because they name different things in different languages: which RUST items
+        # Charon starts from, and which LEAN theorems the prover is asked about. Deriving
+        # either from the other would be a guess about a name mangling that Aeneas owns.
+        #
+        # Kept apart from `proved_symbols` deliberately. That key is the Verus lane's, and a
+        # V3 unit claims BOTH lanes — one key read by two provers with two naming schemes is
+        # a key that means whichever the reader assumed.
+        if unit["class"] in {"V2", "V3"}:
+            for key, what in (
+                ("extracted_symbols", "the Rust items the model is extracted from"),
+                ("lean_theorems", "the Lean theorems the prover is asked about"),
+            ):
+                if not unit.get(key):
+                    raise ManifestError(
+                        f"{uwhere}: class {unit['class']} requires `{key}` — {what}. A "
+                        f"unit claiming extracted-model evidence with an empty selection "
+                        f"asks the lane to measure nothing, and nothing measured passes."
+                    )
+            # AND IT MUST SAY SO IN ITS EVIDENCE. Two authorities read "what does this unit
+            # require": `_evidence.required_lanes` derives it from the declared URIs, and the
+            # aggregate's requirement set derives it from the class. They agree only while
+            # every V2/V3 unit declares `lean://` — and nothing made it. A unit with the
+            # selection keys above and no `lean://` entry would be ISSUED an attestation on
+            # its test battery alone while claiming extracted-model evidence, because the
+            # issuer would see no lean lane to check.
+            if not any(
+                str(entry).startswith("lean://") for entry in unit.get("evidence", [])
+            ):
+                raise ManifestError(
+                    f"{uwhere}: class {unit['class']} declares an extraction selection but "
+                    f"no `lean://` evidence entry. The class says the Lean lane must "
+                    f"measure this unit and the evidence list is where a unit says which "
+                    f"lanes are asked about it, so the two must agree — otherwise the "
+                    f"issuer checks a lane the class requires and the manifest never named."
+                )
+        elif unit.get("extracted_symbols") or unit.get("lean_theorems"):
+            raise ManifestError(
+                f"{uwhere}: declares extraction selection but is class {unit['class']}, so "
+                f"no lane reads it. A selection nothing consumes is a declaration that "
+                f"reads as coverage and measures nothing."
+            )
         # The same argument one class down. A `test://` URI names a battery, and a battery
         # with no declared members is a description: the lane would have nothing to select,
         # and "the tests passed" would mean "no test was asked for".
@@ -674,10 +719,24 @@ def expand_paths(patterns) -> set[str]:
     return out
 
 
-#: The classes whose evidence comes from a whole-crate prover run rather than from a battery
-#: over declared symbols. Defined here rather than in the fingerprint because the fingerprint
-#: and the boundary rule must agree about what a unit's evidence covers.
-FORMAL_CLASSES = {"V1", "V3"}
+#: The classes whose evidence comes from a whole-crate run rather than from a battery over
+#: declared symbols. Defined here rather than in the fingerprint because the fingerprint and
+#: the boundary rule must agree about what a unit's evidence covers.
+#:
+#: V2 is here for the reason V1 is, one tool along. `cargo verus verify -p <crate>` checks
+#: the whole crate; `charon cargo --start-from <item>` compiles the whole crate and follows
+#: the named item into whatever it calls, so the extracted model's cone is decided inside
+#: the tool and is not reported by it. Both are wider than the declared paths, and a
+#: fingerprint narrower than the measured cone lets source a proof stands on change while
+#: the graph still answers FRESH.
+FORMAL_CLASSES = {"V1", "V2", "V3"}
+
+#: The classes whose proof lane can CONSUME a seam `_seams` recognises. Those mechanisms are
+#: Verus', written in Rust and read by the Verus lane; a Lean theorem over an extracted model
+#: cannot consume one, because the spec items carrying them are behind the `verify` feature
+#: and are never compiled into the extraction. See `boundary_class_violations`, which is the
+#: one place this distinction decides anything.
+RUST_SEAM_CONSUMERS = {"V1", "V3"}
 
 
 def path_dependency_closure(project: str, seen: set[str]) -> set[str]:
@@ -794,6 +853,25 @@ def boundary_class_violations(
     A crossing is COVERED when some assumption's `scope` names both the unit and the
     boundary. Naming only the unit is not enough — that is the assumption's ordinary scope,
     and it says nothing about which boundary it discharges.
+
+    THE CAP IS ASKED OF THE LANE THAT CAN CONSUME THE SEAM. `_seams` recognises VERUS
+    mechanisms written in Rust — `uninterp`, `assume_specification`, `external_body` — and
+    those are propositions the Verus lane trusts. A V2 unit's proof is a Lean theorem over a
+    model Charon extracted from compiled Rust: the spec items carrying those mechanisms are
+    behind the `verify` feature, are not compiled into the extraction, and do not appear in
+    the model at all. Reading them as premises of a Lean theorem would be R9-C022 one lane
+    over — a premise invented out of a source-level overlap, in a registry whose whole value
+    is that every entry names something real.
+
+    That is a decision about a case that has never arisen rather than a relaxation of one
+    that has: the cap can only fire above `max_class_without_assumption`, every declared cap
+    is V0, and until now every unit above V0 was a Verus unit. What it must not become is an
+    unguarded lane, and it is not one. The extracted model's premises are its AXIOM CLOSURE,
+    `verify-lean` discovers that closure with `#print axioms` rather than by location, and
+    every axiom outside the declared kernel baseline must be an `ASM-NNNN` scoped to the
+    unit or the lane refuses. An assumption there names its boundary in its own `scope`, the
+    way ASM-0037 names `boundary://boundary.crypto_primitives` — which is the declared half
+    of the relation this function's own docstring calls a floor with a declared complement.
     """
     covered: set[tuple[str, str]] = set()
     for entry in assumptions.get("assumption", []):
@@ -816,6 +894,8 @@ def boundary_class_violations(
     # being asked about, and computing them inside the boundary loop rescanned every seam
     # file once per boundary.
     for unit in verification.get("unit", []):
+        if unit["class"] not in RUST_SEAM_CONSUMERS:
+            continue
         for boundary_id, seams in semantic_boundary_crossings(unit, boundaries).items():
             cap = caps.get(boundary_id)
             if cap is None or CLASS_ORDER[unit["class"]] <= CLASS_ORDER[cap]:
@@ -917,6 +997,12 @@ def load_toolchains() -> dict:
     # consumer at once — the gate, the Lean lane, the graph — instead of one script
     # remembering to ask.
     for problem in identity_problems(doc):
+        raise ManifestError(problem)
+    # The same class of question one level down: not *which* environment the pin names, but
+    # whether the record says which preserved BYTES carry it. A lock that omits that cannot
+    # be checked against the store at all, so it is refused here rather than at whichever
+    # consumer happens to look first.
+    for problem in artifact_record_problems(doc):
         raise ManifestError(problem)
     return doc
 

@@ -52,9 +52,11 @@ accurate.
 
 Step 1 of `extraction-pilot-measurement-2026-08-30.md` §4: **an extraction image that can run
 Lean** — pinned toolchain installed, Aeneas backend built, mathlib cached, and a new digest
-in `[extraction_container]`. That is a toolchain-pin change plus a GHCR publish
-(`tools/verification/extraction-image`) — an outward-facing action, an operator decision, and
-a change to an identity every fingerprint in the graph carries. It is outside this mandate's
+in `[extraction_container]`. That is a toolchain-pin change plus a build of the current definition
+(`tools/verification/extraction-image identity`) — an operator decision, and a change to
+an identity every fingerprint in the graph carries. It was described here as a GHCR
+publish because that was the mechanism at the time; the registry is not a requirement,
+and `../rulings/extraction-artifact-storage-2026-09-09.md` records why. It is outside this mandate's
 autonomy, which is why this slice records a decision instead of a `lean://` URI. Steps 2–5
 (the lakefile, `regenerate-lean`, the totality theorem with its two model-boundary
 assumptions, and `verify-lean`'s controls including `sorry` fail-closed) are ordinary work

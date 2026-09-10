@@ -14,11 +14,28 @@
 target/
 **/*.rs.bk
 
-# Bazel (build artifacts; symlinks point into ~/Library/Caches/bazel/)
-/bazel-bin
-/bazel-mcp-re
-/bazel-out
-/bazel-testlogs
+# Lean build output. `tools/verification/verify-lean` runs `lake build` in
+# `verification/lean/`, which creates `.lake/` there — oleans and a resolved
+# `lake-manifest.json`, hundreds of megabytes.
+#
+# The manifest is a BUILD ARTIFACT here, not a pin. Dependencies resolve out of the pinned
+# extraction image's own package directory (`lakefile.toml`'s `packagesDir`), so what gets
+# resolved is decided by the image digest in `verification/policy/toolchains.lock.toml`,
+# and the publish workflow checks the image's mathlib against
+# `[aeneas_lean_backend].mathlib_revision` before that digest is ever recorded. A second
+# copy committed here would be a second answer to which mathlib a theorem was proved with.
+/verification/lean/.lake/
+/verification/lean/lake-manifest.json
+
+# Bazel convenience symlinks (they point into ~/Library/Caches/bazel/).
+#
+# A GLOB, not four names. Bazel names one of them after the workspace DIRECTORY, so a build
+# run from a worktree or a temporary checkout creates a symlink this list did not predict:
+# `bazel-wt-capsule` was created in a scratch worktree, was matched by nothing here, and was
+# committed — a tracked symlink (mode 120000) pointing at /private/tmp. It dangled on every
+# other machine, and crashed `scripts/conformance_claims_gate.py` on any machine where
+# something happened to exist at the path it named.
+/bazel-*
 
 # macOS
 .DS_Store

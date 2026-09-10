@@ -34,8 +34,37 @@ attestation in place — the failure would make the unit look fresh.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+#: The directory every lane writes its records into, and the aggregate reads them from.
+#:
+#: OVERRIDABLE, and that is the mechanism rather than a convenience. The repository's
+#: required evidence is produced in two mutually incompatible environments — Verus and the
+#: cargo matrix on the macOS host, Charon and Lean inside the pinned container — so no one
+#: process can execute every lane. The composition that follows is only sound if every
+#: record it reads was written by THIS run: a global cache would let a run go green on a
+#: record some earlier run left behind. So CI creates a fresh directory per invocation and
+#: names it here, and both phases write into the same one.
+EVIDENCE_ENV = "MCP_RE_EVIDENCE_DIR"
+
+#: Where records land when nothing names a directory — the working store a developer's
+#: `verify` run uses, and the one `attest` has always read.
+DEFAULT_EVIDENCE_DIR = REPO_ROOT / ".verification" / "evidence"
+
+
+def evidence_store() -> Path:
+    """The evidence directory this process must read and write.
+
+    One resolver, because "where the records are" is exactly the fact that must not have
+    two implementations: a lane writing to one directory while the aggregate reads another
+    is a run that composes nothing and says so in no way a reader would notice.
+    """
+    named = os.environ.get(EVIDENCE_ENV)
+    return Path(named) if named else DEFAULT_EVIDENCE_DIR
 
 #: Edge kinds over which a producer's failure denies the consumer an attestation. The same
 #: set `_graph.propagate` treats as carrying invalidation, for the same reason: an edge

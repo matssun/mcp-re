@@ -77,19 +77,43 @@ def test_every_exit_from_a_run_states_an_aggregate():
     aggregate is whatever the previous run's was.
     """
     tree = ast.parse((HERE / "verify").read_text(encoding="utf-8"))
-    run = next(
-        node
+    functions = {
+        node.name: node
         for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef) and node.name == "_run"
-    )
-    returns = [node for node in ast.walk(run) if isinstance(node, ast.Return)]
-    assert returns, "the control is vacuous if _run has no returns"
-    for node in returns:
-        call = node.value
-        assert isinstance(call, ast.Call) and getattr(call.func, "id", "") == "RunOutcome", (
-            f"verify:_run line {node.lineno} returns without stating an aggregate; "
-            f"the bundle would carry the previous run's verdict"
-        )
+        if isinstance(node, ast.FunctionDef)
+    }
+    assert "_run" in functions
+
+    def outcomes(name: str, seen: set[str]) -> None:
+        """Every return on every path out of `name` states an aggregate.
+
+        DELEGATION IS ALLOWED, and followed rather than trusted. `_run` returns
+        `_phase_outcome(...)` and `_composed_outcome(...)` — a phase states no repository
+        verdict and the composer states one from records, and both are `RunOutcome`s. A
+        control that demanded a literal `RunOutcome(...)` at every `return` would forbid
+        that shape rather than check it, so it follows the call: a helper that could return
+        anything else fails here exactly as an inline `return None` would.
+        """
+        assert name not in seen, f"verify:{name} recurses; the control cannot terminate"
+        seen = seen | {name}
+        returns = [node for node in ast.walk(functions[name]) if isinstance(node, ast.Return)]
+        assert returns, f"the control is vacuous if {name} has no returns"
+        for node in returns:
+            call = node.value
+            assert isinstance(call, ast.Call), (
+                f"verify:{name} line {node.lineno} returns without stating an aggregate; "
+                f"the bundle would carry the previous run's verdict"
+            )
+            called = getattr(call.func, "id", "")
+            if called == "RunOutcome":
+                continue
+            assert called in functions, (
+                f"verify:{name} line {node.lineno} returns {called or '<expression>'}, "
+                "which this control cannot follow to a RunOutcome"
+            )
+            outcomes(called, seen)
+
+    outcomes("_run", set())
 
 
 def test_the_bundle_write_happens_once_and_outside_the_run():

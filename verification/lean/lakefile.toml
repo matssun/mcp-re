@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# ADR-MCPRE-059 §8 — the extracted-model proof package.
+#
+# This package is built by `tools/verification/verify-lean` INSIDE the image pinned as
+# `[extraction_container]`, and nowhere else. Charon is a rustc driver linking the private
+# compiler crates and does not build on the macOS host, so the extraction and the proof
+# share one environment by necessity rather than by preference.
+#
+# That is why the Aeneas Lean library is required by absolute path. The path is the pinned
+# image's layout, and the image's identity — digest AND the digest of the Dockerfile it was
+# built from — is recorded in `../policy/toolchains.lock.toml`. A relative path or an
+# environment lookup would make the dependency resolvable in environments whose identity
+# nothing records, which is the property this package must not have. `verify-lean` reports
+# UNAVAILABLE rather than FAIL when the directory is absent: an absent toolchain is a
+# missing measurement, not a failed one.
+name = "mcpre"
+defaultTargets = ["Theorems"]
+
+# Resolve dependencies out of the Aeneas backend's own package directory rather than
+# cloning them again. The backend in the image is BUILT — mathlib included, at the revision
+# `[aeneas_lean_backend].mathlib_revision` records — and a second copy would be a second
+# mathlib, fetched at lane time, whose revision nothing pins. A theorem proved against a
+# different mathlib is a theorem proved in a different environment.
+packagesDir = "/opt/aeneas/backends/lean/.lake/packages"
+
+[[require]]
+name = "aeneas"
+path = "/opt/aeneas/backends/lean"
+
+# The machine-owned half. `roots` names the crate Aeneas emitted, and it is written here
+# rather than globbed because the build definition is what `verify-lean` reads to decide
+# which modules the axiom query imports: a glob would let an extraction that stopped
+# emitting a module leave the query silently asking about less.
+[[lean_lib]]
+name = "Generated"
+srcDir = "generated"
+roots = ["McpReCore"]
+
+# The handwritten half. Nothing here is generated, and nothing generated is here — the two
+# live in separate source directories so that "was this written by a person" is a question
+# about which directory a file is in, not about reading it.
+[[lean_lib]]
+name = "Theorems"
+srcDir = "theorems"
+roots = ["CivilFromDays"]
