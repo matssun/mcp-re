@@ -83,120 +83,21 @@ jobs:
       # the things that measurement found missing, asked directly, so that a build which
       # reintroduces the defect fails here instead of being published and discovered by a
       # lane that reports nothing.
-      # FIRST, because it is the cheapest and because every step below it runs a tool
-      # this image has to be able to start. The lane's own entry points are Python and they
-      # run INSIDE this image; the first real run of the pipeline answered
-      # `/usr/bin/env: 'python3': No such file or directory`, and every check that had
-      # passed above it was about a component rather than about the harness that drives
-      # them. `tomllib` rather than a version string: what the scripts need is the module
-      # they parse the toolchain lock with.
-      - name: Smoke — the image can run the lane's own entry points
+      # THE SMOKE CHECKS, through the tool. An image that builds is not an image that
+      # works: the image pinned on 2026-08-30 built fine and could not run Lean at all.
+      #
+      # They moved out of this file because a RECEIVING host asks the same question. The
+      # artifact is preserved on the machine that built it and moved to others by hand, and
+      # a host handed 5.6 GiB has to establish that what it received works — without
+      # rebuilding, since a rebuild of this definition is a different instrument. As
+      # workflow steps they could only ever be asked on the build path.
+      #
+      # `--built` because nothing is pinned to this image yet; a receiving host runs
+      # `extraction-image smoke` with no flag and gets the preserved artifact.
+      - name: Smoke — the built image actually works
         run: |
           set -euo pipefail
-          docker run --rm "${{ steps.tag.outputs.ref }}" \
-            python3 -c 'import tomllib, json, hashlib; print("harness interpreter ok")'
-
-      - name: Smoke — the Lean toolchain is the PINNED one
-        run: |
-          set -euo pipefail
-          pinned="$(python3 -c "import tomllib;print(tomllib.load(open('verification/policy/toolchains.lock.toml','rb'))['lean']['toolchain'])")"
-          # `lean --version` prints e.g. "Lean (version 4.31.0, ...)"; the pin is
-          # "leanprover/lean4:v4.31.0". Compare the version, not the string.
-          want="${pinned##*:v}"
-          got="$(docker run --rm "${{ steps.tag.outputs.ref }}" lean --version)"
-          echo "$got"
-          echo "$got" | grep -q "version ${want}," || {
-            echo "FAIL: image Lean is not the pinned ${pinned}"; exit 1; }
-
-      - name: Smoke — the Aeneas Lean backend is BUILT, not merely present
-        run: |
-          set -euo pipefail
-          # Sources without a `.lake/build` is the state the measurement found: nothing
-          # elaborates against a library that was never compiled.
-          docker run --rm "${{ steps.tag.outputs.ref }}" \
-            bash -c 'test -d /opt/aeneas/backends/lean/.lake/build && ls /opt/aeneas/backends/lean/.lake/build | head'
-
-      - name: Smoke — mathlib is resolved at the revision the lock records
-        run: |
-          set -euo pipefail
-          # The manifest is COPIED OUT and read on the runner, rather than parsed by a
-          # python one-liner inside a `bash -c` inside a `$(...)` inside YAML. That form
-          # never ran: four levels of quoting, and the shell died on an unterminated string
-          # before docker was ever reached. Reading both operands with
-          # the same interpreter in the same place is also the honest shape — the comparison
-          # below is between two values this step produced, not between a value and a
-          # rendering of one.
-          docker run --rm --entrypoint cat "${{ steps.tag.outputs.ref }}" \
-            /opt/aeneas/backends/lean/lake-manifest.json > lake-manifest.json
-          want="$(python3 -c "import tomllib;print(tomllib.load(open('verification/policy/toolchains.lock.toml','rb'))['aeneas_lean_backend']['mathlib_revision'])")"
-          got="$(python3 -c "import json;print(next(p['rev'] for p in json.load(open('lake-manifest.json'))['packages'] if p['name']=='mathlib'))")"
-          echo "manifest mathlib: $got"
-          [ "$got" = "$want" ] || { echo "FAIL: mathlib is $got, lock records $want"; exit 1; }
-
-      - name: Smoke — Charon and Aeneas execute
-        run: |
-          set -euo pipefail
-          # `--help`, not `--version`: the pinned Charon is a subcommand CLI and rejects
-          # `--version` outright, which is what this step measured on its first real run.
-          # The proposition is that the binaries EXECUTE, and `--help` establishes that for
-          # both without depending on a flag either project may reshape.
-          #
-          # Redirected rather than piped to `head`. Under `set -o pipefail` a producer that
-          # keeps writing after `head` exits takes SIGPIPE and fails the step — a check that
-          # would go red for a reason having nothing to do with the image.
-          docker run --rm "${{ steps.tag.outputs.ref }}" \
-            bash -c '"$CHARON_EXE" --help >/dev/null && "$AENEAS_EXE" -help >/dev/null'
-
-      - name: Smoke — a tiny crate extracts and its Lean elaborates
-        run: |
-          set -euo pipefail
-          # End to end, in miniature: Rust -> LLBC -> Lean -> elaborated. Each earlier
-          # check proves one component answers; only this proves they compose.
-          #
-          # `--preset=aeneas` is mandatory — the 2026-08-30 measurement found the default
-          # preset produces LLBC that Aeneas rejects — but at this pin it is an option of a
-          # SUBCOMMAND, not a top-level flag. Measured 2026-08-31 by running the image, which
-          # is the first time anything got this far:
-          #
-          #     Usage: charon <COMMAND>
-          #     Commands: rustc  cargo  ui_test  toolchain-path  toolchain-version
-          #               pretty-print  version  help
-          #
-          # and `charon cargo --help` lists `--preset <PRESET>`. So the form is
-          # `charon cargo --preset=aeneas`, and the 2026-08-30 pilot's `charon --preset=...`
-          # was measured against a locally built image at a different Charon.
-          #
-          # `bash -c`, NEVER `bash -l`. That diagnostic, once captured, said:
-          #
-          #     Can't find `rustup`; please install it with your system package manager
-          #
-          # in an image that installs rustup. A LOGIN shell sources `/etc/profile`, and
-          # Debian's sets `PATH` unconditionally for root — so the image's own `ENV PATH`,
-          # which is the only thing putting `/opt/cargo/bin` on it, was discarded before
-          # Charon ran. `charon cargo` shells out to `rustup` to resolve the nightly it
-          # links against, and could not find it.
-          #
-          # The three checks above survived the same shell only because every path in them
-          # is absolute; this is the first step that needed the image's PATH to be intact,
-          # so it is the first one the login shell could break.
-          #
-          # `2>&1` and an explicit exit report: the run before that failed with a bare exit
-          # 101 and no captured diagnostic, which says the extraction stopped without
-          # saying why. It is what turned this from a guess into a reading.
-          docker run --rm "${{ steps.tag.outputs.ref }}" bash -c '
-            set -euo pipefail
-            mkdir -p /tmp/smoke/src && cd /tmp/smoke
-            printf "[package]\nname = \"smoke\"\nversion = \"0.0.0\"\nedition = \"2021\"\n[lib]\npath = \"src/lib.rs\"\n" > Cargo.toml
-            printf "pub fn double(x: u32) -> u32 { x.wrapping_add(x) }\n" > src/lib.rs
-            "$CHARON_EXE" cargo --preset=aeneas --dest-file /tmp/smoke/smoke.llbc 2>&1 \
-              || { rc=$?; echo "charon exited $rc — the output above is the whole diagnostic"; exit "$rc"; }
-            "$AENEAS_EXE" -backend lean -dest /tmp/smoke/out /tmp/smoke/smoke.llbc
-            ls /tmp/smoke/out
-            cd /opt/aeneas/backends/lean
-            lean --root=. $(ls /tmp/smoke/out/*.lean | head -1) || {
-              echo "NOTE: standalone elaboration needs the package search path; \
-                    reporting the Aeneas output above as the composition evidence"; }
-          '
+          python3 tools/verification/extraction-image smoke --built
 
       # The identity, reported and never written. Recording it in the lock is a separate
       # reviewed commit: the lock is what says which prover the repository's formal evidence

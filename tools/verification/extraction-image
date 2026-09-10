@@ -43,6 +43,7 @@ file records one platform for that reason.
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 import tempfile
@@ -92,6 +93,92 @@ def _run(cmd: list[str], *, capture: bool = True) -> str:
     if completed.returncode != 0:
         raise SystemExit(f"FAIL: {' '.join(cmd[:3])}… exited {completed.returncode}")
     return (completed.stdout or "").strip()
+
+
+# ---------------------------------------------------------------------------
+# The smoke checks
+# ---------------------------------------------------------------------------
+#
+# AN IMAGE THAT BUILDS IS NOT AN IMAGE THAT WORKS. The image pinned on 2026-08-30 built
+# fine and could not run Lean at all, and the lane pinned to it reported nothing wrong for
+# four weeks. Each check below is one thing a measurement found missing, asked directly.
+#
+# THEY LIVE HERE RATHER THAN IN THE BUILD WORKFLOW because they answer a question a
+# RECEIVING host has too. The artifact is preserved on the machine that built it and moved
+# to others by hand, and a host that has just been handed 5.6 GiB needs to establish that
+# what it received works — without rebuilding, since a rebuild of this definition is a
+# different instrument. As workflow steps they could only ever be asked on the build path.
+#
+# Every check runs against an IMAGE ID, never a tag, for the same reason the lane does: a
+# tag resolves through the local image cache, and the cache is the thing that is not the
+# evidence store.
+
+
+def _smoke(image: str, toolchains: dict) -> None:
+    lean_pin = str(toolchains["lean"]["toolchain"])
+    want_lean = lean_pin.rsplit(":v", 1)[-1]
+    mathlib = str(toolchains["aeneas_lean_backend"]["mathlib_revision"])
+
+    # FIRST, because every check below runs a tool this image has to be able to start. The
+    # lane's own entry points are Python and they run INSIDE the image; the first real run
+    # of the pipeline answered `/usr/bin/env: 'python3': No such file or directory`, and
+    # every check that had passed above it was about a COMPONENT rather than the harness.
+    # `tomllib` rather than a version: what the scripts need is the module they parse the
+    # toolchain lock with.
+    print("smoke: the image can run the lane's own entry points")
+    _run(["docker", "run", "--rm", image, "python3", "-c",
+          "import tomllib, json, hashlib; print('harness interpreter ok')"])
+
+    print(f"smoke: Lean is the pinned {lean_pin}")
+    got = _run(["docker", "run", "--rm", image, "lean", "--version"])
+    if f"version {want_lean}," not in got:
+        raise SystemExit(f"FAIL: image Lean is {got!r}, not the pinned {lean_pin}")
+    print(f"  {got}")
+
+    # Sources without a `.lake/build` is the state the 2026-08-30 measurement found:
+    # nothing elaborates against a library that was never compiled.
+    #
+    # `bash -c`, NEVER `bash -lc`. A login shell sources /etc/profile, which on Debian sets
+    # PATH unconditionally for root — discarding the image's own ENV PATH before anything
+    # runs. Checks whose paths are all absolute survive that; the ones below do not.
+    print("smoke: the Aeneas Lean backend is BUILT, not merely present")
+    _run(["docker", "run", "--rm", image, "bash", "-c",
+          "test -d /opt/aeneas/backends/lean/.lake/build"])
+
+    print(f"smoke: mathlib is resolved at {mathlib[:12]}")
+    manifest = _run(["docker", "run", "--rm", "--entrypoint", "cat", image,
+                     "/opt/aeneas/backends/lean/lake-manifest.json"])
+    got_rev = next(
+        p["rev"] for p in json.loads(manifest)["packages"] if p["name"] == "mathlib"
+    )
+    if got_rev != mathlib:
+        raise SystemExit(f"FAIL: image mathlib is {got_rev}, the lock records {mathlib}")
+
+    # `--help`/`-help`, not `--version`: the pinned Charon is a subcommand CLI and rejects
+    # `--version`. The proposition is that both binaries EXECUTE.
+    print("smoke: Charon and Aeneas execute")
+    _run(["docker", "run", "--rm", image, "bash", "-c",
+          '"$CHARON_EXE" --help >/dev/null && "$AENEAS_EXE" -help >/dev/null'])
+
+    # End to end in miniature. Each check above proves one component answers; only this
+    # proves they compose. `--preset=aeneas` is mandatory — without it Aeneas refuses the
+    # LLBC outright — and at this pin it is an option of the `cargo` SUBCOMMAND.
+    print("smoke: a tiny crate extracts and Aeneas emits Lean")
+    _run(["docker", "run", "--rm", image, "bash", "-c", TINY_CRATE], capture=False)
+    print("smoke: PASS — six check(s)")
+
+
+#: Rust -> LLBC -> Lean, on a crate small enough that the whole thing is one step.
+TINY_CRATE = """
+set -euo pipefail
+mkdir -p /tmp/smoke/src && cd /tmp/smoke
+printf '[package]\nname = "smoke"\nversion = "0.0.0"\nedition = "2021"\n[lib]\npath = "src/lib.rs"\n' > Cargo.toml
+printf 'pub fn double(x: u32) -> u32 { x.wrapping_add(x) }\n' > src/lib.rs
+"$CHARON_EXE" cargo --preset=aeneas --dest-file /tmp/smoke/smoke.llbc 2>&1 \
+  || { rc=$?; echo "charon exited $rc — the output above is the whole diagnostic"; exit "$rc"; }
+"$AENEAS_EXE" -backend lean -dest /tmp/smoke/out /tmp/smoke/smoke.llbc
+echo "emitted: $(ls /tmp/smoke/out)"
+"""
 
 
 def _preserve(ref: str, image: str) -> str:
@@ -166,17 +253,21 @@ def _verify(toolchains: dict) -> int:
     return 1
 
 
-def _load(toolchains: dict) -> int:
-    """Make the PRESERVED artifact executable here, and print the image id to run.
+def _resolve_preserved(toolchains: dict) -> str | None:
+    """Make the PRESERVED artifact executable here and return the image id, printing none.
 
     An id, never a tag. A tag resolves through the local image store, which is the thing
     that is not the evidence store: a same-tag entry from another build would run silently.
+
+    SEPARATE FROM `_load` so that `load`'s stdout contract stays `load`'s. Two callers want
+    this resolution and only one of them is handing an id to a shell — `smoke` printed
+    `load`'s line into the middle of its own report until they were split.
     """
     if _verify(toolchains) != 0:
-        return 1
+        return None
     state = preservation(toolchains)
     if state is None or not state.usable:
-        return 1
+        return None
     image = str(toolchains["extraction_container"]["artifact_digest"])
     if not _present(image):
         print(f"loading {state.path}", file=sys.stderr)
@@ -188,10 +279,23 @@ def _load(toolchains: dict) -> int:
             "pinned environment.",
             file=sys.stderr,
         )
+        return None
+    return image
+
+
+def _load(toolchains: dict) -> int:
+    """`_resolve_preserved`, with the id on stdout for a caller to substitute."""
+    image = _resolve_preserved(toolchains)
+    if image is None:
         return 1
     # THE ONE LINE THIS TOOL PUTS ON STDOUT.
     print(image)
     return 0
+
+
+def _image_id(ref: str) -> str:
+    """The image id docker reports for a reference."""
+    return _run(["docker", "image", "inspect", ref, "--format", "{{.Id}}"])
 
 
 def _present(ref: str) -> bool:
@@ -206,9 +310,18 @@ def _present(ref: str) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "action", choices=["tag", "build", "identity", "verify", "load"]
+        "action", choices=["tag", "build", "identity", "verify", "load", "smoke"]
     )
     parser.add_argument("--image", default=DEFAULT_IMAGE)
+    parser.add_argument(
+        "--built",
+        action="store_true",
+        help=(
+            "smoke: check the image this checkout's pins BUILD to, rather than the "
+            "preserved artifact the lock pins. The build path wants the first — nothing is "
+            "pinned to it yet; a receiving host wants the second."
+        ),
+    )
     args = parser.parse_args()
 
     try:
@@ -226,6 +339,25 @@ def main() -> int:
         return _verify(toolchains)
     if args.action == "load":
         return _load(toolchains)
+    if args.action == "smoke":
+        # TWO SUBJECTS, because there are two moments this question is asked. On the build
+        # path nothing is pinned to the new image yet, so the subject is the tag this
+        # checkout computes. On a host that has just been handed an artifact the subject is
+        # the PRESERVED one, resolved and loaded exactly as the lane resolves it — which is
+        # what makes a transferred artifact verifiable without rebuilding.
+        if args.built:
+            if not _present(ref):
+                print(f"FAIL: {ref} is not present; run `build`.", file=sys.stderr)
+                return 1
+            subject = _image_id(ref)
+        else:
+            resolved = _resolve_preserved(toolchains)
+            if resolved is None:
+                return 1
+            subject = resolved
+        print(f"smoke: subject {subject}")
+        _smoke(subject, toolchains)
+        return 0
 
     _run([
         "docker", "buildx", "build",
