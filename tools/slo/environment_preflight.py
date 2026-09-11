@@ -114,8 +114,49 @@ def colima(profile: str, *args: str, timeout: int = 120) -> subprocess.Completed
 # ==========================================================================================
 
 
+#: Fields that are not COMPARED because they are the addressing mechanism itself: we reach
+#: the plane through them, so a wrong value cannot pass silently -- it fails to connect or
+#: fails to find the image. They are enforced by use, and listed so that the completeness
+#: check below can account for every declared field.
+ENFORCED_BY_USE = frozenset({"docker_endpoint", "colima_profile", "redis_image"})
+
+
+def observed_vm_storage(profile: str) -> str:
+    """Establish, mechanically, whether the VM's disk is on internal or external storage.
+
+    Not cosmetic. The dedicated SLO VM was deliberately placed on internal storage because
+    the Redis fleet runs `appendonly yes` with `appendfsync everysec` -- put that image on
+    the USB-attached Disk 02 and filesystem latency lands directly in the measured number.
+    A declared-but-unchecked `vm_storage` would let exactly that drift happen silently.
+
+    The disk may be a SYMLINK to another volume (the `db` profile is, pointing at
+    /Volumes/Disk 02), so the path is resolved before its mount is identified.
+    """
+    disk = Path.home() / ".colima" / "_lima" / "_disks" / f"colima-{profile}" / "datadisk"
+    try:
+        real = disk.resolve()
+        # `df -P` guarantees one line per filesystem; the mount point is the sixth field
+        # and MAY CONTAIN SPACES ("/Volumes/Disk 02"), so it is split with a maxsplit
+        # rather than taken as the last whitespace-delimited token.
+        out = subprocess.run(["df", "-P", str(real)], capture_output=True, text=True, timeout=60)
+        mount = out.stdout.strip().splitlines()[-1].split(None, 5)[5].strip()
+        info = subprocess.run(["diskutil", "info", mount], capture_output=True, text=True, timeout=60)
+        for line in info.stdout.splitlines():
+            if "Device Location" in line:
+                return line.split(":", 1)[1].strip().lower()
+    except (OSError, IndexError, subprocess.SubprocessError):
+        return "<undetermined>"
+    return "<undetermined>"
+
+
 def verify_environment(entry: dict) -> dict:
-    """Compare every declared environment field against the live plane."""
+    """Compare every declared environment field against the live plane.
+
+    EVERY declared field is either compared here or listed in ENFORCED_BY_USE. The
+    completeness check at the end makes that structural: adding a field to the declaration
+    without giving it a disposition FAILS, rather than quietly becoming an authoritative
+    claim nobody verifies.
+    """
     want = declared_environment(entry)
     host = want["docker_endpoint"]
     profile = want["colima_profile"]
@@ -149,15 +190,30 @@ def verify_environment(entry: dict) -> dict:
     parts = (digests.stdout or "").split()
     observed["redis_image_digest"] = parts[1] if len(parts) >= 2 else "<absent>"
 
-    for field in ("docker_server_version", "vm_cpus", "vm_memory_gib", "vm_arch",
-                  "redis_image_digest"):
+    observed["vm_storage"] = observed_vm_storage(profile)
+
+    compared = ("docker_server_version", "vm_cpus", "vm_memory_gib", "vm_arch",
+                "vm_storage", "redis_image_digest")
+    for field in compared:
         if field in observed and observed[field] != want.get(field):
             mismatches.append(
                 f"{field}: declared {want.get(field)!r}, observed {observed[field]!r}")
 
+    # No fourth category. Every declared field must be compared above or enforced by use;
+    # anything else is an authoritative claim with nothing establishing it, which reads as
+    # a guarantee while permitting the drift it names.
+    unaccounted = sorted(set(want) - set(compared) - ENFORCED_BY_USE)
+    if unaccounted:
+        mismatches.append(
+            f"declared environment field(s) {unaccounted} are neither mechanically "
+            f"enforced nor enforced by use. Give them a disposition or remove them from "
+            f"the authoritative declaration."
+        )
+
     return {"verified": not mismatches, "reachable": True,
             "endpoint": host, "declared": want, "observed": observed,
-            "mismatches": mismatches}
+            "compared": list(compared), "enforced_by_use": sorted(ENFORCED_BY_USE),
+            "unaccounted": unaccounted, "mismatches": mismatches}
 
 
 # ==========================================================================================

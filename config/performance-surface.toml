@@ -107,6 +107,14 @@ max_age_days = 90
 # visible consequence.
 fields = [
   "hardware_class",
+  # A digest DERIVED from [context.class.environment] of whichever class is in force.
+  # `hardware_class` alone distinguishes dev1-slo-v1 from its predecessor, but it does not
+  # notice the environment declaration being EDITED underneath a stable name — which would
+  # let a PASS measured in the old VM be reused in the new one. Folding the derived witness
+  # closes that mechanically, so correctness does not depend on remembering to bump v1.
+  # The individual fields are deliberately NOT listed here: the class declaration stays the
+  # one authority and this is a witness derived from it.
+  "hardware_class_environment_digest",
   "os_class",
   "container_runtime_class",
   "cpu_count",
@@ -204,7 +212,6 @@ vm_storage = "internal"
 docker_server_version = "29.2.1"
 redis_image = "redis:7-alpine"
 redis_image_digest = "sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf"
-redis_server_version = "7.4.11"
 
 [[context.class]]
 name = "kind-local"
