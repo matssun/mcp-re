@@ -152,12 +152,59 @@ reason = "a developer workstation with the load generator CO-LOCATED on the same
 
 [[context.class]]
 name = "dev1-macos-arm64"
-kind = "self-hosted-actions-runner"
+kind = "self-hosted-actions-runner-retired"
 slo_declarable = false
 regression_anchor = "docs/bench/adr-051-baseline-dev1.json"
-github_actions_runner = true
+github_actions_runner = false
+retired = "2026-09-11"
+retired_reason = """RETIRED as the runner class, not deleted: its records remain true for
+what they measured. This class measured with the Redis fleet on the `colima-db` Docker
+daemon -- the same VM as the 3.6M-row EODHD corpus and unrelated testcontainer churn. A
+durable PASS exists at 15,447.96 rps (2026-09-10). The successor `dev1-slo-v1` runs the
+fleet on a dedicated daemon, which is a different question, so it carries its own class and
+its own anchor rather than inheriting these numbers.
+
+This retirement is load-bearing. `measurement_context()` folds `container_runtime_class`,
+which is derived from the Docker SERVER VERSION and reads `docker-29.2` on BOTH daemons --
+so had this class simply been pointed at the new endpoint, the context digest would have
+been byte-identical and that PASS would have been silently reused for a VM it was never
+measured in."""
 reason = "a self-hosted Actions runner; the load generator is co-located exactly as it is on a developer workstation, so this class detects REGRESSION and states no capacity"
 note = "The anchor is this class's own, and none may be inferred from another one. The runner's chip, core count and thermal envelope are not the developer workstation's, so its numbers are a different question — that is the two-identity model working. It was declared from run 34323483201, the first run of this lane on this host, which reported UNANCHORED exactly as designed and whose retained reports are the six reps the anchor records. Its `caveat` states the box state it was measured at and which half of the band that leaves loose."
+
+[[context.class]]
+name = "dev1-slo-v1"
+kind = "self-hosted-actions-runner"
+slo_declarable = false
+regression_anchor = ""
+github_actions_runner = true
+reason = "a self-hosted Actions runner with the load generator co-located on the same cores, exactly as its predecessor; this class detects REGRESSION and states no capacity"
+note = """Successor to `dev1-macos-arm64`. `regression_anchor` is empty ON PURPOSE: no
+measurement of THIS environment exists yet, so the first run must report UNANCHORED, which
+is the same path `dev1-macos-arm64` took on run 34323483201. An anchor inherited from the
+predecessor would be a number measured in a different VM.
+
+THE ENVIRONMENT BELOW IS THE IDENTITY, AND IT IS ENFORCED, NOT MERELY RECORDED.
+`tools/slo/environment_preflight.py` verifies every field against the live endpoint before
+a measurement may begin, and REFUSES on any mismatch. A declared invariant nobody checks is
+evidence-starved: it reads as a guarantee while permitting exactly the drift it names.
+
+These facts are here, in the class, and NOT added as separate `measurement_context()`
+fields. The class name is already folded into the context digest, so changing class changes
+the identity on its own. Restating the same facts in both places would create two
+authorities that can disagree."""
+
+[context.class.environment]
+docker_endpoint = "unix:///Users/mats/.colima/slo/docker.sock"
+colima_profile = "slo"
+vm_cpus = 4
+vm_memory_gib = 4
+vm_arch = "aarch64"
+vm_storage = "internal"
+docker_server_version = "29.2.1"
+redis_image = "redis:7-alpine"
+redis_image_digest = "sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf"
+redis_server_version = "7.4.11"
 
 [[context.class]]
 name = "kind-local"

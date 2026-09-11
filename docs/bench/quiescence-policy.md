@@ -34,3 +34,33 @@ quiet, which no transient satisfies.
 A threshold below the measured floor would make the lane permanently INCONCLUSIVE. The
 controls in `tools/slo/test_host_gate.py` therefore assert BOTH directions: the failed
 run's reading is refused, and dev1's measured idle floor is admitted.
+
+
+## Re-measured 2026-09-11, after a THIRD VM was added
+
+The dedicated `colima-slo` profile is persistent infrastructure, so it raises dev1's idle
+floor and the policy had to be re-checked against it. 120 samples over
+19.9 minutes:
+
+```
+                     load1   load5   load15
+  2-VM floor (was)    0.099   0.125   0.113
+  3-VM clean floor    0.110   0.151   0.178
+  3-VM clean max      0.256   0.238   0.240
+  threshold           0.200   0.250   0.300
+```
+
+95 of 120 samples satisfy the policy and the longest consecutive quiet streak is 45,
+against a requirement of 6. **The policy is unchanged.**
+
+### The measurement that was thrown away, and why
+
+A first re-measurement reported 0/46 satisfying samples and an unreachable policy. It was
+taken over 7.6 minutes immediately after booting the VM, pulling an image, deleting 40 image
+layers and running two `fstrim`s — and `load15` has a 15-minute time constant, so it could
+not possibly have decayed. Its 0.861 load1 peak was the setup work itself.
+
+Retuning against it would have permanently loosened the thresholds to accommodate a
+transient, and would have been indistinguishable from tuning until the gate goes green.
+The discarded samples are NOT kept, because a contaminated series invites exactly the
+comparison that should not be made; this note is the record that it happened.
