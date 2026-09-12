@@ -75,9 +75,13 @@ def cmd_job_started(paths, ident: JobIdentity) -> int:
             proof = vm_participant.inhibit_fallback()
             host_gate.write_atomic(paths["root"] / "vm-inhibition.json", proof)
         else:
+            # The per-runner detail goes into the log, not only the names. A refusal that
+            # says WHICH runner but not WHY costs a diagnosis session, which it did.
+            host_gate.log(paths, "participation.refused", runners=participation["runners"])
+            detail = "; ".join(f"{e['name']}: {e['detail']}" for e in missing)
             raise ArbiterError(
-                f"runner application(s) {names} are not participating in host admission. "
-                "Refusing to measure: an unhooked runner is unobserved, not quiet."
+                f"runner application(s) {names} are not participating in host admission "
+                f"({detail}). Refusing to measure: an unhooked runner is unobserved, not quiet."
             )
 
     host_gate.await_drain(paths, ident, vm_workers_or_refuse())

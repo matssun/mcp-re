@@ -521,6 +521,22 @@ def verify_participation(vm_read_env=None, vm_check_exec=None,
             if r["kernel"] == "darwin":
                 hook = hook_from_env_text(Path(r["root"], ".env").read_text())
                 entry["hook"] = hook
+
+                # DIRECT EVIDENCE beats inference. If this code is executing, it was
+                # launched BY a runner's job-started hook -- so for THAT runner, the
+                # question "has the listener loaded the hook configuration?" is already
+                # answered in the affirmative by our own existence. Asking a timestamp
+                # heuristic instead is strictly weaker and was observed to disagree: the
+                # SLO job on dev1-mcp-re refused itself while running from dev1-mcp-re's
+                # own hook, which is a contradiction the heuristic cannot represent.
+                if (os.environ.get("RUNNER_NAME") == r["name"]
+                        and os.environ.get("ACTIONS_RUNNER_HOOK_JOB_STARTED")):
+                    entry["participating"] = True
+                    entry["listener_loaded_env"] = True
+                    entry["detail"] = "proven directly: this check is running from its hook"
+                    results.append(entry)
+                    continue
+
                 fresh = listener_started_after_env(r["root"])
                 entry["listener_loaded_env"] = fresh
                 if not (hook and Path(hook).exists()):

@@ -214,12 +214,16 @@ jobs:
       # endpoint is read from the declaration, never restated here.
       - name: Resolve and verify the declared measurement environment
         id: plane
+        env:
+          # The installed copies live outside the checkout, so they are told where the
+          # declaration is rather than guessing from their own location.
+          MCP_RE_SURFACE_TOML: ${{ github.workspace }}/config/performance-surface.toml
         run: |
           set -euo pipefail
-          endpoint="$(python3 tools/slo/environment_preflight.py --print-endpoint)"
+          endpoint="$(python3 /opt/verification/runner-arbiter/bin/environment_preflight.py --print-endpoint)"
           echo "docker_host=$endpoint" >> "$GITHUB_OUTPUT"
           echo "The declared measurement plane is $endpoint"
-          python3 tools/slo/environment_preflight.py
+          python3 /opt/verification/runner-arbiter/bin/environment_preflight.py
 
       # RUN LIFECYCLE, opened before the first ephemeral resource exists.
       #
@@ -233,12 +237,14 @@ jobs:
       # destroy what we did not create.
       - name: Open the run lifecycle (reconcile, then assert a clean plane)
         id: run
+        env:
+          MCP_RE_SURFACE_TOML: ${{ github.workspace }}/config/performance-surface.toml
         run: |
           set -euo pipefail
-          run_id="$(python3 tools/slo/run_supervisor.py run-id)"
+          run_id="$(python3 /opt/verification/runner-arbiter/bin/run_supervisor.py run-id)"
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "SLO run identity: $run_id"
-          MCP_RE_SLO_RUN_ID="$run_id" python3 tools/slo/run_supervisor.py begin
+          MCP_RE_SLO_RUN_ID="$run_id" python3 /opt/verification/runner-arbiter/bin/run_supervisor.py begin
 
       # Only NOW, on a plane proven empty by the supervisor above.
       - name: Establish host quiescence (after the plane is clean)
@@ -289,12 +295,16 @@ jobs:
       # It does NOT claim to cover SIGKILL or power loss: no code of ours executes there.
       # Those are repaired by the next run's reconciliation, which is why ownership is a
       # durable label rather than a destructor.
+      # `always()` AND a run id: if the lifecycle never opened, this run created nothing,
+      # so there is nothing to close. Running teardown anyway would fail looking for a
+      # declaration and report an infrastructure failure that did not happen.
       - name: Close the run lifecycle (teardown, then assert a clean plane)
-        if: always()
+        if: always() && steps.run.outputs.run_id != ''
         env:
           MCP_RE_SLO_RUN_ID: ${{ steps.run.outputs.run_id }}
           DOCKER_HOST: ${{ steps.plane.outputs.docker_host }}
-        run: python3 tools/slo/run_supervisor.py end
+          MCP_RE_SURFACE_TOML: ${{ github.workspace }}/config/performance-surface.toml
+        run: python3 /opt/verification/runner-arbiter/bin/run_supervisor.py end
 
       # The reports are what an operator declares this class's anchor from, and what a later
       # reader compares a regression against. Kept on `always()`: a FAIL, an INCONCLUSIVE and

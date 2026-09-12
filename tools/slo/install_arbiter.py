@@ -46,7 +46,8 @@ VM_RUNNER_HOME = os.environ.get("MCP_RE_ARBITER_VM_RUNNER_HOME", "/home/mats.gue
 COLIMA = os.environ.get("MCP_RE_ARBITER_COLIMA", "/opt/homebrew/bin/colima")
 
 SOURCES = ("host_gate.py", "vm_participant.py", "job_identity.py",
-           "arbiter_error.py", "runner_arbiter.py")
+           "arbiter_error.py", "runner_arbiter.py", "environment_preflight.py",
+           "run_supervisor.py")
 
 STARTED_VAR = "ACTIONS_RUNNER_HOOK_JOB_STARTED"
 COMPLETED_VAR = "ACTIONS_RUNNER_HOOK_JOB_COMPLETED"

@@ -50,7 +50,14 @@ import tomllib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
-SURFACE_TOML = REPO / "config" / "performance-surface.toml"
+
+#: The class declaration lives in the REPO, but this module is also installed to
+#: /opt/verification/runner-arbiter/bin so the lifecycle can run when the Actions checkout
+#: is absent. From there the repo-relative guess resolves to /opt/verification and finds
+#: nothing, so the location is overridable. The declaration itself stays the one authority;
+#: this only says where to read it.
+SURFACE_TOML = Path(os.environ.get(
+    "MCP_RE_SURFACE_TOML", str(REPO / "config" / "performance-surface.toml")))
 
 #: Networks the Docker daemon creates for itself. Their presence is not contamination.
 BUILTIN_NETWORKS = frozenset({"bridge", "host", "none"})
