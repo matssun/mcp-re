@@ -184,13 +184,14 @@ note = "The anchor is this class's own, and none may be inferred from another on
 name = "dev1-slo-v1"
 kind = "self-hosted-actions-runner"
 slo_declarable = false
-regression_anchor = ""
+regression_anchor = "docs/bench/adr-051-baseline-dev1-slo-v1.json"
 github_actions_runner = true
 reason = "a self-hosted Actions runner with the load generator co-located on the same cores, exactly as its predecessor; this class detects REGRESSION and states no capacity"
-note = """Successor to `dev1-macos-arm64`. `regression_anchor` is empty ON PURPOSE: no
-measurement of THIS environment exists yet, so the first run must report UNANCHORED, which
-is the same path `dev1-macos-arm64` took on run 34323483201. An anchor inherited from the
-predecessor would be a number measured in a different VM.
+note = """Successor to `dev1-macos-arm64`. The anchor was declared from run 34683989229,
+the first measurement on this plane, which reported UNANCHORED exactly as designed -- the
+same path `dev1-macos-arm64` took on run 34323483201. No anchor was inherited from the
+predecessor: its numbers were measured with the Redis fleet on the shared `colima-db`
+daemon, which is a different question.
 
 THE ENVIRONMENT BELOW IS THE IDENTITY, AND IT IS ENFORCED, NOT MERELY RECORDED.
 `tools/slo/environment_preflight.py` verifies every field against the live endpoint before
