@@ -14,6 +14,7 @@ import itertools
 import json
 import multiprocessing
 import os
+import subprocess
 import sys
 import tempfile
 import time
@@ -362,6 +363,39 @@ def test_participation() -> None:
           not vm_entry["participating"])
 
 
+def test_listener_freshness_is_timezone_independent() -> None:
+    """Regression control for the false refusal of 2026-09-12 06:08.
+
+    `listener_started_after_env` parsed `ps -o lstart=` with strptime/mktime. `ps` prints
+    LOCAL time; `mktime` interprets in the PROCESS's timezone. A hook running inside a
+    runner job without TZ set therefore read 21:19 CEST as 21:19 UTC -- two hours early --
+    which put the listener before its own .env and reported a correctly-hooked runner as
+    NOT participating. The SLO job refused itself.
+
+    The answer must not depend on the caller's clock settings, so it is asked under two
+    timezones two hours apart. Anything reading a formatted local timestamp fails this.
+    """
+    print("\nlistener freshness does not depend on the caller's timezone (regression)")
+    runner = "/Users/mats/dev/actions-runner-mcp-re"
+    if not Path(runner, ".env").exists():
+        check("SKIPPED — this control needs the real runner install", True)
+        return
+
+    answers = {}
+    for tz in ("UTC", "Europe/Stockholm", "America/Los_Angeles"):
+        got = subprocess.run(
+            [sys.executable, "-c",
+             "import sys;sys.path.insert(0,%r);import host_gate;"
+             "print(host_gate.listener_started_after_env(%r))"
+             % (str(Path(__file__).resolve().parent), runner)],
+            capture_output=True, text=True, env={**os.environ, "TZ": tz}, timeout=120)
+        answers[tz] = got.stdout.strip()
+
+    check("every timezone gives the same answer", len(set(answers.values())) == 1, str(answers))
+    check("and that answer is True for a listener started after its .env",
+          set(answers.values()) == {"True"}, str(answers))
+
+
 def test_mirror_is_published_for_the_other_kernel() -> None:
     print("\nthe committed mirror the VM reads (cross-kernel rule)")
     paths = fresh()
@@ -405,6 +439,7 @@ def main() -> int:
                test_second_slo_cannot_overlap, test_simultaneous_admission, test_fail_closed,
                test_completion_releases_on_every_path, test_crash_leaves_closed_not_open,
                test_quiescence, test_participation,
+               test_listener_freshness_is_timezone_independent,
                test_mirror_is_published_for_the_other_kernel,
                test_vm_reported_jobs_block_drain):
         fn()

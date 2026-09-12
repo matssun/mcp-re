@@ -485,15 +485,29 @@ def listener_started_after_env(runner_root: str) -> bool | None:
     pids = [p for p in found.stdout.split() if p.strip().isdigit()]
     if not pids:
         return None
+    # ELAPSED time, not a formatted start date.
+    #
+    # This read `ps -o lstart=` and parsed it with `time.strptime` + `time.mktime`. That
+    # was wrong in a way that only appeared inside a runner job: `ps` prints the start in
+    # LOCAL time while `mktime` interprets it in the PROCESS's timezone, so a hook running
+    # without TZ set resolved 21:19 CEST as 21:19 UTC -- two hours early, which put the
+    # listener before the 21:18 .env and reported a correctly-hooked runner as not
+    # participating. It refused a real SLO run on 2026-09-12 at 06:08.
+    #
+    # `etime` is elapsed seconds since start. It has no timezone, no locale-dependent month
+    # name and no date format, so the class of bug cannot recur here.
     try:
-        started = subprocess.run(["ps", "-o", "lstart=", "-p", pids[0]],
+        elapsed = subprocess.run(["ps", "-o", "etime=", "-p", pids[0]],
                                  capture_output=True, text=True).stdout.strip()
-        if not started:
+        if not elapsed:
             return None
-        parsed = time.mktime(time.strptime(started))
+        days, _, clock = elapsed.rpartition("-") if "-" in elapsed else ("", "", elapsed)
+        units = [int(x) for x in clock.split(":")]
+        seconds = (int(days) * 86400 if days else 0) + sum(
+            value * scale for value, scale in zip(reversed(units), (1, 60, 3600)))
     except (OSError, ValueError):
         return None
-    return parsed >= env_mtime
+    return (time.time() - seconds) >= env_mtime
 
 
 def verify_participation(vm_read_env=None, vm_check_exec=None,

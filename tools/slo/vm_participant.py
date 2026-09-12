@@ -112,17 +112,30 @@ def listener_loaded_env() -> bool | None:
     """Has the VM's systemd unit restarted since its .env was written?
 
     The macOS freshness check cannot answer this -- `pgrep` does not cross the kernel
-    boundary -- so the VM reports it from systemd's own start timestamp. None means
-    "cannot tell", which callers treat as not-participating rather than as participating.
+    boundary -- so the VM answers it about itself. None means "cannot tell", which callers
+    treat as not-participating rather than as participating.
+
+    THE COMPARISON HAPPENS INSIDE THE VM, in one shell, against one clock.
+    This previously reconstructed a wall-clock start from
+    `ExecMainStartTimestampMonotonic` plus a boot epoch derived from `uptime -s`, then
+    compared that against the .env mtime. Those two have DIFFERENT ORIGINS -- CLOCK_MONOTONIC
+    excludes suspended time and the boot estimate drifts -- so on a VM up for two days the
+    reconstruction landed 107 seconds early and reported a listener that had started 55
+    seconds AFTER its .env as predating it. That refused a real SLO run on 2026-09-12.
+
+    `ExecMainStartTimestampUsec` is empty on this systemd, so the human
+    `ExecMainStartTimestamp` is converted by `date -d` in the same shell that reads the
+    mtime. No value crosses the kernel boundary except the answer.
     """
-    started = ssh("systemctl", "show", "-p", "ExecMainStartTimestampMonotonic",
-                  "--value", UNIT, timeout=60).stdout.strip()
-    env_epoch = ssh("sh", "-c", f"stat -c %Y {RUNNER_HOME}/.env 2>/dev/null || echo 0",
-                    timeout=60).stdout.strip()
-    boot_epoch = ssh("sh", "-c", "date -d \"$(uptime -s)\" +%s 2>/dev/null || echo 0",
-                     timeout=60).stdout.strip()
-    try:
-        start_abs = int(boot_epoch) + int(started) // 1_000_000
-        return start_abs >= int(env_epoch)
-    except (TypeError, ValueError):
-        return None
+    probe = ssh("sh", "-c",
+                f'S=$(date -d "$(systemctl show -p ExecMainStartTimestamp --value {UNIT})" +%s 2>/dev/null);'
+                f' E=$(stat -c %Y {RUNNER_HOME}/.env 2>/dev/null);'
+                ' if [ -n "$S" ] && [ -n "$E" ]; then'
+                '   if [ "$S" -ge "$E" ]; then echo fresh; else echo stale; fi;'
+                ' else echo unknown; fi', timeout=90)
+    answer = (probe.stdout or "").strip()
+    if answer == "fresh":
+        return True
+    if answer == "stale":
+        return False
+    return None
