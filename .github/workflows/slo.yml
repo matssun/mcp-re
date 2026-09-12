@@ -221,6 +221,32 @@ jobs:
           echo "The declared measurement plane is $endpoint"
           python3 tools/slo/environment_preflight.py
 
+      # RUN LIFECYCLE, opened before the first ephemeral resource exists.
+      #
+      # Host exclusivity says nothing about what a PREVIOUS SLO run left behind. A stale
+      # fleet's load lands in the quiescence window, and a fleet answering on the port this
+      # run expects would be measured as though this run had started it. So reconciliation
+      # happens here -- after the reservation and drain, BEFORE anything is measured.
+      #
+      # Reconciliation acts only on resources whose ownership is established by label. An
+      # unlabelled occupant is INFRASTRUCTURE_UNAVAILABLE and the run refuses: we do not
+      # destroy what we did not create.
+      - name: Open the run lifecycle (reconcile, then assert a clean plane)
+        id: run
+        run: |
+          set -euo pipefail
+          run_id="$(python3 tools/slo/run_supervisor.py run-id)"
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "SLO run identity: $run_id"
+          MCP_RE_SLO_RUN_ID="$run_id" python3 tools/slo/run_supervisor.py begin
+
+      # Only NOW, on a plane proven empty by the supervisor above.
+      - name: Establish host quiescence (after the plane is clean)
+        run: |
+          set -euo pipefail
+          exec /usr/bin/env python3 \
+            /opt/verification/runner-arbiter/bin/runner_arbiter.py quiesce
+
       # ASK the host authority; do not become it. The admission state machine lives on the
       # host in tools/slo/host_gate.py, installed at /opt/verification/runner-arbiter, and
       # this step reads its verdict rather than re-deriving exclusivity in YAML. A non-zero
@@ -249,7 +275,26 @@ jobs:
           # Routes the bench harness's Redis fleet to the daemon the class declares,
           # instead of whatever the ambient Docker context points at.
           DOCKER_HOST: ${{ steps.plane.outputs.docker_host }}
+          # Every Docker resource the harness creates is stamped with this, which is what
+          # lets teardown and the next run's reconciliation find them.
+          MCP_RE_SLO_RUN_ID: ${{ steps.run.outputs.run_id }}
         run: scripts/local_gate.sh --from 4
+
+      # UNCONDITIONAL. `if: always()` so it runs on success, on a benchmark FAIL, on
+      # INCONCLUSIVE, on a setup failure after partial startup, and on cancellation where
+      # GitHub still reaches the step. It exits non-zero if anything this run created
+      # survived -- a measurement that leaves its plane dirty is not attestable, because
+      # cleanup success is part of the validity of the result.
+      #
+      # It does NOT claim to cover SIGKILL or power loss: no code of ours executes there.
+      # Those are repaired by the next run's reconciliation, which is why ownership is a
+      # durable label rather than a destructor.
+      - name: Close the run lifecycle (teardown, then assert a clean plane)
+        if: always()
+        env:
+          MCP_RE_SLO_RUN_ID: ${{ steps.run.outputs.run_id }}
+          DOCKER_HOST: ${{ steps.plane.outputs.docker_host }}
+        run: python3 tools/slo/run_supervisor.py end
 
       # The reports are what an operator declares this class's anchor from, and what a later
       # reader compares a regression against. Kept on `always()`: a FAIL, an INCONCLUSIVE and

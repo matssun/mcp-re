@@ -81,14 +81,37 @@ def cmd_job_started(paths, ident: JobIdentity) -> int:
             )
 
     host_gate.await_drain(paths, ident, vm_workers_or_refuse())
+
+    # QUIESCENCE IS DELIBERATELY NOT MEASURED HERE.
+    #
+    # It used to be, and the ordering was wrong. This hook runs before any workflow step,
+    # so it precedes the run supervisor's reconciliation of a PREVIOUS run's leftovers --
+    # and a stale proxy or Redis fleet contributes real load. Measuring decay before
+    # removing them folds their load into the "quiet box" the run claims to have measured
+    # on, which is the exact false-quiet this whole mechanism exists to eliminate.
+    #
+    # The correct order is reserve -> drain -> reconcile -> clean -> QUIESCE, so the lane
+    # calls `runner-arbiter quiesce` once the supervisor has proven the plane empty.
+    # `assert-exclusive` refuses without an established record, so a lane that skips the
+    # step cannot measure anyway.
+    host_gate.activate(paths, ident, {"established": None, "deferred_to_lane": True})
+    return EXIT_OK
+
+
+def cmd_quiesce(paths, ident: JobIdentity) -> int:
+    """Wait for sustained host quiescence and record the samples that admitted it.
+
+    Called by the lane AFTER the measurement plane has been reconciled and proven clean,
+    so the decay being observed is the host settling -- not a previous run still running.
+    """
     quiescence = host_gate.await_quiescence()
     host_gate.write_atomic(paths["root"] / f"quiescence-{ident.key}.json", quiescence)
+    print(json.dumps(quiescence, indent=2, default=str))
     if not quiescence["established"]:
         raise ArbiterError(
             "host did not become quiescent within the bounded wait; refusing to begin a "
             "release-grade measurement on a busy machine. Report INCONCLUSIVE."
         )
-    host_gate.activate(paths, ident, quiescence)
     return EXIT_OK
 
 
@@ -208,6 +231,7 @@ def main(argv: list[str] | None = None) -> int:
     for name, helptext in (
         ("job-started", "ACTIONS_RUNNER_HOOK_JOB_STARTED entry point"),
         ("job-completed", "ACTIONS_RUNNER_HOOK_JOB_COMPLETED entry point"),
+        ("quiesce", "wait for sustained quiescence AFTER the plane is proven clean"),
         ("assert-exclusive", "the physical-host exclusivity clause slo.yml evaluates"),
         ("status", "human-readable host state"),
         ("dump-env", "print the hook environment (SLO identification study)"),
@@ -234,6 +258,9 @@ def main(argv: list[str] | None = None) -> int:
                 vm_participant.release_fallback()
                 (paths["root"] / "vm-inhibition.json").unlink(missing_ok=True)
             return EXIT_OK
+
+        if args.cmd == "quiesce":
+            return cmd_quiesce(paths, ident)
 
         if args.cmd == "assert-exclusive":
             return cmd_assert_exclusive(paths, ident)
