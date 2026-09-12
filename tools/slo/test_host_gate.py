@@ -363,6 +363,42 @@ def test_participation() -> None:
           not vm_entry["participating"])
 
 
+def test_drain_refusal_names_the_blocker() -> None:
+    """A drain that gives up must say WHICH job held the host, and release it.
+
+    The reservation closes the host to every runner from the moment it is granted, so a
+    drain that cannot complete is a fleet-wide outage until it expires. On 2026-09-12 that
+    ran most of an hour. Two properties follow, and both are checked here rather than
+    assumed: the bound is short enough to be a nuisance instead of an outage, and the
+    refusal identifies the blocker so nobody has to go read the arbiter log to find it.
+    """
+    print("\na drain that gives up names the blocker and releases (blast radius)")
+    check("the drain bound is at most 30 minutes", host_gate.DRAIN_WAIT_S <= 30 * 60,
+          f"{host_gate.DRAIN_WAIT_S}s")
+
+    paths = fresh()
+    blocker = ordinary(7, runner="dev1")
+    host_gate.admit_ordinary(paths, blocker, wait_s=1)
+    host_gate.grant_reservation(paths, slo())
+    try:
+        host_gate.await_drain(paths, slo(), lambda: 0, wait_s=2)
+        check("the drain refuses when work will not finish", False, "it returned")
+    except ArbiterError as exc:
+        message = str(exc)
+        check("the drain refuses when work will not finish", True)
+        check("and the refusal NAMES the blocking runner and job",
+              "dev1" in message and blocker.job in message, message[:140])
+        check("and says the work was not killed", "NOT killed" in message, message[:140])
+
+    # The owner's job-completed hook is what reopens the host; the refusal must not leave
+    # the reservation standing, or the outage outlives the attempt.
+    host_gate.job_completed(paths, slo())
+    check("the reservation is released so ordinary work resumes",
+          host_gate.read_gate(paths)["state"] == host_gate.RELEASED)
+    host_gate.admit_ordinary(paths, ordinary(8), wait_s=1)
+    check("and a new ordinary job is admitted again", True)
+
+
 def test_listener_freshness_is_timezone_independent() -> None:
     """Regression control for the false refusal of 2026-09-12 06:08.
 
@@ -439,6 +475,7 @@ def main() -> int:
                test_second_slo_cannot_overlap, test_simultaneous_admission, test_fail_closed,
                test_completion_releases_on_every_path, test_crash_leaves_closed_not_open,
                test_quiescence, test_participation,
+               test_drain_refusal_names_the_blocker,
                test_listener_freshness_is_timezone_independent,
                test_mirror_is_published_for_the_other_kernel,
                test_vm_reported_jobs_block_drain):
