@@ -207,6 +207,20 @@ jobs:
           echo "runner: ${RUNNER_NAME:-<unset>}"
           df -h . | tail -2
 
+      # The declared environment must BE the environment, and the fleet must be built in
+      # it. `dev1-slo-v1` names a dedicated Docker daemon; the bench harness shells plain
+      # `docker`, which would otherwise reach whatever the ambient context happens to be --
+      # so a PASS could be recorded under a class describing a VM it never touched. The
+      # endpoint is read from the declaration, never restated here.
+      - name: Resolve and verify the declared measurement environment
+        id: plane
+        run: |
+          set -euo pipefail
+          endpoint="$(python3 tools/slo/environment_preflight.py --print-endpoint)"
+          echo "docker_host=$endpoint" >> "$GITHUB_OUTPUT"
+          echo "The declared measurement plane is $endpoint"
+          python3 tools/slo/environment_preflight.py
+
       # ASK the host authority; do not become it. The admission state machine lives on the
       # host in tools/slo/host_gate.py, installed at /opt/verification/runner-arbiter, and
       # this step reads its verdict rather than re-deriving exclusivity in YAML. A non-zero
@@ -232,6 +246,9 @@ jobs:
       - name: SLO lane (local_gate.sh stage 4)
         env:
           MCP_RE_LOADGEN_HW_CLASS: ${{ steps.context.outputs.hardware_class }}
+          # Routes the bench harness's Redis fleet to the daemon the class declares,
+          # instead of whatever the ambient Docker context points at.
+          DOCKER_HOST: ${{ steps.plane.outputs.docker_host }}
         run: scripts/local_gate.sh --from 4
 
       # The reports are what an operator declares this class's anchor from, and what a later

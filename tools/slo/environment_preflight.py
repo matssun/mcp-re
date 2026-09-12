@@ -288,7 +288,15 @@ def preflight(entry: dict | None = None) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
-    argv = argv or sys.argv[1:]
+    argv = argv if argv is not None else sys.argv[1:]
+
+    # The lane asks for the endpoint here rather than restating a socket path in YAML. A
+    # literal in a second place is a fact that can drift, and a drifted endpoint would send
+    # the fleet to one daemon while the preflight verified another.
+    if "--print-endpoint" in argv:
+        print(endpoint(declared_class()))
+        return EXIT_OK
+
     name = argv[0] if argv and not argv[0].startswith("-") else None
     result = preflight(declared_class(name))
     print(json.dumps(result, indent=2, default=str))
