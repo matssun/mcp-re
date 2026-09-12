@@ -80,6 +80,7 @@ LOCAL_STORE = REPO / ".verification" / "slo"
 STORE_ENV = "MCP_RE_SLO_EVIDENCE_STORE"
 BASELINE = REPO / "docs" / "bench" / "adr-051-baseline-local.json"
 WORKFLOW = REPO / ".github" / "workflows" / "slo.yml"
+TARGETS = REPO / "docs" / "bench" / "adr-051-slo-targets.json"
 SCHEMA = "mcp-re-slo-evidence/v1"
 
 REUSE, REMEASURE = 0, 10
@@ -395,6 +396,61 @@ def record(report_paths: list[str], verdict: str) -> int:
 CLASS_KEYS = ("name", "kind", "slo_declarable", "regression_anchor", "github_actions_runner")
 
 
+
+def anchor_consistency_defects() -> list[str]:
+    """An anchor must ADMIT the measurements that declared it.
+
+    THE DEFECT THIS CATCHES, found by shipping it. `dev1-slo-v1`'s first anchor was the
+    MEDIAN of six reps, and the gate derives its ceiling by multiplying that median by the
+    declared tolerance. But the rep-to-rep spread of p99 on a co-located loadgen is wider
+    than the tolerance: median 20,937us gave a ceiling of 27,218us, while one of the six
+    reps that DEFINED the anchor measured 29,772us. The gate was therefore flaky by
+    construction -- it would reject a run indistinguishable from the one it was built from,
+    and it did, on the very next measurement, at 1.1% over.
+
+    A point estimate is a legitimate anchor only when the band around it covers the
+    dispersion of the sample it came from. So the check is exactly that: run the gate's own
+    arithmetic against the anchor's own reps. Any rep outside the band means the anchor
+    cannot be used to adjudicate its own class.
+
+    The remedy is NOT to widen the tolerance, which would weaken the gate everywhere to
+    accommodate one noisy class. It is to re-measure on a host quiet enough that the spread
+    fits the band -- which is what the tolerance file already says: "tighten them once a
+    dedicated loadgen removes that noise."
+    """
+    tolerances = json.loads(TARGETS.read_text(encoding="utf-8"))["local_regression"]["tolerances"]
+    found: list[str] = []
+    for name, entry in hardware_classes().items():
+        anchor_path = entry.get("regression_anchor")
+        if not anchor_path or not (REPO / anchor_path).is_file():
+            continue
+        results = json.loads((REPO / anchor_path).read_text(encoding="utf-8"))["anchor"]["results"]
+        reps = results.get("reps") or {}
+        if not reps:
+            continue
+
+        floor = results["throughput_rps"] * tolerances["throughput_rps_min_fraction"]
+        under = [r for r in reps.get("throughput_rps", []) if r < floor]
+        if under:
+            found.append(
+                f"{name!r}: throughput reps {under} fall below the floor {floor:.1f} its own "
+                f"anchor produces")
+
+        for percentile, fraction_key in (("p50", "p50_added_us_max_fraction"),
+                                         ("p99", "p99_added_us_max_fraction"),
+                                         ("p999", "p999_added_us_max_fraction")):
+            ceiling = results["added_latency_us"][percentile] * tolerances[fraction_key]
+            over = [r for r in reps.get(f"{percentile}_us", []) if r > ceiling]
+            if over:
+                found.append(
+                    f"{name!r}: {percentile} reps {over} exceed the ceiling {ceiling:.0f} its "
+                    f"own anchor produces — the band is narrower than the spread it was "
+                    f"declared from, so the gate would reject a run like the one that "
+                    f"defined it. Re-measure on a quieter host rather than widening the "
+                    f"tolerance.")
+    return found
+
+
 def hardware_classes() -> dict[str, dict[str, object]]:
     """The declared measurement contexts, by `hardware_class` value.
 
@@ -453,6 +509,7 @@ def class_defects() -> list[str]:
     claimed = [entry["name"] for entry in declared if entry.get("github_actions_runner")]
     if len(claimed) != 1:
         found.append(f"exactly one class must set github_actions_runner = true; {claimed} do")
+    found.extend(anchor_consistency_defects())
     return found
 
 

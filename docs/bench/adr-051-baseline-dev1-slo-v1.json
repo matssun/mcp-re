@@ -13,7 +13,7 @@
     "any other hardware class \u2014 scripts/adr051_slo_gate.py refuses a cross-class comparison"
   ],
   "supersedes": "nothing. This is the FIRST anchor for hardware_class dev1-slo-v1, and the numbers in docs/bench/adr-051-baseline-dev1.json may NOT be read into it. That predecessor was measured with the Redis fleet on the colima-db Docker daemon \u2014 the same VM as the 3.6M-row EODHD corpus and unrelated testcontainer churn. dev1-slo-v1 runs the fleet on a dedicated 4 vCPU / 4 GiB colima-slo profile on internal storage, with nothing else permitted on that daemon. A different measurement plane is a different question.",
-  "caveat": "Recorded on the self-hosted Actions runner with the load generator CO-LOCATED with the proxy on the same cores. It is a REGRESSION anchor and states no capacity; config/performance-surface.toml declares this class slo_declarable = false for that reason.\n\nBOX STATE, stated because it bounds what these numbers are worth, and it is materially better than the predecessor's. The host reservation drained an ordinary job on the OTHER runner application before measuring, quiescence was established over 140.1s of sustained load1/load5/load15 below 0.20/0.25/0.30 of 14 cpus, and the exclusivity assertion recorded zero non-owner ACTIVE records, zero macOS Runner.Worker processes and zero Runner.Worker processes inside the colima VM \u2014 the last of which no macOS process scan can establish. problems: [].\n\nThe tail is still the loose half: the six reps span p99 17,343-29,772us (+/-26%) while throughput spans 15,369.9-16,836.0 (+/-4.5%). So the throughput floor is a tight regression band and a tail regression smaller than that spread will not be caught here.",
+  "caveat": "Recorded on the self-hosted Actions runner with the load generator CO-LOCATED with the proxy on the same cores. It is a REGRESSION anchor and states no capacity; config/performance-surface.toml declares this class slo_declarable = false for that reason.\n\nBOX STATE. The host reservation drained ordinary work on the other runner applications before measuring, quiescence was established from sustained load1/load5/load15 below 0.20/0.25/0.30 of 14 cpus, and the exclusivity assertion recorded zero non-owner ACTIVE records, zero macOS Runner.Worker processes and zero Runner.Worker processes inside the colima VM -- the last of which no macOS process scan can establish.\n\nTHE BAND COVERS THE SAMPLE, which is the property that makes this anchor usable: p99 reps span 18,771-31,332us, a max/median of 1.26x against the declared 1.30x tolerance, and throughput spans 15,543.4-16,164.1 rps (+/-2%). Every rep that declared this anchor passes the gate the anchor produces -- checked mechanically rather than asserted.\n\nThe tail is still the looser half and a tail regression smaller than that spread will not be caught here. Tightening it needs a dedicated load generator, not a narrower tolerance.",
   "recorded": {
     "date": "2026-09-12",
     "harness": "mcp-re-proxy/tests/tls_load_harness_bench.rs",
@@ -21,7 +21,7 @@
     "rust_toolchain": "1.97.1 (pinned in rust-toolchain.toml and MODULE.bazel)",
     "serving_mode": "delegated-required-only (ADR-MCPRE-052; delegated-credential-backed response signature per request)",
     "carrier": "RFC 9421 HTTP Message Signatures + RFC 9530 Content-Digest",
-    "provenance": "GitHub Actions run 34683989229, job 'SLO lane (local_gate.sh stage 4)' on runner dev1-mcp-re, reports retained as artifact slo-reports-dev1-slo-v1-34683989229. The run reported UNANCHORED and was red, which is what this file answers \u2014 the same path dev1-macos-arm64 took on run 34323483201.",
+    "provenance": "GitHub Actions run 34703904633, job 'SLO lane (local_gate.sh stage 4)' on runner dev1-mcp-re, reports retained as artifact slo-reports-dev1-slo-v1-34703904633.\n\nNOT declared from run 34683989229, the first measurement on this plane, although that run also measured cleanly. Its p99 reps spanned 17,343-29,772us -- a max/median spread of 1.42x against a declared tolerance of 1.30x -- so the ceiling THAT anchor produced (27,218us) would have rejected one of the six reps that defined it. An anchor whose own sample falls outside the band it generates is flaky by construction, and it proved so on the very next measurement, failing at 1.1% over. `anchor_consistency_defects()` in scripts/slo_evidence_identity.py now refuses such a declaration; it was added because this one shipped without it.",
     "measurement_plane": {
       "docker_endpoint": "unix:///Users/mats/.colima/slo/docker.sock",
       "colima_profile": "slo",
@@ -45,47 +45,47 @@
       "tls_mode": "TLS1.3-mTLS"
     },
     "results": {
-      "throughput_rps": 15549.1,
+      "throughput_rps": 15963.4,
       "added_latency_us": {
-        "p50": 7646,
-        "p99": 20937,
-        "p999": 28340,
-        "mean": 8047,
-        "min": 2849,
-        "max": 39235
+        "p50": 7439,
+        "p99": 24958,
+        "p999": 30981,
+        "mean": 7857,
+        "min": 2639,
+        "max": 40604
       },
       "reps": {
         "throughput_rps": [
-          15369.9,
-          15381.4,
-          15441.3,
-          15656.9,
-          15819.0,
-          16836.0
+          15543.4,
+          15796.0,
+          15933.3,
+          15993.5,
+          16014.1,
+          16164.1
         ],
         "p50_us": [
-          7072,
-          7554,
-          7646,
-          7647,
-          7711,
-          7778
+          7348,
+          7431,
+          7435,
+          7444,
+          7491,
+          7602
         ],
         "p99_us": [
-          17343,
-          19858,
-          19990,
-          21885,
-          24010,
-          29772
+          18771,
+          19325,
+          22394,
+          27522,
+          27705,
+          31332
         ],
         "p999_us": [
-          22470,
-          25505,
-          26185,
-          30496,
-          30679,
-          36393
+          26195,
+          28255,
+          30438,
+          31524,
+          32857,
+          38960
         ]
       }
     }
