@@ -840,7 +840,19 @@ jobs:
       # unit, this lane, this fingerprint — and, for the extracted-model lanes, the
       # artifact the lock pins.
       # -----------------------------------------------------------------------
+      #
+      # RUNS EVEN AFTER A PHASE FAILED, and that is the point. A failing step skips the rest
+      # of the job by default, so a run whose extraction phase could not start produced NO
+      # repository verdict at all — measured on dev1, where the preserved artifact is
+      # absent: the job went red with `Compose the repository verdict: skipped`, and the one
+      # thing that would have said WHICH evidence was missing never ran.
+      #
+      # A phase failure is exactly the case the composer exists to describe. It reports
+      # INCOMPLETE and names every required lane/unit with no acceptable record, which is a
+      # diagnostic; the job stays red either way. `!cancelled()` rather than `always()`: a
+      # cancelled run measured nothing and has nothing to compose.
       - name: Compose the repository verdict
+        if: ${{ !cancelled() }}
         run: ./tools/verification/verify --aggregate --gate
 
       # The records this verdict was composed from, kept whatever the verdict was. A

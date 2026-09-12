@@ -461,3 +461,266 @@ image id, preserved at
 
 on the machine that built it. A host that does not hold the archive reports UNAVAILABLE and
 refuses; it never rebuilds, because a rebuild of this definition is a different instrument.
+
+---
+
+## 8. The whole pipeline, run — 2026-09-09
+
+Production Rust met Charon, Aeneas and Lean, from the preserved artifact
+`sha256:d38738c1…`, with `core.time_civil_from_days` declared V2. Every stage reported its
+own verdict.
+
+**Extraction.** The invocation is the manifest's, not this document's: `extracted_symbols`
+becomes the `--start-from` set.
+
+```
+$ /opt/aeneas/charon/bin/charon cargo --preset=aeneas \
+      --start-from mcp_re_core::time::format::civil_from_days \
+      --dest-file …/mcp_re_core.llbc
+$ /opt/aeneas/bin/aeneas -backend lean -dest …/lean …/mcp_re_core.llbc
+regenerate-lean: 1 file(s) from 1 unit(s) — McpReCore.lean
+VERDICT: PASS
+```
+
+**The extraction is stable across two independent builds of the declared pins.** The model
+this artifact produced is BYTE-IDENTICAL to the one committed from a different build — a
+different opam resolution, a different image id. That is a measurement, not a guarantee:
+§6's finding stands, the build is still not reproducible, and the identity is still
+recorded rather than derived. What it says is that for this target the residual variation
+did not reach the output.
+
+**Freshness.** `check-generated: 1 generated file(s) reproduce from the pinned pipeline over
+1 unit(s) — VERDICT: PASS`.
+
+**The lane.**
+
+```
+verify-lean: elaborating the model and the theorems  ($ lake build)
+verify-lean: axiom discovery                         ($ lake env lean …)
+  PASS core.time_civil_from_days: 1 theorem(s) established;
+       axiom closure is the declared kernel baseline
+VERDICT: PASS
+```
+
+**The axiom closure, asked of the prover:**
+
+```
+'MCPRE.Time.civil_from_days_total' depends on axioms: [propext, Classical.choice, Quot.sound]
+```
+
+Nothing else. No `sorryAx`, no unregistered axiom, no `ASM-NNNN` — and, as §5 predicted
+rather than assumed, the closure does not reach the four `sorry`s the pinned Aeneas Lean
+library carries in `Slice`/`StringIter`. The prediction is now a checked one.
+
+**The refusals are real.** `verify-lean --activation-probe` made the prover produce a
+`sorry`, an unregistered axiom and an unresolvable theorem name, and each was still
+refused — `VERDICT: PASS`. Every check above is conditional on the prover reporting what
+the lane expects, and all three failure modes look exactly like a clean axiom closure.
+
+**The evidence record names the artifact**, which is the whole point of preserving it:
+
+```json
+{ "unit_id": "core.time_civil_from_days", "lane": "lean", "result": "pass",
+  "prover": { "lean": "leanprover/lean4:v4.31.0",
+              "aeneas": "daa85d7e…", "charon": "340b1af4…",
+              "extraction_artifact": "sha256:d38738c1…" } }
+```
+
+### One environment fact, and it is not about the code
+
+The run above was made in a **git worktree**, whose `.git` is a file pointing outside the
+bind mount, so `git ls-files` inside the container fails and the fingerprint cannot
+describe the tree. It is a property of how this measurement was hosted, not of the lane: a
+normal checkout — which is what the runner has — carries its own `.git`. Recorded so the
+next person running the lane from a worktree recognises it in one line instead of reading
+it as a lane defect.
+
+### Where the artifact is
+
+On the machine that built it. `dev1` runs the extraction lane and does not hold this
+archive, so the lane reports **UNAVAILABLE** there until it is copied or dev1 builds and
+preserves its own — at which point the pin moves onto that artifact and the model is
+regenerated against it. That is the stated cost of having no registry, and it is
+fail-closed in the right direction: a host that cannot execute the pinned environment says
+so instead of running a different one.
+
+---
+
+## 9. Declaring the first V2 unit makes the HOST gate structurally unable to pass
+
+Found by the CI run of the branch that declares one, and it is **independent of where the
+artifact lives**. `.github/workflows/verification.yml` has two jobs:
+
+| job | environment | lanes it can execute |
+|---|---|---|
+| `verification platform (macOS host)` | dev1, macOS | assumptions, test, mutation, **verus** |
+| `extraction pipeline (linux container)` | the pinned artifact | **generated-model**, **lean** |
+
+The host job runs `tools/verification/verify --gate`, whose lane table is **all six**. With
+no V2 unit both extracted-model lanes report `NOT_REQUIRED` and the aggregate is `PASS`.
+Declaring one makes them required, and on macOS neither can run:
+
+```
+[generated-model] UNAVAILABLE
+    no regeneration stamp, and the Aeneas Lean library is not at /opt/aeneas/backends/lean,
+    so this is not the extraction environment and nothing here could have produced one.
+[lean] UNAVAILABLE
+    the Aeneas Lean library is not at /opt/aeneas/backends/lean …
+VERIFICATION: INCOMPLETE — required and missing: generated-model, lean
+```
+
+Every verdict there is correct. `UNAVAILABLE` forcing `INCOMPLETE` is the algebra doing its
+job — a lane that cannot run is never a lane that passed — and softening it is not the fix.
+**What is wrong is that a process is asked for an aggregate over lanes it cannot execute.**
+Charon links the private rustc crates and does not build on macOS; Verus and the cargo
+matrix are not in the container. No single process can run all six.
+
+> The repository's aggregate verdict has evidence from two environments, and neither
+> environment can compute it.
+
+### What this is NOT
+
+* Not the missing archive. dev1 holding `d38738c1…` fixes the extraction job and changes
+  nothing here: `/opt/aeneas` is inside the image, not on the host.
+* Not a regression from the artifact store. The host job would report the same on any
+  arrangement where the extracted-model lanes live in a container.
+* Not fixable by `NOT_REQUIRED`. "The manifest asked nothing of Lean" and "Lean proved
+  something" are different claims and only the second is evidence.
+
+### The recommended fix, and why it is not taken here
+
+`verify-lean` already writes an `EvidenceRecord` per unit, carrying the **unit fingerprint
+it measured at** — and since the artifact store landed, that fingerprint includes
+`artifact_digest` and `archive_digest`. So a record cannot be replayed across a different
+tree *or a different extraction artifact*. That is exactly the property an aggregate over
+persisted records needs, and `_evidence.load_records` already reads them.
+
+So: one job, ordered — host preflight, the extraction steps, then `verify --gate` — with
+`verify-lean` and `check-generated`, when they are not in the extraction environment,
+consuming this run's own records instead of reporting `UNAVAILABLE`, and refusing any
+record whose fingerprint is not the current one.
+
+It was written here rather than implemented because it **changes what `VERIFICATION: PASS`
+means**, which is an owner decision.
+
+### Ruled and taken — 2026-09-09
+
+The change is approved, in a stronger form than the sketch above:
+
+> from **one process must EXECUTE every required lane**
+> to **every required lane must have valid EVIDENCE for the current fingerprint**.
+
+And with one constraint the sketch did not have: **no lane may report PASS by reading
+somebody else's record.** Lane executors stay the authorities for execution — `verify-lean`
+on a macOS host still reports `UNAVAILABLE` — and only the central aggregate composes.
+Putting the composition inside a lane would have hidden it where no control could see it.
+
+`tools/verification/_compose.py` holds the acceptance rules. It derives its requirement set
+from the **manifest**, never from what ran, so a lane that silently did not execute leaves
+no record and a missing record is `INCOMPLETE` — the old shape could not express that at
+all, which is why this is not a relaxation. Per (lane, unit) it requires exactly one
+acceptable current record: right unit, right lane, `pass`, the **exact** current
+fingerprint, and — for the extracted-model lanes — the extraction artifact the lock pins.
+
+| refused | verdict |
+|---|---|
+| no record for a required lane/unit | UNAVAILABLE → INCOMPLETE |
+| record at another fingerprint | UNAVAILABLE → INCOMPLETE, reported as STALE |
+| record naming another unit or lane | FAIL |
+| record from a different extraction artifact, or naming none | FAIL |
+| two records for one unit | FAIL |
+| an unreadable record in the directory | FAIL |
+| a recorded `fail` | FAIL |
+| a lane declaring `NOT_REQUIRED` where the manifest requires it | FAIL, in the execution phase |
+
+That last one is refused where the declared verdict still exists. A `NOT_REQUIRED` lane
+writes no record, so the composer would see an absence and could not tell it from a lane
+that simply did not run — and the two call for different actions.
+
+**The fingerprint is the load-bearing clause,** and the artifact store is what made it
+sufficient: a unit fingerprint carries the whole toolchain identity, including
+`artifact_digest` and `archive_digest`, so a record produced by a different tree, a
+different prover, or a *different build of the same declared pins* cannot be composed into
+a verdict about this one.
+
+**Current-run isolation.** `MCP_RE_EVIDENCE_DIR` names one directory, created fresh per CI
+invocation and reached from both environments through the bind mount. No global store is
+searched: a run must not go green on a record an earlier one left behind. Fingerprint-bound
+reuse across runs is a separate question about the evidence system, and it is not what
+solves this one.
+
+**One ordered job** — host preflight, host lanes, the preserved artifact, extraction lanes,
+composer — replacing the two that could each only answer half the question. The evidence
+directory is uploaded whatever the verdict, because a failing run's records are what a
+reader needs most.
+
+Sixteen controls in `tools/verification/test_compose.py`, each handing the composer a store
+that looks complete and asking it to refuse, plus the positive — a control set in which
+nothing ever passes proves nothing.
+
+**Exercised on the runner, 2026-09-09.** The composed workflow ran on dev1 against the lane
+branch: fresh evidence directory created, host lanes executed and recorded, the extraction
+steps correctly skipped because that branch declares no V2 unit, and
+
+```
+Compose the repository verdict: success        (under --gate, which exits 0 only on PASS)
+```
+
+so the repository verdict was stated by validating and composing records rather than by one
+process executing every lane. The refusing direction was exercised locally first: with the
+extraction phase's two records present and the host phase's absent, the composer reported
+`INCOMPLETE` and named all six missing `verus` records.
+
+**And with the V2 unit declared, end to end, on the machine that holds the artifact.** dev1's
+run could not show this half — it has no archive, and the lane branch declares no V2 unit —
+so it was measured here, in one fresh directory, in the order the workflow uses:
+
+```
+$ verify --phase host                       PHASE host: OK — 3 lane(s) executed
+$ regenerate-lean && verify --phase extraction
+                                            PHASE extraction: OK — 2 lane(s) executed
+$ verify --aggregate --gate
+[compose] over …/.verification/run-local-2
+    [generated-model] PASS
+    [lean] PASS
+    [mutation] PASS
+    [test] PASS
+    [verus] PASS
+VERIFICATION: PASS
+Composed from records in …/run-local-2; every required lane has one, at this fingerprint.
+```
+
+Neither phase stated a repository verdict; the composer stated one, from five lanes'
+records, two of which were produced inside the pinned artifact and three on the host. That
+is the whole change, exercised on the tree it was built for.
+
+### One more finding, from the run that was supposed to just fail
+
+Putting the V2 unit in front of dev1 produced the expected refusal and one thing nobody had
+asked about. The load step refused — `ABSENT`, correctly, never a rebuild — and every step
+after it was skipped by default, **including the composer**:
+
+```
+Load the preserved extraction artifact: failure
+Execute the extraction lanes:           skipped
+Compose the repository verdict:         SKIPPED
+```
+
+The job was red, which is honest, and it said nothing about *which* evidence was missing.
+A phase failure is precisely the case the composer describes, so it now runs after one
+(`!cancelled()`, not `always()`: a cancelled run measured nothing). The same run then said:
+
+```
+[compose] over …/.verification/run-34379114249-1
+    REFUSED generated-model/core.time_civil_from_days: no evidence record. The manifest
+            requires this lane for a V2 unit, and absence of measurement is not measurement.
+    REFUSED lean/core.time_civil_from_days: no evidence record. …
+VERIFICATION: INCOMPLETE — a required lane has no acceptable current record
+```
+
+The job stays red either way. What changed is that the run now states a verdict and names
+the two records that would satisfy it.
+
+**#860 is therefore blocked on exactly one thing: dev1 holding the preserved archive.**
+Nothing else about it is unmeasured — the refusing direction is measured on dev1, the
+passing direction on the machine that holds the artifact.

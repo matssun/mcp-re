@@ -5118,3 +5118,41 @@ tested_symbols = [
   "lib#request_signing_inputs::tests::a_decision_mints_its_own_binding_over_the_exact_bytes",
   "lib#request_signing_inputs::tests::a_caller_that_presents_no_decision_authors_a_block_without_one",
 ]
+
+# ---------------------------------------------------------------------------
+# Phase 3 pilot — the extracted-model unit
+# ---------------------------------------------------------------------------
+#
+# The same file as `core.time_rfc3339`, deliberately, and the same shape as
+# `http_profile.keyid` / `http_profile.keyid_selector`: two units over one file because
+# there are two propositions with two different evidence lanes. `core.time_rfc3339` is the
+# Verus unit over the PARSER, and its own module documentation says the formatting
+# direction carries its totality in Rust, "as an argument about the range their arguments
+# can occupy" — which is the argument this unit turns into a checked one.
+#
+# `mod.rs` is declared because the i64-extreme control lives in its `tests` module, and the
+# manifest refuses an in-crate selector whose module a unit does not declare.
+
+[[unit]]
+id = "core.time_civil_from_days"
+class = "V2"
+description = "The civil-date conversion's TOTALITY on the domain its caller can supply: every intermediate i64 operation is in range and both narrowing casts succeed, so the conversion cannot panic."
+paths = [
+  "mcp-re-core/src/time/format.rs",
+  "mcp-re-core/src/time/mod.rs",
+]
+evidence = [
+  "lean://core/time/civil_from_days_total",
+  "test://core/time/civil_from_days_extremes",
+]
+# The control the prose argument rested on, and it STAYS. The extremes are exactly where a
+# bound argument fails, so it is compensating evidence the theorem joins rather than
+# replaces: one measures the shipped code at two points, the other the whole admitted
+# domain of a model derived from it.
+tested_symbols = [
+  "lib#time::tests::civil_from_days_is_total_at_the_i64_extremes",
+]
+extracted_symbols = ["mcp_re_core::time::format::civil_from_days"]
+lean_theorems = ["MCPRE.Time.civil_from_days_total"]
+pilot = "lean-pilot"
+

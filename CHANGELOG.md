@@ -182,6 +182,40 @@ against THIS exact preserved extraction artifact* — and not *this artifact can
 reconstructed indefinitely from the Dockerfile*. Full build reproducibility is future
 assurance work.
 
+### Added — THM-0128: the first theorem proved from extracted production Rust (#541)
+
+```lean
+theorem civil_from_days_total (z : Std.I64)
+    (hlo : (-106751991167301 : Int) ≤ z.val)
+    (hhi : z.val ≤ 106751991167300) :
+    ∃ y m d, mcp_re_core.time.format.civil_from_days z = ok (y, m, d)
+```
+
+Proved against a model Charon and Aeneas extracted from `mcp-re-core/src/time/format.rs` —
+shipped production Rust, not a slice written for the pilot — and checked by the pinned Lean
+4.31.0. The bounds are the exact image of `i64` under `unix.div_euclid(86_400)`, and `ok`
+is total success: Aeneas' `spec` sends `fail` and `div` both to `False`. So the conversion
+neither overflows nor fails a narrowing `i64 → u32` cast, over the whole domain its caller
+can supply.
+
+`unix_to_rfc3339_utc` stamps `verified_at` and `issued_at` from a caller-supplied
+`now_unix`, and `mcp-re-core` never reads a clock itself, so that argument is
+attacker-influenced wherever a caller forwards one. Until now the absence of a panic there
+was an ARGUMENT — a `#[allow(clippy::arithmetic_side_effects)]` whose justification is a
+chain of bounds a reader must follow, with two `i64`-extreme unit tests as its evidence.
+The tests stay; they measure the shipped code where the theorem measures a model derived
+from it, and `core.time_civil_from_days` declares both.
+
+**The axiom closure is the declared kernel baseline and nothing else**, so the claim rests
+on no registered assumption — the extraction reports one transparent function and zero
+opaque ones. It also does not reach the four `sorry`s the pinned Aeneas Lean library
+carries, which is why the lane asks `#print axioms` instead of grepping.
+
+**Totality, not the round trip.** `alloc.fmt.format` extracts uninterpreted, so a
+formatter's output is an arbitrary `String` in the model and a claim over those bytes is
+one its evidence says nothing about. The proposition follows what the toolchain supports,
+measured before it was chosen.
+
 ### Added — the Lean lane measures something (#541)
 
 `verify-lean`, `regenerate-lean` and the Lean half of `check-generated` were stubs that
