@@ -472,13 +472,29 @@ impl RedisFleet {
         let primary = format!("mcp-re-loadgen-redis-primary-{id}");
         let r1 = format!("mcp-re-loadgen-redis-r1-{id}");
         let r2 = format!("mcp-re-loadgen-redis-r2-{id}");
-        // Clean any stale artifacts from a previous aborted run (idempotent).
-        for c in [&primary, &r1, &r2] {
-            let _ = docker(&["rm", "-f", c]);
-        }
-        let _ = docker(&["network", "rm", &net]);
 
-        let created = docker(&["network", "create", &net]);
+        // OWNERSHIP IS A LABEL, NOT A NAME.
+        //
+        // This block previously removed `primary`/`r1`/`r2` and called it "cleaning any
+        // stale artifacts from a previous aborted run". It could never do that: the names
+        // are built from the CURRENT process id just above, so they cannot match a prior
+        // run's containers. The cleanup was unreachable by construction while reading as
+        // though it worked, which is worse than no cleanup at all.
+        //
+        // Reconciling a previous run is now the SUPERVISOR's job (tools/slo/run_supervisor.py),
+        // which runs outside cargo and can therefore still act when this process has been
+        // killed. What happens here is the half only this process can do: stamp every
+        // resource with the run that owns it, so something outside can find them later.
+        //
+        // `unowned-local` marks a developer run with no supervisor. It is deliberately a
+        // distinct value rather than an empty label: "created by a local run" and "created
+        // by an authoritative run whose id was lost" must not look the same to reconciliation.
+        let run_id =
+            std::env::var("MCP_RE_SLO_RUN_ID").unwrap_or_else(|_| "unowned-local".to_string());
+        let own = format!("com.mcp-re.slo.run={run_id}");
+        let slo = "com.mcp-re.slo=true";
+
+        let created = docker(&["network", "create", "--label", slo, "--label", &own, &net]);
         assert!(
             created.status.success(),
             "docker network create failed (is the Docker daemon running?): {}",
@@ -500,6 +516,10 @@ impl RedisFleet {
         let mut primary_args: Vec<&str> = vec![
             "run",
             "-d",
+            "--label",
+            slo,
+            "--label",
+            &own,
             "--name",
             &primary,
             "--network",
@@ -521,6 +541,10 @@ impl RedisFleet {
             let mut a: Vec<&str> = vec![
                 "run",
                 "-d",
+                "--label",
+                slo,
+                "--label",
+                &own,
                 "--name",
                 r,
                 "--network",
@@ -584,9 +608,19 @@ impl RedisFleet {
 }
 
 impl Drop for RedisFleet {
+    /// The FAST path, not the guarantee.
+    ///
+    /// This releases the fleet in milliseconds on a normal exit and on a panic, which is
+    /// worth having. It cannot run on SIGKILL, on a cancelled job whose process group is
+    /// killed, or when the runner dies -- so it is not what makes the plane clean. That is
+    /// the supervisor's clean-end gate, which verifies by label rather than trusting a
+    /// destructor to have executed.
+    ///
+    /// `-v` removes the container's anonymous volumes too: redis runs with `appendonly
+    /// yes`, so every container owns one, and `rm -f` alone leaks them one fleet at a time.
     fn drop(&mut self) {
         for c in &self.containers {
-            let _ = docker(&["rm", "-f", c]);
+            let _ = docker(&["rm", "-fv", c]);
         }
         let _ = docker(&["network", "rm", &self.net]);
     }

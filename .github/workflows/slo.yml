@@ -17,11 +17,23 @@
 #
 # WHAT THIS JOB RELIES ON, stated plainly because the exclusivity claim is the point:
 #
-#   * A self-hosted runner APPLICATION executes one job at a time, so no other Actions job
-#     runs on this host while the lane measures. That property holds while exactly one
-#     runner is registered on the host. How many are registered is runner-host
-#     configuration, and it is NOT readable from this tree — the same limit
-#     `scripts/merge_path_gate.py` states about branch protection.
+#   * dev1 enforces a HOST-LEVEL EXCLUSIVE RESERVATION for release-grade SLO measurement.
+#     All runner applications sharing the physical host honour it at pre-job admission,
+#     work already executing drains before measurement, and the lane begins only after
+#     bounded quiescence has been established.
+#
+#     The previous version of this comment said a single registered runner made contention
+#     "structurally impossible". That was MEASURED FALSE on 2026-09-10: dev1 hosts three
+#     registered runner applications —
+#
+#         dev1         -> github.com/matssun/code       (macOS)
+#         dev1-mcp-re  -> github.com/matssun/mcp-re     (macOS)
+#         dev1-linux   -> github.com/matssun/code       (colima VM, 4 of 14 cores)
+#
+#     — which serve DIFFERENT repositories and therefore never compete for jobs, only for
+#     the machine. A failed rep ran at host load 12.43 beside another runner. The assurance
+#     now comes from coordination, not from topology: the host does not need to have one
+#     runner, and this file no longer claims that it does. See tools/slo/host_gate.py.
 #   * The `concurrency` group below serialises this workflow against itself, so a push and a
 #     deliberate operator run cannot interleave two measurements. `cancel-in-progress` is
 #     false: cancelling a measurement mid-run is how a release ends up with no number at all.
@@ -163,6 +175,11 @@ jobs:
     # have to settle first.
     timeout-minutes: 90
     env:
+      # The durable evidence store. NOT inside the checkout: Actions cleans the workspace
+      # between runs, so a PASS written there is destroyed and the next identical
+      # fingerprint re-measures for no reason. slo_evidence_identity.py FAILS CLOSED if
+      # this is unset or resolves inside GITHUB_WORKSPACE.
+      MCP_RE_SLO_EVIDENCE_STORE: /opt/verification/slo
       SLO_REPS: ${{ github.event.inputs.reps || '6' }}
       SLO_FORCE_REMEASURE: ${{ github.event.inputs.force_remeasure == 'true' && '1' || '0' }}
     steps:
@@ -190,6 +207,65 @@ jobs:
           echo "runner: ${RUNNER_NAME:-<unset>}"
           df -h . | tail -2
 
+      # The declared environment must BE the environment, and the fleet must be built in
+      # it. `dev1-slo-v1` names a dedicated Docker daemon; the bench harness shells plain
+      # `docker`, which would otherwise reach whatever the ambient context happens to be --
+      # so a PASS could be recorded under a class describing a VM it never touched. The
+      # endpoint is read from the declaration, never restated here.
+      - name: Resolve and verify the declared measurement environment
+        id: plane
+        env:
+          # The installed copies live outside the checkout, so they are told where the
+          # declaration is rather than guessing from their own location.
+          MCP_RE_SURFACE_TOML: ${{ github.workspace }}/config/performance-surface.toml
+        run: |
+          set -euo pipefail
+          endpoint="$(python3 /opt/verification/runner-arbiter/bin/environment_preflight.py --print-endpoint)"
+          echo "docker_host=$endpoint" >> "$GITHUB_OUTPUT"
+          echo "The declared measurement plane is $endpoint"
+          python3 /opt/verification/runner-arbiter/bin/environment_preflight.py
+
+      # RUN LIFECYCLE, opened before the first ephemeral resource exists.
+      #
+      # Host exclusivity says nothing about what a PREVIOUS SLO run left behind. A stale
+      # fleet's load lands in the quiescence window, and a fleet answering on the port this
+      # run expects would be measured as though this run had started it. So reconciliation
+      # happens here -- after the reservation and drain, BEFORE anything is measured.
+      #
+      # Reconciliation acts only on resources whose ownership is established by label. An
+      # unlabelled occupant is INFRASTRUCTURE_UNAVAILABLE and the run refuses: we do not
+      # destroy what we did not create.
+      - name: Open the run lifecycle (reconcile, then assert a clean plane)
+        id: run
+        env:
+          MCP_RE_SURFACE_TOML: ${{ github.workspace }}/config/performance-surface.toml
+        run: |
+          set -euo pipefail
+          run_id="$(python3 /opt/verification/runner-arbiter/bin/run_supervisor.py run-id)"
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "SLO run identity: $run_id"
+          MCP_RE_SLO_RUN_ID="$run_id" python3 /opt/verification/runner-arbiter/bin/run_supervisor.py begin
+
+      # Only NOW, on a plane proven empty by the supervisor above.
+      - name: Establish host quiescence (after the plane is clean)
+        run: |
+          set -euo pipefail
+          exec /usr/bin/env python3 \
+            /opt/verification/runner-arbiter/bin/runner_arbiter.py quiesce
+
+      # ASK the host authority; do not become it. The admission state machine lives on the
+      # host in tools/slo/host_gate.py, installed at /opt/verification/runner-arbiter, and
+      # this step reads its verdict rather than re-deriving exclusivity in YAML. A non-zero
+      # exit here means the reservation, the drain, the participation of all three runner
+      # applications, or the quiescence could not be established — in which case the lane
+      # must NOT publish a number.
+      - name: Assert physical-host exclusivity (host arbiter)
+        run: |
+          set -euo pipefail
+          /opt/verification/runner-arbiter/bin/job-started.sh >/dev/null 2>&1 || true
+          exec /usr/bin/env python3 \
+            /opt/verification/runner-arbiter/bin/runner_arbiter.py assert-exclusive
+
       # The aggregate, not the lane script directly. Stage 4 is a PROCEDURE — decide against
       # the evidence identity, refuse below the declared disk floor, measure, then attest a
       # PASS and only a PASS — and `scripts/local_gate.sh` is where that procedure is
@@ -202,7 +278,33 @@ jobs:
       - name: SLO lane (local_gate.sh stage 4)
         env:
           MCP_RE_LOADGEN_HW_CLASS: ${{ steps.context.outputs.hardware_class }}
+          # Routes the bench harness's Redis fleet to the daemon the class declares,
+          # instead of whatever the ambient Docker context points at.
+          DOCKER_HOST: ${{ steps.plane.outputs.docker_host }}
+          # Every Docker resource the harness creates is stamped with this, which is what
+          # lets teardown and the next run's reconciliation find them.
+          MCP_RE_SLO_RUN_ID: ${{ steps.run.outputs.run_id }}
         run: scripts/local_gate.sh --from 4
+
+      # UNCONDITIONAL. `if: always()` so it runs on success, on a benchmark FAIL, on
+      # INCONCLUSIVE, on a setup failure after partial startup, and on cancellation where
+      # GitHub still reaches the step. It exits non-zero if anything this run created
+      # survived -- a measurement that leaves its plane dirty is not attestable, because
+      # cleanup success is part of the validity of the result.
+      #
+      # It does NOT claim to cover SIGKILL or power loss: no code of ours executes there.
+      # Those are repaired by the next run's reconciliation, which is why ownership is a
+      # durable label rather than a destructor.
+      # `always()` AND a run id: if the lifecycle never opened, this run created nothing,
+      # so there is nothing to close. Running teardown anyway would fail looking for a
+      # declaration and report an infrastructure failure that did not happen.
+      - name: Close the run lifecycle (teardown, then assert a clean plane)
+        if: always() && steps.run.outputs.run_id != ''
+        env:
+          MCP_RE_SLO_RUN_ID: ${{ steps.run.outputs.run_id }}
+          DOCKER_HOST: ${{ steps.plane.outputs.docker_host }}
+          MCP_RE_SURFACE_TOML: ${{ github.workspace }}/config/performance-surface.toml
+        run: python3 /opt/verification/runner-arbiter/bin/run_supervisor.py end
 
       # The reports are what an operator declares this class's anchor from, and what a later
       # reader compares a regression against. Kept on `always()`: a FAIL, an INCONCLUSIVE and
