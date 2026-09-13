@@ -31,7 +31,9 @@ echo "ports: A=${A} B=${B} inner=${INNER} redis=${REDIS}  tier=${TIER}  (config/
 pids=()
 cleanup() {
   for p in "${pids[@]:-}"; do kill "$p" 2>/dev/null || true; done
-  docker rm -f redis-primary redis-r1 redis-r2 >/dev/null 2>&1 || true
+  # -v, not just -f: redis declares VOLUME, so each run would otherwise strand
+  # three anonymous volumes.
+  docker rm -fv redis-primary redis-r1 redis-r2 >/dev/null 2>&1 || true
   docker network rm "$NET" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -39,7 +41,9 @@ trap cleanup EXIT
 wait_port() { for _ in $(seq 1 50); do nc -z 127.0.0.1 "$1" 2>/dev/null && return 0; sleep 0.2; done; return 1; }
 
 # --- 1. Redis primary + 2 replicas (WAIT 2 quorum) ------------------------------
-docker rm -f redis-primary redis-r1 redis-r2 >/dev/null 2>&1 || true
+# -v, not just -f: redis declares VOLUME, so each run would otherwise strand
+# three anonymous volumes.
+docker rm -fv redis-primary redis-r1 redis-r2 >/dev/null 2>&1 || true
 docker network rm "$NET" >/dev/null 2>&1 || true
 docker network create "$NET" >/dev/null
 echo "redis: starting primary (published on ${REDIS}) + 2 replicas in Docker"

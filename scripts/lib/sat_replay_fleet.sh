@@ -25,7 +25,9 @@ SAT_FLEET_STARTED=0
 
 sat_fleet_down() {
   if (( SAT_FLEET_STARTED )); then
-    docker rm -f "$SAT_FLEET_PRIMARY" "${SAT_FLEET_REPLICAS[@]}" >/dev/null 2>&1 || true
+    # -v, not just -f: redis declares VOLUME, so each run strands one anonymous
+    # volume per node without it.
+    docker rm -fv "$SAT_FLEET_PRIMARY" "${SAT_FLEET_REPLICAS[@]}" >/dev/null 2>&1 || true
     docker network rm "$SAT_FLEET_NET" >/dev/null 2>&1 || true
     SAT_FLEET_STARTED=0
   fi
@@ -40,7 +42,7 @@ sat_fleet_up() {
     echo "saturation fleet: need Docker for the replay fleet, or set MCP_RE_SAT_REDIS_URL" >&2
     return 2
   fi
-  docker rm -f "$SAT_FLEET_PRIMARY" "${SAT_FLEET_REPLICAS[@]}" >/dev/null 2>&1 || true
+  docker rm -fv "$SAT_FLEET_PRIMARY" "${SAT_FLEET_REPLICAS[@]}" >/dev/null 2>&1 || true
   docker network rm "$SAT_FLEET_NET" >/dev/null 2>&1 || true
   docker network create "$SAT_FLEET_NET" >/dev/null || return 2
   SAT_FLEET_STARTED=1
