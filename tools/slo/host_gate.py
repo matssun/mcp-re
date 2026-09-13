@@ -106,8 +106,30 @@ MIRROR = Path(os.environ.get("MCP_RE_ARBITER_MIRROR", str(Path.home() / ".runner
 # Runner hooks have no built-in timeout, so an unbounded wait wedges a runner permanently
 # with nothing to show an operator. Every wait is bounded; every expiry REFUSES.
 ORDINARY_WAIT_S = int(os.environ.get("MCP_RE_ARBITER_ORDINARY_WAIT_S", 45 * 60))
-DRAIN_WAIT_S = int(os.environ.get("MCP_RE_ARBITER_DRAIN_WAIT_S", 60 * 60))
+
+# HOW LONG THE HOST MAY STAY CLOSED WHILE THE OWNER DRAINS.
+#
+# This is not merely the owner's patience -- it is the blast radius. From the moment the
+# reservation is granted, NO new ordinary job is admitted on ANY runner, which is what stops
+# the queue refilling while pre-existing work finishes. So the bound is how long one
+# already-running job can hold the whole machine closed to CI.
+#
+# It was 60 minutes, and that was measured to be too generous. On 2026-09-12 a genrule hung
+# (see PR #8470) and the reservation sat behind it; the host was closed to every repository
+# for the better part of an hour before the bound expired. One stalled job should not cost
+# the fleet an hour.
+#
+# 30 minutes, because the trade is asymmetric: an SLO that gives up is re-dispatched at no
+# cost to anyone, while a closed host blocks every other PR on the machine. A legitimate
+# ordinary job longer than this simply means the benchmark retries later, which is the
+# cheaper failure.
+DRAIN_WAIT_S = int(os.environ.get("MCP_RE_ARBITER_DRAIN_WAIT_S", 30 * 60))
 POLL_S = float(os.environ.get("MCP_RE_ARBITER_POLL_S", 5))
+
+#: How often the drain re-announces what it is waiting on. It used to say so ONCE, so a
+#: stalled drain looked identical to a fast one from the outside and the operator had to go
+#: read the arbiter log to find out which job was holding the host.
+DRAIN_ANNOUNCE_S = float(os.environ.get("MCP_RE_ARBITER_DRAIN_ANNOUNCE_S", 60))
 
 # Quiescence. The old rule read load1 once. The failed run shows why one instantaneous
 # sample cannot carry a release-grade claim:  1m=3.48 "quiet",  5m=5.73,  15m=5.61 --
@@ -385,25 +407,45 @@ def await_drain(p: dict[str, Path], ident: JobIdentity, vm_workers,
     `vm_workers` is a callable returning the VM's live worker count, injected so this stays
     testable without a VM and so the VM observation is explicit rather than hidden here.
     """
-    deadline = time.monotonic() + wait_s
+    started = time.monotonic()
+    deadline = started + wait_s
     announced: list[dict] = []
+    last_announce = 0.0
     while True:
         others = [r for r in active_records(p) if r.get("key") != ident.key]
         vm_n = vm_workers()
         if not others and vm_n == 0:
             log(p, "gate.drained", drained=announced)
             return announced
+
+        waiting_on = [{"key": r.get("key"),
+                       "runner": r.get("identity", {}).get("runner"),
+                       "job": r.get("identity", {}).get("job"),
+                       "reported_by": r.get("reported_by")} for r in others]
+        if not announced:
+            announced = waiting_on
+
         if time.monotonic() >= deadline:
+            # Name the blocker. A refusal that says only "did not drain" sends the operator
+            # to the arbiter log to discover WHICH job held the host, which is a step they
+            # should not have to take while CI is blocked.
+            blockers = ", ".join(
+                f"{w['runner']}:{w['job']}" for w in waiting_on) or f"{vm_n} VM worker(s)"
             raise ArbiterError(
-                f"pre-existing work did not drain within {wait_s}s (non-owner active="
-                f"{len(others)}, vm workers={vm_n}). Refusing to measure beside it, and "
-                "refusing to kill it."
+                f"pre-existing work did not drain within {wait_s}s and the host reservation "
+                f"is being released so ordinary work can resume. Still running: {blockers} "
+                f"(non-owner active={len(others)}, vm workers={vm_n}). The benchmark was NOT "
+                f"measured beside it, and that work was NOT killed — re-dispatch the SLO when "
+                f"the host is quieter."
             )
-        if not announced and others:
-            announced = [{"key": r.get("key"),
-                          "runner": r.get("identity", {}).get("runner"),
-                          "reported_by": r.get("reported_by")} for r in others]
-            log(p, "gate.draining", waiting_on=announced, vm_workers=vm_n)
+
+        # Re-announce periodically. Said once, a stalled drain is indistinguishable from a
+        # fast one until somebody reads the log.
+        elapsed = time.monotonic() - started
+        if elapsed - last_announce >= DRAIN_ANNOUNCE_S or last_announce == 0.0:
+            log(p, "gate.draining", waited_s=int(elapsed), budget_s=wait_s,
+                waiting_on=waiting_on, vm_workers=vm_n)
+            last_announce = elapsed
         time.sleep(POLL_S)
 
 
