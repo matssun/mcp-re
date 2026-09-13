@@ -60,8 +60,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from dataclasses import field
 import json
+import os
 from pathlib import Path
 import re
+import tempfile
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -337,6 +339,30 @@ def node_runtime_dir(runtime: str) -> str:
     return NODE_RUNTIME_DIR.format(major=runtime.split(".")[0])
 
 
+def vitest_report_path(runtime: str, target: str) -> Path:
+    """The file the vitest lane tells the runner to write its machine-readable report to.
+
+    Named rather than found, and the reason is a measured CI failure. vitest 4's json
+    reporter wrote the report to stdout, so the lane SCANNED stdout for it. vitest 5's does
+    not: given no `outputFile` it writes `.vitest/json/output.json` under the project root
+    and logs only the path, so the same suite that passed on 4 came back from 5 as `vitest
+    wrote no JSON report` — the lane unable to read a runner, which it correctly refused to
+    present as a battery of controls that never ran. A report whose location the lane states
+    does not depend on which version of the runner is installed; both honour the flag.
+
+    Outside the repository, because a report is an artefact OF the measurement and does not
+    belong in the tree being measured — a run would otherwise leave an untracked directory
+    in `sdk/typescript` that the fingerprint would then have to be taught to ignore.
+
+    Per process and per (runtime, target), because the lane re-runs unread names one at a
+    time in the same process, and across the pinned Node versions in turn. A single path
+    would let a name be answered by the run before it: `ok` read from a report that measured
+    a different runtime is not evidence about this one.
+    """
+    slug = re.sub(r"[^A-Za-z0-9_.-]", "_", f"{runtime}-{target}")
+    return Path(tempfile.gettempdir()) / f"mcp-re-vitest-{os.getpid()}" / f"{slug}.json"
+
+
 #: How each ecosystem's prepared runtime is reached and asked its own version. One table
 #: rather than a chain of `if eco is …`: adding an ecosystem's runtime dimension should be
 #: a row, and a lane that cannot ask a runtime its version cannot enforce a pin.
@@ -453,6 +479,8 @@ def test_argv(
             "node_modules/vitest/vitest.mjs",
             "run",
             "--reporter=json",
+            # WHERE the report goes is the lane's to say — see `vitest_report_path`.
+            f"--outputFile={vitest_report_path(runtime, target)}",
             *files,
         ]
     raise ValueError(f"no test command for ecosystem {eco.name!r}")

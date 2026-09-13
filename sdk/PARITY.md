@@ -203,7 +203,7 @@ complete record (§9.3), not a spliced one.
 cd sdk/python && maturin develop && pytest --cov      # 90% gate in pyproject.toml
 
 # TypeScript
-cd sdk/typescript && npm test                          # 90% gate in vitest.config.ts
+cd sdk/typescript && npm test                          # 90% gate in vitest.config.mts
 ```
 
 The live proxy e2e tests self-skip without their harness (a built

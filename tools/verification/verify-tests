@@ -58,11 +58,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _ecosystems import CARGO  # noqa: E402
 from _ecosystems import RUNTIME_PROBES  # noqa: E402
+from _ecosystems import TYPESCRIPT  # noqa: E402
 from _ecosystems import ReportUnreadable  # noqa: E402
 from _ecosystems import parse_results  # noqa: E402
 from _ecosystems import test_argv  # noqa: E402
 from _ecosystems import unit_ecosystem  # noqa: E402
 from _ecosystems import valid_target  # noqa: E402
+from _ecosystems import vitest_report_path  # noqa: E402
 from _evidence import EvidenceRecord, evidence_store, write_record  # noqa: E402
 from _fingerprint import fingerprint_unit  # noqa: E402
 from _manifest import (  # noqa: E402
@@ -133,6 +135,33 @@ def group_by_target(eco, symbols: list[str]) -> tuple[dict[str, list[str]], list
     return dict(grouped), malformed
 
 
+def _clear_report(eco, target: str, runtime: str | None) -> None:
+    """Remove any report left where this run's runner is about to write one.
+
+    Only vitest is told where to put its report, so only vitest can find one already there.
+    Clearing it is what makes the next read a statement about THIS run: without it, a run
+    that dies before writing leaves the previous answer in place, and the lane would read a
+    stale `ok` for a name it had just failed to measure.
+    """
+    if eco is not TYPESCRIPT or runtime is None:
+        return
+    vitest_report_path(runtime, target).unlink(missing_ok=True)
+
+
+def _report(eco, target: str, runtime: str | None, stdout: str) -> str:
+    """What the lane reads: the report the runner was told to write, or the run's output.
+
+    The fallback is the diagnosis, not a second chance at a result. A missing report means
+    the run did not reach the point of writing one, and what it printed on its way to not
+    getting there is exactly what a human needs to see — so it is handed to the same reader,
+    which fails on it as an unreadable report rather than as controls that did not pass.
+    """
+    if eco is not TYPESCRIPT or runtime is None:
+        return stdout
+    path = vitest_report_path(runtime, target)
+    return path.read_text() if path.exists() else stdout
+
+
 def _rerun_unread(
     eco, crate: str, target: str, names: list[str], features: list[str],
     runtime: str | None = None,
@@ -150,6 +179,7 @@ def _rerun_unread(
     """
     recovered: set[str] = set()
     for name in names:
+        _clear_report(eco, target, runtime)
         again = subprocess.run(
             test_argv(eco, crate, target, [name], features, runtime),
             cwd=REPO_ROOT if eco is CARGO else REPO_ROOT / crate,
@@ -159,7 +189,7 @@ def _rerun_unread(
             check=False,
         )
         try:
-            fresh = parse_results(eco, again.stdout)
+            fresh = parse_results(eco, _report(eco, target, runtime, again.stdout))
         except ReportUnreadable:
             fresh = {}
         if again.returncode == 0 and fresh.get(name) == "ok":
@@ -185,6 +215,7 @@ def run_selection(
     """
     features = list(features or [])
     argv = test_argv(eco, crate, target, paths, features, runtime)
+    _clear_report(eco, target, runtime)
     proc = subprocess.run(
         argv,
         # Cargo is driven from the workspace root with `-p`; a pytest or vitest selection is
@@ -217,7 +248,7 @@ def run_selection(
         return True, f"{target}: {len(paths)} item(s) passed"
 
     try:
-        observed = parse_results(eco, proc.stdout)
+        observed = parse_results(eco, _report(eco, target, runtime, proc.stdout))
     except ReportUnreadable as unreadable:
         # Not "the controls failed" — the lane could not read the runner. Reported as its
         # own failure, with what the runner said, because presenting an unread report as a
