@@ -605,9 +605,8 @@ jobs:
   # ---------------------------------------------------------------------------
   verification:
     # Renamed from `host` with the jobs merged: it is no longer the host half of a pair.
-    # Safe to rename because neither verification job is a required status check — the
-    # `Protect main` ruleset requires three contexts, and two of them name a Rust version
-    # this repository no longer builds with, so they can never report at all.
+    # Safe to rename because neither verification job is a required status check: the
+    # `Protect main` ruleset requires three contexts and this is not one of them.
     name: verification platform
     # Same-repository refs only. This job executes the checked-out tree's own
     # `tools/verification/*` on a persistent self-hosted Mac mini that holds the pinned
@@ -624,6 +623,22 @@ jobs:
     # targets, so this job now carries a Cargo build rather than only manifest parsing and
     # a prover invocation.
     timeout-minutes: 60
+    env:
+      # THE ENDPOINT IS DECLARED, NOT INHERITED.
+      #
+      # Without this the docker CLI resolves through `currentContext` in the runner user's
+      # ~/.docker/config.json — one global, mutable, last-writer-wins value that every
+      # `colima start` rewrites. The host runs four Colima profiles, so the daemon this job
+      # measured was whichever profile started most recently, and on 2026-09-13 that was a
+      # stopped one: the context had fallen back to `default`, which on this host is a
+      # symlink to a Docker Desktop socket that does not exist.
+      #
+      # Naming it also makes the failure the right KIND of failure. An absent context is
+      # refused outright rather than silently resolving to some other daemon, so a job that
+      # cannot reach its declared runtime fails as unavailable infrastructure instead of
+      # quietly measuring the wrong one. Repairing it is the host supervisor's job
+      # (`~/.local/bin/colima-watchdog.sh` on the runner), never this workflow's.
+      DOCKER_CONTEXT: colima
     steps:
       - uses: actions/checkout@v7
 
@@ -763,6 +778,11 @@ jobs:
           # An unavailable runtime is a lane that CANNOT run. On the authoritative runner
           # that is a failure, never a SKIP — silence must not read as evidence. macOS
           # cannot run Linux containers natively, so this is a real host prerequisite.
+          #
+          # The probe names the endpoint it is asserting about (job-level DOCKER_CONTEXT),
+          # so what this step reports reachable is the same daemon every step below runs on.
+          echo "asserting the declared endpoint: DOCKER_CONTEXT=${DOCKER_CONTEXT}"
+          docker context inspect "${DOCKER_CONTEXT}" --format 'endpoint {{.Endpoints.docker.Host}}'
           docker info --format 'server {{.ServerVersion}} {{.OSType}}/{{.Architecture}}'
 
       # The environment is LOADED FROM THE PRESERVED ARTIFACT, not taken from Docker's

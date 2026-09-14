@@ -264,6 +264,35 @@ def test_the_preserved_bytes_are_part_of_the_model_stamp_identity():
     assert identity.get("extraction_container.artifact_digest") == IMAGE
 
 
+def test_a_streamed_command_keeps_its_output_off_the_tools_stdout():
+    """`load` prints ONE line — the image id — and a caller substitutes it into a shell
+    variable. `docker load` also writes `Loaded image: <tag>`, on stdout, and streaming it
+    by inheriting the parent's stdout put both lines there. Measured on CI 2026-09-13: the
+    workflow step did `image="$(extraction-image load)"` and GitHub Actions refused the
+    two-line value with `Invalid format 'sha256:…'`.
+
+    It had never fired because the load branch only runs when the image is ABSENT from the
+    local store, and every prior run found it present — the step that exists to load the
+    preserved artifact was green on every run in which it did nothing. A cold store is the
+    case it is FOR, and it was the case nobody had measured."""
+    import subprocess
+
+    tool = load_tool("extraction-image", "extraction_image_stream_probe")
+    probe = (
+        "import sys;"
+        "sys.path.insert(0, %r);"
+        "from _load_tool import load_tool;"
+        "t = load_tool('extraction-image', 'exim_probe');"
+        "t._run(['sh', '-c', 'echo NOISE_FROM_THE_CHILD'], capture=False);"
+        "print('THE_ONE_VALUE_LINE')"
+    ) % str(Path(tool.__file__).resolve().parent)
+    done = subprocess.run(
+        [sys.executable, "-c", probe], text=True, capture_output=True, check=True
+    )
+    assert done.stdout.splitlines() == ["THE_ONE_VALUE_LINE"], done.stdout
+    assert "NOISE_FROM_THE_CHILD" in done.stderr
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

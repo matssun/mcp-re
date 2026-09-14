@@ -84,12 +84,17 @@ def _run(cmd: list[str], *, capture: bool = True) -> str:
     Status is taken from the process itself, never from a shell pipeline: a pipeline
     reports its last stage, so a failed build can exit 0 and be recorded as a good one.
 
-    `capture=False` streams instead, for the two commands that take minutes and whose
-    progress is the only sign they are alive.
+    `capture=False` streams instead, for the commands that take minutes and whose progress
+    is the only sign they are alive. A streamed command's output is PROGRESS, not a value,
+    so it goes to fd 2 rather than being inherited onto this tool's stdout. `docker load`
+    prints `Loaded image: <tag>` on stdout, and `load`'s contract is ONE line — inheriting
+    put both on stdout, which the caller assigned to a single shell variable.
     """
-    completed = subprocess.run(cmd, text=True, capture_output=capture, check=False)
     if capture:
+        completed = subprocess.run(cmd, text=True, capture_output=True, check=False)
         sys.stderr.write(completed.stderr)
+    else:
+        completed = subprocess.run(cmd, text=True, stdout=2, check=False)
     if completed.returncode != 0:
         raise SystemExit(f"FAIL: {' '.join(cmd[:3])}… exited {completed.returncode}")
     return (completed.stdout or "").strip()
