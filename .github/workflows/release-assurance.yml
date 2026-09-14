@@ -78,7 +78,7 @@ jobs:
           find .verification/evidence -mindepth 2 -maxdepth 2 -type f -name '*.json' \
             -exec mv -f {} .verification/evidence/ \;
           find .verification/evidence -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +
-          echo "records: $(ls -1 .verification/evidence | wc -l | tr -d ' ')"
+          echo "records: $(find .verification/evidence -maxdepth 1 -type f | wc -l | tr -d ' ')"
 
       # The one authority. Everything above prepared its inputs; nothing above decided.
       - name: Release assurance
