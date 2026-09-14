@@ -1,0 +1,274 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""The canonical release-assurance command — ADR-MCPRE-059 §28.8, issues #542 / #739.
+
+There is exactly one repository-level release-assurance authority and this is it. A
+workflow, a runbook or a release procedure CALLS it; none of them reimplements what it
+decides, because a semantics written twice is a semantics that disagrees with itself the
+first time either copy moves.
+
+# Why it exists
+
+`review --require-root-complete` is the binding closure mode: it fails unless every
+declared system root is established, and it is deliberately NOT on the merge path (§28.8 —
+a gate that punishes recording an honest GAP teaches people not to record it). Measured on
+2026-09-14, it had **zero invokers**: not one shell script and not one workflow ran it. It
+had been run by hand for v0.16 and v0.17 and its verdict typed into a provenance document.
+
+That is this repository's own "prose and status are claims, not evidence" rule applied to
+the campaign's closure criterion. A remembered command plus a typed sentence is not
+evidence that anything was measured.
+
+# What this command owns, and what it only calls
+
+It owns RELEASE-LEVEL COMPOSITION: which authorities must answer, that they answered about
+ONE immutable tree, and the record of what they said. Every verdict inside it belongs to an
+existing authority and is obtained by calling it:
+
+| question | authority called |
+|---|---|
+| does the evidence compose to a repository verdict | `verify --aggregate --gate` |
+| are the trusted premises accounted for | `check-assumptions` |
+| is every declared system root established | `review --require-root-complete` |
+| is every published claim reviewed at its current fingerprint | `scripts/claim_surface_gate.py` |
+
+No verifier is reimplemented here. If a future question already has an owner, it is added
+to that table, not reproduced below it.
+
+# The exact-tree requirement
+
+Release assurance is about one immutable commit, so ambiguity is refused rather than
+resolved. A dirty working tree fails: the authorities measure the checkout, so a record
+naming a commit whose tree is not the one measured would be a false identity. `--target`
+must name the commit that is checked out, for the same reason — this command measures
+here, it does not fetch.
+
+Run:  tools/verification/release-assurance
+      tools/verification/release-assurance --target <sha>
+      tools/verification/release-assurance --selftest
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+TOOLS = REPO_ROOT / "tools" / "verification"
+
+#: Bumped whenever a reader would interpret an existing field differently. A record with an
+#: unknown version is refused by its consumers rather than read optimistically.
+SCHEMA_VERSION = 1
+
+#: The composition. Each entry is (step id, argv, what it establishes). The ORDER is the
+#: order a reader should think in — identity, then evidence, then premises, then the
+#: binding root check, then the published surface — and a failure stops the run, because a
+#: later authority's answer about an already-failed tree is not information.
+STEPS: tuple[tuple[str, list[str], str], ...] = (
+    (
+        "evidence_composition",
+        [sys.executable, str(TOOLS / "verify"), "--aggregate", "--gate"],
+        "the evidence records in the store compose to a repository verdict",
+    ),
+    (
+        "trusted_premises",
+        [sys.executable, str(TOOLS / "check-assumptions")],
+        "every escape hatch and trusted premise is registered to a site",
+    ),
+    (
+        "root_completeness",
+        [sys.executable, str(TOOLS / "review"), "--require-root-complete"],
+        "every declared system root is established — the binding closure mode",
+    ),
+    (
+        "published_claims",
+        [sys.executable, str(REPO_ROOT / "scripts" / "claim_surface_gate.py")],
+        "every published claim is a declared root reviewed at its current fingerprint",
+    ),
+)
+
+
+def git(*args: str) -> str:
+    """One `git` question, answered or raised. Never through a pipe.
+
+    A pipeline reports its LAST stage, so a failed `git` read through one exits 0 with an
+    empty answer — and an empty commit id would be recorded as an identity.
+    """
+    proc = subprocess.run(
+        ["git", *args], cwd=REPO_ROOT, capture_output=True, text=True, check=False
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"git {' '.join(args)} exited {proc.returncode}: {proc.stderr.strip()}")
+    return proc.stdout.strip()
+
+
+def target_identity(requested: str | None) -> dict[str, str]:
+    """Which immutable thing this record is about — refusing every ambiguity.
+
+    Three facts, because one of them alone is not an identity. The COMMIT is what a reader
+    cites; the TREE is what was actually measured, and a release that moves a commit message
+    or a parent keeps the tree it qualified; the REMOTE says which repository's commit that
+    is, because a bare SHA is only unique by convention.
+    """
+    dirty = git("status", "--porcelain")
+    if dirty:
+        raise RuntimeError(
+            "the working tree is not clean, so no commit identifies what would be "
+            "measured:\n  " + "\n  ".join(dirty.splitlines()[:10])
+        )
+    commit = git("rev-parse", "HEAD")
+    if requested and requested != commit and not commit.startswith(requested):
+        raise RuntimeError(
+            f"--target {requested} is not the checked-out commit {commit}. This command "
+            "measures the tree it is run in; it does not fetch or check out a target."
+        )
+    try:
+        remote = git("remote", "get-url", "origin")
+    except RuntimeError:
+        remote = ""
+    return {
+        "repository": remote,
+        "commit": commit,
+        "tree": git("rev-parse", "HEAD^{tree}"),
+    }
+
+
+def run_step(argv: list[str]) -> tuple[int, str]:
+    """Execute one authority and return ITS OWN status and output.
+
+    Streams merged and the child's own return code read directly: reading a gate's result
+    through a pipe reports the pipe's last stage, and this repository has already recorded
+    a failed gate passing that way.
+    """
+    proc = subprocess.run(
+        argv, cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False
+    )
+    return proc.returncode, proc.stdout
+
+
+def compose(identity: dict[str, str], steps=STEPS, runner=run_step) -> dict:
+    """Call each authority in order, stop at the first refusal, and state one verdict."""
+    results = []
+    verdict = "PASS"
+    for step_id, argv, establishes in steps:
+        code, output = runner(argv)
+        results.append(
+            {
+                "step": step_id,
+                "command": " ".join(Path(a).name if a.startswith("/") else a for a in argv),
+                "establishes": establishes,
+                "exit_status": code,
+                "verdict": "PASS" if code == 0 else "FAIL",
+                "tail": output.strip().splitlines()[-1] if output.strip() else "",
+            }
+        )
+        if code != 0:
+            verdict = "FAIL"
+            break
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "kind": "release-assurance",
+        "target": identity,
+        "recorded_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "steps": results,
+        "root_completeness": next(
+            (r["verdict"] for r in results if r["step"] == "root_completeness"), "NOT_REACHED"
+        ),
+        "verdict": verdict,
+    }
+
+
+def summarize(record: dict) -> str:
+    """The human account, DERIVED from the record rather than written beside it."""
+    target = record["target"]
+    lines = [
+        "RELEASE ASSURANCE",
+        f"  repository      {target['repository'] or '(no origin remote)'}",
+        f"  commit          {target['commit']}",
+        f"  tree            {target['tree']}",
+        f"  recorded at     {record['recorded_at']}",
+        "",
+    ]
+    for step in record["steps"]:
+        lines.append(f"  {step['verdict']:5s} {step['step']:22s} {step['establishes']}")
+        if step["verdict"] != "PASS" and step["tail"]:
+            lines.append(f"        {step['tail']}")
+    lines += ["", f"  root completeness   {record['root_completeness']}"]
+    lines.append(f"RELEASE ASSURANCE: {record['verdict']}")
+    return "\n".join(lines)
+
+
+def selftest() -> int:
+    """The activation probe. A composition that cannot be shown to fail is not a gate.
+
+    The two directions that matter: every authority passing is the ONLY way to a PASS, and
+    a refusal anywhere — including one that is not the last step — stops the run and is
+    reported as the verdict rather than averaged away.
+    """
+    identity = {"repository": "r", "commit": "c" * 40, "tree": "t" * 40}
+    green = tuple((s, a, e) for s, a, e in STEPS)
+
+    ok = compose(identity, green, lambda argv: (0, "VERDICT: PASS"))
+    assert ok["verdict"] == "PASS", "every authority passing must compose to PASS"
+    assert ok["root_completeness"] == "PASS"
+    assert len(ok["steps"]) == len(STEPS), "a PASS must have asked every authority"
+
+    for index, (step_id, _, _) in enumerate(STEPS):
+        red = compose(
+            identity,
+            green,
+            lambda argv, i=index: (0, "ok") if argv is not STEPS[i][1] else (1, "FAIL: no"),
+        )
+        assert red["verdict"] == "FAIL", f"a refusal at {step_id} must fail the composition"
+        assert red["steps"][-1]["step"] == step_id, "the run must stop at the refusal"
+        assert len(red["steps"]) == index + 1, "no authority is consulted after a refusal"
+
+    incomplete = compose(
+        identity, green, lambda argv: (0, "ok") if argv is not STEPS[0][1] else (1, "no")
+    )
+    assert incomplete["root_completeness"] == "NOT_REACHED", (
+        "a run that never reached the binding root check must say so, and must never "
+        "report its absence as a pass"
+    )
+
+    assert "RELEASE ASSURANCE: PASS" in summarize(ok)
+    assert "RELEASE ASSURANCE: FAIL" in summarize(red)
+    print("release-assurance selftest: OK")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--target", help="the commit this record must be about; must be HEAD")
+    parser.add_argument(
+        "--out",
+        default=str(REPO_ROOT / ".verification" / "release-assurance.json"),
+        help="where the machine-readable record is written",
+    )
+    parser.add_argument("--selftest", action="store_true", help="the activation probe")
+    args = parser.parse_args()
+
+    if args.selftest:
+        return selftest()
+
+    try:
+        identity = target_identity(args.target)
+    except RuntimeError as exc:
+        print(f"RELEASE ASSURANCE: FAIL\n  {exc}", file=sys.stderr)
+        return 1
+
+    record = compose(identity)
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(summarize(record))
+    print(f"\n  record          {out}")
+    return 0 if record["verdict"] == "PASS" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

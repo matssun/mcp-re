@@ -1,0 +1,101 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Release assurance — the BINDING closure lane, deliberately off the merge path.
+#
+# ADR-MCPRE-059 §28.8 keeps two modes apart on purpose. Ordinary development CI runs
+# `review --root-completeness`, which is report-only: an honest unresolved GAP under a
+# declared root must not fail everyday work, or the incentive becomes to leave the
+# obligation unrecorded. THIS lane runs the binding mode, where a declared root that is not
+# established fails.
+#
+# It exists because the binding mode had ZERO invokers, measured 2026-09-14. It had been run
+# by hand for v0.16 and v0.17 and its verdict typed into a provenance document — the
+# "prose and status are claims, not evidence" failure applied to a closure criterion.
+#
+# ALL SEMANTICS LIVE IN `tools/verification/release-assurance`. This file checks out a
+# target, gives the command the evidence to compose, runs it, and keeps what it produced.
+# It decides nothing: a verdict computed in YAML is a verdict with no owner and no tests.
+#
+# `workflow_dispatch` only. The target is a ref of THIS repository, so it is a trusted
+# commit rather than a fork head or an untrusted merge ref — the `R9-C025` boundary is not
+# crossed here and is not claimed to be closed by this lane.
+
+name: release assurance
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: The commit, tag or branch to qualify. Checked out exactly.
+        required: true
+        type: string
+      verification_run_id:
+        description: >-
+          A `verification` workflow run ON THIS SAME COMMIT whose evidence records this
+          run composes. Evidence from another tree does not silently pass: the aggregate
+          validates every record against the current fingerprints and reports INCOMPLETE.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  release-assurance:
+    name: release assurance (binding closure)
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+
+      # The command refuses a dirty tree and refuses a `--target` that is not the checked-out
+      # commit, so this resolves the input to the immutable thing the record will name.
+      - name: Resolve the target
+        id: target
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "target commit $sha"
+          echo "target tree   $(git rev-parse 'HEAD^{tree}')"
+
+      - name: The evidence this verdict is composed from
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf .verification/evidence
+          mkdir -p .verification/evidence
+          gh run download "${{ inputs.verification_run_id }}" \
+            --repo "${{ github.repository }}" \
+            --pattern 'verification-evidence-*' \
+            --dir .verification/evidence
+          # The artifact unpacks under a directory named for the run; flatten it so the
+          # evidence store is where `evidence_store()` resolves without an env override.
+          find .verification/evidence -mindepth 2 -maxdepth 2 -type f -name '*.json' \
+            -exec mv -f {} .verification/evidence/ \;
+          find .verification/evidence -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +
+          echo "records: $(ls -1 .verification/evidence | wc -l | tr -d ' ')"
+
+      # The one authority. Everything above prepared its inputs; nothing above decided.
+      - name: Release assurance
+        run: python3 tools/verification/release-assurance --target "${{ steps.target.outputs.sha }}"
+
+      # Kept on failure too. A failing run's record is the thing a reader needs most.
+      #
+      # This artifact is the RUN's copy and it expires. When a release is cut, the same
+      # bytes are committed as `docs/releases/<version>-release-assurance.json` beside the
+      # provenance document, and `scripts/release_assurance_gate.py` checks the document's
+      # assurance block against that tracked record. A document checked against a file that
+      # expires in 90 days is a document that stops being checked.
+      - name: The record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assurance-${{ steps.target.outputs.sha }}-${{ github.run_id }}
+          path: .verification/release-assurance.json
+          if-no-files-found: error
+          retention-days: 90
