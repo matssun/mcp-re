@@ -43,6 +43,24 @@ naming a commit whose tree is not the one measured would be a false identity. `-
 must name the commit that is checked out, for the same reason — this command measures
 here, it does not fetch.
 
+# The evidence was produced somewhere else, and the record says so
+
+The formal lanes run on the verification host and leave records behind; this command
+COMPOSES them. Those records are content-addressed — each is valid at a unit's fingerprint,
+not at a commit — so evidence produced at one commit legitimately composes at another when
+nothing a unit depends on moved between them.
+
+Measured 2026-09-14: records from a run at `782b11e2` composed to `VERIFICATION: PASS` at
+`e607a667`, correctly, because the only change between them was a workflow file that is no
+unit's input. That is the assurance model working as designed, and it is NOT something to
+"fix" by refusing.
+
+What would be dishonest is a record that names one commit and lets a reader assume the
+lanes executed there. So `--evidence-run` and `--evidence-commit` are recorded verbatim
+beside the target, and the summary says plainly when they differ. The claim the record
+supports is the one the aggregate actually establishes: *every required lane has a record
+valid at THIS tree's fingerprints* — never *every lane executed at this commit*.
+
 Run:  tools/verification/release-assurance
       tools/verification/release-assurance --target <sha>
       tools/verification/release-assurance --selftest
@@ -180,7 +198,7 @@ def run_step(argv: list[str]) -> tuple[int, str]:
     return proc.returncode, proc.stdout
 
 
-def compose(identity: dict[str, str], steps=STEPS, runner=run_step) -> dict:
+def compose(identity: dict[str, str], steps=STEPS, runner=run_step, evidence=None) -> dict:
     """Call each authority in order, stop at the first refusal, and state one verdict."""
     results = []
     verdict = "PASS"
@@ -203,6 +221,7 @@ def compose(identity: dict[str, str], steps=STEPS, runner=run_step) -> dict:
         "schema_version": SCHEMA_VERSION,
         "kind": "release-assurance",
         "target": identity,
+        "evidence": evidence or {"source": "local", "run_id": None, "commit": None},
         "recorded_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "steps": results,
         "root_completeness": next(
@@ -221,8 +240,22 @@ def summarize(record: dict) -> str:
         f"  commit          {target['commit']}",
         f"  tree            {target['tree']}",
         f"  recorded at     {record['recorded_at']}",
-        "",
     ]
+    evidence = record.get("evidence") or {}
+    if evidence.get("source") == "local":
+        lines.append("  evidence        this checkout's store")
+    else:
+        lines.append(
+            f"  evidence        run {evidence.get('run_id')} at {evidence.get('commit')}"
+        )
+        if evidence.get("commit") and evidence["commit"] != target["commit"]:
+            lines.append(
+                "                  NOTE: the lanes executed at a DIFFERENT commit. The "
+                "records are\n                  valid at this tree's fingerprints, which "
+                "is what the aggregate\n                  establishes; it is not a claim "
+                "that any lane ran here."
+            )
+    lines.append("")
     for step in record["steps"]:
         lines.append(f"  {step['verdict']:5s} {step['step']:22s} {step['establishes']}")
         if step["verdict"] != "PASS" and step["tail"]:
@@ -273,6 +306,29 @@ def selftest() -> int:
         "python3 tools/verification/verify --gate"
     ), "a record compared across hosts must not carry this machine's interpreter path"
 
+    local = compose(identity, green, lambda argv: (0, "ok"))
+    assert local["evidence"]["source"] == "local", (
+        "a record must always say where its evidence came from, including 'here'"
+    )
+    elsewhere = compose(
+        identity,
+        green,
+        lambda argv: (0, "ok"),
+        evidence={"source": "verification-run", "run_id": "42", "commit": "d" * 40},
+    )
+    assert "DIFFERENT commit" in summarize(elsewhere), (
+        "a record whose lanes ran at another commit must SAY so: content-addressed "
+        "evidence composing elsewhere is correct, and letting a reader assume the lanes "
+        "executed here is not"
+    )
+    same = compose(
+        identity,
+        green,
+        lambda argv: (0, "ok"),
+        evidence={"source": "verification-run", "run_id": "42", "commit": identity["commit"]},
+    )
+    assert "DIFFERENT commit" not in summarize(same)
+
     assert "RELEASE ASSURANCE: PASS" in summarize(ok)
     assert "RELEASE ASSURANCE: FAIL" in summarize(red)
     print("release-assurance selftest: OK")
@@ -287,6 +343,10 @@ def main() -> int:
         default=str(REPO_ROOT / ".verification" / "release-assurance.json"),
         help="where the machine-readable record is written",
     )
+    parser.add_argument("--evidence-run", help="the verification run whose records are composed")
+    parser.add_argument(
+        "--evidence-commit", help="the commit that run measured; recorded, never assumed"
+    )
     parser.add_argument("--selftest", action="store_true", help="the activation probe")
     args = parser.parse_args()
 
@@ -299,7 +359,14 @@ def main() -> int:
         print(f"RELEASE ASSURANCE: FAIL\n  {exc}", file=sys.stderr)
         return 1
 
-    record = compose(identity)
+    evidence = None
+    if args.evidence_run or args.evidence_commit:
+        evidence = {
+            "source": "verification-run",
+            "run_id": args.evidence_run,
+            "commit": args.evidence_commit,
+        }
+    record = compose(identity, evidence=evidence)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")

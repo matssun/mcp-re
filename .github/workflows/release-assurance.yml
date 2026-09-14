@@ -63,26 +63,55 @@ jobs:
           echo "target tree   $(git rev-parse 'HEAD^{tree}')"
 
       - name: The evidence this verdict is composed from
+        id: evidence
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          rm -rf .verification/evidence
-          mkdir -p .verification/evidence
+          # The artifact IS an evidence store: a `bundle.json` beside one directory per
+          # lane. It is restored whole, never flattened -- `evidence_store()` reads the
+          # lane directories, and an earlier form of this step moved `*.json` up one level
+          # and deleted the directories, which would have destroyed every record while
+          # leaving a plausible-looking empty store behind.
+          rm -rf .verification/evidence .verification/_artifact
+          mkdir -p .verification/_artifact
           gh run download "${{ inputs.verification_run_id }}" \
             --repo "${{ github.repository }}" \
             --pattern 'verification-evidence-*' \
-            --dir .verification/evidence
-          # The artifact unpacks under a directory named for the run; flatten it so the
-          # evidence store is where `evidence_store()` resolves without an env override.
-          find .verification/evidence -mindepth 2 -maxdepth 2 -type f -name '*.json' \
-            -exec mv -f {} .verification/evidence/ \;
-          find .verification/evidence -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +
-          echo "records: $(find .verification/evidence -maxdepth 1 -type f | wc -l | tr -d ' ')"
+            --dir .verification/_artifact
+          # One artifact, or refuse. Two would mean two runs' records composed together,
+          # which is a verdict about no single tree.
+          count="$(find .verification/_artifact -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
+          [ "$count" = "1" ] || {
+            echo "expected exactly one verification-evidence artifact, found $count" >&2
+            exit 1
+          }
+          inner="$(find .verification/_artifact -mindepth 1 -maxdepth 1 -type d)"
+          mv "$inner" .verification/evidence
+          rmdir .verification/_artifact
+          test -f .verification/evidence/bundle.json || {
+            echo "the restored store has no bundle.json: it is not an evidence store" >&2
+            exit 1
+          }
+          echo "lanes restored: $(find .verification/evidence -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort | tr '\n' ' ')"
+          echo "records:        $(find .verification/evidence -type f -name '*.json' | wc -l | tr -d ' ')"
+          echo "evidence_commit=$(gh run view "${{ inputs.verification_run_id }}" \
+            --repo "${{ github.repository }}" --json headSha --jq .headSha)" >> "$GITHUB_OUTPUT"
 
       # The one authority. Everything above prepared its inputs; nothing above decided.
+      #
+      # The evidence run's own commit is passed in rather than assumed equal to the target.
+      # Records are content-addressed — valid at a unit's fingerprint, not at a commit — so
+      # evidence produced at one commit legitimately composes at another when nothing a unit
+      # depends on moved. Measured 2026-09-14: records from `782b11e2` composed to PASS at
+      # `e607a667`, correctly. What must not happen is a record that names one commit and
+      # lets a reader assume the lanes executed there.
       - name: Release assurance
-        run: python3 tools/verification/release-assurance --target "${{ steps.target.outputs.sha }}"
+        run: |
+          python3 tools/verification/release-assurance \
+            --target "${{ steps.target.outputs.sha }}" \
+            --evidence-run "${{ inputs.verification_run_id }}" \
+            --evidence-commit "${{ steps.evidence.outputs.evidence_commit }}"
 
       # Kept on failure too. A failing run's record is the thing a reader needs most.
       #
