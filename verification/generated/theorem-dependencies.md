@@ -440,3 +440,10 @@ graph BT
 graph BT
     THM_0125["THM-0125<br/>A request a verifier could not bind is refused before it is sent, and a notification is not a request with no id"]
 ```
+
+## Component 23
+
+```mermaid
+graph BT
+    THM_0128["THM-0128<br/>The civil-date conversion is total on the domain its caller can supply"]
+```

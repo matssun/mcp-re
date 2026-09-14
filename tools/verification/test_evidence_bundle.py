@@ -33,6 +33,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -46,7 +47,7 @@ from _load_tool import load_tool  # noqa: E402
 
 verify_tool = load_tool('verify', 'verify_tool')
 
-from _evidence import load_bundle, write_bundle  # noqa: E402
+from _evidence import EVIDENCE_ENV, load_bundle, write_bundle  # noqa: E402
 
 
 def test_a_failed_run_never_exits_zero():
@@ -143,30 +144,31 @@ def test_a_partial_run_is_recorded_as_incomplete_not_left_stale():
     there; after, the file says what actually happened, so `attest` refuses instead of
     inheriting a verdict from a run that no longer describes the tree.
     """
-    store = REPO / ".verification" / "evidence"
-    path = store / "bundle.json"
-    saved = path.read_text(encoding="utf-8") if path.is_file() else None
-    try:
-        write_bundle(store, "PASS", {"verus": "PASS"}, "stale-revision")
-        completed = subprocess.run(
-            [sys.executable, str(HERE / "verify"), "--manifests"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert completed.returncode == 0, completed.stdout + completed.stderr
-        bundle = load_bundle(store)
-        assert bundle is not None
-        assert bundle["aggregate"] == "INCOMPLETE", bundle
-        assert bundle["lanes"] == {"manifests": "PASS"}, bundle
-        assert bundle["policy_revision"] != "stale-revision", (
-            "the bundle still carries the previous run's revision"
-        )
-    finally:
-        if saved is None:
-            path.unlink(missing_ok=True)
-        else:
-            path.write_text(saved, encoding="utf-8")
+    # ITS OWN DIRECTORY, NAMED TO THE SUBPROCESS. The store is resolved by
+    # `MCP_RE_EVIDENCE_DIR`, so a control that hard-codes the default path reads a
+    # directory `verify` may not have written to — measured: with the variable exported,
+    # this seeded a stale bundle in one place, the subprocess wrote its real one in
+    # another, and the control read back the stale PASS it had planted itself. It is also
+    # the honest shape: a control that writes into the operator's evidence store and
+    # restores it afterwards is one interrupted run away from leaving a forged bundle
+    # behind.
+    store = Path(tempfile.mkdtemp(prefix="bundle-store-"))
+    write_bundle(store, "PASS", {"verus": "PASS"}, "stale-revision")
+    completed = subprocess.run(
+        [sys.executable, str(HERE / "verify"), "--manifests"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, EVIDENCE_ENV: str(store)},
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    bundle = load_bundle(store)
+    assert bundle is not None
+    assert bundle["aggregate"] == "INCOMPLETE", bundle
+    assert bundle["lanes"] == {"manifests": "PASS"}, bundle
+    assert bundle["policy_revision"] != "stale-revision", (
+        "the bundle still carries the previous run's revision"
+    )
 
 
 def test_an_unreadable_policy_revision_does_not_skip_the_write():

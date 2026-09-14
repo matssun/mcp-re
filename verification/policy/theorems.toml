@@ -6513,3 +6513,52 @@ owner = "client.request_construction"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://client.request_construction"]
 depends_on = []
+
+[[theorem]]
+id = "THM-0128"
+title = "The civil-date conversion is total on the domain its caller can supply"
+statement = """
+For every `i64` in [-106_751_991_167_301, 106_751_991_167_300] — the exact image of `i64`
+under `unix.div_euclid(86_400)` — the model extracted from `civil_from_days` evaluates to
+`ok`. Every intermediate `i64` operation is in range and both narrowing `i64 -> u32` casts
+succeed, so the conversion neither overflows nor fails a cast anywhere in that domain.
+"""
+security_consequence = """
+`unix_to_rfc3339_utc` stamps `verified_at` and `issued_at` from a caller-supplied
+`now_unix`, and mcp-re-core never reads a clock itself — so the argument is
+attacker-influenced wherever a caller forwards one. A panic there is an availability failure
+on the evidence-stamping path, reached by a VALUE rather than by a state, which is the class
+of defect a test suite is least likely to find.
+
+Until now the absence of that panic was an ARGUMENT: a `#[allow(clippy::arithmetic_side_effects)]`
+whose justification is a chain of bounds a reader must follow, with two i64-extreme unit
+tests as its evidence. Two points are where a bound argument is most likely to fail and are
+still not the domain.
+"""
+scope = """
+TOTALITY, NOT CORRECTNESS. Nothing here says the conversion computes the right date; it says
+it computes one. The Gregorian correspondence is the round-trip controls' and is not
+restated.
+
+THE DOMAIN IS A HYPOTHESIS, NOT A DERIVATION. The link from "any i64 a caller passes" to "a
+value in this range" runs through `div_euclid`, which the extraction leaves uninterpreted,
+so composing this with its caller is NOT established here. The range is stated as the closed
+interval it is, and a reader checking it against `unix.div_euclid(86_400)` is doing
+arithmetic rather than trusting a premise.
+
+NOTHING ABOUT THE TEXT. `alloc.fmt.format` extracts as an uninterpreted axiom, so every
+claim quantified over the bytes `unix_to_rfc3339_utc` produces is outside what this model
+can constrain. That is a measured toolchain limitation, recorded as one in
+baseline/extraction-pilot-measurement-2026-08-30.md, and it is why the proposition is
+totality rather than the round trip the pilot was originally expected to carry.
+
+Class V2, established by the Aeneas/Lean lane over a model Charon extracted from the shipped
+Rust, with the extraction pinned by image digest and Dockerfile digest together. Its axiom
+closure is the declared kernel baseline and nothing else, so the claim rests on no
+registered assumption.
+"""
+owner = "core.time_civil_from_days"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://core.time_civil_from_days"]
+depends_on = []
+
