@@ -36,6 +36,23 @@ existing authority and is obtained by calling it:
 No verifier is reimplemented here. If a future question already has an owner, it is added
 to that table, not reproduced below it.
 
+# Why this is not `tools/verification/evidence`
+
+`evidence` already sequences VERIFY -> ATTEST -> GRAPH -> FRONTIER, and its phase-1/2 rule —
+only attest what verify established — is the same rule this command applies to all five of
+its steps. It is deliberately not reused, and the reason is one word in its phase 1: it
+calls `verify` WITHOUT `--aggregate`, so it RUNS THE LANES.
+
+Release assurance must not run them. The formal lanes execute on the verification host,
+inside the pinned extraction container, in their own workflow; this command composes the
+records they left. Giving `evidence` a second mode would make one tool answer two different
+questions — *run the lanes here* and *compose records produced elsewhere* — which is the
+duplication worth avoiding, not the one avoided by folding them together.
+
+So both call the same authorities, and neither reimplements one. (`evidence` has no caller
+in any script or workflow either, measured 2026-09-14 — the same finding as `attest`'s, and
+recorded on #739 rather than fixed by pressing it into service here.)
+
 `attest` is in that list because root completeness is derived from ATTESTATIONS, not from
 evidence records: `review` reads `.verification/attestations`, and `attest` is what turns a
 measured record into one — refusing unless the fingerprint in the record equals the
