@@ -1,0 +1,14 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:c08a565a8070fdffd28b2001f26e2cb4142952dd3842c2015ac9c60a7d80e7ff",
+    "theorem_dependencies": {},
+    "theorem_id": "THM-0128",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "Recorded AFK under the owner's bounded review rule R5 of 2026-09-14, which authorises an APPROVE without a further stop when six conditions hold. Each was checked against this record rather than assumed. (1) GOVERNED ALREADY: ADR-MCPRE-059 §10.2/§7.2 governs `lean://` evidence, and the owner's ruling of 2026-09-06 directed this exact proposition — \"a TOTALITY theorem — never an encoding or round-trip one, because `alloc::fmt::format` extracts as an uninterpreted axiom\". The theorem is that instruction executed, not a new semantic choice. (2) NO BROADER CLAIM: the statement is the proved Lean theorem's own domain, and the closed interval [-106_751_991_167_301, 106_751_991_167_300] is written out rather than described. (3) DEPENDENCIES DO NOT BROADEN: `depends_on` is empty and `theorem_dependencies` is `{}`; the axiom closure is `[propext, Classical.choice, Quot.sound]` — the declared kernel baseline and nothing else — so no ASM-NNNN is required and none is claimed. (4) ASSUMPTIONS AND BOUNDARIES HONESTLY STATED: the scope names three limitations, including the one it would be most tempting to leave out. TOTALITY, NOT CORRECTNESS. THE DOMAIN IS A HYPOTHESIS, NOT A DERIVATION — `div_euclid` is uninterpreted in the extraction, so composing this with its caller is explicitly NOT established. NOTHING ABOUT THE TEXT, because `alloc.fmt.format` extracts uninterpreted. (5) NO UNRESOLVED SEMANTIC QUESTION: the scope resolves each one by declining to claim it. (6) EXACT CURRENT FINGERPRINT: sha256:32037a30267a670712b7eca3b024df4dbdd20f1b993036d63d0283fa4ad628e4, read from `review --fingerprint THM-0128` on this tree. THM-0128 is a LEAF: it is not in `root_theorems` and no theorem declares it in `depends_on`, so this approval reaches no system root. VERDICT: APPROVE.",
+  "reviewed_fingerprint": "sha256:32037a30267a670712b7eca3b024df4dbdd20f1b993036d63d0283fa4ad628e4",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0128"
+}
