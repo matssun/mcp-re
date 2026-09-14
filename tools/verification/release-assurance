@@ -289,6 +289,19 @@ def selftest() -> int:
     identity = {"repository": "r", "commit": "c" * 40, "tree": "t" * 40}
     green = tuple((s, a, e) for s, a, e in STEPS)
 
+    # The composition itself, pinned. Every one of these was established by MEASUREMENT
+    # rather than by design, and the ordering is load-bearing: `attest` before
+    # `root_completeness`, because `review` derives completeness from attestations and
+    # nothing else issues them. Silently dropping a step would leave the command exiting 0
+    # having asked a smaller question — which is this repository's oldest failure.
+    assert [step for step, _, _ in STEPS] == [
+        "evidence_composition",
+        "freshness_issuance",
+        "trusted_premises",
+        "root_completeness",
+        "published_claims",
+    ], "the release-assurance composition changed; a step may not be removed silently"
+
     ok = compose(identity, green, lambda argv: (0, "VERDICT: PASS"))
     assert ok["verdict"] == "PASS", "every authority passing must compose to PASS"
     assert ok["root_completeness"] == "PASS"
