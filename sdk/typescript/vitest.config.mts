@@ -8,8 +8,8 @@ export default defineConfig({
     environment: "node",
     // The native addon calls JS callbacks synchronously; keep a single fork so the
     // Node main thread owns them (no worker threading around the .node boundary).
-    // Vitest 4 removed poolOptions.forks.singleFork; fileParallelism:false is the
-    // replacement — all test files run sequentially in one fork.
+    // `fileParallelism: false` is what makes it one fork: all test files run
+    // sequentially in it.
     pool: "forks",
     fileParallelism: false,
     coverage: {

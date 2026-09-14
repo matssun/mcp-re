@@ -28,6 +28,7 @@ from _ecosystems import (  # noqa: E402
     ReportUnreadable,
     PYTHON,
     TYPESCRIPT,
+    vitest_report_path,
     build_configuration_patterns,
     ecosystem_for_path,
     formal_source_patterns,
@@ -287,7 +288,28 @@ def test_each_ecosystem_selects_exactly_the_declared_symbols():
         "run",
         "--reporter=json",
     ]
-    assert ts[4:] == ["test/x.test.ts", "test/y.test.ts"]
+    assert ts[4] == f"--outputFile={vitest_report_path('22.23.2', 'vitest')}"
+    assert ts[5:] == ["test/x.test.ts", "test/y.test.ts"]
+
+
+def test_the_vitest_lane_says_where_the_report_goes_rather_than_scanning_for_it():
+    """Measured on CI: vitest 4 wrote its json report to stdout and the lane scanned stdout
+    for it; vitest 5 writes `.vitest/json/output.json` under the project root and logs only
+    the path, so a suite of 68 passing tests came back as `vitest wrote no JSON report`. A
+    lane that names the file is not a lane that has to know which runner version it got."""
+    a_target = vitest_report_path("22.23.2", "vitest")
+    another_target = vitest_report_path("22.23.2", "vitest-e2e")
+    another_runtime = vitest_report_path("26.8.1", "vitest")
+
+    # Distinct per runtime AND per target: the lane re-runs unread names one at a time in
+    # this same process and across the pinned Node versions in turn, and an `ok` read from
+    # the run before it is not evidence about the run being measured.
+    assert len({a_target, another_target, another_runtime}) == 3
+
+    # Outside the repository. A report is an artefact OF the measurement; written under the
+    # project root it would sit untracked in the tree the fingerprint covers.
+    repo_root = HERE.parent.parent
+    assert repo_root not in vitest_report_path("22.23.2", "vitest").parents
 
 
 def test_every_runners_report_is_read_in_one_vocabulary():

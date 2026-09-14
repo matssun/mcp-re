@@ -1046,7 +1046,7 @@ jobs:
         run: git diff --exit-code -- native/binding.js native/binding.d.ts
 
       # Coverage is gated at the repo-wide 90% bar by the `thresholds` block in
-      # sdk/typescript/vitest.config.ts; the run fails below it.
+      # sdk/typescript/vitest.config.mts; the run fails below it.
       - name: Test + coverage gate (vitest)
         run: npx vitest run --coverage
 
