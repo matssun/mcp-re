@@ -802,11 +802,29 @@ jobs:
           echo "image=$image" >> "$GITHUB_OUTPUT"
           echo "executing $image"
 
+      # Lean builds are memory-hungry: CivilFromDays was OOM-killed (exit 137,
+      # "Lean exited with code 137") partway through [1699/1700], which failed the
+      # extraction lane and made the verdict INCOMPLETE.
+      #
+      # The limit below is NOT what fixed it. The Docker VM these runners use --
+      # colima's `default` profile -- was on colima's stock 2 CPU / 2 GiB, so `-m 8g`
+      # could not have been satisfied at all: the VM had less memory than the flag
+      # asks for. It has been resized to 6 CPU / 12 GiB on the host (48 GB physical;
+      # ~32 GiB of ceilings now across four profiles, all allocated lazily, so the
+      # ceiling is not a reservation). That resize is HOST state and is not in this
+      # repository -- see the runner provisioning issue.
+      #
+      # The flag is still worth having: it bounds a runaway build to a predictable
+      # kill instead of letting it exhaust the VM and take the other lanes with it.
+      # --oom-kill-disable is deliberately NOT used: a container that cannot be
+      # OOM-killed hangs the VM rather than failing the step, trading a legible
+      # failure for an illegible one.
       - name: Regenerate the extracted model
         if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true'
         run: |
           set -euo pipefail
           docker run --rm --platform linux/arm64 \
+            -m 8g --memory-swap 10g \
             -v "$PWD:/workspace" -w /workspace \
             -e GIT_CONFIG_COUNT=1 \
             -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/workspace \
@@ -824,6 +842,7 @@ jobs:
         run: |
           set -euo pipefail
           docker run --rm --platform linux/arm64 \
+            -m 8g --memory-swap 10g \
             -v "$PWD:/workspace" -w /workspace \
             -e GIT_CONFIG_COUNT=1 \
             -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/workspace \
@@ -835,6 +854,7 @@ jobs:
         run: |
           set -euo pipefail
           docker run --rm --platform linux/arm64 \
+            -m 8g --memory-swap 10g \
             -v "$PWD:/workspace" -w /workspace \
             -e GIT_CONFIG_COUNT=1 \
             -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/workspace \
