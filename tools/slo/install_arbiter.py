@@ -1,5 +1,7 @@
 """Materialize the host copy of the admission gate and point every runner at it.
 
+    python3 tools/slo/install_arbiter.py --verify     # refuse unless the installed copy
+                                                      # is this checkout's
     python3 tools/slo/install_arbiter.py --check      # report only, change nothing
     python3 tools/slo/install_arbiter.py --apply      # install + configure .env
     python3 tools/slo/install_arbiter.py --apply --vm # also configure the colima VM runner
@@ -86,6 +88,118 @@ def env_with_hooks(lines: list[str], started: str, completed: str) -> list[str]:
     kept = [ln for ln in lines
             if not ln.strip().startswith((STARTED_VAR + "=", COMPLETED_VAR + "="))]
     return kept + [f"{STARTED_VAR}={started}", f"{COMPLETED_VAR}={completed}"]
+
+
+def installed_drift(root: Path = ROOT, mirror: Path = MIRROR, here: Path = HERE) -> list[dict]:
+    """Does the code that will DECIDE equal the code in this checkout?
+
+    The SLO lane executes `/opt/verification/runner-arbiter/bin/*.py`, and what those files
+    answer is EVIDENCE: `physical_host_exclusive: true` is an assertion a reader takes on the
+    strength of the source in this repository. Nothing established that the installed copy IS
+    that source. `install_host` only ever writes — `--check` reported directory and `.env`
+    state and never compared a byte — so an edit on the host, a partial install, or a copy
+    left behind by an older revision would decide a measurement while every file in the tree
+    read as correct.
+
+    A checked-out copy cannot be verified by the installed one: an installed file that had
+    drifted would be answering the question about itself. So this comparison belongs here, in
+    the checkout, and the lane must run it from the checkout.
+
+    Generated wrappers are compared to a REGENERATION rather than to a stored copy, because
+    their content is derived from `ROOT` and a stored expectation would be a second place
+    deciding what they say.
+    """
+    drift = [_compare(here / name, root / "bin" / name) for name in SOURCES]
+    drift.append(_compare(here / "vm_admission_hook.py", mirror / "bin" / "vm_admission_hook.py"))
+    for command, filename in (("job-started", "job-started.sh"),
+                              ("job-completed", "job-completed.sh")):
+        drift.append(_expect(root / "bin" / filename, WRAPPER.format(root=root, command=command)))
+    for command, filename in (("job-started", "vm-job-started.sh"),
+                              ("job-completed", "vm-job-completed.sh")):
+        drift.append(_expect(mirror / "bin" / filename, WRAPPER.format(root=root, command=command)))
+    return drift
+
+
+def _compare(source: Path, installed: Path) -> dict:
+    """One tracked file against its installed copy."""
+    if not installed.is_file():
+        return {"file": str(installed), "state": "ABSENT", "source": str(source)}
+    state = "MATCHES" if installed.read_bytes() == source.read_bytes() else "DIFFERS"
+    return {"file": str(installed), "state": state, "source": str(source)}
+
+
+def _expect(installed: Path, expected: str) -> dict:
+    """One generated wrapper against a regeneration of what it should say."""
+    if not installed.is_file():
+        return {"file": str(installed), "state": "ABSENT", "source": "generated"}
+    state = "MATCHES" if installed.read_text() == expected else "DIFFERS"
+    return {"file": str(installed), "state": state, "source": "generated"}
+
+
+def verify(root: Path = ROOT, mirror: Path = MIRROR, here: Path = HERE) -> int:
+    """Fail closed on any drift. ABSENT and DIFFERS are both refusals, for one reason.
+
+    An absent file is not "nothing to compare": the lane will execute that path, and a path
+    that is not there at verification time is a host whose admission code is unknown.
+    """
+    drift = installed_drift(root, mirror, here)
+    print(json.dumps({"arbiter_provenance": drift}, indent=2))
+    bad = [row for row in drift if row["state"] != "MATCHES"]
+    if bad:
+        print(
+            f"\narbiter provenance: FAIL — {len(bad)} of {len(drift)} installed file(s) are "
+            "not this checkout's.\nThe host arbiter decides whether the SLO lane may measure "
+            "and asserts physical-host exclusivity; that verdict is evidence. Re-install with "
+            "`--apply` and restart the listeners, or do not measure.",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"\narbiter provenance: OK — {len(drift)} installed file(s) are this checkout's.")
+    return 0
+
+
+def selftest() -> int:
+    """The mutation probe. A comparison that cannot be shown to fail compares nothing."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        src, root, mirror = base / "src", base / "root", base / "mirror"
+        (root / "bin").mkdir(parents=True)
+        (mirror / "bin").mkdir(parents=True)
+        src.mkdir()
+        for name in SOURCES + ("vm_admission_hook.py",):
+            (src / name).write_text(f"# {name}\n")
+            if name in SOURCES:
+                shutil.copy2(src / name, root / "bin" / name)
+        shutil.copy2(src / "vm_admission_hook.py", mirror / "bin" / "vm_admission_hook.py")
+        for command, filename in (("job-started", "job-started.sh"),
+                                  ("job-completed", "job-completed.sh")):
+            (root / "bin" / filename).write_text(WRAPPER.format(root=root, command=command))
+        for command, filename in (("job-started", "vm-job-started.sh"),
+                                  ("job-completed", "vm-job-completed.sh")):
+            (mirror / "bin" / filename).write_text(WRAPPER.format(root=root, command=command))
+
+        assert verify(root, mirror, src) == 0, "an exact install must verify"
+
+        edited = root / "bin" / SOURCES[0]
+        edited.write_text(edited.read_text() + "# edited on the host\n")
+        assert verify(root, mirror, src) == 1, "an edited installed file must refuse"
+        shutil.copy2(src / SOURCES[0], edited)
+        assert verify(root, mirror, src) == 0, "restoring it must verify again"
+
+        (mirror / "bin" / "vm_admission_hook.py").unlink()
+        assert verify(root, mirror, src) == 1, "an absent VM hook must refuse, not pass"
+        shutil.copy2(src / "vm_admission_hook.py", mirror / "bin" / "vm_admission_hook.py")
+
+        wrapper = root / "bin" / "job-started.sh"
+        wrapper.write_text(wrapper.read_text().replace("runner_arbiter.py", "true #"))
+        assert verify(root, mirror, src) == 1, (
+            "a wrapper that no longer calls the arbiter must refuse — that is the edit that "
+            "makes admission fail OPEN, and it is invisible to a file-presence check"
+        )
+    print("install_arbiter selftest: OK")
+    return 0
 
 
 def install_host(apply: bool) -> dict:
@@ -186,7 +300,15 @@ def main(argv: list[str] | None = None) -> int:
                     help="report only, change nothing (the default)")
     ap.add_argument("--apply", action="store_true", help="make changes")
     ap.add_argument("--vm", action="store_true", help="also configure the colima VM runner")
+    ap.add_argument("--verify", action="store_true",
+                    help="refuse unless every installed file is this checkout's")
+    ap.add_argument("--selftest", action="store_true", help="the mutation probe")
     args = ap.parse_args(argv)
+
+    if args.selftest:
+        return selftest()
+    if args.verify:
+        return verify()
 
     report = {
         "mode": "apply" if args.apply else "check",
