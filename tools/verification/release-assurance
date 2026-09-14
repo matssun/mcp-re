@@ -28,12 +28,21 @@ existing authority and is obtained by calling it:
 | question | authority called |
 |---|---|
 | does the evidence compose to a repository verdict | `verify --aggregate --gate` |
+| does each record become an attestation at its own fingerprint | `attest` |
 | are the trusted premises accounted for | `check-assumptions` |
 | is every declared system root established | `review --require-root-complete` |
 | is every published claim reviewed at its current fingerprint | `scripts/claim_surface_gate.py` |
 
 No verifier is reimplemented here. If a future question already has an owner, it is added
 to that table, not reproduced below it.
+
+`attest` is in that list because root completeness is derived from ATTESTATIONS, not from
+evidence records: `review` reads `.verification/attestations`, and `attest` is what turns a
+measured record into one — refusing unless the fingerprint in the record equals the
+fingerprint of the tree now. Measured 2026-09-14: `attest` had **no caller** in any script
+or workflow either, so every by-hand "12 of 12 roots established" rested on someone
+remembering to run it in the right order. Composing it here is what makes the ordering a
+property of the command rather than of a procedure.
 
 # The exact-tree requirement
 
@@ -91,6 +100,11 @@ STEPS: tuple[tuple[str, list[str], str], ...] = (
         "evidence_composition",
         [sys.executable, str(TOOLS / "verify"), "--aggregate", "--gate"],
         "the evidence records in the store compose to a repository verdict",
+    ),
+    (
+        "freshness_issuance",
+        [sys.executable, str(TOOLS / "attest")],
+        "each composed record becomes an attestation, at the fingerprint it was measured at",
     ),
     (
         "trusted_premises",
