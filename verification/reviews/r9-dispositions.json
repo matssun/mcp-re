@@ -506,7 +506,12 @@
       "node": "assurance platform",
       "area": "assurance-platform",
       "reason": "`is_registered` is still per (mechanism kind, unit) with no site, so one registration licenses every future site in every file the unit declares.",
-      "tracking_issue": 739
+      "tracking_issue": 739,
+      "merged_closure": {
+        "pr": 835,
+        "commit": "441f1f6bcf35a4278b89fa211bb83a2a26786225",
+        "note": "`scope` naming a crate no longer licenses a file: registration requires the MECHANISM, a unit in `scope` declaring the file, AND `sites` naming this exact seam. ASM-0021 can no longer cover all of verify.rs."
+      }
     },
     {
       "cluster": "R9-C038",
@@ -856,7 +861,12 @@
       "node": "assurance platform",
       "area": "assurance-platform",
       "reason": "Same as C037.",
-      "tracking_issue": 739
+      "tracking_issue": 739,
+      "merged_closure": {
+        "pr": 835,
+        "commit": "441f1f6bcf35a4278b89fa211bb83a2a26786225",
+        "note": "a future seam in a declared file is not registered, because `sites` names items and the new item is not among them. `sites` is the one optional key and its absence registers nothing."
+      }
     },
     {
       "cluster": "R9-C068",
@@ -867,7 +877,12 @@
       "node": "assurance platform",
       "area": "assurance-platform",
       "reason": "Same as C037.",
-      "tracking_issue": 739
+      "tracking_issue": 739,
+      "merged_closure": {
+        "pr": 835,
+        "commit": "441f1f6bcf35a4278b89fa211bb83a2a26786225",
+        "note": "registration is per SITE — `<repo-relative path>#<qualified item>` from `_seams.item_at` — not per mechanism kind. All 55 census sites resolve to a distinct key; a seam that resolves to no item is UNREGISTRABLE rather than assigned an invented one."
+      }
     },
     {
       "cluster": "R9-C069",
