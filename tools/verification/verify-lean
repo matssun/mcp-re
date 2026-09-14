@@ -61,7 +61,7 @@ from _lean_model import (  # noqa: E402
     stamp_defects,
 )
 from _lean_probe import run as run_activation_probe  # noqa: E402
-from _lean_query import LEAN_DIR, elaborate, lake  # noqa: E402
+from _lean_query import LEAN_DIR, elaborate, external_termination, lake  # noqa: E402
 from _manifest import (  # noqa: E402
     REPO_ROOT,
     ManifestError,
@@ -102,6 +102,18 @@ def axiom_reports(imports: list[str], theorems: list[str]) -> dict[str, tuple[st
 def refuse(message: str) -> int:
     print(f"FAIL: {message}", file=sys.stderr)
     print("VERDICT: FAIL")
+    return 1
+
+
+def unavailable(message: str) -> int:
+    """Required, and could not execute — never confused with required and refuted.
+
+    Both hold the aggregate at INCOMPLETE, so this is not the difference between a green
+    lane and a red one. It is the difference between *the theorems did not stand* and *the
+    prover never got to say*, and only one of those is a statement about the code.
+    """
+    print(f"UNAVAILABLE: {message}", file=sys.stderr)
+    print("VERDICT: UNAVAILABLE")
     return 1
 
 
@@ -191,6 +203,13 @@ def activation_probe() -> int:
     code, output = lake(["lake", "build"], "elaborating the package for the probe")
     if code != 0:
         print(output.strip()[-4000:], file=sys.stderr)
+        killed = external_termination(code, output)
+        if killed:
+            return unavailable(
+                f"{killed}, so the probe never elaborated. A probe that was stopped has "
+                "not shown that the lane's refusals are inert, and it has not shown that "
+                "they still fire either."
+            )
         return refuse(f"lake build exited {code}; the probe has nothing to elaborate into")
     defects = run_activation_probe(lakefile_roots(), baseline)
     if defects:
@@ -305,6 +324,16 @@ def main() -> int:
     code, output = lake(["lake", "build"], "elaborating the model and the theorems")
     if code != 0:
         print(output.strip()[-6000:], file=sys.stderr)
+        killed = external_termination(code, output)
+        if killed:
+            # NO evidence record. A `fail` row would be a durable, fingerprinted assertion
+            # that these units' theorems were measured and did not stand — written on the
+            # strength of a build the OOM killer ended. Absence of a record is what the
+            # aggregate already reads as "no acceptable current record", which is true.
+            return unavailable(
+                f"{killed}, so nothing elaborated. This says nothing about "
+                f"{', '.join(unit['id'] for unit in units)}; no evidence is written."
+            )
         for unit in units:
             record(unit["id"], "fail", f"lake build exited {code}")
         return refuse(f"lake build exited {code}; nothing elaborated, so nothing is proved")

@@ -9,6 +9,8 @@ Run with `python3 -m pytest tools/verification/test_verdict_algebra.py`, or dire
 
 from __future__ import annotations
 
+import ast
+import pathlib
 import sys
 from pathlib import Path
 
@@ -17,7 +19,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _load_tool import load_tool  # noqa: E402
 from _manifest import LANE_VERDICTS, aggregate_verdict  # noqa: E402
 
+from _lean_query import external_termination  # noqa: E402
+
 verify_cli = load_tool("verify", "verify_cli")
+verify_lean_cli = load_tool("verify-lean", "verify_lean_cli")
 
 
 def test_a_required_formal_lane_that_passed_is_a_pass():
@@ -139,6 +144,99 @@ def test_a_clean_exit_carries_the_lanes_own_verdict():
     FAIL to everything."""
     for declared in ("PASS", "INCOMPLETE", "UNAVAILABLE", "SKIPPED", "NOT_REQUIRED"):
         assert verify_cli._lane_verdict(0, declared, "")[0] == declared
+
+
+# ---------------------------------------------------------------------------
+# An externally killed prover is absence, not refutation — measured 2026-09-14.
+#
+# `verify-lean --activation-probe` printed `VERDICT: FAIL` because the colima VM held
+# 1.91 GiB and the OOM killer removed Lean at `[1699/1700]`. The theorems were untouched and
+# re-established unchanged after the VM was resized, so the FAIL was a statement about the
+# host wearing the words of a statement about the proof. These are the controls for that.
+# ---------------------------------------------------------------------------
+
+
+def test_a_killed_child_reported_only_in_lakes_TEXT_is_still_a_termination():
+    """The shape that actually happened, and the one a status-only reading cannot see.
+
+    `lake` does not propagate its child's signal: it printed `error: Lean exited with code
+    137` and then exited **1** of its own accord. A classifier that looked only at the
+    return code would call that an ordinary build failure, which is exactly what happened.
+    """
+    reason = external_termination(1, "error: Lean exited with code 137\nerror: build failed")
+    assert reason is not None
+    assert "137" in reason and "SIGKILL" in reason
+
+
+def test_a_signal_on_our_own_process_is_a_termination_in_both_conventions():
+    """POSIX gives `-N` to the parent; a shell in between gives `128 + N`. Both are the
+    same event and neither may read as a refuted proof."""
+    assert external_termination(-9, "") is not None
+    assert external_termination(137, "") is not None
+    assert external_termination(-15, "") is not None
+    assert external_termination(143, "") is not None
+
+
+def test_an_ordinary_build_failure_is_STILL_a_failure():
+    """The positive control, and the one that stops this whole change from being a way to
+    launder red lanes into `UNAVAILABLE`. A build that failed on its own terms says
+    something about the theorems, and it must keep saying it."""
+    assert external_termination(1, "error: build failed") is None
+    assert external_termination(1, "") is None
+    assert external_termination(2, "unknown identifier 'civil_from_days'") is None
+
+
+def test_an_abort_is_the_prover_deciding_and_is_NOT_external():
+    """`SIGABRT` (134) is the prover concluding it cannot continue. That is a fact about the
+    prover on this input, so it stays in the FAIL direction; only signals imposed from
+    outside — the OOM killer, a cancellation, a timeout — move a lane to UNAVAILABLE."""
+    assert external_termination(1, "error: Lean exited with code 134") is None
+    assert external_termination(134, "") is None
+
+
+def test_the_lane_has_a_verdict_for_it_and_that_verdict_is_not_a_pass():
+    """The two halves that make the classification mean anything.
+
+    `verify-lean` must emit the word the aggregate understands, and `verify` must let a
+    lane keep it on a non-zero exit — otherwise the classifier answers correctly into a
+    channel that overwrites it, which is the R9-C114 defect one lane over.
+    """
+    assert verify_lean_cli.unavailable("stopped from outside") == 1
+    assert verify_cli._lane_verdict(1, "UNAVAILABLE", "")[0] == "UNAVAILABLE"
+    assert aggregate_verdict(["UNAVAILABLE"], []) != "PASS"
+    assert "UNAVAILABLE" in LANE_VERDICTS
+
+
+def test_a_terminated_lane_writes_no_evidence_record():
+    """The durable half. A `fail` row is fingerprinted and outlives the run: it asserts that
+    these units WERE measured and did not stand. Writing one from a build the OOM killer
+    ended would leave that assertion in the store after the host was repaired.
+
+    Read from the syntax tree rather than from the text, so the control is about the branch
+    that actually executes and not about where a substring happens to fall.
+    """
+    tree = ast.parse((pathlib.Path(__file__).parent / "verify-lean").read_text())
+    branches = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Name)
+        and node.test.id == "killed"
+    ]
+    assert branches, "no `if killed:` branch found — the classifier is not wired in"
+    for branch in branches:
+        called = {
+            n.func.id
+            for n in ast.walk(branch)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+        }
+        assert "record" not in called, (
+            "the externally-terminated branch must return before any evidence record"
+        )
+        assert "unavailable" in called, (
+            "the externally-terminated branch must return the UNAVAILABLE verdict"
+        )
+        assert "refuse" not in called
 
 
 if __name__ == "__main__":
