@@ -137,6 +137,36 @@ def target_identity(requested: str | None) -> dict[str, str]:
     }
 
 
+#: Lines that carry no information in a record: blank, or pure box-drawing. A record whose
+#: `tail` is a row of `=` tells a reader nothing about why a step refused, and the record is
+#: the durable artifact — it outlives the log the line was cut from.
+DECORATION = set("=-_* \t")
+
+
+def last_meaningful(output: str) -> str:
+    """The last line a reader would quote, not the last line printed."""
+    for line in reversed(output.strip().splitlines()):
+        if line.strip() and not set(line).issubset(DECORATION):
+            return line.strip()
+    return ""
+
+
+def render_command(argv: list[str]) -> str:
+    """The command as a reader would type it, repo-relative.
+
+    `sys.executable` is an absolute interpreter path that differs per machine, and the tool
+    paths are absolute so the subprocess does not depend on a working directory. Neither
+    belongs in a record that is compared across hosts.
+    """
+    words = []
+    for arg in argv:
+        try:
+            words.append(str(Path(arg).relative_to(REPO_ROOT)))
+        except ValueError:
+            words.append("python3" if arg == sys.executable else arg)
+    return " ".join(words)
+
+
 def run_step(argv: list[str]) -> tuple[int, str]:
     """Execute one authority and return ITS OWN status and output.
 
@@ -159,11 +189,11 @@ def compose(identity: dict[str, str], steps=STEPS, runner=run_step) -> dict:
         results.append(
             {
                 "step": step_id,
-                "command": " ".join(Path(a).name if a.startswith("/") else a for a in argv),
+                "command": render_command(argv),
                 "establishes": establishes,
                 "exit_status": code,
                 "verdict": "PASS" if code == 0 else "FAIL",
-                "tail": output.strip().splitlines()[-1] if output.strip() else "",
+                "tail": last_meaningful(output),
             }
         )
         if code != 0:
@@ -234,6 +264,14 @@ def selftest() -> int:
         "a run that never reached the binding root check must say so, and must never "
         "report its absence as a pass"
     )
+
+    assert last_meaningful("real line\n=========\n\n") == "real line", (
+        "a record's tail must quote the line a reader would act on, not a rule of `=`"
+    )
+    assert last_meaningful("=====\n") == ""
+    assert render_command([sys.executable, str(TOOLS / "verify"), "--gate"]) == (
+        "python3 tools/verification/verify --gate"
+    ), "a record compared across hosts must not carry this machine's interpreter path"
 
     assert "RELEASE ASSURANCE: PASS" in summarize(ok)
     assert "RELEASE ASSURANCE: FAIL" in summarize(red)
