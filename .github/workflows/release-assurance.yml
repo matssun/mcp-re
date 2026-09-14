@@ -46,6 +46,11 @@ jobs:
     name: release assurance (binding closure)
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 30
+    env:
+      # The durable SLO evidence store, outside the checkout. `--decide` FAILS CLOSED when
+      # this is unset or resolves inside the workspace, so naming it here is what lets the
+      # `slo_evidence_freshness` step answer REUSE instead of refusing to decide.
+      MCP_RE_SLO_EVIDENCE_STORE: /opt/verification/slo
     steps:
       - uses: actions/checkout@v7
         with:

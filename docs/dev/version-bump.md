@@ -120,6 +120,16 @@ commit, the tree, the root-completeness verdict and the overall verdict. It refu
 working tree and refuses a `--target` that is not the checked-out commit, because a release
 record is about one immutable thing.
 
+One of its steps is the SLO question. The lane itself is `workflow_dispatch` only — an SLO
+run belongs to a release, not to a pull request — so `slo_evidence_identity.py --decide` is
+what asks whether the attested result is still reusable, by folding the declared performance
+surface and the measurement context into two digests. `REUSE` passes; `REMEASURE` fails the
+release and names which of surface, context or freshness moved, and the remedy is to
+dispatch `.github/workflows/slo.yml` and re-run release assurance.
+
+That is the owner's rule of 2026-09-08 made executable: a minor release needs no SLO run,
+only one where perf-relevant code was touched.
+
 `review --require-root-complete` is the **binding** closure mode. Ordinary CI runs the
 report-only form deliberately (ADR-MCPRE-059 §28.8): an honest unresolved GAP under a
 declared root must not fail everyday work. This is the lane where it is binding.

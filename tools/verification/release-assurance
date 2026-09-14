@@ -27,6 +27,7 @@ existing authority and is obtained by calling it:
 
 | question | authority called |
 |---|---|
+| is the attested SLO result still reusable | `slo_evidence_identity.py --decide` |
 | does the evidence compose to a repository verdict | `verify --aggregate --gate` |
 | does each record become an attestation at its own fingerprint | `attest` |
 | are the trusted premises accounted for | `check-assumptions` |
@@ -68,6 +69,24 @@ resolved. A dirty working tree fails: the authorities measure the checkout, so a
 naming a commit whose tree is not the one measured would be a false identity. `--target`
 must name the commit that is checked out, for the same reason — this command measures
 here, it does not fetch.
+
+# Where the SLO question is asked, and why it is asked HERE
+
+The SLO lane is `workflow_dispatch` only: an SLO run belongs to a release, not to a pull
+request, because it takes the self-hosted host exclusively and every PR that queued one
+drained the other repository's runners through the host arbiter.
+
+Removing that trigger would be a loss if nothing else asked the question, so this command
+asks it. `slo_evidence_identity.py --decide` answers by CONTENT where a `paths:` filter
+answered by name: it folds the declared performance surface and the measurement context into
+two digests and compares them against the attested results in the durable store. `REUSE`
+(exit 0) passes; `REMEASURE` (exit 10) fails the release and names which of surface, context
+or freshness moved.
+
+That is the owner's rule of 2026-09-08 made executable rather than remembered — *a minor
+release needs no SLO run, only one where perf-relevant code was touched* — and the `exit 10`
+is preserved in the record beside the verdict, so a reader can tell "must measure" from
+"could not decide".
 
 # The evidence was produced somewhere else, and the record says so
 
@@ -137,6 +156,11 @@ STEPS: tuple[tuple[str, list[str], str], ...] = (
         "published_claims",
         [sys.executable, str(REPO_ROOT / "scripts" / "claim_surface_gate.py")],
         "every published claim is a declared root reviewed at its current fingerprint",
+    ),
+    (
+        "slo_evidence_freshness",
+        [sys.executable, str(REPO_ROOT / "scripts" / "slo_evidence_identity.py"), "--decide"],
+        "the attested SLO result is reusable for this performance surface and context",
     ),
 )
 
@@ -317,6 +341,7 @@ def selftest() -> int:
         "trusted_premises",
         "root_completeness",
         "published_claims",
+        "slo_evidence_freshness",
     ], "the release-assurance composition changed; a step may not be removed silently"
 
     ok = compose(identity, green, lambda argv: (0, "VERDICT: PASS"))
