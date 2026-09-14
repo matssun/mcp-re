@@ -55,87 +55,31 @@
 
 name: slo
 
+# WHEN THIS LANE RUNS — the owner's rule, 2026-09-14: an SLO run belongs to a RELEASE, not
+# to a pull request.
+#
+# `workflow_dispatch` ONLY. It previously ran on `pull_request` and on `push` to main behind
+# a `paths:` filter derived from the declared performance surface, and the measured effect
+# was waste rather than assurance: the lane takes the self-hosted host EXCLUSIVELY, so every
+# PR touching the serving path -- or merely `scripts/local_gate.sh` -- queued a job that
+# drained the other repository's runners through the host arbiter. One such run sat in
+# "Set up runner" for twenty minutes and would then have concluded REUSE, because the
+# surface had not moved at all.
+#
+# NOTHING IS LOST BY REMOVING THE FILTER, and this is the part worth reading. A `paths:`
+# filter answers "did an input change?" by NAME. `scripts/slo_evidence_identity.py --decide`
+# answers it by CONTENT -- it folds the declared surface (source, build configuration,
+# harness, envelope, images) and the measurement context (hardware, OS and container-runtime
+# classes, benchmark configuration) into two digests and compares them against the attested
+# results in the durable store. The filter was the weaker of the two mechanisms and the only
+# one that cost a host.
+#
+# So the question moves to where a release already asks it:
+# `tools/verification/release-assurance` runs `--decide` as a step, and a release whose
+# surface HAS moved fails there, naming which of surface, context or freshness moved and
+# telling the operator to dispatch this lane. A PR cannot answer that question usefully; a
+# release must.
 on:
-  # NOT on every push. The owner's ruling: a whole SLO run belongs where perf-relevant code
-  # was touched, not on every change. "Perf-relevant" already has an owner — the declared
-  # performance surface — so this filter is derived from it rather than being a second
-  # opinion about it, and `scripts/slo_evidence_identity.py` FAILS the build when this list
-  # is narrower than the surface. A filter and a content-addressed fingerprint are one
-  # dependency set written down twice; when they diverge the workflow does not go red, it
-  # stops running, and every check stays green while nothing re-measures.
-  pull_request:
-    paths:
-      # surface.source — the serving path and everything on the per-request path.
-      - "mcp-re-proxy/src/**"
-      - "mcp-re-core/src/**"
-      - "mcp-re-policy/src/**"
-      - "mcp-re-http-profile/src/**"
-      - "mcp-re-client-core/src/**"
-      # surface.build_configuration — what compiles it.
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "rust-toolchain.toml"
-      - "mcp-re-proxy/Cargo.toml"
-      - "mcp-re-core/Cargo.toml"
-      - "mcp-re-policy/Cargo.toml"
-      - "mcp-re-http-profile/Cargo.toml"
-      - "mcp-re-client-core/Cargo.toml"
-      # surface.harness — the instrument and the two gates that decide what passes.
-      - "mcp-re-proxy/tests/tls_load_harness_bench.rs"
-      - "scripts/local_slo_lane.sh"
-      - "scripts/adr051_slo_gate.py"
-      - "scripts/slo_gate.py"
-      - "tools/slo/run_slo_job.sh"
-      # surface.envelope — the load applied and the numbers it is compared against.
-      - "docs/bench/adr-051-benchmark-envelope.json"
-      - "docs/bench/adr-051-baseline-local.json"
-      - "docs/bench/adr-051-baseline-dev1.json"
-      - "docs/bench/adr-051-slo-targets.json"
-      # surface.images — the image the cloud Job measures inside.
-      - "deploy/docker/Dockerfile.bench"
-      # The declaration itself, the aggregate this job invokes, and this file. None of them
-      # is a surface input — they decide WHEN and WHERE, not how fast the code runs — but a
-      # change to any of them changes what this lane does, so it re-runs.
-      - "config/performance-surface.toml"
-      - "config/heavy-lane-floors.toml"
-      - "scripts/slo_evidence_identity.py"
-      - "scripts/heavy_lane_disk_preflight.py"
-      - "scripts/local_gate.sh"
-      - ".github/workflows/slo.yml"
-  push:
-    branches: [main]
-    paths:
-      - "mcp-re-proxy/src/**"
-      - "mcp-re-core/src/**"
-      - "mcp-re-policy/src/**"
-      - "mcp-re-http-profile/src/**"
-      - "mcp-re-client-core/src/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "rust-toolchain.toml"
-      - "mcp-re-proxy/Cargo.toml"
-      - "mcp-re-core/Cargo.toml"
-      - "mcp-re-policy/Cargo.toml"
-      - "mcp-re-http-profile/Cargo.toml"
-      - "mcp-re-client-core/Cargo.toml"
-      - "mcp-re-proxy/tests/tls_load_harness_bench.rs"
-      - "scripts/local_slo_lane.sh"
-      - "scripts/adr051_slo_gate.py"
-      - "scripts/slo_gate.py"
-      - "tools/slo/run_slo_job.sh"
-      - "docs/bench/adr-051-benchmark-envelope.json"
-      - "docs/bench/adr-051-baseline-local.json"
-      - "docs/bench/adr-051-baseline-dev1.json"
-      - "docs/bench/adr-051-slo-targets.json"
-      - "deploy/docker/Dockerfile.bench"
-      - "config/performance-surface.toml"
-      - "config/heavy-lane-floors.toml"
-      - "scripts/slo_evidence_identity.py"
-      - "scripts/heavy_lane_disk_preflight.py"
-      - "scripts/local_gate.sh"
-      - ".github/workflows/slo.yml"
-  # The deliberate operator run: a release that wants a number, or the run that produces the
-  # reports an anchor is declared from.
   workflow_dispatch:
     inputs:
       reps:

@@ -184,6 +184,13 @@ stage_static() {
     `# They had diverged in four ways and nothing related them; this is what relates them.` \
     && python3 scripts/claim_surface_gate.py --selftest \
     && python3 scripts/claim_surface_gate.py \
+    `# The BINDING closure mode had zero invokers: it was run by hand for v0.16 and v0.17` \
+    `# and its verdict typed into a provenance document. This checks that the release lane` \
+    `# CALLS tools/verification/release-assurance in command position, and that no` \
+    `# provenance document states a verdict this gate has not been taught to check.` \
+    && python3 scripts/release_assurance_gate.py --selftest \
+    && python3 scripts/release_assurance_gate.py \
+    && python3 tools/verification/release-assurance --selftest \
     `# The R9 record is a historical measurement, and the appendix in the packet is a view` \
     `# of it. --check refuses a hand-edited appendix, an untracked surviving High/Critical` \
     `# row, and a merged_closure whose commit is not an ancestor of HEAD — the last because` \

@@ -42,11 +42,29 @@ production-SLO verdict are declared once and read by every consumer:
 resolves its refusal set from it, and `.github/workflows/slo.yml` resolves the class the
 self-hosted runner measures as from it.
 
-THE TRIGGER SET IS PART OF THE DECLARATION. `.github/workflows/slo.yml` is `paths:`-filtered,
-and its filter and the declared surface are one dependency set written down twice. When the
-surface grows past the filter the workflow does not go red — it stops running, and every
-check stays green while nothing re-measures the changed serving path. `check()` therefore
-refuses a filter narrower than the surface, on both the `pull_request` and `push` triggers.
+THE TRIGGER SET IS PART OF THE DECLARATION — but the SURFACE is the stronger half, and as of
+2026-09-14 it is the only half. `.github/workflows/slo.yml` is `workflow_dispatch` ONLY: an
+SLO run belongs to a release, not to a pull request, because the lane takes the self-hosted
+host exclusively and every PR that queued one drained the other repository's runners through
+the host arbiter — usually to conclude REUSE.
+
+Two mechanisms can answer "must this be re-measured?", and they are not equals. A `paths:`
+filter answers it by NAME; `--decide` answers it by CONTENT, folding the declared surface and
+the measurement context into two digests and comparing them against the attested results in
+the durable store. The filter was the weaker one and the only one that cost a host.
+
+So `trigger_defects()` polices what remains true rather than what used to be there:
+
+  * every trigger that EXISTS and carries a `paths:` filter must cover the surface — a
+    filter narrower than the surface does not go red, it stops running, and every check
+    stays green while nothing re-measures;
+  * the workflow must remain REACHABLE. With no filtered trigger left, a workflow that also
+    lost `workflow_dispatch` could never run at all, and a lane nobody can start is worse
+    than one that starts too often.
+
+Where the question is now asked: `tools/verification/release-assurance` runs `--decide` as a
+step, so a release whose surface has moved fails there and names which of surface, context or
+freshness moved. A pull request cannot answer that usefully; a release must.
 
 Run:  python3 scripts/slo_evidence_identity.py                 # validate the declaration
       python3 scripts/slo_evidence_identity.py --emit
@@ -513,7 +531,7 @@ def class_defects() -> list[str]:
     return found
 
 
-def trigger_defects() -> list[str]:
+def trigger_defects(text: str | None = None) -> list[str]:
     """Declared surface inputs the SLO workflow's `paths:` filters do not cover.
 
     The GitHub path-matching semantics come from `verification_trigger_gate.py` rather than
@@ -522,21 +540,26 @@ def trigger_defects() -> list[str]:
     actually applies. Imported inside the function so that the ordinary identity commands
     stay dependency-free.
     """
-    if not WORKFLOW.is_file():
-        return [f"{WORKFLOW.relative_to(REPO)} does not exist — the declared surface has no lane"]
+    if text is None:
+        if not WORKFLOW.is_file():
+            return [
+                f"{WORKFLOW.relative_to(REPO)} does not exist — the declared surface has no lane"
+            ]
+        text = WORKFLOW.read_text(encoding="utf-8")
     sys.path.insert(0, str(REPO / "scripts"))
     from verification_trigger_gate import glob_matches, trigger_paths  # noqa: PLC0415
 
-    triggers = trigger_paths(WORKFLOW.read_text(encoding="utf-8"))
+    triggers = trigger_paths(text)
     inputs = [str(path.relative_to(REPO)) for path in declared_inputs()]
     found: list[str] = []
-    for trigger in ("pull_request", "push"):
-        patterns = triggers.get(trigger)
-        if patterns is None:
-            found.append(f"{WORKFLOW.name} declares no `{trigger}` trigger")
-            continue
+
+    # Every FILTERED trigger must cover the surface. A trigger that is absent is not a
+    # defect — the lane is dispatched, and `--decide` answers by content what a filter
+    # answered by name. A trigger that is present and too narrow IS a defect, because it
+    # fails by going quiet.
+    for trigger, patterns in sorted(triggers.items()):
         if not patterns:
-            continue  # no `paths:` filter at all means every change triggers it
+            continue  # declared with no `paths:` filter: every change reaches it
         uncovered = [p for p in inputs if not any(glob_matches(g, p) for g in patterns)]
         found.extend(
             f"{trigger}: no path filter matches {path!r}, which is a declared performance-"
@@ -545,6 +568,16 @@ def trigger_defects() -> list[str]:
         )
         if len(uncovered) > 5:
             found.append(f"{trigger}: …and {len(uncovered) - 5} more uncovered surface input(s)")
+
+    # And the lane must remain startable. `workflow_dispatch` is how a release runs it now,
+    # so losing it would leave a declared surface with no lane at all — the same defect as an
+    # absent workflow, one line further in.
+    if "workflow_dispatch" not in triggers:
+        found.append(
+            f"{WORKFLOW.name} declares no `workflow_dispatch` trigger. With no `paths:`-"
+            "filtered trigger left, nothing could start this lane, and a declared "
+            "performance surface with no lane is a surface nothing can ever measure."
+        )
     return found
 
 
@@ -577,7 +610,7 @@ def check() -> int:
         f"slo-evidence-identity: OK — {len(digests)} declared input(s), all git-tracked; "
         f"surface {surface[:23]}…; {len(stored)} attested result(s); {len(classes)} declared "
         f"hardware class(es), {anchored} anchored; the {WORKFLOW.name} trigger set covers "
-        f"every surface input on both triggers"
+        f"every surface input it filters on, and the lane is dispatchable"
     )
     return 0
 
@@ -638,11 +671,34 @@ def selftest() -> int:
 
     assert glob_matches("mcp-re-proxy/src/**", "mcp-re-proxy/src/app.rs"), "`**` stopped matching"
     assert not glob_matches("mcp-re-proxy/*", "mcp-re-proxy/src/app.rs"), "`*` crossed a separator"
-    assert not trigger_defects(), f"the SLO workflow's trigger set is narrower than the surface: {trigger_defects()}"
+    assert not trigger_defects(), (
+        f"the SLO workflow's trigger set is narrower than the surface: {trigger_defects()}"
+    )
+
+    # The mutation probe for both directions the invariant now has. Without these the check
+    # is satisfied by a rule that answers "no defects" to everything, which is the shape of
+    # every silent control this repository has had to repair.
+    assert trigger_defects("name: slo\non:\n  push:\n    branches: [main]\n"), (
+        "a workflow with no `workflow_dispatch` cannot be started at all, and a declared "
+        "surface with no lane must be refused"
+    )
+    narrow = (
+        "name: slo\non:\n  workflow_dispatch:\n  push:\n    branches: [main]\n"
+        "    paths:\n      - \"docs/bench/adr-051-slo-targets.json\"\n"
+    )
+    defects = trigger_defects(narrow)
+    assert defects and any("no path filter matches" in d for d in defects), (
+        "a FILTERED trigger narrower than the surface must be refused: it does not go red, "
+        "it stops running, and every check stays green while nothing re-measures"
+    )
+    assert not trigger_defects("name: slo\non:\n  workflow_dispatch:\n"), (
+        "dispatch-only is the current shape and must pass: `--decide` answers by content "
+        "what a `paths:` filter answered by name"
+    )
 
     print(
         f"slo_evidence_identity selftest: OK — {len(digests)} declared inputs, 9 identity "
-        f"cases, {len(classes)} hardware classes, trigger coverage on both triggers"
+        f"cases, {len(classes)} hardware classes, trigger coverage: filtered triggers cover the surface, and the lane is dispatchable"
     )
     return 0
 

@@ -103,3 +103,48 @@ gcloud builds submit --config deploy/cloudbuild/mcp-re-images.yaml .
 and note that the kind lane (`local_gate.sh --with-kind`) builds its own images locally and
 stamps them with the git revision, so a green kind stage does **not** prove the registry
 holds the tag — only that the source builds and deploys.
+
+## Release assurance — the binding closure run
+
+Qualifying a release is a separate act from bumping a version, and it has exactly one
+authority:
+
+```sh
+tools/verification/release-assurance
+```
+
+It composes the release-level verdict from the authorities that already own each question —
+`verify --aggregate --gate`, `check-assumptions`, `review --require-root-complete` and
+`claim_surface_gate.py` — and writes a machine-readable record naming the repository, the
+commit, the tree, the root-completeness verdict and the overall verdict. It refuses a dirty
+working tree and refuses a `--target` that is not the checked-out commit, because a release
+record is about one immutable thing.
+
+One of its steps is the SLO question. The lane itself is `workflow_dispatch` only — an SLO
+run belongs to a release, not to a pull request — so `slo_evidence_identity.py --decide` is
+what asks whether the attested result is still reusable, by folding the declared performance
+surface and the measurement context into two digests. `REUSE` passes; `REMEASURE` fails the
+release and names which of surface, context or freshness moved, and the remedy is to
+dispatch `.github/workflows/slo.yml` and re-run release assurance.
+
+That is the owner's rule of 2026-09-08 made executable: a minor release needs no SLO run,
+only one where perf-relevant code was touched.
+
+`review --require-root-complete` is the **binding** closure mode. Ordinary CI runs the
+report-only form deliberately (ADR-MCPRE-059 §28.8): an honest unresolved GAP under a
+declared root must not fail everyday work. This is the lane where it is binding.
+
+In Actions the lane is `.github/workflows/release-assurance.yml`, dispatched with the ref to
+qualify and the `verification` run whose evidence records it composes. It runs on the
+self-hosted runner, never on a fork head.
+
+**Cutting the release then commits the record.** Copy the run's
+`release-assurance.json` to `docs/releases/<version>-release-assurance.json`, register the
+provenance document as `mechanized` in `scripts/release_assurance_gate.py`, and paste the
+block the gate renders into it. The gate then checks the document against the record on
+every CI run, which is the point: a provenance document may explain a result, but it may not
+be the authority for what the command returned.
+
+The v0.16.0 and v0.17.0 documents are registered `pre-mechanism` — they were written before
+this command existed and are dated measurements, not retroactively falsified. A new document
+may not join that class.

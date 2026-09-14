@@ -429,6 +429,20 @@ jobs:
           python3 scripts/claim_surface_gate.py --selftest
           python3 scripts/claim_surface_gate.py
 
+      # ADR-MCPRE-059 §28.8. `review --require-root-complete` is the BINDING closure mode
+      # and it is deliberately NOT run here: an honest unresolved GAP under a declared root
+      # must not fail ordinary development, or the incentive becomes to leave the
+      # obligation unrecorded. What IS checked here is that the mode has a caller at all.
+      # Measured 2026-09-14: it had ZERO — not one shell script, not one workflow — and had
+      # been run by hand for v0.16 and v0.17 with its verdict typed into a provenance
+      # document. Same class as `too-many-lines-threshold` parameterising a lint nobody
+      # switched on, and as the documented SLO-Job rehearsal with no caller.
+      - name: Release-assurance gate (the closure mode has a caller)
+        run: |
+          python3 scripts/release_assurance_gate.py --selftest
+          python3 scripts/release_assurance_gate.py
+          python3 tools/verification/release-assurance --selftest
+
       # ADR-MCPRE-059 §14.7 — approval is evidence ABOUT a fingerprint, never a bit on the
       # object approved. This gate had `scripts/local_gate.sh` as its only caller, and it
       # was RED on main while every CI check was green: `r9-dispositions.json` landed under
