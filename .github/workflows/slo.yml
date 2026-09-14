@@ -207,6 +207,22 @@ jobs:
           echo "runner: ${RUNNER_NAME:-<unset>}"
           df -h . | tail -2
 
+      # THE ARBITER THAT DECIDES MUST BE THE ARBITER IN THIS TREE.
+      #
+      # Every step below runs `/opt/verification/runner-arbiter/bin/*.py` -- host copies
+      # installed by `tools/slo/install_arbiter.py`, outside the checkout on purpose so a
+      # runner self-update cannot delete the pre-job hook. What those files answer is
+      # EVIDENCE: `physical_host_exclusive: true` is an assertion a reader takes on the
+      # strength of the source in this repository, and nothing established that the
+      # installed copy IS that source. `install_host` only ever wrote; `--check` reported
+      # directory and `.env` state and never compared a byte.
+      #
+      # Run from the CHECKOUT, and first. An installed file that had drifted cannot be the
+      # thing that certifies itself, and a wrapper edited to stop calling the arbiter makes
+      # admission fail OPEN while every file is still present.
+      - name: The installed arbiter is this checkout's
+        run: python3 tools/slo/install_arbiter.py --verify
+
       # The declared environment must BE the environment, and the fleet must be built in
       # it. `dev1-slo-v1` names a dedicated Docker daemon; the bench harness shells plain
       # `docker`, which would otherwise reach whatever the ambient context happens to be --
