@@ -4575,6 +4575,9 @@ evidence = [
 # this unit at all: it exercises the SIGNING-side epoch label (a credential minted under the
 # pre-bump label is refused by a sibling), which is the other consumer of the counter.
 tested_symbols = [
+  "lib#trust_plane::snapshot::tests::a_document_past_the_read_bound_is_refused_and_says_so",
+  "lib#trust_plane::snapshot::tests::a_document_at_the_read_bound_is_read_whole",
+  "lib#trust_plane::snapshot::tests::a_missing_trust_file_names_the_path_it_could_not_read",
   # --- Tier 3 over the seam ---
   "lib#trust_plane::push_trust::tests::pushed_invalidation_rejects_the_key_before_t_elapses",
   "lib#trust_plane::push_trust::tests::flush_all_evicts_every_cached_binding_forcing_re_resolve",

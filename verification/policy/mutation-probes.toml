@@ -3710,3 +3710,28 @@ weakening = """
 expect_red = [
   "lib#admission_source::in_memory::tests::a_panic_under_the_record_lock_does_not_close_the_source",
 ]
+
+[[probe]]
+id = "M148-an-oversized-trust-document-is-refused-not-truncated"
+unit = "proxy.trust_plane_runtime"
+conjunct = "a --trust document past the read bound is refused whole, never handed to the parser cut in half"
+# The weakening keeps the bound on the READ and drops the refusal, so an oversized document
+# reaches the parser truncated. That is the failure mode the extra byte exists to prevent:
+# the operator is answered with a JSON syntax error about a document their file does not
+# contain, and nothing names the cap they have outgrown. The at-the-cap control cannot see
+# it, because a document AT the bound is unaffected either way.
+path = "mcp-re-proxy/src/trust_plane/snapshot.rs"
+anchor = """
+    if bytes.len() as u64 > MAX_TRUST_DOCUMENT_BYTES {
+        return Err(format!(
+            "{trust_path}: trust document exceeds the {MAX_TRUST_DOCUMENT_BYTES}-byte read \\
+             bound and was refused rather than read into memory. This read also runs on the \\
+             --trust reload cadence, inside the serving process."
+        ));
+    }
+"""
+weakening = """
+"""
+expect_red = [
+  "lib#trust_plane::snapshot::tests::a_document_past_the_read_bound_is_refused_and_says_so",
+]
