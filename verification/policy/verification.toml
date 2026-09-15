@@ -3715,7 +3715,18 @@ tested_symbols = [
   "lib#audit_sink::tests::every_record_carries_a_sequence_number",
   "lib#audit_sink::tests::the_collector_preserves_emission_order",
   "lib#audit_sink::tests::a_full_audit_queue_drops_rather_than_blocking_the_caller",
-  "lib#audit_sink::tests::the_drop_count_is_reported_without_a_following_record",
+  # Moved with its subject: `report_drops` is the writer's, so the control over it lives
+  # beside the writer. The proposition is unchanged.
+  "lib#audit_sink::writer::tests::the_drop_count_is_reported_without_a_following_record",
+  # The converse, which held nowhere. "Never reported twice" was asserted against a `Vec<u8>`
+  # that cannot fail; "reported at LEAST once" was false, because the count was taken out of
+  # the counter before a write whose failure was discarded — erasing exactly the gaps a full
+  # volume or a closed stderr produces.
+  "lib#audit_sink::writer::tests::a_drop_count_survives_a_failed_report_and_is_reported_later",
+  "lib#audit_sink::writer::tests::a_reported_drop_count_is_not_reported_twice",
+  # A failed write is observable by the drain, which is what lets `Drained` mean ARRIVED
+  # rather than ATTEMPTED.
+  "lib#audit_sink::writer::tests::a_failed_report_latches_the_write_failure",
   "lib#audit_sink::tests::an_unattributed_flood_cannot_consume_the_headroom_an_attributed_record_needs",
   "lib#audit_sink::tests::concurrent_offers_at_the_ceiling_admit_only_the_remaining_slots",
   "lib#audit_sink::tests::the_no_audit_sink_records_nothing_and_does_not_panic",

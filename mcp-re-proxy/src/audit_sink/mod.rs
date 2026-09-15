@@ -80,6 +80,17 @@ pub trait AuditSink: Send + Sync {
 #[derive(Debug, Default)]
 pub struct StderrAuditSink;
 
+/// The sequence number of the next record, so a drop is a visible hole. Assigned by the
+/// SINK, before the hand-off: a number the writer assigned would not number the records the
+/// writer never received.
+static STDERR_AUDIT_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// What the writer thread does with a line, and what it can truthfully say afterwards.
+mod writer;
+
+use writer::{stderr_audit_writer, STDERR_AUDIT_DROPPED, STDERR_AUDIT_QUEUED};
+pub(crate) use writer::{AuditMessage, STDERR_AUDIT_WRITER};
+
 /// Bounded hand-off depth. Deep enough to absorb a burst while the writer is inside one
 /// `write` syscall, shallow enough that a stalled writer costs bounded memory.
 const STDERR_AUDIT_QUEUE_DEPTH: usize = 4096;
@@ -95,89 +106,6 @@ const STDERR_AUDIT_UNATTRIBUTED_CEILING: usize = 3 * STDERR_AUDIT_QUEUE_DEPTH / 
 
 /// How long the writer waits for a record before reporting drops it already knows about.
 const STDERR_AUDIT_DROP_REPORT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
-
-/// One item on the hand-off queue.
-enum AuditMessage {
-    /// A formatted record to write.
-    Line(String),
-    /// Write everything queued ahead of this, then acknowledge. The acknowledgement is
-    /// what makes a shutdown drain observable rather than a hope about timing.
-    Flush(std::sync::mpsc::SyncSender<()>),
-}
-
-/// The writer's channel, started on first use.
-///
-/// Process-global because the sink is a unit type installed once and shared by every
-/// core: one stderr, one thread that owns it, one queue in front of it.
-static STDERR_AUDIT_WRITER: std::sync::OnceLock<std::sync::mpsc::SyncSender<AuditMessage>> =
-    std::sync::OnceLock::new();
-
-/// Records that never reached the writer because the queue was full.
-static STDERR_AUDIT_DROPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-/// Lines handed over and not yet written, so admission can reserve headroom. A
-/// `sync_channel` does not expose its occupancy, and the reservation needs it.
-static STDERR_AUDIT_QUEUED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-/// The sequence number of the next record, so a drop is a visible hole.
-static STDERR_AUDIT_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-fn stderr_audit_writer() -> &'static std::sync::mpsc::SyncSender<AuditMessage> {
-    STDERR_AUDIT_WRITER.get_or_init(|| {
-        let (sender, receiver) =
-            std::sync::mpsc::sync_channel::<AuditMessage>(STDERR_AUDIT_QUEUE_DEPTH);
-        // A detached thread: it lives as long as the process, and the sink it drains for
-        // is a `static`. Errors from the write are swallowed — a sink that cannot write
-        // must not fail a request, and there is nowhere else to report them.
-        let _ = std::thread::Builder::new()
-            .name("mcp-re-audit".to_owned())
-            .spawn(move || {
-                use std::io::Write;
-                loop {
-                    let message = match receiver.recv_timeout(STDERR_AUDIT_DROP_REPORT_INTERVAL) {
-                        Ok(message) => Some(message),
-                        // Nothing arrived. A burst that stopped must still report the
-                        // records it cost, or the stream ends in a silence that reads
-                        // exactly like no traffic at all.
-                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => None,
-                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
-                    };
-                    let line = match message {
-                        Some(AuditMessage::Line(line)) => {
-                            STDERR_AUDIT_QUEUED.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-                            Some(line)
-                        }
-                        Some(AuditMessage::Flush(ack)) => {
-                            report_drops(&mut std::io::stderr().lock(), &STDERR_AUDIT_DROPPED);
-                            let _ = ack.try_send(());
-                            continue;
-                        }
-                        None => None,
-                    };
-                    let mut stderr = std::io::stderr().lock();
-                    report_drops(&mut stderr, &STDERR_AUDIT_DROPPED);
-                    if let Some(line) = line {
-                        let _ = stderr.write_all(line.as_bytes());
-                        let _ = stderr.write_all(b"\n");
-                    }
-                }
-            });
-        sender
-    })
-}
-
-/// Emit the outstanding drop count, if any.
-fn report_drops(stderr: &mut impl std::io::Write, counter: &std::sync::atomic::AtomicU64) {
-    let dropped = counter.swap(0, std::sync::atomic::Ordering::Relaxed);
-    if dropped > 0 {
-        let _ = writeln!(
-            stderr,
-            "mcp-re-proxy: audit dropped={dropped} (the audit hand-off queue was full; \
-             that many decisions are missing from this stream, and their seq numbers are \
-             the gaps in it)"
-        );
-    }
-}
 
 impl AuditSink for StderrAuditSink {
     fn record(&self, record: &AuditRecord) {
@@ -447,29 +375,6 @@ mod tests {
             );
             drop(held);
         }
-    }
-
-    /// R8-C123: the drop count is reported without a later record to carry it.
-    ///
-    /// A burst that ends in quiescence used to report nothing at all — the count was read
-    /// only when the NEXT line was dequeued — so the stream's last state was
-    /// indistinguishable from no traffic. The writer's own timeout is what makes the gap
-    /// visible.
-    #[test]
-    fn the_drop_count_is_reported_without_a_following_record() {
-        let mut sink: Vec<u8> = Vec::new();
-        let dropped = std::sync::atomic::AtomicU64::new(7);
-        report_drops(&mut sink, &dropped);
-        assert!(
-            String::from_utf8_lossy(&sink).contains("audit dropped=7"),
-            "the tail of a burst reports itself: {:?}",
-            String::from_utf8_lossy(&sink)
-        );
-        assert_eq!(
-            dropped.load(std::sync::atomic::Ordering::SeqCst),
-            0,
-            "a reported drop must not be reported twice"
-        );
     }
 
     /// A record carries a sequence number, so a dropped one is a numbered hole rather
