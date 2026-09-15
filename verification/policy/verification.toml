@@ -4207,6 +4207,59 @@ tested_symbols = [
 # ---------------------------------------------------------------------------------------
 
 [[unit]]
+id = "http_profile.bodyless_acknowledgement"
+class = "V0"
+description = "What a bodyless message signs and what its acknowledgement establishes (#415 rev 2 §3.4/§8.1, #418, #424, owner ruling C019b). The named component sets are enforced as sets — a verifier never NOTICES a body is absent and drops a requirement — and a signed 202 claims exactly that the enforcement boundary authenticated and accepted THIS transmission. The binding is instance-level: `;req` alone distinguishes notification A from a different notification B but not from a byte-identical retransmission A', so the 202 additionally covers `mcp-re-request-evidence`, the digest of the request's own signature base and therefore of its nonce."
+paths = [
+  "mcp-re-http-profile/src/bodyless/mod.rs",
+  "mcp-re-http-profile/src/bodyless/acknowledged.rs",
+  "mcp-re-http-profile/src/bodyless/delegated_ack.rs",
+  "mcp-re-http-profile/src/bodyless/delegated_credential.rs",
+]
+exported_contracts = []
+evidence = ["test://http_profile/bodyless/acknowledgement_component_sets"]
+# Two DEDICATED batteries, both already in the tree and both driving the production
+# verifier over real signed messages. They are listed whole rather than filtered to the
+# controls that look most on-point: the unit's claim is about the SETS, and a control that
+# a bodied message still requires its content-type is as much a statement about the sets as
+# one that a bodyless message must not carry it.
+tested_symbols = [
+  "tests/bodyless_202_test#signed_202_verifies_against_its_notification",
+  "tests/bodyless_202_test#an_acknowledgement_binds_to_one_transmission_not_to_content",
+  "tests/bodyless_202_test#a_forged_request_evidence_header_is_refused",
+  "tests/bodyless_202_test#a_missing_request_evidence_header_is_refused",
+  "tests/bodyless_202_test#content_injected_into_a_signed_202_is_caught",
+  "tests/bodyless_202_test#content_type_on_a_bodyless_202_is_rejected",
+  "tests/bodyless_202_test#a_202_without_its_req_binding_is_rejected",
+  "tests/bodyless_202_test#a_bodyless_response_that_is_not_202_is_rejected",
+  "tests/bodyless_202_test#a_202_signed_by_a_request_key_fails_the_response_slot",
+  "tests/bodyless_202_test#bodyless_request_round_trips",
+  "tests/bodyless_202_test#bodyless_get_request_round_trips",
+  "tests/bodyless_202_test#content_type_on_a_bodyless_request_is_rejected",
+  "tests/bodyless_202_test#the_bodied_request_set_still_requires_content_type",
+  "tests/bodyless_202_test#a_bodyless_request_covers_a_present_authorization_header",
+  "tests/bodyless_202_test#swapping_a_covered_bearer_token_on_a_bodyless_request_is_caught",
+  "tests/bodyless_202_test#an_uncovered_authorization_header_on_a_bodyless_request_is_rejected",
+  "tests/bodyless_202_test#uncovered_dpop_and_mcp_transport_headers_on_a_bodyless_request_are_rejected",
+  "tests/bodyless_202_test#the_bodyless_signer_covers_every_conditionally_mandatory_header",
+  "tests/bodyless_202_test#a_configured_transport_contract_is_refused_rather_than_ignored",
+  "tests/delegated_202_test#a_delegated_202_verifies_via_the_credential_chain",
+  "tests/delegated_202_test#a_credential_header_not_covered_is_rejected",
+  "tests/delegated_202_test#a_missing_credential_header_is_rejected",
+  "tests/delegated_202_test#a_duplicated_credential_header_is_rejected",
+  "tests/delegated_202_test#an_oversized_credential_header_is_rejected",
+  "tests/delegated_202_test#a_revoked_delegated_key_is_rejected",
+  "tests/delegated_202_test#a_delegated_202_refuses_a_content_distinct_notification",
+  "tests/delegated_202_test#a_delegated_202_refuses_a_retransmission_of_the_same_notification",
+  "tests/delegated_202_test#a_stale_trust_epoch_is_rejected",
+  "lib#bodyless::acknowledged::tests::the_pinned_coordinate_is_the_root_anchor_and_not_the_rotating_delegated_kid",
+  "lib#bodyless::acknowledged::tests::taking_the_actor_is_the_only_way_to_consume_one",
+  "lib#bodyless::delegated_credential::tests::a_credential_scoped_to_another_signer_is_refused",
+  "lib#bodyless::delegated_credential::tests::the_scoped_keyid_is_read_through_the_actor_field_escape",
+  "lib#bodyless::delegated_credential::tests::the_credential_header_is_present_exactly_once_and_bounded",
+]
+
+[[unit]]
 id = "http_profile.replay_key"
 class = "V0"
 description = "The ADR-MCPRE-050 replay five-tuple and its injective pre-serialization onto the core cache's three slots: equality of the composite slots holds exactly when the full five-tuple is equal, and an admitted key is fresh once."

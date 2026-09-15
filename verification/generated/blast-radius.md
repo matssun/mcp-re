@@ -51,6 +51,7 @@ attestations this view cannot see.
 | unit://http_profile.admission_state_provenance | source, contracts or evidence | THM-0129 | _no consumer_ |
 | unit://http_profile.artifact_typing | source, contracts or evidence | THM-0007 | _no consumer_ |
 | unit://http_profile.artifact_verification_boundary | source, contracts or evidence | THM-0008, THM-0015 | _no consumer_ |
+| unit://http_profile.bodyless_acknowledgement | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://http_profile.continuation_binding | source, contracts or evidence | THM-0010 | http_profile.continuation_unbypassability (PROOF_DEPENDENCY) |
 | unit://http_profile.continuation_unbypassability | source, contracts or evidence | THM-0009 | _no consumer_ |
 | unit://http_profile.delegated_signing_custody | source, contracts or evidence | _no theorem_ | _no consumer_ |

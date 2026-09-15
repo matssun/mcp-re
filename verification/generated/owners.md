@@ -47,6 +47,7 @@ not an omission to hide.
 | http_profile.admission_state_provenance | V0 | THM-0129 | 0 |
 | http_profile.artifact_typing | V1 | THM-0007 | 8 |
 | http_profile.artifact_verification_boundary | V0 | THM-0008 | 0 |
+| http_profile.bodyless_acknowledgement | V0 | _none_ | 0 |
 | http_profile.continuation_binding | V1 | THM-0010 | 6 |
 | http_profile.continuation_unbypassability | V1 | THM-0009 | 6 |
 | http_profile.delegated_signing_custody | V0 | _none_ | 0 |
