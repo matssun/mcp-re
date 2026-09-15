@@ -237,21 +237,15 @@ class _BraceScan:
         return i + 1
 
 
-def production_lines(text: str) -> int:
-    """Every line of a Rust source that is NOT inside a test region.
+def production_source(text: str) -> list[str]:
+    """The lines of a Rust source that are NOT inside a test region.
 
-    A test region runs from its `#[cfg(test)]`-family attribute to the end of the module it
-    introduces, tracked by brace depth over CODE characters only — a brace inside a string,
-    a raw string, a character literal or a comment is not a brace. Counting resumes
-    afterwards, and a file may contain several regions: a file that puts a helper module
-    below its tests is not thereby exempt.
-
-    This is deliberately NOT "lines before the first test module" — that rule discards every
-    production item below the tests, and measured `trust_plane.rs` at 134 lines when it is
-    690. This function is the definition; the prose in ADR-MCPRE-061 §5.1 describes it.
+    The definition `production_lines` counts and `scripts/unit_closure_gate.py` reads items
+    from. Both need the same answer to "which lines are production", and a second scan
+    would be a second opinion about where a test region ends.
     """
     lines = text.splitlines()
-    count = 0
+    kept: list[str] = []
     i = 0
     while i < len(lines):
         if TEST_ATTR.match(lines[i].lstrip()):
@@ -267,9 +261,25 @@ def production_lines(text: str) -> int:
                 if opened and depth <= 0:
                     break
             continue
-        count += 1
+        kept.append(lines[i])
         i += 1
-    return count
+    return kept
+
+
+def production_lines(text: str) -> int:
+    """Every line of a Rust source that is NOT inside a test region.
+
+    A test region runs from its `#[cfg(test)]`-family attribute to the end of the module it
+    introduces, tracked by brace depth over CODE characters only — a brace inside a string,
+    a raw string, a character literal or a comment is not a brace. Counting resumes
+    afterwards, and a file may contain several regions: a file that puts a helper module
+    below its tests is not thereby exempt.
+
+    This is deliberately NOT "lines before the first test module" — that rule discards every
+    production item below the tests, and measured `trust_plane.rs` at 134 lines when it is
+    690. This function is the definition; the prose in ADR-MCPRE-061 §5.1 describes it.
+    """
+    return len(production_source(text))
 
 
 def rust_sources(root: Path) -> list[Path]:
