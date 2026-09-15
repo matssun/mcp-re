@@ -22,7 +22,9 @@ SIGKILL that job after five minutes, and ordinary work is never killed to start 
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
+import time
 import sys
 from pathlib import Path
 
@@ -37,8 +39,111 @@ COLIMA = os.environ.get("MCP_RE_ARBITER_COLIMA", "/opt/homebrew/bin/colima")
 
 
 def ssh(*args: str, timeout: int = 120) -> subprocess.CompletedProcess:
-    return subprocess.run([COLIMA, "ssh", "-p", PROFILE, "--", *args],
-                          capture_output=True, text=True, timeout=timeout)
+    """Run a command in the VM, and leave NOTHING behind when it times out.
+
+    `subprocess.run(timeout=...)` kills only the DIRECT child. This command is
+    a three-generation chain -- `colima` spawns `limactl`, which spawns `ssh` --
+    so a timeout killed `colima` and reparented `limactl` and `ssh` to PID 1,
+    where they lived forever holding a share of the VM's multiplexed ssh
+    socket.
+
+    Measured 2026-09-15: sixteen such orphans, the oldest 15 days 22 hours,
+    including a `limactl shell ... systemctl is-active` that is this module's
+    own `service_active()` probe. Past a threshold the mux socket stopped
+    answering anyone, so `colima ssh` returned `Input/output error` and the VM
+    was unreachable to every caller -- for a fortnight, with `dev1-linux` still
+    reporting `online` to GitHub and accepting jobs it could not run.
+
+    The VM was never broken. Killing the orphans restored it instantly, with no
+    restart: it had simply run out of usable ssh channels.
+
+    So the timeout is not the fix and never was -- every call here already had
+    one. `start_new_session=True` puts the whole chain in its own process
+    group, and killing that group on timeout takes the grandchildren with it.
+    """
+    with subprocess.Popen(
+        [COLIMA, "ssh", "-p", PROFILE, "--", *args],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    ) as proc:
+        # Captured HERE, while the leader is certainly alive. Reading it later
+        # from `proc.pid` is unreliable: once the leader has exited and been
+        # reaped, `os.getpgid` raises and the cleanup would have no group to
+        # signal -- leaving exactly the orphans it exists to remove.
+        group = _group_of(proc)
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            # The group, not the process. os.killpg reaches limactl and ssh;
+            # proc.kill() would not, which is the entire defect.
+            _terminate_group(group, proc)
+            # Safe now: the writers are gone, so the pipes are at EOF. Before
+            # the group kill this call would block on a grandchild holding the
+            # inherited stdout, which is the same defect one layer along.
+            stdout, stderr = proc.communicate()
+            raise subprocess.TimeoutExpired(proc.args, timeout, output=stdout, stderr=stderr)
+        return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
+
+
+def _group_of(proc: "subprocess.Popen[str]") -> int | None:
+    """The process group of a just-spawned child, or None if it already exited."""
+    try:
+        return os.getpgid(proc.pid)
+    except (ProcessLookupError, PermissionError, OSError):
+        return None
+
+
+def _terminate_group(group: int | None, proc: "subprocess.Popen[str]") -> None:
+    """SIGTERM the process group, then SIGKILL whatever is still there.
+
+    SIGTERM first so `ssh` can close its channel cleanly -- a SIGKILLed client
+    can leave the mux master believing the channel is still open, which is the
+    state this function exists to avoid creating.
+
+    Failures are swallowed deliberately: the group may be partly gone already,
+    and a cleanup path that can itself raise would abandon the orphans it was
+    called to remove.
+    """
+    if group is None:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        return
+
+    try:
+        os.killpg(group, signal.SIGTERM)
+    except OSError:
+        pass
+
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        if not _group_alive(group):
+            return
+        time.sleep(0.2)
+
+    try:
+        os.killpg(group, signal.SIGKILL)
+    except OSError:
+        pass
+
+
+def _group_alive(group: int) -> bool:
+    """Whether any process remains in the group.
+
+    Asks about the GROUP, not about the leader. Waiting on the leader alone is
+    what made the original bug invisible: it exits promptly and its children do
+    not, so "the child is gone" and "nothing is left" are different claims.
+    """
+    try:
+        os.killpg(group, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
 
 
 def available() -> bool:
