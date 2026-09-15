@@ -429,6 +429,52 @@ tested_symbols = [
 # anchor-set change is that a new anchor set is a new listener with a new empty store. Two
 # propositions, two batteries; neither is evidence for the other.
 
+# r11 W2-B PR-4. A SECOND unit beside `proxy.tls_listener_state`, because the posture is a
+# different proposition from the construction. That unit claims every construction path
+# obtains its listener state through one owner; it says nothing about whether what an
+# operator is told about revocation is true a week later, and three files in its closure
+# contributed no evidence at all (R11-609) — two of them carried no tests whatsoever.
+#
+# The two halves this owns went wrong independently, which is the argument for one unit over
+# both: the startup evidence was written once and never rewritten, so after the first
+# successful reload the posture described a CRL nobody was enforcing (R11-617); and the
+# reload's staleness gate was weaker than startup's, so a CRL that refuses boot could be
+# installed and reported as success (R11-610/611/612).
+
+[[unit]]
+id = "proxy.client_revocation_currency"
+class = "V0"
+description = "That a replica's client-revocation posture states what it is enforcing NOW: a set of CRLs is installable only when every one of them is inside its own nextUpdate window, by whichever path installs it; each successful reload republishes what it installed; and a replica whose reload worker has died, or whose plane has retired, retracts the cadence it advertised rather than continuing to claim it."
+paths = [
+  "mcp-re-proxy/src/tls_plane/crl_evidence.rs",
+  "mcp-re-proxy/src/tls_plane/revocation_currency.rs",
+  "mcp-re-proxy/src/tls_plane/crl_reload_worker/supervision.rs",
+  # Also in `proxy.tls_listener_state`, and deliberately: this file has two halves. Loading
+  # and indexing the CRLs is what a listener is built with; RENDERING the posture is what
+  # the deployment says about them. A change to either dirties both units, which is the
+  # conservative direction.
+  "mcp-re-proxy/src/tls_plane/client_revocation_posture.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/tls/client_revocation_currency"]
+# The first two are the ones that carry the claim rather than a symptom of it. A latch that
+# a later reload could clear would satisfy every "the fault is recorded" assertion and still
+# let a straggler success report the cadence as kept; and a stale CRL that has no INHABITANT
+# cannot be installed by a path nobody has written yet, which a second call to the same
+# checker would not establish.
+tested_symbols = [
+  "lib#tls_plane::revocation_currency::tests::a_stopped_worker_is_not_cleared_by_a_later_reload",
+  "lib#tls_plane::crl_evidence::tests::a_stale_crl_produces_no_evidence_to_install",
+  "lib#tls_plane::revocation_currency::tests::an_unscheduled_reload_is_never_reported_as_stopped",
+  "lib#tls_plane::revocation_currency::tests::a_degraded_reload_recovers_on_the_next_success",
+  "lib#tls_plane::revocation_currency::tests::the_maintenance_token_names_the_cadence_it_is_or_is_not_keeping",
+  "lib#tls_plane::crl_evidence::tests::no_crls_is_evidence_of_a_deployment_without_them",
+  "lib#tls_plane::crl_reload_worker::supervision::tests::a_dead_reload_worker_retracts_the_cadence_it_advertised",
+  "lib#tls_plane::crl_reload_worker::supervision::tests::a_failed_reload_is_degraded_and_a_dead_worker_is_stopped",
+  "lib#tls_plane::client_revocation_posture::revocation_posture_tests::with_no_crl_the_per_request_check_is_reported_as_not_configured",
+  "lib#tls_plane::client_revocation_posture::revocation_posture_tests::every_loaded_crl_reports_its_own_digest_and_window",
+]
+
 [[unit]]
 id = "proxy.tls_listener_state"
 class = "V0"
@@ -459,7 +505,7 @@ paths = [
   # about what the production listener is built with, and a CRL reload rebuilds it.
   "mcp-re-proxy/src/tls_plane/mod.rs",
   "mcp-re-proxy/src/tls_plane/client_revocation_posture.rs",
-  "mcp-re-proxy/src/tls_plane/crl_reload_worker.rs",
+  "mcp-re-proxy/src/tls_plane/crl_reload_worker/mod.rs",
 ]
 exported_contracts = []
 evidence = [
