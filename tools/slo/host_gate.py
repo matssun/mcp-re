@@ -78,6 +78,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -169,6 +170,42 @@ REGISTERED_RUNNERS = (
     {"name": "dev1-linux", "kernel": "linux-vm",
      "root": os.environ.get("MCP_RE_ARBITER_VM_RUNNER_HOME", "/home/mats.guest/actions-runner")},
 )
+
+
+# ==========================================================================================
+# capacity
+# ==========================================================================================
+
+# WHERE THE REFUSAL THRESHOLD COMES FROM, AND WHY IT IS NOT THE ALARM THRESHOLD.
+#
+# matssun/code carries LOW_SPACE_ALARM_GB = 40 in
+# infrastructure/scripts/verification_store_retention.py. The two numbers describe ONE
+# condition at two stages and must not be read as competing thresholds:
+#
+#     40 GB   ALARM    retention should reclaim now.  Jobs still run.
+#     25 GB   REFUSE   too late to reclaim politely.  No job is admitted.
+#
+# The 15 GB between them is the operating margin -- the room the weekly retention job has to
+# work in while CI keeps running. Seeing the alarm and no refusals means the band is doing
+# its job; seeing refusals means it was lost.
+#
+# Both ends divide by 1024**3, so the numbers are directly comparable. (Both call that "GB";
+# it is GiB. Kept, because agreeing with the other end matters more than the label.)
+DISK_REFUSE_GB = float(os.environ.get("MCP_RE_ARBITER_DISK_REFUSE_GB", 25))
+
+# THE RECOVERY LANE, WHICH MUST BE ADMITTED BELOW THE THRESHOLD.
+#
+# A capacity guard that refuses its own cure is a deadlock. The weekly retention job runs on
+# this host, on this runner, through this hook, and it is the thing that makes the disk not
+# full. Refusing it at exactly the moment it is needed converts a self-healing condition into
+# one that requires a human at a keyboard -- which is the failure this guard exists to end,
+# reintroduced by the guard itself.
+#
+# Identified by repository AND workflow path, for the reason `JobIdentity.is_slo` is: a title
+# match would let any workflow name itself into the exemption.
+RECOVERY_REPOSITORY = os.environ.get("MCP_RE_ARBITER_RECOVERY_REPOSITORY", "matssun/code")
+RECOVERY_WORKFLOW = os.environ.get(
+    "MCP_RE_ARBITER_RECOVERY_WORKFLOW", ".github/workflows/disk-retention.yml")
 
 
 # ==========================================================================================
@@ -292,6 +329,114 @@ def active_records(p: dict[str, Path]) -> list[dict]:
             rec["reported_by"] = src
             out.append(rec)
     return out
+
+
+# ==========================================================================================
+# capacity admission
+# ==========================================================================================
+
+
+def work_volume(env: dict[str, str] | None = None) -> Path | None:
+    """The filesystem the job about to run will write to, or None if it cannot be named.
+
+    Asked of the runner's own hook environment rather than assumed to be `/`. The same code
+    runs inside the colima VM, which is a different kernel with a different filesystem, and
+    nothing on the host prevents `_work` being moved to an external volume. A guard that
+    measured the wrong volume would report a number that is true about some disk and
+    irrelevant to this job -- which is worse than not measuring, because it reads as an
+    answer.
+    """
+    e = dict(os.environ if env is None else env)
+    for var in ("RUNNER_WORKSPACE", "GITHUB_WORKSPACE", "RUNNER_TEMP"):
+        value = e.get(var)
+        if not value:
+            continue
+        candidate = Path(value)
+        # The path need not exist yet this early in the job, so the nearest existing
+        # ancestor is measured instead. That is the same volume EXCEPT where the intended
+        # volume is not mounted at all -- in which case the job could not write there
+        # either, and free space is not the interesting problem.
+        while not candidate.exists() and candidate != candidate.parent:
+            candidate = candidate.parent
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def free_gb(path: Path) -> float:
+    """Free space on `path`'s volume, in the same unit the retention script reports.
+
+    Divisor matched deliberately: DISK_REFUSE_GB and that script's LOW_SPACE_ALARM_GB
+    describe one condition at two stages, and a mismatched divisor would put a 7% error
+    between them for no reason.
+    """
+    return shutil.disk_usage(path).free / (1024.0**3)
+
+
+def is_recovery(ident: JobIdentity) -> bool:
+    """True only for the lane that makes the disk not-full.
+
+    Repository AND workflow path, for the reason `JobIdentity.is_slo` uses both: a title
+    match would let any workflow name itself into the exemption.
+    """
+    return ident.repository == RECOVERY_REPOSITORY and ident.workflow_path == RECOVERY_WORKFLOW
+
+
+def refuse_if_disk_exhausted(p: dict[str, Path], ident: JobIdentity, measure=None) -> None:
+    """Refuse a job on a volume with no room to run it. The recovery lane is exempt.
+
+    WHAT THIS CHANGES, WHICH IS NOT THE FREQUENCY OF A FULL DISK
+    ------------------------------------------------------------
+    Retention reduces how often the volume fills. This decides what HAPPENS when it does.
+
+    On 2026-09-01 the volume reached 167 MB free. dev1-linux went on reporting `online` to
+    GitHub and accepting jobs it could not run, for a fortnight, because nothing on the
+    admission path had an opinion about capacity. The jobs did not fail cleanly -- the VM
+    wedged, sixteen `colima ssh` grandchildren orphaned, and the machine looked healthy from
+    every angle an operator would think to check.
+
+    A refusal here is a red job naming the volume and the number. That is a worse-looking
+    outcome and a far better one: it is attributable, it points at its own remedy, and it
+    arrives on the first job rather than whenever somebody happens to look.
+
+    WHY THIS ONE FAILS OPEN WHEN THE REST OF THE ARBITER FAILS CLOSED
+    ----------------------------------------------------------------
+    Every other refusal in this file protects a MEASUREMENT: admitting wrongly corrupts an
+    SLO number, so uncertainty must refuse. This one protects CAPACITY, where the asymmetry
+    runs the other way -- refusing wrongly stops all work on the host for no reason at all.
+    So an unreadable volume is logged and admitted. The guard declines to become the outage
+    it exists to prevent.
+    """
+    volume = work_volume()
+    if volume is None:
+        log(p, "capacity.unmeasured", key=ident.key,
+            reason="no runner work path in the hook environment")
+        return
+
+    try:
+        free = (measure or free_gb)(volume)
+    except OSError as exc:
+        log(p, "capacity.unmeasured", key=ident.key, volume=str(volume), error=str(exc))
+        return
+
+    if free >= DISK_REFUSE_GB:
+        log(p, "capacity.ok", key=ident.key, volume=str(volume), free_gb=round(free, 1))
+        return
+
+    if is_recovery(ident):
+        log(p, "capacity.recovery_admitted", key=ident.key, volume=str(volume),
+            free_gb=round(free, 1))
+        return
+
+    raise ArbiterError(
+        f"refusing admission: {volume} has {free:.1f} GB free, under the "
+        f"{DISK_REFUSE_GB:.0f} GB floor this host admits work above. Fail-closed: this job "
+        f"executed no workload, and nothing it would have written was written. The volume is "
+        f"named because the runner and the colima VM measure different filesystems. To "
+        f"reclaim: run the disk-retention workflow in matssun/code (exempt from this "
+        f"refusal, so it still starts), or "
+        f"`infrastructure/scripts/verification_store_retention.py --apply` on the host."
+    )
 
 
 # ==========================================================================================

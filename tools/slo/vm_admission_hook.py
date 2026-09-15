@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -39,6 +40,88 @@ WAIT_S = int(os.environ.get("MCP_RE_ARBITER_ORDINARY_WAIT_S", 45 * 60))
 POLL_S = float(os.environ.get("MCP_RE_ARBITER_POLL_S", 5))
 
 EXIT_OK, EXIT_REFUSED = 0, 1
+
+
+# CAPACITY, AND WHY THIS SIDE NEEDS TWO FLOORS RATHER THAN THE HOST'S ONE.
+#
+# dev1-linux is the runner that spent a fortnight reporting `online` while accepting work it
+# could not run. The host side refuses below a single 25 GB floor; applying that number here
+# would be a fleet-wide outage, because MEASURED INSIDE THIS VM on 2026-09-15:
+#
+#     /                              free  6.6 GB  of   18.3 GB   the guest's own disk
+#     /Users/mats/.runner-arbiter    free 51.1 GB  of  926.4 GB   the HOST volume, virtiofs
+#
+# The guest's entire disk is 18.3 GB, so a 25 GB floor there can never be satisfied and
+# every job would be refused forever -- the guard becoming the outage it exists to prevent.
+#
+# Two volumes genuinely matter and they are checked separately:
+#
+#   * THE HOST VOLUME, reached over the virtiofs mount that carries the shared mirror.
+#     virtiofs reports the underlying host filesystem, verified against `df -h /` on the
+#     host in the same minute (51 GB both sides), so this side can see the condition that
+#     actually wedged it -- the host filling -- WITHOUT asking the host anything. Same
+#     25 GB floor as the macOS side, because it is the same volume and the same number.
+#   * THE GUEST'S OWN ROOT, on a much smaller floor. A runaway build filling 18 GB is a
+#     real failure and is worth refusing, but it is a different magnitude of problem.
+#
+# Deliberately duplicated rather than imported: this module resolves nothing under /opt and
+# imports nothing from host_gate, for the reason stated in the module docstring.
+HOST_VOLUME_REFUSE_GB = float(os.environ.get("MCP_RE_ARBITER_DISK_REFUSE_GB", 25))
+GUEST_ROOT_REFUSE_GB = float(os.environ.get("MCP_RE_ARBITER_VM_DISK_REFUSE_GB", 3))
+
+# The lane that makes the disk not-full must never be refused for the disk being full. It is
+# labelled for macOS today and so does not land here, but the exemption is stated on both
+# sides: a label change must not be able to create a deadlock this far from where it is made.
+RECOVERY_REPOSITORY = os.environ.get("MCP_RE_ARBITER_RECOVERY_REPOSITORY", "matssun/code")
+RECOVERY_WORKFLOW = os.environ.get(
+    "MCP_RE_ARBITER_RECOVERY_WORKFLOW", ".github/workflows/disk-retention.yml")
+
+
+def workflow_path() -> str:
+    """The workflow's path as GITHUB_WORKFLOW_REF carries it, or "" if unidentifiable."""
+    ref = os.environ.get("GITHUB_WORKFLOW_REF", "")
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    if not ref or not repo:
+        return ""
+    before_git_ref = ref.split("@", 1)[0]
+    prefix = repo + "/"
+    return before_git_ref[len(prefix):] if before_git_ref.startswith(prefix) else ""
+
+
+def is_recovery() -> bool:
+    return (os.environ.get("GITHUB_REPOSITORY", "") == RECOVERY_REPOSITORY
+            and workflow_path() == RECOVERY_WORKFLOW)
+
+
+def capacity_refusal(usage=None) -> str | None:
+    """The reason this job must not start, or None to admit.
+
+    Fails OPEN on an unreadable volume, against this module's own fail-closed default and
+    for a stated reason: every other refusal here protects a MEASUREMENT, where admitting
+    wrongly corrupts an SLO number. This protects CAPACITY, where refusing wrongly stops all
+    work on the runner for no reason at all.
+    """
+    measure = usage or shutil.disk_usage
+    for label, path, floor in (
+        ("the host volume", MIRROR, HOST_VOLUME_REFUSE_GB),
+        ("this VM's own root", Path("/"), GUEST_ROOT_REFUSE_GB),
+    ):
+        try:
+            free = measure(path).free / (1024.0**3)
+        except OSError as exc:
+            print(f"[vm-admission] capacity unmeasured for {path}: {exc}", file=sys.stderr)
+            continue
+        if free >= floor:
+            continue
+        if is_recovery():
+            print(f"[vm-admission] {label} is at {free:.1f} GB but this is the recovery "
+                  f"lane; admitting", file=sys.stderr)
+            return None
+        return (f"{label} ({path}) has {free:.1f} GB free, under the {floor:.0f} GB floor "
+                f"this runner admits work above. Fail-closed: this job executed no workload. "
+                f"The guest and the host are different filesystems, so the volume is named. "
+                f"To reclaim, run the disk-retention workflow in matssun/code.")
+    return None
 
 
 def job_key() -> str:
@@ -71,6 +154,14 @@ def read_gate() -> dict:
 
 
 def hook_job_started() -> int:
+    # Capacity first, before the gate wait and before any active record is written: a job
+    # refused for space must not first queue for up to 45 minutes, nor leave a report behind
+    # claiming it is running.
+    refusal = capacity_refusal()
+    if refusal is not None:
+        print(f"[vm-admission] REFUSED: {refusal}", file=sys.stderr)
+        return EXIT_REFUSED
+
     key = job_key()
     deadline = time.monotonic() + WAIT_S
     announced = False
