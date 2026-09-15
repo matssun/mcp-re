@@ -3538,6 +3538,9 @@ paths = [
 exported_contracts = []
 evidence = [
   "test://proxy/retention_commitment/two_stages_and_their_dispositions",
+  # Declared so the probe below is not decoration: a `[[probe]]` naming a unit that does not
+  # claim mutation evidence writes no record.
+  "mutation://proxy/retention_commitment/two_stages_and_their_dispositions",
 ]
 # `retained_record.rs` and `covered_set.rs` are deliberately ABSENT. WHAT a hop contains is
 # a different authority from WHEN responsibility was accepted and crossed, and this claim
@@ -3574,6 +3577,19 @@ tested_symbols = [
   # A rescind after a commitment finds nothing, which is what lets the drop be
   # unconditional rather than guarded by a flag a future path could set wrongly.
   "lib#transparency::durable_writer::tests::a_rescind_publishes_nothing_and_tolerates_an_absent_marker",
+  # r11 R11-739. `durability_bounds.rs` is in `paths` because the bounds ARE this unit's
+  # argument — the queue is twice the ceiling so `complete` is never refused for capacity —
+  # and the closure named no control over it. The claim rested on a file whose whole content
+  # is that arithmetic, measured by nothing.
+  "lib#transparency::durability::tests::completion_is_never_refused_for_capacity",
+  "lib#transparency::durability::tests::a_full_reservation_queue_is_refused_at_reserve_and_the_slot_returns",
+  # r11 R11-644. The capacity refusal is only retry-safe while it is distinguishable from a
+  # store that will never accept anything again, and both used to answer `WouldBlock`.
+  "lib#transparency::durability::tests::a_dead_writer_is_a_terminal_fault_and_a_full_queue_is_not",
+  # r11 R11-633/635. `reserve` hands every reservation a clone of the job sender, so the
+  # channel does not close when this authority closes its own. Without a budget the drop
+  # waits for a writer that is waiting for a sender a parked reservation still holds.
+  "lib#transparency::durability::tests::dropping_the_store_under_a_live_reservation_still_terminates",
 ]
 
 [[unit]]

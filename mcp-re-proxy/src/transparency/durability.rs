@@ -71,22 +71,81 @@ pub struct EvidenceRetention {
     jobs: SyncSender<WriteJob>,
     /// Bounds concurrent reservations, and through them the queue.
     permits: Arc<tokio::sync::Semaphore>,
-    /// Joined on drop, so a dropped store has no writes still in flight.
+    /// Reclaimed on drop within a bounded budget, so a dropped store has no writes still
+    /// in flight — or says which ones it gave up waiting for.
     writer: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Drop for EvidenceRetention {
+    /// Close this authority's sender, then reclaim the writer WITHIN A BUDGET.
+    ///
+    /// Dropping the last sender ends the writer's receive loop — but this is not the last
+    /// sender. `reserve` hands every [`ReservedBeforeDispatch`] a clone, and that clone is
+    /// not held through this type, so the store can reach its own `Drop` while a
+    /// reservation is still alive on a task parked against a slow backend. The channel then
+    /// never closes, `recv()` blocks forever, and an unbounded `join()` never returns: the
+    /// whole shutdown deadlocks on a reservation that is itself waiting.
+    ///
+    /// So the wait is bounded, the same way `WorkerSet` bounds its own and for the same
+    /// reason: a teardown that can hang is a teardown that has no deadline, and correctness
+    /// on this path must not depend on every other holder having finished first. Past the
+    /// budget the handle is dropped and the thread is left running, which is stated in the
+    /// line below rather than left to be inferred from a process that never exits.
+    ///
+    /// Giving up the wait is not giving up the guarantee: nothing was acknowledged that is
+    /// not durable, because acknowledgement happens after the fsync. What is lost is only
+    /// the assurance that the queue was empty at the moment this type went away.
     fn drop(&mut self) {
-        // Dropping the last sender ends the writer's receive loop; the join then waits
-        // for the batch it may be in the middle of.
         let (dead, _) = std::sync::mpsc::sync_channel(1);
         let live = std::mem::replace(&mut self.jobs, dead);
         drop(live);
-        if let Some(writer) = self.writer.take() {
-            let _ = writer.join();
+        let Some(writer) = self.writer.take() else {
+            return;
+        };
+        let now = std::time::Instant::now();
+        // Class R: this budget bounds how long shutdown may wait, so a deadline that cannot
+        // be represented is treated as already reached.
+        let deadline = now
+            .checked_add(crate::managed_worker::JOIN_DEADLINE)
+            .unwrap_or(now);
+        while !writer.is_finished() && std::time::Instant::now() < deadline {
+            std::thread::sleep(WRITER_JOIN_POLL);
         }
+        if writer.is_finished() {
+            let _ = writer.join();
+            return;
+        }
+        // RELINQUISHED. Written out because it is the one decision here that gives up a
+        // guarantee, and should read as a choice rather than as a binding falling out of
+        // scope.
+        drop(writer);
+        eprintln!(
+            "mcp-re-proxy: the retained-evidence writer did not finish within {}s of its \
+             store closing — a reservation still holds the queue open. It is left running \
+             rather than blocking shutdown on it; nothing unacknowledged was durable, so no \
+             completed exchange is in doubt.",
+            crate::managed_worker::JOIN_DEADLINE.as_secs()
+        );
     }
 }
+
+#[cfg(test)]
+impl EvidenceRetention {
+    /// Put this store in the state a returned or panicked write loop leaves it: holding a
+    /// sender whose receiver is gone.
+    ///
+    /// `#[cfg(test)]`, so it is not a production surface. It exists because the terminal
+    /// fault is otherwise reachable only by making the writer thread panic, and a test that
+    /// panicked a thread to reach it would be measuring the panic rather than the answer.
+    fn retire_writer_for_test(&mut self) {
+        let (orphaned, receiver) = std::sync::mpsc::sync_channel(1);
+        drop(receiver);
+        self.jobs = orphaned;
+    }
+}
+
+/// How often the drop path re-checks the writer while waiting out its budget.
+const WRITER_JOIN_POLL: std::time::Duration = std::time::Duration::from_millis(10);
 
 impl EvidenceRetention {
     /// Open (creating if absent) a retention store rooted at `dir`, proving it writable
@@ -128,12 +187,26 @@ impl EvidenceRetention {
     /// acknowledgement — is a store failure, never a silent success.
     async fn submit(&self, kind: JobKind) -> Result<(), RetentionError> {
         let (ack, acked) = tokio::sync::oneshot::channel();
-        self.jobs.try_send(WriteJob::new(kind, ack)).map_err(|_| {
-            RetentionError::Store(std::io::Error::new(
-                std::io::ErrorKind::WouldBlock,
-                "retention writer is not accepting work",
-            ))
-        })?;
+        // `Full` and `Disconnected` are two facts and they demand two answers. A full queue
+        // is genuine backpressure and an ordinary retry is correct — the capacity argument
+        // in `durability_bounds` depends on it staying retryable. A disconnected one means
+        // the writer thread has returned or panicked and NO future job will ever be
+        // accepted, so answering it as transient tells a client to retry something that
+        // cannot succeed until this replica is restarted.
+        self.jobs
+            .try_send(WriteJob::new(kind, ack))
+            .map_err(|e| match e {
+                std::sync::mpsc::TrySendError::Full(_) => RetentionError::Store(
+                    std::io::Error::new(std::io::ErrorKind::WouldBlock, "retention queue is full"),
+                ),
+                std::sync::mpsc::TrySendError::Disconnected(_) => {
+                    RetentionError::StoreRetired(std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe,
+                        "the retained-evidence writer has stopped; no further write will be \
+                         accepted by this replica",
+                    ))
+                }
+            })?;
         match acked.await {
             Ok(Ok(())) => Ok(()),
             Ok(Err(JobFault::NotPublished(e))) => Err(RetentionError::Store(e)),
@@ -657,6 +730,77 @@ mod tests {
             .await
             .expect("a returned slot admits the next call");
         drop(first);
+    }
+
+    /// A full queue and a dead writer are two facts, and only one of them is retryable.
+    ///
+    /// The capacity refusal keeps its `WouldBlock` because the whole permit scheme depends
+    /// on it being a genuine, retry-safe backpressure answer. A writer that has returned
+    /// accepts nothing again until the process restarts, and answering that as transient
+    /// tells a client to retry something that cannot succeed.
+    ///
+    /// Two stores, because the two conditions are reached at different points: the ceiling
+    /// refuses at the permit, before anything is offered to the writer at all, so a store
+    /// holding both conditions would only ever report the first.
+    #[tokio::test]
+    async fn a_dead_writer_is_a_terminal_fault_and_a_full_queue_is_not() {
+        let (request, _) = exchange();
+        let mut other = request.clone();
+        other.body.push(0x01);
+        let mut third = request.clone();
+        third.body.push(0x02);
+
+        let full = TempDir::new("full-not-retired");
+        let at_ceiling = EvidenceRetention::open_bounded(&full.0, 2).expect("open");
+        let _first = at_ceiling.reserve(&request).await.expect("first reserves");
+        let _second = at_ceiling.reserve(&other).await.expect("second reserves");
+        assert!(
+            matches!(
+                at_ceiling.reserve(&third).await,
+                Err(RetentionError::Store(_))
+            ),
+            "past the ceiling is retryable backpressure, not a retired store"
+        );
+
+        let gone = TempDir::new("retired");
+        let mut retired = EvidenceRetention::open_bounded(&gone.0, 2).expect("open");
+        // What a panicked or returned write loop leaves behind: a sender with no receiver.
+        retired.retire_writer_for_test();
+        assert!(
+            matches!(
+                retired.reserve(&request).await,
+                Err(RetentionError::StoreRetired(_))
+            ),
+            "a store whose writer has stopped must not answer as though a retry could work"
+        );
+    }
+
+    /// A store dropped while a reservation is still alive does not hang the shutdown.
+    ///
+    /// `reserve` hands every reservation a clone of the job sender, so the channel does not
+    /// close when this type closes its own. An unbounded `join()` waits for a writer that
+    /// is waiting for a sender the reservation still holds — and the process never exits.
+    ///
+    /// The budget is what makes this terminate. Asserted as an elapsed bound rather than by
+    /// observing the writer, because "shutdown finishes" is the property, and a test that
+    /// waited for the writer would measure the writer.
+    #[tokio::test]
+    async fn dropping_the_store_under_a_live_reservation_still_terminates() {
+        let dir = TempDir::new("dropdeadlock");
+        let retention = EvidenceRetention::open_bounded(&dir.0, 2).expect("open");
+        let (request, _) = exchange();
+        let held = retention.reserve(&request).await.expect("reserves");
+
+        let started = std::time::Instant::now();
+        drop(retention);
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed <= crate::managed_worker::JOIN_DEADLINE + std::time::Duration::from_secs(2),
+            "drop must be bounded by its own budget, not by a reservation that outlives it \
+             (took {elapsed:?})"
+        );
+        drop(held);
     }
 
     /// R7-C001/C002/C028: a completion is NEVER refused for capacity.
