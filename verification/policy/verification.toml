@@ -2068,6 +2068,13 @@ paths = [
   "mcp-re-http-profile/src/scitt/service.rs",
   "mcp-re-http-profile/src/scitt/wire.rs",
   "mcp-re-http-profile/src/scitt/mod.rs",
+  # The prototype transparency service and its tree builder. Not a running service, and its
+  # own header says so — but its builder is ONE OF THE TWO independent RFC 6962
+  # implementations this unit's controls cross-check against `merkle`'s fold, so a change to
+  # it changes what "two implementations agree" measures. A retained public API under #657
+  # ruling 4 and #841's classification, in no unit until now.
+  "mcp-re-http-profile/src/scitt/prototype/mod.rs",
+  "mcp-re-http-profile/src/scitt/prototype/tree.rs",
 ]
 exported_contracts = []
 evidence = [
@@ -4124,6 +4131,11 @@ description = "Whether the record stream is honest about what reached it: bounde
 paths = [
   "mcp-re-proxy/src/audit_sink/mod.rs",
   "mcp-re-proxy/src/audit_sink/drain.rs",
+  # The writer thread. Four of this unit's `tested_symbols` are
+  # `lib#audit_sink::writer::tests::*`, so without this the unit's fingerprint did not move
+  # when the code its own evidence lives in changed — `report_drops` could be rewritten
+  # under a standing attestation. A unit's paths must contain the code it cites.
+  "mcp-re-proxy/src/audit_sink/writer.rs",
 ]
 exported_contracts = []
 evidence = ["test://proxy/audit/delivery_integrity"]
