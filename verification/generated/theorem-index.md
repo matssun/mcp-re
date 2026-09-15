@@ -167,6 +167,7 @@ any of them is closed.
 | THM-0127 | The deployable's serving path always runs an anchor refresher | client.serving_lifetime | unit://client.serving_lifetime | live |
 | THM-0128 | The civil-date conversion is total on the domain its caller can supply | core.time_civil_from_days | unit://core.time_civil_from_days | live |
 | THM-0129 | Authoritative admission state is authenticated and bounded-current | http_profile.admission_state_provenance | unit://http_profile.admission_state_provenance, unit://proxy.admission_state_source | live |
+| THM-0131 | The client-revocation posture states what this replica is enforcing now | proxy.client_revocation_currency | unit://proxy.client_revocation_currency | live |
 
 ## Claims in full
 
@@ -1575,3 +1576,15 @@ any of them is closed.
 **Review requirement.** Owner security-specification review
 
 **Depends on.** THM-0004
+
+### THM-0131 — The client-revocation posture states what this replica is enforcing now
+
+**Statement.** A set of client CRLs is installable only when every one of them is inside its own `nextUpdate` window and states one at all. That is a property of the value, not of a call site: the evidence type has a single constructor and the constructor performs the classification, so startup and the reload worker run one gate rather than two that agree. Each successful reload republishes the evidence it installed, so the posture names the CRLs in force rather than the ones read at boot. And a replica whose reload worker has died, or whose plane has retired, retracts the cadence it advertised: the maintenance verdict is latched, and no later reload can clear it.
+
+**Security consequence.** An operator reading this replica's revocation posture is reading what it is doing. Three specific misreadings are closed: * a CRL that startup refuses to boot on could be installed by a reload and reported as "new verifier is live", after which — expiration being enforced — every new handshake against that issuer failed closed, an outage the transcript attributed to success; * after any successful reload the posture reported the boot digest and window forever, so the CRL an operator checked against the one they published was not the one being enforced; * a panicked reload worker printed a FATAL line and changed nothing, so the deployment went on advertising "hot-reload enabled (every Ns)" while nothing re-read the files. The self-bounding argument that licenses the weaker treatment covers the rustls VERIFIER; it does not cover the per-request index, whose whole purpose is that a peer added to a reloaded CRL stops being served on the connection it already holds, and its bound is a CRL validity period rather than the cadence the startup line promised. The latch's two flags are the security content of the third: one flag would let a straggler reload landing after the worker died report the cadence as kept.
+
+**Scope — what this does NOT establish.** V0: a test battery over the evidence constructor, the maintenance algebra and the retraction, plus the plane's own retirement path. It is a claim about what the deployment SAYS and about what may be installed. It is NOT a fail-closed: a dead reload worker does not refuse handshakes, deliberately, because the verifier does self-bound once the last-good CRL passes its own `nextUpdate` and refusing would convert a bounded staleness into an immediate outage. What is claimed is that the advertised property is withdrawn, not that the exposure is zero. It says nothing about whether a revoked peer is refused — that is THM-0054's handshake half and the per-request index beside it — and nothing about the CRLs being the right CRLs, which is an operator decision. The retraction reaches an operator through stderr. Whether a log pipeline consumes it is outside this repository, and no claim here rests on its doing so.
+
+**Review requirement.** Owner security-specification review
+
+**Depends on.** THM-0054

@@ -486,7 +486,10 @@ _PROXY_LIB_SRCS = [
     # per-request revocation index and the CRL reload worker.
     "src/tls_plane/mod.rs",
     "src/tls_plane/client_revocation_posture.rs",
-    "src/tls_plane/crl_reload_worker.rs",
+    "src/tls_plane/crl_evidence.rs",
+    "src/tls_plane/crl_reload_worker/mod.rs",
+    "src/tls_plane/crl_reload_worker/supervision.rs",
+    "src/tls_plane/revocation_currency.rs",
     # ADR-MCPRE-056 §8: the shared control runtime — one owner for control-plane
     # execution; consumers get a tokio Handle (access, not ownership).
     "src/control_runtime.rs",
