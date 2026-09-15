@@ -69,8 +69,17 @@ pub(super) fn establish_redis(
     {
         eprintln!("mcp-re-proxy: replay tier = shared (horizontally-scaled; async Redis backend)");
         eprintln!("mcp-re-proxy: {}", tier.startup_audit_line("redis"));
+        // Refuse, do not panic. This function already returns `Result<_, String>` and the
+        // caller already reports a startup refusal, so an `expect` here was an unjustified
+        // ADR-MCPRE-061 §6 site AND a worse diagnostic: a panic in the composition root
+        // reaches an operator as a backtrace rather than as the sentence that says which
+        // part of the plan disagreed with which.
         let rt = control
-            .expect("the plan declared the redis replay tier needs the control runtime")
+            .ok_or_else(|| {
+                "the plan declared the redis replay tier, which needs the control runtime, \
+                 and none was established"
+                    .to_owned()
+            })?
             .handle();
         let wait_timeout_ms = tier.wait_quorum_params().map(|(_, ms)| ms);
         let mut store = rt
