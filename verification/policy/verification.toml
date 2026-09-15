@@ -429,6 +429,52 @@ tested_symbols = [
 # anchor-set change is that a new anchor set is a new listener with a new empty store. Two
 # propositions, two batteries; neither is evidence for the other.
 
+# r11 W2-B PR-4. A SECOND unit beside `proxy.tls_listener_state`, because the posture is a
+# different proposition from the construction. That unit claims every construction path
+# obtains its listener state through one owner; it says nothing about whether what an
+# operator is told about revocation is true a week later, and three files in its closure
+# contributed no evidence at all (R11-609) — two of them carried no tests whatsoever.
+#
+# The two halves this owns went wrong independently, which is the argument for one unit over
+# both: the startup evidence was written once and never rewritten, so after the first
+# successful reload the posture described a CRL nobody was enforcing (R11-617); and the
+# reload's staleness gate was weaker than startup's, so a CRL that refuses boot could be
+# installed and reported as success (R11-610/611/612).
+
+[[unit]]
+id = "proxy.client_revocation_currency"
+class = "V0"
+description = "That a replica's client-revocation posture states what it is enforcing NOW: a set of CRLs is installable only when every one of them is inside its own nextUpdate window, by whichever path installs it; each successful reload republishes what it installed; and a replica whose reload worker has died, or whose plane has retired, retracts the cadence it advertised rather than continuing to claim it."
+paths = [
+  "mcp-re-proxy/src/tls_plane/crl_evidence.rs",
+  "mcp-re-proxy/src/tls_plane/revocation_currency.rs",
+  "mcp-re-proxy/src/tls_plane/crl_reload_worker/supervision.rs",
+  # Also in `proxy.tls_listener_state`, and deliberately: this file has two halves. Loading
+  # and indexing the CRLs is what a listener is built with; RENDERING the posture is what
+  # the deployment says about them. A change to either dirties both units, which is the
+  # conservative direction.
+  "mcp-re-proxy/src/tls_plane/client_revocation_posture.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/tls/client_revocation_currency"]
+# The first two are the ones that carry the claim rather than a symptom of it. A latch that
+# a later reload could clear would satisfy every "the fault is recorded" assertion and still
+# let a straggler success report the cadence as kept; and a stale CRL that has no INHABITANT
+# cannot be installed by a path nobody has written yet, which a second call to the same
+# checker would not establish.
+tested_symbols = [
+  "lib#tls_plane::revocation_currency::tests::a_stopped_worker_is_not_cleared_by_a_later_reload",
+  "lib#tls_plane::crl_evidence::tests::a_stale_crl_produces_no_evidence_to_install",
+  "lib#tls_plane::revocation_currency::tests::an_unscheduled_reload_is_never_reported_as_stopped",
+  "lib#tls_plane::revocation_currency::tests::a_degraded_reload_recovers_on_the_next_success",
+  "lib#tls_plane::revocation_currency::tests::the_maintenance_token_names_the_cadence_it_is_or_is_not_keeping",
+  "lib#tls_plane::crl_evidence::tests::no_crls_is_evidence_of_a_deployment_without_them",
+  "lib#tls_plane::crl_reload_worker::supervision::tests::a_dead_reload_worker_retracts_the_cadence_it_advertised",
+  "lib#tls_plane::crl_reload_worker::supervision::tests::a_failed_reload_is_degraded_and_a_dead_worker_is_stopped",
+  "lib#tls_plane::client_revocation_posture::revocation_posture_tests::with_no_crl_the_per_request_check_is_reported_as_not_configured",
+  "lib#tls_plane::client_revocation_posture::revocation_posture_tests::every_loaded_crl_reports_its_own_digest_and_window",
+]
+
 [[unit]]
 id = "proxy.tls_listener_state"
 class = "V0"
@@ -459,7 +505,7 @@ paths = [
   # about what the production listener is built with, and a CRL reload rebuilds it.
   "mcp-re-proxy/src/tls_plane/mod.rs",
   "mcp-re-proxy/src/tls_plane/client_revocation_posture.rs",
-  "mcp-re-proxy/src/tls_plane/crl_reload_worker.rs",
+  "mcp-re-proxy/src/tls_plane/crl_reload_worker/mod.rs",
 ]
 exported_contracts = []
 evidence = [
@@ -3213,7 +3259,7 @@ id = "proxy.audit_record_coordinates"
 class = "V0"
 description = "What a security record may say, and in whose vocabulary: a request record always states an authorization outcome, a response record has none to carry, and the Core verdict and the authorization verdict occupy separate coordinates that cannot be read as each other."
 paths = [
-  "mcp-re-proxy/src/audit_record.rs",
+  "mcp-re-proxy/src/audit_record/mod.rs",
   "mcp-re-proxy/src/authorization/audit.rs",
   "mcp-re-proxy/src/authorization/audit/fields.rs",
 ]
@@ -3231,6 +3277,53 @@ tested_symbols = [
   "lib#authorization::audit::tests::the_two_refusal_arms_are_distinguishable_in_the_record",
   "lib#authorization::audit::tests::before_policy_imports_no_vocabulary",
   "lib#authorization::audit::fields::tests::the_unconfigured_line_cannot_be_read_as_an_authorization",
+  # Which values this authority calls a closed token and which it calls open text is a
+  # COORDINATE decision — who may say what, in whose vocabulary — so its control lives here
+  # rather than with the module that spells them. `target_field` is the one place a `Token`
+  # arm and a `Text` arm sit in one match, so it is the one place the decision can go wrong.
+  "lib#authorization::audit::fields::tests::a_client_named_target_is_classified_as_text",
+]
+
+# r11 W2-A. A THIRD unit beside the coordinate and delivery ones, because this is a third
+# question. `proxy.audit_record_coordinates` claims what a record MAY SAY and in whose
+# vocabulary; `proxy.audit_delivery` claims that the stream is honest about what reached it.
+# Neither states that the TEXT preserves what was said, and attaching that here would put a
+# claim inside a unit whose evidence closure does not establish it.
+#
+# It is not folded into the delivery unit for a second reason: that unit's paths are the
+# sink, and putting the encoding property there would make the unit boundary assert the very
+# ownership this slice exists to refuse — that the transport owns the format.
+#
+# Two files, one proposition. `scalar.rs` is the injective escape and its inverse, statable
+# with nothing in scope but a string; `text.rs` is the record grammar built over it. The
+# claim is the composition, so the closure is both.
+
+[[unit]]
+id = "proxy.audit_text_rendering"
+class = "V0"
+description = "That one logical audit record renders to exactly one physical record: every scalar is escaped by one authority into an image free of the record grammar's separators and of every control, line separator and bidi codepoint, the escape has a tested left inverse, and the field names are separator-free — so a field value can synthesize neither a new field nor a new line, and the logical record is recoverable from the physical one."
+paths = [
+  "mcp-re-proxy/src/audit_record/scalar.rs",
+  "mcp-re-proxy/src/audit_record/text.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/audit/text_rendering"]
+# The anti-collision control is the one that carries the claim rather than a symptom of it:
+# an escape that mapped LF and the two characters `\n` to one image would pass every
+# "no newline in the output" assertion and still be non-injective, which is the difference
+# between a record that cannot be forged and one whose forgeries are merely inconvenient.
+tested_symbols = [
+  "lib#audit_record::scalar::tests::an_escaped_value_and_a_literal_one_do_not_collide",
+  "lib#audit_record::scalar::tests::every_scalar_round_trips",
+  "lib#audit_record::scalar::tests::the_inverse_refuses_text_that_is_no_image_of_the_escape",
+  "lib#audit_record::scalar::tests::no_scalar_escapes_to_the_bare_absent_marker",
+  "lib#audit_record::scalar::tests::a_separator_free_string_is_exactly_one_that_renders_verbatim",
+  "lib#audit_record::text::tests::a_scalar_carrying_a_newline_still_renders_one_physical_record",
+  "lib#audit_record::text::tests::a_scalar_carrying_the_field_separator_cannot_add_a_field",
+  "lib#audit_record::text::tests::a_scalar_carrying_the_key_separator_keeps_one_equals_per_token",
+  "lib#audit_record::text::tests::the_absent_marker_is_not_producible_by_any_scalar",
+  "lib#audit_record::text::tests::no_field_name_contains_a_separator",
+  "lib#audit_record::text::tests::a_rendered_record_parses_back_to_the_fields_that_were_written",
 ]
 
 # ADR-MCPRE-059 §28 / issue #742. TWO owners, not one, and the split is the finding: R9's
@@ -3843,6 +3936,10 @@ evidence = ["test://proxy/audit/delivery_integrity"]
 # drain that completed, and must never collapse into it.
 tested_symbols = [
   "lib#audit_sink::tests::every_record_carries_a_sequence_number",
+  # "One record in, one line out" is a DELIVERY claim: whatever the record says, the stream
+  # receives exactly one physical record for it. That the value survives recoverably is
+  # `proxy.audit_text_rendering`'s; that the count is one is this unit's.
+  "lib#audit_sink::tests::one_record_writes_exactly_one_line_for_any_actor_id",
   "lib#audit_sink::tests::the_collector_preserves_emission_order",
   "lib#audit_sink::tests::a_full_audit_queue_drops_rather_than_blocking_the_caller",
   # Moved with its subject: `report_drops` is the writer's, so the control over it lives
@@ -4268,7 +4365,14 @@ tested_symbols = [
   "lib#async_replay::tests::an_abandoned_insert_s_charge_expires_with_the_entry_it_may_have_created",
   "lib#async_replay::tests::the_tier_releases_charges_once_their_retention_expires",
   "lib#async_replay::bounds::tests::the_budget_reserves_headroom_and_splits_evenly",
-  "lib#async_replay::bounds::tests::no_number_of_actors_can_spend_the_reserve",
+  # Renamed with the property it asserts: the old name claimed no actor count could spend
+  # the reserve, which is false above `actors > spendable` where the floor makes every
+  # budget 1. The control now quantifies over every count up to the spendable capacity AND
+  # asserts the counterexample regime rather than stopping short of it.
+  "lib#async_replay::bounds::tests::the_reserve_survives_every_actor_count_the_wall_governs",
+  # What the floor is for: a budget of zero would refuse an actor holding nothing, which
+  # arrives earlier than the ceiling and is the outage the reserve exists to prevent.
+  "lib#async_replay::bounds::tests::no_actor_count_produces_a_zero_budget",
   "lib#async_replay::retention_ledger::tests::a_release_returns_one_actors_charge_and_no_one_elses",
   "lib#async_replay::retention_ledger::tests::a_committed_charge_is_returned_only_when_its_retention_expires",
   "lib#async_replay::in_memory::tests::in_memory_store_is_fresh_then_replay_and_single_process",

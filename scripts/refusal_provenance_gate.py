@@ -115,7 +115,11 @@ REFUSAL = ["mcp-re-proxy/src/refusal/mod.rs", "mcp-re-proxy/src/refusal/cause.rs
 #: sites moved out of `mod.rs`, so a gate still reading that one file would find no stage
 #: to poison-pill and no call sites to check — a clean pass over the subject.
 SERVING = "mcp-re-proxy/src/http_profile_serve"
-RECORD = "mcp-re-proxy/src/audit_record.rs"
+#: The record. A DIRECTORY since r11 W2-A gave the record's scalar spelling its own owner:
+#: the type and the field composition stayed in `mod.rs` while `text.rs` and `scalar.rs`
+#: carry the grammar, so a gate still reading that one file would be reading a subset of its
+#: subject and calling it the whole.
+RECORD = "mcp-re-proxy/src/audit_record"
 CORE_AUDIT = "mcp-re-core/src/audit.rs"
 
 #: The transport frame the async fleet serves through, and the module that owns the served
@@ -249,7 +253,7 @@ def read_unit(rel: str, overrides: dict[str, str] | None) -> str:
         return read(rel, overrides)
     members = sorted(m for m in target.rglob("*.rs") if m.is_file())
     if not members:
-        raise SystemExit(f"{rel}: a serving path with no Rust source is not measurable")
+        raise SystemExit(f"{rel}: an owner subtree with no Rust source is not measurable")
     return "\n".join(production(m.read_text(encoding="utf-8")) for m in members)
 
 
@@ -309,7 +313,7 @@ def check(overrides: dict[str, str] | None = None) -> list[str]:
             transport_callers.add(rel)
 
     # 7/8. the record kind decides what each authority may say (R3, R5)
-    record = read(RECORD, overrides)
+    record = read_unit(RECORD, overrides)
     if "Option<AuthorizationFacet>" in record:
         problems.append(
             f"{RECORD}: the authorization facet is optional — an absent facet then means both "
@@ -522,7 +526,10 @@ SELFTEST = [
     ),
     (
         "an undeclared pre-exchange refusal site appears (12c)",
-        {RECORD: "fn f() -> ServedHttpResponse { ServedHttpResponse::json(403, b) }\n"},
+        # Keyed on a FILE, not on the `RECORD` subtree: clause 12c rides the whole-workspace
+        # walk, and that walk reads files. A fixture keyed on a directory overrides nothing
+        # the walk reads, so it would report a clean pass over a clause it never reached.
+        {f"{RECORD}/mod.rs": "fn f() -> ServedHttpResponse { ServedHttpResponse::json(403, b) }\n"},
         1,
         'pre-exchange refusal sites are',
     ),
@@ -545,7 +552,8 @@ def selftest() -> int:
         # written for. Counting problems alone lets a fixture that breaks four unrelated
         # shapes pass as evidence for a clause it never reached.
         marker = case[3] if len(case) > 3 else None
-        base = {r: (REPO / r).read_text() for r in REFUSAL + [RECORD, CORE_AUDIT, TRANSPORT]}
+        base = {r: (REPO / r).read_text() for r in REFUSAL + [CORE_AUDIT, TRANSPORT]}
+        base[RECORD] = read_unit(RECORD, None)
         # The serving path is a subtree; a fixture that replaces it supplies its text as
         # one override, which `read_unit` honours ahead of the walk.
         base[SERVING] = read_unit(SERVING, None)
