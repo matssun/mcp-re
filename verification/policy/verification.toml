@@ -3776,8 +3776,13 @@ paths = [
   "mcp-re-proxy/src/redis_continuation_store.rs",
 ]
 exported_contracts = []
+# TWO evidence classes. The key derivation's whole security content is three `hasher.update`
+# calls, and a green battery does not say any one of them is load-bearing — delete a length
+# prefix and every positive control still passes. The probes delete them one at a time; the
+# control that goes red is the evidence.
 evidence = [
   "test://proxy/continuation_correlation_store/actor_scoped_correlation",
+  "mutation://proxy/continuation_correlation_store/actor_scoped_correlation",
 ]
 # WHAT THIS UNIT DOES NOT CLAIM. Not that the shared tier was established. Which capability
 # the runtime installs for the plan it was given is a materialization fact with its own
@@ -3786,12 +3791,18 @@ evidence = [
 # it. So there is no "prevents startup" conjunct here. Not the durability of an
 # acknowledged write either; that is D2b, and it needs a mechanism premise this claim does
 # not use.
+#
+# WHAT IT DOES REST ON, registered rather than assumed silently: ASM-0047, that an entry in
+# the `mcp-re:cont:` keyspace was written by an open leg of this deployment — the answer
+# leg's admission is digest equality against bytes nothing proves this fleet produced — and
+# ASM-0048, that a `DEL` reply of 1 means this call removed a key that existed, which is
+# where the one-shot verdict measured below comes from.
 tested_symbols = [
   # The key is derived from the actor the VERIFIER resolved, never from anything the
   # request asserts. Without it a second verified actor who knows the public digests
   # completes the victim's approval round trip.
   "lib#continuation_store::tests::the_key_is_scoped_to_the_audience",
-  "lib#continuation_store::tests::the_actor_state_boundary_cannot_be_moved",
+  "lib#continuation_store::tests::no_boundary_between_the_keys_fields_can_be_moved",
   # The key separates both inputs, so the scope above is not vacuous.
   "lib#continuation_store::tests::key_is_stable_and_specific_to_both_inputs",
   # REACHABILITY, not merely key derivation. The three above establish what the key is

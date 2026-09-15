@@ -3460,3 +3460,41 @@ weakening = """
 expect_red = [
   "lib#transparency::durability::tests::a_dead_writer_is_a_terminal_fault_and_a_full_queue_is_not",
 ]
+
+[[probe]]
+id = "M141-the-audience-actor-boundary-in-the-continuation-key-is-pinned"
+unit = "proxy.continuation_correlation_store"
+theorem = "THM-0087"
+conjunct = "No tuple can be spelled as a different one by moving a boundary between the key's fields"
+# The boundary that separates DEPLOYMENTS. Without this prefix, `("ab", "c")` and
+# `("a", "bc")` hash the same bytes, so an actor trusted by two MCP-RE deployments on one
+# shared store can open a leg against one dispatch boundary and answer it against the other.
+# Every positive control in the battery still passes under this weakening — which is why it
+# is registered rather than argued.
+path = "mcp-re-proxy/src/continuation_store/mod.rs"
+anchor = """
+    hasher.update((audience_id.len() as u64).to_be_bytes());
+"""
+weakening = """
+"""
+expect_red = [
+  "lib#continuation_store::tests::no_boundary_between_the_keys_fields_can_be_moved",
+]
+
+[[probe]]
+id = "M142-the-actor-state-boundary-in-the-continuation-key-is-pinned"
+unit = "proxy.continuation_correlation_store"
+theorem = "THM-0087"
+conjunct = "No tuple can be spelled as a different one by moving a boundary between the key's fields"
+# The boundary that separates ACTORS. Without this prefix one actor names another's entry by
+# spelling the split differently, and the store hands it the victim's retained bases — which
+# is another actor answering a human-approval round trip, not a denial of service.
+path = "mcp-re-proxy/src/continuation_store/mod.rs"
+anchor = """
+    hasher.update((actor_id.len() as u64).to_be_bytes());
+"""
+weakening = """
+"""
+expect_red = [
+  "lib#continuation_store::tests::no_boundary_between_the_keys_fields_can_be_moved",
+]

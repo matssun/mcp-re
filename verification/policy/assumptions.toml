@@ -1462,3 +1462,84 @@ introduced_by = "v0.17 per-site escape-hatch registration (verification/reviews/
 review_requirement = "Owner review; any theorem that begins to read a field of one of these types, and any type added to or removed from the list."
 affected_contracts = []
 tool_specific_mechanism = "verus:external_body"
+
+# ---------------------------------------------------------------------------
+# r11 R11-346 / R11-518 — what the MRTR correlation tier rests on.
+# ---------------------------------------------------------------------------
+#
+# The module used to say the store "is never a trust root". It is one, for exactly one
+# property, and the two entries below separate that property from the mechanism premise
+# underneath it — the same split, and for the same reason, as ASM-0040 / ASM-0041 above:
+# who may write to the tier and what the tier's replies mean are different beliefs, with
+# different failure modes and different review triggers.
+#
+# Neither entry is needed for the CALLER's identity. Who is answering, and that the answer
+# is theirs, comes from the client's RFC 9421 signature over the answer leg and from
+# nothing in this store.
+
+[[assumption]]
+id = "ASM-0047"
+description = "Write access to the `mcp-re:cont:` keyspace of the shared correlation tier is confined to the fleet's own replicas, so an entry found there was written by an open leg of this deployment."
+justification = """
+The answer leg is admitted on digest equality: `HttpContinuation::verify` hashes the bytes
+the store returned and compares them with the digests the client signed. Nothing in that
+check — and nothing that could be added to it without a second signature over the retained
+bases — establishes that those bytes were ever produced by an `InputRequiredResult` this
+fleet delegated-signed. The key is derived from the ANSWERING actor, so a party holding a
+verified client identity AND write access to the keyspace plants its own bases under its
+own key, signs an answer leg committing to their digests, and the binding passes. The
+deployment then records a completed human-approval round trip that no human approved.
+
+So the premise is about ACCESS, not about Redis behaving correctly (ASM-0048 carries that).
+It is the ordinary premise of any shared-state tier — the replay tier and the trust epoch
+rest on the same confinement — but it is load-bearing here in a way it is not there: a
+planted replay entry can only refuse a request, while a planted correlation entry
+MANUFACTURES an approval.
+
+It stops being acceptable if the correlation keyspace is shared with a tenant that is not
+this dispatch boundary, or reachable by any principal that is not a replica of this fleet —
+an operator console with write access included. The audience is in the key so that two
+MCP-RE deployments on one Redis do not share a namespace; that separates deployments, and
+it does not separate a deployment from a party that can write to its own keys.
+"""
+scope = [
+  "unit://proxy.continuation_correlation_store",
+  "boundary://boundary.shared_state_store",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r11 R11-346 (security funnel round 11, tracker #879)"
+review_requirement = "Owner review; any change to what the answer leg's admission is decided on, and any deployment topology that widens who may write the correlation keyspace."
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"
+
+[[assumption]]
+id = "ASM-0048"
+description = "A Redis `DEL key` reply of 1 means THIS call removed a key that existed, and a `SET key v PX t` keeps the key readable for `t` milliseconds and then not — so the delete count is a one-shot verdict across replicas and the entry's lifetime is bounded."
+justification = """
+Both of the correlation tier's cross-replica properties are read directly off these replies.
+One-shot is the `DEL` count and nothing else: of two concurrent answer legs that both peeked
+the same entry and both bound, exactly one is told it removed it, and the other is failed
+closed. The bounded lifetime is the `PX` expiry and nothing else: an approval that is never
+answered stops being answerable, which is what keeps a continuation from being a permanent
+credential.
+
+Narrow on purpose, and not ASM-0040. That premise is about what a `WAIT` acknowledgement
+establishes under replication; this one is about the atomicity of a single command at the
+primary and the honesty of its reply. A correlation entry is never `WAIT`ed on, so the
+quorum question does not arise, and an umbrella over both would state something true of
+neither.
+
+It stops being acceptable under a topology where the two legs can reach different primaries
+for the same key — a client-side-sharded or multi-primary cluster without hash-tag affinity
+for `mcp-re:cont:` — because then two `DEL`s can both return 1 and the one-shot rule is
+gone, or a proxy layer that answers `DEL` optimistically.
+"""
+scope = [
+  "unit://proxy.continuation_correlation_store",
+  "boundary://boundary.shared_state_store",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r11 R11-518 (security funnel round 11, tracker #879)"
+review_requirement = "Owner review; any change to the commands the tier issues, and any Redis topology in which the two legs of one continuation can reach different primaries."
+affected_contracts = []
+tool_specific_mechanism = "foreign-dependency"
