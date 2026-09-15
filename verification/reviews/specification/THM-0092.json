@@ -4,15 +4,15 @@
     "encoding_version": 1,
     "theorem_claim": "sha256:100ebea63d495c27a671114c4a8231f73e6271d9fc8c2b9d6c4addde5bf1da82",
     "theorem_dependencies": {
-      "THM-0086": "sha256:9fe769a6f49b2d1628059803ee4096c9de6800af4df4ec47a1434e6ce6da6f2d",
+      "THM-0086": "sha256:8fea6f6254d34ef27b12cc45879aeb6a3e696bb85cc4a4de4c1f8b2cb2df0ae7",
       "THM-0106": "sha256:fdd244d4ea07be034ed2558a7cfb015525ac117a46ac2395630832c720c6d68b",
       "THM-0107": "sha256:e1bbab3da6f8f2de5ff707aaca9f04d3a2c2c2eb853ebf338a0646cc124cadd4"
     },
     "theorem_id": "THM-0092",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "DEPENDENCY-ONLY RE-AFFIRMATION, recorded under the owner's AFK mandate as routine maintenance. The theorem's own claim text, security consequence, scope, owner and review requirement are BYTE-IDENTICAL to the reviewed version; what moved is the transitive dependency closure, because THM-0092 gained THM-0106 and THM-0107. WHAT THIS REVIEW ACKNOWLEDGES: the addition of two subordinate local results about the DEPLOYABLE replay backends \u2014 that the Redis adapter refuses a server which may drop a nonce before its TTL and refuses one whose policy it could not read, and that the etcd adapter records a nonce only under a bounded lease through a linearized put-if-absent \u2014 each turning every non-answer into an outage rather than a fresh nonce. WHAT IT DOES NOT DO: it does not widen what earns dispatch, it introduces no new trust assumption, it adds nothing to ASM-0040 or ASM-0041 and restates neither, and it does not level the two mechanisms \u2014 a deployment still obtains the strength of the tier it wired. The edge STRENGTHENS the support beneath an existing claim rather than changing the claim: THM-0092's consequence was already about a store that was unreachable, and its battery already measured that against a stub; what is new is that the shipped adapters are measured to BE such a store. The fingerprint was recomputed on the tree after the last edit and equals the value above.",
-  "reviewed_fingerprint": "sha256:3a0c918cb7b9765879bf0fa5823b68a52a2eb8d73fd7536c9326f85e96df9e45",
+  "notes": "DEPENDENCY-ONLY RE-AFFIRMATION, recorded under the owner's AFK mandate for the r11 closure campaign. The theorem's own claim text, security consequence, scope, owner and review requirement are BYTE-IDENTICAL to the reviewed version; what moved is one member of the transitive dependency closure, THM-0086, whose statement gained a corrected symbol path (`replay_plane::materialize` -> `replay_plane::MaterializedReplay::materialize`). WHAT THIS REVIEW ACKNOWLEDGES: a subordinate result's producer was renamed and its refusal made structural. The subordinate proposition is unchanged, so nothing this theorem composes from it changed.",
+  "reviewed_fingerprint": "sha256:dac8855f40bc9bbe009106c7f4ad19c5161e183cada1f7ee16ad6fb549af52e9",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0092"
 }

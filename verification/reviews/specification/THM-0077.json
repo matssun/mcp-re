@@ -20,7 +20,7 @@
       "THM-0066": "sha256:53248632f6d1eb564a7557c6f4b400d16e21655bdb1037376abe64d51c0e6fdc",
       "THM-0067": "sha256:10ada285a51969bc917f49fad14a6ec471c16cbcf8082a14ea9d697092b70433",
       "THM-0073": "sha256:1193224486e76a9ffcaf098325e3f701e100454779b066ca7c56be2edb2473ac",
-      "THM-0086": "sha256:9fe769a6f49b2d1628059803ee4096c9de6800af4df4ec47a1434e6ce6da6f2d",
+      "THM-0086": "sha256:8fea6f6254d34ef27b12cc45879aeb6a3e696bb85cc4a4de4c1f8b2cb2df0ae7",
       "THM-0089": "sha256:5f08ed31d860d3ef9a71836edf1b0bff9ea496a89e74dae727eb4baff757fad8",
       "THM-0090": "sha256:69e411fd6b97444acab2d2001bf35cd1e70cfe46b78ed76db391b6d0c5b906f0",
       "THM-0096": "sha256:033bf43215d5609849ab29b30e6d84cd709306a05495236471d9dd7a6adb1b13",
@@ -30,8 +30,8 @@
     "theorem_id": "THM-0077",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "DEPENDENCY-ONLY RE-AFFIRMATION recorded under the owner's AFK mandate of 2026-09-06, by the implementing agent, superseding this record's previous entry at sha256:2164f33aae3c49b1ac183ef0559f9b1ad7601ca440e92ca36d1a2b40387ded2a. THE CLAIM TEXT DID NOT MOVE: theorem_claim is sha256:c37c7e0bbf738372218737fd9687e7d808198485c7ba74d1ea2652d40e35315d in both records; title, statement, security consequence, scope, owner, supported_by and review_requirement are re-affirmed unchanged and were not reopened. WHAT WAS REVIEWED IS THE DEPENDENCY CLOSURE, 20 -> 22 members, and the two additions are the #581 slice: THM-0102, the connection credential window (a validated deployment's connection-age bound never exceeds the credential lifetime it reports as its exposure window), added as a DIRECT premise beside THM-0048 and THM-0054 because it is a deployment-posture claim of exactly this root's kind; and THM-0103, the epoch-bound store's contract, which arrives TRANSITIVELY beneath THM-0048 and was given no direct edge. Both reviewed on the same tree, at sha256:6bb5cdc3e29b3c189fd02659beabe894e90050d858178fc7a94fb3aa84c92cdc and sha256:9855fe8152cefc4d7d6e12446a8afaa805875d29976fcb1a5fc98b2c3e376a57 respectively. No dependency was removed and no pre-existing member's digest changed. NEITHER ADDITION WIDENS THIS ROOT: THM-0102 states a relation over configured values and explicitly does NOT claim that a live connection is closed at the configured age (that code is untested, unowned and feature-gated, and the scope says so); THM-0103 is a claim about the STORE and explicitly does NOT claim that a production listener's epoch advances. No assumption is added by either. Recomputed on the tree before writing and equal to sha256:e87e6bdeaf0725ee7a5771b559b35cbd67362f02c54d67fd0616eb0a35303f53.",
-  "reviewed_fingerprint": "sha256:e87e6bdeaf0725ee7a5771b559b35cbd67362f02c54d67fd0616eb0a35303f53",
+  "notes": "DEPENDENCY-ONLY RE-AFFIRMATION, recorded under the owner's AFK mandate for the r11 closure campaign. The theorem's own claim text, security consequence, scope, owner and review requirement are BYTE-IDENTICAL to the reviewed version; what moved is one member of the transitive dependency closure, THM-0086, whose statement gained a corrected symbol path (`replay_plane::materialize` -> `replay_plane::MaterializedReplay::materialize`). WHAT THIS REVIEW ACKNOWLEDGES: a subordinate result's producer was renamed and its refusal made structural. The subordinate proposition is unchanged, so nothing this theorem composes from it changed.",
+  "reviewed_fingerprint": "sha256:42c5302bd726343fa7916193dd363e83ae80c053c95b7985523fcdbdb422e604",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0077"
 }

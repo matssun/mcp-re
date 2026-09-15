@@ -4504,10 +4504,10 @@ depends_on = ["THM-0046", "THM-0069", "THM-0081"]
 id = "THM-0086"
 title = "The established replay tier is the selected one, and never a weaker substitute"
 statement = """
-The replay tier `replay_plane::materialize` hands to the serving path is the tier the plan
-selected, paired with the dispatch posture that plan declared. A tier that self-declares the
-volatile single-process reference posture cannot be handed over at all, and a backend this
-build does not carry is refused by name rather than substituted.
+The replay tier `replay_plane::MaterializedReplay::materialize` hands to the serving path is
+the tier the plan selected, paired with the dispatch posture that plan declared. A tier that
+self-declares the volatile single-process reference posture cannot be handed over at all, and
+a backend this build does not carry is refused by name rather than substituted.
 """
 security_consequence = """
 A deployment cannot come up believing it has cross-replica replay protection while holding

@@ -1109,7 +1109,7 @@ any of them is closed.
 
 ### THM-0086 — The established replay tier is the selected one, and never a weaker substitute
 
-**Statement.** The replay tier `replay_plane::materialize` hands to the serving path is the tier the plan selected, paired with the dispatch posture that plan declared. A tier that self-declares the volatile single-process reference posture cannot be handed over at all, and a backend this build does not carry is refused by name rather than substituted.
+**Statement.** The replay tier `replay_plane::MaterializedReplay::materialize` hands to the serving path is the tier the plan selected, paired with the dispatch posture that plan declared. A tier that self-declares the volatile single-process reference posture cannot be handed over at all, and a backend this build does not carry is refused by name rather than substituted.
 
 **Security consequence.** A deployment cannot come up believing it has cross-replica replay protection while holding process-local protection. Replay admission cannot degrade to a weaker store on infrastructure trouble, because there is no reachable path that substitutes one.
 
