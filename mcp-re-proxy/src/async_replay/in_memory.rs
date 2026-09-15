@@ -30,7 +30,9 @@ use mcp_re_core::ReplayDecision;
 
 use crate::shared_replay::ReplayStoreError;
 
+use super::bounds::per_actor_budget;
 use super::bounds::ASYNC_MAX_ENTRIES;
+use super::budget_report::{BudgetRefusal, BudgetRefusalReporter};
 use super::local_refusals::refuse_over_ceiling;
 use super::local_refusals::refuse_over_fair_share;
 use super::local_refusals::refuse_stale_retain_until;
@@ -54,6 +56,9 @@ pub struct InMemoryAsyncAtomicReplayStore {
     /// every handle onto the same state evicts against the same notion of now.
     clock: Arc<UnixClock>,
     max_entries: usize,
+    /// Paces the budget-refusal line. Shared with clones, so one over-quota actor does not
+    /// get a fresh allowance of stderr per handle onto the same state.
+    refusals: Arc<BudgetRefusalReporter>,
 }
 
 impl Default for InMemoryAsyncAtomicReplayStore {
@@ -61,6 +66,7 @@ impl Default for InMemoryAsyncAtomicReplayStore {
         InMemoryAsyncAtomicReplayStore {
             inner: std::sync::Arc::new(Mutex::new(RetainedSet::default())),
             clock: Arc::new(system_clock()),
+            refusals: Arc::new(BudgetRefusalReporter::default()),
             max_entries: ASYNC_MAX_ENTRIES,
         }
     }
@@ -132,7 +138,22 @@ impl InMemoryAsyncAtomicReplayStore {
         }
 
         state.prune_if_due(&(self.clock));
-        refuse_over_fair_share(&state, actor, self.max_entries)?;
+        if refuse_over_fair_share(&state, actor, self.max_entries).is_err() {
+            // The numbers are read under the guard; the SENTENCE is built after it is
+            // dropped. A blocking stderr write inside this lock would serialise the store
+            // behind a file descriptor the proxy does not control, and a panicking one
+            // would unwind with the guard held and poison it for the process lifetime.
+            let refusal = BudgetRefusal::new(
+                state.per_actor.get(actor).copied().unwrap_or(0),
+                per_actor_budget(self.max_entries, state.per_actor.len()),
+                state.seen.len(),
+                self.max_entries,
+            );
+            drop(state);
+            return Err(self
+                .refusals
+                .refuse("in-memory async replay store", refusal, actor));
+        }
         refuse_over_ceiling(&state, self.max_entries)?;
         state.record(key, actor, retain_until);
         Ok(ReplayDecision::Fresh)

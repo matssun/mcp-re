@@ -554,6 +554,7 @@ _PROXY_LIB_SRCS = [
     # ADR-MCPRE-061: the tier's own authorities — the retention arithmetic, the reference
     # L2, the per-replica account above the backend seam, and the dormant L1.
     "src/async_replay/bounds.rs",
+    "src/async_replay/budget_report.rs",
     "src/async_replay/retained_set.rs",
     "src/async_replay/local_refusals.rs",
     "src/async_replay/in_memory.rs",

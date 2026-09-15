@@ -32,9 +32,11 @@ use mcp_re_core::ReplayKey;
 use crate::shared_replay::composite_replay_key;
 use crate::shared_replay::ReplayStoreError;
 
+mod bounds;
 /// How much retention there is, and whose share of it one actor may hold — one definition,
 /// applied both inside the reference L2 and per replica above the backend seam.
-mod bounds;
+/// Saying a refusal was a budget refusal, outside the lock that decided it.
+mod budget_report;
 
 /// What the reference L2 is holding, and how it stops holding it.
 mod retained_set;
