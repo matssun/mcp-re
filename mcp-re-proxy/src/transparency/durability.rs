@@ -12,8 +12,11 @@
 //! asserting it could account for a call while the evidence was still in a queue.
 //!
 //! The queue is bounded by the reservations, not the other way round: a reservation
-//! contributes at most one queued job at any instant, so `K` reservations bound the queue at
-//! `K` jobs. Exceeding the ceiling is refused before dispatch.
+//! contributes at most TWO queued jobs at any instant — one awaited, plus the un-awaited
+//! rescind its guard emits as `commit_to_dispatch` returns — so `K` reservations bound the
+//! queue at `2K` jobs. [`super::durability_bounds::write_queue_capacity`] carries the
+//! census; this sentence and that one are the same claim, so they move together. Exceeding
+//! the ceiling is refused before dispatch.
 //!
 //! Nothing here decides what a record CONTAINS, and nothing in the record owner decides
 //! when a write has landed. Two copies of either fact is how they would come to disagree.
