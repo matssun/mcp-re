@@ -148,11 +148,6 @@ rule = "UC-1"
 baseline_sha = "7e184961"
 status = "unreviewed"
 
-[[exclusion]]
-path = "mcp-re-proxy/src/signing_plane/rotation.rs"
-rule = "UC-1"
-baseline_sha = "7e184961"
-status = "unreviewed"
 
 [[exclusion]]
 path = "mcp-re-proxy/src/signing_plane/trust_epoch_advance.rs"

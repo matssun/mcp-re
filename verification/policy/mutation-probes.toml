@@ -2713,7 +2713,7 @@ id = "M99-keep-last-good-is-bounded"
 unit = "proxy.trust_plane_runtime"
 theorem = "THM-0097"
 conjunct = "a store that has stopped being maintained — the reload's keep-last-good tolerance is bounded by exactly the budget"
-path = "mcp-re-proxy/src/trust_plane/reload.rs"
+path = "mcp-re-proxy/src/trust_plane/reload/mod.rs"
 anchor = """
             if consecutive_failures >= TRUST_RELOAD_FAILURE_BUDGET {
 """
@@ -2854,7 +2854,7 @@ id = "M107-the-reload-sleeps-exactly-its-cadence"
 unit = "proxy.trust_plane_runtime"
 theorem = "THM-0100"
 conjunct = "the reload worker reads again no later than R after the previous cycle — each cycle is one halt-aware sleep of exactly R"
-path = "mcp-re-proxy/src/trust_plane/reload.rs"
+path = "mcp-re-proxy/src/trust_plane/reload/mod.rs"
 anchor = """
         if halt.sleep(Duration::from_secs(interval_secs)) {
 """
@@ -2870,7 +2870,7 @@ id = "M108-a-successful-cycle-swaps-the-snapshot"
 unit = "proxy.trust_plane_runtime"
 theorem = "THM-0100"
 conjunct = "a successful cycle swaps the snapshot the resolver and the signer directory answer from"
-path = "mcp-re-proxy/src/trust_plane/reload.rs"
+path = "mcp-re-proxy/src/trust_plane/reload/mod.rs"
 anchor = """
             store.store(resolver, signers);
             freshness.mark_fresh();
@@ -3373,4 +3373,49 @@ weakening = """
 """
 expect_red = [
   "lib#authoritative_admission::record::verified::tests::a_restored_admitted_record_is_refused_past_the_authorized_window",
+]
+
+# ---------------------------------------------------------------------------
+# r11 W2-B PR-3 (M135, M136) — the two fail-closed supervisors that had no evidence.
+# Both were already CORRECT; the defect was that deleting either left the workspace green,
+# so the claims above them rested on code nothing measured. Each probe deletes exactly the
+# action the supervisor converts a panic into, and each test asserts the CONSUMER-VISIBLE
+# surface rather than the flag — a supervisor that set a flag nobody read would satisfy a
+# flag assertion and change nothing about what is served.
+# ---------------------------------------------------------------------------
+
+[[probe]]
+id = "M135-a-dead-trust-reloader-must-stop-the-resolver"
+unit = "proxy.trust_plane_runtime"
+theorem = "THM-0097"
+conjunct = "a snapshot that has stopped being maintained refuses with Unavailable rather than serving"
+path = "mcp-re-proxy/src/trust_plane/reload/supervision.rs"
+anchor = """
+        freshness.mark_stale_permanently();
+"""
+weakening = """
+        // the reload body died; the frozen snapshot keeps answering
+"""
+expect_red = [
+  "lib#trust_plane::reload::supervision::tests::a_panicking_trust_reload_thread_makes_the_resolver_refuse",
+]
+
+[[probe]]
+id = "M136-a-dead-rotor-must-retire-the-snapshot"
+unit = "proxy.delegated_signing_credential"
+theorem = "THM-0043"
+conjunct = "every transition out of a valid delegated key fails closed rather than continuing to sign"
+# Deleting this leaves the published key valid for the rest of its own window, so response
+# signing continues on a rotor whose state is not known good and the replica reads healthy
+# right up to `exp`. The test asserts `current()` INSIDE that window, so "retired at once"
+# cannot be satisfied by "expired on its own".
+path = "mcp-re-proxy/src/signing_plane/rotation.rs"
+anchor = """
+        signer.retire_permanently();
+"""
+weakening = """
+        // the rotor died; the current snapshot keeps signing until its own exp
+"""
+expect_red = [
+  "lib#signing_plane::rotation::tests::a_panicking_rotor_retires_the_snapshot_immediately_not_at_exp",
 ]
