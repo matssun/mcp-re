@@ -55,11 +55,13 @@
 //! and inferring the second from the first is how a workload credential becomes a policy
 //! authority.
 
+pub mod authority;
 pub mod evidence;
 pub mod policy;
 pub mod refusal;
 pub mod relation;
 
+pub use authority::EnrolledAuthority;
 pub use evidence::bound_decision_evidence;
 pub use evidence::BoundDecisionEvidence;
 pub use evidence::DecisionEvidenceRefusal;

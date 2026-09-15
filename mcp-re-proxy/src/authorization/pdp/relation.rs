@@ -8,6 +8,7 @@
 use mcp_re_http_profile::pdp_decision::verify_authorization_decision;
 use mcp_re_http_profile::pdp_decision::PdpDecisionClaims;
 use mcp_re_http_profile::pdp_decision::PdpDecisionOutcome;
+use mcp_re_http_profile::pdp_decision::PdpDecisionRefusal;
 use mcp_re_policy::PolicyError;
 
 use super::policy::PdpDecisionPolicy;
@@ -103,9 +104,22 @@ impl PdpDecisionEvaluator {
             &audiences,
             &self.policy.freshness,
             (self.now)(),
-            |kid| (self.policy.resolve_authority)(kid),
+            |kid| (self.policy.resolve_authority)(kid).map(|a| a.key().clone()),
         )
         .map_err(PdpRelationRefusal::NotAuthenticated)?;
+
+        // The enrolment entry that answered for the kid the signature verified under.
+        // `claims.issuer_kid` is a verified coordinate, not a self-description: the verifier
+        // refuses a header/claims disagreement, and it is the string it resolved the key
+        // from — so a decision naming a kid it was not signed under never reaches here.
+        // Read a second time rather than captured, so that a seam whose answer has changed
+        // since — an enrolment withdrawn mid-request by an embedder's own resolver —
+        // refuses instead of attributing to an authority this deployment no longer enrols.
+        let Some(authority) = (self.policy.resolve_authority)(&claims.issuer_kid) else {
+            return Err(PdpRelationRefusal::NotAuthenticated(
+                PdpDecisionRefusal::IssuerUntrusted,
+            ));
+        };
 
         let decided_scope = claims.mcp_re_decided_actor.scope();
         if decided_scope != self.policy.accepted_scope {
@@ -125,8 +139,11 @@ impl PdpDecisionEvaluator {
         match claims.mcp_re_decision {
             // The evidence identity comes from `evidence`, which established it while
             // proving the correspondence — not from the document, and not from the claims.
+            // The deciding AUTHORITY comes from the enrolment for the same reason: `iss` is
+            // a string the signer chose, so a record built from it says which authority the
+            // document names itself, not which one this deployment trusted to decide.
             PdpDecisionOutcome::Permit => Ok(AuthorizedDecision::new(
-                GrantAttribution::new(claims.iss, claims.mcp_re_policy_version, claims.jti),
+                GrantAttribution::new(authority.name(), claims.mcp_re_policy_version, claims.jti),
                 evidence.identity().clone(),
             )),
             PdpDecisionOutcome::Deny => Err(PdpRelationRefusal::ExplicitDeny),

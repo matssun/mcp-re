@@ -54,6 +54,7 @@ use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
 use mcp_re_proxy::async_serve::ServedHttpRequest;
 use mcp_re_proxy::authorization::AuthorizationFacet;
 use mcp_re_proxy::authorization::AuthorizationRefusalFacet;
+use mcp_re_proxy::authorization::EnrolledAuthority;
 use mcp_re_proxy::authorization::PdpDecisionEvaluator;
 use mcp_re_proxy::authorization::PdpDecisionPolicy;
 use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
@@ -73,6 +74,9 @@ const TARGET: &str = "https://mcp.example.com/mcp?route=a";
 const CLIENT_KEY_ID: &str = "client-key-1";
 const ROOT_KID: &str = "root-kid";
 const PDP_KID: &str = "pdp-root-1";
+/// The name this deployment ENROLS the authorization authority under. What an audit record
+/// attributes a grant to, and not the same thing as whatever a decision puts in its `iss`.
+const PDP_ENROLLED_NAME: &str = "did:example:pdp";
 const VERIFIER_AUD: &str = "verifier-1";
 const TRUST_DOMAIN: &str = "example.com";
 const SUBJECT: &str = "did:example:host-a";
@@ -127,7 +131,7 @@ fn actor_resolver() -> ActorResolver {
 /// A principal-scoped decision permitting `tool` to `SUBJECT`.
 fn decision_for(tool: Option<&str>, operation: &str) -> PdpDecisionClaims {
     PdpDecisionClaims {
-        iss: "did:example:pdp".into(),
+        iss: PDP_ENROLLED_NAME.into(),
         iat: NOW - 5,
         nbf: NOW - 5,
         exp: NOW + 300,
@@ -309,7 +313,8 @@ fn proxy_with(
     let evaluator = PdpDecisionEvaluator::new(
         PdpDecisionPolicy {
             resolve_authority: Arc::new(move |kid: &str| {
-                (kid == trusted_kid).then(|| pdp_key().public_key())
+                (kid == trusted_kid)
+                    .then(|| EnrolledAuthority::enrolled(PDP_ENROLLED_NAME, pdp_key().public_key()))
             }),
             accepted_scope: scope,
             freshness: PdpDecisionFreshness {
@@ -865,9 +870,10 @@ async fn an_authorized_request_records_which_policy_permitted_what() {
         panic!("a policy permitted this, and the record must say so: {authorization:?}");
     };
     // Who decided, under which policy, over what — none of it reconstructed here. The
-    // authority is the PDP that issued the decision, not this proxy: an operator asking
-    // "why was this permitted" is pointed at the party that answered.
-    assert_eq!(a.authority, "did:example:pdp");
+    // authority is the name this deployment ENROLLED for the kid the decision was
+    // authenticated under, so an operator asking "why was this permitted" is pointed at a
+    // party their own trust document names.
+    assert_eq!(a.authority, PDP_ENROLLED_NAME);
     assert_eq!(a.action.operation(), "tools/call");
     assert_eq!(a.action.target().named(), Some("read"));
     assert!(
@@ -889,6 +895,52 @@ async fn an_authorized_request_records_which_policy_permitted_what() {
     );
     // Invariant 7: naming the evidence costs no byte of the decision document.
     assert!(!format!("{a:?}").contains(&d));
+}
+
+/// The deciding authority a record names is the ENROLLED one, and an `iss` that says
+/// otherwise changes nothing about it.
+///
+/// `iss` is a string the decision's signer chose. The deployment's trust document says which
+/// KEY may decide; before this control the record's `authz_authority` was read from the
+/// claims, so an authority holding an enrolled key could name any party it liked as the one
+/// that permitted the call — and an operator auditing "who permitted this" would read a name
+/// their own enrolment never contained.
+///
+/// Authorization itself is unaffected either way: the decision is still only accepted under
+/// an enrolled key, and this control asserts the call is still SERVED. What it pins is the
+/// record.
+#[tokio::test]
+async fn the_record_names_the_enrolled_authority_and_not_the_one_the_decision_claims_to_be() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut claims = decision_for(Some("read"), "tools/call");
+    claims.iss = "did:example:some-other-authority".into();
+    // The kid is untouched, so this is still the enrolled authority's key signing it.
+    assert_eq!(claims.issuer_kid, PDP_KID);
+    let d = issue(&claims, &pdp_key());
+
+    let (status, records) = serve_recorded(
+        proxy(Arc::clone(&calls)),
+        signed_call("read", "n-audit-iss", Some(&d)),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    let accepted = records
+        .iter()
+        .find(|r| r.event().event_type == "mcp-re.request.accepted")
+        .expect("the admitted request is recorded");
+    let mcp_re_proxy::AuditSubject::Request { authorization, .. } = &accepted.subject else {
+        panic!("a request record");
+    };
+    let AuthorizationFacet::Authorized(a) = authorization else {
+        panic!("a policy permitted this, and the record must say so: {authorization:?}");
+    };
+    assert_eq!(
+        a.authority, PDP_ENROLLED_NAME,
+        "the record must attribute to the enrolment, never to the decision's own `iss`"
+    );
+    assert_ne!(a.authority, "did:example:some-other-authority");
 }
 
 #[tokio::test]

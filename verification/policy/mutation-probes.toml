@@ -3551,3 +3551,24 @@ weakening = """
 expect_red = [
   "lib#continuation_store::tests::no_boundary_between_the_keys_fields_can_be_moved",
 ]
+
+[[probe]]
+id = "M146-the-grant-is-attributed-to-the-enrolment"
+unit = "proxy.pdp_decision_relation"
+theorem = "THM-0040"
+conjunct = "the authority an audit record names is the one this deployment enrolled for the kid the decision authenticated under"
+# The weakening takes the attribution from the decision's own `iss` claim, which is what the
+# signer chose. Nothing is admitted that was not admitted before — the decision is still only
+# accepted under an enrolled key, and the same calls are served — so the battery's own grant
+# control cannot see it: it asserts the authority the fixture happens to name itself. Measured
+# by hand before registering: under this weakening exactly ONE control fails.
+path = "mcp-re-proxy/src/authorization/pdp/relation.rs"
+anchor = """
+                GrantAttribution::new(authority.name(), claims.mcp_re_policy_version, claims.jti),
+"""
+weakening = """
+                GrantAttribution::new(claims.iss, claims.mcp_re_policy_version, claims.jti),
+"""
+expect_red = [
+  "tests/integration_async#pdp_authorization_serving_test::the_record_names_the_enrolled_authority_and_not_the_one_the_decision_claims_to_be",
+]

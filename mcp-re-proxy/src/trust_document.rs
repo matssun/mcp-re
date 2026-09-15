@@ -42,6 +42,8 @@ use mcp_re_core::InMemoryTrustResolver;
 use mcp_re_core::VerificationKey;
 use serde::Deserialize;
 
+use crate::authorization::pdp::EnrolledAuthority;
+
 /// The closed slot vocabulary. An unlisted name is a parse refusal, not a narrower key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(try_from = "String")]
@@ -169,19 +171,24 @@ impl TrustDocument {
             .collect()
     }
 
-    /// The `key_id -> key` map for keys enrolled as AUTHORIZATION AUTHORITIES: only an
-    /// entry that lists `authorization-issuer`; never the deployment's own `response_kid`.
-    /// *This key signs requests* and *this key decides permission* are different
-    /// authorities (ADR-MCPRE-065 §8), so an absent `slots` enrols none.
+    /// The `key_id -> enrolled authority` map for keys enrolled as AUTHORIZATION
+    /// AUTHORITIES: only an entry that lists `authorization-issuer`; never the deployment's
+    /// own `response_kid`. *This key signs requests* and *this key decides permission* are
+    /// different authorities (ADR-MCPRE-065 §8), so an absent `slots` enrols none. The
+    /// value carries the entry's SIGNER beside its key, for the same reason
+    /// [`TrustDocument::request_signers`] maps to one — see [`EnrolledAuthority`].
     pub(crate) fn authorization_issuers(
         &self,
         response_kid: &str,
-    ) -> HashMap<String, VerificationKey> {
+    ) -> HashMap<String, EnrolledAuthority> {
         self.entries
             .iter()
             .filter(|e| e.key_id != response_kid)
             .filter(|e| e.lists(Slot::AuthorizationIssuer))
-            .map(|e| (e.key_id.clone(), e.key.clone()))
+            .map(|e| {
+                let authority = EnrolledAuthority::enrolled(e.signer.as_str(), e.key.clone());
+                (e.key_id.clone(), authority)
+            })
             .collect()
     }
 }
@@ -206,7 +213,7 @@ mod tests {
         parse(json).expect("loads").request_signers("response-kid")
     }
 
-    fn issuers(json: &str) -> HashMap<String, VerificationKey> {
+    fn issuers(json: &str) -> HashMap<String, EnrolledAuthority> {
         parse(json)
             .expect("loads")
             .authorization_issuers("response-kid")
@@ -466,7 +473,7 @@ mod tests {
         assert_eq!(issuers.len(), 1);
         assert_eq!(
             resolver.resolve("b", "k2").expect("held").to_b64url(),
-            issuers["k2"].to_b64url()
+            issuers["k2"].key().to_b64url()
         );
         assert!(resolver.resolve("c", "k3").is_ok());
         assert!(
