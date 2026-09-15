@@ -3259,7 +3259,7 @@ id = "proxy.audit_record_coordinates"
 class = "V0"
 description = "What a security record may say, and in whose vocabulary: a request record always states an authorization outcome, a response record has none to carry, and the Core verdict and the authorization verdict occupy separate coordinates that cannot be read as each other."
 paths = [
-  "mcp-re-proxy/src/audit_record.rs",
+  "mcp-re-proxy/src/audit_record/mod.rs",
   "mcp-re-proxy/src/authorization/audit.rs",
   "mcp-re-proxy/src/authorization/audit/fields.rs",
 ]
@@ -3277,6 +3277,53 @@ tested_symbols = [
   "lib#authorization::audit::tests::the_two_refusal_arms_are_distinguishable_in_the_record",
   "lib#authorization::audit::tests::before_policy_imports_no_vocabulary",
   "lib#authorization::audit::fields::tests::the_unconfigured_line_cannot_be_read_as_an_authorization",
+  # Which values this authority calls a closed token and which it calls open text is a
+  # COORDINATE decision — who may say what, in whose vocabulary — so its control lives here
+  # rather than with the module that spells them. `target_field` is the one place a `Token`
+  # arm and a `Text` arm sit in one match, so it is the one place the decision can go wrong.
+  "lib#authorization::audit::fields::tests::a_client_named_target_is_classified_as_text",
+]
+
+# r11 W2-A. A THIRD unit beside the coordinate and delivery ones, because this is a third
+# question. `proxy.audit_record_coordinates` claims what a record MAY SAY and in whose
+# vocabulary; `proxy.audit_delivery` claims that the stream is honest about what reached it.
+# Neither states that the TEXT preserves what was said, and attaching that here would put a
+# claim inside a unit whose evidence closure does not establish it.
+#
+# It is not folded into the delivery unit for a second reason: that unit's paths are the
+# sink, and putting the encoding property there would make the unit boundary assert the very
+# ownership this slice exists to refuse — that the transport owns the format.
+#
+# Two files, one proposition. `scalar.rs` is the injective escape and its inverse, statable
+# with nothing in scope but a string; `text.rs` is the record grammar built over it. The
+# claim is the composition, so the closure is both.
+
+[[unit]]
+id = "proxy.audit_text_rendering"
+class = "V0"
+description = "That one logical audit record renders to exactly one physical record: every scalar is escaped by one authority into an image free of the record grammar's separators and of every control, line separator and bidi codepoint, the escape has a tested left inverse, and the field names are separator-free — so a field value can synthesize neither a new field nor a new line, and the logical record is recoverable from the physical one."
+paths = [
+  "mcp-re-proxy/src/audit_record/scalar.rs",
+  "mcp-re-proxy/src/audit_record/text.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/audit/text_rendering"]
+# The anti-collision control is the one that carries the claim rather than a symptom of it:
+# an escape that mapped LF and the two characters `\n` to one image would pass every
+# "no newline in the output" assertion and still be non-injective, which is the difference
+# between a record that cannot be forged and one whose forgeries are merely inconvenient.
+tested_symbols = [
+  "lib#audit_record::scalar::tests::an_escaped_value_and_a_literal_one_do_not_collide",
+  "lib#audit_record::scalar::tests::every_scalar_round_trips",
+  "lib#audit_record::scalar::tests::the_inverse_refuses_text_that_is_no_image_of_the_escape",
+  "lib#audit_record::scalar::tests::no_scalar_escapes_to_the_bare_absent_marker",
+  "lib#audit_record::scalar::tests::a_separator_free_string_is_exactly_one_that_renders_verbatim",
+  "lib#audit_record::text::tests::a_scalar_carrying_a_newline_still_renders_one_physical_record",
+  "lib#audit_record::text::tests::a_scalar_carrying_the_field_separator_cannot_add_a_field",
+  "lib#audit_record::text::tests::a_scalar_carrying_the_key_separator_keeps_one_equals_per_token",
+  "lib#audit_record::text::tests::the_absent_marker_is_not_producible_by_any_scalar",
+  "lib#audit_record::text::tests::no_field_name_contains_a_separator",
+  "lib#audit_record::text::tests::a_rendered_record_parses_back_to_the_fields_that_were_written",
 ]
 
 # ADR-MCPRE-059 §28 / issue #742. TWO owners, not one, and the split is the finding: R9's
@@ -3889,6 +3936,10 @@ evidence = ["test://proxy/audit/delivery_integrity"]
 # drain that completed, and must never collapse into it.
 tested_symbols = [
   "lib#audit_sink::tests::every_record_carries_a_sequence_number",
+  # "One record in, one line out" is a DELIVERY claim: whatever the record says, the stream
+  # receives exactly one physical record for it. That the value survives recoverably is
+  # `proxy.audit_text_rendering`'s; that the count is one is this unit's.
+  "lib#audit_sink::tests::one_record_writes_exactly_one_line_for_any_actor_id",
   "lib#audit_sink::tests::the_collector_preserves_emission_order",
   "lib#audit_sink::tests::a_full_audit_queue_drops_rather_than_blocking_the_caller",
   # Moved with its subject: `report_drops` is the writer's, so the control over it lives

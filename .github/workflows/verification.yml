@@ -228,7 +228,7 @@ on:
       # Stage 6: the transparency-service pin, whose provenance THM-0068 states.
       - "mcp-re-http-profile/src/scitt/**"
       # Stage 7: what a record may say, and whether the stream is honest about what reached it.
-      - "mcp-re-proxy/src/audit_record.rs"
+      - "mcp-re-proxy/src/audit_record/**"
       - "mcp-re-proxy/src/audit_sink/**"
       - "mcp-re-proxy/src/authorization/audit.rs"
       - "mcp-re-proxy/src/authorization/audit/**"
@@ -504,7 +504,7 @@ on:
       # Stage 6: the transparency-service pin, whose provenance THM-0068 states.
       - "mcp-re-http-profile/src/scitt/**"
       # Stage 7: what a record may say, and whether the stream is honest about what reached it.
-      - "mcp-re-proxy/src/audit_record.rs"
+      - "mcp-re-proxy/src/audit_record/**"
       - "mcp-re-proxy/src/audit_sink/**"
       - "mcp-re-proxy/src/authorization/audit.rs"
       - "mcp-re-proxy/src/authorization/audit/**"

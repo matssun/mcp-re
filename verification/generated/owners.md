@@ -67,6 +67,7 @@ not an omission to hide.
 | proxy.async_replay_retention | V0 | THM-0105 | 0 |
 | proxy.audit_delivery | V0 | THM-0070 | 0 |
 | proxy.audit_record_coordinates | V0 | THM-0069, THM-0071 | 0 |
+| proxy.audit_text_rendering | V0 | THM-0130 | 0 |
 | proxy.authenticated_relationship_peer | V0 | THM-0031 | 1 |
 | proxy.authorization_posture | V0 | THM-0056 | 0 |
 | proxy.aws_kms_adapter | V0 | THM-0116 | 0 |

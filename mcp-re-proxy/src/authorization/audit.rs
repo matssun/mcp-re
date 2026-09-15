@@ -156,12 +156,13 @@ pub enum AuthorizationRefusalFacet {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audit_record::text::render_record;
 
     #[test]
     fn an_unconfigured_deployment_is_not_rendered_as_an_authorized_one() {
         // The record-level half of "`Off` is not `Allow`". These two lines must not be
         // confusable by a reader who has only the record.
-        let off = AuthorizationFacet::NotConfigured.audit_fields();
+        let off = render_record(&AuthorizationFacet::NotConfigured.audit_fields());
         assert_eq!(off, "authz=not-configured");
         assert!(!off.contains("authorized"));
     }
@@ -175,7 +176,7 @@ mod tests {
             PolicyError::AuthorizationScopeDenied,
         ));
         assert_eq!(
-            f.audit_fields(),
+            render_record(&f.audit_fields()),
             "authz=refused-by-policy authz_policy_reason=mcp-re.authorization_scope_denied"
         );
     }
@@ -194,8 +195,9 @@ mod tests {
     fn before_policy_imports_no_vocabulary() {
         // It names no error, from either authority. The lifecycle reason on the same record
         // already says what was wrong with the request.
-        let line =
-            AuthorizationFacet::Refused(AuthorizationRefusalFacet::BeforePolicy).audit_fields();
+        let line = render_record(
+            &AuthorizationFacet::Refused(AuthorizationRefusalFacet::BeforePolicy).audit_fields(),
+        );
         assert!(!line.contains("mcp-re."), "got: {line}");
     }
 }
