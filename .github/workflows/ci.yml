@@ -293,6 +293,17 @@ jobs:
           python3 scripts/module_size_gate.py --selftest
           python3 scripts/module_size_gate.py
 
+      # A unit's `paths` is the source closure its ReviewFingerprint is taken over. A file
+      # that leaves that closure — renamed, or carved out into a new sibling — leaves the
+      # unit deriving a fingerprint over less code than before, with every claim above it
+      # still answering FRESH. `bazel_srcs_gate.py` walks the same module tree but answers
+      # for a BUILD file's hand-list, and the manifest loader checks only declared ⇒ exists.
+      # This is the other direction, and three splits had already escaped through it.
+      - name: Unit-closure gate (UC-1/UC-2/UC-3)
+        run: |
+          python3 scripts/unit_closure_gate.py --selftest
+          python3 scripts/unit_closure_gate.py
+
       # The heavy local lanes (SLO, kind) refuse to start below a declared free-space
       # floor, so that a full Docker VM stops presenting itself as `PROOF FAILED` on a
       # proof that never ran — twice during v0.17. Only the `--selftest` runs here: the
