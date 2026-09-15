@@ -4314,7 +4314,14 @@ tested_symbols = [
   "lib#async_replay::tests::an_abandoned_insert_s_charge_expires_with_the_entry_it_may_have_created",
   "lib#async_replay::tests::the_tier_releases_charges_once_their_retention_expires",
   "lib#async_replay::bounds::tests::the_budget_reserves_headroom_and_splits_evenly",
-  "lib#async_replay::bounds::tests::no_number_of_actors_can_spend_the_reserve",
+  # Renamed with the property it asserts: the old name claimed no actor count could spend
+  # the reserve, which is false above `actors > spendable` where the floor makes every
+  # budget 1. The control now quantifies over every count up to the spendable capacity AND
+  # asserts the counterexample regime rather than stopping short of it.
+  "lib#async_replay::bounds::tests::the_reserve_survives_every_actor_count_the_wall_governs",
+  # What the floor is for: a budget of zero would refuse an actor holding nothing, which
+  # arrives earlier than the ceiling and is the outage the reserve exists to prevent.
+  "lib#async_replay::bounds::tests::no_actor_count_produces_a_zero_budget",
   "lib#async_replay::retention_ledger::tests::a_release_returns_one_actors_charge_and_no_one_elses",
   "lib#async_replay::retention_ledger::tests::a_committed_charge_is_returned_only_when_its_retention_expires",
   "lib#async_replay::in_memory::tests::in_memory_store_is_fresh_then_replay_and_single_process",
