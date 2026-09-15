@@ -58,6 +58,7 @@ not an omission to hide.
 | http_profile.replay_key | V0 | THM-0079 | 0 |
 | http_profile.request_envelope | V0 | THM-0083 | 0 |
 | http_profile.response_emission_binding | V0 | THM-0065 | 0 |
+| http_profile.retained_chain_record | V0 | _none_ | 0 |
 | http_profile.scitt_receipt_offline | V0 | THM-0041, THM-0072 | 0 |
 | http_profile.scitt_retained_correspondence | V0 | THM-0042 | 0 |
 | http_profile.scitt_service_pin | V0 | THM-0068 | 0 |

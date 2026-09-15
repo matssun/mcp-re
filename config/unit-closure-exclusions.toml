@@ -17,12 +17,6 @@ baseline_sha = "7e184961"
 status = "unreviewed"
 
 [[exclusion]]
-path = "mcp-re-http-profile/src/chain/mod.rs"
-rule = "UC-2"
-baseline_sha = "7e184961"
-status = "unreviewed"
-
-[[exclusion]]
 path = "mcp-re-http-profile/src/error/core_projection.rs"
 rule = "UC-1"
 baseline_sha = "7e184961"

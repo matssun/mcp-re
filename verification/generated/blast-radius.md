@@ -62,6 +62,7 @@ attestations this view cannot see.
 | unit://http_profile.replay_key | source, contracts or evidence | THM-0079 | _no consumer_ |
 | unit://http_profile.request_envelope | source, contracts or evidence | THM-0083 | _no consumer_ |
 | unit://http_profile.response_emission_binding | source, contracts or evidence | THM-0065, THM-0075 | _no consumer_ |
+| unit://http_profile.retained_chain_record | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://http_profile.scitt_receipt_offline | source, contracts or evidence | THM-0041, THM-0072 | _no consumer_ |
 | unit://http_profile.scitt_retained_correspondence | source, contracts or evidence | THM-0042 | _no consumer_ |
 | unit://http_profile.scitt_service_pin | source, contracts or evidence | THM-0068, THM-0072 | _no consumer_ |
