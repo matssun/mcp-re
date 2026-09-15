@@ -367,19 +367,25 @@ mod tests {
     /// export route, rather than proving it happened not to this time.
     struct NonExportingSource {
         key: SigningKey,
-        exports_attempted: std::cell::Cell<u32>,
+        /// How many times an EXPORT was attempted through this source.
+        ///
+        /// Shared rather than owned, so a battery can still read it after the source has
+        /// been boxed as a `dyn KeySource` — which is the whole scenario under test, and
+        /// the reason the counter previously could not be asserted at all.
+        exports_attempted: std::sync::Arc<std::sync::atomic::AtomicU32>,
     }
 
     impl NonExportingSource {
         fn new() -> Self {
             NonExportingSource {
                 key: SigningKey::from_seed_bytes(&[9u8; 32]),
-                exports_attempted: std::cell::Cell::new(0),
+                exports_attempted: std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)),
             }
         }
 
         fn refuse_export<T>(&self) -> Result<T, KeyError> {
-            self.exports_attempted.set(self.exports_attempted.get() + 1);
+            self.exports_attempted
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Err(KeyError::NotFound(
                 "this device does not export key material".to_string(),
             ))
@@ -410,9 +416,10 @@ mod tests {
         }
     }
 
-    // SAFETY-free: the cell is only touched behind `&self` in single-threaded tests, and
-    // the bound exists because `KeySource: Send + Sync`.
-    unsafe impl Sync for NonExportingSource {}
+    // No `unsafe impl Sync` any more: the counter is an `AtomicU32`, so the `Send + Sync`
+    // that `KeySource` requires is derived rather than asserted. The previous form needed
+    // the escape hatch only because a `Cell` is not `Sync`, and an escape hatch in a test
+    // support type is a place where a real concurrency bug could hide.
 
     /// **The seam's own proposition.** Boxing a source and using it AS the response signer
     /// signs through the source; it does not reach for an exported key.
@@ -424,6 +431,7 @@ mod tests {
     fn a_boxed_source_signs_by_delegation_and_never_by_export() {
         let source = NonExportingSource::new();
         let expected = source.key.public_key();
+        let exports = std::sync::Arc::clone(&source.exports_attempted);
         let boxed: Box<dyn KeySource + Send + Sync> = Box::new(source);
 
         let preimage = b"the canonical response preimage";
@@ -437,6 +445,39 @@ mod tests {
         mcp_re_core::verify_ed25519(preimage, &signature, &public)
             .expect("a delegated signature verifies under the advertised key");
         assert_eq!(public.to_bytes(), expected.to_bytes());
+
+        // THE DISTINGUISHING ASSERTION, and the one this test's own doc comment named
+        // while the body never made it. A forward that quietly went through
+        // `tls_server_key` would produce a signature that verifies under the advertised
+        // key just as well — the two clauses above cannot tell the two implementations
+        // apart. The counter can: it is incremented by every export refusal, so zero is
+        // the statement that no export was reached for.
+        assert_eq!(
+            exports.load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "signing through the seam must not reach for an exported key"
+        );
+    }
+
+    /// The counter is load-bearing, so it has to be able to move. A source asked for an
+    /// export DOES register one — otherwise the zero above is satisfied by a counter
+    /// nothing ever increments, which is the same vacuity one layer along.
+    #[test]
+    fn an_export_attempt_registers_on_the_counter() {
+        let source = NonExportingSource::new();
+        let exports = std::sync::Arc::clone(&source.exports_attempted);
+        let boxed: Box<dyn KeySource + Send + Sync> = Box::new(source);
+
+        assert!(
+            boxed.tls_server_key().is_err(),
+            "this device exports nothing"
+        );
+        assert_eq!(
+            exports.load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "an export attempt must be observable, or the zero asserted above proves \
+             nothing about the delegation path"
+        );
     }
 
     /// A source that says nothing about delegation is on the EXPORTED-key TLS path.
