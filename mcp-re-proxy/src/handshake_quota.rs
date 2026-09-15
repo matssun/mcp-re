@@ -43,6 +43,15 @@
 //! Both providers used to state the relation as a constant defined against their own
 //! timeout, with a test asserting the two had not drifted apart. Deriving it is what
 //! deletes the test: there is one value, so there is nothing to drift.
+//!
+//! # Only a window's own installer may shorten it
+//!
+//! Two threads can hold opinions about the window at once: a prober whose call is still in
+//! flight, and a straggler reacting to a failure it observed later. Both races resolve by
+//! one rule — a window may always be LENGTHENED, and may be shortened only by the thread
+//! whose own instant is still installed. [`HandshakeQuotaWindow::arm`] keeps that rule with
+//! `max`; [`HandshakeQuotaWindow::release_probe`] keeps it with equality. Break either half
+//! and a waiting cohort is released a cooldown early — the flood this exists to stop.
 
 use std::sync::Mutex;
 use std::time::Duration;
@@ -113,11 +122,9 @@ impl HandshakeQuotaWindow {
     /// instant, so a signer call slower than the cooldown opened a window that had already
     /// elapsed — no throttle at all, precisely when the signer was slow enough to need one.
     ///
-    /// `max` is a narrower guarantee than it looks, and the two are easy to confuse: it
-    /// stops a thread REPLACING a longer window with a shorter one, which is what plain
-    /// assignment did when two threads reported failures out of order. It does NOT sanitise
-    /// a stale reading — on the `None` branch, whatever `until` it is handed is installed
-    /// outright. Freshness comes from the caller reading the clock here, not from `max`.
+    /// `max` keeps the module's shortening rule. It does NOT sanitise a stale reading — on
+    /// the `None` branch whatever `until` it is handed is installed outright, so freshness
+    /// comes from the caller reading the clock here.
     fn arm(&self, now: Instant) {
         let mut window = self.until.lock().unwrap_or_else(|p| p.into_inner());
         let until = now + self.cooldown;
@@ -142,12 +149,14 @@ impl HandshakeQuotaWindow {
         verdict: impl Fn(&E) -> QuotaVerdict,
     ) -> Result<T, QuotaGuarded<E>> {
         let now = clock();
-        // Whether THIS thread is the one probing a lapsed window. Only the thread that
-        // observes the lapse takes the probe: it re-arms the window before releasing the
-        // lock, so the rest of a concurrent handshake cohort at the boundary is still
-        // refused instead of all calling the signer at once — which is the flood the window
-        // exists to stop, arriving one cooldown late.
-        let probing = {
+        // The window THIS thread installed as its probe, or `None` when it is not probing.
+        // Only the thread that observes the lapse takes the probe: it re-arms the window
+        // before releasing the lock, so the rest of a concurrent handshake cohort at the
+        // boundary is still refused instead of all calling the signer at once — which is the
+        // flood the window exists to stop, arriving one cooldown late.
+        // The instant is carried, not just the fact of probing: releasing is a claim about
+        // WHICH window — see `release_probe`.
+        let probe = {
             // Poison recovery, not propagation: the state is one whole-value swap, and a
             // sticky lock error here would refuse every later handshake signature for the
             // process lifetime — a far worse failure than the throttle it guards against.
@@ -155,24 +164,36 @@ impl HandshakeQuotaWindow {
             match *window {
                 Some(until) if now < until => return Err(QuotaGuarded::Refused(self.refusal)),
                 Some(_) => {
-                    *window = Some(now + self.cooldown);
-                    true
+                    let installed = now + self.cooldown;
+                    *window = Some(installed);
+                    Some(installed)
                 }
-                None => false,
+                None => None,
             }
         };
         let signed = sign();
         match &signed {
-            Ok(_) if probing => {
-                // The probe went through: the quota is available again, so reopen the path
-                // rather than leaving the window this thread armed to run its course.
-                *self.until.lock().unwrap_or_else(|p| p.into_inner()) = None;
-            }
+            Ok(_) => self.release_probe(probe),
             // Armed from a reading taken NOW, after the call — not from the entry instant.
             Err(error) if verdict(error) == QuotaVerdict::Exhausted => self.arm(clock()),
             _ => {}
         }
         signed.map_err(QuotaGuarded::Call)
+    }
+
+    /// Reopen the path after a probe succeeded — but only if `installed` is still in force.
+    ///
+    /// The other half of the module's shortening rule. A probe may outlive its own window,
+    /// and a thread that armed a later one from newer information must not lose it to this
+    /// thread's success; equality on the instant is what makes that exact.
+    fn release_probe(&self, installed: Option<Instant>) {
+        let Some(installed) = installed else {
+            return;
+        };
+        let mut window = self.until.lock().unwrap_or_else(|p| p.into_inner());
+        if *window == Some(installed) {
+            *window = None;
+        }
     }
 }
 
@@ -388,6 +409,65 @@ mod tests {
         assert!(w
             .guard(&|| boundary, || Ok(vec![2u8; 64]), only_throttling)
             .is_ok());
+    }
+
+    /// A probe that succeeds releases ITS OWN window and no later one.
+    ///
+    /// The mirror of [`a_straggler_cannot_shorten_the_window`]. A probing call may outlive
+    /// its own cooldown, and while it is in flight another thread can arm a strictly later
+    /// window from newer information. Clearing unconditionally on success discards that
+    /// window and releases the cohort a full cooldown early — the flood the throttle exists
+    /// to stop, arriving late rather than not at all.
+    ///
+    /// Drive it deterministically: the probe's clock is pinned to the boundary, and the
+    /// later window is armed from inside `sign` — i.e. while the probe is in flight.
+    #[test]
+    fn a_successful_probe_does_not_clear_a_window_armed_later() {
+        let w = window();
+        let start = Instant::now();
+        assert!(w
+            .guard(
+                &|| start,
+                || Err::<Vec<u8>, _>(throttled()),
+                only_throttling
+            )
+            .is_err());
+
+        // The probing thread takes the lapsed window and installs `boundary + TIMEOUT`.
+        let boundary = start + TIMEOUT;
+        let much_later = boundary + Duration::from_secs(60);
+        assert!(w
+            .guard(
+                &|| boundary,
+                || {
+                    // Another thread reports a quota failure from a much later reading
+                    // while this probe is still running.
+                    w.arm(much_later);
+                    Ok(vec![3u8; 64])
+                },
+                only_throttling,
+            )
+            .is_ok());
+
+        let calls = AtomicUsize::new(0);
+        let inside_the_later_window = much_later - Duration::from_secs(1);
+        assert!(
+            w.guard(
+                &|| inside_the_later_window,
+                || {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok::<Vec<u8>, Failed>(Vec::new())
+                },
+                only_throttling,
+            )
+            .is_err(),
+            "a window armed while the probe was in flight must survive the probe's success"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "the signer must not be reached inside the surviving window"
+        );
     }
 
     /// Only quota failures open a window. A malformed request is this caller's problem,

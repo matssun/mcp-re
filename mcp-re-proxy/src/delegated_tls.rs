@@ -98,6 +98,14 @@ pub struct TlsHandshakeSignBudget {
     state: Mutex<(f64, Instant)>,
     /// How many signatures this budget has refused, for the operator-facing posture.
     refused: AtomicU64,
+    /// How many times a poisoned lock has been recovered here.
+    ///
+    /// Separate from [`Self::refused`] because they are different operator facts and only
+    /// one of them is about this budget: `refused` means the deployment's own rate limit
+    /// did its job, which is ordinary and expected under load; this means a thread panicked
+    /// while holding the bucket, which is a bug and is reported nowhere else. Recovery makes
+    /// the panic invisible, so it is counted where an operator can see it.
+    poison_observed: AtomicU64,
 }
 
 impl TlsHandshakeSignBudget {
@@ -109,6 +117,7 @@ impl TlsHandshakeSignBudget {
             refill_per_sec: f64::from(rate_per_sec.max(1)),
             state: Mutex::new((f64::from(burst.max(1)), Instant::now())),
             refused: AtomicU64::new(0),
+            poison_observed: AtomicU64::new(0),
         }
     }
 
@@ -127,16 +136,36 @@ impl TlsHandshakeSignBudget {
         self.refused.load(Ordering::Relaxed)
     }
 
+    /// Distinct poison events observed so far. A non-zero value means a thread panicked
+    /// while holding the bucket and is a bug to investigate, not a load signal.
+    pub fn poison_observed(&self) -> u64 {
+        self.poison_observed.load(Ordering::Relaxed)
+    }
+
     /// Take one token, or report that the budget is exhausted.
     ///
-    /// A poisoned lock is treated as exhausted: the only writer is this method, so a
-    /// poisoned lock means a panic inside it, and continuing to sign off state that is
-    /// not known good is the direction this exists to prevent.
+    /// # What a poisoned lock means here
+    ///
+    /// It is recovered, counted on [`Self::poison_observed`], and the bucket is used. The
+    /// budget bounds the RATE at which handshakes may reach the signer; it is not the
+    /// authority that decides whether they may — the key is. So the worst an unwind inside
+    /// the guarded region can do is leave the bucket credited but not debited, which
+    /// over-grants exactly one signature; and nothing in that region can actually panic,
+    /// since `f64` arithmetic is total and [`Instant::duration_since`] saturates.
+    ///
+    /// Refusing stickily would trade that bounded over-grant for a permanent loss of
+    /// handshake signing on this listener, which is the outage the budget exists to
+    /// prevent one cause of. [`crate::handshake_quota::HandshakeQuotaWindow`], the sibling
+    /// throttle one layer out, recovers for the same reason and states it the same way.
     fn try_acquire(&self) -> bool {
-        let Ok(mut state) = self.state.lock() else {
-            self.refused.fetch_add(1, Ordering::Relaxed);
-            return false;
-        };
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| {
+            self.poison_observed.fetch_add(1, Ordering::Relaxed);
+            // Clear the flag so the counter measures PANICS and not calls. Left sticky, a
+            // single panic makes every later handshake increment it, and the number an
+            // operator reads would track traffic rather than faults.
+            self.state.clear_poison();
+            poisoned.into_inner()
+        });
         let now = Instant::now();
         let elapsed = now.duration_since(state.1).as_secs_f64();
         state.1 = now;
@@ -447,5 +476,49 @@ mod tests {
         assert!(!budget.try_acquire());
         std::thread::sleep(std::time::Duration::from_millis(20));
         assert!(budget.try_acquire(), "the bucket must refill with time");
+    }
+
+    /// A poisoned bucket keeps signing, counts the panic, and does not call it a throttle.
+    ///
+    /// Poison is sticky, and this budget sits on the TLS handshake path: a single panic
+    /// under the guard would otherwise refuse every later handshake signature for the
+    /// process lifetime — the listener stops serving — in exchange for preventing a
+    /// one-token over-grant. The budget bounds the rate at which handshakes reach the
+    /// signer, not whether they may, so the trade is the wrong way round.
+    ///
+    /// The count is asserted to be per PANIC rather than per call, which is what
+    /// `clear_poison` buys; and `refused` is asserted not to move, because an operator
+    /// reading it needs "the rate limit did its job" to stay distinguishable from "a thread
+    /// died holding the bucket".
+    #[test]
+    fn a_poisoned_budget_lock_still_signs_and_counts_the_panic_once() {
+        let budget = Arc::new(TlsHandshakeSignBudget::new(1000, 100));
+        let poisoner = Arc::clone(&budget);
+        let unwound = std::thread::spawn(move || {
+            let _guard = poisoner.state.lock().expect("uncontended");
+            panic!("a panic under the budget guard");
+        })
+        .join();
+        assert!(unwound.is_err(), "the poisoning thread must have unwound");
+
+        assert!(
+            budget.try_acquire(),
+            "a poisoned bucket must not cost the listener its handshake signing"
+        );
+        assert_eq!(budget.poison_observed(), 1);
+        assert_eq!(
+            budget.refused(),
+            0,
+            "a recovered panic is not a throttled signature"
+        );
+
+        // The flag was cleared, so the next handshake is an ordinary one.
+        assert!(budget.try_acquire());
+        assert_eq!(
+            budget.poison_observed(),
+            1,
+            "the counter must measure panics, not calls that followed one"
+        );
+        assert_eq!(budget.refused(), 0);
     }
 }
