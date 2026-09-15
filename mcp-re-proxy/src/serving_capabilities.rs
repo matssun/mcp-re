@@ -334,16 +334,35 @@ pub(crate) fn admission_currency(
     let handle = control
         .ok_or("internal error: the plan declared the admission source needs the control runtime")?
         .handle();
+    // ONE resolver for both admission artifacts. The authority that admits a workload is
+    // the authority that says whether it still is, so the assertion and the authoritative
+    // record are verified under the same configured key — a second resolver here would be a
+    // second trust root wearing the first one's name.
+    let resolve_authority: crate::http_profile_serve::AdmissionAuthorityResolver = {
+        let (kid, key) = (kid.clone(), key.clone());
+        Arc::new(move |presented: &str| (presented == kid).then(|| key.clone()))
+    };
     let source = handle
-        .block_on(crate::redis_admission_source::RedisAdmissionSource::connect(url))
+        .block_on(crate::redis_admission_source::RedisAdmissionSource::connect(
+            url,
+            crate::admission_source::AdmissionRecordVerifier::new(
+                Arc::clone(&resolve_authority),
+                mcp_re_http_profile::PROFILE_TAG,
+                mcp_re_http_profile::authoritative_admission::record::AdmissionStateCurrentness {
+                    max_record_age: gate.record_currentness().max_age_secs(),
+                    max_clock_skew,
+                },
+            ),
+        ))
         .map_err(|e| format!("connect redis admission source: {e}"))?;
-    // Rendered before the resolver closure below moves `kid`.
     let line = format!(
-        "admission currency = {} (authority {kid}, shared record over redis, degraded {})",
+        "admission currency = {} (authority {kid}, shared record over redis signed by that \
+         authority and read within {}s, degraded {})",
         match enforcement {
             crate::admission_enforcer::AdmissionEnforcement::Required => "REQUIRED",
             crate::admission_enforcer::AdmissionEnforcement::Optional => "optional",
         },
+        gate.record_currentness().max_age_secs(),
         match availability {
             AdmissionAvailability::FailClosed => {
                 "OFF (an unreachable authority fails closed)".to_string()
@@ -363,9 +382,7 @@ pub(crate) fn admission_currency(
                 allow_degraded_mode,
             },
             enforcement,
-            resolve_authority: Arc::new(move |presented: &str| {
-                (presented == kid).then(|| key.clone())
-            }),
+            resolve_authority,
         },
         line,
     ))

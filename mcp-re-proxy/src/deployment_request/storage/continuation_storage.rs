@@ -41,6 +41,7 @@ mod tests {
             authority_pubkey_b64url: "k".to_string(),
             store: SharedStoreRequest::redis("redis://h:6379"),
             availability: crate::deployment_request::AdmissionAvailabilityRequest::FailClosed,
+            record_max_age_secs: std::num::NonZeroU64::new(60).expect("nonzero"),
         };
         assert_eq!(
             continuation

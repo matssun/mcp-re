@@ -21,6 +21,15 @@ pub struct AdmissionGateRequest {
     pub store: SharedStoreRequest,
     /// What this deployment does when that record cannot be reached.
     pub availability: AdmissionAvailabilityRequest,
+    /// How old a record read from that store may be and still be acted on — the
+    /// deployment's revocation-currentness promise for the AUTHENTICATED record.
+    ///
+    /// A member of the applied gate rather than an optional sibling: a signed record that
+    /// never goes out of date is one a party with store-write access can restore forever,
+    /// so a deployment that verifies records has, necessarily, said how long one lives.
+    /// `NonZeroU64` because a zero-width window admits nobody — that is a broken gate, not
+    /// a stricter one.
+    pub record_max_age_secs: std::num::NonZeroU64,
 }
 
 #[cfg(test)]
@@ -36,6 +45,7 @@ mod tests {
             authority_pubkey_b64url: "k".to_string(),
             store: SharedStoreRequest::redis("redis://h:6379"),
             availability: AdmissionAvailabilityRequest::FailClosed,
+            record_max_age_secs: std::num::NonZeroU64::new(60).expect("nonzero"),
         };
         assert_eq!(gate.store.locator(), "redis://h:6379");
     }

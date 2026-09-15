@@ -13,6 +13,7 @@
 //! configuration boundary's.
 
 mod availability;
+mod record_currentness;
 
 use crate::deployment_request::{AdmissionGateRequest, AdmissionRequest, SharedStoreRequest};
 
@@ -32,6 +33,7 @@ pub(super) struct AdmissionFlags {
     authority_kid: Option<String>,
     authority_pubkey_b64url: Option<String>,
     store_url: Option<String>,
+    record_max_age_secs: Option<i64>,
     degraded_bound_secs: Option<i64>,
     allow_degraded: Option<bool>,
 }
@@ -45,6 +47,7 @@ impl AdmissionFlags {
                 | "--admission-authority-kid"
                 | "--admission-authority-pubkey"
                 | "--admission-redis-url"
+                | "--admission-record-max-age-secs"
                 | "--admission-degraded-bound-secs"
                 | "--admission-allow-degraded"
         )
@@ -57,6 +60,7 @@ impl AdmissionFlags {
             "--admission-authority-kid" => self.take_authority_kid(value.to_string()),
             "--admission-authority-pubkey" => self.take_authority_pubkey(value.to_string()),
             "--admission-redis-url" => self.take_store_url(value.to_string()),
+            "--admission-record-max-age-secs" => self.take_record_max_age(value)?,
             "--admission-degraded-bound-secs" => self.take_degraded_bound(value)?,
             _ => self.take_allow_degraded(value)?,
         }
@@ -93,6 +97,12 @@ impl AdmissionFlags {
         self.store_url = Some(value);
     }
 
+    /// Read `--admission-record-max-age-secs`.
+    fn take_record_max_age(&mut self, value: &str) -> Result<(), String> {
+        self.record_max_age_secs = Some(record_currentness::parse(value)?);
+        Ok(())
+    }
+
     /// The admission form this command line names, with its own inputs.
     pub(super) fn finish(self) -> Result<AdmissionRequest, String> {
         if self.strictness == Strictness::Off {
@@ -111,6 +121,7 @@ impl AdmissionFlags {
                 self.required("--admission-redis-url", self.store_url.clone())?,
             ),
             availability: self.availability()?,
+            record_max_age_secs: record_currentness::window(self.record_max_age_secs)?,
         };
         Ok(match self.strictness {
             Strictness::Optional => AdmissionRequest::Optional(gate),
@@ -172,6 +183,38 @@ mod tests {
         flags.take_authority_pubkey("k".to_string());
         flags.take_store_url("redis://127.0.0.1:6379".to_string());
         flags
+            .take_record_max_age("60")
+            .expect("an integer currentness budget");
+        flags
+    }
+
+    /// The record-currentness budget is a gate input, refused by ABSENCE like the other
+    /// three — not defaulted. A deployment that verifies signed records has said how long
+    /// one lives, because the number is its revocation promise and the authority's
+    /// republication cadence at once.
+    #[test]
+    fn an_enforcing_gate_without_a_record_currentness_budget_is_refused() {
+        let mut flags = AdmissionFlags::default();
+        flags.take_strictness("required").expect("a known level");
+        flags.take_authority_kid("authority-1".to_string());
+        flags.take_authority_pubkey("k".to_string());
+        flags.take_store_url("redis://127.0.0.1:6379".to_string());
+        let err = flags.finish().expect_err("no currentness budget");
+        assert!(err.contains("--admission-record-max-age-secs"), "{err}");
+    }
+
+    /// The legal form carries its window onward. The refusals themselves are measured in
+    /// [`record_currentness`]; what belongs to the FAMILY is that the value reaches the
+    /// assembled request.
+    #[test]
+    fn a_positive_record_currentness_budget_is_carried_to_the_request() {
+        let mut flags = enforcing();
+        flags.take_record_max_age("45").expect("an integer");
+        let request = flags.finish().expect("a configured gate");
+        assert_eq!(
+            request.gate().map(|g| g.record_max_age_secs.get()),
+            Some(45)
+        );
     }
 
     /// Every gate input beside `--admission off` is answered where it is still visible.

@@ -6,7 +6,7 @@
     "theorem_dependencies": {
       "THM-0001": "sha256:b067364dff3ea3ee94ba4bc44f3eaa6b7d73dfd0a7f83fce66f6b974683c2868",
       "THM-0003": "sha256:928d66c4b4d815fb3901fa02e719fcfa72fb02769e7efef282d027cb12c18815",
-      "THM-0004": "sha256:b6bc6203e4bd76f0016d2bd0e65bad4537dfc7aca1eb056bf0d71150fa8ca5cb",
+      "THM-0004": "sha256:bb4066095b8e280d4797c175443960231475a71ad74e31ead9746c81087d8dfb",
       "THM-0005": "sha256:2432f2895f1fa66bcc761fb826a89b5ec4ff43aaa0b61f11680a5848f04b9078",
       "THM-0006": "sha256:d17afc6a8b94917b667b65999e20357b3a49979b0037acf90a033b0d25235f73",
       "THM-0007": "sha256:474119e67bd5170a9e3647750fbb9d1e8a7308425d93ccfd4245998d38a24889",
@@ -41,7 +41,7 @@
       "THM-0079": "sha256:386bd3a50010a9bfc4f72c6638d8a9255567f410066ec9f6de1bcca96ea0764e",
       "THM-0080": "sha256:7b218d34dfbc963b13ced298042e2fcdd28e63db9d0c5f8fb35fa154f8da81a0",
       "THM-0083": "sha256:820496f9be44d962079f369353b0daf5cdbf454b5ba366b96299be726332e706",
-      "THM-0086": "sha256:8fea6f6254d34ef27b12cc45879aeb6a3e696bb85cc4a4de4c1f8b2cb2df0ae7",
+      "THM-0086": "sha256:9fe769a6f49b2d1628059803ee4096c9de6800af4df4ec47a1434e6ce6da6f2d",
       "THM-0087": "sha256:da4d310a19bbbe160954ef6f26e43538c6a91be221cf45ca5f9ad6589cc2e0ef",
       "THM-0092": "sha256:100ebea63d495c27a671114c4a8231f73e6271d9fc8c2b9d6c4addde5bf1da82",
       "THM-0093": "sha256:ca9f010834f7c81335754f69eeb3e5e1a34abb1ce145a6e2d1e118532a19ea91",
@@ -56,8 +56,8 @@
     "theorem_id": "THM-0074",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "DEPENDENCY-ONLY RE-AFFIRMATION, recorded under the owner's AFK mandate for the r11 closure campaign. The theorem's own claim text, security consequence, scope, owner and review requirement are BYTE-IDENTICAL to the reviewed version; what moved is one member of the transitive dependency closure, THM-0086, whose statement gained a corrected symbol path (`replay_plane::materialize` -> `replay_plane::MaterializedReplay::materialize`). WHAT THIS REVIEW ACKNOWLEDGES: a subordinate result's producer was renamed and its refusal made structural. The subordinate proposition is unchanged, so nothing this theorem composes from it changed.",
-  "reviewed_fingerprint": "sha256:413a442e1d1e67768eb9fc5509f432a07bed7f908bf89d3eefffcb8d26ba6184",
+  "notes": "DEPENDENCY-ONLY RE-AFFIRMATION, recorded under owner ruling R11-1. The root's own claim text, security consequence, scope, owner and review requirement are BYTE-IDENTICAL; what moved is its transitive dependency closure \u2014 THM-0004's scope paragraph was corrected, and THM-0129 entered the closure beneath it. WHAT THIS REVIEW ACKNOWLEDGES: the closure beneath this root became STRONGER, not weaker. A gap the root's own scope restated as out of scope \u2014 that the authoritative admission state the enforcement point holds is itself an authenticated, sufficiently current statement from the configured authority \u2014 now has a registered subordinate result establishing it at class V0, and no claim beneath this root was narrowed, relaxed or reclassified to get there. The root asserts exactly what it asserted before; more of what it composes from is now established rather than disclaimed.",
+  "reviewed_fingerprint": "sha256:ab6810108c97222ad98d2a373325dafb781a6eece731ad2ba22de6aa56e804d2",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0074"
 }

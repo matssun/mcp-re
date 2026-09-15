@@ -688,7 +688,7 @@ description = "#415 §7 admission currency: an Ok verdict is Admitted at the bou
 paths = [
   "mcp-re-http-profile/src/admission.rs",
   "mcp-re-http-profile/src/admission_policy.rs",
-  "mcp-re-http-profile/src/authoritative_admission.rs",
+  "mcp-re-http-profile/src/authoritative_admission/mod.rs",
   "mcp-re-http-profile/src/verus_std_specs.rs",
 ]
 exported_contracts = ["contract://http_profile/admission/check_admission"]
@@ -730,6 +730,136 @@ tested_symbols = [
 proved_symbols = ["mcp_re_http_profile::admission::check_admission"]
 features = ["verify"]
 pilot = "verus-wp2"
+
+# ---------------------------------------------------------------------------
+# The PROVENANCE of the authoritative state THM-0004 compares against
+# ---------------------------------------------------------------------------
+#
+# A SIBLING of `http_profile.admission_currency`, not a widening of it. That unit answers
+# "given authoritative state X, does this call match X?"; this one answers "why is X an
+# authenticated, sufficiently current statement from the configured admission authority?".
+# Two questions, two owners: folding them together would let one fingerprint stand for the
+# currency comparison and for the store's integrity at once, and a defect in either would
+# be invisible while the other's controls stayed green.
+#
+# It is where the r11 critical landed. The record was `<generation>:<status>` and the
+# argument for believing it was that only trusted parties can write the key — which made
+# the STORE the admission authority. The closure is the artifact, its currentness budget,
+# the verification that produces the state, and the two sources that cannot hand the gate
+# anything else.
+
+[[unit]]
+id = "http_profile.admission_state_provenance"
+class = "V0"
+description = "An authoritative admission state is obtainable only by verifying a record authenticated as issued by the configured admission authority, bound to the workload and to the admission generation and status, and current within the deployment's declared revocation-currentness budget — so store-write access without the signing authority can neither mint an admission nor indefinitely replay one."
+paths = [
+  "mcp-re-http-profile/src/authoritative_admission/record/mod.rs",
+  "mcp-re-http-profile/src/authoritative_admission/record/currentness.rs",
+  "mcp-re-http-profile/src/authoritative_admission/record/verified.rs",
+]
+# `redis_admission_source.rs` is deliberately ABSENT. It is behind `redis_replay`, so a unit
+# naming it would be a unit whose closure the default lane compiles to nothing — and the
+# decision it makes is not its own: it calls the same `AdmissionRecordVerifier` the
+# in-memory source does, which is the point of there being one owner. What belongs to the
+# Redis adapter alone is a store round trip, measured in its own feature-bearing lane.
+exported_contracts = []
+evidence = [
+  "test://http_profile/admission_state/provenance_and_currentness_battery",
+  "mutation://http_profile/admission_state/authentication_and_freshness",
+]
+tested_symbols = [
+  # The artifact, and the boundary that keeps it from being the caller's assertion.
+  "lib#authoritative_admission::record::tests::the_record_typ_is_not_the_assertion_typ",
+  "lib#authoritative_admission::record::tests::a_signer_returning_a_non_ed25519_signature_is_refused_at_issuance",
+  "lib#authoritative_admission::record::tests::the_issued_record_is_three_non_empty_compact_segments",
+  # The accepting half FIRST: without it every refusal below is satisfied by a verifier
+  # that refuses everything, which would establish nothing about the record that IS current.
+  "lib#authoritative_admission::record::verified::tests::a_record_signed_by_the_configured_authority_is_accepted_and_projects_its_state",
+  # Store-write access is not signing authority: mint, tamper, move, mislabel.
+  "lib#authoritative_admission::record::verified::tests::a_changed_status_in_the_stored_bytes_is_refused",
+  "lib#authoritative_admission::record::verified::tests::a_changed_generation_is_refused",
+  "lib#authoritative_admission::record::verified::tests::a_store_writer_cannot_mint_a_high_generation",
+  "lib#authoritative_admission::record::verified::tests::a_record_moved_under_another_admission_id_is_refused",
+  "lib#authoritative_admission::record::verified::tests::an_unknown_issuer_is_refused",
+  "lib#authoritative_admission::record::verified::tests::a_record_signed_by_an_unconfigured_key_is_refused",
+  "lib#authoritative_admission::record::verified::tests::a_header_kid_disagreeing_with_the_claims_is_refused",
+  "lib#authoritative_admission::record::verified::tests::an_assertion_presented_as_a_record_is_refused",
+  "lib#authoritative_admission::record::verified::tests::a_record_from_another_evidence_profile_is_refused",
+  "lib#authoritative_admission::record::verified::tests::malformed_bytes_are_refused_as_malformed_and_never_as_anything_softer",
+  # The rollback bound — the half a signature cannot establish.
+  "lib#authoritative_admission::record::verified::tests::a_restored_admitted_record_is_refused_past_the_authorized_window",
+  "lib#authoritative_admission::record::currentness::tests::a_record_inside_both_its_own_window_and_the_budget_is_current",
+  "lib#authoritative_admission::record::currentness::tests::a_legitimately_signed_record_stops_being_read_at_the_ceiling",
+  "lib#authoritative_admission::record::currentness::tests::an_issuer_window_wider_than_the_budget_is_refused_not_clamped",
+  "lib#authoritative_admission::record::currentness::tests::a_shorter_issuer_window_is_the_one_that_applies",
+  "lib#authoritative_admission::record::currentness::tests::no_accepted_window_is_read_past_the_budget_ceiling",
+  "lib#authoritative_admission::record::currentness::tests::a_record_issued_in_the_future_is_refused",
+  "lib#authoritative_admission::record::currentness::tests::a_record_before_its_nbf_is_refused",
+  "lib#authoritative_admission::record::currentness::tests::an_inverted_window_is_refused",
+  "lib#authoritative_admission::record::currentness::tests::extreme_coordinates_saturate_rather_than_wrap",
+  # The revision floor, as HARDENING and labelled so. What the FLOOR does across reads
+  # belongs to the source that keeps one; what belongs here is that the verifier honours a
+  # floor it is handed.
+  "lib#authoritative_admission::record::verified::tests::an_observed_revision_floor_refuses_an_older_publication"
+]
+
+# ---------------------------------------------------------------------------
+# What the ENFORCEMENT POINT can be handed, and what a refusal costs
+# ---------------------------------------------------------------------------
+#
+# The sibling of the unit above, in the crate where the gate lives. That one says what a
+# record must be to be believed; this one says the enforcement point cannot be handed
+# anything else, and — the half that decides whether a refusal becomes a route around the
+# control — that a reachable store which ANSWERED is never an outage.
+#
+# The distinction is the whole reason both exist. An outage reaches the §5.2 degraded fork,
+# which serves the caller on its own assertion within P. Classify a forged, moved or expired
+# record as "the authority could not be reached" and corrupting a `revoked` record becomes a
+# cheaper un-revoke than issuing a new admission — with every control in the unit above
+# still green, because each of those refusals really did fire.
+
+[[unit]]
+id = "proxy.admission_state_source"
+class = "V0"
+description = "Every admission source hands the gate only a state produced by verifying a record against the configured authority, one owner makes that decision so no source can omit it, and a reachable store that answered with a record this deployment will not act on is a definitive negative rather than an outage."
+paths = [
+  "mcp-re-proxy/src/admission_source/mod.rs",
+  "mcp-re-proxy/src/admission_source/verifier.rs",
+  "mcp-re-proxy/src/admission_source/in_memory.rs",
+]
+# `redis_admission_source.rs` is deliberately ABSENT. It is behind `redis_replay`, so a unit
+# naming it would be a unit whose closure the default lane compiles to nothing — and the
+# decision it makes is not its own: it calls the same `AdmissionRecordVerifier` the
+# in-memory source does, which is the point of there being one owner. What belongs to the
+# Redis adapter alone is a store round trip, measured in its own feature-bearing lane.
+exported_contracts = []
+evidence = [
+  "test://proxy/admission_state/source_classification_battery",
+]
+tested_symbols = [
+  # One owner makes the decision, and it is the configured authority's key it makes it
+  # against. A source cannot forget to verify because it has nothing else to hand over.
+  "lib#admission_source::verifier::tests::a_record_signed_by_the_configured_authority_verifies",
+  "lib#admission_source::verifier::tests::a_record_from_an_unconfigured_key_is_refused",
+  "lib#admission_source::verifier::tests::a_record_naming_an_unknown_issuer_is_refused",
+  # The revision floor, as HARDENING and labelled so — per workload, and advancing only on
+  # a verification that succeeded.
+  "lib#admission_source::verifier::tests::accepting_a_publication_raises_the_floor_for_that_workload",
+  "lib#admission_source::verifier::tests::one_workloads_floor_does_not_refuse_another_workloads_record",
+  # FAILURE CLASSIFICATION. A reachable store that answered is never an outage, so none of
+  # these can reach the degraded fork.
+  "lib#admission_source::in_memory::tests::a_record_this_store_cannot_authenticate_is_a_definitive_negative",
+  "lib#admission_source::in_memory::tests::a_record_filed_under_another_workload_is_refused",
+  "lib#admission_source::in_memory::tests::a_deleted_record_is_a_definitive_negative",
+  "lib#admission_source::in_memory::tests::an_unknown_workload_is_a_definitive_negative_not_an_outage",
+  "lib#admission_source::in_memory::tests::restoring_an_older_publication_after_a_revocation_is_refused",
+  # The mirror: a GENUINE outage still reads as one, so the clause above is a
+  # classification and not a verifier that reports everything the same way.
+  "lib#admission_source::in_memory::tests::an_outage_is_distinguishable_from_an_unknown_workload",
+  # And the accepting half, so none of the above is satisfied by a source that refuses
+  # everything.
+  "lib#admission_source::in_memory::tests::revoking_keeps_the_generation_and_changes_the_status",
+]
 
 # ---------------------------------------------------------------------------
 # WP2 — typed artifact-binding verification

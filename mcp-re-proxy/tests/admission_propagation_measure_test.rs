@@ -38,7 +38,9 @@ use std::time::Instant;
 use mcp_re_core::b64url_decode;
 use mcp_re_core::b64url_encode;
 use mcp_re_core::SigningKey;
-use mcp_re_http_profile::authoritative_admission::AuthoritativeAdmission;
+use mcp_re_http_profile::authoritative_admission::record::issue_admission_state_record;
+use mcp_re_http_profile::authoritative_admission::record::AdmissionStateClaims;
+use mcp_re_http_profile::authoritative_admission::record::AdmissionStateCurrentness;
 use mcp_re_http_profile::issue_admission_assertion;
 use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::sign_request_full;
@@ -63,6 +65,7 @@ use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::PROFILE_TAG;
 
 use mcp_re_proxy::admission_enforcer::AdmissionEnforcement;
+use mcp_re_proxy::admission_source::AdmissionRecordVerifier;
 use mcp_re_proxy::admission_source::AsyncAdmissionSource;
 use mcp_re_proxy::async_inner::AsyncInnerServer;
 use mcp_re_proxy::async_replay::AsyncReplayTier;
@@ -178,6 +181,52 @@ fn actor_resolver() -> ActorResolver {
 
 fn authority_resolver() -> AdmissionAuthorityResolver {
     Arc::new(|kid: &str| (kid == AUTHORITY_KID).then(|| authority_key().public_key()))
+}
+
+/// The deployment's declared currentness budget for an authoritative record.
+///
+/// Wide relative to `DECLARED_P_MS`: this battery measures how fast a NEW publication
+/// reaches a sibling replica, and a record expiring mid-poll would make it pass for the
+/// wrong reason. The budget's own boundary is measured where it is decided.
+const RECORD_MAX_AGE: i64 = 3_600;
+
+/// A verifier that trusts exactly the admission authority, the one a real deployment
+/// builds from its validated state.
+fn record_verifier() -> AdmissionRecordVerifier {
+    AdmissionRecordVerifier::new(
+        authority_resolver(),
+        PROFILE_TAG,
+        AdmissionStateCurrentness {
+            max_record_age: RECORD_MAX_AGE,
+            max_clock_skew: 30,
+        },
+    )
+}
+
+/// The AUTHORITY's signed statement about a workload.
+///
+/// Signing happens HERE, in the control-plane half of the harness, because that is where
+/// it happens in a deployment: the serving replicas below hold a verifier and no key.
+fn signed_state(workload: &str, generation: u64, revision: u64, status: AdmissionStatus) -> String {
+    issue_admission_state_record(
+        &AdmissionStateClaims {
+            iss: "did:example:admission".into(),
+            iat: NOW,
+            nbf: NOW,
+            exp: NOW + RECORD_MAX_AGE,
+            mcp_re_profile: PROFILE_TAG.into(),
+            mcp_re_admission_id: workload.into(),
+            mcp_re_admission_generation: generation,
+            mcp_re_admission_status: status,
+            mcp_re_state_revision: revision,
+            issuer_kid: AUTHORITY_KID.into(),
+        },
+        |input| {
+            b64url_decode(&authority_key().sign(input))
+                .map_err(|_| HttpProfileError::InvalidSignature)
+        },
+    )
+    .expect("the authority issues its own record")
 }
 
 fn admission_claims(workload: &str, generation: u64) -> AdmissionClaims {
@@ -350,26 +399,26 @@ fn a_revocation_reaches_a_sibling_replica_within_the_declared_p_bound() {
     rt.block_on(async {
         // Three independent connections: the authority that writes, and one per
         // replica that reads. A single shared connection would measure a memory write.
-        let authority = RedisAdmissionSource::connect(&url)
+        let authority = RedisAdmissionSource::connect(&url, record_verifier())
             .await
             .expect("authority connects");
         let source_a = Arc::new(
-            RedisAdmissionSource::connect(&url)
+            RedisAdmissionSource::connect(&url, record_verifier())
                 .await
                 .expect("A connects"),
         );
         let source_b = Arc::new(
-            RedisAdmissionSource::connect(&url)
+            RedisAdmissionSource::connect(&url, record_verifier())
                 .await
                 .expect("B connects"),
         );
 
         authority
-            .publish(&AuthoritativeAdmission::new(
-                workload.clone(),
-                5,
-                AdmissionStatus::Admitted,
-            ))
+            .publish(
+                &signed_state(&workload, 5, 1, AdmissionStatus::Admitted),
+                &workload,
+                NOW,
+            )
             .await
             .expect("publish admitted");
 
@@ -406,7 +455,16 @@ fn a_revocation_reaches_a_sibling_replica_within_the_declared_p_bound() {
 
         // The authority revokes. Nothing notifies either replica.
         let revoked_at = Instant::now();
-        authority.revoke(&workload).await.expect("revoke");
+        authority
+            .publish(
+                // The generation is UNCHANGED — revocation is not a rotation — and the
+                // publication sequence advances, which is what the two counters are for.
+                &signed_state(&workload, 5, 2, AdmissionStatus::Revoked),
+                &workload,
+                NOW,
+            )
+            .await
+            .expect("revoke");
 
         // Poll replica B — which performed no revocation and shares nothing with the
         // authority but the store — until it refuses. Each attempt carries a fresh

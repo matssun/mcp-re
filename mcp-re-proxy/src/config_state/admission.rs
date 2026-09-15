@@ -71,6 +71,38 @@ pub enum AdmissionAvailability {
     },
 }
 
+/// How current an authoritative admission record must be for this deployment to act on it.
+///
+/// This is the deployment's REVOCATION-CURRENTNESS PROMISE for the authenticated record —
+/// after a revocation is published, no replica may still be acting on an older record once
+/// this many seconds have passed. It is not P. P bounds serving on last-known state while
+/// the authority is UNREACHABLE; this bounds how old a record may be while the store is
+/// answering normally, and the two are declared separately because a deployment that
+/// tolerates no outage window may still need a workable republication cadence.
+///
+/// `NonZeroU64` because a zero-width window is not a stricter spelling of "off": it refuses
+/// every record the instant it is signed, so an authority that publishes correctly still
+/// admits nobody. The gate has to be turned off by turning it off.
+///
+/// The authority must republish at least this often. That cost is the price of the property
+/// — a record that never needs re-signing is one a party with store-write access can
+/// restore forever.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AdmissionRecordCurrentness {
+    max_age_secs: NonZeroU64,
+}
+
+impl AdmissionRecordCurrentness {
+    /// The budget as the verifier's saturating `i64` seconds.
+    ///
+    /// Narrowed from a positive `u64` at layer A, so the saturation cannot fire on any
+    /// value a deployment can state; it is here because the verifier's coordinates are
+    /// signed and mixing widths silently is how a bound stops being the bound.
+    pub fn max_age_secs(&self) -> i64 {
+        i64::try_from(self.max_age_secs.get()).unwrap_or(i64::MAX)
+    }
+}
+
 /// Which admission state a configuration requests.
 ///
 /// The representation is private to this module. [`classify_and_validate`] is the only
@@ -93,24 +125,40 @@ pub struct AdmissionState {
 ///
 /// Private to this module: this state's consumers live in this crate, so `pub` variants
 /// would be constructible by all of them.
+///
+/// **Two states, not three.** `Optional` and `Required` carried IDENTICAL field lists, so
+/// every consumer that wanted the inputs matched both arms and every new gate input had to
+/// be added twice — the duplicated representation ADR-MCPRE-061 §8 question 10 asks about,
+/// and the reason `PartialEq` here was a fifty-line destructure of two spellings of one
+/// thing. What actually varies between them is the POSTURE, so that is the field.
 #[derive(Debug, Clone)]
 enum AdmissionKindState {
     /// Not enforced. Admission evidence, if present, decides nothing.
     Off,
-    /// Enforced when present — for a rollout that has not reached every client.
-    Optional {
-        authority_kid: String,
-        authority: VerificationKey,
-        record_store: String,
-        availability: AdmissionAvailability,
+    /// A gate is applied, at `posture`, over `gate`'s validated inputs.
+    ///
+    /// Boxed: `Off` carries nothing, so an inline gate would make every `AdmissionState` —
+    /// including the unenforced one every non-admission deployment holds — as large as the
+    /// widest arm. The box is a size decision and nothing else; the gate is still owned
+    /// here and still unreachable from outside this module.
+    Enforced {
+        posture: AdmissionPosture,
+        gate: Box<ValidatedGate>,
     },
-    /// Enforced always: a call with no admission evidence is refused.
-    Required {
-        authority_kid: String,
-        authority: VerificationKey,
-        record_store: String,
-        availability: AdmissionAvailability,
-    },
+}
+
+/// What an enforcing posture cannot exist without, after validation.
+///
+/// Private to this module, and never handed out: [`EnforcedAdmission`] is the borrowed view
+/// consumers read. Holding one of these would be holding the terms of a validated relation
+/// as independently replaceable values.
+#[derive(Debug, Clone)]
+struct ValidatedGate {
+    authority_kid: String,
+    authority: VerificationKey,
+    record_store: String,
+    availability: AdmissionAvailability,
+    currentness: AdmissionRecordCurrentness,
 }
 
 /// How strictly a gate is applied, for a deployment that applies one.
@@ -137,6 +185,7 @@ pub struct EnforcedAdmission<'a> {
     authority: &'a VerificationKey,
     record_store: &'a str,
     availability: AdmissionAvailability,
+    currentness: AdmissionRecordCurrentness,
 }
 
 impl<'a> EnforcedAdmission<'a> {
@@ -164,6 +213,11 @@ impl<'a> EnforcedAdmission<'a> {
     pub fn availability(&self) -> AdmissionAvailability {
         self.availability
     }
+
+    /// How current a record read from that store must be to be acted on.
+    pub fn record_currentness(&self) -> AdmissionRecordCurrentness {
+        self.currentness
+    }
 }
 
 /// Two admission states are the same state when they name the same issuer.
@@ -182,37 +236,21 @@ impl PartialEq for AdmissionState {
         match (&self.kind, &other.kind) {
             (AdmissionKindState::Off, AdmissionKindState::Off) => true,
             (
-                AdmissionKindState::Optional {
-                    authority_kid: a_kid,
-                    authority: a_key,
-                    record_store: a_url,
-                    availability: a_av,
+                AdmissionKindState::Enforced {
+                    posture: a,
+                    gate: x,
                 },
-                AdmissionKindState::Optional {
-                    authority_kid: b_kid,
-                    authority: b_key,
-                    record_store: b_url,
-                    availability: b_av,
-                },
-            )
-            | (
-                AdmissionKindState::Required {
-                    authority_kid: a_kid,
-                    authority: a_key,
-                    record_store: a_url,
-                    availability: a_av,
-                },
-                AdmissionKindState::Required {
-                    authority_kid: b_kid,
-                    authority: b_key,
-                    record_store: b_url,
-                    availability: b_av,
+                AdmissionKindState::Enforced {
+                    posture: b,
+                    gate: y,
                 },
             ) => {
-                a_kid == b_kid
-                    && a_url == b_url
-                    && a_av == b_av
-                    && a_key.to_bytes() == b_key.to_bytes()
+                a == b
+                    && x.authority_kid == y.authority_kid
+                    && x.record_store == y.record_store
+                    && x.availability == y.availability
+                    && x.currentness == y.currentness
+                    && x.authority.to_bytes() == y.authority.to_bytes()
             }
             _ => false,
         }
@@ -234,39 +272,16 @@ impl AdmissionState {
     /// this machine's semantics; both are handed over in one value so no consumer can pair
     /// a posture with an authority the validator did not pair it with.
     pub fn enforced(&self) -> Option<EnforcedAdmission<'_>> {
-        let (posture, authority_kid, authority, record_store, availability) = match &self.kind {
-            AdmissionKindState::Off => return None,
-            AdmissionKindState::Optional {
-                authority_kid,
-                authority,
-                record_store,
-                availability,
-            } => (
-                AdmissionPosture::Optional,
-                authority_kid,
-                authority,
-                record_store,
-                availability,
-            ),
-            AdmissionKindState::Required {
-                authority_kid,
-                authority,
-                record_store,
-                availability,
-            } => (
-                AdmissionPosture::Required,
-                authority_kid,
-                authority,
-                record_store,
-                availability,
-            ),
+        let AdmissionKindState::Enforced { posture, gate } = &self.kind else {
+            return None;
         };
         Some(EnforcedAdmission {
-            posture,
-            authority_kid,
-            authority,
-            record_store,
-            availability: *availability,
+            posture: *posture,
+            authority_kid: &gate.authority_kid,
+            authority: &gate.authority,
+            record_store: &gate.record_store,
+            availability: gate.availability,
+            currentness: gate.currentness,
         })
     }
 }
@@ -287,6 +302,7 @@ pub fn classify_and_validate(config: &DeploymentRequest) -> (Option<AdmissionSta
         key,
         record_store,
         availability,
+        currentness,
     }) = authority
     else {
         return (
@@ -307,20 +323,19 @@ pub fn classify_and_validate(config: &DeploymentRequest) -> (Option<AdmissionSta
                 Vec::new(),
             )
         }
-        AdmissionRequest::Optional(_) => AdmissionState {
-            kind: AdmissionKindState::Optional {
-                authority_kid: kid,
-                authority: key,
-                record_store,
-                availability,
-            },
-        },
-        AdmissionRequest::Required(_) => AdmissionState {
-            kind: AdmissionKindState::Required {
-                authority_kid: kid,
-                authority: key,
-                record_store,
-                availability,
+        AdmissionRequest::Optional(_) | AdmissionRequest::Required(_) => AdmissionState {
+            kind: AdmissionKindState::Enforced {
+                posture: match config.admission {
+                    AdmissionRequest::Optional(_) => AdmissionPosture::Optional,
+                    _ => AdmissionPosture::Required,
+                },
+                gate: Box::new(ValidatedGate {
+                    authority_kid: kid,
+                    authority: key,
+                    record_store,
+                    availability,
+                    currentness,
+                }),
             },
         },
     };
@@ -350,6 +365,8 @@ pub(crate) struct AdmissionAuthority {
     /// What this deployment does when that record cannot be reached. Derived here because
     /// the two flags behind it are legal only in the combinations this function accepts.
     pub(crate) availability: AdmissionAvailability,
+    /// How current a record must be to be acted on.
+    pub(crate) currentness: AdmissionRecordCurrentness,
 }
 
 /// The one decision about whether an admission-currency configuration can be enforced.
@@ -426,6 +443,9 @@ pub(crate) fn validated_admission_authority(
                 AdmissionAvailability::BoundedDegraded { bound_secs }
             }
         },
+        currentness: AdmissionRecordCurrentness {
+            max_age_secs: gate.record_max_age_secs,
+        },
     }))
 }
 
@@ -445,6 +465,7 @@ mod tests {
             authority_pubkey_b64url: valid_pubkey(),
             store: crate::deployment_request::SharedStoreRequest::redis("redis://127.0.0.1:6379"),
             availability: AdmissionAvailabilityRequest::FailClosed,
+            record_max_age_secs: NonZeroU64::new(60).expect("nonzero"),
         }
     }
 

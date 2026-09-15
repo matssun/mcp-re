@@ -18,11 +18,37 @@ record **live, per request**, and compares the generation and status against the
 admission the call is bound to.
 
 ```
-admission authority ──SET mcp-re:admission:<id> "<generation>:<status>"──> shared store
-                                                                              │
-replica A ──GET (per request)───────────────────────────────────────────────┘
-replica B ──GET (per request)───────────────────────────────────────────────┘
+admission authority ──SET mcp-re:admission:<id> <signed record>──> shared store
+                                                                       │
+replica A ──GET (per request) ── verify ──────────────────────────────┘
+replica B ──GET (per request) ── verify ──────────────────────────────┘
 ```
+
+**The record is signed, and the store is not the authority.** It was a bare
+`<generation>:<status>` string until the r11 admission-integrity ruling, and the argument
+for believing it was that only trusted parties can write the key — which made Redis the
+admission authority. What lives under the key now is a compact JWS
+(`typ: mcp-re-admission-state+jws`) signed by the SAME admission authority that issues
+admission assertions, verified under the `--admission-authority-kid` /
+`--admission-authority-pubkey` the deployment already configured. No second trust root, and
+no private key anywhere near a serving replica: publication is control-plane work.
+
+A party that obtains store-write access without the signing key can delete records, corrupt
+them and take the store down — all of which a replica survives by failing closed. It cannot
+mint an admission, rewind a generation, move one workload's record onto another's key, or
+keep a revoked workload in service by restoring the bytes from before its revocation.
+
+**The authority must republish, and that is a deployment duty.** A signature is a statement
+about the past, so a genuine record restored after a revocation would otherwise be accepted
+forever. `--admission-record-max-age-secs` is the deployment's answer: past
+`iat + budget + skew` no record is read, whatever its signature says, and nothing has to
+detect the substitution. The control plane therefore has to re-sign and re-publish each
+admitted workload's record more often than that budget, or admission lapses for everyone.
+
+That budget is **not** P. P (`--admission-degraded-bound-secs`) bounds serving on last-known
+state while the authority is UNREACHABLE; the record budget bounds how old a record may be
+while the store is answering normally. The number below measures neither — it measures
+write-to-read visibility.
 
 There is **no cached copy**. That is a deliberate choice with a cost and a benefit:
 

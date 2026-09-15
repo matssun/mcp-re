@@ -551,11 +551,24 @@ CASES: list[tuple[str, dict, bool, str]] = [
         False,
         "admissionCurrency.redisUrl is plaintext",
     ),
+    # The record budget is the deployment's revocation-currentness promise, so a gate that
+    # verifies signed records cannot be rendered without one. Zero is not a stricter
+    # setting: it refuses every record the instant it is signed, so a correctly publishing
+    # authority admits nobody.
+    (
+        "an enforcing gate without a record-currentness budget is refused",
+        merged({"admissionCurrency": {"mode": "required", "authorityKid": "adm-1",
+                                      "authorityPubkey": "cHVia2V5",
+                                      "redisUrl": "rediss://r:6379"}}),
+        False,
+        "recordMaxAgeSecs",
+    ),
     (
         "an unbounded degraded window is refused",
         merged({"admissionCurrency": {"mode": "optional", "authorityKid": "adm-1",
                                       "authorityPubkey": "cHVia2V5",
                                       "redisUrl": "rediss://r:6379",
+                                      "recordMaxAgeSecs": 60,
                                       "allowDegraded": True, "degradedBoundSecs": 0}}),
         False,
         "degradedBoundSecs",
@@ -625,7 +638,8 @@ CASES: list[tuple[str, dict, bool, str]] = [
         merged({"fleet": False},
                {"admissionCurrency": {"mode": "required", "authorityKid": "adm-1",
                                       "authorityPubkey": "cHVia2V5",
-                                      "redisUrl": "rediss://r:6379"}}),
+                                      "redisUrl": "rediss://r:6379",
+                                      "recordMaxAgeSecs": 60}}),
         True,
         "",
     ),
@@ -633,7 +647,8 @@ CASES: list[tuple[str, dict, bool, str]] = [
         "a fully configured admission currency renders",
         merged({"admissionCurrency": {"mode": "required", "authorityKid": "adm-1",
                                       "authorityPubkey": "cHVia2V5",
-                                      "redisUrl": "rediss://r:6379"}}),
+                                      "redisUrl": "rediss://r:6379",
+                                      "recordMaxAgeSecs": 60}}),
         True,
         "",
     ),
@@ -768,14 +783,16 @@ ARGV_CASES: list[tuple[str, dict, list[tuple[str, str]], list[str]]] = [
          "--admission-degraded-bound-secs"],
     ),
     (
-        "admission currency renders the mode and all three anchors",
+        "admission currency renders the mode and all four anchors",
         merged({"admissionCurrency": {"mode": "required", "authorityKid": "adm-1",
                                       "authorityPubkey": "cHVia2V5",
-                                      "redisUrl": "rediss://r:6379"}}),
+                                      "redisUrl": "rediss://r:6379",
+                                      "recordMaxAgeSecs": 60}}),
         [("--admission", "required"),
          ("--admission-authority-kid", "adm-1"),
          ("--admission-authority-pubkey", "cHVia2V5"),
-         ("--admission-redis-url", "rediss://r:6379")],
+         ("--admission-redis-url", "rediss://r:6379"),
+         ("--admission-record-max-age-secs", "60")],
         # Degraded serving is opt-in; leaving it unset must not render a bound that
         # would read as an authorised window.
         ["--admission-allow-degraded", "--admission-degraded-bound-secs"],
@@ -785,10 +802,15 @@ ARGV_CASES: list[tuple[str, dict, list[tuple[str, str]], list[str]]] = [
         merged({"admissionCurrency": {"mode": "optional", "authorityKid": "adm-1",
                                       "authorityPubkey": "cHVia2V5",
                                       "redisUrl": "rediss://r:6379",
+                                      "recordMaxAgeSecs": 60,
                                       "allowDegraded": True, "degradedBoundSecs": 30}}),
         [("--admission", "optional"),
          ("--admission-allow-degraded", "true"),
-         ("--admission-degraded-bound-secs", "30")],
+         ("--admission-degraded-bound-secs", "30"),
+         # The two windows are different facts and both are rendered. P bounds serving
+         # while the authority is UNREACHABLE; the record budget bounds how old a signed
+         # record may be while the store is answering.
+         ("--admission-record-max-age-secs", "60")],
         [],
     ),
     # SCT-2 / SCT-3 retention. The flag is only half of it — with

@@ -47,6 +47,14 @@
 //! Reading a field cannot produce an illegal value; only construction can, and construction
 //! is what is closed.
 
+/// The AUTHENTICATED form of this fact: what the admission authority publishes, and the
+/// verification that is the only way to obtain a state the enforcement point will act on.
+///
+/// A submodule rather than a sibling because it is the same fact with a provenance: the
+/// type here is what the currency check consumes, and `record` is what says the deployment
+/// is entitled to consume it.
+pub mod record;
+
 use crate::admission::AdmissionStatus;
 
 /// The authoritative state an admission authority holds for one workload (§4.3).

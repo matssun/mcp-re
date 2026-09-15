@@ -29,6 +29,15 @@ claimed the guard held "at any replica count" and the chart did not.
 {{- if and .Values.admissionCurrency.allowDegraded (not (gt (int .Values.admissionCurrency.degradedBoundSecs) 0)) -}}
 {{- fail "admissionCurrency.allowDegraded=true requires a positive admissionCurrency.degradedBoundSecs: degraded serving is a BOUNDED window measured from the last successful authority read, and an unbounded or zero one is not a policy." -}}
 {{- end -}}
+{{/*
+LAST of the enforcing guards, deliberately. Every clause above predates it, and the
+diagnostic a multiply-misconfigured deployment meets first must not move because a new
+requirement was added — a chart that starts answering an older mistake with a newer
+message is a chart whose refusals an operator has to re-learn.
+*/}}
+{{- if not (gt (int .Values.admissionCurrency.recordMaxAgeSecs) 0) -}}
+{{- fail "admissionCurrency.mode=optional|required requires a positive admissionCurrency.recordMaxAgeSecs: the authoritative record is signed by the admission authority, and how long a signed record stays readable IS this deployment's revocation-currentness promise. Zero refuses every record the instant it is signed, so a correctly publishing authority admits nobody; a gate is turned off by setting mode to off." -}}
+{{- end -}}
 {{- else -}}
 {{- if and .Values.continuationControl.redisUrl (not .Values.replay.allowPlaintextRedis) (hasPrefix "redis://" .Values.continuationControl.redisUrl) -}}
 {{- fail "continuationControl.redisUrl is plaintext redis:// — the correlation record is what binds an answer leg to the request that opened it, so an unauthenticated peer who can write it can redirect a continuation. Use rediss:// with credentials, or set replay.allowPlaintextRedis=true to accept the risk deliberately." -}}
@@ -222,6 +231,13 @@ spec:
             - {{ .Values.admissionCurrency.authorityPubkey | quote }}
             - "--admission-redis-url"
             - {{ .Values.admissionCurrency.redisUrl | quote }}
+            # The deployment's revocation-currentness promise for the SIGNED
+            # authoritative record: after a revocation is published, no replica acts
+            # on an older record than this. It also sets the authority's
+            # republication cadence, because a record that never goes out of date is
+            # one a party with store-write access can restore forever.
+            - "--admission-record-max-age-secs"
+            - "{{ .Values.admissionCurrency.recordMaxAgeSecs }}"
             {{- if .Values.admissionCurrency.allowDegraded }}
             # Degraded serve is a BOUNDED window measured from the last successful
             # authority read; without it an unreachable authority fails every call

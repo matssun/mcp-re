@@ -265,6 +265,15 @@ freshness (ASM-0012). Currency is generation equality against the state the enfo
 point holds; the theorem does not establish that that state is itself current, nor that the
 authority behind it is the right authority to trust.
 
+Those last two were O-9, and O-9 is no longer a permanent boundary. THM-0129 establishes
+them ABOUT THE SAME STATE, as a separate result over a separate owner, and the division is
+deliberate: this theorem answers *given authoritative state X, does this call match X?* and
+THM-0129 answers *why is X an authenticated, sufficiently current statement from the
+configured admission authority?*. Broadening this one to cover both would put the store's
+integrity and the currency comparison behind one fingerprint, so a defect in either would be
+invisible while the other's controls stayed green. What this theorem's scope still excludes
+is unchanged in every other respect.
+
 The subject conjunct is a claim about the VERDICT, not a caller obligation. It was one: the
 state carried a generation and a status and no workload identity, so the proof quantified
 over whatever record the caller supplied, and the security consequence rested on every
@@ -294,6 +303,80 @@ owner = "http_profile.admission_currency"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://http_profile.admission_currency"]
 depends_on = []
+
+# The r11 critical's result. It is a SUBORDINATE of THM-0004 rather than a widening of it:
+# the currency comparison keeps its own responsibility, and this carries the provenance and
+# currentness of the state that comparison is made against. Registered at the evidence class
+# that exists — V0, a test battery with a mutation self-test — not at the class the
+# neighbouring proof enjoys. Tests are not a proof and a mutation kill is not a proof.
+[[theorem]]
+id = "THM-0129"
+title = "Authoritative admission state is authenticated and bounded-current"
+statement = """
+An authoritative admission state accepted by the enforcement point is authenticated as
+issued by the configured admission authority, bound to the workload and to the admission
+generation and status, and current within the deployment's declared revocation-currentness
+budget. Store write access without the admission signing authority can deny service but
+cannot mint or indefinitely replay an admission that restores service to a revoked or
+otherwise non-current workload.
+
+Three coordinates carry it, and each answers a forgery the others cannot see. The SIGNATURE,
+over a preimage covering the artifact's own `typ`, the subject, the generation, the status,
+the publication sequence, the issuer identity and both time coordinates, refuses a minted or
+altered record. The SUBJECT comparison, against the id the record was read under, refuses a
+genuine record MOVED onto another workload's key — a forgery a signature cannot see, because
+the bytes are real. And the CURRENTNESS CEILING refuses a genuine record RESTORED after it
+was superseded, without anything having to detect the substitution: an accepted record is
+inside its own window and that window began no earlier than the budget before it ends, so no
+record is read later than `iat + budget + skew`.
+"""
+security_consequence = """
+A party that obtains write access to the shared admission store, and does not hold the
+admission signing authority, can delete state, corrupt it and make it unreachable — all of
+which this deployment survives by failing closed. It cannot move a workload from revoked
+back to admitted, change a generation or status undetectably, answer for one workload with
+another's record, or keep a revoked workload in service by restoring the bytes from before
+its revocation. The authority's power to revoke is restored by the passage of the declared
+budget rather than by anyone noticing.
+
+The failure classification is part of the consequence, not a detail of it. A reachable store
+that answers with a record the deployment will not act on is a definitive non-admission, not
+an outage — so corrupting a `revoked` record is never a cheaper un-revoke than issuing a new
+admission, which is exactly what routing it to the bounded degraded fork would have made it.
+"""
+scope = """
+V0: a test battery with a mutation self-test over the authentication and freshness
+conjuncts. NOT proved, and the batteries passing is not evidence that either check is
+load-bearing — that is what the mutation probe is for, and a mutation kill is not a proof
+either.
+
+Says nothing about whether the configured authority is the RIGHT authority to trust: which
+authority a deployment enrols is an operator decision, and this claim is about what follows
+from having enrolled one. Says nothing about the assertion the CALLER presents (ASM-0012),
+nor about whether the call matches the state — that is THM-0004.
+
+The observed publication-sequence floor is HARDENING and is deliberately outside the claim.
+A replica that has just started has no floor and a restart forgets it, so a monotone floor
+cannot by itself bound a rollback; the currentness ceiling, which needs no memory, is what
+does. The floor narrows the window for a replica that was already running, which is worth
+having and is not what the theorem rests on.
+
+Redis ACLs and compare-and-set are likewise outside it. An ACL binds who may connect, not
+what a record means, and a CAS is an agreement between honest writers rather than a defence
+against a malicious one. Neither appears as a premise, and no assumption registers the store
+as trusted: that framing is what the result exists to remove.
+
+AVAILABILITY is not claimed. A store-write adversary can certainly stop this deployment
+serving, and an authority that fails to republish inside its own declared budget will see
+admission lapse. Both are inside the claim rather than violations of it.
+"""
+owner = "http_profile.admission_state_provenance"
+review_requirement = "Owner security-specification review"
+supported_by = [
+  "unit://http_profile.admission_state_provenance",
+  "unit://proxy.admission_state_source",
+]
+depends_on = ["THM-0004"]
 
 [[theorem]]
 id = "THM-0005"
