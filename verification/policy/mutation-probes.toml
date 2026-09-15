@@ -3421,6 +3421,27 @@ expect_red = [
 ]
 
 [[probe]]
+id = "M137-a-stopped-poller-is-not-a-healthy-source"
+unit = "proxy.trust_epoch_source"
+conjunct = "a source nothing is driving reports unhealthy — for a poller that stopped as well as one that died"
+# The weakening restores the code as it shipped: reporting only the PANIC exit. Under it the
+# panic control stays green and the graceful-stop control turns red, which is the point —
+# the two exits are two facts, and the battery covered one of them.
+path = "mcp-re-proxy/src/trust_epoch.rs"
+anchor = """
+        let _ = ran;
+        source.report_poller_gone();
+"""
+weakening = """
+        if ran.is_err() {
+            source.report_poller_gone();
+        }
+"""
+expect_red = [
+  "lib#trust_epoch::tests::a_gracefully_stopped_poller_reports_unhealthy_at_once",
+]
+
+[[probe]]
 id = "M138-a-retired-writer-is-not-backpressure"
 unit = "proxy.retention_commitment"
 conjunct = "a capacity refusal is retry-safe, which is only true while it is distinguishable from a store that will never accept another write"
