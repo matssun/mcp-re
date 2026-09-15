@@ -2894,9 +2894,20 @@ paths = [
   "mcp-re-proxy/src/delegated_server_signer/mod.rs",
   "mcp-re-proxy/src/delegated_server_signer/retry_schedule.rs",
   "mcp-re-proxy/src/delegated_response_signer.rs",
+  # r11 R11-572/573/574: the ONLY thing that mints these credentials was in no unit at all.
+  # "Every transition fails closed" quantifies over the transitions, and a panicked rotor is
+  # one of them — so a supervisor that stopped retiring the snapshot would have left this
+  # claim standing on a fingerprint that never moved.
+  "mcp-re-proxy/src/signing_plane/rotation.rs",
 ]
 exported_contracts = []
-evidence = ["test://proxy/signing/delegated_credential_lifecycle"]
+evidence = [
+  "test://proxy/signing/delegated_credential_lifecycle",
+  # Declared so the probe below is not decoration. A `[[probe]]` naming a unit that does not
+  # claim mutation evidence writes no record, so `attest` would issue this unit from the
+  # ordinary battery alone and the probe could be deleted with nothing deriving DIRTY.
+  "mutation://proxy/signing/delegated_credential_lifecycle",
+]
 # Every control here is about ABSENCE: before the first rotation, past expiry, after a
 # terminal retirement, under a poisoned lock. There is no direct-root fallback to measure,
 # because there is no direct-root mode — so what has to be measured is that the fail-closed
@@ -2910,6 +2921,10 @@ tested_symbols = [
   "lib#delegated_server_signer::tests::advance_trust_epoch_republishes_a_fresh_key_under_the_new_epoch",
   "lib#delegated_server_signer::tests::a_declined_advance_is_reported_as_declined_and_keeps_the_prior_key",
   "lib#delegated_server_signer::tests::seconds_to_expiry_tracks_the_published_key",
+  # The transition a dead ROTOR produces, which is the one nothing measured. Asserted on
+  # `current()` — what the response path reads — with the key still inside its own window,
+  # so "retired at once" cannot be satisfied by "expired on its own".
+  "lib#signing_plane::rotation::tests::a_panicking_rotor_retires_the_snapshot_immediately_not_at_exp",
   "lib#delegated_server_signer::tests::metrics_count_success_and_reset_the_failure_streak",
   "lib#delegated_server_signer::tests::backoff_is_exponential_then_ceilinged",
   "lib#delegated_server_signer::tests::backoff_never_sleeps_past_a_still_valid_key",
@@ -4059,7 +4074,10 @@ paths = [
   # The three-state freshness latch and the resolver that refuses on it.
   "mcp-re-proxy/src/trust_plane/freshness.rs",
   # The reload cycle, the bounded keep-last-good budget, and the halt exit.
-  "mcp-re-proxy/src/trust_plane/reload.rs",
+  "mcp-re-proxy/src/trust_plane/reload/mod.rs",
+  # The other way the reload stops: the body panics, and no later read may report the store
+  # current again. A distinct fact from the budget next door, which the next read recovers.
+  "mcp-re-proxy/src/trust_plane/reload/supervision.rs",
   # One read of `--trust`, two products that cannot disagree.
   "mcp-re-proxy/src/trust_plane/snapshot.rs",
   # The delivered window R + T, stated as arithmetic. Claim surface, and measured as one.
@@ -4153,6 +4171,11 @@ tested_symbols = [
   "lib#trust_plane::handle_lifetime_tests::a_plane_materialized_without_a_reload_cadence_still_fails_closed_after_drop",
   # --- the reload: the swap, the budget, the halt ---
   "lib#trust_plane::reload::reload_loop_tests::a_halted_reloader_marks_the_trust_store_stale",
+  # The OTHER way the reload stops, and the one nothing measured: the body panics. Asserted
+  # on `StaleFailsClosed::resolve` — what a request meets — because the flag and the surface
+  # agreeing is one claim, and only the surface is the deployment's answer. Deleting the
+  # whole supervisor used to leave every test in the workspace green (R11-726).
+  "lib#trust_plane::reload::supervision::tests::a_panicking_trust_reload_thread_makes_the_resolver_refuse",
   "lib#trust_plane::reload::reload_loop_tests::a_reload_cycle_replaces_the_map_the_resolver_answers_from",
   "lib#trust_plane::reload::reload_loop_tests::the_reload_loop_reads_on_its_cadence_until_halted",
   "lib#trust_plane::reload::reload_loop_tests::the_failure_budget_fails_closed_on_exactly_the_fifth_consecutive_bad_read",
