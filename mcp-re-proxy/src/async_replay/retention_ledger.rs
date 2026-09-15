@@ -24,6 +24,7 @@ use crate::shared_replay::ReplayStoreError;
 use super::bounds::per_actor_budget;
 use super::bounds::under_pressure;
 use super::bounds::ASYNC_PRUNE_EVERY_N_INSERTS;
+use super::budget_report::{BudgetRefusal, BudgetRefusalReporter};
 
 /// The per-replica retention account the TIER keeps, so one signature-valid actor
 /// cannot exhaust the replay tier whichever backend is configured.
@@ -43,6 +44,9 @@ use super::bounds::ASYNC_PRUNE_EVERY_N_INSERTS;
 pub(super) struct RetentionLedger {
     pub(super) state: Mutex<LedgerState>,
     max_entries: usize,
+    /// Paces the budget-refusal line. Outside the mutex on purpose: it paces a
+    /// DIAGNOSTIC and must never be a reason to take the lock.
+    refusals: BudgetRefusalReporter,
 }
 
 #[derive(Default)]
@@ -69,6 +73,7 @@ impl RetentionLedger {
         RetentionLedger {
             state: Mutex::new(LedgerState::default()),
             max_entries: max_entries.max(1),
+            refusals: BudgetRefusalReporter::default(),
         }
     }
 
@@ -102,23 +107,18 @@ impl RetentionLedger {
             let budget = per_actor_budget(self.max_entries, state.per_actor.len());
             let charged = state.per_actor.get(actor).copied().unwrap_or(0);
             if charged >= budget {
-                // The wire token is frozen and says only `replay_cache_unavailable`,
-                // which is also what a genuine backend outage says. Without this line
-                // an operator paging on that token investigates store health while the
-                // real cause is one signature-valid peer over its quota.
-                eprintln!(
-                    "mcp-re-proxy: replay budget refusal (NOT a store outage): actor holds \
-                     {charged} of its {budget} entries with the tier at {held} of {}; \
-                     actor={actor}",
-                    self.max_entries
-                );
-                return Err(ReplayStoreError::Unavailable {
-                    details: format!(
-                        "async replay tier: actor holds {charged} of its {budget} \
-                         retained-entry budget while the tier is at {held} of {} entries",
-                        self.max_entries
-                    ),
-                });
+                // OUTSIDE THE GUARD, and for two reasons. The lock is the one every
+                // serving core shares, so a blocking stderr write inside it serialises
+                // the whole tier behind a file descriptor the proxy does not control —
+                // in a future with no await point, on a path any signature-valid peer
+                // can drive. And `eprintln!` PANICS when the write fails (a closed pipe,
+                // a full buffer with a dead reader); unwinding here would do it with the
+                // guard held, poisoning the mutex permanently, after which every
+                // `reserve` on this replica refuses for the process lifetime. A
+                // diagnostic must not be able to take the control down.
+                let refusal = BudgetRefusal::new(charged, budget, held, self.max_entries);
+                drop(state);
+                return Err(self.refusals.refuse("async replay tier", refusal, actor));
             }
         }
         if held >= self.max_entries {
@@ -204,6 +204,32 @@ impl LedgerState {
 
 #[cfg(test)]
 mod tests {
+
+    /// The budget refusal renders its sentence with the ledger lock RELEASED.
+    ///
+    /// Asserted by taking the lock from this thread while the refusal is reported: if the
+    /// reporting path still held it, `try_lock` would fail. The property matters twice
+    /// over — a blocking stderr write inside the one mutex every serving core shares
+    /// serialises the tier behind a file descriptor the proxy does not control, and a
+    /// panicking write would unwind with the guard held and poison it for the process
+    /// lifetime.
+    #[test]
+    fn a_budget_refusal_is_rendered_without_the_ledger_lock() {
+        let ledger = RetentionLedger::new(4);
+        // Fill the tier so the next reserve is under pressure and over budget.
+        for n in 0..4 {
+            let actor = ledger.reserve("greedy", 1_000).expect("under the ceiling");
+            ledger.commit(actor, 9_000);
+            let _ = n;
+        }
+        let refused = ledger.reserve("greedy", 1_000);
+        assert!(refused.is_err(), "an actor over its budget is refused");
+        assert!(
+            ledger.state.try_lock().is_ok(),
+            "the ledger lock must be free once the refusal has been reported"
+        );
+    }
+
     use super::*;
 
     /// The reservation is per ACTOR, and releasing one actor's charge leaves another's

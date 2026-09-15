@@ -62,18 +62,9 @@ pub(super) fn refuse_over_fair_share(
         let budget = per_actor_budget(max_entries, state.per_actor.len());
         let held = state.per_actor.get(actor).copied().unwrap_or(0);
         if held >= budget {
-            // The wire token is frozen and says only `replay_cache_unavailable`,
-            // which is also what a genuine backend outage says. Without this line
-            // an operator paging on that token investigates store health while the
-            // real cause is one signature-valid peer over its quota — the very
-            // mechanism this budget added, otherwise unobservable.
-            eprintln!(
-                "mcp-re-proxy: replay budget refusal (NOT a store outage): actor \
-                     holds {held} of its {budget} entries with the store at {} of {}; \
-                     actor={actor}",
-                state.seen.len(),
-                max_entries
-            );
+            // No diagnostic HERE. This runs under the caller's guard, and the operator
+            // line belongs outside it: see `super::budget_report`. The caller catches
+            // this refusal, drops the lock, and reports.
             return Err(ReplayStoreError::Unavailable {
                 details: format!(
                     "in-memory async replay store: actor holds {held} of its {budget} \
