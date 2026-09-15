@@ -15,6 +15,7 @@
 
 use std::time::Duration;
 
+use super::writer::writes_have_failed;
 use super::AuditMessage;
 use super::STDERR_AUDIT_WRITER;
 
@@ -32,8 +33,10 @@ const AUDIT_FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) enum AuditDrain {
     /// Every record handed to the writer reached stderr.
     Drained,
-    /// The drain was not acknowledged inside the bound. Whether those records reached
-    /// stderr is unknown, and stays unknown.
+    /// Whether the records handed to the writer reached stderr is unknown, and stays
+    /// unknown. Two ways to get here, and they are the same fact: the drain was not
+    /// acknowledged inside the bound, or a write failed at some point and the records it
+    /// carried are unaccounted for however cleanly the later ones landed.
     OutcomeUnknown,
 }
 
@@ -67,11 +70,19 @@ fn flush(timeout: Duration) -> AuditDrain {
     if queue.try_send(AuditMessage::Flush(ack)).is_err() {
         return AuditDrain::OutcomeUnknown;
     }
-    if acked.recv_timeout(timeout).is_ok() {
-        AuditDrain::Drained
-    } else {
-        AuditDrain::OutcomeUnknown
+    if acked.recv_timeout(timeout).is_err() {
+        return AuditDrain::OutcomeUnknown;
     }
+    // The acknowledgement says the lines ahead of it were DEQUEUED and written AT. It says
+    // nothing about whether they arrived: the writer swallows individual write errors by
+    // design, so a shutdown in which every `write_all` returned EPIPE acknowledges exactly
+    // as fast as one in which they all landed. Reading the latch here — after the ack has
+    // ordered it behind every write this drain is reporting on — is what keeps `Drained`
+    // meaning arrived rather than attempted.
+    if writes_have_failed() {
+        return AuditDrain::OutcomeUnknown;
+    }
+    AuditDrain::Drained
 }
 
 /// What shutdown says about the drain, or `None` when this deployment does not write its
@@ -88,11 +99,12 @@ fn drain_line(outcome: AuditDrain, report: bool) -> Option<String> {
                                 handed to the audit writer reached stderr"
             .to_string(),
         AuditDrain::OutcomeUnknown => format!(
-            "mcp-re-proxy: WARNING: the audit stream did NOT acknowledge its drain within {}s. \
-             This is NOT a report that records were lost and NOT a clean shutdown of the audit \
-             stream: whether the decisions recorded last reached stderr is UNKNOWN. Their seq \
-             numbers are the gap to look for, and the writer's backing channel (a stalled log \
-             collector, a full volume) is what to check.",
+            "mcp-re-proxy: WARNING: the audit stream did not complete a clean drain — it either \
+             failed to acknowledge within {}s or reported a failed write. This is NOT a report \
+             that records were lost and NOT a clean shutdown of the audit stream: whether the \
+             decisions recorded last reached stderr is UNKNOWN. Their seq numbers are the gap \
+             to look for, and the writer's backing channel (a stalled log collector, a full \
+             volume, a closed stderr) is what to check.",
             AUDIT_FLUSH_TIMEOUT.as_secs()
         ),
     })
