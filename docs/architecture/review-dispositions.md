@@ -2,7 +2,12 @@
 
 # ADR-MCPRE-061 §14 review dispositions
 
-The durable records that `config/module-size-debt.toml`'s `review_ref` fields point at.
+The durable records that the repository's debt registers point at through a `review_ref`
+field. Two registers cite this document: `config/module-size-debt.toml` (files over the
+200-line threshold, `EX-` records) and `config/unit-closure-exclusions.toml` (files the
+module tree reaches from a measured assurance unit that no unit's `paths` answer for,
+`UC-` records). Both gates fail when a cited record is absent, so a completed review points
+at evidence rather than at a memory of one.
 
 A §14 record adjudicates a unit. It does **not** necessarily grant it an exception — this
 register holds declined censuses too, because:
@@ -44,6 +49,28 @@ the census of the rest of it. Each record below names exactly what was reviewed.
 
 The register only records outcomes. The investigation procedure is ADR-061 §8; the campaign
 order is [`README.md`](README.md).
+
+## The unit-closure register
+
+`config/unit-closure-exclusions.toml` answers a different question with the same lifecycle
+shape, for the same reason: *this file is adjacent in the module tree to one an assurance
+unit measures, and no unit measures it.* Its three states are
+
+| status | meaning |
+|---|---|
+| `unreviewed` | outside every unit's closure and **nobody has looked** |
+| `reviewed-attached` | looked at; it **belongs in a named unit**, and the `paths` edit is the open work |
+| `reviewed-out-of-cone` | looked at; **genuinely outside every existing unit's claim**, with the `reason` field saying why |
+
+`scripts/unit_closure_gate.py` enforces the same three properties `module_size_gate.py`
+does — nothing returns to `unreviewed`, an entry the rules no longer flag must be removed
+rather than left standing, and a reviewed entry names a record here. A `UC-` record answers
+one question and it is not ADR-061 §8's: **which unit's claim is falsified by a change to
+this file, and if none, why does no unit's claim reach it?** An answer that needs an "and"
+is the same evidence of a shallow boundary §8 question 1 looks for.
+
+What the gate deliberately does not decide is semantic ownership. An entry with a plausible
+reason passes it. The review is the control; the gate only makes the review unavoidable.
 
 ## What a record must contain
 

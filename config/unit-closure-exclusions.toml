@@ -1,0 +1,185 @@
+# Unit-closure exclusions — files the module tree reaches from a measured unit
+# that no unit's `paths` answer for. Emitted at 7e184961: 30 entries.
+#
+# A debt register, not an exception mechanism. It may only shrink; see
+# scripts/unit_closure_gate.py.
+
+[[exclusion]]
+path = "mcp-re-client/src/lib.rs"
+rule = "UC-2"
+baseline_sha = "7e184961"
+status = "unreviewed"
+
+[[exclusion]]
+path = "mcp-re-client/src/main.rs"
+rule = "UC-2"
+baseline_sha = "7e184961"
+status = "unreviewed"
+
+[[exclusion]]
+path = "mcp-re-http-profile/src/chain/mod.rs"
+rule = "UC-2"
+baseline_sha = "7e184961"
+status = "unreviewed"
+
+[[exclusion]]
+path = "mcp-re-http-profile/src/error/core_projection.rs"
+rule = "UC-1"
+baseline_sha = "7e184961"
+status = "unreviewed"
+
+[[exclusion]]
+path = "mcp-re-http-profile/src/scitt/prototype/mod.rs"
+rule = "UC-1"
+baseline_sha = "7e184961"
+status = "unreviewed"
+
+[[exclusion]]
+path = "mcp-re-policy/src/revocation.rs"
+rule = "UC-1"
+baseline_sha = "7e184961"
+status = "unreviewed"
+
+[[exclusion]]
+path = "mcp-re-proxy/src/async_replay/budget_report.rs"
+rule = "UC-1"
+baseline_sha = "7e184961"
+status = "unreviewed"
+
+[[exclusion]]
+path = "mcp-re-proxy/src/async_replay/l1_fast_reject.rs"
+rule = "UC-1"
+baseline_sha = "7e184961"
+status = "unreviewed"
+
+[[exclusion]]
+path = "mcp-re-proxy/src/audit_sink/writer.rs"
+rule = "UC-1"
+baseline_sha = "7e184961"
+status = "unreviewed"
+
+[[exclusion]]
+path = "mcp-re-proxy/src/capability_materialization/key_source/aws.rs"
+rule = "UC-1"
+baseline_sha = "7e184961"
+status = "unreviewed"
+
+[[exclusion]]
+path = "mcp-re-proxy/src/capability_materialization/key_source/env.rs"
+rule = "UC-1"
+baseline_sha = "7e184961"
+status = "unreviewed"
+
+[[exclusion]]
+path = "mcp-re-proxy/src/capability_materialization/key_source/file.rs"
+rule = "UC-1"
+baseline_sha = "7e184961"
+status = "unreviewed"
+
+[[exclusion]]
+path = "mcp-re-proxy/src/capability_materialization/key_source/gcp.rs"
+rule = "UC-1"
+baseline_sha = "7e184961"
+status = "unreviewed"
+
+[[exclusion]]
+path = "mcp-re-proxy/src/capability_materialization/key_source/pin.rs"
+rule = "UC-1"
+baseline_sha = "7e184961"
+status = "unreviewed"
+
+[[exclusion]]
+path = "mcp-re-proxy/src/capability_materialization/key_source/pkcs11.rs"
+rule = "UC-1"
+baseline_sha = "7e184961"
+status = "unreviewed"
+
+[[exclusion]]
+path = "mcp-re-proxy/src/config_state/mod.rs"
+rule = "UC-2"
+baseline_sha = "7e184961"
+status = "unreviewed"
+
+[[exclusion]]
+path = "mcp-re-proxy/src/config_state/validation/machine_violations.rs"
+rule = "UC-1"
+baseline_sha = "7e184961"
+status = "unreviewed"
+
+[[exclusion]]
+path = "mcp-re-proxy/src/config_state/validation/recognition.rs"
+rule = "UC-1"
+baseline_sha = "7e184961"
+status = "unreviewed"
+
+[[exclusion]]
+path = "mcp-re-proxy/src/config_state/validation/refusable_machines.rs"
+rule = "UC-1"
+baseline_sha = "7e184961"
+status = "unreviewed"
+
+[[exclusion]]
+path = "mcp-re-proxy/src/config_state/validation/total_machines.rs"
+rule = "UC-1"
+baseline_sha = "7e184961"
+status = "unreviewed"
+
+[[exclusion]]
+path = "mcp-re-proxy/src/deployment_request/mod.rs"
+rule = "UC-2"
+baseline_sha = "7e184961"
+status = "unreviewed"
+
+[[exclusion]]
+path = "mcp-re-proxy/src/deployment_request/revocation/revocation_list.rs"
+rule = "UC-1"
+baseline_sha = "7e184961"
+status = "unreviewed"
+
+[[exclusion]]
+path = "mcp-re-proxy/src/serving_capabilities.rs"
+rule = "UC-2"
+baseline_sha = "7e184961"
+status = "unreviewed"
+
+[[exclusion]]
+path = "mcp-re-proxy/src/signing_plane/mint_successor.rs"
+rule = "UC-1"
+baseline_sha = "7e184961"
+status = "unreviewed"
+
+[[exclusion]]
+path = "mcp-re-proxy/src/signing_plane/rotation.rs"
+rule = "UC-1"
+baseline_sha = "7e184961"
+status = "unreviewed"
+
+[[exclusion]]
+path = "mcp-re-proxy/src/signing_plane/trust_epoch_advance.rs"
+rule = "UC-1"
+baseline_sha = "7e184961"
+status = "unreviewed"
+
+[[exclusion]]
+path = "mcp-re-proxy/src/transparency/auditor/mod.rs"
+rule = "UC-1"
+baseline_sha = "7e184961"
+status = "unreviewed"
+
+[[exclusion]]
+path = "mcp-re-proxy/src/transparency/retained_archive.rs"
+rule = "UC-1"
+baseline_sha = "7e184961"
+status = "unreviewed"
+
+[[exclusion]]
+path = "mcp-re-proxy/src/trust_plane/window_policy.rs"
+rule = "UC-1"
+baseline_sha = "7e184961"
+status = "unreviewed"
+
+[[exclusion]]
+path = "mcp-re-test-paths/src/lib.rs"
+rule = "UC-2"
+baseline_sha = "7e184961"
+status = "unreviewed"
