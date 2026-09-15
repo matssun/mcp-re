@@ -217,7 +217,13 @@ fn publish_state(
 }
 
 /// The authority admits the workload at `generation` — publication 1.
-fn admit(source: &InMemoryAdmissionSource, generation: u64) {
+///
+/// Deliberately not named for the Verus proof escape hatch that would shadow it:
+/// `tools/verification/_seams.py` matches that mechanism in its code form, and a test
+/// helper spelled the same way is indistinguishable from a real one to the gate whose job
+/// is to notice unregistered seams. A gate that cannot tell them apart is one someone
+/// eventually silences.
+fn publish_admitted(source: &InMemoryAdmissionSource, generation: u64) {
     publish_state(source, generation, 1, AdmissionStatus::Admitted);
 }
 
@@ -434,7 +440,7 @@ impl mcp_re_proxy::authorization::AuthorizationEvaluator for RefusesEverything {
 #[test]
 fn an_admitted_workload_is_still_refused_by_a_denying_policy() {
     let source = Arc::new(admission_store());
-    admit(&source, 5);
+    publish_admitted(&source, 5);
     let calls = Arc::new(AtomicUsize::new(0));
     let proxy = replica(
         source,
@@ -463,7 +469,7 @@ fn an_admitted_workload_is_still_refused_by_a_denying_policy() {
 #[test]
 fn a_current_admitted_workload_is_served() {
     let source = Arc::new(admission_store());
-    admit(&source, 5);
+    publish_admitted(&source, 5);
     let calls = Arc::new(AtomicUsize::new(0));
     let proxy = replica(
         source,
@@ -495,7 +501,7 @@ fn a_current_admitted_workload_is_served() {
 #[test]
 fn an_assertion_issued_to_another_actor_does_not_admit_this_caller() {
     let source = Arc::new(admission_store());
-    admit(&source, 5);
+    publish_admitted(&source, 5);
     let calls = Arc::new(AtomicUsize::new(0));
     let proxy = replica(
         source,
@@ -525,7 +531,7 @@ fn an_assertion_issued_to_another_actor_does_not_admit_this_caller() {
 #[test]
 fn a_superseded_generation_is_refused_before_the_backend_runs() {
     let source = Arc::new(admission_store());
-    admit(&source, 6);
+    publish_admitted(&source, 6);
     let calls = Arc::new(AtomicUsize::new(0));
     let proxy = replica(
         source,
@@ -549,7 +555,7 @@ fn a_superseded_generation_is_refused_before_the_backend_runs() {
 #[test]
 fn a_revoked_workload_is_refused_though_its_assertion_is_still_valid() {
     let source = Arc::new(admission_store());
-    admit(&source, 5);
+    publish_admitted(&source, 5);
     revoke(&source, 5);
     let calls = Arc::new(AtomicUsize::new(0));
     let proxy = replica(
@@ -598,7 +604,7 @@ fn an_unknown_workload_is_refused_not_routed_into_degraded_mode() {
 #[test]
 fn an_unreachable_authority_fails_closed_by_default() {
     let source = Arc::new(admission_store());
-    admit(&source, 5);
+    publish_admitted(&source, 5);
     source.set_unavailable(true);
     let calls = Arc::new(AtomicUsize::new(0));
     let proxy = replica(
@@ -628,7 +634,7 @@ fn an_unreachable_authority_fails_closed_by_default() {
 #[test]
 fn an_unreachable_authority_serves_within_p_and_fails_closed_past_it() {
     let source = Arc::new(admission_store());
-    admit(&source, 5);
+    publish_admitted(&source, 5);
     let calls = Arc::new(AtomicUsize::new(0));
     let policy = AdmissionPolicy {
         allow_degraded_mode: true,
@@ -693,7 +699,7 @@ fn an_unreachable_authority_serves_within_p_and_fails_closed_past_it() {
 #[test]
 fn a_replica_that_never_reached_the_authority_does_not_enter_degraded_mode() {
     let source = Arc::new(admission_store());
-    admit(&source, 5);
+    publish_admitted(&source, 5);
     source.set_unavailable(true);
     let calls = Arc::new(AtomicUsize::new(0));
     let policy = AdmissionPolicy {
@@ -759,7 +765,7 @@ fn a_call_without_admission_evidence_is_refused_when_required_and_served_when_op
 #[test]
 fn an_assertion_from_an_untrusted_authority_is_refused() {
     let source = Arc::new(admission_store());
-    admit(&source, 5);
+    publish_admitted(&source, 5);
     let calls = Arc::new(AtomicUsize::new(0));
     let proxy = replica(
         source,
@@ -784,7 +790,7 @@ fn an_assertion_from_an_untrusted_authority_is_refused() {
 #[test]
 fn a_revocation_on_the_shared_source_is_honoured_by_a_replica_that_never_saw_the_workload() {
     let source = Arc::new(admission_store());
-    admit(&source, 5);
+    publish_admitted(&source, 5);
     let claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
 
     let calls_a = Arc::new(AtomicUsize::new(0));
@@ -839,7 +845,7 @@ fn a_revocation_on_the_shared_source_is_honoured_by_a_replica_that_never_saw_the
 #[test]
 fn a_generation_ahead_of_the_authority_is_refused() {
     let source = Arc::new(admission_store());
-    admit(&source, 5);
+    publish_admitted(&source, 5);
     let calls = Arc::new(AtomicUsize::new(0));
     let proxy = replica(
         source,
@@ -862,7 +868,7 @@ fn a_generation_ahead_of_the_authority_is_refused() {
 #[test]
 fn a_binding_naming_another_workload_does_not_borrow_its_admission() {
     let source = Arc::new(admission_store());
-    admit(&source, 5);
+    publish_admitted(&source, 5);
     // A genuine, currently-admitted record for a DIFFERENT workload, published under its
     // own name. The point of the test is that naming it in a binding does not borrow it.
     let other = issue_admission_state_record(
@@ -996,7 +1002,7 @@ fn degraded_replica_with_an_open_window(
 #[test]
 fn a_corrupt_record_on_a_reachable_store_is_refused_and_never_degraded() {
     let source = Arc::new(admission_store());
-    admit(&source, 5);
+    publish_admitted(&source, 5);
     let calls = Arc::new(AtomicUsize::new(0));
     let proxy = degraded_replica_with_an_open_window(&source, &calls);
 
@@ -1032,7 +1038,7 @@ fn a_corrupt_record_on_a_reachable_store_is_refused_and_never_degraded() {
 #[test]
 fn a_record_minted_by_a_store_writer_is_refused_and_never_degraded() {
     let source = Arc::new(admission_store());
-    admit(&source, 5);
+    publish_admitted(&source, 5);
     let calls = Arc::new(AtomicUsize::new(0));
     let proxy = degraded_replica_with_an_open_window(&source, &calls);
 
@@ -1077,7 +1083,7 @@ fn a_record_minted_by_a_store_writer_is_refused_and_never_degraded() {
 #[test]
 fn an_expired_authentic_record_on_a_reachable_store_is_refused_and_never_degraded() {
     let source = Arc::new(admission_store());
-    admit(&source, 5);
+    publish_admitted(&source, 5);
     let calls = Arc::new(AtomicUsize::new(0));
     let proxy = degraded_replica_with_an_open_window(&source, &calls);
 

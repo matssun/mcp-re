@@ -747,19 +747,22 @@ fn delegated_ed25519_tls_handshake_round_trip() {
     // holds only the public cert + the delegated signer.
     let server_ca = make_ca();
     let (server_cert, delegated_signer) = make_ed25519_server_leaf(&server_ca);
-    // Through the gate (ADR-MCPRE-063 Slice 3): the resolver cannot be constructed unless
-    // the certificate and the delegated signer present the same public key. There is no
-    // unchecked constructor to reach for, and this material genuinely corresponds — the
-    // leaf was minted for the very key the signer holds.
-    let resolver = mcp_re_proxy::DelegatedCertResolver::materialize(
-        vec![server_cert],
-        std::sync::Arc::new(delegated_signer),
-        std::sync::Arc::new(mcp_re_proxy::delegated_tls::TlsHandshakeSignBudget::default()),
-    )
-    .expect("credential and signer correspond");
+    // Through the OWNER's path, not around it. `build_delegated_config` validates the
+    // credential (ADR-MCPRE-063 Slice 3: the certificate and the delegated signer must
+    // present the same public key) AND binds the resolver to this listener's own signing
+    // budget — the fourth of the four things THM-0048 says are established together.
+    //
+    // This used to assemble the resolver itself and hand it to a `pub` escape hatch with a
+    // hand-made `TlsHandshakeSignBudget::default()`, which is precisely the shape the
+    // theorem says cannot happen: the terms supplied to the listener independently. The
+    // escape hatch is gone and the test is stronger for losing it.
     let config = std::sync::Arc::new(
         TlsListenerSecurityState::new(vec![client_ca.cert.der().clone()])
-            .build_delegated_resolver_config(resolver, Vec::new())
+            .build_delegated_config(
+                vec![server_cert],
+                std::sync::Arc::new(delegated_signer),
+                Vec::new(),
+            )
             .expect("delegated server config"),
     );
 
