@@ -15,6 +15,8 @@
 //! so revoking here says nothing to any other replica. A fleet wires the shared store.
 
 use std::collections::HashMap;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 
 use mcp_re_http_profile::authoritative_admission::record::CurrentAdmissionState;
@@ -31,6 +33,10 @@ pub struct InMemoryAdmissionSource {
     unavailable: Mutex<bool>,
     /// The one place stored bytes become authoritative state.
     verifier: AdmissionRecordVerifier,
+    /// Panics observed inside one of the two guarded regions above. A FAULT count, not an
+    /// outage count: the two are different operator facts and folding them together is how
+    /// "a thread died holding the map" reads as "the store is unreachable".
+    poison_observed: AtomicU64,
 }
 
 impl InMemoryAdmissionSource {
@@ -40,6 +46,7 @@ impl InMemoryAdmissionSource {
             records: Mutex::new(HashMap::new()),
             unavailable: Mutex::new(false),
             verifier,
+            poison_observed: AtomicU64::new(0),
         }
     }
 
@@ -49,49 +56,61 @@ impl InMemoryAdmissionSource {
     /// under a workload it is not about is not refused HERE — the reader refuses it, which
     /// is the honest place, because in a real deployment the writer is not this process.
     pub fn publish(&self, admission_id: &str, signed_record: String) {
-        self.records
-            .lock()
-            .unwrap_or_else(recover)
+        self.recovered(&self.records)
             .insert(admission_id.to_owned(), signed_record);
     }
 
     /// Remove a workload's record. The authority's DELETE, which every source must survive:
     /// a missing record is a definitive negative, not an outage.
     pub fn remove(&self, admission_id: &str) {
-        self.records
-            .lock()
-            .unwrap_or_else(recover)
-            .remove(admission_id);
+        self.recovered(&self.records).remove(admission_id);
     }
 
     /// Make every subsequent lookup fail as unavailable (or stop doing so).
     pub fn set_unavailable(&self, unavailable: bool) {
-        *self.unavailable.lock().unwrap_or_else(recover) = unavailable;
+        *self.recovered(&self.unavailable) = unavailable;
     }
-}
 
-/// A poisoned record set, as the outage this source already reports.
-///
-/// A lock is poisoned because a thread panicked while holding it: runtime state, not a fact
-/// about this call. `Unavailable` is what a record set nobody can trust means to an
-/// admission decision, and the caller fails closed on it already.
-fn poisoned<T>(_: std::sync::PoisonError<T>) -> AdmissionSourceError {
-    AdmissionSourceError::Unavailable {
-        details: "in-memory admission records are poisoned".to_owned(),
+    /// Panics observed inside one of this source's guarded regions.
+    ///
+    /// Public for the same reason the sibling throttle's is: an operator reading "records
+    /// unavailable" needs to be able to tell a store that is genuinely unreachable from a
+    /// thread that died holding its map, and only a separate counter can say which.
+    pub fn poison_observed(&self) -> u64 {
+        self.poison_observed.load(Ordering::Relaxed)
     }
-}
-
-/// The guard behind a poisoned lock, for the writers that have no verdict to report.
-///
-/// `publish`, `remove` and `set_unavailable` return `()`, so there is nowhere to carry an
-/// outage to, and the map is a plain `HashMap`. Every READER below reports the outage
-/// instead, which is where a decision is actually taken on this state. Nothing a writer can
-/// leave behind admits anybody: the records are signed, and the reader verifies them.
-fn recover<T>(poisoned: std::sync::PoisonError<T>) -> T {
-    poisoned.into_inner()
 }
 
 impl InMemoryAdmissionSource {
+    /// The guard behind a lock, poisoned or not, with the panic counted and the flag
+    /// cleared.
+    ///
+    /// # Why the READER recovers too, and not only the writers
+    ///
+    /// The argument was already written here, for the writers: *nothing a writer can leave
+    /// behind admits anybody — the records are signed, and the reader verifies them.* That
+    /// is a statement about the DATA, not about which side of the lock a caller is on, so it
+    /// covers the reader exactly as it covers `publish`. The map holds signed bytes and the
+    /// verifier is the only thing that turns them into state; a half-updated `HashMap`
+    /// cannot produce a record the verifier will accept that the authority did not sign.
+    ///
+    /// Poison is STICKY, so refusing on it is not "one call fails". One panic under either
+    /// lock would turn every later lookup into an outage for the process lifetime: the
+    /// replica then serves the §5.2 degraded fork until its window closes and fails closed
+    /// after that — a permanent refusal bought by a single panic. That is the trade
+    /// `TlsHandshakeSignBudget` was corrected out of, and this is the same correction.
+    ///
+    /// The flag is cleared so [`Self::poison_observed`] counts PANICS and not calls; left
+    /// sticky, one panic makes every later lookup increment it and the number an operator
+    /// reads tracks traffic rather than faults.
+    fn recovered<'g, T>(&self, lock: &'g Mutex<T>) -> std::sync::MutexGuard<'g, T> {
+        lock.lock().unwrap_or_else(|poisoned| {
+            self.poison_observed.fetch_add(1, Ordering::Relaxed);
+            lock.clear_poison();
+            poisoned.into_inner()
+        })
+    }
+
     /// The read, written as a plain function so the trait method is the `Box::pin` and
     /// nothing else. The async block is not a scope this logic belongs inside: none of it
     /// awaits.
@@ -100,19 +119,12 @@ impl InMemoryAdmissionSource {
         admission_id: &str,
         now: i64,
     ) -> Result<Option<CurrentAdmissionState>, AdmissionSourceError> {
-        // Class R: a poisoned lock is runtime state, reported through the outage the
-        // caller already handles.
-        if *self.unavailable.lock().map_err(poisoned)? {
+        if *self.recovered(&self.unavailable) {
             return Err(AdmissionSourceError::Unavailable {
                 details: "in-memory source marked unavailable".to_owned(),
             });
         }
-        let raw = self
-            .records
-            .lock()
-            .map_err(poisoned)?
-            .get(admission_id)
-            .cloned();
+        let raw = self.recovered(&self.records).get(admission_id).cloned();
         let Some(raw) = raw else {
             return Ok(None);
         };
@@ -266,6 +278,51 @@ mod tests {
             matches!(block_on(s.current("workload-7", 1_030)), Ok(None)),
             "the restored publication is older than one this replica accepted"
         );
+    }
+
+    /// One panic must not close this replica's admission source for the process lifetime.
+    ///
+    /// Poison is STICKY. Before this, the readers answered `Err(Unavailable)` on a poisoned
+    /// lock while every writer recovered from one, so a single panic under either mutex
+    /// turned every later lookup into an outage — the replica serves the §5.2 degraded fork
+    /// until its window closes and fails closed after that. A permanent refusal bought by
+    /// one panic, which is the trade `TlsHandshakeSignBudget` was corrected out of.
+    ///
+    /// The control asserts both halves: the record is still readable, and the panic is
+    /// counted ONCE on its own counter rather than being folded into the outage the caller
+    /// already handles.
+    #[test]
+    fn a_panic_under_the_record_lock_does_not_close_the_source() {
+        let key = authority();
+        let s = std::sync::Arc::new(source(&key));
+        s.publish(
+            "workload-7",
+            signed_admitted(&key, "workload-7", 5, 1, 1_000),
+        );
+
+        let poisoner = std::sync::Arc::clone(&s);
+        let died = std::thread::spawn(move || {
+            let _guard = poisoner.records.lock().expect("not yet poisoned");
+            panic!("a thread dies holding the map");
+        })
+        .join();
+        assert!(died.is_err(), "the fixture must actually have panicked");
+
+        let state = block_on(s.current("workload-7", 1_030))
+            .expect("a poisoned lock is not an outage")
+            .expect("the record is still there");
+        assert_eq!(state.state().generation(), 5);
+        assert_eq!(
+            s.poison_observed(),
+            1,
+            "the panic is counted once, and the flag is cleared so the counter measures \
+             panics rather than calls"
+        );
+
+        // And the second read does not count a second panic, which is what a sticky flag
+        // would have made it do.
+        assert!(block_on(s.current("workload-7", 1_030)).is_ok());
+        assert_eq!(s.poison_observed(), 1);
     }
 
     /// An absent record after a DELETE is the authority having nothing to say, refused

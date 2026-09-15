@@ -3684,3 +3684,29 @@ weakening = """
 expect_red = [
   "lib#http_profile_serve::retention::tests::each_pre_dispatch_fault_earns_its_own_answer",
 ]
+
+[[probe]]
+id = "M149-a-panic-does-not-close-the-in-memory-admission-source"
+unit = "proxy.admission_state_source"
+conjunct = "one panic under the record lock does not turn every later lookup into an outage for the process lifetime"
+# The weakening restores the sticky refusal the readers used to perform while every writer
+# recovered. Nothing is admitted that was not admitted before — an outage fails closed — which
+# is exactly why no control could see it: the cost is a PERMANENT refusal on a replica whose
+# §5.2 degraded window then closes, and no existing control poisons a lock at all.
+path = "mcp-re-proxy/src/admission_source/in_memory.rs"
+anchor = """
+        let raw = self.recovered(&self.records).get(admission_id).cloned();
+"""
+weakening = """
+        let raw = self
+            .records
+            .lock()
+            .map_err(|_| AdmissionSourceError::Unavailable {
+                details: "in-memory admission records are poisoned".to_owned(),
+            })?
+            .get(admission_id)
+            .cloned();
+"""
+expect_red = [
+  "lib#admission_source::in_memory::tests::a_panic_under_the_record_lock_does_not_close_the_source",
+]
