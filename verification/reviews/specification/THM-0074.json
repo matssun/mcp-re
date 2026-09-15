@@ -41,7 +41,7 @@
       "THM-0079": "sha256:386bd3a50010a9bfc4f72c6638d8a9255567f410066ec9f6de1bcca96ea0764e",
       "THM-0080": "sha256:7b218d34dfbc963b13ced298042e2fcdd28e63db9d0c5f8fb35fa154f8da81a0",
       "THM-0083": "sha256:820496f9be44d962079f369353b0daf5cdbf454b5ba366b96299be726332e706",
-      "THM-0086": "sha256:9fe769a6f49b2d1628059803ee4096c9de6800af4df4ec47a1434e6ce6da6f2d",
+      "THM-0086": "sha256:8fea6f6254d34ef27b12cc45879aeb6a3e696bb85cc4a4de4c1f8b2cb2df0ae7",
       "THM-0087": "sha256:da4d310a19bbbe160954ef6f26e43538c6a91be221cf45ca5f9ad6589cc2e0ef",
       "THM-0092": "sha256:100ebea63d495c27a671114c4a8231f73e6271d9fc8c2b9d6c4addde5bf1da82",
       "THM-0093": "sha256:ca9f010834f7c81335754f69eeb3e5e1a34abb1ce145a6e2d1e118532a19ea91",
@@ -56,8 +56,8 @@
     "theorem_id": "THM-0074",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "DEPENDENCY-ONLY RE-AFFIRMATION, recorded under owner ruling R11-1. The root's own claim text, security consequence, scope, owner and review requirement are BYTE-IDENTICAL; what moved is its transitive dependency closure \u2014 THM-0004's scope paragraph was corrected, and THM-0129 entered the closure beneath it. WHAT THIS REVIEW ACKNOWLEDGES: the closure beneath this root became STRONGER, not weaker. A gap the root's own scope restated as out of scope \u2014 that the authoritative admission state the enforcement point holds is itself an authenticated, sufficiently current statement from the configured authority \u2014 now has a registered subordinate result establishing it at class V0, and no claim beneath this root was narrowed, relaxed or reclassified to get there. The root asserts exactly what it asserted before; more of what it composes from is now established rather than disclaimed.",
-  "reviewed_fingerprint": "sha256:ab6810108c97222ad98d2a373325dafb781a6eece731ad2ba22de6aa56e804d2",
+  "notes": "DEPENDENCY-ONLY RE-AFFIRMATION covering TWO moves, recorded under the r11 closure mandate's AFK review authority. The root's own claim text, security consequence, scope, owner and review requirement are BYTE-IDENTICAL; what moved is its transitive dependency closure, twice. (1) THM-0086's statement gained a corrected symbol path, `replay_plane::materialize` -> `replay_plane::MaterializedReplay::materialize`, when the handover value's representation was made private to `replay_plane::materialized`; the proposition is unchanged and its refusal became structural as well as procedural. (2) Under owner ruling R11-1, THM-0004's scope paragraph was corrected and THM-0129 entered the closure beneath it. WHAT THIS REVIEW ACKNOWLEDGES: the closure beneath this root became STRONGER on both counts, and nothing beneath it was narrowed, relaxed or reclassified to get there. O-9 \u2014 that the authoritative admission state the enforcement point holds is itself an authenticated, sufficiently current statement from the configured authority \u2014 was recorded as a permanent OUT_OF_SCOPE boundary and is now a registered subordinate result at class V0 with two mutation probes. The root asserts exactly what it asserted before; more of what it composes from is established rather than disclaimed. A single record rather than two because the two moves landed in one rebase and a fingerprint names a tree, not a commit.",
+  "reviewed_fingerprint": "sha256:633710adad9fe703afa03c0955778248082cbf576601c029d4add36af133a92d",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0074"
 }
