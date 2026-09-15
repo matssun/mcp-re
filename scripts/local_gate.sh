@@ -247,6 +247,11 @@ stage_static() {
     `# this gate. Pure text: it belongs in the no-build stage.` \
     && python3 scripts/module_size_gate.py --selftest \
     && python3 scripts/module_size_gate.py \
+    `# A unit's \`paths\` is the closure its fingerprint is taken over, so a file that` \
+    `# leaves it keeps every claim above it answering FRESH over code nothing measured.` \
+    `# Three splits escaped that way before this existed. Pure text: no build.` \
+    && python3 scripts/unit_closure_gate.py --selftest \
+    && python3 scripts/unit_closure_gate.py \
     `# The ratchet's comparison logic needs no build; the measurement it guards does, and` \
     `# runs in stage 2 with the probes that prove the lints are actually switched on.` \
     && python3 scripts/clippy_ratchet_gate.py --selftest \
