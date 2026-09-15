@@ -612,7 +612,10 @@ fn run_validated(
     // ADR-MCPS-023 §A1 (MCPS-58): the operator-visible revocation posture. Rendered by
     // the plane that parsed the CRLs, so what an operator is told is assertable in a test
     // rather than only readable in a transcript.
-    for line in crate::tls_plane::revocation_posture_lines(&tls_plan, building.tls()?.crls()) {
+    for line in crate::tls_plane::revocation_posture_lines(
+        &tls_plan,
+        &building.tls()?.revocation_currency(),
+    ) {
         eprintln!("{line}");
     }
 
