@@ -193,6 +193,13 @@ mod tests {
             core.signer,
             "mcp-re-http-v1\u{1f}mcp-re\u{1f}host:example.com:did%3Aexample%3Ahost:client-key-1"
         );
+        // `principal` was omitted here, so `principal_slot() { self.signer_slot() }` — the
+        // mutation that collapses the occupancy identity onto the key identity — shipped
+        // green. It is the coordinate the retention budget is charged to.
+        assert_eq!(
+            core.principal,
+            "mcp-re-http-v1\u{1f}mcp-re\u{1f}host:example.com:did%3Aexample%3Ahost"
+        );
         assert_eq!(core.audience, "AAAABBBBCCCC");
         assert_eq!(core.nonce, "nonce-1");
         assert_eq!(core.expires_at_unix, EXPIRES);
@@ -200,24 +207,113 @@ mod tests {
 
     /// The injective mapping cannot be forged across slot boundaries: shifting a
     /// separator's worth of text between components must not collide.
+    ///
+    /// # What this replaces, and why the replacement is a different test
+    ///
+    /// The earlier version built two five-tuples that were IDENTICAL — `b` spelled out
+    /// exactly the values `key()` supplies — and asserted Fresh then Replay. That is the
+    /// proposition `first_insert_is_fresh_replay_is_detected` already establishes, and it
+    /// holds whether or not the join is injective: deleting `SEP` from `signer_slot` left
+    /// every test in this file green.
+    ///
+    /// Injectivity is a claim about DISTINCT inputs, so the fixtures have to be distinct
+    /// and chosen adversarially: each row below is a five-tuple whose components, joined
+    /// WITHOUT a separator, produce the same string as the row above it. Under a forgeable
+    /// join they are one key and the second is refused as a replay; under an injective one
+    /// every row is admitted.
     #[test]
     fn composite_slots_are_injective() {
+        // Pairs that coincide under naive concatenation. Written as (profile_id,
+        // signature_label, actor_id) because those are the three the signer slot joins;
+        // the boundary being attacked is named beside each.
+        let boundary_shifted: [(&str, &str, &str, &str); 6] = [
+            (
+                "mcp-re-http-v",
+                "1mcp-re",
+                "act",
+                "profile/label boundary, digit moved",
+            ),
+            (
+                "mcp-re-http-v1",
+                "mcp-re",
+                "act",
+                "profile/label boundary, unshifted",
+            ),
+            ("ab", "cd", "ef", "three-way split a"),
+            ("a", "bcd", "ef", "three-way split b"),
+            ("", "ab", "c", "empty first component absorbs"),
+            ("a", "b", "c", "no component empty"),
+        ];
+
+        // ONE cache, so a later row colliding with an earlier one is detected as a replay.
         let cache = InMemoryReplayCache::new(0);
-        let a = HttpReplayKey {
-            actor_id: "a".into(),
-            audience_hash: "b".into(),
-            ..key()
-        };
-        // Would collide with `a` only if the separators were forgeable.
-        let b = HttpReplayKey {
-            profile_id: "mcp-re-http-v1".into(),
-            signature_label: "mcp-re".into(),
-            actor_id: "a".into(),
-            audience_hash: "b".into(),
-            nonce: "nonce-1".into(),
-        };
-        assert_eq!(admit(&cache, &a), ReplayDecision::Fresh);
-        // Identical five-tuple → replay (sanity that equality still detects).
-        assert_eq!(admit(&cache, &b), ReplayDecision::Replay);
+        for (profile_id, signature_label, actor_id, boundary) in boundary_shifted {
+            let k = HttpReplayKey {
+                profile_id: profile_id.into(),
+                signature_label: signature_label.into(),
+                actor_id: actor_id.into(),
+                ..key()
+            };
+            assert_eq!(
+                admit(&cache, &k),
+                ReplayDecision::Fresh,
+                "{boundary}: ({profile_id:?}, {signature_label:?}, {actor_id:?}) is a \
+                 DISTINCT key and must not be merged onto an earlier one"
+            );
+        }
+
+        // And the slots themselves are pairwise distinct, so a failure above names the
+        // collision rather than only reporting a refusal.
+        let slots: Vec<String> = boundary_shifted
+            .iter()
+            .map(|(p, l, a, _)| {
+                HttpReplayKey {
+                    profile_id: (*p).into(),
+                    signature_label: (*l).into(),
+                    actor_id: (*a).into(),
+                    ..key()
+                }
+                .signer_slot()
+            })
+            .collect();
+        let mut unique = slots.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(
+            unique.len(),
+            slots.len(),
+            "the signer slots must be pairwise distinct: {slots:?}"
+        );
+    }
+
+    /// The `principal` slot drops the keyid and keeps the subject.
+    ///
+    /// `principal_slot` is the only production producer of the occupancy identity and had
+    /// no test at all, so `principal_slot() { self.signer_slot() }` — which would charge a
+    /// subject's budget once per key it holds — passed every battery in this file.
+    #[test]
+    fn the_principal_slot_is_the_subject_without_its_keyid() {
+        let one_key = key();
+        let mut other_key = key();
+        other_key.actor_id = "host:example.com:did%3Aexample%3Ahost:client-key-2".into();
+
+        assert_eq!(
+            one_key.principal_slot(),
+            other_key.principal_slot(),
+            "one subject holding two keys is ONE principal — otherwise rotating a key, or \
+             running one client key per replica, reads as several independent principals \
+             and each gets a fresh occupancy budget"
+        );
+        assert_ne!(
+            one_key.signer_slot(),
+            other_key.signer_slot(),
+            "the SIGNER slot still discriminates the key, which is what keeps the replay \
+             keyspace per-key while the budget is per-subject"
+        );
+        assert_ne!(
+            one_key.principal_slot(),
+            one_key.signer_slot(),
+            "the principal slot is not the signer slot"
+        );
     }
 }
