@@ -2,13 +2,13 @@
   "axis": "specification",
   "components": {
     "encoding_version": 1,
-    "theorem_claim": "sha256:9fe769a6f49b2d1628059803ee4096c9de6800af4df4ec47a1434e6ce6da6f2d",
+    "theorem_claim": "sha256:8fea6f6254d34ef27b12cc45879aeb6a3e696bb85cc4a4de4c1f8b2cb2df0ae7",
     "theorem_dependencies": {},
     "theorem_id": "THM-0086",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner specification-review ruling of 2026-09-01, given in the ADR-MCPRE-059 §28 closure campaign after the measurement recorded on issue #744. The ruling reads: 'I APPROVE the current THM-0086 specification statement as D1a, provided its statement/consequence/scope are unchanged from #755. Record the owner specification review against its exact fingerprint.' They are unchanged: this record was written over the text merged at commit bf1431b9 with no edit, and the fingerprint below is the one `review --fingerprint THM-0086` prints for it. The approved proposition is the replay one — selected replay tier -> materialized replay tier, with no weaker substitution. `theorem_dependencies` is empty because the theorem is a leaf, so this approval is over its own claim text alone and cannot inherit a premise the owner did not read. The sibling THM-0087 was NOT approved by the same ruling and is deliberately left unreviewed.",
-  "reviewed_fingerprint": "sha256:4f81d389f7369f85fc99c5f609f070a6761d2e0cd6416a471ca536eb53a6b2e9",
+  "notes": "CLAIM RE-AFFIRMATION, recorded under the owner's AFK mandate for the r11 closure campaign (owner ruling R11-2). WHAT MOVED: one symbol path in the statement, `replay_plane::materialize` -> `replay_plane::MaterializedReplay::materialize`. The producer moved onto the owner type when `MaterializedReplay`'s representation was made private to `replay_plane::materialized`; the free function it replaced had the same signature and the same single call site. WHAT DID NOT MOVE: the proposition, word for word after that one path \u2014 the established tier is the selected one, paired with the posture the plan declared; a self-declared volatile single-process tier cannot be handed over; a backend this build lacks is refused by name. `security_consequence`, `scope`, `owner` and `review_requirement` are BYTE-IDENTICAL. WHAT THIS REVIEW ACKNOWLEDGES: that the refusal named in the statement is now STRUCTURAL as well as procedural \u2014 the illegal pairing is unconstructible outside the owner module rather than refused by the only producer that happens to exist. That is strictly more evidence for the same claim, not a wider claim, so the statement is unchanged in consequence. NOT ACKNOWLEDGED: any new proposition about what an acknowledged write to the established tier durably establishes; the scope paragraph excluding it is unchanged.",
+  "reviewed_fingerprint": "sha256:dbd5a9b589552f5154ea4a3ab32b01074a99c53ae158fb97f4521ba06ba50352",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0086"
 }

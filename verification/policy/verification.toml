@@ -3345,6 +3345,7 @@ description = "The replay tier handed to the serving path is the one the plan se
 paths = [
   "mcp-re-proxy/src/replay_plane/mod.rs",
   "mcp-re-proxy/src/replay_plane/backends.rs",
+  "mcp-re-proxy/src/replay_plane/materialized.rs",
 ]
 exported_contracts = []
 evidence = [
@@ -3355,21 +3356,28 @@ evidence = [
 # here would let one unit's fingerprint stand for two owners' evidence. The composition is
 # made at the theorem, which is what `depends_on` is for.
 tested_symbols = [
-  # The guard fires from inside the only producer of the handover value, so a volatile
-  # store cannot be paired with a durability-claiming posture and handed over. The
-  # INVOCATION, not the predicate — a check the producer remembers to run afterwards is
-  # the shape this is not.
-  "lib#replay_plane::tests::the_handover_value_cannot_be_built_around_a_volatile_tier",
-  "lib#replay_plane::tests::a_volatile_tier_is_never_handed_over",
+  # The guard fires from inside the only producer of the handover value, so the exact
+  # illegal pairing — a volatile store under a `fleet_strict`, `Linearizable`-advertising
+  # posture — cannot be handed over. The INVOCATION, not the predicate.
+  #
+  # Its companion is the REPRESENTATION, and that half is NOT a runtime control: the
+  # fields are private to `replay_plane::materialized` and the struct holds a witness of
+  # a type the module does not export, so an outside struct literal does not compile and
+  # re-publishing the fields is a `private_interfaces` diagnostic. Compilation of the
+  # consumer closure is the evidence for the seal; these symbols are the evidence for the
+  # guard. Listing a test here for the seal would be listing a control that cannot fail.
+  "lib#replay_plane::materialized::tests::a_volatile_tier_under_a_linearizable_posture_cannot_be_built",
+  "lib#replay_plane::materialized::tests::a_volatile_tier_is_never_handed_over",
   # The mirror. Without it the two above are satisfied by a constructor that refuses
-  # everything, which would establish nothing about the tier that IS selected.
-  "lib#replay_plane::tests::a_durable_tier_produces_the_handover_value_with_its_posture",
+  # everything, which would establish nothing about the tier that IS selected. It reads
+  # the result back through `into_parts`, the only projection.
+  "lib#replay_plane::materialized::tests::a_durable_tier_produces_the_handover_value_with_its_posture",
   # A backend the build lacks is refused BY NAME rather than substituted — the refusal
   # class that belongs to materialization because it is a fact about the build.
-  "lib#replay_plane::tests::a_backend_the_build_lacks_is_refused_and_named",
+  "lib#replay_plane::materialized::tests::a_backend_the_build_lacks_is_refused_and_named",
   # What those refusals amount to together: a build carrying neither backend has no
   # reachable replay state, so it is not a serving binary.
-  "lib#replay_plane::tests::a_build_with_no_replay_backend_can_reach_no_replay_state",
+  "lib#replay_plane::materialized::tests::a_build_with_no_replay_backend_can_reach_no_replay_state",
 ]
 
 # ADR-MCPRE-059 §28 / issue #744, D1b'. The materialization leaf the continuation family was

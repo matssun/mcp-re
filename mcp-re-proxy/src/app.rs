@@ -582,14 +582,12 @@ fn run_validated(
     // The redis store's reconnect machinery binds to the runtime it is CREATED in, so the
     // substrate must outlive every USE of the tier — discharged by draining the fleet
     // before anything is reclaimed, not by drop order. See `replay_plane`.
-    let crate::replay_plane::MaterializedReplay {
-        tier: replay_async,
-        dispatch: dispatch_cfg,
-    } = crate::replay_plane::materialize(
+    let (replay_async, dispatch_cfg) = crate::replay_plane::MaterializedReplay::materialize(
         &replay_plan,
         config.state().freshness(),
         control_rt.as_ref(),
-    )?;
+    )?
+    .into_parts();
 
     // Materialized HERE, not where `tls_material` is built, so the CRL load and its
     // stale-CRL refusal keep the position they had before the extraction: after the trust
