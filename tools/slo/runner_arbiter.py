@@ -54,6 +54,12 @@ def vm_readers() -> dict:
 
 
 def cmd_job_started(paths, ident: JobIdentity) -> int:
+    # Capacity first, before ANY state is written. A job refused here leaves no active
+    # record and holds no reservation, so a full disk cannot also leave the gate dirty --
+    # the SLO path below would otherwise reserve the whole host and then refuse, closing
+    # every runner behind a job that never ran.
+    host_gate.refuse_if_disk_exhausted(paths, ident)
+
     if not ident.is_slo:
         host_gate.admit_ordinary(paths, ident)
         return EXIT_OK

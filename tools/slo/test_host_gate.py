@@ -65,6 +65,165 @@ def slo(n: int = 99, runner: str = "dev1-mcp-re") -> JobIdentity:
 
 
 # ==========================================================================================
+# capacity admission
+# ==========================================================================================
+
+RETENTION_WORKFLOW = ".github/workflows/disk-retention.yml"
+
+
+def recovery(n: int = 700) -> JobIdentity:
+    """The lane that makes the disk not-full, as GitHub presents it to the hook."""
+    return JobIdentity("dev1", CODE_REPO, workflow_ref(CODE_REPO, RETENTION_WORKFLOW),
+                       RETENTION_WORKFLOW, str(n), "1", "retention")
+
+
+def with_work_path(tmp: Path):
+    """A hook environment naming a work path, which is what work_volume() reads."""
+    return {"RUNNER_TEMP": str(tmp)}
+
+
+def test_capacity_refusal() -> None:
+    print("\ncapacity admission")
+    p = fresh()
+    tmp = p["root"]
+
+    # Everything below fixes the SAME simulated free space and varies only the identity or
+    # the threshold. A test that let free space float would prove nothing: above the floor
+    # every job is admitted, so an "admitted" assertion holds with the guard deleted.
+    starved = lambda _volume: 3.0      # noqa: E731  -- 3 GB, far under the 25 GB floor
+    roomy = lambda _volume: 400.0      # noqa: E731
+
+    env = with_work_path(tmp)
+    old_environ = dict(os.environ)
+    os.environ.update(env)
+    try:
+        refused = False
+        try:
+            host_gate.refuse_if_disk_exhausted(p, ordinary(1), measure=starved)
+        except ArbiterError as exc:
+            refused = True
+            message = str(exc)
+        check("an ordinary job is refused below the floor", refused)
+
+        # The positive control. Without it the refusal above also passes against a guard
+        # that refuses everything, which would be a total outage rather than a guard.
+        admitted = True
+        try:
+            host_gate.refuse_if_disk_exhausted(p, ordinary(2), measure=roomy)
+        except ArbiterError:
+            admitted = False
+        check("the same job is admitted above the floor", admitted)
+
+        # THE DISCRIMINATING PAIR, both at 3 GB. The recovery lane is the cure for the
+        # condition being refused; a guard that refused it would deadlock the host. Note
+        # this is asserted at the SAME free space as the refusal above -- asserting it at
+        # 400 GB would hold with the exemption deleted.
+        recovered = True
+        try:
+            host_gate.refuse_if_disk_exhausted(p, recovery(), measure=starved)
+        except ArbiterError:
+            recovered = False
+        check("the retention lane is admitted below the floor", recovered)
+
+        # ...and it is the WORKFLOW that is exempt, not the repository. matssun/code runs
+        # CI here too, and exempting the whole repository would exempt nearly everything.
+        impostor_refused = False
+        try:
+            host_gate.refuse_if_disk_exhausted(p, ordinary(3), measure=starved)
+        except ArbiterError:
+            impostor_refused = True
+        check("another workflow in the same repository is still refused", impostor_refused)
+
+        # The refusal is read by an operator who has no context, so it must name the volume
+        # it measured: the host and the colima VM measure DIFFERENT filesystems through this
+        # same code, and a number without its volume cannot be checked.
+        check("the refusal names the volume and both numbers",
+              str(tmp) in message and "3.0" in message and "25" in message,
+              detail=message if refused else "no refusal")
+
+        # Fail-open, deliberately and against the rest of this file's direction: an
+        # unreadable volume must not stop all work on the host.
+        def unreadable(_volume):
+            raise OSError("simulated statvfs failure")
+
+        open_on_failure = True
+        try:
+            host_gate.refuse_if_disk_exhausted(p, ordinary(4), measure=unreadable)
+        except ArbiterError:
+            open_on_failure = False
+        check("an unmeasurable volume admits rather than refuses", open_on_failure)
+    finally:
+        os.environ.clear()
+        os.environ.update(old_environ)
+
+    # A hook environment naming no work path at all cannot be measured either, and must not
+    # refuse. Asserted with the work-path variables absent rather than by faking a failure.
+    for var in ("RUNNER_WORKSPACE", "GITHUB_WORKSPACE", "RUNNER_TEMP"):
+        os.environ.pop(var, None)
+    unnamed_ok = True
+    try:
+        host_gate.refuse_if_disk_exhausted(p, ordinary(5), measure=starved)
+    except ArbiterError:
+        unnamed_ok = False
+    check("a job whose work path is unknown is not refused", unnamed_ok)
+    os.environ.clear()
+    os.environ.update(old_environ)
+
+
+def test_the_hook_consults_the_guard() -> None:
+    """That `job-started` ASKS. The predicate being correct is not enough.
+
+    The checks above prove `refuse_if_disk_exhausted` decides correctly. They say NOTHING
+    about whether the admission path calls it -- delete that one line from
+    `cmd_job_started` and every one of them stays green while a full host admits work
+    exactly as it did during the fortnight outage. This is the same gap a poison pill found
+    in the retention collector, arriving at a different seam.
+    """
+    print("\nthe hook consults the guard")
+    import runner_arbiter
+
+    p = fresh()
+    old_environ = dict(os.environ)
+    os.environ["RUNNER_TEMP"] = str(p["root"])
+    real_free_gb = host_gate.free_gb
+    try:
+        host_gate.free_gb = lambda _volume: 3.0
+        rc = runner_arbiter.cmd_job_started(p, ordinary(10))
+        check("a starved host refuses through the hook entry point", False,
+              detail=f"returned {rc} instead of raising")
+    except ArbiterError:
+        check("a starved host refuses through the hook entry point", True)
+    finally:
+        host_gate.free_gb = real_free_gb
+        os.environ.clear()
+        os.environ.update(old_environ)
+
+    # Refused BEFORE any state is written. A job that left an active record behind would
+    # leak one per refused job, and on the SLO path would reserve the whole host and then
+    # refuse -- closing every runner behind a job that never ran.
+    check("a refused job leaves no active record", not list(p["active"].glob("*.json")))
+    check("a refused job leaves the gate open",
+          host_gate.read_gate(p).get("state", host_gate.OPEN) == host_gate.OPEN)
+
+    # The positive control: the same entry point admits when there is room. Without it the
+    # refusal above would pass against a `cmd_job_started` that raised unconditionally.
+    p2 = fresh()
+    os.environ["RUNNER_TEMP"] = str(p2["root"])
+    try:
+        host_gate.free_gb = lambda _volume: 400.0
+        rc = runner_arbiter.cmd_job_started(p2, ordinary(11))
+        check("a host with room admits through the hook entry point", rc == 0)
+        check("and the admitted job DID leave an active record",
+              len(list(p2["active"].glob("*.json"))) == 1)
+    except ArbiterError:
+        check("a host with room admits through the hook entry point", False)
+    finally:
+        host_gate.free_gb = real_free_gb
+        os.environ.clear()
+        os.environ.update(old_environ)
+
+
+# ==========================================================================================
 # identification
 # ==========================================================================================
 
@@ -478,7 +637,8 @@ def main() -> int:
                test_drain_refusal_names_the_blocker,
                test_listener_freshness_is_timezone_independent,
                test_mirror_is_published_for_the_other_kernel,
-               test_vm_reported_jobs_block_drain):
+               test_vm_reported_jobs_block_drain,
+               test_capacity_refusal, test_the_hook_consults_the_guard):
         fn()
     total = len(PASSED) + len(FAILED)
     print(f"\n{'=' * 74}\nexecuted {total} checks: {len(PASSED)} passed, {len(FAILED)} failed")
