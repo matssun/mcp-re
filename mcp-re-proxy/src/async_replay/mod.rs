@@ -29,6 +29,7 @@ use mcp_re_core::ReplayDecision;
 use mcp_re_core::ReplayDurabilityClass;
 use mcp_re_core::ReplayKey;
 
+use crate::config_state::FreshnessWindow;
 use crate::shared_replay::composite_replay_key;
 use crate::shared_replay::ReplayStoreError;
 
@@ -89,8 +90,11 @@ pub struct ReplayInsert<'a> {
     pub actor: &'a str,
     /// The skew-folded retain-until the tier computed.
     pub expires_at_unix: i64,
-    /// The same vestigial `0` anchor as the sync contract — a backend that derives a
-    /// server-side TTL reads its OWN clock and ignores this.
+    /// The instant the VERIFIER used for this request, and never a constant. The DEFAULT
+    /// in-memory backend judges an already-past `expires_at_unix` against it (MCPS-08);
+    /// one deriving a server-side TTL reads its own clock and ignores it. The sync
+    /// `AtomicReplayStore` carries a vestigial `0` here and this contract does not, so a
+    /// caller passing one disables that guard in the backend a default build selects.
     pub now_unix: i64,
 }
 
@@ -147,33 +151,34 @@ pub trait AsyncAtomicReplayStore: Send + Sync {
 #[derive(Clone)]
 pub struct AsyncReplayTier {
     store: Arc<dyn AsyncAtomicReplayStore>,
-    freshness: crate::config_state::FreshnessWindow,
+    freshness: FreshnessWindow,
     /// Shared by every clone, so the per-core tiers of one replica budget against one
     /// account rather than one each.
     ledger: Arc<RetentionLedger>,
 }
 
 impl AsyncReplayTier {
-    /// Build the tier over `store`, applying the symmetric `max_clock_skew_secs`
-    /// to each entry's retain-until (folded into the store TTL) exactly as the
-    /// sync `SharedReplayCache` does.
-    pub fn new(
+    /// Build the tier over `store`, folding the symmetric `max_clock_skew_secs` into each
+    /// entry's retain-until (and so its store TTL) exactly as `SharedReplayCache` does.
+    pub fn new(store: Arc<dyn AsyncAtomicReplayStore>, freshness: FreshnessWindow) -> Self {
+        Self::new_bounded(store, freshness, ASYNC_MAX_ENTRIES)
+    }
+
+    /// The same tier, with the retained-entry ceiling the per-actor budget is computed
+    /// from stated at CONSTRUCTION. A setter installing a fresh ledger could be called on
+    /// a clone, and that core would then budget against an account of its own — the one
+    /// thing the `Arc`-shared ledger exists to prevent, and nothing would refuse it. Here
+    /// no tier exists whose ledger was replaced after it was built.
+    pub fn new_bounded(
         store: Arc<dyn AsyncAtomicReplayStore>,
-        freshness: crate::config_state::FreshnessWindow,
+        freshness: FreshnessWindow,
+        max_retained_entries: usize,
     ) -> Self {
         AsyncReplayTier {
             store,
             freshness,
-            ledger: Arc::new(RetentionLedger::new(ASYNC_MAX_ENTRIES)),
+            ledger: Arc::new(RetentionLedger::new(max_retained_entries)),
         }
-    }
-
-    /// Override the retained-entry ceiling the per-actor budget is computed from
-    /// (tests, and bounded embedders). A fresh ledger, so this is only meaningful
-    /// before the tier serves anything.
-    pub fn with_max_retained_entries(mut self, max_entries: usize) -> Self {
-        self.ledger = Arc::new(RetentionLedger::new(max_entries));
-        self
     }
 
     /// This tier's declared durability class — delegated to the backing store, so
@@ -187,12 +192,8 @@ impl AsyncReplayTier {
     /// composite key and folds skew identically to the sync path; maps a store
     /// failure to the fail-closed [`ReplayCacheError::Unavailable`].
     ///
-    /// `now_unix` is the instant the VERIFIER used for this request — the same reading
-    /// the freshness gate was evaluated against. A store that bounds its own retention
-    /// judges an already-past `retain_until` against it (MCPS-08); one that derives a
-    /// server-side TTL reads its own clock and ignores it (see
-    /// [`AsyncAtomicReplayStore`]). Passing a constant here would silently disable that
-    /// guard in the in-memory store, which is the DEFAULT one.
+    /// `now_unix` reaches the backend as [`ReplayInsert::now_unix`], whose doc states what
+    /// a constant in this position would disable.
     pub async fn check_and_insert(
         &self,
         key: &ReplayKey,
@@ -316,11 +317,11 @@ mod tests {
     fn the_tier_budgets_a_durable_backend_that_budgets_nothing_itself() {
         // max_entries 10 ⇒ reserve 2, pressure at 8, solo budget 8.
         let store = Arc::new(UnboundedDurableStore::default());
-        let tier = AsyncReplayTier::new(
+        let tier = AsyncReplayTier::new_bounded(
             Arc::clone(&store) as Arc<dyn AsyncAtomicReplayStore>,
             crate::config_state::test_support::freshness(0),
-        )
-        .with_max_retained_entries(10);
+            10,
+        );
         assert_eq!(
             tier.durability_class(),
             ReplayDurabilityClass::Durable,
@@ -390,11 +391,11 @@ mod tests {
     /// otherwise re-sending one nonce would spend an actor's whole budget.
     #[test]
     fn a_replay_hands_the_charge_back() {
-        let tier = AsyncReplayTier::new(
+        let tier = AsyncReplayTier::new_bounded(
             Arc::new(UnboundedDurableStore::default()),
             crate::config_state::test_support::freshness(0),
-        )
-        .with_max_retained_entries(10);
+            10,
+        );
         const ACTOR: &str = "did:example:repeater";
         block(async {
             for _ in 0..5 {
@@ -419,11 +420,11 @@ mod tests {
     #[test]
     fn one_subject_gets_one_budget_however_many_keys_it_holds() {
         // max_entries 10 ⇒ reserve 2, pressure at 8, solo budget 8.
-        let tier = AsyncReplayTier::new(
+        let tier = AsyncReplayTier::new_bounded(
             Arc::new(UnboundedDurableStore::default()),
             crate::config_state::test_support::freshness(0),
-        )
-        .with_max_retained_entries(10);
+            10,
+        );
         const SUBJECT: &str = "did:example:many-keys";
 
         block(async {
@@ -448,6 +449,46 @@ mod tests {
                 "one subject gets one budget, not one budget per key it holds"
             );
             assert_eq!(tier.ledger.held_by(SUBJECT), 8);
+        });
+    }
+
+    /// The per-core tiers of one replica budget against ONE account.
+    ///
+    /// `AsyncReplayTier` is `Clone` and the serving path clones it per core, so the
+    /// retention bound is only a replica bound if every clone charges the same ledger. An
+    /// implementation that gave each clone a ledger of its own would satisfy every other
+    /// control in this module — each of them holds a single tier — while multiplying the
+    /// deployment's real ceiling by the core count.
+    #[test]
+    fn every_clone_of_a_tier_budgets_against_the_same_account() {
+        // max_entries 10 ⇒ reserve 2, pressure at 8, solo budget 8.
+        let first = AsyncReplayTier::new_bounded(
+            Arc::new(UnboundedDurableStore::default()),
+            crate::config_state::test_support::freshness(0),
+            10,
+        );
+        let second = first.clone();
+        const SUBJECT: &str = "did:example:two-cores";
+
+        block(async {
+            // Spend the whole solo budget through the FIRST tier.
+            for i in 0..8 {
+                assert!(matches!(
+                    first
+                        .check_and_insert(&replay_key(SUBJECT, &format!("n-{i}"), 9_000), 1_000)
+                        .await,
+                    Ok(ReplayDecision::Fresh)
+                ));
+            }
+            // The SECOND sees it spent, because there is one account and not two.
+            assert!(
+                second
+                    .check_and_insert(&replay_key(SUBJECT, "n-from-the-clone", 9_000), 1_000)
+                    .await
+                    .is_err(),
+                "a clone must not hand the same actor a second budget"
+            );
+            assert_eq!(second.ledger.held_by(SUBJECT), 8);
         });
     }
 
@@ -482,11 +523,11 @@ mod tests {
     /// non-`Fresh` exit — the defect `charge.rs` documents — went undetected.
     #[test]
     fn a_store_failure_is_unavailable_and_keeps_the_charge() {
-        let tier = AsyncReplayTier::new(
+        let tier = AsyncReplayTier::new_bounded(
             Arc::new(FailingStore),
             crate::config_state::test_support::freshness(0),
-        )
-        .with_max_retained_entries(10);
+            10,
+        );
         const ACTOR: &str = "did:example:unlucky";
         block(async {
             let refused = tier
@@ -537,11 +578,11 @@ mod tests {
     /// The broken implementation this catches is releasing on every non-`Fresh` exit.
     #[test]
     fn an_abandoned_insert_keeps_its_charge_because_the_write_may_have_landed() {
-        let tier = AsyncReplayTier::new(
+        let tier = AsyncReplayTier::new_bounded(
             Arc::new(NeverAnsweringStore),
             crate::config_state::test_support::freshness(0),
-        )
-        .with_max_retained_entries(10);
+            10,
+        );
         const ACTOR: &str = "did:example:quitter";
         block(async {
             for i in 0..50 {
@@ -583,11 +624,11 @@ mod tests {
     /// freshness window rather than accumulating for the life of the process.
     #[test]
     fn an_abandoned_insert_s_charge_expires_with_the_entry_it_may_have_created() {
-        let tier = AsyncReplayTier::new(
+        let tier = AsyncReplayTier::new_bounded(
             Arc::new(NeverAnsweringStore),
             crate::config_state::test_support::freshness(0),
-        )
-        .with_max_retained_entries(10_000);
+            10_000,
+        );
         const ACTOR: &str = "did:example:quitter";
         block(async {
             for i in 0..8 {
@@ -615,11 +656,11 @@ mod tests {
     /// not permanently penalised for traffic that has long since expired.
     #[test]
     fn the_tier_releases_charges_once_their_retention_expires() {
-        let tier = AsyncReplayTier::new(
+        let tier = AsyncReplayTier::new_bounded(
             Arc::new(UnboundedDurableStore::default()),
             crate::config_state::test_support::freshness(0),
-        )
-        .with_max_retained_entries(10_000);
+            10_000,
+        );
         const ACTOR: &str = "did:example:busy";
         block(async {
             // A prune runs on the 64th reservation; the first 63 retain until 1_500.

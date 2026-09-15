@@ -4596,6 +4596,7 @@ evidence = [
 tested_symbols = [
   "lib#async_replay::tests::the_tier_budgets_a_durable_backend_that_budgets_nothing_itself",
   "lib#async_replay::tests::one_subject_gets_one_budget_however_many_keys_it_holds",
+  "lib#async_replay::tests::every_clone_of_a_tier_budgets_against_the_same_account",
   "lib#async_replay::tests::a_replay_hands_the_charge_back",
   "lib#async_replay::tests::a_store_failure_is_unavailable_and_keeps_the_charge",
   "lib#async_replay::tests::an_abandoned_insert_keeps_its_charge_because_the_write_may_have_landed",
