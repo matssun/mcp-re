@@ -616,6 +616,8 @@ mod tests {
             "1i8Bah79Hk_feT60LNhEceG6nwzwTRKHtcxx9hYofLg",
             "--admission-redis-url",
             "redis://127.0.0.1:6379",
+            "--admission-record-max-age-secs",
+            "60",
         ])
     }
 
@@ -656,6 +658,7 @@ mod tests {
                     "redis://127.0.0.1:6379",
                 ),
                 availability: crate::deployment_request::AdmissionAvailabilityRequest::FailClosed,
+                record_max_age_secs: std::num::NonZeroU64::new(60).expect("nonzero"),
             },
         );
         let violations = unsafe_config_violations(&config);

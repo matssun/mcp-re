@@ -80,6 +80,7 @@ mod tests {
             authority_pubkey_b64url: "k".to_string(),
             store: SharedStoreRequest::redis("redis://127.0.0.1:6379"),
             availability: AdmissionAvailabilityRequest::FailClosed,
+            record_max_age_secs: NonZeroU64::new(60).expect("nonzero"),
         }
     }
 

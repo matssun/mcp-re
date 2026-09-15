@@ -1,0 +1,16 @@
+{
+  "axis": "specification",
+  "components": {
+    "encoding_version": 1,
+    "theorem_claim": "sha256:d8a0230ca7a964c4e81cc6d04b4ccc20d4558b74a01f6f454d261ef832e205f7",
+    "theorem_dependencies": {
+      "THM-0004": "sha256:bb4066095b8e280d4797c175443960231475a71ad74e31ead9746c81087d8dfb"
+    },
+    "theorem_id": "THM-0129",
+    "theorem_review_requirement": "Owner security-specification review"
+  },
+  "notes": "FIRST REVIEW, recorded under the owner ruling R11-1 in the r11 closure mandate, which states the proposition verbatim and says it authorizes the claim: \"An authoritative admission state accepted by the enforcement point is authenticated as issued by the configured admission authority, bound to the workload and admission generation/status, and current within the deployment's declared revocation-currentness budget. Redis write access without the admission signing authority can deny service but cannot mint or indefinitely replay an admission that restores service to a revoked or otherwise non-current workload.\" WHAT THE STATEMENT ADDS TO THAT WORDING: nothing about consequence. It generalises \"Redis\" to \"the store\" (the mechanism is not the claim, and the in-memory source is held to the same boundary), and it names the three coordinates that carry it \u2014 signature, subject comparison, currentness ceiling \u2014 each with the forgery the other two cannot see. WHAT IT DELIBERATELY DOES NOT CLAIM, all recorded in `scope`: it is V0, so tests plus a mutation self-test, NOT a proof, and the batteries passing is not evidence that a check is load-bearing; the observed publication-sequence floor is HARDENING and outside the claim, because a replica that has just started has no floor and a restart forgets one; Redis ACLs and compare-and-set appear as no premise at all, and no assumption registers the store as trusted \u2014 that framing is what this result removes; availability is not claimed, and an authority that fails to republish inside its own declared budget will see admission lapse, which is inside the claim rather than a violation of it. Registered as a SUBORDINATE of THM-0004 rather than a widening of it, as the ruling directs: THM-0004 keeps \"given state X, does this call match X?\" and this answers \"why is X an authenticated, sufficiently current statement from the configured authority?\".",
+  "reviewed_fingerprint": "sha256:22e6c2b059be8df1ec009a8a57e14bad7e068c7a6013635aff9d44c213228847",
+  "reviewer": "mats@sundvall.name",
+  "subject": "THM-0129"
+}

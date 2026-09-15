@@ -44,6 +44,7 @@ not an omission to hide.
 | host.request_freshness_inputs | V0 | THM-0114 | 0 |
 | http_profile.admission_assertion | V0 | THM-0053 | 0 |
 | http_profile.admission_currency | V1 | THM-0003, THM-0004, THM-0005, THM-0006 | 9 |
+| http_profile.admission_state_provenance | V0 | THM-0129 | 0 |
 | http_profile.artifact_typing | V1 | THM-0007 | 8 |
 | http_profile.artifact_verification_boundary | V0 | THM-0008 | 0 |
 | http_profile.continuation_binding | V1 | THM-0010 | 6 |
@@ -62,6 +63,7 @@ not an omission to hide.
 | http_profile.verifier_result_separation | V0 | THM-0047 | 0 |
 | http_profile.verifier_results | V0 | THM-0014, THM-0015, THM-0016, THM-0017, THM-0018, THM-0019, THM-0020, THM-0021, THM-0022 | 3 |
 | policy.authorization_taxonomy | V0 | _none_ | 0 |
+| proxy.admission_state_source | V0 | _none_ | 0 |
 | proxy.async_replay_retention | V0 | THM-0105 | 0 |
 | proxy.audit_delivery | V0 | THM-0070 | 0 |
 | proxy.audit_record_coordinates | V0 | THM-0069, THM-0071 | 0 |

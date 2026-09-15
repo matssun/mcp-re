@@ -5,9 +5,11 @@
 //! arithmetic over it, with its own name, its own invariant, and no dependence on the
 //! request being served.
 //!
-//! The four collaborators enter through [`AdmissionEnforcer::new`], the representation is
-//! private, and the degraded-window arithmetic has no caller outside this module: holding
-//! an enforcer means holding a gate that never treated its own startup as a confirmation.
+//! The four collaborators enter through [`AdmissionEnforcer::new`]; the fifth member is not
+//! one of them, because a caller able to supply it could hand a fresh replica a degraded
+//! window it never earned. The representation is private, and the window's arithmetic
+//! belongs to [`degraded_window`] — so holding an enforcer means holding a gate that never
+//! treated its own startup as a confirmation.
 
 use std::sync::Arc;
 
@@ -18,6 +20,11 @@ use mcp_re_http_profile::VerifiedMcpRequest;
 
 use crate::admission_source::AsyncAdmissionSource;
 use crate::http_profile_serve::AdmissionAuthorityResolver;
+
+/// How long a replica may serve on last-known state while the authority is unreachable.
+mod degraded_window;
+
+use degraded_window::DegradedWindow;
 
 /// What a request that carries NO admission evidence means to this deployment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,22 +51,9 @@ pub(crate) struct AdmissionEnforcer {
     /// A kid never introduces trust: an assertion signed by an unresolvable issuer
     /// is refused, exactly as an unknown request keyid is.
     resolve_authority: AdmissionAuthorityResolver,
-    /// When the authoritative source was last READ successfully, in unix seconds.
-    ///
-    /// P bounds how long this PEP may serve on last-known state while the authority is
-    /// unreachable. Applied to the presented assertion's `iat`, it bounds the wrong
-    /// thing: the revocation channel is the STORE, so during a store outage the
-    /// assertion issuer never learns of a revocation and keeps minting assertions with
-    /// a current `iat` — and a caller that simply keeps fetching them is served for the
-    /// whole outage, however long. Bounding elapsed time since the last successful read
-    /// is what makes "degraded serving is bounded by P" a true statement about the
-    /// deployment.
-    ///
-    /// `i64::MIN` until the first successful read: a replica that has never reached the
-    /// authority has no last-known state to serve on, so it fails closed rather than
-    /// treating startup as a confirmation. The sole producer establishes it, so it
-    /// holds for every enforcer that exists rather than for the ones built correctly.
-    last_authoritative_read: std::sync::atomic::AtomicI64,
+    /// How long this replica may still serve on last-known state, and the clock that
+    /// decides it. See [`degraded_window`].
+    window: DegradedWindow,
 }
 
 impl AdmissionEnforcer {
@@ -77,7 +71,7 @@ impl AdmissionEnforcer {
             policy,
             enforcement,
             resolve_authority,
-            last_authoritative_read: std::sync::atomic::AtomicI64::new(i64::MIN),
+            window: DegradedWindow::unearned(),
         }
     }
 
@@ -115,16 +109,19 @@ impl AdmissionEnforcer {
         };
 
         // The authoritative lookup. An outage yields `None` — the ONLY input that
-        // reaches the §5.2 degraded fork — while a healthy authority that has never
-        // heard of this workload is a definitive negative, refused here rather than
-        // being handed to a fork that would serve it on its own assertion.
-        let authoritative = match self.source.current(&binding.admission_id).await {
+        // reaches the §5.2 degraded fork — while a store that ANSWERED is a definitive
+        // negative whenever it has nothing this deployment will act on: no record, or a
+        // record that is not the configured authority's current statement. Both are
+        // refused here rather than handed to a fork that would serve the call on its own
+        // assertion, which is what would make corrupting a record a cheaper un-revoke than
+        // issuing one.
+        let authoritative = match self.source.current(&binding.admission_id, now).await {
             Ok(Some(state)) => {
-                self.record_authoritative_read(now);
+                self.window.record_read(now);
                 Some(state)
             }
             Ok(None) => {
-                self.record_authoritative_read(now);
+                self.window.record_read(now);
                 return Err(HttpProfileError::AdmissionNotCurrent);
             }
             // The source is unreachable. Whether the §5.2 degraded fork may be entered
@@ -132,7 +129,7 @@ impl AdmissionEnforcer {
             // not downstream by how fresh the caller's assertion is, which the caller
             // controls.
             Err(_) => {
-                if self.degraded_window_exhausted(now) {
+                if self.window.exhausted(&self.policy, now) {
                     return Err(HttpProfileError::AdmissionStateUnavailable);
                 }
                 None
@@ -148,7 +145,11 @@ impl AdmissionEnforcer {
             // to another workload, or under another key, names a different actor and is
             // refused, so possession alone does not satisfy the gate (§16.4).
             actor_id,
-            authoritative.as_ref(),
+            // The PROJECTION, not the product. `CurrentAdmissionState` exists so that
+            // reaching this line means the state was authenticated as the configured
+            // authority's and found current; the currency check below consumes the
+            // semantic fact, which is what its Verus contract is stated over.
+            authoritative.as_ref().map(|current| current.state()),
             mcp_re_http_profile::PROFILE_TAG,
             &[audience_id],
             &self.policy,
@@ -165,107 +166,38 @@ impl AdmissionEnforcer {
         // than closed by quietly widening a pinned vocabulary.
         .map(|_| ())
     }
-
-    /// Note that the authoritative record was read at `now`.
-    ///
-    /// A definitive negative counts: the authority answered, which is what P measures.
-    fn record_authoritative_read(&self, now: i64) {
-        self.last_authoritative_read
-            .fetch_max(now, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    /// Has the authority been unreachable for longer than P (+ skew)?
-    ///
-    /// True also when it has never been reachable, and whenever degraded mode is not
-    /// enabled at all — in both cases there is no window to be inside of.
-    fn degraded_window_exhausted(&self, now: i64) -> bool {
-        if !self.policy.allow_degraded_mode {
-            return true;
-        }
-        let last = self
-            .last_authoritative_read
-            .load(std::sync::atomic::Ordering::Relaxed);
-        if last == i64::MIN {
-            return true;
-        }
-        now.saturating_sub(last)
-            > self
-                .policy
-                .degraded_propagation_bound
-                .saturating_add(self.policy.max_clock_skew)
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // Every enforcer under test is built the only way one can be built, so these
-    // assertions are about the type rather than about a representation assembled here.
-    fn enforcer(bound: i64, skew: i64, allow_degraded: bool) -> AdmissionEnforcer {
-        AdmissionEnforcer::new(
-            Arc::new(crate::admission_source::InMemoryAdmissionSource::new()),
+    /// The window is a MEMBER of the gate and not a constructor parameter, so every
+    /// enforcer that exists begins with an unearned one. Its arithmetic is measured in
+    /// [`degraded_window`]; what belongs here is that the gate holds one it did not let a
+    /// caller choose.
+    #[test]
+    fn a_new_enforcer_has_a_window_nobody_earned() {
+        let enforcer = AdmissionEnforcer::new(
+            Arc::new(crate::admission_source::InMemoryAdmissionSource::new(
+                crate::admission_source::test_support::verifier_for(
+                    &mcp_re_core::SigningKey::from_seed_bytes(&[3u8; 32]),
+                    60,
+                    5,
+                ),
+            )),
             AdmissionPolicy {
                 max_assertion_age: 300,
-                max_clock_skew: skew,
-                degraded_propagation_bound: bound,
-                allow_degraded_mode: allow_degraded,
+                max_clock_skew: 5,
+                degraded_propagation_bound: 60,
+                allow_degraded_mode: true,
             },
             AdmissionEnforcement::Required,
             Arc::new(|_kid: &str| None),
-        )
-    }
-
-    /// A replica that has never reached the authority has no last-known state to serve
-    /// on, so startup is not a confirmation.
-    #[test]
-    fn a_replica_that_never_reached_the_authority_has_no_window() {
-        assert!(enforcer(60, 5, true).degraded_window_exhausted(1_000));
-    }
-
-    /// R7-C093: the degraded window is elapsed OUTAGE time, not assertion freshness.
-    ///
-    /// The revocation channel is the store, so during a store outage the issuer never
-    /// learns of a revocation and keeps minting assertions with a current `iat`. A
-    /// caller that simply keeps fetching them was therefore served for the whole
-    /// outage, however long, while the operator was told degraded serving is bounded
-    /// by P. Nothing the caller can do moves this clock.
-    #[test]
-    fn the_degraded_window_closes_p_after_the_last_successful_read() {
-        let enforcer = enforcer(60, 5, true);
-        enforcer.record_authoritative_read(1_000);
-
-        assert!(
-            !enforcer.degraded_window_exhausted(1_060),
-            "inside P + skew the last-known state is still usable"
         );
         assert!(
-            !enforcer.degraded_window_exhausted(1_065),
-            "the skew allowance is on the same clock"
+            enforcer.window.exhausted(&enforcer.policy, 1_000),
+            "a gate must not treat its own construction as a confirmation"
         );
-        assert!(
-            enforcer.degraded_window_exhausted(1_066),
-            "past P + skew an unreachable authority fails closed, however fresh the \
-             assertion the caller presents"
-        );
-    }
-
-    /// The clock only moves forward: a stale read cannot re-open a window a later one
-    /// closed.
-    #[test]
-    fn an_out_of_order_read_does_not_rewind_the_window() {
-        let enforcer = enforcer(60, 0, true);
-        enforcer.record_authoritative_read(2_000);
-        enforcer.record_authoritative_read(1_000);
-        assert!(!enforcer.degraded_window_exhausted(2_050));
-    }
-
-    /// Degraded mode is opt-in; without it an unreachable authority fails closed at
-    /// once, whatever was last read.
-    #[test]
-    fn without_the_opt_in_there_is_no_window_at_all() {
-        let enforcer = enforcer(3_600, 30, false);
-        enforcer.record_authoritative_read(1_000);
-        assert!(enforcer.degraded_window_exhausted(1_001));
     }
 }

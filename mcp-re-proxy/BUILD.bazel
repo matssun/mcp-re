@@ -52,7 +52,8 @@ _PROXY_LIB_SRCS = [
     # of the default build). No async aws-sdk-kms/tokio (ADR-MCPS-018 lean-sync).
     # ADR-MCPRE-064 Slice 5: the §7 admission gate's collaborators, decomposed out of the
     # serving pipeline — a deployment posture, not a stage.
-    "src/admission_enforcer.rs",
+    "src/admission_enforcer/mod.rs",
+    "src/admission_enforcer/degraded_window.rs",
     # ADR-MCPRE-065 Slice 1: the authorization authority — verified actor and action facts,
     # the mechanism seam, the honest posture, and the body only a decision can release.
     "src/authorization/mod.rs",
@@ -208,6 +209,7 @@ _PROXY_LIB_SRCS = [
     "src/capability_materialization/mod.rs",
     "src/capability_materialization/revocation.rs",
     "src/cli/admission_flags/availability.rs",
+    "src/cli/admission_flags/record_currentness.rs",
     "src/cli/admission_flags/mod.rs",
     "src/cli/audit_flags.rs",
     "src/cli/channel_flags.rs",
@@ -580,10 +582,13 @@ _PROXY_LIB_SRCS = [
     "src/redis_continuation_store.rs",
     # MCPRE-493 (#414 §4.3): the authoritative admission-state seam — trait + in-memory
     # impl always compiled, so the serving path's §7 currency gate builds by default.
-    "src/admission_source.rs",
+    "src/admission_source/mod.rs",
+    "src/admission_source/verifier.rs",
+    "src/admission_source/in_memory.rs",
     # MCPRE-493: the Redis-backed admission source (live per-request GET, no cached
     # copy). #[cfg(feature = "redis_replay")] — cfg'd out of the default build.
-    "src/redis_admission_source.rs",
+    "src/redis_admission_source/mod.rs",
+    "src/redis_admission_source/refusal_report.rs",
     "src/transport/mod.rs",
     "src/transport/ingress/mod.rs",
     "src/transport/ingress/v1.rs",

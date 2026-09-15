@@ -1018,6 +1018,7 @@ mod tests {
                     "redis://127.0.0.1:6379",
                 ),
                 availability: crate::deployment_request::AdmissionAvailabilityRequest::FailClosed,
+                record_max_age_secs: std::num::NonZeroU64::new(60).expect("nonzero"),
             },
         );
         config

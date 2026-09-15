@@ -48,6 +48,7 @@ attestations this view cannot see.
 | unit://host.request_freshness_inputs | source, contracts or evidence | THM-0114 | _no consumer_ |
 | unit://http_profile.admission_assertion | source, contracts or evidence | THM-0053 | _no consumer_ |
 | unit://http_profile.admission_currency | source, contracts or evidence | THM-0003, THM-0004, THM-0005, THM-0006 | _no consumer_ |
+| unit://http_profile.admission_state_provenance | source, contracts or evidence | THM-0129 | _no consumer_ |
 | unit://http_profile.artifact_typing | source, contracts or evidence | THM-0007 | _no consumer_ |
 | unit://http_profile.artifact_verification_boundary | source, contracts or evidence | THM-0008, THM-0015 | _no consumer_ |
 | unit://http_profile.continuation_binding | source, contracts or evidence | THM-0010 | http_profile.continuation_unbypassability (PROOF_DEPENDENCY) |
@@ -66,6 +67,7 @@ attestations this view cannot see.
 | unit://http_profile.verifier_result_separation | source, contracts or evidence | THM-0047, THM-0051 | _no consumer_ |
 | unit://http_profile.verifier_results | source, contracts or evidence | THM-0014, THM-0015, THM-0016, THM-0017, THM-0018, THM-0019, THM-0020, THM-0021, THM-0022, THM-0065 | proxy.request_peer_binding (COMPILE_DEPENDENCY) |
 | unit://policy.authorization_taxonomy | source, contracts or evidence | THM-0111 | _no consumer_ |
+| unit://proxy.admission_state_source | source, contracts or evidence | THM-0129 | _no consumer_ |
 | unit://proxy.async_replay_retention | source, contracts or evidence | THM-0105 | _no consumer_ |
 | unit://proxy.audit_delivery | source, contracts or evidence | THM-0070 | _no consumer_ |
 | unit://proxy.audit_record_coordinates | source, contracts or evidence | THM-0069, THM-0071 | _no consumer_ |
@@ -141,7 +143,7 @@ attestations this view cannot see.
 | THM-0001 | statement, consequence, scope or review requirement | specification review | THM-0014, THM-0021, THM-0022 |
 | THM-0002 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0003 | statement, consequence, scope or review requirement | specification review | THM-0074 |
-| THM-0004 | statement, consequence, scope or review requirement | specification review | THM-0074 |
+| THM-0004 | statement, consequence, scope or review requirement | specification review | THM-0074, THM-0129 |
 | THM-0005 | statement, consequence, scope or review requirement | specification review | THM-0074, THM-0077 |
 | THM-0006 | statement, consequence, scope or review requirement | specification review | THM-0074 |
 | THM-0007 | statement, consequence, scope or review requirement | specification review | THM-0008, THM-0015 |
@@ -265,6 +267,7 @@ attestations this view cannot see.
 | THM-0126 | statement, consequence, scope or review requirement | specification review | THM-0076 |
 | THM-0127 | statement, consequence, scope or review requirement | specification review | THM-0076 |
 | THM-0128 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
+| THM-0129 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 
 ## Assumptions
 

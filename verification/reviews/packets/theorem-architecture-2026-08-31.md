@@ -367,7 +367,7 @@ the sentence stays authoritative (§28.5).
 | O-6 | liveness: that a valid request *is* served, that a reload *happens*, that revocation propagates | §28.9 — the roots are safety claims; THM-0037's scope says this explicitly for reload |
 | O-7 | `ReceiptPositionProfile::Bound` semantics in production | no shipped pin selects it; kept unselectable by ruling |
 | O-8 | ordinary validated parameters that cannot change a security decision | THM-0038's pinned inventory |
-| O-9 | that the authoritative admission state held by the enforcement point is itself current | THM-0004 scope — currency is generation equality against the state held |
+| O-9 | ~~that the authoritative admission state held by the enforcement point is itself current~~ **CLOSED 2026-09-15** — no longer a boundary. Owner ruling R11-1 (r11 closure) ruled it in, and **THM-0129** establishes, at class V0, that the state accepted by the enforcement point is authenticated as the configured authority's and current within the deployment's declared budget. THM-0004 keeps its own responsibility — currency is still generation equality against the state held — and its scope names the sibling rather than absorbing it. | THM-0004 scope — currency is generation equality against the state held |
 | O-10 | collision-resistant separation between continuation role labels | THM-0010 scope — stays at `boundary.crypto_primitives` |
 | O-11 | that a degraded verdict is confined to the propagation window P | THM-0005 scope — enforced in the body, not a conjunct |
 | O-12 | `RuntimeState::admits_requests` as a control | THM-0012 scope — descriptive, no production consumer |

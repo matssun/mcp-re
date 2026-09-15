@@ -29,7 +29,9 @@ use std::sync::Arc;
 use mcp_re_core::b64url_decode;
 use mcp_re_core::b64url_encode;
 use mcp_re_core::SigningKey;
-use mcp_re_http_profile::authoritative_admission::AuthoritativeAdmission;
+use mcp_re_http_profile::authoritative_admission::record::issue_admission_state_record;
+use mcp_re_http_profile::authoritative_admission::record::AdmissionStateClaims;
+use mcp_re_http_profile::authoritative_admission::record::AdmissionStateCurrentness;
 use mcp_re_http_profile::issue_admission_assertion;
 use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::sign_request_full;
@@ -54,6 +56,7 @@ use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::PROFILE_TAG;
 
 use mcp_re_proxy::admission_enforcer::AdmissionEnforcement;
+use mcp_re_proxy::admission_source::AdmissionRecordVerifier;
 use mcp_re_proxy::admission_source::AsyncAdmissionSource;
 use mcp_re_proxy::admission_source::InMemoryAdmissionSource;
 use mcp_re_proxy::async_inner::AsyncInnerServer;
@@ -158,6 +161,75 @@ fn client_actor_id() -> String {
         keyid: CLIENT_KEY_ID.into(),
     }
     .actor_id()
+}
+
+/// The DEPLOYMENT's declared currentness budget for an authoritative record.
+///
+/// Wide enough that the record's own window is never what these batteries measure — they
+/// are about the currency comparison and the degraded fork, and a record expiring underneath
+/// them would make every one of them pass for the wrong reason. The budget's own boundary is
+/// measured where it is decided, in `admission_state_record::currentness`.
+const RECORD_MAX_AGE: i64 = 3_600;
+
+/// A store that will act on records signed by [`authority_key`] and no other.
+fn admission_store() -> InMemoryAdmissionSource {
+    InMemoryAdmissionSource::new(AdmissionRecordVerifier::new(
+        authority_resolver(),
+        PROFILE_TAG,
+        AdmissionStateCurrentness {
+            max_record_age: RECORD_MAX_AGE,
+            max_clock_skew: 30,
+        },
+    ))
+}
+
+/// The AUTHORITY's statement about a workload, signed and published.
+///
+/// Every publication advances the revision, because that is what a publication is; the
+/// generation moves only when the admitted configuration does. The two counters are
+/// deliberately independent here for the same reason they are in the record.
+fn publish_state(
+    source: &InMemoryAdmissionSource,
+    generation: u64,
+    revision: u64,
+    status: AdmissionStatus,
+) {
+    let record = issue_admission_state_record(
+        &AdmissionStateClaims {
+            iss: "did:example:admission".into(),
+            iat: NOW,
+            nbf: NOW,
+            exp: NOW + RECORD_MAX_AGE,
+            mcp_re_profile: PROFILE_TAG.into(),
+            mcp_re_admission_id: WORKLOAD.into(),
+            mcp_re_admission_generation: generation,
+            mcp_re_admission_status: status,
+            mcp_re_state_revision: revision,
+            issuer_kid: AUTHORITY_KID.into(),
+        },
+        |input| {
+            b64url_decode(&authority_key().sign(input))
+                .map_err(|_| HttpProfileError::InvalidSignature)
+        },
+    )
+    .expect("the authority issues its own record");
+    source.publish(WORKLOAD, record);
+}
+
+/// The authority admits the workload at `generation` — publication 1.
+///
+/// Deliberately not named for the Verus proof escape hatch that would shadow it:
+/// `tools/verification/_seams.py` matches that mechanism in its code form, and a test
+/// helper spelled the same way is indistinguishable from a real one to the gate whose job
+/// is to notice unregistered seams. A gate that cannot tell them apart is one someone
+/// eventually silences.
+fn publish_admitted(source: &InMemoryAdmissionSource, generation: u64) {
+    publish_state(source, generation, 1, AdmissionStatus::Admitted);
+}
+
+/// The authority revokes, KEEPING the generation and advancing the publication.
+fn revoke(source: &InMemoryAdmissionSource, generation: u64) {
+    publish_state(source, generation, 2, AdmissionStatus::Revoked);
 }
 
 fn admission_claims(generation: u64, status: AdmissionStatus, iat: i64) -> AdmissionClaims {
@@ -367,8 +439,8 @@ impl mcp_re_proxy::authorization::AuthorizationEvaluator for RefusesEverything {
 /// admission is ordered first and refuses on its own.
 #[test]
 fn an_admitted_workload_is_still_refused_by_a_denying_policy() {
-    let source = Arc::new(InMemoryAdmissionSource::new());
-    source.admit(WORKLOAD, 5);
+    let source = Arc::new(admission_store());
+    publish_admitted(&source, 5);
     let calls = Arc::new(AtomicUsize::new(0));
     let proxy = replica(
         source,
@@ -396,8 +468,8 @@ fn an_admitted_workload_is_still_refused_by_a_denying_policy() {
 
 #[test]
 fn a_current_admitted_workload_is_served() {
-    let source = Arc::new(InMemoryAdmissionSource::new());
-    source.admit(WORKLOAD, 5);
+    let source = Arc::new(admission_store());
+    publish_admitted(&source, 5);
     let calls = Arc::new(AtomicUsize::new(0));
     let proxy = replica(
         source,
@@ -428,8 +500,8 @@ fn a_current_admitted_workload_is_served() {
 /// the ONLY thing wrong with it is that it was issued to somebody else.
 #[test]
 fn an_assertion_issued_to_another_actor_does_not_admit_this_caller() {
-    let source = Arc::new(InMemoryAdmissionSource::new());
-    source.admit(WORKLOAD, 5);
+    let source = Arc::new(admission_store());
+    publish_admitted(&source, 5);
     let calls = Arc::new(AtomicUsize::new(0));
     let proxy = replica(
         source,
@@ -458,8 +530,8 @@ fn an_assertion_issued_to_another_actor_does_not_admit_this_caller() {
 /// currency.
 #[test]
 fn a_superseded_generation_is_refused_before_the_backend_runs() {
-    let source = Arc::new(InMemoryAdmissionSource::new());
-    source.admit(WORKLOAD, 6);
+    let source = Arc::new(admission_store());
+    publish_admitted(&source, 6);
     let calls = Arc::new(AtomicUsize::new(0));
     let proxy = replica(
         source,
@@ -482,9 +554,9 @@ fn a_superseded_generation_is_refused_before_the_backend_runs() {
 
 #[test]
 fn a_revoked_workload_is_refused_though_its_assertion_is_still_valid() {
-    let source = Arc::new(InMemoryAdmissionSource::new());
-    source.admit(WORKLOAD, 5);
-    source.revoke(WORKLOAD);
+    let source = Arc::new(admission_store());
+    publish_admitted(&source, 5);
+    revoke(&source, 5);
     let calls = Arc::new(AtomicUsize::new(0));
     let proxy = replica(
         source,
@@ -506,7 +578,7 @@ fn a_revoked_workload_is_refused_though_its_assertion_is_still_valid() {
 /// degraded fork and be served on its own assertion — admitted by being unknown.
 #[test]
 fn an_unknown_workload_is_refused_not_routed_into_degraded_mode() {
-    let source = Arc::new(InMemoryAdmissionSource::new());
+    let source = Arc::new(admission_store());
     let calls = Arc::new(AtomicUsize::new(0));
     let proxy = replica(
         source,
@@ -531,8 +603,8 @@ fn an_unknown_workload_is_refused_not_routed_into_degraded_mode() {
 
 #[test]
 fn an_unreachable_authority_fails_closed_by_default() {
-    let source = Arc::new(InMemoryAdmissionSource::new());
-    source.admit(WORKLOAD, 5);
+    let source = Arc::new(admission_store());
+    publish_admitted(&source, 5);
     source.set_unavailable(true);
     let calls = Arc::new(AtomicUsize::new(0));
     let proxy = replica(
@@ -561,8 +633,8 @@ fn an_unreachable_authority_fails_closed_by_default() {
 /// however long. Every assertion below is FRESH; only the outage ages.
 #[test]
 fn an_unreachable_authority_serves_within_p_and_fails_closed_past_it() {
-    let source = Arc::new(InMemoryAdmissionSource::new());
-    source.admit(WORKLOAD, 5);
+    let source = Arc::new(admission_store());
+    publish_admitted(&source, 5);
     let calls = Arc::new(AtomicUsize::new(0));
     let policy = AdmissionPolicy {
         allow_degraded_mode: true,
@@ -626,8 +698,8 @@ fn an_unreachable_authority_serves_within_p_and_fails_closed_past_it() {
 /// a window that has to have been opened by a real read.
 #[test]
 fn a_replica_that_never_reached_the_authority_does_not_enter_degraded_mode() {
-    let source = Arc::new(InMemoryAdmissionSource::new());
-    source.admit(WORKLOAD, 5);
+    let source = Arc::new(admission_store());
+    publish_admitted(&source, 5);
     source.set_unavailable(true);
     let calls = Arc::new(AtomicUsize::new(0));
     let policy = AdmissionPolicy {
@@ -666,7 +738,7 @@ fn a_call_without_admission_evidence_is_refused_when_required_and_served_when_op
 
     let calls = Arc::new(AtomicUsize::new(0));
     let strict = replica(
-        Arc::new(InMemoryAdmissionSource::new()),
+        Arc::new(admission_store()),
         strict_policy(),
         AdmissionEnforcement::Required,
         Arc::clone(&calls),
@@ -677,7 +749,7 @@ fn a_call_without_admission_evidence_is_refused_when_required_and_served_when_op
 
     let calls = Arc::new(AtomicUsize::new(0));
     let lenient = replica(
-        Arc::new(InMemoryAdmissionSource::new()),
+        Arc::new(admission_store()),
         strict_policy(),
         AdmissionEnforcement::Optional,
         Arc::clone(&calls),
@@ -692,8 +764,8 @@ fn a_call_without_admission_evidence_is_refused_when_required_and_served_when_op
 /// call's own request signature verifies.
 #[test]
 fn an_assertion_from_an_untrusted_authority_is_refused() {
-    let source = Arc::new(InMemoryAdmissionSource::new());
-    source.admit(WORKLOAD, 5);
+    let source = Arc::new(admission_store());
+    publish_admitted(&source, 5);
     let calls = Arc::new(AtomicUsize::new(0));
     let proxy = replica(
         source,
@@ -717,8 +789,8 @@ fn an_assertion_from_an_untrusted_authority_is_refused() {
 /// of the call.
 #[test]
 fn a_revocation_on_the_shared_source_is_honoured_by_a_replica_that_never_saw_the_workload() {
-    let source = Arc::new(InMemoryAdmissionSource::new());
-    source.admit(WORKLOAD, 5);
+    let source = Arc::new(admission_store());
+    publish_admitted(&source, 5);
     let claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
 
     let calls_a = Arc::new(AtomicUsize::new(0));
@@ -744,7 +816,7 @@ fn a_revocation_on_the_shared_source_is_honoured_by_a_replica_that_never_saw_the
     assert_eq!(served.status, 200);
 
     // The authority revokes it. Nothing tells B; B simply consults the shared source.
-    source.revoke(WORKLOAD);
+    revoke(&source, 5);
 
     let served = block_on(replica_b.handle(
         served_of(&signed_call(Some((&claims, &authority_key())), "n-b-1")),
@@ -772,8 +844,8 @@ fn a_revocation_on_the_shared_source_is_honoured_by_a_replica_that_never_saw_the
 /// issued is not a fresher client, it is a client asserting an admission nobody made.
 #[test]
 fn a_generation_ahead_of_the_authority_is_refused() {
-    let source = Arc::new(InMemoryAdmissionSource::new());
-    source.admit(WORKLOAD, 5);
+    let source = Arc::new(admission_store());
+    publish_admitted(&source, 5);
     let calls = Arc::new(AtomicUsize::new(0));
     let proxy = replica(
         source,
@@ -795,13 +867,30 @@ fn a_generation_ahead_of_the_authority_is_refused() {
 /// because the binding it names must also match the assertion it carries.
 #[test]
 fn a_binding_naming_another_workload_does_not_borrow_its_admission() {
-    let source = Arc::new(InMemoryAdmissionSource::new());
-    source.admit(WORKLOAD, 5);
-    source.set(AuthoritativeAdmission::new(
-        "workload-other".to_owned(),
-        5,
-        AdmissionStatus::Admitted,
-    ));
+    let source = Arc::new(admission_store());
+    publish_admitted(&source, 5);
+    // A genuine, currently-admitted record for a DIFFERENT workload, published under its
+    // own name. The point of the test is that naming it in a binding does not borrow it.
+    let other = issue_admission_state_record(
+        &AdmissionStateClaims {
+            iss: "did:example:admission".into(),
+            iat: NOW,
+            nbf: NOW,
+            exp: NOW + RECORD_MAX_AGE,
+            mcp_re_profile: PROFILE_TAG.into(),
+            mcp_re_admission_id: "workload-other".into(),
+            mcp_re_admission_generation: 5,
+            mcp_re_admission_status: AdmissionStatus::Admitted,
+            mcp_re_state_revision: 1,
+            issuer_kid: AUTHORITY_KID.into(),
+        },
+        |input| {
+            b64url_decode(&authority_key().sign(input))
+                .map_err(|_| HttpProfileError::InvalidSignature)
+        },
+    )
+    .expect("the authority issues its own record");
+    source.publish("workload-other", other);
     let calls = Arc::new(AtomicUsize::new(0));
     let proxy = replica(
         source,
@@ -860,4 +949,254 @@ fn source_revoked_workload_call(proxy: &HttpProfileProxy, calls: &Arc<AtomicUsiz
         "mcp-re.request_binding_mismatch"
     );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+// ---------------------------------------------------------------------------------------
+// A store writer is not an admission authority — at the serving path (r11 critical R11-505)
+// ---------------------------------------------------------------------------------------
+//
+// The unit batteries in `admission_state_record` and `admission_source` establish what the
+// verifier refuses. These establish what the DEPLOYMENT does with those refusals, which is
+// the half a verifier cannot state about itself: every one of them is a refusal that must
+// not become an outage, because an outage reaches the §5.2 degraded fork and would be
+// served on the caller's own assertion. Corrupting a record must never be a cheaper
+// un-revoke than issuing one.
+
+/// A degraded-mode deployment that has ALREADY earned its window — the configuration in
+/// which a misclassified refusal would actually serve a revoked workload.
+///
+/// Every test below opens the window first with a live-confirmed call, so nothing here
+/// passes merely because degraded mode was unreachable.
+fn degraded_replica_with_an_open_window(
+    source: &Arc<InMemoryAdmissionSource>,
+    calls: &Arc<AtomicUsize>,
+) -> HttpProfileProxy {
+    let proxy = replica(
+        Arc::clone(source) as Arc<dyn AsyncAdmissionSource>,
+        AdmissionPolicy {
+            allow_degraded_mode: true,
+            degraded_propagation_bound: 120,
+            ..strict_policy()
+        },
+        AdmissionEnforcement::Required,
+        Arc::clone(calls),
+    );
+    let confirmed = admission_claims(5, AdmissionStatus::Admitted, NOW - 30);
+    let served = block_on(proxy.handle(
+        served_of(&signed_call(
+            Some((&confirmed, &authority_key())),
+            "n-window-open",
+        )),
+        NOW,
+    ));
+    assert_eq!(served.status, 200, "the degraded window must start OPEN");
+    proxy
+}
+
+/// **Corrupting a record while the store is reachable does not admit anybody.**
+///
+/// The store answered; it simply has nothing this deployment will act on. That is a
+/// definitive negative, and it stays one even with degraded mode enabled and its window
+/// open — which is the configuration in which the opposite classification would serve the
+/// caller on its own assertion.
+#[test]
+fn a_corrupt_record_on_a_reachable_store_is_refused_and_never_degraded() {
+    let source = Arc::new(admission_store());
+    publish_admitted(&source, 5);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let proxy = degraded_replica_with_an_open_window(&source, &calls);
+
+    for (label, corrupt) in [
+        ("garbage", "not-a-record".to_owned()),
+        ("empty", String::new()),
+        ("the old two-field form", "5:admitted".to_owned()),
+    ] {
+        source.publish(WORKLOAD, corrupt);
+        let fresh = admission_claims(5, AdmissionStatus::Admitted, NOW + 5);
+        let served = block_on(proxy.handle(
+            served_of(&signed_call(
+                Some((&fresh, &authority_key())),
+                &format!("n-corrupt-{}", label.replace(' ', "-")),
+            )),
+            NOW + 10,
+        ));
+        assert_eq!(served.status, 403, "{label}: a corrupt record must refuse");
+        assert_eq!(wire_code_of(&served.body), ADMISSION_REFUSED, "{label}");
+    }
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "only the window-opening call reached the inner"
+    );
+}
+
+/// **A record signed by anything but the configured authority does not admit anybody.**
+///
+/// This is the mint. A party that can write the store, and can sign with its own key,
+/// still cannot produce an admission — and cannot pick an arbitrarily high generation to
+/// outrun the real authority, because it cannot sign one.
+#[test]
+fn a_record_minted_by_a_store_writer_is_refused_and_never_degraded() {
+    let source = Arc::new(admission_store());
+    publish_admitted(&source, 5);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let proxy = degraded_replica_with_an_open_window(&source, &calls);
+
+    let attacker = SigningKey::from_seed_bytes(&[77u8; 32]);
+    let forged = issue_admission_state_record(
+        &AdmissionStateClaims {
+            iss: "did:example:admission".into(),
+            iat: NOW,
+            nbf: NOW,
+            exp: NOW + RECORD_MAX_AGE,
+            mcp_re_profile: PROFILE_TAG.into(),
+            mcp_re_admission_id: WORKLOAD.into(),
+            // An arbitrarily high generation, which is exactly what a store-only writer
+            // would reach for to outrun the authority's anti-rollback counter.
+            mcp_re_admission_generation: u64::MAX,
+            mcp_re_admission_status: AdmissionStatus::Admitted,
+            mcp_re_state_revision: u64::MAX,
+            issuer_kid: AUTHORITY_KID.into(),
+        },
+        |input| {
+            b64url_decode(&attacker.sign(input)).map_err(|_| HttpProfileError::InvalidSignature)
+        },
+    )
+    .expect("the attacker can certainly produce bytes");
+    source.publish(WORKLOAD, forged);
+
+    let fresh = admission_claims(u64::MAX, AdmissionStatus::Admitted, NOW + 5);
+    let served = block_on(proxy.handle(
+        served_of(&signed_call(Some((&fresh, &authority_key())), "n-minted")),
+        NOW + 10,
+    ));
+    assert_eq!(served.status, 403);
+    assert_eq!(wire_code_of(&served.body), ADMISSION_REFUSED);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+/// **An expired authenticated record on a reachable store does not admit anybody.**
+///
+/// The signature is genuine and the authority really did publish it. It is simply past the
+/// deployment's declared currentness budget, which is the whole anti-rollback mechanism:
+/// nothing here detects a substitution, and nothing has to.
+#[test]
+fn an_expired_authentic_record_on_a_reachable_store_is_refused_and_never_degraded() {
+    let source = Arc::new(admission_store());
+    publish_admitted(&source, 5);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let proxy = degraded_replica_with_an_open_window(&source, &calls);
+
+    // A record the authority really published, whose window has since closed. The CALL is
+    // fresh — the request signature and the assertion are both current — so the only stale
+    // thing is the authoritative state, which is the proposition. (Advancing `now` past the
+    // record instead would expire the request signature first and refuse for the wrong
+    // reason; that is what the first draft of this test measured.)
+    let stale = issue_admission_state_record(
+        &AdmissionStateClaims {
+            iss: "did:example:admission".into(),
+            iat: NOW - 100,
+            nbf: NOW - 100,
+            exp: NOW - 40,
+            mcp_re_profile: PROFILE_TAG.into(),
+            mcp_re_admission_id: WORKLOAD.into(),
+            mcp_re_admission_generation: 5,
+            mcp_re_admission_status: AdmissionStatus::Admitted,
+            mcp_re_state_revision: 1,
+            issuer_kid: AUTHORITY_KID.into(),
+        },
+        |input| {
+            b64url_decode(&authority_key().sign(input))
+                .map_err(|_| HttpProfileError::InvalidSignature)
+        },
+    )
+    .expect("the authority issues its own record");
+    source.publish(WORKLOAD, stale);
+
+    let fresh = admission_claims(5, AdmissionStatus::Admitted, NOW + 5);
+    let served = block_on(proxy.handle(
+        served_of(&signed_call(Some((&fresh, &authority_key())), "n-expired")),
+        NOW + 10,
+    ));
+    assert_eq!(served.status, 403);
+    assert_eq!(wire_code_of(&served.body), ADMISSION_REFUSED);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+/// **The exact attack the r11 ruling pins, end to end on the serving path.**
+///
+/// ```text
+/// t0  the authority admits the workload and the replica serves it
+/// t1  the authority revokes; the replica refuses
+/// t2  a party with store-write access restores the t0 bytes verbatim
+/// ```
+///
+/// The restored record is genuinely signed and nothing detects that it was restored. It
+/// does not restore service, because this replica has already accepted a later publication
+/// — and on a replica that has not, the currentness budget closes it anyway (measured in
+/// `admission_state_record::currentness` and `redis_admission_source`).
+#[test]
+fn restoring_a_revoked_workloads_old_admitted_record_does_not_restore_service() {
+    let source = Arc::new(admission_store());
+    let calls = Arc::new(AtomicUsize::new(0));
+
+    let admitted = issue_admission_state_record(
+        &AdmissionStateClaims {
+            iss: "did:example:admission".into(),
+            iat: NOW,
+            nbf: NOW,
+            exp: NOW + RECORD_MAX_AGE,
+            mcp_re_profile: PROFILE_TAG.into(),
+            mcp_re_admission_id: WORKLOAD.into(),
+            mcp_re_admission_generation: 5,
+            mcp_re_admission_status: AdmissionStatus::Admitted,
+            mcp_re_state_revision: 1,
+            issuer_kid: AUTHORITY_KID.into(),
+        },
+        |input| {
+            b64url_decode(&authority_key().sign(input))
+                .map_err(|_| HttpProfileError::InvalidSignature)
+        },
+    )
+    .expect("the authority issues its own record");
+
+    source.publish(WORKLOAD, admitted.clone());
+    let proxy = replica(
+        Arc::clone(&source) as Arc<dyn AsyncAdmissionSource>,
+        strict_policy(),
+        AdmissionEnforcement::Required,
+        Arc::clone(&calls),
+    );
+
+    let claims = admission_claims(5, AdmissionStatus::Admitted, NOW - 30);
+    let served = block_on(proxy.handle(
+        served_of(&signed_call(Some((&claims, &authority_key())), "n-t0")),
+        NOW,
+    ));
+    assert_eq!(served.status, 200, "t0: the workload is admitted");
+
+    // t1 — revocation, same generation, next publication.
+    revoke(&source, 5);
+    let served = block_on(proxy.handle(
+        served_of(&signed_call(Some((&claims, &authority_key())), "n-t1")),
+        NOW + 1,
+    ));
+    assert_eq!(served.status, 403, "t1: the revocation is honoured");
+
+    // t2 — the old bytes restored verbatim. Genuine signature, genuine authority.
+    source.publish(WORKLOAD, admitted);
+    let served = block_on(proxy.handle(
+        served_of(&signed_call(Some((&claims, &authority_key())), "n-t2")),
+        NOW + 2,
+    ));
+    assert_eq!(
+        served.status, 403,
+        "t2: store-write access without the signing authority did not un-revoke"
+    );
+    assert_eq!(wire_code_of(&served.body), ADMISSION_REFUSED);
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "only the t0 call ever reached the inner"
+    );
 }

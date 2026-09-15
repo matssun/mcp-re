@@ -38,7 +38,14 @@
 # FIELDS
 # ------
 #
-#   id           stable, never reused
+#   id           stable, never reused. MEASURED 2026-09-15 and NOT true of this file: the
+#                numbers 25, 26 and 27 each name two probes (a bound-response family and a
+#                certificate-identity family). Nothing is silently dropped — every probe runs,
+#                because the loader carries the full string — but "M26" does not identify a
+#                probe, so a `expect_red` discussion or a review note that says one is
+#                ambiguous. Renumbering moves this file's digest and therefore every standing
+#                attestation that names it, so it is a bookkeeping change of its own rather
+#                than a passenger on a security slice.
 #   unit         the review unit whose battery is being self-tested
 #   theorem      OPTIONAL. The THM-NNNN whose conjunct this probe is about, when one is
 #                registered. Absent where the unit has no theorem yet — `conjunct` still
@@ -3307,4 +3314,63 @@ weakening = """
 """
 expect_red = [
   "lib#response::framing_tests::a_truncated_body_is_rejected_not_silently_shortened",
+]
+
+# ---------------------------------------------------------------------------
+# THM-0129 — the authoritative record's own authentication and currentness
+# ---------------------------------------------------------------------------
+#
+# The r11 critical's two conjuncts, each with the weakening that would restore the
+# situation it removed. They are separate probes because the two failures are separate:
+# delete the signature check and a store writer MINTS; delete the currentness check and a
+# store writer REPLAYS. A single probe covering both would be satisfied by either.
+
+[[probe]]
+id = "M133-admission-record-must-be-authenticated"
+unit = "http_profile.admission_state_provenance"
+theorem = "THM-0129"
+conjunct = "the state is authenticated as issued by the configured admission authority"
+# Deleting this restores the pre-r11 situation exactly: the record still parses, still
+# names a subject, a generation and a status, and still answers the gate — and anyone who
+# can write the store can say whatever they like in it. The subject and currentness checks
+# survive the weakening, which is the point: neither of them notices a forgery, so if this
+# probe does not turn a control red the authentication conjunct rests on nothing.
+path = "mcp-re-http-profile/src/authoritative_admission/record/verified.rs"
+anchor = """
+    verify_ed25519_with(
+        signing_input.as_bytes(),
+        &normalize_signature(s_seg)?,
+        &authority,
+        McpReError::InvalidSignature,
+    )
+    .map_err(|_| AdmissionRecordRefusal::SignatureInvalid)?;
+"""
+weakening = """
+    let _ = (&signing_input, &authority);
+"""
+expect_red = [
+  "lib#authoritative_admission::record::verified::tests::a_changed_status_in_the_stored_bytes_is_refused",
+  "lib#authoritative_admission::record::verified::tests::a_changed_generation_is_refused",
+  "lib#authoritative_admission::record::verified::tests::a_store_writer_cannot_mint_a_high_generation",
+  "lib#authoritative_admission::record::verified::tests::a_record_signed_by_an_unconfigured_key_is_refused",
+]
+
+[[probe]]
+id = "M134-admission-record-must-be-bounded-current"
+unit = "http_profile.admission_state_provenance"
+theorem = "THM-0129"
+conjunct = "the state is current within the deployment's declared revocation-currentness budget"
+# The half a signature cannot establish. With this deleted every record above remains
+# genuinely signed and genuinely about its own workload, and a party that can write the
+# store restores the bytes from before a revocation and keeps a revoked workload in service
+# indefinitely — which is the attack the ruling names, and which no other check here sees.
+path = "mcp-re-http-profile/src/authoritative_admission/record/verified.rs"
+anchor = """
+    check_currentness(&claims, currentness, now)?;
+"""
+weakening = """
+    let _ = (currentness, now);
+"""
+expect_red = [
+  "lib#authoritative_admission::record::verified::tests::a_restored_admitted_record_is_refused_past_the_authorized_window",
 ]

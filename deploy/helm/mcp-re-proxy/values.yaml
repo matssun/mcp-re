@@ -232,6 +232,27 @@ admissionCurrency:
   redisUrl: ""
   allowDegraded: false
   degradedBoundSecs: 0
+  # The deployment's revocation-currentness promise for the SIGNED authoritative record,
+  # in seconds. Required (and render-refused at zero) whenever mode is optional|required.
+  #
+  # Redis is a storage substrate, not the admission authority: what lives under
+  # `mcp-re:admission:<id>` is a compact JWS signed by the same authority that issues
+  # admission assertions, verified under `authorityKid`/`authorityPubkey`. A party that
+  # obtains store-write access without the signing key can delete state, corrupt it or
+  # take the store down; it cannot mint an admission, rewind a generation, or move one
+  # workload's record onto another's key.
+  #
+  # What a signature alone cannot stop is REPLAY of a genuine older record — restoring the
+  # bytes from before a revocation. This value is what stops it: past it, a record fails
+  # closed however valid its signature, and nothing has to detect the substitution. It is
+  # therefore also the authority's republication cadence — the control plane must re-sign
+  # each admitted workload's record more often than this, or admission lapses.
+  #
+  # It is NOT `degradedBoundSecs`. That bounds serving on last-known state while the
+  # authority is UNREACHABLE; this bounds how old a record may be while the store is
+  # answering normally. A deployment that tolerates no outage window still needs a
+  # workable republication cadence.
+  recordMaxAgeSecs: 0
 
 # SCITT evidence retention (SCT-2 / SCT-3). Retains the full request and response
 # messages of every served call into a content-addressed store, which is what makes
