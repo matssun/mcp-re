@@ -4224,6 +4224,11 @@ tested_symbols = [
   "lib#trust_epoch::tests::draining_does_not_read_the_store",
   "lib#trust_epoch::tests::the_request_path_does_not_wait_on_a_stalled_epoch_read",
   "lib#trust_epoch::tests::a_source_that_stops_being_polled_stops_reporting_healthy",
+  # The OTHER exit, and the one the supervisor did not report: a poller asked to stop left
+  # `is_healthy()` true for the whole missed-poll tolerance, so the latch described a source
+  # nothing was driving. The liveness bound in that control is a minute wide, so a pass is a
+  # statement about the exit path and not about how long the test waited (R11-707).
+  "lib#trust_epoch::tests::a_gracefully_stopped_poller_reports_unhealthy_at_once",
   "lib#trust_epoch::tests::a_poller_that_never_ran_is_not_healthy",
   "lib#trust_epoch::tests::a_poisoned_queue_still_delivers_the_flush",
   # THE POLLER. The only controls that run `trust_epoch_poller_body`, which is what makes

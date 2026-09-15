@@ -3419,3 +3419,24 @@ weakening = """
 expect_red = [
   "lib#signing_plane::rotation::tests::a_panicking_rotor_retires_the_snapshot_immediately_not_at_exp",
 ]
+
+[[probe]]
+id = "M137-a-stopped-poller-is-not-a-healthy-source"
+unit = "proxy.trust_epoch_source"
+conjunct = "a source nothing is driving reports unhealthy — for a poller that stopped as well as one that died"
+# The weakening restores the code as it shipped: reporting only the PANIC exit. Under it the
+# panic control stays green and the graceful-stop control turns red, which is the point —
+# the two exits are two facts, and the battery covered one of them.
+path = "mcp-re-proxy/src/trust_epoch.rs"
+anchor = """
+        let _ = ran;
+        source.report_poller_gone();
+"""
+weakening = """
+        if ran.is_err() {
+            source.report_poller_gone();
+        }
+"""
+expect_red = [
+  "lib#trust_epoch::tests::a_gracefully_stopped_poller_reports_unhealthy_at_once",
+]

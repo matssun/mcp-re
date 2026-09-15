@@ -124,9 +124,9 @@ impl<R: EpochReader> TrustEpochSource<R> {
         }
     }
 
-    /// Record that the poller is gone, so `healthy` stops describing a source nothing
-    /// is driving.
-    fn report_poller_death(&self) {
+    /// Record that nothing is driving this source any more, so `healthy` stops describing
+    /// one that is.
+    fn report_poller_gone(&self) {
         *recover(self.healthy.lock()) = false;
         *recover(self.last_poll.lock()) = None;
         eprintln!(
@@ -394,8 +394,8 @@ const TRUST_EPOCH_MISSED_POLLS_TOLERATED: u64 = 3;
 /// before serving, so the first advance after startup is detected rather than adopted.
 ///
 /// SUPERVISED, because everything downstream believes what this thread last wrote: the
-/// source requires a poll within a bound before it will call itself healthy, and a body
-/// that unwinds says so on its way out instead of leaving the latch at `true`.
+/// source requires a poll within a bound before calling itself healthy, and EITHER exit —
+/// panicked or stopped — reports that nothing will detect another advance.
 ///
 /// The liveness bound is registered HERE, before the body is handed back, so a caller
 /// that takes the body and never runs it leaves the source failing closed rather than
@@ -430,9 +430,9 @@ pub fn trust_epoch_poller_body<R: EpochReader + Send + Sync + 'static>(
                 poller.poll_once();
             }
         }));
-        if ran.is_err() {
-            source.report_poller_death();
-        }
+        // `ran.is_ok()` here means the loop returned because `stop()` said so.
+        let _ = ran;
+        source.report_poller_gone();
     }
 }
 
@@ -864,6 +864,45 @@ mod tests {
         assert!(
             !src.is_healthy(),
             "a dead poller must not keep reporting the health it last observed"
+        );
+    }
+
+    /// T6. A poller asked to STOP reports unhealthy at once, not when the bound expires.
+    ///
+    /// The other half of the same fact, and the one that was missing: only the panic exit
+    /// reported, so after a graceful stop `is_healthy()` stayed true for the whole
+    /// missed-poll tolerance — several intervals — while nothing was driving the source.
+    ///
+    /// The tolerance is set to a minute here on purpose. Under the old code this test
+    /// passes only by waiting that minute out, so a pass now is a statement about the exit
+    /// path rather than about how long the test was willing to sleep.
+    #[test]
+    fn a_gracefully_stopped_poller_reports_unhealthy_at_once() {
+        let src = std::sync::Arc::new(TrustEpochSource::new(FakeReader::new(1)));
+        let stop_after_first_nap = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop = std::sync::Arc::clone(&stop_after_first_nap);
+        let body = trust_epoch_poller_body(std::sync::Arc::clone(&src), 60, move || {
+            stop.load(std::sync::atomic::Ordering::SeqCst)
+        });
+        let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            body();
+            let _ = finished_tx.send(());
+        });
+
+        // The first poll has landed and the liveness bound is a minute wide, so nothing
+        // but the stop path can make this go false in the next three seconds.
+        wait_for(Duration::from_secs(3), || src.is_healthy());
+        stop_after_first_nap.store(true, std::sync::atomic::Ordering::SeqCst);
+        finished_rx
+            .recv_timeout(Duration::from_secs(3))
+            .expect("the body returns when asked to stop");
+        let _ = handle.join();
+
+        assert!(
+            !src.is_healthy(),
+            "a stopped poller detects no more advances than a dead one, so it must not keep \
+             reporting the health it last observed"
         );
     }
 
