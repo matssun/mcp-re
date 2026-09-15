@@ -2429,6 +2429,59 @@ expect_red = [
 ]
 
 [[probe]]
+id = "M139-the-serving-paths-declared-tier-gate-is-load-bearing"
+unit = "proxy.replay_admission_gate"
+theorem = "THM-0092"
+conjunct = "A fleet-strict deployment whose declared replay tier is undeclared or below the strict-production minimum is refused before the store is touched"
+# One gate, consulted by both entry points, so this weakening deletes it for the serving
+# path too — which is the whole reason it is one function. The controls named below drive
+# `dispatch_request_with_async_tier`, the dispatch `answering_commitment` calls: a probe
+# satisfied only by the sync entry point's controls would leave the production arm
+# unmeasured while reading as protected.
+path = "mcp-re-proxy/src/http_profile_dispatch.rs"
+anchor = """
+        match &self.tier {
+            Some(tier) if tier.meets_strict_production_minimum() => Ok(()),
+            Some(tier) => Err(ProxyDispatchError::SubMinimumReplayTier(tier.clone())),
+            None => Err(ProxyDispatchError::NoDeclaredReplayTier),
+        }
+"""
+weakening = """
+        let _ = &self.tier;
+        Ok(())
+"""
+expect_red = [
+  "lib#http_profile_dispatch::tests::the_serving_path_refuses_an_undeclared_tier_before_the_store_is_touched",
+  "lib#http_profile_dispatch::tests::the_serving_path_refuses_a_sub_minimum_tier_before_the_store_is_touched",
+]
+
+[[probe]]
+id = "M140-a-single-process-async-store-is-refused-under-fleet-strict"
+unit = "proxy.replay_admission_gate"
+theorem = "THM-0092"
+conjunct = "A store that self-reports the single-process reference class is refused under fleet-strict however strong the declared tier is"
+# The serving path's own copy of the rule the sync path inherits from `dispatch_request`.
+# There is no async `dispatch_request` to fall through to, so deleting this arm leaves a
+# fleet-strict deployment admitting against a store that says it cannot prevent a
+# cross-node replay — and nothing beneath it refuses.
+path = "mcp-re-proxy/src/http_profile_dispatch.rs"
+anchor = """
+    if config.fleet_strict
+        && tier.durability_class() == ReplayDurabilityClass::SingleProcessReference
+    {
+        return Err(ProxyDispatchError::Dispatch(
+            DispatchError::NonSharedReplayTier,
+        ));
+    }
+"""
+weakening = """
+    let _ = tier.durability_class();
+"""
+expect_red = [
+  "lib#http_profile_dispatch::tests::a_strong_declared_tier_does_not_excuse_a_single_process_async_store",
+]
+
+[[probe]]
 id = "M87-an-outage-is-not-a-miss"
 unit = "proxy.continuation_leg_binding"
 conjunct = "A continuation store that does not answer is refused as a deployment fact, not reported as the caller's"

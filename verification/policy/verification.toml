@@ -3869,13 +3869,20 @@ tested_symbols = [
 [[unit]]
 id = "proxy.replay_admission_gate"
 class = "V0"
-description = "The fail-closed order of replay admission: an undeclared or sub-minimum tier and a store that self-reports the single-process class are refused before the store is touched, the atomic admission is the last step, and a store that does not answer refuses rather than admitting."
+description = "The fail-closed order of replay admission, measured on BOTH dispatch entry points and therefore on the one the serving path runs: an undeclared or sub-minimum tier and a store that self-reports the single-process class are refused before the store is touched, the atomic admission is the last step, and a store that does not answer refuses rather than admitting."
 paths = [
   "mcp-re-proxy/src/http_profile_dispatch.rs",
   "mcp-re-proxy/src/http_profile_dispatch/core_projection.rs",
 ]
 exported_contracts = []
-evidence = ["test://proxy/replay_admission/fail_closed_order"]
+# TWO evidence classes. The gate's arms are a handful of `return Err` lines on the request
+# path, so "the battery is green" and "the battery would notice one of them being deleted"
+# are different facts, and only the second is what a fail-closed claim needs. The probes
+# delete them; the controls that go red are the claim's evidence.
+evidence = [
+  "test://proxy/replay_admission/fail_closed_order",
+  "mutation://proxy/replay_admission/fail_closed_order",
+]
 # WHAT THIS IS ABOUT: the REFUSAL direction, which is local and needs no premise about any
 # backend. That an ACKNOWLEDGED admission durably established the nonce fleet-wide is the
 # other direction, it is not local, and it is carried by ASM-0040 and ASM-0041 at the
@@ -3901,6 +3908,18 @@ tested_symbols = [
   # arm does not re-decide a verdict the dispatcher already gave.
   "lib#http_profile_dispatch::core_projection::tests::an_unusable_tier_and_an_undeclared_one_are_one_verdict",
   "lib#http_profile_dispatch::core_projection::tests::a_delegated_failure_keeps_the_dispatchers_verdict",
+  # THE SERVING PATH. Everything above drives `dispatch_request_with_tier_gate`, which no
+  # production caller reaches — it is the reference reading of the profile pipeline. These
+  # five drive `dispatch_request_with_async_tier`, which `answering_commitment` calls, and
+  # they are listed separately because a test property includes the FUNCTION the test
+  # exists in: the two entry points share the deployment tier gate but not their shape, and
+  # the store-class refusal the sync path inherits from `dispatch_request` is carried by the
+  # async one itself.
+  "lib#http_profile_dispatch::tests::the_serving_path_refuses_an_undeclared_tier_before_the_store_is_touched",
+  "lib#http_profile_dispatch::tests::the_serving_path_refuses_a_sub_minimum_tier_before_the_store_is_touched",
+  "lib#http_profile_dispatch::tests::a_strong_declared_tier_does_not_excuse_a_single_process_async_store",
+  "lib#http_profile_dispatch::tests::neither_serving_path_gate_fires_outside_fleet_strict",
+  "lib#http_profile_dispatch::tests::the_serving_path_admits_a_strict_minimum_tier_over_a_durable_store",
 ]
 
 [[unit]]

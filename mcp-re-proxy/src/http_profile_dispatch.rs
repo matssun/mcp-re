@@ -58,6 +58,28 @@ pub struct ProxyDispatchConfig {
     pub tier: Option<ReplayDurabilityTier>,
 }
 
+impl ProxyDispatchConfig {
+    /// The deployment tier gate: whether what the operator DECLARED the shared replay
+    /// store to be clears [`ReplayDurabilityTier::meets_strict_production_minimum`].
+    ///
+    /// One function, consulted by both entry points below, so the rule the serving path
+    /// runs is the rule a control can reach. Pure — no store, no await, no side effect —
+    /// which is what lets either of them refuse before anything has been spent.
+    ///
+    /// Outside fleet-strict it admits: the declaration is load-bearing only where the
+    /// operator asked for the strict posture.
+    fn deployment_tier_admits(&self) -> Result<(), ProxyDispatchError> {
+        if !self.fleet_strict {
+            return Ok(());
+        }
+        match &self.tier {
+            Some(tier) if tier.meets_strict_production_minimum() => Ok(()),
+            Some(tier) => Err(ProxyDispatchError::SubMinimumReplayTier(tier.clone())),
+            None => Err(ProxyDispatchError::NoDeclaredReplayTier),
+        }
+    }
+}
+
 /// A fail-closed adapter outcome: the tier-gate refusals this layer adds, plus a
 /// delegated dispatcher failure. Every variant maps to a frozen `mcp-re.*` wire
 /// token (no parallel namespace).
@@ -80,10 +102,11 @@ pub enum ProxyDispatchError {
 mod core_projection;
 
 /// Drive a verified full-profile request through the replay-tier gate and then the
-/// pure dispatcher.
+/// pure dispatcher — the reference reading of the profile pipeline, wrapping
+/// [`dispatch_request`]. The serving path runs [`dispatch_request_with_async_tier`].
 ///
-/// Ordering (fail closed): the [`ReplayDurabilityTier`] strict-production gate FIRST
-/// — refuse a sub-minimum or undeclared tier before touching the cache — then
+/// Ordering (fail closed): the shared `deployment_tier_admits` gate FIRST —
+/// refuse a sub-minimum or undeclared tier before touching the cache — then
 /// [`dispatch_request`], which applies the core `is_single_process_reference` gate
 /// beneath and performs the atomic replay admission LAST. `verified` MUST come from
 /// [`mcp_re_http_profile::verify_request_full`]; `continuation_ctx` is `Some` iff
@@ -94,14 +117,8 @@ pub fn dispatch_request_with_tier_gate(
     continuation_ctx: Option<RetainedContinuation<'_>>,
     config: &ProxyDispatchConfig,
 ) -> Result<DispatchOutcome, ProxyDispatchError> {
-    // 1. Deployment tier gate (proxy) — only meaningful under fleet-strict.
-    if config.fleet_strict {
-        match &config.tier {
-            Some(tier) if tier.meets_strict_production_minimum() => {}
-            Some(tier) => return Err(ProxyDispatchError::SubMinimumReplayTier(tier.clone())),
-            None => return Err(ProxyDispatchError::NoDeclaredReplayTier),
-        }
-    }
+    // 1. Deployment tier gate (proxy) — the shared one.
+    config.deployment_tier_admits()?;
 
     // 2. Pure dispatcher (core gate beneath + replay admission). fleet_strict is
     //    threaded through so the core single-process refusal still fires — defense
@@ -118,16 +135,20 @@ pub fn dispatch_request_with_tier_gate(
 }
 
 /// Drive a verified full-profile request through the replay-tier gate and then the
-/// AUTHORITATIVE ASYNC replay tier (ADR-MCPRE-051 §4) — the production serving
-/// path's admission. The async analogue of [`dispatch_request_with_tier_gate`]:
-/// identical fail-closed ordering and identical key construction (both call
-/// [`prepare_http_dispatch`]), differing ONLY in that the one side-effecting step
-/// AWAITS the async tier's atomic insert-if-absent instead of a sync cache.
+/// AUTHORITATIVE ASYNC replay tier (ADR-MCPRE-051 §4) — THE production serving path's
+/// admission (`http_profile_serve::answering_commitment`).
 ///
-/// Ordering (fail closed): the deployment [`ReplayDurabilityTier`] strict gate and
-/// the store's single-process-reference refusal FIRST (both refuse before any
-/// side effect), then the non-side-effecting key construction + continuation
-/// binding, then the awaited atomic admission LAST. `verified` MUST come from
+/// It shares [`ProxyDispatchConfig`]'s `deployment_tier_admits` gate with
+/// [`dispatch_request_with_tier_gate`] and builds the replay key the same way (both call
+/// [`prepare_http_dispatch`]), but the two are not the same shape: the sync entry point
+/// WRAPS [`dispatch_request`] and inherits that dispatcher's store-class refusal beneath
+/// it, while this one IS the dispatcher and carries that refusal itself, at step 1b —
+/// same rule about the object holding the nonces, one level higher.
+///
+/// Ordering (fail closed): the declared-tier gate and the store's
+/// single-process-reference refusal FIRST (both refuse before any side effect), then the
+/// non-side-effecting key construction + continuation binding, then the awaited atomic
+/// admission LAST. `verified` MUST come from
 /// [`mcp_re_http_profile::verify_request_full`].
 pub async fn dispatch_request_with_async_tier(
     verified: &VerifiedMcpRequest,
@@ -136,22 +157,18 @@ pub async fn dispatch_request_with_async_tier(
     config: &ProxyDispatchConfig,
     now_unix: i64,
 ) -> Result<DispatchOutcome, ProxyDispatchError> {
-    // 1a. Deployment tier gate (proxy) — only meaningful under fleet-strict.
-    if config.fleet_strict {
-        match &config.tier {
-            Some(tier) if tier.meets_strict_production_minimum() => {}
-            Some(tier) => return Err(ProxyDispatchError::SubMinimumReplayTier(tier.clone())),
-            None => return Err(ProxyDispatchError::NoDeclaredReplayTier),
-        }
-        // 1b. Defense in depth: the DECLARED tier may be strong, but if the wired
-        //     async store self-reports the single-process reference class it cannot
-        //     prevent cross-node replays — refuse on the same frozen token, exactly
-        //     as the sync core gate does beneath `dispatch_request`.
-        if tier.durability_class() == ReplayDurabilityClass::SingleProcessReference {
-            return Err(ProxyDispatchError::Dispatch(
-                DispatchError::NonSharedReplayTier,
-            ));
-        }
+    // 1a. Deployment tier gate (proxy) — the shared one.
+    config.deployment_tier_admits()?;
+    // 1b. The store's own self-report. A strong DECLARATION does not excuse a wired
+    //     store that says it cannot prevent a cross-node replay. Sync reaches this rule
+    //     inside `dispatch_request`; there is no async `dispatch_request`, so this
+    //     function carries it, on the same frozen token.
+    if config.fleet_strict
+        && tier.durability_class() == ReplayDurabilityClass::SingleProcessReference
+    {
+        return Err(ProxyDispatchError::Dispatch(
+            DispatchError::NonSharedReplayTier,
+        ));
     }
 
     // 2–3. Native key construction + continuation binding (shared, non-side-effecting).
@@ -194,6 +211,14 @@ mod tests {
     use mcp_re_http_profile::ResolvedActor;
     use mcp_re_http_profile::SignerSlot;
     use std::cell::Cell;
+
+    use crate::async_replay::AsyncAtomicReplayStore;
+    use crate::async_replay::ReplayDecisionFuture;
+    use crate::async_replay::ReplayInsert;
+    use crate::config_state::FreshnessWindow;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
 
     /// A cache that records whether the dispatcher ever reached it.
     ///
@@ -475,6 +500,198 @@ mod tests {
             McpReError::from(&err),
             McpReError::ReplayCacheUnavailable,
             "an outage must not be reported as a replay: {err:?}"
+        );
+    }
+
+    /// An async store that records whether the tier ever reached it.
+    ///
+    /// The same construction as [`WitnessCache`], for the same reason: the two gates above
+    /// the admission step claim to refuse BEFORE any side effect, and a stub that only
+    /// returned a decision could not tell that from a refusal taken after the insert.
+    struct WitnessStore {
+        touched: Arc<AtomicBool>,
+        class: ReplayDurabilityClass,
+    }
+
+    impl AsyncAtomicReplayStore for WitnessStore {
+        fn atomic_insert_if_absent<'a>(
+            &'a self,
+            _insert: ReplayInsert<'a>,
+        ) -> ReplayDecisionFuture<'a> {
+            self.touched.store(true, Ordering::SeqCst);
+            Box::pin(async { Ok(ReplayDecision::Fresh) })
+        }
+
+        fn durability_class(&self) -> ReplayDurabilityClass {
+            self.class
+        }
+    }
+
+    /// An async tier over a witness store self-reporting `class`, and the flag that store
+    /// sets when the admission step reaches it.
+    fn async_tier(class: ReplayDurabilityClass) -> (AsyncReplayTier, Arc<AtomicBool>) {
+        let touched = Arc::new(AtomicBool::new(false));
+        let store = WitnessStore {
+            touched: Arc::clone(&touched),
+            class,
+        };
+        let freshness = FreshnessWindow::new(5).expect("5s is inside the §5.1 skew bound");
+        (AsyncReplayTier::new(Arc::new(store), freshness), touched)
+    }
+
+    fn block<F: std::future::Future>(f: F) -> F::Output {
+        tokio::runtime::Runtime::new().expect("rt").block_on(f)
+    }
+
+    fn strict(tier: Option<ReplayDurabilityTier>) -> ProxyDispatchConfig {
+        ProxyDispatchConfig {
+            fleet_strict: true,
+            tier,
+        }
+    }
+
+    /// THE SERVING PATH: a fleet-strict deployment that declared no tier is refused by
+    /// `dispatch_request_with_async_tier` without the async store being touched.
+    ///
+    /// The five controls below drive the function `answering_commitment` calls. The sync
+    /// ones above drive a function no production caller reaches, so they establish the
+    /// gate's logic and say nothing about the admission the proxy actually performs — a
+    /// test property includes the FUNCTION the test exists in.
+    #[test]
+    fn the_serving_path_refuses_an_undeclared_tier_before_the_store_is_touched() {
+        let (tier, touched) = async_tier(ReplayDurabilityClass::Durable);
+        let err = block(dispatch_request_with_async_tier(
+            &verified(),
+            &tier,
+            None,
+            &strict(None),
+            1,
+        ))
+        .expect_err("fleet-strict with no declared tier must refuse");
+
+        assert_eq!(err, ProxyDispatchError::NoDeclaredReplayTier);
+        assert!(
+            !touched.load(Ordering::SeqCst),
+            "the store was consulted before refusal"
+        );
+    }
+
+    /// THE SERVING PATH: a declared tier below the strict-production minimum is refused
+    /// without the async store being touched, and the refusal names what was declared.
+    #[test]
+    fn the_serving_path_refuses_a_sub_minimum_tier_before_the_store_is_touched() {
+        for declared in [
+            ReplayDurabilityTier::AsyncReplicatedBounded,
+            ReplayDurabilityTier::SingleStoreFailClosed,
+        ] {
+            let (tier, touched) = async_tier(ReplayDurabilityClass::Durable);
+            let err = block(dispatch_request_with_async_tier(
+                &verified(),
+                &tier,
+                None,
+                &strict(Some(declared.clone())),
+                1,
+            ))
+            .expect_err("a sub-minimum tier must refuse under fleet-strict");
+
+            assert_eq!(err, ProxyDispatchError::SubMinimumReplayTier(declared));
+            assert!(
+                !touched.load(Ordering::SeqCst),
+                "the store was consulted before refusal"
+            );
+        }
+    }
+
+    /// THE SERVING PATH, step 1b: the strongest possible DECLARATION does not excuse a
+    /// wired async store that self-reports the single-process reference class.
+    ///
+    /// This is the refusal the async path carries itself, because there is no async
+    /// `dispatch_request` beneath it to inherit one from. It is also the case a
+    /// declaration-only check would admit: the operator's declaration is strong and the
+    /// object actually holding the nonces cannot prevent a cross-node replay.
+    #[test]
+    fn a_strong_declared_tier_does_not_excuse_a_single_process_async_store() {
+        let (tier, touched) = async_tier(ReplayDurabilityClass::SingleProcessReference);
+        let err = block(dispatch_request_with_async_tier(
+            &verified(),
+            &tier,
+            None,
+            &strict(Some(ReplayDurabilityTier::Linearizable)),
+            1,
+        ))
+        .expect_err("a single-process async store must be refused under fleet-strict");
+
+        assert_eq!(
+            err,
+            ProxyDispatchError::Dispatch(DispatchError::NonSharedReplayTier)
+        );
+        assert!(
+            !touched.load(Ordering::SeqCst),
+            "the store was consulted before refusal"
+        );
+    }
+
+    /// Neither serving-path gate fires outside fleet-strict — the negative control for the
+    /// three above.
+    ///
+    /// Without it they are equally satisfied by a gate that refuses every request, which
+    /// would establish nothing about the ones that ARE admitted. The store here
+    /// self-reports the class step 1b refuses, so this also pins that 1b is conditioned on
+    /// the posture and not on the class alone.
+    #[test]
+    fn neither_serving_path_gate_fires_outside_fleet_strict() {
+        let (tier, touched) = async_tier(ReplayDurabilityClass::SingleProcessReference);
+        let outcome = block(dispatch_request_with_async_tier(
+            &verified(),
+            &tier,
+            None,
+            &ProxyDispatchConfig {
+                fleet_strict: false,
+                tier: None,
+            },
+            1,
+        ));
+
+        assert!(
+            !matches!(
+                outcome,
+                Err(ProxyDispatchError::NoDeclaredReplayTier)
+                    | Err(ProxyDispatchError::SubMinimumReplayTier(_))
+                    | Err(ProxyDispatchError::Dispatch(
+                        DispatchError::NonSharedReplayTier
+                    ))
+            ),
+            "a fleet-strict gate fired without fleet-strict"
+        );
+        assert!(
+            touched.load(Ordering::SeqCst),
+            "the admission step was not reached"
+        );
+    }
+
+    /// THE SERVING PATH: a tier meeting the strict minimum over a store that self-reports
+    /// a durable class passes both gates and reaches the awaited admission.
+    ///
+    /// The mirror of the first three under the strict posture: they refuse, this admits,
+    /// and the pair is what distinguishes a gate from a blanket refusal.
+    #[test]
+    fn the_serving_path_admits_a_strict_minimum_tier_over_a_durable_store() {
+        let (tier, touched) = async_tier(ReplayDurabilityClass::Durable);
+        let outcome = block(dispatch_request_with_async_tier(
+            &verified(),
+            &tier,
+            None,
+            &strict(Some(ReplayDurabilityTier::Linearizable)),
+            1,
+        ));
+
+        assert!(
+            outcome.is_ok(),
+            "a strict-minimum tier over a durable store was refused: {outcome:?}"
+        );
+        assert!(
+            touched.load(Ordering::SeqCst),
+            "the admission step was not reached"
         );
     }
 }
