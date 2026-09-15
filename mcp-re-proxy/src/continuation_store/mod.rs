@@ -50,17 +50,25 @@
 //! — deleted the retained bases permanently, and an approval round trip cannot be
 //! re-opened.
 //!
-//! One store serves one dispatch boundary, so the audience adds no separation the
-//! actor does not already give.
-//!
 //! One-shot survives the split: `consume` reports whether IT removed the entry, so of
 //! two concurrent answer legs exactly one is admitted and the other fails closed.
 //!
-//! The store is CONTENT-CORRELATION only: it holds public signature-base bytes (not
-//! secret) keyed by an actor-scoped requestState digest, and its entries are
-//! one-shot. It is never a trust root — trust comes from the client's RFC 9421
-//! signature over the answer leg (incl. the continuation digests) and the digest
-//! equality the dispatcher enforces against these bytes.
+//! **What the store is trusted for.** PROVENANCE — that an entry
+//! under `mcp-re:cont:` was written by an open leg of this deployment. The dispatcher
+//! compares the client's signed digests against the bytes this store returned, and
+//! nothing establishes that those bytes came from an `InputRequiredResult` this fleet
+//! signed; so a party able to WRITE the store plants bases under a key derived from
+//! its OWN resolved actor, signs an answer leg over their digests, and the binding
+//! passes — a completed human-approval round trip nobody approved. ASM-0047 registers
+//! that premise and ASM-0048 what the Redis mechanism's replies mean. The client's RFC
+//! 9421 signature carries the other half independently, so what rests on the store is
+//! the human-approval property and not the caller's identity.
+//!
+//! **Confidentiality is claimed by nothing here.** A base carries the VALUE of every
+//! component its message covered, and the profile's closed allowlist admits `authorization`
+//! and `dpop` (`verify/floor/covered_components.rs`) — so a deployment whose clients cover
+//! either retains a bearer credential at rest for the continuation TTL. ASM-0047 constrains
+//! who may WRITE the tier and says nothing about who may read it.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -147,27 +155,26 @@ pub const CONTINUATION_KEY_PREFIX: &str = "mcp-re:cont:";
 /// profile computes over the same bytes.
 const CONTINUATION_KEY_DOMAIN: &[u8] = b"mcp-re/continuation-key/v1";
 
-/// Derive the shared-store key for a continuation from the RESOLVED ACTOR and the
-/// opaque `requestState` bytes:
-/// `mcp-re:cont:<base64url(SHA-256(domain || len(actor) || actor || requestState))>`.
+/// Derive the shared-store key for a continuation from the dispatch AUDIENCE, the
+/// RESOLVED ACTOR and the opaque `requestState` bytes:
+/// `mcp-re:cont:<b64url(SHA-256(domain || len(aud) || aud || len(actor) || actor || state))>`.
 ///
-/// Both legs derive it the same way — the open leg from the state it minted into the
-/// reply, the answer leg from the state the client re-presents — and both use the
-/// actor the VERIFIER resolved, never anything the request asserts. A matching answer
-/// from the same actor therefore lands on the exact entry the open leg wrote, and an
-/// answer from any other actor lands on a key that does not exist.
+/// Both legs derive it the same way: the open leg from the state it minted into the reply,
+/// the answer leg from the state the client re-presents. Why it is the VERIFIER's actor is
+/// the module header's argument and is not restated here.
 ///
-/// The AUDIENCE is in the key too, as it is in the replay composite key.
-///
-/// Without it two MCP-RE deployments — different audiences, different inner backends —
+/// The AUDIENCE is in the key as it is in the replay composite key. Without it two
+/// MCP-RE deployments — different audiences, different inner backends —
 /// pointed at one Redis share a single continuation namespace, and nothing in config
 /// or code enforced the assumption that they would not be. An actor trusted by both
 /// could then open a leg against one dispatch boundary and answer it against the
 /// other. The audience is what makes a signed request valid HERE and nowhere else, so
 /// it belongs in any key that crosses a shared store.
 ///
-/// Every field is length-prefixed so no tuple can be spelled as a different one by
-/// moving a boundary between them.
+/// Every boundary between the fields is pinned: `audience_id` and `actor_id` each carry
+/// their length, and `request_state` is last, so the remaining bytes are all of it. No
+/// tuple can be spelled as a different one by moving a boundary — which is the property;
+/// a length prefix on the final field would add nothing to it.
 ///
 /// `actor_id` is `role:trust_domain:subject:keyid`, so the scope is the KEY, not the
 /// subject: both legs must be signed with the same key. This is a narrower identity than
@@ -190,8 +197,6 @@ pub fn continuation_key(audience_id: &str, actor_id: &str, request_state: &[u8])
         mcp_re_core::b64url_encode(&hasher.finalize())
     )
 }
-
-// ---- In-memory store (unit tests / single-process only) ---------------------
 
 #[cfg(test)]
 mod tests {
@@ -272,13 +277,35 @@ mod tests {
         assert!(continuation_key(AUD, ACTOR_A, b"abc").starts_with(CONTINUATION_KEY_PREFIX));
     }
 
+    /// No boundary in the key can be moved — over BOTH of the key's interior boundaries,
+    /// which is what the derivation claims.
+    ///
+    /// The actor/state half is the reachable attack: without `actor_id`'s length prefix
+    /// `("ab", "c")` and `("a", "bc")` hash the same bytes, and one actor names another's
+    /// entry by spelling the split differently.
+    ///
+    /// The audience/actor half needs a constructed witness, and the construction is the
+    /// point. `("ab", "c")` versus `("a", "bc")` does NOT separate it — the actor prefix
+    /// that follows pins that boundary from the right — so the obvious pair passes
+    /// whether `audience_id` carries its length or not, and a control written that way
+    /// would report a check it never exercised. Moving this boundary means absorbing the
+    /// FOLLOWING length prefix into the audience, which is what the pair below does: the
+    /// two tuples differ, and their unprefixed encodings are byte-identical.
     #[test]
-    fn the_actor_state_boundary_cannot_be_moved() {
-        // Without the length prefix, ("ab", "c") and ("a", "bc") would hash the same
-        // bytes — an actor could name another's entry by spelling the split differently.
+    fn no_boundary_between_the_keys_fields_can_be_moved() {
         assert_ne!(
             continuation_key(AUD, "ab", b"c"),
             continuation_key(AUD, "a", b"bc")
+        );
+
+        // ("A", "X", 0x00*8 ++ "Z") and ("A" ++ len8("X") ++ "X", "", "Z") encode to the
+        // same bytes once `audience_id`'s length is dropped: the first tuple's actor
+        // prefix becomes part of the second tuple's audience.
+        let mut state = vec![0u8; 8];
+        state.push(b'Z');
+        assert_ne!(
+            continuation_key("A", "X", &state),
+            continuation_key("A\0\0\0\0\0\0\0\u{1}X", "", b"Z")
         );
     }
 }

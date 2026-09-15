@@ -290,8 +290,13 @@ paths = [
   # listed, so a unit reaching it crossed this boundary without the model saying so. Named
   # precisely: the reader, not the cache that reacts to what it read.
   "mcp-re-proxy/src/trust_epoch.rs",
+  # r11 R11-346/R11-518. The MRTR correlation tier keeps its entries in the same store
+  # class, and a unit reached it without the model saying so. The file that holds the
+  # connection, not the trait or the in-process reference beside it — same rule as
+  # `trust_epoch.rs` above.
+  "mcp-re-proxy/src/redis_continuation_store.rs",
 ]
-beyond = "Whether Redis replication and etcd consensus behave as their premises state. THM-0092's scope says this in as many words, and no umbrella premise stands in for both mechanisms."
+beyond = "Whether Redis replication and etcd consensus behave as their premises state, and who else can write the keyspaces a fleet keeps its cross-replica state in. THM-0092's scope says the first in as many words, and no umbrella premise stands in for both mechanisms; ASM-0047 says the second, which is load-bearing for the correlation tier in a way it is not for the others — a planted replay entry can only refuse a request, a planted correlation entry manufactures an approval."
 max_class_without_assumption = "V0"
 
 [[boundary]]

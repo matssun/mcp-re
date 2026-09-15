@@ -43,8 +43,12 @@ fn decode_bases(value: &str) -> Option<RetainedBases> {
     })
 }
 
-/// A durable, cross-process ASYNC continuation store backed by Redis
-/// `SET ... PX` + `GETDEL`.
+/// A durable, cross-process ASYNC continuation store backed by Redis `SET ... PX`, a
+/// non-destructive `GET`, and a `DEL` whose returned count is the one-shot verdict.
+///
+/// Not `GETDEL`: that is the destructive read the peek/consume split exists to forbid,
+/// and it would let a request whose binding is about to fail delete a live entry on its
+/// way out.
 pub struct RedisContinuationStore {
     /// Auto-reconnecting, multiplexed async connection. Cloned per op (cheap).
     conn: ConnectionManager,
