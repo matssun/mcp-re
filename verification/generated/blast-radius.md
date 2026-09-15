@@ -53,6 +53,7 @@ attestations this view cannot see.
 | unit://http_profile.artifact_verification_boundary | source, contracts or evidence | THM-0008, THM-0015 | _no consumer_ |
 | unit://http_profile.continuation_binding | source, contracts or evidence | THM-0010 | http_profile.continuation_unbypassability (PROOF_DEPENDENCY) |
 | unit://http_profile.continuation_unbypassability | source, contracts or evidence | THM-0009 | _no consumer_ |
+| unit://http_profile.delegated_signing_custody | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://http_profile.freshness_window | source, contracts or evidence | THM-0001, THM-0014, THM-0016, THM-0017, THM-0021, THM-0022 | _no consumer_ |
 | unit://http_profile.keyid | source, contracts or evidence | THM-0055 | _no consumer_ |
 | unit://http_profile.keyid_selector | source, contracts or evidence | THM-0050 | _no consumer_ |
@@ -67,12 +68,16 @@ attestations this view cannot see.
 | unit://http_profile.verifier_result_separation | source, contracts or evidence | THM-0047, THM-0051 | _no consumer_ |
 | unit://http_profile.verifier_results | source, contracts or evidence | THM-0014, THM-0015, THM-0016, THM-0017, THM-0018, THM-0019, THM-0020, THM-0021, THM-0022, THM-0065 | proxy.request_peer_binding (COMPILE_DEPENDENCY) |
 | unit://policy.authorization_taxonomy | source, contracts or evidence | THM-0111 | _no consumer_ |
+| unit://proxy.admission_configuration_state | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://proxy.admission_currency_gate | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.admission_state_source | source, contracts or evidence | THM-0129 | _no consumer_ |
 | unit://proxy.async_replay_retention | source, contracts or evidence | THM-0105 | _no consumer_ |
 | unit://proxy.audit_delivery | source, contracts or evidence | THM-0070 | _no consumer_ |
 | unit://proxy.audit_record_coordinates | source, contracts or evidence | THM-0069, THM-0071 | _no consumer_ |
 | unit://proxy.audit_text_rendering | source, contracts or evidence | THM-0130 | _no consumer_ |
 | unit://proxy.authenticated_relationship_peer | source, contracts or evidence | THM-0031 | proxy.current_authenticated_peer (CONTRACT_CONSUMES) |
+| unit://proxy.authorization_capability | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://proxy.authorization_configuration_state | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.authorization_posture | source, contracts or evidence | THM-0056 | _no consumer_ |
 | unit://proxy.aws_kms_adapter | source, contracts or evidence | THM-0116 | _no consumer_ |
 | unit://proxy.aws_sts_credentials | source, contracts or evidence | THM-0117 | _no consumer_ |

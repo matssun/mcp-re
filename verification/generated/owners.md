@@ -49,6 +49,7 @@ not an omission to hide.
 | http_profile.artifact_verification_boundary | V0 | THM-0008 | 0 |
 | http_profile.continuation_binding | V1 | THM-0010 | 6 |
 | http_profile.continuation_unbypassability | V1 | THM-0009 | 6 |
+| http_profile.delegated_signing_custody | V0 | _none_ | 0 |
 | http_profile.freshness_window | V1 | THM-0001 | 11 |
 | http_profile.keyid | V0 | THM-0055 | 0 |
 | http_profile.keyid_selector | V0 | THM-0050 | 1 |
@@ -63,12 +64,16 @@ not an omission to hide.
 | http_profile.verifier_result_separation | V0 | THM-0047 | 0 |
 | http_profile.verifier_results | V0 | THM-0014, THM-0015, THM-0016, THM-0017, THM-0018, THM-0019, THM-0020, THM-0021, THM-0022 | 3 |
 | policy.authorization_taxonomy | V0 | _none_ | 0 |
+| proxy.admission_configuration_state | V0 | _none_ | 0 |
+| proxy.admission_currency_gate | V0 | _none_ | 0 |
 | proxy.admission_state_source | V0 | _none_ | 0 |
 | proxy.async_replay_retention | V0 | THM-0105 | 0 |
 | proxy.audit_delivery | V0 | THM-0070 | 0 |
 | proxy.audit_record_coordinates | V0 | THM-0069, THM-0071 | 0 |
 | proxy.audit_text_rendering | V0 | THM-0130 | 0 |
 | proxy.authenticated_relationship_peer | V0 | THM-0031 | 1 |
+| proxy.authorization_capability | V0 | _none_ | 0 |
+| proxy.authorization_configuration_state | V0 | _none_ | 0 |
 | proxy.authorization_posture | V0 | THM-0056 | 0 |
 | proxy.aws_kms_adapter | V0 | THM-0116 | 0 |
 | proxy.aws_sts_credentials | V0 | THM-0117 | 0 |

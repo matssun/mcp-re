@@ -3764,6 +3764,153 @@ tested_symbols = [
 ]
 
 [[unit]]
+id = "proxy.admission_currency_gate"
+class = "V0"
+description = "The §7 admission gate: a call declaring no admission is refused where the deployment requires one, an unreachable authority is tolerated only while this replica's own window is unexhausted, and a store that ANSWERED with nothing this deployment will act on is a refusal rather than an entry to the degraded fork."
+paths = [
+  "mcp-re-proxy/src/admission_enforcer/mod.rs",
+  "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/admission_currency_gate/degraded_window_and_declaration"]
+# TWO TARGETS, and the split is the point. The in-file controls measure the window's
+# arithmetic, which no request can reach; the integration battery drives `decide` through the
+# production `HttpProfileProxy`, which is the only thing that can say the gate is CONSULTED.
+# A unit citing either alone would be evidence for half a claim.
+#
+# `tests/integration_async` is an ordinary cargo test target with no `required-features` —
+# measured, because six of its FILES are `#![cfg(feature = "async_serve")]` and these two are
+# not: the default lane lists 159 tests there and the feature lane 189.
+tested_symbols = [
+  "lib#admission_enforcer::tests::a_new_enforcer_has_a_window_nobody_earned",
+  "lib#admission_enforcer::degraded_window::tests::a_replica_that_never_reached_the_authority_has_no_window",
+  "lib#admission_enforcer::degraded_window::tests::the_degraded_window_closes_p_after_the_last_successful_read",
+  "lib#admission_enforcer::degraded_window::tests::an_out_of_order_read_does_not_rewind_the_window",
+  "lib#admission_enforcer::degraded_window::tests::without_the_opt_in_there_is_no_window_at_all",
+  "tests/integration_async#admission_currency_serving_test::a_call_without_admission_evidence_is_refused_when_required_and_served_when_optional",
+  "tests/integration_async#admission_currency_serving_test::an_unreachable_authority_fails_closed_by_default",
+  "tests/integration_async#admission_currency_serving_test::an_unreachable_authority_serves_within_p_and_fails_closed_past_it",
+  "tests/integration_async#admission_currency_serving_test::a_replica_that_never_reached_the_authority_does_not_enter_degraded_mode",
+  "tests/integration_async#admission_currency_serving_test::an_unknown_workload_is_refused_not_routed_into_degraded_mode",
+  "tests/integration_async#admission_currency_serving_test::a_corrupt_record_on_a_reachable_store_is_refused_and_never_degraded",
+  "tests/integration_async#admission_currency_serving_test::a_record_minted_by_a_store_writer_is_refused_and_never_degraded",
+  "tests/integration_async#admission_currency_serving_test::a_superseded_generation_is_refused_before_the_backend_runs",
+  "tests/integration_async#admission_currency_serving_test::a_revoked_workload_is_refused_though_its_assertion_is_still_valid",
+]
+
+[[unit]]
+id = "proxy.admission_configuration_state"
+class = "V0"
+description = "What admission configuration this deployment RECOGNISES: every legal form is classified and accepted, an enforcing state carries every value it cannot verify without, and a configuration that names no authority is refused rather than served as OFF."
+paths = ["mcp-re-proxy/src/config_state/admission.rs"]
+exported_contracts = []
+evidence = ["test://proxy/admission_configuration_state/recognised_forms"]
+# Separate from the gate above because these are different facts: this decides what a
+# deployment may BE, the gate decides what a running one DOES. One unit over both would need
+# an "and" in its description, which ADR-MCPRE-061 §8 question 1 names as a shallow boundary.
+tested_symbols = [
+  "lib#config_state::admission::tests::every_legal_state_form_is_classified_and_accepted",
+  "lib#config_state::admission::tests::an_enforcing_state_carries_the_authority_that_made_it_inhabitable",
+  "lib#config_state::admission::tests::the_availability_posture_is_classified_from_the_two_flags",
+  "lib#config_state::admission::tests::the_off_state_carries_nothing_because_it_verifies_nothing",
+  "lib#config_state::admission::tests::a_refused_configuration_recognises_no_state",
+  "lib#config_state::admission::tests::the_degraded_sub_state_is_accepted_with_a_positive_window",
+  "lib#config_state::admission::tests::an_enforcing_state_names_every_value_it_cannot_verify_without",
+  "lib#config_state::admission::tests::an_authority_key_that_cannot_verify_anything_is_refused",
+]
+
+[[unit]]
+id = "proxy.authorization_capability"
+class = "V0"
+description = "What a running deployment does with an ADR-065 authorization decision: a deployment installing nothing decides nothing and claims nothing, a configured one refuses a deny and a request carrying no decision, and a decision for another action does not authorize this one."
+paths = [
+  "mcp-re-proxy/src/authorization/capability.rs",
+  "mcp-re-proxy/src/authorization/serving.rs",
+  "mcp-re-proxy/src/authorization/evaluator.rs",
+  "mcp-re-proxy/src/authorization/grant.rs",
+  "mcp-re-proxy/src/authorization/decision_evidence.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/authorization_capability/installed_decision"]
+tested_symbols = [
+  "lib#authorization::capability::tests::a_deployment_installing_nothing_says_so_without_reading_any_trust_material",
+  "lib#authorization::capability::tests::a_configured_profile_installs_an_evaluator_over_the_enrolled_authorities",
+  "lib#authorization::capability::tests::a_configured_profile_with_no_enrolled_authority_refuses_startup",
+  "lib#authorization::capability::tests::a_request_signer_key_does_not_become_an_authorization_authority",
+  "lib#authorization::capability::tests::a_configured_deployment_permits_a_correctly_bound_permit",
+  "lib#authorization::capability::tests::a_configured_deployment_refuses_a_deny",
+  "lib#authorization::capability::tests::a_configured_deployment_refuses_a_request_carrying_no_decision",
+  "lib#authorization::capability::tests::changing_the_document_changes_the_evidence_identity_even_under_one_decision_id",
+  "lib#authorization::capability::tests::the_evidence_identity_is_a_function_of_the_document_alone",
+  "lib#authorization::capability::tests::the_audit_record_answers_which_decision_and_which_evidence_separately",
+  "lib#authorization::capability::tests::a_decision_for_another_action_does_not_authorize_this_one",
+  "lib#authorization::serving::tests::a_deployment_that_installs_nothing_still_decides_and_claims_nothing",
+  "lib#authorization::evaluator::tests::the_seam_carries_verified_facts_in_and_an_attributed_grant_out",
+  "lib#authorization::evaluator::tests::the_authority_decision_id_and_the_evidence_identity_are_different_coordinates",
+  "lib#authorization::evaluator::tests::a_denial_crosses_the_seam_as_the_frozen_token",
+  "lib#authorization::grant::tests::a_grant_names_the_authority_the_version_and_the_authoritys_own_decision_id",
+  "lib#authorization::grant::tests::two_versions_of_one_authority_are_different_attributions",
+  "lib#authorization::grant::tests::two_decisions_of_one_policy_version_are_different_attributions",
+  "lib#authorization::decision_evidence::tests::the_rendering_carries_the_algorithm_because_a_bare_digest_names_no_function",
+  "lib#authorization::decision_evidence::tests::two_identities_are_equal_only_when_both_coordinates_are",
+  "tests/integration_async#authorization_serving_test::a_granting_policy_serves_and_the_backend_runs",
+  "tests/integration_async#authorization_serving_test::a_denying_policy_refuses_before_the_backend_runs",
+  "tests/integration_async#authorization_serving_test::a_deployment_with_no_policy_serves_and_claims_nothing",
+  "tests/integration_async#authorization_serving_test::a_covered_routing_header_naming_another_tool_does_not_reach_the_policy",
+  "tests/integration_async#authorization_serving_test::a_covered_routing_header_cannot_carry_a_grant_the_signed_body_does_not_have",
+  "tests/integration_async#authorization_serving_test::an_uncovered_routing_header_never_reaches_the_policy_at_all",
+  "tests/integration_async#authorization_serving_test::an_evaluator_that_cannot_decide_fails_closed_with_its_own_token",
+  "tests/integration_async#authorization_serving_test::a_request_whose_signature_does_not_verify_never_reaches_the_policy",
+  "tests/integration_async#authorization_serving_test::a_denied_request_is_answerable_as_nothing_executed",
+]
+
+[[unit]]
+id = "proxy.authorization_configuration_state"
+class = "V0"
+description = "What authorization configuration this deployment RECOGNISES: a configured profile carries its scope and its staleness bound together, a scope or bound with no authority installed is refused rather than ignored, and installing nothing is OFF rather than unrecognised."
+paths = ["mcp-re-proxy/src/config_state/authorization.rs"]
+exported_contracts = []
+evidence = ["test://proxy/authorization_configuration_state/recognised_forms"]
+tested_symbols = [
+  "lib#config_state::authorization::tests::a_configured_profile_carries_its_scope_and_its_staleness_bound_together",
+  "lib#config_state::authorization::tests::a_deployment_that_installs_nothing_is_off_rather_than_unrecognised",
+  "lib#config_state::authorization::tests::a_scope_with_no_authority_installed_is_refused_rather_than_ignored",
+  "lib#config_state::authorization::tests::a_staleness_bound_with_no_authority_installed_is_refused",
+  "lib#config_state::authorization::tests::a_profile_missing_its_scope_is_refused_rather_than_defaulted",
+  "lib#config_state::authorization::tests::a_zero_staleness_bound_is_refused_because_it_accepts_no_decision",
+  "lib#config_state::authorization::tests::the_reference_profile_is_not_an_authority_this_machine_installs",
+]
+
+[[unit]]
+id = "http_profile.delegated_signing_custody"
+class = "V0"
+description = "The delegated-signing credential lifecycle: the root is never touched within a key's life, a successor is minted in the overlap window and under an advanced trust epoch, a signature window never outlives the credential it was issued under, and an issuance that fails after expiry fails closed rather than continuing on the predecessor."
+paths = [
+  "mcp-re-http-profile/src/custody/mod.rs",
+  "mcp-re-http-profile/src/custody/issuance_terms.rs",
+]
+exported_contracts = []
+evidence = ["test://http_profile/delegated_signing_custody/credential_lifecycle"]
+tested_symbols = [
+  "lib#custody::tests::signing_never_touches_the_root_within_a_key_life",
+  "lib#custody::tests::rotation_mints_successor_in_the_overlap_window",
+  "lib#custody::tests::two_replicas_never_mint_the_same_credential_id",
+  "lib#custody::tests::successive_issuances_in_one_process_have_distinct_credential_ids",
+  "lib#custody::tests::reissue_under_advanced_trust_epoch_mints_a_fresh_key",
+  "lib#custody::tests::continuous_availability_across_rotations",
+  "lib#custody::tests::fail_closed_when_issuance_fails_after_expiry",
+  "lib#custody::tests::the_signature_expiry_never_outlives_the_credential",
+  "lib#custody::tests::a_failing_root_is_retried_on_a_bounded_interval_not_once_per_request",
+  "lib#custody::tests::a_declined_reissue_leaves_the_predecessor_untouched",
+  "lib#custody::tests::the_minted_credential_carries_the_configured_scope_and_trust_epoch",
+  "lib#custody::tests::an_unrepresentable_expiry_refuses_rather_than_wrapping",
+  "lib#custody::tests::an_uncomputable_rotation_threshold_rotates_rather_than_holding_the_key",
+  "lib#custody::tests::a_signature_window_that_cannot_be_computed_clamps_to_the_credential",
+  "lib#custody::issuance_terms::tests::every_term_fails_restrictively",
+  "lib#custody::issuance_terms::tests::the_retry_interval_has_a_floor",
+]
+
+[[unit]]
 id = "proxy.continuation_correlation_store"
 class = "V0"
 description = "The MRTR continuation correlation entry is reachable only by the actor the verifier resolved, and a read that does not admit an answer leg does not destroy it."

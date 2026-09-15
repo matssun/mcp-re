@@ -60,6 +60,14 @@ on:
       # excluded from the unit, but the glob covers the directory so a fingerprint input
       # cannot land outside every trigger.
       - "mcp-re-proxy/src/async_replay/**"
+      # r11 R11-097 / R11-203: the §7 admission gate, the ADR-065 authorization capability
+      # and the two configuration-recognition halves. Directory globs rather than file
+      # entries, for the reason stated beside `async_replay/**` above — a fingerprint input
+      # must not be able to land outside every trigger.
+      - "mcp-re-proxy/src/admission_enforcer/**"
+      - "mcp-re-proxy/src/authorization/**"
+      - "mcp-re-proxy/src/config_state/admission.rs"
+      - "mcp-re-proxy/src/config_state/authorization.rs"
       # The deployable replay backends (THM-0106 / THM-0107). Feature-gated, so a plain
       # cargo lane compiles them to zero tests — which is exactly why a change to one must
       # still re-trigger the units that carry them.
@@ -336,6 +344,14 @@ on:
       # excluded from the unit, but the glob covers the directory so a fingerprint input
       # cannot land outside every trigger.
       - "mcp-re-proxy/src/async_replay/**"
+      # r11 R11-097 / R11-203: the §7 admission gate, the ADR-065 authorization capability
+      # and the two configuration-recognition halves. Directory globs rather than file
+      # entries, for the reason stated beside `async_replay/**` above — a fingerprint input
+      # must not be able to land outside every trigger.
+      - "mcp-re-proxy/src/admission_enforcer/**"
+      - "mcp-re-proxy/src/authorization/**"
+      - "mcp-re-proxy/src/config_state/admission.rs"
+      - "mcp-re-proxy/src/config_state/authorization.rs"
       # The deployable replay backends (THM-0106 / THM-0107). Feature-gated, so a plain
       # cargo lane compiles them to zero tests — which is exactly why a change to one must
       # still re-trigger the units that carry them.
