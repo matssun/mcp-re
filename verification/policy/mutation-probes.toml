@@ -3374,3 +3374,23 @@ weakening = """
 expect_red = [
   "lib#authoritative_admission::record::verified::tests::a_restored_admitted_record_is_refused_past_the_authorized_window",
 ]
+
+[[probe]]
+id = "M138-a-retired-writer-is-not-backpressure"
+unit = "proxy.retention_commitment"
+conjunct = "a capacity refusal is retry-safe, which is only true while it is distinguishable from a store that will never accept another write"
+# The weakening restores the code as it shipped: every `try_send` failure answered as a full
+# queue. Under it the serving path answers a permanently dead writer with 503 — the status
+# that tells a client to keep trying — forever.
+path = "mcp-re-proxy/src/transparency/durability.rs"
+anchor = """
+                std::sync::mpsc::TrySendError::Disconnected(_) => {
+                    RetentionError::StoreRetired(std::io::Error::new(
+"""
+weakening = """
+                std::sync::mpsc::TrySendError::Disconnected(_) => {
+                    RetentionError::Store(std::io::Error::new(
+"""
+expect_red = [
+  "lib#transparency::durability::tests::a_dead_writer_is_a_terminal_fault_and_a_full_queue_is_not",
+]

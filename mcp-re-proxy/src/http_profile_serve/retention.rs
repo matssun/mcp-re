@@ -12,11 +12,12 @@
 //! [`crate::transparency::DispatchCommitted`]. What is here is the serving-side half:
 //! which refusal each failure earns.
 //!
-//! Reserving fails before anything is committed: an ordinary 503. Committing fails in one
-//! of two ways, and they are not one — nothing published is again an ordinary 503, while a
-//! crossing that could be neither made durable nor withdrawn is not. Completing fails
-//! AFTER the backend acted; answering 503 there is what made a transient store fault into
-//! repeated execution, because 503 is the status clients retry.
+//! Every refusal here turns on one question: could a retry succeed? Before dispatch the
+//! exchange is exactly where it was, so the answer is `pre_dispatch_refusal`'s alone — 503
+//! for backpressure, and not 503 for a store that will never accept another write, nor for
+//! a crossing that could be neither made durable nor withdrawn. After dispatch the backend
+//! has acted, and answering 503 there is what made a transient store fault into repeated
+//! execution.
 
 use std::sync::Arc;
 
@@ -62,11 +63,10 @@ impl Retention {
     /// ```text
     /// ensures   Ok  => the obligation is durably accepted, and no artefact says the
     ///                  exchange crossed anything
-    ///           Err => 503, bound
+    ///           Err => `pre_dispatch_refusal`, bound
     /// forbids   running the backend
     /// refusal   free
     /// ```
-    ///
     ///
     /// NOT a probe: it does not claim the later writes will succeed, because nothing can —
     /// the backend and the store share no transaction. The write runs on the retention
@@ -84,16 +84,7 @@ impl Retention {
         };
         match store.reserve(request).await {
             Ok(reservation) => Ok(PreDispatchRetention::Reserved(reservation)),
-            Err(e) => {
-                eprintln!(
-                    "evidence retention could not accept the exchange, refusing before \
-                     dispatch: {e}"
-                );
-                Err(Refusal::after_admission(
-                    McpReError::EvidenceRetentionUnavailable,
-                    503,
-                ))
-            }
+            Err(e) => Err(Self::pre_dispatch_refusal(&e, "accept the exchange")),
         }
     }
 
@@ -101,18 +92,13 @@ impl Retention {
     ///
     /// ```text
     /// ensures   Ok  => the crossing of the execution threshold is itself durable
-    ///           Err => 503 (nothing published) / 500 (published and unwithdrawable), bound
+    ///           Err => `pre_dispatch_refusal`, bound
     /// forbids   running the backend
     /// refusal   THE LAST FREE ONE
     /// ```
     ///
     /// Awaiting is not optional: dispatching before the crossing is durable would make the
     /// record a hint rather than a record.
-    ///
-    /// The two failures are not one. Nothing published is an ordinary 503 — the backend is
-    /// untouched and a retry is genuinely free. A crossing that could be neither made
-    /// durable nor withdrawn is not: answering it as a retry-safe 503 would tell a client
-    /// to retry freely while leaving execution-signifying state behind (R9-C099).
     pub(super) async fn commit(
         &self,
         accepted: PreDispatchRetention,
@@ -130,26 +116,43 @@ impl Retention {
         };
         match store.commit_to_dispatch(reservation).await {
             Ok(crossing) => Ok(committed(RetentionDisposition::Committed(crossing))),
-            Err(RetentionError::Unresolved(e)) => {
+            Err(e) => Err(Self::pre_dispatch_refusal(&e, "record the crossing")),
+        }
+    }
+
+    /// What a PRE-DISPATCH retention fault is answered with.
+    ///
+    /// One place, because it is one decision: could a retry succeed, and is the store's
+    /// record of this exchange statable? 503 says keep trying and is right for a full queue
+    /// — the permit scheme's whole argument is that refusing at the ceiling is free and
+    /// retry-safe. It is wrong for the other two, and for different reasons: a retired
+    /// writer accepts nothing again until this replica restarts, and an unresolved crossing
+    /// leaves something on disk that may read as a threshold an exchange never crossed
+    /// (R9-C099), so it carries the disposition that says so.
+    fn pre_dispatch_refusal(error: &RetentionError, attempted: &str) -> Refusal {
+        let unavailable =
+            |status| Refusal::after_admission(McpReError::EvidenceRetentionUnavailable, status);
+        match error {
+            RetentionError::Unresolved(_) => {
                 eprintln!(
-                    "evidence retention could not establish OR withdraw the crossing; the \
-                     exchange did NOT dispatch and the store's record of it cannot be \
-                     stated: {e}"
+                    "evidence retention could not {attempted}: the exchange did NOT dispatch \
+                     and the store's record of it cannot be stated: {error}"
                 );
-                Err(
-                    Refusal::after_admission(McpReError::EvidenceRetentionUnavailable, 500)
-                        .refining(ExecutionDisposition::NothingExecutedRetentionUnresolved),
-                )
+                unavailable(500).refining(ExecutionDisposition::NothingExecutedRetentionUnresolved)
             }
-            Err(e) => {
+            RetentionError::StoreRetired(_) => {
                 eprintln!(
-                    "evidence retention could not record the crossing, refusing before \
-                     dispatch: {e}"
+                    "evidence retention could not {attempted}, and this replica will not \
+                     accept the next one either: {error}"
                 );
-                Err(Refusal::after_admission(
-                    McpReError::EvidenceRetentionUnavailable,
-                    503,
-                ))
+                unavailable(500)
+            }
+            _ => {
+                eprintln!(
+                    "evidence retention could not {attempted}, refusing before dispatch: \
+                     {error}"
+                );
+                unavailable(503)
             }
         }
     }

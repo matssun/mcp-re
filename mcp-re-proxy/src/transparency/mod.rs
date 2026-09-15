@@ -149,12 +149,26 @@ pub enum RetentionError {
     /// the deployment telling a client to retry freely while holding a record it cannot
     /// account for (R9-C099).
     Unresolved(std::io::Error),
+    /// The store's writer is gone; no further write will be accepted by this replica.
+    ///
+    /// Separate from [`Store`](Self::Store) because the two demand different answers from
+    /// the CLIENT. A full queue is backpressure and an ordinary retry is correct — that is
+    /// what the capacity argument in `durability_bounds` rests on. A writer that has
+    /// returned or panicked accepts nothing again until the process restarts, so answering
+    /// it as transient tells a client to retry something that cannot succeed, forever.
+    ///
+    /// Like [`Store`](Self::Store) and unlike [`Unresolved`](Self::Unresolved), nothing was
+    /// published: the exchange is exactly where it was.
+    StoreRetired(std::io::Error),
 }
 
 impl std::fmt::Display for RetentionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RetentionError::Store(e) => write!(f, "retained-evidence store: {e}"),
+            RetentionError::StoreRetired(e) => {
+                write!(f, "retained-evidence store has retired its writer: {e}")
+            }
             RetentionError::Malformed(what) => write!(f, "retained evidence: {what}"),
             RetentionError::AlreadyCompleted => {
                 write!(f, "retained evidence: the commitment is already completed")
