@@ -586,7 +586,8 @@ _PROXY_LIB_SRCS = [
     "src/admission_source/in_memory.rs",
     # MCPRE-493: the Redis-backed admission source (live per-request GET, no cached
     # copy). #[cfg(feature = "redis_replay")] — cfg'd out of the default build.
-    "src/redis_admission_source.rs",
+    "src/redis_admission_source/mod.rs",
+    "src/redis_admission_source/refusal_report.rs",
     "src/transport/mod.rs",
     "src/transport/ingress/mod.rs",
     "src/transport/ingress/v1.rs",

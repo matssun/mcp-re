@@ -38,7 +38,14 @@
 # FIELDS
 # ------
 #
-#   id           stable, never reused
+#   id           stable, never reused. MEASURED 2026-09-15 and NOT true of this file: the
+#                numbers 25, 26 and 27 each name two probes (a bound-response family and a
+#                certificate-identity family). Nothing is silently dropped — every probe runs,
+#                because the loader carries the full string — but "M26" does not identify a
+#                probe, so a `expect_red` discussion or a review note that says one is
+#                ambiguous. Renumbering moves this file's digest and therefore every standing
+#                attestation that names it, so it is a bookkeeping change of its own rather
+#                than a passenger on a security slice.
 #   unit         the review unit whose battery is being self-tested
 #   theorem      OPTIONAL. The THM-NNNN whose conjunct this probe is about, when one is
 #                registered. Absent where the unit has no theorem yet — `conjunct` still
@@ -3319,7 +3326,7 @@ expect_red = [
 # store writer REPLAYS. A single probe covering both would be satisfied by either.
 
 [[probe]]
-id = "M74-admission-record-must-be-authenticated"
+id = "M133-admission-record-must-be-authenticated"
 unit = "http_profile.admission_state_provenance"
 theorem = "THM-0129"
 conjunct = "the state is authenticated as issued by the configured admission authority"
@@ -3349,7 +3356,7 @@ expect_red = [
 ]
 
 [[probe]]
-id = "M75-admission-record-must-be-bounded-current"
+id = "M134-admission-record-must-be-bounded-current"
 unit = "http_profile.admission_state_provenance"
 theorem = "THM-0129"
 conjunct = "the state is current within the deployment's declared revocation-currentness budget"

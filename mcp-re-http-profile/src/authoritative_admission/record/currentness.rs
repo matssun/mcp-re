@@ -46,6 +46,35 @@ pub enum AdmissionRecordRefusal {
     RevisionRewound,
 }
 
+impl AdmissionRecordRefusal {
+    /// How many refusal classes there are.
+    ///
+    /// Published so a consumer can size a per-class structure without allocating or
+    /// locking — a diagnostic paced by the number of CLASSES rather than by the number of
+    /// requests needs exactly this, and a caller counting the variants itself would be a
+    /// second copy of the taxonomy's size.
+    pub const COUNT: usize = 8;
+
+    /// A dense index in `0..COUNT`, stable for the life of a process and meaningless
+    /// outside it.
+    ///
+    /// A match with one arm per variant and NO catch-all: a variant added without an index
+    /// here does not compile, which is what makes [`Self::COUNT`] true rather than
+    /// remembered.
+    pub const fn discriminant_index(self) -> usize {
+        match self {
+            AdmissionRecordRefusal::Malformed => 0,
+            AdmissionRecordRefusal::IssuerUntrusted => 1,
+            AdmissionRecordRefusal::SignatureInvalid => 2,
+            AdmissionRecordRefusal::ProfileMismatch => 3,
+            AdmissionRecordRefusal::SubjectMismatch => 4,
+            AdmissionRecordRefusal::Expired => 5,
+            AdmissionRecordRefusal::WindowExceedsBudget => 6,
+            AdmissionRecordRefusal::RevisionRewound => 7,
+        }
+    }
+}
+
 impl std::fmt::Display for AdmissionRecordRefusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
@@ -134,6 +163,38 @@ mod tests {
     }
 
     /// The fixture is issued at 1000 with a 60s window, so a 60s budget admits it exactly.
+    /// `COUNT` is the number of variants, and `discriminant_index` is a bijection onto
+    /// `0..COUNT`. Without this the array a consumer sizes by `COUNT` could be indexed out
+    /// of range by a variant added with a larger index — the compiler catches a MISSING arm,
+    /// not one whose number is too big.
+    #[test]
+    fn every_class_has_a_distinct_index_inside_the_published_count() {
+        let all = [
+            AdmissionRecordRefusal::Malformed,
+            AdmissionRecordRefusal::IssuerUntrusted,
+            AdmissionRecordRefusal::SignatureInvalid,
+            AdmissionRecordRefusal::ProfileMismatch,
+            AdmissionRecordRefusal::SubjectMismatch,
+            AdmissionRecordRefusal::Expired,
+            AdmissionRecordRefusal::WindowExceedsBudget,
+            AdmissionRecordRefusal::RevisionRewound,
+        ];
+        assert_eq!(all.len(), AdmissionRecordRefusal::COUNT);
+        let mut indices: Vec<usize> = all.iter().map(|r| r.discriminant_index()).collect();
+        indices.sort_unstable();
+        assert_eq!(
+            indices,
+            (0..AdmissionRecordRefusal::COUNT).collect::<Vec<_>>(),
+            "the indices must be a bijection onto 0..COUNT"
+        );
+        // And every class renders differently, so the once-per-class diagnostic cannot
+        // report two classes as one.
+        let mut rendered: Vec<String> = all.iter().map(|r| r.to_string()).collect();
+        rendered.sort();
+        rendered.dedup();
+        assert_eq!(rendered.len(), AdmissionRecordRefusal::COUNT);
+    }
+
     #[test]
     fn a_record_inside_both_its_own_window_and_the_budget_is_current() {
         assert_eq!(

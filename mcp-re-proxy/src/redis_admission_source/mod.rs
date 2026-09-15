@@ -49,6 +49,11 @@
 
 use redis::aio::ConnectionManager;
 
+/// Saying WHICH refusal class fired, at a pace a caller cannot set.
+mod refusal_report;
+
+use refusal_report::ReportedClasses;
+
 use mcp_re_http_profile::authoritative_admission::record::CurrentAdmissionState;
 
 use crate::admission_source::admission_key;
@@ -63,6 +68,8 @@ pub struct RedisAdmissionSource {
     conn: ConnectionManager,
     /// The one place stored bytes become authoritative state.
     verifier: AdmissionRecordVerifier,
+    /// Which refusal classes have already been reported. See [`Self::report_once`].
+    reported: ReportedClasses,
 }
 
 impl RedisAdmissionSource {
@@ -84,7 +91,11 @@ impl RedisAdmissionSource {
                 details: format!("connect redis async: {e}"),
             }
         })?;
-        Ok(RedisAdmissionSource { conn, verifier })
+        Ok(RedisAdmissionSource {
+            conn,
+            verifier,
+            reported: ReportedClasses::default(),
+        })
     }
 
     /// Store an already-signed authoritative record — the admission-authority side of the
@@ -150,16 +161,7 @@ impl RedisAdmissionSource {
         match self.verifier.verify(admission_id, &raw, now) {
             Ok(verified) => Ok(Some(verified)),
             Err(refusal) => {
-                // Named, because an operator asking why a revocation has not taken effect —
-                // or why an admitted workload is being refused — needs to know WHICH of the
-                // seven classes fired. The raw value is withheld: it is attacker-influenced
-                // and this line is a line-oriented record.
-                eprintln!(
-                    "mcp-re-proxy: the admission record for a workload in the shared store \
-                     is not the configured authority's current statement ({refusal}); \
-                     treating the workload as NOT ADMITTED. A reachable store that answered \
-                     is not an outage. Raw value withheld."
-                );
+                self.reported.report_once(refusal);
                 Ok(None)
             }
         }
