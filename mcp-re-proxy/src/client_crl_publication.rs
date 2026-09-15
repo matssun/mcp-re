@@ -184,20 +184,18 @@ pub fn load_client_crls(
     Ok(crls)
 }
 
+/// CRL fixtures for the modules that read this one.
+///
+/// `#[cfg(test)]`, so it is not a production surface: two modules need the same DER, and a
+/// second hand-rolled builder would be a second opinion about what a conforming CRL is.
 #[cfg(test)]
-mod crl_next_update_tests {
-    //! The TLS plane performs no security transition on `Drop` and gives its CRL reload
-    //! loop no failure budget, both on the ground that a CRL bounds ITSELF. That argument
-    //! holds only while every loaded CRL states a `nextUpdate`, so a CRL without one is
-    //! refused where it is read rather than admitted into a posture that claims it
-    //! self-bounds.
-
-    use super::*;
-    use der::Decode;
-    use der::Encode;
-    use x509_cert::crl::CertificateList;
-
-    fn crl_with_next_update() -> Vec<u8> {
+pub(crate) mod test_support {
+    /// A conforming CRL that states a `nextUpdate`, far in the future.
+    ///
+    /// The caller reads the instant back out with [`super::crl_posture`] rather than being
+    /// told it, so a test about the boundary is about the CRL's own boundary.
+    pub(crate) fn crl_with_next_update() -> rustls_pki_types::CertificateRevocationListDer<'static>
+    {
         let key = rcgen::KeyPair::generate().expect("ca key");
         let mut params = rcgen::CertificateParams::new(Vec::new()).expect("ca params");
         params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
@@ -217,10 +215,32 @@ mod crl_next_update_tests {
             revoked_certs: Vec::new(),
             key_identifier_method: rcgen::KeyIdMethod::Sha256,
         };
-        crl_params
-            .signed_by(&rcgen::Issuer::from_params(&params, &key))
-            .expect("crl")
-            .der()
+        rustls_pki_types::CertificateRevocationListDer::from(
+            crl_params
+                .signed_by(&rcgen::Issuer::from_params(&params, &key))
+                .expect("crl")
+                .der()
+                .to_vec(),
+        )
+    }
+}
+
+#[cfg(test)]
+mod crl_next_update_tests {
+    //! The TLS plane performs no security transition on `Drop` and gives its CRL reload
+    //! loop no failure budget, both on the ground that a CRL bounds ITSELF. That argument
+    //! holds only while every loaded CRL states a `nextUpdate`, so a CRL without one is
+    //! refused where it is read rather than admitted into a posture that claims it
+    //! self-bounds.
+
+    use super::*;
+    use der::Decode;
+    use der::Encode;
+    use x509_cert::crl::CertificateList;
+
+    fn crl_with_next_update() -> Vec<u8> {
+        super::test_support::crl_with_next_update()
+            .as_ref()
             .to_vec()
     }
 

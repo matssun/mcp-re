@@ -344,7 +344,9 @@ _PROXY_LIB_SRCS = [
     "src/lib.rs",
     # ADR-MCPS-035: the serving path's audit emission seam (admitted actor, rejection
     # wire code, response signing key). Pure std, no feature gate — always compiled.
-    "src/audit_record.rs",
+    "src/audit_record/mod.rs",
+    "src/audit_record/scalar.rs",
+    "src/audit_record/text.rs",
     "src/audit_sink/mod.rs",
     # The writer's teardown obligation: the bound, the wait, and the two-valued outcome.
     "src/audit_sink/drain.rs",
@@ -472,7 +474,8 @@ _PROXY_LIB_SRCS = [
     "src/trust_plane/mod.rs",
     "src/trust_plane/freshness.rs",
     "src/trust_plane/window_policy.rs",
-    "src/trust_plane/reload.rs",
+    "src/trust_plane/reload/mod.rs",
+    "src/trust_plane/reload/supervision.rs",
     "src/trust_plane/snapshot.rs",
     "src/trust_plane/invalidation_channel.rs",
     "src/trust_plane/delivered_window.rs",
@@ -486,7 +489,10 @@ _PROXY_LIB_SRCS = [
     # per-request revocation index and the CRL reload worker.
     "src/tls_plane/mod.rs",
     "src/tls_plane/client_revocation_posture.rs",
-    "src/tls_plane/crl_reload_worker.rs",
+    "src/tls_plane/crl_evidence.rs",
+    "src/tls_plane/crl_reload_worker/mod.rs",
+    "src/tls_plane/crl_reload_worker/supervision.rs",
+    "src/tls_plane/revocation_currency.rs",
     # ADR-MCPRE-056 §8: the shared control runtime — one owner for control-plane
     # execution; consumers get a tokio Handle (access, not ownership).
     "src/control_runtime.rs",

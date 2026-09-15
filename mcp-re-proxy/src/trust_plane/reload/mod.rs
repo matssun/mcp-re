@@ -29,7 +29,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::freshness::TrustStoreFreshness;
+
+/// What a dead reloader means, and the fail-closed action it becomes.
+mod supervision;
+
 use super::snapshot::read_trust_file;
+use supervision::supervise_trust_reload;
 
 /// How many consecutive failed `--trust` re-reads are absorbed before the resolver
 /// fails closed.
@@ -65,29 +70,22 @@ pub(super) fn spawn_trust_reload_task(
     freshness: Arc<TrustStoreFreshness>,
 ) {
     let halt = workers.halt();
-    workers.spawn("trust store reload", move || {
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    let loop_freshness = Arc::clone(&freshness);
+    workers.spawn(
+        "trust store reload",
+        supervise_trust_reload(freshness, move || {
             trust_reload_loop(
                 &store,
                 &trust_path,
                 &response_kid,
                 interval_secs,
-                &freshness,
+                &loop_freshness,
                 &halt,
             );
-        }));
-        if outcome.is_err() {
-            freshness.mark_stale_permanently();
-            eprintln!(
-                "mcp-re-proxy: FATAL: the trust store reload thread PANICKED. --trust is no \
-                 longer being re-read, so a key revoked in it would keep resolving from the \
-                 frozen snapshot; request verification now fails closed \
-                 (trust_resolver_unavailable) rather than serving a store that cannot change. \
-                 This replica cannot recover on its own — restart it."
-            );
-        }
-    });
+        }),
+    );
 }
+
 /// The reload loop proper. Split out so the supervisor above can catch a panic from
 /// anywhere inside it.
 fn trust_reload_loop(
