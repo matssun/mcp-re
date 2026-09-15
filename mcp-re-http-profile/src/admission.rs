@@ -189,6 +189,21 @@ impl AdmissionBinding {
 }
 
 /// The verified outcome of an admission check.
+///
+/// # Why this is not sealed
+///
+/// Every field is `pub`, so `VerifiedAdmission { status: Admitted, .. }` is an ordinary
+/// expression in any crate that depends on this one. **It must stay that way**, and the
+/// reason is measured rather than argued: the seal was written and `verify-verus` refused
+/// it — `external_type_specification: private fields not supported for transparent
+/// datatypes` (`docs/dev/sealed-owners.md`). Making the fields private turns the datatype
+/// OPAQUE, and an opaque type's postconditions are unstatable, so sealing would delete the
+/// machine-checked conjunct that `admitted_actor` was added to carry.
+///
+/// A proved postcondition outranks a seal. So every sentence about this value is phrased
+/// over what a SUCCESSFUL `check_admission` RETURN establishes, never over what holding one
+/// means — the same trade, and the same phrasing discipline, as
+/// [`crate::verified_request::CryptographicFloorVerifiedRequest`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedAdmission {
     pub admission_id: String,
