@@ -53,8 +53,7 @@
 //! One-shot survives the split: `consume` reports whether IT removed the entry, so of
 //! two concurrent answer legs exactly one is admitted and the other fails closed.
 //!
-//! **What the store is trusted for.** Not secrecy: the retained bases are public
-//! values, already held by anyone who saw the exchange. PROVENANCE — that an entry
+//! **What the store is trusted for.** PROVENANCE — that an entry
 //! under `mcp-re:cont:` was written by an open leg of this deployment. The dispatcher
 //! compares the client's signed digests against the bytes this store returned, and
 //! nothing establishes that those bytes came from an `InputRequiredResult` this fleet
@@ -64,6 +63,12 @@
 //! that premise and ASM-0048 what the Redis mechanism's replies mean. The client's RFC
 //! 9421 signature carries the other half independently, so what rests on the store is
 //! the human-approval property and not the caller's identity.
+//!
+//! **Confidentiality is claimed by nothing here.** A base carries the VALUE of every
+//! component its message covered, and the profile's closed allowlist admits `authorization`
+//! and `dpop` (`verify/floor/covered_components.rs`) — so a deployment whose clients cover
+//! either retains a bearer credential at rest for the continuation TTL. ASM-0047 constrains
+//! who may WRITE the tier and says nothing about who may read it.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -150,19 +155,16 @@ pub const CONTINUATION_KEY_PREFIX: &str = "mcp-re:cont:";
 /// profile computes over the same bytes.
 const CONTINUATION_KEY_DOMAIN: &[u8] = b"mcp-re/continuation-key/v1";
 
-/// Derive the shared-store key for a continuation from the RESOLVED ACTOR and the
-/// opaque `requestState` bytes:
-/// `mcp-re:cont:<base64url(SHA-256(domain || len(actor) || actor || requestState))>`.
+/// Derive the shared-store key for a continuation from the dispatch AUDIENCE, the
+/// RESOLVED ACTOR and the opaque `requestState` bytes:
+/// `mcp-re:cont:<b64url(SHA-256(domain || len(aud) || aud || len(actor) || actor || state))>`.
 ///
-/// Both legs derive it the same way — the open leg from the state it minted into the
-/// reply, the answer leg from the state the client re-presents — and both use the
-/// actor the VERIFIER resolved, never anything the request asserts. A matching answer
-/// from the same actor therefore lands on the exact entry the open leg wrote, and an
-/// answer from any other actor lands on a key that does not exist.
+/// Both legs derive it the same way: the open leg from the state it minted into the reply,
+/// the answer leg from the state the client re-presents. Why it is the VERIFIER's actor is
+/// the module header's argument and is not restated here.
 ///
-/// The AUDIENCE is in the key too, as it is in the replay composite key.
-///
-/// Without it two MCP-RE deployments — different audiences, different inner backends —
+/// The AUDIENCE is in the key as it is in the replay composite key. Without it two
+/// MCP-RE deployments — different audiences, different inner backends —
 /// pointed at one Redis share a single continuation namespace, and nothing in config
 /// or code enforced the assumption that they would not be. An actor trusted by both
 /// could then open a leg against one dispatch boundary and answer it against the
