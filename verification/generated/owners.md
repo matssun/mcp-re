@@ -76,6 +76,7 @@ not an omission to hide.
 | proxy.channel_associated_credential | V0 | THM-0028 | 1 |
 | proxy.channel_associated_identity | V0 | THM-0029 | 1 |
 | proxy.client_credential_window | V0 | THM-0102 | 0 |
+| proxy.client_revocation_currency | V0 | THM-0131 | 0 |
 | proxy.continuation_correlation_store | V0 | THM-0087 | 0 |
 | proxy.continuation_installation | V0 | _none_ | 0 |
 | proxy.continuation_key_provenance | V0 | _none_ | 0 |
