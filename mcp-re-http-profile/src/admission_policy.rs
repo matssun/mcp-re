@@ -11,6 +11,23 @@
 //! stated in terms of, and its default is the fail-closed answer.
 
 /// The verifier-local admission freshness + fallback budget (§5.2).
+///
+/// # Why this is not sealed, and where the legality actually lives
+///
+/// The fields are `pub` and there is no constructor, so a caller can name any cell —
+/// including `allow_degraded_mode: true` with a zero bound, which the command line refuses
+/// outright because "a zero P still admits a revoked workload for the skew tolerance while
+/// claiming no window was configured". That is not an oversight to be closed here. Verus
+/// refuses `external_type_specification` on a datatype with non-public fields, and
+/// `allow_degraded_mode` is the deployment opt-in the degraded clause of the §7 currency
+/// theorem is stated in terms of — sealing this type would make the clause unstatable
+/// (`docs/dev/sealed-owners.md`, "A proved postcondition outranks a seal").
+///
+/// The legality is owned one layer up and by a type that CAN hold it:
+/// `config_state::AdmissionAvailability` is a tagged value whose degraded arm carries a
+/// `NonZeroU64`, so the illegal cells are unconstructible there, and
+/// `serving_capabilities` PROJECTS this budget from it. Possessing an `AdmissionPolicy`
+/// therefore establishes nothing; what establishes the cell is where it came from.
 #[derive(Debug, Clone, Copy)]
 pub struct AdmissionPolicy {
     /// N — the maximum age (seconds) of an assertion the PEP will accept, beyond
