@@ -2903,6 +2903,7 @@ class = "V0"
 description = "The delegated response-signing credential source: when a valid short-TTL key exists, when it stops existing, and that every one of those transitions fails CLOSED rather than falling back to a longer-lived or root credential."
 paths = [
   "mcp-re-proxy/src/delegated_server_signer/mod.rs",
+  "mcp-re-proxy/src/delegated_server_signer/reader.rs",
   "mcp-re-proxy/src/delegated_server_signer/retry_schedule.rs",
   "mcp-re-proxy/src/delegated_response_signer.rs",
   # r11 R11-572/573/574: the ONLY thing that mints these credentials was in no unit at all.
@@ -2924,6 +2925,8 @@ evidence = [
 # because there is no direct-root mode — so what has to be measured is that the fail-closed
 # answer is the one every one of those states gives.
 tested_symbols = [
+  "lib#delegated_server_signer::reader::tests::a_reader_answers_the_signers_current_snapshot",
+  "lib#delegated_server_signer::reader::tests::a_reader_observes_a_retirement_it_cannot_perform",
   "lib#delegated_server_signer::tests::no_key_before_first_rotate_fails_closed",
   "lib#delegated_server_signer::tests::rotate_publishes_a_snapshot_the_hot_path_reads",
   "lib#delegated_server_signer::tests::snapshot_fails_closed_past_expiry",

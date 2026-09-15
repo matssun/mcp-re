@@ -19,6 +19,7 @@ use std::sync::Arc;
 
 use crate::audit_sink::MaybeAuditSink;
 use crate::delegated_server_signer::DelegatedServerSigner;
+use crate::delegated_server_signer::DelegatedSigningReader;
 use crate::refusal::RefusalPosture;
 use mcp_re_http_profile::ExecutionDisposition;
 
@@ -48,7 +49,10 @@ pub(crate) struct ResponseSigning {
     /// response and rejection is signed by the active short-TTL delegated key + inline
     /// credential; the root is never on the request path, and this fails closed when no
     /// valid delegated key is available. There is no direct-root mode.
-    signer: Arc<DelegatedServerSigner>,
+    ///
+    /// The READ half, narrowed at construction: this authority signs under the deployment's
+    /// delegated key and has no way to publish or retire one.
+    signer: DelegatedSigningReader,
     /// Response-signature validity window (seconds added to `created`), before the
     /// credential's own bound is applied.
     sig_ttl_secs: i64,
@@ -56,9 +60,9 @@ pub(crate) struct ResponseSigning {
 
 impl ResponseSigning {
     /// Assemble the authority from the credential source and the configured window.
-    pub(crate) fn new(signer: Arc<DelegatedServerSigner>, sig_ttl_secs: i64) -> Self {
+    pub(crate) fn new(signer: &Arc<DelegatedServerSigner>, sig_ttl_secs: i64) -> Self {
         Self {
-            signer,
+            signer: signer.reader(),
             sig_ttl_secs,
         }
     }

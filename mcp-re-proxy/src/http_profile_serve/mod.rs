@@ -270,7 +270,7 @@ impl HttpProfileProxy {
     ) -> Self {
         HttpProfileProxy {
             requests: request_admission::RequestAdmission::new(resolve_actor, expected_audience),
-            responses: receipt::ResponseSigning::new(delegated_signer, sig_ttl_secs),
+            responses: receipt::ResponseSigning::new(&delegated_signer, sig_ttl_secs),
             replay_async,
             dispatch_cfg,
             inner_async: inner_plane::InnerPlane::over(inner_async),
