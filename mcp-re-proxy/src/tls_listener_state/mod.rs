@@ -169,12 +169,12 @@ impl TlsListenerSecurityState {
         self.build_delegated_resolver_config(resolver, crls)
     }
 
-    /// Build a serving config around a caller-supplied certificate resolver.
+    /// Build a serving config around an already-validated certificate resolver.
     ///
-    /// The escape hatch for custody arrangements this crate does not model. It performs no
-    /// credential validation of its own — [`Self::build_delegated_config`] is the path that
-    /// does — and it is still bound to this listener's anchors, epoch and cache.
-    pub fn build_delegated_resolver_config(
+    /// Private, which is what makes THM-0048's "the terms cannot be supplied to it
+    /// independently" true: handing this an arbitrary resolver IS that supply.
+    /// [`Self::build_delegated_config`] validates the credential and binds the budget.
+    fn build_delegated_resolver_config(
         &self,
         cert_resolver: Arc<dyn rustls::server::ResolvesServerCert>,
         crls: Vec<CertificateRevocationListDer<'static>>,
