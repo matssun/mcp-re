@@ -44,24 +44,38 @@ pub enum InvalidationEvent {
     FlushAll,
 }
 
-/// An injected source of revocation push events plus a health signal.
+/// An injected source of revocation push events plus a health WITNESS.
 ///
-/// The cache drains pending events before each lookup and evicts the named
-/// entries. CRITICAL: [`is_healthy`](InvalidationChannel::is_healthy) gates the
-/// honesty contract — when it returns `false` (a missed heartbeat / disconnect),
-/// the cache MUST NOT claim a near-zero window for that interval; it falls back to
-/// the bounded `T`. The trait makes no delivery/ordering guarantee, which is
-/// exactly why the reference Tier 3 is "near-zero + bounded fallback", not
-/// zero-window.
+/// The cache drains pending events before each lookup and evicts the named entries. The
+/// trait makes no delivery or ordering guarantee, which is exactly why the reference Tier 3
+/// is "near-zero + bounded fallback" rather than zero-window.
+///
+/// # `is_healthy` reports; it does not gate
+///
+/// This said `is_healthy` GATES the honesty contract. It does not, and nothing in this
+/// crate reads it on a serving path: `channel_is_healthy` has no production caller. What
+/// makes the fallback safe is BEHAVIOURAL and holds regardless of the witness — a cached
+/// binding answers for at most `T` and never past the deadline it was first cached under,
+/// so an undelivered push costs at most `T`, whether or not anything noticed the channel
+/// was down.
+///
+/// Reading it as a gate is worse than useless: it suggests a control that would have to
+/// exist for the near-zero claim to be honest, and none does. The witness is worth keeping
+/// — it is the difference between "no events arrived" and "nothing could have arrived", and
+/// a reader with only `drain_pending` cannot tell those apart — but it is evidence for an
+/// operator, not an input to a decision.
 pub trait InvalidationChannel {
     /// Drain and return all revocation events received since the last drain. An
     /// empty vector means none pending (NOT that the channel is down — see
     /// [`is_healthy`](InvalidationChannel::is_healthy)).
     fn drain_pending(&self) -> Vec<InvalidationEvent>;
 
-    /// Whether the channel is currently healthy (connected, heartbeat fresh). When
-    /// `false`, the caller treats pushes as possibly-lost and relies on the
-    /// bounded `T` fallback for the affected interval.
+    /// Whether the channel is currently healthy (connected, heartbeat fresh).
+    ///
+    /// A WITNESS. `false` means pushes may have been lost, and the bounded `T` fallback
+    /// already covers that interval whether or not anyone asks — see the type doc. A caller
+    /// that begins gating on this is adding a control, and owes the argument for why the
+    /// behavioural bound is no longer sufficient.
     fn is_healthy(&self) -> bool;
 }
 
