@@ -41,37 +41,55 @@ pub(super) fn spawn_delegated_rotation_task(
     epoch_watch: Option<DelegatedEpochWatch>,
 ) {
     let halt = workers.halt();
-    workers.spawn("delegated key rotation", move || {
-        // SUPERVISION (C040). This thread is the ONLY thing that mints delegated keys, and
-        // nothing observes it while it runs — `WorkerSet` reclaims it at shutdown, which is
-        // far too late to matter here. Left bare, a panic on any reachable `.expect()` (the
-        // CSPRNG draw, the two custody invariants) would end all rotation for the process
-        // lifetime while every health surface still read steady state:
-        // `DelegatedRotationMetrics.consecutive_failures` is only written BY this thread, so
-        // a dead thread leaves it at 0 and the replica appears healthy right up until the
-        // current key's `exp`, then 503s with no attributable cause.
-        //
-        // So the loop runs inside `catch_unwind` and a panic is converted into the
-        // strongest honest signal available: RETIRE the snapshot, which makes the hot path
-        // fail closed IMMEDIATELY (`delegated_signing_unavailable`) rather than at `exp`,
-        // and record a failure so the metric stops reading healthy. The thread does not
-        // resume — after a panic the rotor's state is not known good, and continuing to
-        // mint from it would be worse than refusing.
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            rotation_loop(&mut rotor, &signer, overlap, epoch_watch.as_ref(), &halt)
-        }));
-        if outcome.is_err() {
-            signer.retire_permanently();
-            signer.metrics().record_failure();
-            eprintln!(
-                "mcp-re-proxy: FATAL: the delegated rotation thread PANICKED. Delegated key \
-                 rotation has stopped for the lifetime of this process and the current \
-                 snapshot has been retired, so response signing now fails closed \
-                 (delegated_signing_unavailable) immediately rather than at the key's exp. \
-                 This replica cannot recover on its own — restart it."
-            );
+    workers.spawn(
+        "delegated key rotation",
+        supervise_delegated_rotation(Arc::clone(&signer), move || {
+            rotation_loop(&mut rotor, &signer, overlap, epoch_watch.as_ref(), &halt);
+        }),
+    );
+}
+
+/// The `catch_unwind` and the fail-closed action it converts a panic into, AS A VALUE.
+///
+/// Taking the body rather than writing it inline is what makes the supervisor reachable. It
+/// was written inline, and the only way to inject a panic was to spawn through `WorkerSet`
+/// directly — which measures `WorkerSet` and not this. `SigningPlane::for_teardown_test`
+/// advertises "one that panics" and does exactly that, which is why deleting this
+/// supervisor left every test green.
+///
+/// A pure extraction: it moves no decision, adds no type, and stays private to this module.
+///
+/// SUPERVISION (C040). This thread is the ONLY thing that mints delegated keys, and nothing
+/// observes it while it runs — `WorkerSet` reclaims it at shutdown, far too late to matter.
+/// Left bare, a panic on any reachable `.expect()` (the CSPRNG draw, the two custody
+/// invariants) would end all rotation for the process lifetime while every health surface
+/// still read steady state: `DelegatedRotationMetrics.consecutive_failures` is only written
+/// BY this thread, so a dead thread leaves it at 0 and the replica appears healthy right up
+/// until the current key's `exp`, then 503s with no attributable cause.
+///
+/// So a panic becomes the strongest honest signal available: RETIRE the snapshot, which
+/// makes the hot path fail closed IMMEDIATELY (`delegated_signing_unavailable`) rather than
+/// at `exp`, and record a failure so the metric stops reading healthy. The thread does not
+/// resume — after a panic the rotor's state is not known good, and continuing to mint from
+/// it would be worse than refusing.
+fn supervise_delegated_rotation(
+    signer: Arc<crate::delegated_server_signer::DelegatedServerSigner>,
+    body: impl FnOnce() + Send + 'static,
+) -> impl FnOnce() + Send + 'static {
+    move || {
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)).is_ok() {
+            return;
         }
-    });
+        signer.retire_permanently();
+        signer.metrics().record_failure();
+        eprintln!(
+            "mcp-re-proxy: FATAL: the delegated rotation thread PANICKED. Delegated key \
+             rotation has stopped for the lifetime of this process and the current \
+             snapshot has been retired, so response signing now fails closed \
+             (delegated_signing_unavailable) immediately rather than at the key's exp. \
+             This replica cannot recover on its own — restart it."
+        );
+    }
 }
 
 /// The rotation loop proper. Split out of [`spawn_delegated_rotation_task`] so the
@@ -163,4 +181,87 @@ fn wait_for_window(
         std::thread::sleep(Duration::from_millis(50));
     }
     false
+}
+
+// Everything below is test code. The `#[cfg(test)]` marker lives HERE because it is the
+// region `scripts/module_size_gate.py` reads.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mcp_re_core::SigningKey;
+    use mcp_re_http_profile::ActiveDelegatedKey;
+    use mcp_re_http_profile::ActorIdentity;
+
+    const NOW: i64 = 1_700_000_100;
+
+    /// A snapshot valid for another hour, so "retired at once" is distinguishable from
+    /// "expired on its own".
+    fn live_key() -> ActiveDelegatedKey {
+        ActiveDelegatedKey {
+            key: Arc::new(SigningKey::from_seed_bytes(&[9u8; 32])),
+            delegated_kid: "delegated-1".into(),
+            server_signer: ActorIdentity {
+                role: "server".into(),
+                trust_domain: "example.com".into(),
+                subject: "did:example:server".into(),
+                keyid: "delegated-1".into(),
+            },
+            credential: "cred".into(),
+            nbf: 0,
+            exp: NOW + 3600,
+        }
+    }
+
+    /// T2. A panic in the rotor retires the snapshot AT ONCE, while its key is still
+    /// inside its own window.
+    ///
+    /// The window is the whole point. A dead rotor with the snapshot left in place keeps
+    /// signing until `exp` and then 503s with no attributable cause, and every health
+    /// surface reads steady state on the way there: `consecutive_failures` is written only
+    /// by this thread, so a dead one leaves it at 0.
+    ///
+    /// The supervisor is run exactly as production runs it, with only the body replaced.
+    /// Before the extraction that was impossible — `SigningPlane::for_teardown_test`
+    /// advertises "one that panics" and spawns through `WorkerSet` directly, so it measures
+    /// `WorkerSet`, and deleting this supervisor left every test green (R11-572/573/574).
+    #[test]
+    fn a_panicking_rotor_retires_the_snapshot_immediately_not_at_exp() {
+        let signer = Arc::new(crate::delegated_server_signer::DelegatedServerSigner::new());
+        signer.publish(live_key());
+        assert!(
+            signer.current(NOW).is_some(),
+            "a live rotor signs with a key inside its window"
+        );
+        assert_eq!(signer.metrics().consecutive_failures(), 0);
+
+        // The panic is this test's INPUT, so the hook is quieted for the duration.
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let supervised = supervise_delegated_rotation(Arc::clone(&signer), || {
+            panic!("injected: the rotation body died");
+        });
+        let joined = std::thread::spawn(supervised).join();
+        std::panic::set_hook(hook);
+
+        assert!(
+            joined.is_ok(),
+            "the supervisor converts the panic; it does not propagate it"
+        );
+        assert!(
+            signer.current(NOW).is_none(),
+            "response signing must fail closed NOW, not in an hour when the key expires"
+        );
+        assert!(
+            signer.metrics().consecutive_failures() > 0,
+            "the metric only this thread writes must stop reading steady state"
+        );
+
+        // Terminal: a straggler mint that lands after the panic cannot restore signing.
+        signer.publish(live_key());
+        assert!(
+            signer.current(NOW).is_none(),
+            "after a panic the rotor's state is not known good; continuing to mint from it \
+             would be worse than refusing"
+        );
+    }
 }

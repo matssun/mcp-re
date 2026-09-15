@@ -27,6 +27,8 @@ pub(crate) mod drain;
 
 use std::sync::Arc;
 
+use crate::audit_record::text::render_record;
+use crate::audit_record::text::AuditField;
 use crate::audit_record::AuditRecord;
 
 /// A sink for [`AuditRecord`]s.
@@ -110,21 +112,16 @@ const STDERR_AUDIT_DROP_REPORT_INTERVAL: std::time::Duration = std::time::Durati
 impl AuditSink for StderrAuditSink {
     fn record(&self, record: &AuditRecord) {
         let seq = STDERR_AUDIT_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        // Each authority renders its own fields (`AuditSubject::audit_fields`); this sink
-        // formats only the ones every record shares. A sink that interpreted the
-        // authorization coordinate would be a third place the two vocabularies could merge.
-        let line = format!(
-            "mcp-re-proxy: audit seq={} event={} decision={:?} reason={} actor={} \
-             status={} at={} {}",
-            seq,
-            record.event().event_type,
-            record.event().decision,
-            record.event().reason.unwrap_or("-"),
-            record.actor_id.as_deref().unwrap_or("-"),
-            record.status,
-            record.at_unix,
-            record.subject.audit_fields(),
-        );
+        // The sequence number is this sink's own coordinate — it is what makes a drop a
+        // visible hole in THIS stream — so the sink contributes it and the record
+        // contributes everything else. The sink interprets nothing it was handed: a field
+        // slice carries no vocabulary, and `render_record` owns every question of spelling.
+        let mut fields = vec![AuditField::number(
+            "seq",
+            i64::try_from(seq).unwrap_or(i64::MAX),
+        )];
+        fields.extend(record.audit_fields());
+        let line = format!("mcp-re-proxy: audit {}", render_record(&fields));
         offer(
             stderr_audit_writer(),
             &STDERR_AUDIT_DROPPED,
@@ -232,6 +229,33 @@ mod tests {
     use crate::authorization::AuthorizationFacet;
     use crate::authorization::AuthorizationRefusalFacet;
     use mcp_re_core::audit::AuditEvent;
+
+    /// One record is one line, whatever the resolved actor's identity contains.
+    ///
+    /// Asserted on the line handed to `offer` rather than on captured stderr, because
+    /// `record` hands off to a detached process-global writer: capturing the other end would
+    /// measure the writer's scheduling, not this claim.
+    #[test]
+    fn one_record_writes_exactly_one_line_for_any_actor_id() {
+        let record = AuditRecord {
+            subject: AuditSubject::request(
+                AuditEvent::request_accepted(),
+                AuthorizationFacet::NotConfigured,
+            ),
+            actor_id: Some("client:example.com:a\nmcp-re-proxy: audit seq=8 status=200".into()),
+            status: 200,
+            at_unix: 10,
+        };
+        let mut fields = vec![AuditField::number("seq", 7)];
+        fields.extend(record.audit_fields());
+        let line = render_record(&fields);
+
+        assert!(!line.contains('\n'), "{line}");
+        assert!(!line.contains('\r'), "{line}");
+        // `write_all(line)` + `write_all(b"\n")` therefore emits exactly one record, and the
+        // forged `status=200` is inside the actor's value rather than beside it.
+        assert_eq!(line.matches("status=").count(), 1, "{line}");
+    }
 
     #[test]
     fn the_collector_preserves_emission_order() {

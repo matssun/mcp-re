@@ -142,6 +142,23 @@ impl Ed25519PublicKeyValue {
         der
     }
 
+    /// A value directly from a raw thirty-two-byte point.
+    ///
+    /// TOTAL, and that is not a hole in the seal. The invariant is the canonical RFC 8410
+    /// encoding of an Ed25519 key, the length is the parameter's type, and the algorithm
+    /// and encoding are this owner's — so there is no inhabitant here that
+    /// [`interpret_rfc8410_spki`](Self::interpret_rfc8410_spki) would reject. It is the
+    /// same theorem `the_two_directions_are_inverse` states, read as a constructor.
+    ///
+    /// It exists because a caller that only wants the VALUE had to write the point out with
+    /// [`spki_der_for_point`](Self::spki_der_for_point) and interpret it back, which gave
+    /// that caller an `Err` arm for an outcome this owner's own contract says cannot occur
+    /// — and `role_separation.rs` filled it with `unreachable!`. A partial function nobody
+    /// can make fail is better deleted than justified.
+    pub fn for_point(raw_point: [u8; ED25519_PUBLIC_KEY_LEN]) -> Self {
+        Ed25519PublicKeyValue { raw_point }
+    }
+
     /// The thirty-two raw key bytes.
     ///
     /// The only projection. It is what a verifier, a signer and a key comparison all need,
@@ -252,6 +269,9 @@ mod tests {
             let key = Ed25519PublicKeyValue::interpret_rfc8410_spki(&der)
                 .expect("what this owner writes, this owner accepts");
             assert_eq!(key.raw_point(), point);
+            // The same theorem read as a constructor: a caller that wants the value takes
+            // the short way and gets the same inhabitant, with no Err arm to fill.
+            assert_eq!(Ed25519PublicKeyValue::for_point(point), key);
         }
     }
 

@@ -496,7 +496,7 @@ mod tests {
         )
         .expect("permit")
         .audit_facet();
-        let line = facet.audit_fields();
+        let line = crate::audit_record::text::render_record(&facet.audit_fields());
         assert!(
             line.contains("authz_decision_id=decision-1"),
             "the authority's decision id must be recorded: {line}"

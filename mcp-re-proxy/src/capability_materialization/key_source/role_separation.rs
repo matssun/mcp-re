@@ -117,18 +117,20 @@ fn roles_collapse(source: &(dyn KeySource + Send + Sync)) -> bool {
 /// A backend that does not answer yields `NoKey` — see the note on
 /// [`channel_role_identity`], which is the same argument on the other side.
 ///
-/// The canonical round trip itself cannot fail: `spki_der_for_point` is the WRITE direction
-/// of the same owner that interprets, and its own contract is that interpreting what it
-/// produced yields the point back. There is no arm here for that.
+/// There is no failure arm for the canonical form, and no panic standing in for one. The
+/// value owner's `for_point` is total — a thirty-two-byte point has exactly one canonical
+/// RFC 8410 encoding — so the only question here is whether the backend answered.
+///
+/// It used to write the point out and interpret it back, which manufactured an `Err` arm for
+/// an outcome that owner's own contract says cannot occur, and filled it with
+/// `unreachable!`. `unreachable!` is not covered by the ADR-MCPRE-061 §6 lints, so it
+/// carried no obligation to justify itself while making exactly the kind of claim they
+/// exist to hold to account.
 fn response_role_identity(source: &(dyn KeySource + Send + Sync)) -> RoleIdentity {
     let Ok(key) = source.response_public_key() else {
         return RoleIdentity::NoKey;
     };
-    let spki = Ed25519PublicKeyValue::spki_der_for_point(key.to_bytes());
-    match Ed25519PublicKeyValue::interpret_rfc8410_spki(&spki) {
-        Ok(value) => RoleIdentity::Key(value),
-        Err(_) => unreachable!("the canonical encoder's output is canonical"),
-    }
+    RoleIdentity::Key(Ed25519PublicKeyValue::for_point(key.to_bytes()))
 }
 
 /// The channel role's identity: the public key inside the leaf of the credential chain this

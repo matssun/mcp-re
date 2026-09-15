@@ -6645,3 +6645,116 @@ review_requirement = "Owner security-specification review"
 supported_by = ["unit://core.time_civil_from_days"]
 depends_on = []
 
+
+[[theorem]]
+id = "THM-0130"
+title = "One logical audit record renders to exactly one physical record, recoverably"
+statement = """
+Every scalar an audit record carries is spelled by one authority into an image that contains
+no SPACE, no `=`, no C0 control, no DEL, no C1 control, no Unicode line separator, no bidi or
+format control, and never the reserved absent marker `-`. That spelling is injective: it has
+a left inverse, written and tested as one, so two distinct values cannot produce one image.
+Every field name and every closed-vocabulary token is separator-free by the same standard.
+
+Therefore a rendered record is a sequence of whitespace-delimited tokens, one per field,
+each containing exactly one `=`, and `split(' ')` composed with `split_once('=')` composed
+with the inverse recovers the field sequence that was written. No field value can synthesize
+a new field or a new line.
+"""
+security_consequence = """
+A value chosen by a party other than this operator — the JSON-RPC `method` and the MCP
+target name, read verbatim out of any enrolled client's signed body; the authority, version
+and decision identifier chosen off-box by the PDP; the resolved actor identity, whose
+`keyid` component is held to a charset that admits SPACE and `=` — cannot forge a record.
+Not a sibling record, by carrying a line break; and not a field of a record, by carrying a
+separator and shadowing a real field for a last-wins reader. An operator or a log pipeline
+reading the stream is reading the fields the authorities wrote.
+
+The injectivity is what makes the consequence a security property rather than a cosmetic
+one. A non-injective escape that merely deleted line breaks would satisfy every "the output
+has no newline" check while allowing two different requests to produce the same record — so
+the record would no longer identify what happened, which is the whole of what it is for.
+"""
+scope = """
+V0: a test battery over the escape, its inverse and the record grammar, including a
+round trip over a corpus that contains every C0 byte, DEL, every C1 byte, the named line
+separators and bidi controls, and each of them in leading, medial and trailing position.
+
+The CLASSIFICATION is not established here, and cannot be by this unit: whether a given
+value is a closed token or open text is its owner's decision, measured by
+`proxy.audit_record_coordinates`. What this unit establishes is that the decision is
+honoured — a `Text` is escaped, a `Token` is not — and the type system carries the other
+half, because `AuditValue::Token` takes `&'static str` and a string read out of a request
+body is not `'static`.
+
+It does not establish that the record was delivered, or that exactly one line reached the
+stream: the first is THM-0070 and the second is `proxy.audit_delivery`'s control over the
+line handed to the queue. It says nothing about the truth of any value rendered.
+
+NO LENGTH BOUND is claimed, deliberately. Truncation is lossy and would destroy the
+recoverability this result is; a bound belongs with the sink's queue economics and must be a
+refusal or a digest-plus-marker, never a silent cut.
+
+The `dropped={n}` warning line is outside the claim. It is prose that opens with a
+`key=value`, not a record, and its one value is a `u64`.
+"""
+owner = "proxy.audit_text_rendering"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.audit_text_rendering"]
+depends_on = ["THM-0069"]
+
+[[theorem]]
+id = "THM-0131"
+title = "The client-revocation posture states what this replica is enforcing now"
+statement = """
+A set of client CRLs is installable only when every one of them is inside its own
+`nextUpdate` window and states one at all. That is a property of the value, not of a call
+site: the evidence type has a single constructor and the constructor performs the
+classification, so startup and the reload worker run one gate rather than two that agree.
+
+Each successful reload republishes the evidence it installed, so the posture names the CRLs
+in force rather than the ones read at boot. And a replica whose reload worker has died, or
+whose plane has retired, retracts the cadence it advertised: the maintenance verdict is
+latched, and no later reload can clear it.
+"""
+security_consequence = """
+An operator reading this replica's revocation posture is reading what it is doing. Three
+specific misreadings are closed:
+
+* a CRL that startup refuses to boot on could be installed by a reload and reported as
+  "new verifier is live", after which — expiration being enforced — every new handshake
+  against that issuer failed closed, an outage the transcript attributed to success;
+* after any successful reload the posture reported the boot digest and window forever, so
+  the CRL an operator checked against the one they published was not the one being
+  enforced;
+* a panicked reload worker printed a FATAL line and changed nothing, so the deployment went
+  on advertising "hot-reload enabled (every Ns)" while nothing re-read the files. The
+  self-bounding argument that licenses the weaker treatment covers the rustls VERIFIER; it
+  does not cover the per-request index, whose whole purpose is that a peer added to a
+  reloaded CRL stops being served on the connection it already holds, and its bound is a
+  CRL validity period rather than the cadence the startup line promised.
+
+The latch's two flags are the security content of the third: one flag would let a straggler
+reload landing after the worker died report the cadence as kept.
+"""
+scope = """
+V0: a test battery over the evidence constructor, the maintenance algebra and the
+retraction, plus the plane's own retirement path.
+
+It is a claim about what the deployment SAYS and about what may be installed. It is NOT a
+fail-closed: a dead reload worker does not refuse handshakes, deliberately, because the
+verifier does self-bound once the last-good CRL passes its own `nextUpdate` and refusing
+would convert a bounded staleness into an immediate outage. What is claimed is that the
+advertised property is withdrawn, not that the exposure is zero.
+
+It says nothing about whether a revoked peer is refused — that is THM-0054's handshake half
+and the per-request index beside it — and nothing about the CRLs being the right CRLs,
+which is an operator decision.
+
+The retraction reaches an operator through stderr. Whether a log pipeline consumes it is
+outside this repository, and no claim here rests on its doing so.
+"""
+owner = "proxy.client_revocation_currency"
+review_requirement = "Owner security-specification review"
+supported_by = ["unit://proxy.client_revocation_currency"]
+depends_on = ["THM-0054"]

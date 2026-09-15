@@ -45,10 +45,24 @@ pub(super) const ASYNC_RESERVE_DIVISOR: usize = 5;
 /// The per-actor retention budget, evaluated only when the store is under pressure.
 ///
 /// `actors` is the number of actors currently holding entries. The budget is an equal
-/// split of the SPENDABLE capacity — the ceiling minus the reserve — so the sum of
-/// every actor's budget is `max_entries - reserve` for any number of actors, and the
-/// reserve stays unspendable. That is the property the reserve exists for: an actor
-/// holding nothing yet is still admitted while an actor over its share is refused.
+/// split of the SPENDABLE capacity — the ceiling minus the reserve — so while there are at
+/// most `spendable` actors, the sum of every actor's budget is at most `spendable` and the
+/// reserve stays unspendable. That is the property the reserve exists for: an actor holding
+/// nothing yet is still admitted while an actor over its share is refused.
+///
+/// # Where that stops being true, and why the floor stays
+///
+/// It is bounded by `actors <= spendable`, and saying "for any number of actors" was
+/// false. Past that point there are more actors than there is room for one entry each,
+/// `spendable / actors` is zero, and the trailing `.max(1)` makes every budget 1 — so the
+/// budgets sum to `actors`, which exceeds `spendable`.
+///
+/// The floor stays anyway, because the alternative is worse: a budget of 0 refuses an actor
+/// holding NOTHING, which is precisely the outage the reserve exists to prevent, and it
+/// would arrive earlier than the ceiling would. In that regime the per-actor wall is simply
+/// not what bounds occupancy — the global `max_entries` ceiling is, and it still holds.
+/// What a deployment has then is a million distinct authenticated principals holding one
+/// entry each, which is capacity exhaustion rather than one actor spending the reserve.
 ///
 /// Splitting the FULL ceiling instead would make the reserve reachable the moment a
 /// second actor appears — `k` actors at `max/k` sum to exactly `max`, the ceiling is
@@ -100,24 +114,76 @@ mod tests {
         assert!(!under_pressure(799_999, 1_000_000));
     }
 
-    /// The reserve must survive ANY number of actors, which is the whole point of it.
+    /// The reserve survives every actor count the per-actor wall governs — and the test
+    /// says where that ends.
     ///
     /// Splitting the full ceiling makes the reserve reachable as soon as a second actor
     /// appears: `k` budgets of `max/k` sum to exactly `max`, so the store fills, the
     /// global ceiling refuses the next signer, and the outage the budget exists to
     /// prevent needs two actors rather than one.
+    ///
+    /// # Why this is quantified across the boundary and not up to 64
+    ///
+    /// It used to loop `1..=64` against `MAX = 1_000_000`, where `spendable` is 800_000 —
+    /// four orders of magnitude short of the regime where the property it asserted is
+    /// false. A bound chosen inside the safe region cannot report that the region has an
+    /// edge, and the assertion's own words ("no number of actors") claimed there was none.
+    ///
+    /// `MAX` is small here so the edge is reachable in a unit test: the counterexample
+    /// regime is a property of the ARITHMETIC, not of the shipped constant, and testing it
+    /// at 1_000_000 would need 800_001 iterations to say the same thing.
     #[test]
-    fn no_number_of_actors_can_spend_the_reserve() {
-        const MAX: usize = 1_000_000;
+    fn the_reserve_survives_every_actor_count_the_wall_governs() {
+        const MAX: usize = 100;
         let reserve = MAX / ASYNC_RESERVE_DIVISOR;
-        for actors in 1..=64usize {
+        let spendable = MAX - reserve;
+
+        // Up to and including `spendable` actors, the budgets sum within the spendable
+        // capacity and the reserve is untouched. Every count, not a sample.
+        for actors in 1..=spendable {
             let total = per_actor_budget(MAX, actors) * actors;
             assert!(
-                total <= MAX - reserve,
-                "{actors} actors may hold {total} of {MAX}, which leaves \
-                 {} against a reserve of {reserve}",
+                total <= spendable,
+                "{actors} actors may hold {total} of {MAX}, which leaves {} against a \
+                 reserve of {reserve}",
                 MAX.saturating_sub(total)
             );
+        }
+
+        // Past it the floor takes over and the sum DOES exceed the spendable capacity.
+        // Asserted rather than avoided: this is the edge, and a test that stopped short of
+        // it is how the false claim survived.
+        for actors in [spendable + 1, spendable * 2, MAX * 10] {
+            let total = per_actor_budget(MAX, actors) * actors;
+            assert_eq!(
+                per_actor_budget(MAX, actors),
+                1,
+                "{actors} actors: past the wall every budget is the floor"
+            );
+            assert!(
+                total > spendable,
+                "{actors} actors: the per-actor wall no longer bounds occupancy here — \
+                 the global ceiling does, and this test says so rather than pretending \
+                 the regime does not exist"
+            );
+        }
+    }
+
+    /// The floor is never zero, at any actor count.
+    ///
+    /// This is what the floor is FOR: a budget of zero refuses an actor holding nothing,
+    /// which arrives before the global ceiling would and is the outage the reserve exists
+    /// to prevent.
+    #[test]
+    fn no_actor_count_produces_a_zero_budget() {
+        for max in [1usize, 2, 10, 100, 1_000_000] {
+            for actors in [1usize, 2, 7, max, max * 3, usize::MAX] {
+                assert!(
+                    per_actor_budget(max, actors) >= 1,
+                    "max={max} actors={actors}: a zero budget refuses an actor holding \
+                     nothing"
+                );
+            }
         }
     }
 }
