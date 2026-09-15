@@ -55,7 +55,7 @@ impl ClientCrlEvidence {
     ) -> Result<Self, String> {
         let mut postures = Vec::with_capacity(crls.len());
         for (index, crl) in crls.iter().enumerate() {
-            admit(crl.as_ref(), index, now_unix)?;
+            require_in_force(crl.as_ref(), index, now_unix)?;
             postures.push(
                 crate::client_crl_publication::crl_posture(crl.as_ref())
                     .map_err(|e| e.to_string())?,
@@ -92,7 +92,12 @@ impl ClientCrlEvidence {
 /// Separate from the loop so that "which classes are admissible" is one readable statement
 /// rather than a nest, and so that adding a class is an edit to a match with one arm per
 /// outcome.
-fn admit(crl_der: &[u8], index: usize, now_unix: i64) -> Result<(), String> {
+///
+/// NOT named `admit`: `tools/verification`'s escape-hatch detector reads that identifier as
+/// Verus' proof-discharge `admit()` and refuses the build, which is the conservative
+/// direction and the right one — a security predicate sharing a name with a way to delete a
+/// proof obligation is worth renaming whether or not a tool objects.
+fn require_in_force(crl_der: &[u8], index: usize, now_unix: i64) -> Result<(), String> {
     match crate::client_crl_publication::crl_freshness(crl_der, now_unix, CRL_NEAR_EXPIRY_WARN_SECS)
         .map_err(|e| e.to_string())?
     {
