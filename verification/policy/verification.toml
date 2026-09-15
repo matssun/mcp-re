@@ -4165,13 +4165,20 @@ paths = [
   "mcp-re-proxy/src/audit_sink/writer.rs",
 ]
 exported_contracts = []
-evidence = ["test://proxy/audit/delivery_integrity"]
+evidence = [
+  "test://proxy/audit/delivery_integrity",
+  # Declared WITH its first probe. A `[[probe]]` on a unit claiming no mutation evidence
+  # writes no record, so `attest` issues the unit from the ordinary battery regardless.
+  "mutation://proxy/audit/admission_ceiling",
+]
 # The last two are the ones a reader depends on. A gap in the sequence is visible; a silent
 # drop is not — so the drop count is reported without a following record. And a drain that
 # TIMED OUT has not established that the queue emptied, which is a different fact from a
 # drain that completed, and must never collapse into it.
 tested_symbols = [
   "lib#audit_sink::tests::every_record_carries_a_sequence_number",
+  "lib#audit_sink::tests::the_ceiling_a_record_is_admitted_at_is_chosen_by_its_attribution",
+  "lib#audit_sink::writer::tests::a_burst_that_stops_still_reports_what_it_cost",
   # "One record in, one line out" is a DELIVERY claim: whatever the record says, the stream
   # receives exactly one physical record for it. That the value survives recoverably is
   # `proxy.audit_text_rendering`'s; that the count is one is this unit's.
