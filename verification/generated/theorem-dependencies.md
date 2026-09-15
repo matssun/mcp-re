@@ -124,6 +124,7 @@ graph BT
     THM_0126["THM-0126<br/>A verified reply is not a completed call"]
     THM_0127["THM-0127<br/>The deployable's serving path always runs an anchor refresher"]
     THM_0129["THM-0129<br/>Authoritative admission state is authenticated and bounded-current"]
+    THM_0130["THM-0130<br/>One logical audit record renders to exactly one physical record, recoverably"]
     THM_0007 --> THM_0008
     THM_0010 --> THM_0009
     THM_0001 --> THM_0014
@@ -276,6 +277,7 @@ graph BT
     THM_0061 --> THM_0126
     THM_0120 --> THM_0127
     THM_0004 --> THM_0129
+    THM_0069 --> THM_0130
     classDef root stroke-width:3px;
     class THM_0071,THM_0074,THM_0075,THM_0076,THM_0077,THM_0078 root;
 ```

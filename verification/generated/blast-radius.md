@@ -71,6 +71,7 @@ attestations this view cannot see.
 | unit://proxy.async_replay_retention | source, contracts or evidence | THM-0105 | _no consumer_ |
 | unit://proxy.audit_delivery | source, contracts or evidence | THM-0070 | _no consumer_ |
 | unit://proxy.audit_record_coordinates | source, contracts or evidence | THM-0069, THM-0071 | _no consumer_ |
+| unit://proxy.audit_text_rendering | source, contracts or evidence | THM-0130 | _no consumer_ |
 | unit://proxy.authenticated_relationship_peer | source, contracts or evidence | THM-0031 | proxy.current_authenticated_peer (CONTRACT_CONSUMES) |
 | unit://proxy.authorization_posture | source, contracts or evidence | THM-0056 | _no consumer_ |
 | unit://proxy.aws_kms_adapter | source, contracts or evidence | THM-0116 | _no consumer_ |
@@ -207,7 +208,7 @@ attestations this view cannot see.
 | THM-0066 | statement, consequence, scope or review requirement | specification review | THM-0074, THM-0077, THM-0099 |
 | THM-0067 | statement, consequence, scope or review requirement | specification review | THM-0077 |
 | THM-0068 | statement, consequence, scope or review requirement | specification review | THM-0072 |
-| THM-0069 | statement, consequence, scope or review requirement | specification review | THM-0071, THM-0078, THM-0085 |
+| THM-0069 | statement, consequence, scope or review requirement | specification review | THM-0071, THM-0078, THM-0085, THM-0130 |
 | THM-0070 | statement, consequence, scope or review requirement | specification review | THM-0071 |
 | THM-0071 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0072 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
@@ -268,6 +269,7 @@ attestations this view cannot see.
 | THM-0127 | statement, consequence, scope or review requirement | specification review | THM-0076 |
 | THM-0128 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0129 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
+| THM-0130 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 
 ## Assumptions
 

@@ -48,8 +48,13 @@
 //! custody layer as bare [`AuditEvent`]s on its own path. Adding an arm nothing constructs
 //! would model a producer that does not exist.
 
-use mcp_re_core::audit::AuditEvent;
+pub(crate) mod scalar;
+pub(crate) mod text;
 
+use mcp_re_core::audit::AuditEvent;
+use mcp_re_core::audit::Decision;
+
+use crate::audit_record::text::AuditField;
 use crate::authorization::AuthorizationFacet;
 
 /// One audit record: what happened, to whom, and when.
@@ -111,14 +116,17 @@ impl AuditSubject {
         }
     }
 
-    /// The record's authority-specific fields as stable `key=value` text.
+    /// The authority-specific fields, composed from what each authority named in its own
+    /// vocabulary. A response record contributes nothing: there is nothing it may say.
     ///
-    /// Each authority renders its own vocabulary; this composes what they returned. A
-    /// response record contributes nothing here, because there is nothing it may say.
-    pub fn audit_fields(&self) -> String {
+    /// Fields rather than text, because text is where the property dies: a finished string
+    /// cannot tell a separator its owner emitted from one that arrived inside a value. The
+    /// spelling is [`text::render_record`]'s to decide, and it is the only thing that
+    /// decides it.
+    pub(crate) fn audit_fields(&self) -> Vec<AuditField<'_>> {
         match self {
             AuditSubject::Request { authorization, .. } => authorization.audit_fields(),
-            AuditSubject::Response { .. } => String::new(),
+            AuditSubject::Response { .. } => Vec::new(),
         }
     }
 }
@@ -127,6 +135,40 @@ impl AuditRecord {
     /// The frozen Core event this record carries.
     pub fn event(&self) -> &AuditEvent {
         self.subject.event()
+    }
+
+    /// Every field this record contributes, each value classified by its owner.
+    ///
+    /// Every value is a number or a closed-vocabulary member except `actor`, which is a
+    /// resolved identity built from four components: a `keyid` held to the
+    /// signature-parameter charset, and three values out of the operator's trust store.
+    /// That charset admits SPACE and `=`, so an enrolled `keyid` of `k status=200` would
+    /// otherwise contribute a second `key=value` token and shadow a real field for any
+    /// last-wins reader. It is [`AuditValue::Text`], and the constraint that bounds it
+    /// lives in another crate on an ancestor — which is the reason not to lean on it.
+    ///
+    /// `decision` is matched exhaustively rather than taken from `{:?}`, so the spelling is
+    /// this crate's decision rather than a derive it inherits. Core's `Decision` gains no
+    /// `wire_name()` for it: that vocabulary is frozen behind a drift guard.
+    pub(crate) fn audit_fields(&self) -> Vec<AuditField<'_>> {
+        let event = self.event();
+        let mut fields = vec![
+            AuditField::token("event", event.event_type),
+            AuditField::token(
+                "decision",
+                match event.decision {
+                    Decision::Accepted => "Accepted",
+                    Decision::Signed => "Signed",
+                    Decision::Rejected => "Rejected",
+                },
+            ),
+            AuditField::token_or_absent("reason", event.reason),
+            AuditField::text_or_absent("actor", self.actor_id.as_deref()),
+            AuditField::number("status", i64::from(self.status)),
+            AuditField::number("at", self.at_unix),
+        ];
+        fields.extend(self.subject.audit_fields());
+        fields
     }
 }
 
@@ -158,6 +200,7 @@ pub(crate) fn record_to(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audit_record::text::render_record;
     use crate::authorization::AuthorizationRefusalFacet;
     use mcp_re_policy::PolicyError;
 
@@ -181,7 +224,7 @@ mod tests {
         // represent a second decision, and cannot be made to claim one.
         let r = AuditSubject::response(AuditEvent::response_signed());
         assert!(matches!(r, AuditSubject::Response { .. }));
-        assert_eq!(r.audit_fields(), "");
+        assert!(r.audit_fields().is_empty());
     }
 
     #[test]
@@ -200,10 +243,11 @@ mod tests {
             at_unix: 1,
         };
         assert_eq!(r.event().reason, Some("mcp-re.digest_mismatch"));
-        assert!(r
-            .subject
-            .audit_fields()
-            .contains("authz_policy_reason=mcp-re.authorization_scope_denied"));
-        assert!(!r.subject.audit_fields().contains("digest_mismatch"));
+        let rendered = render_record(&r.subject.audit_fields());
+        assert!(
+            rendered.contains("authz_policy_reason=mcp-re.authorization_scope_denied"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("digest_mismatch"), "{rendered}");
     }
 }
