@@ -38,32 +38,40 @@
 //! where the response key lives; this is the relation between what they materialized, and
 //! it exists because neither machine can see the other's key.
 
-use crate::communication_assurance::certificate_chain_evidence::CertificateChainEvidence;
-use crate::communication_assurance::ed25519_public_key::Ed25519PublicKeyValue;
+use super::role_identity::{channel_role_identity, response_role_identity, RoleIdentity};
 use crate::key_source::{KeyError, KeySource};
 
-/// A deployment's materialized signing capability, known to keep its two roles apart.
+/// A deployment's materialized signing capability, known not to have collapsed its two
+/// roles.
 ///
-/// The representation is private and [`Self::establish`] is the only constructor, so
-/// holding one IS the proof that the response-signing key and the channel-signing key are
-/// different keys.
+/// The representation is private and [`Self::establish`] is the only constructor, so holding
+/// one is the proof that the comparison ran and did not find one key serving both roles.
+///
+/// Read that bound exactly. It is NOT *the two keys are different*: where a role produced no
+/// key there was nothing to compare, and [`RoleSeparation::NotCompared`] is that outcome
+/// rather than a quiet pass. What possession excludes is the collapse — see
+/// [`RoleSeparation`] for why the third value is not the negation of either other.
 pub struct MaterializedSigningRoles {
     source: Box<dyn KeySource + Send + Sync>,
 }
 
-/// What a role contributed to the comparison.
+/// What the comparison of the two roles established.
 ///
-/// `NoKey` is not a failure and not a skipped check. The relation is over what
-/// materialization PRODUCED: a role that produced no key is not a role sharing one, so there
-/// is nothing to compare rather than something unchecked.
+/// Three-valued, because there are three outcomes and the third is not the negation of
+/// either other one: a role that produced no key was not compared, and answering that as
+/// *the roles are separate* would be this boundary claiming a fact it never obtained. The
+/// repository already holds this shape twice, with the argument written out —
+/// `AuditDrain::OutcomeUnknown` and `RetentionError::Unresolved`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RoleIdentity {
-    /// The role resolved to a canonical RFC 8410 Ed25519 public key.
-    Key(Ed25519PublicKeyValue),
-    /// It resolved to no key this comparison can use — the backend did not answer, the
-    /// material is not there, or the credential presents a key of another profile. In every
-    /// case no collapse between the two roles is representable.
-    NoKey,
+enum RoleSeparation {
+    /// Both roles produced a key, and the keys differ.
+    Distinct,
+    /// Both roles produced a key, and it is one key. [`MaterializedSigningRoles::establish`]
+    /// refuses on this, so it reaches no serving path.
+    Collapsed,
+    /// At least one role produced no key this comparison can use. No collapse is
+    /// representable, and none was ruled out either.
+    NotCompared,
 }
 
 impl MaterializedSigningRoles {
@@ -73,16 +81,23 @@ impl MaterializedSigningRoles {
     /// directly, the channel credential through the leaf of the chain this deployment
     /// serves — and refuses when they are the same key.
     pub(super) fn establish(source: Box<dyn KeySource + Send + Sync>) -> Result<Self, KeyError> {
-        if roles_collapse(source.as_ref()) {
-            return Err(KeyError::Malformed(
+        match compare_roles(source.as_ref()) {
+            // Compared, and separate. The one outcome that establishes the proposition.
+            RoleSeparation::Distinct => Ok(MaterializedSigningRoles { source }),
+            // Not compared. Materializing is right and the reason is on
+            // [`channel_role_identity`]: whether a backend answered belongs to the owner of
+            // that material, which refuses a moment later and names the real fault. Written
+            // as its own arm so that decision is one a reader can see being taken, rather
+            // than a `_` that also catches whatever outcome is added next.
+            RoleSeparation::NotCompared => Ok(MaterializedSigningRoles { source }),
+            RoleSeparation::Collapsed => Err(KeyError::Malformed(
                 "the response-signing key and the channel-signing key are the same key. The \
                  two roles are separately attributable only while they are separate keys: a \
                  party able to obtain a handshake signature would otherwise have obtained a \
                  response attribution. Configure a distinct key for one of them."
                     .to_string(),
-            ));
+            )),
         }
-        Ok(MaterializedSigningRoles { source })
     }
 
     /// The key source, for the composition root that materializes the serving path.
@@ -93,193 +108,71 @@ impl MaterializedSigningRoles {
     }
 }
 
-/// Whether the two roles resolved to one key.
+/// What comparing the two roles established.
 ///
-/// A predicate rather than a branch inside the constructor, so the constructor states the
-/// decision and this states the comparison. `false` covers two different situations and
-/// says so: the roles resolved to two keys, or at least one resolved to none — and the note
-/// on [`channel_role_identity`] is why the second is not a skipped check.
-fn roles_collapse(source: &(dyn KeySource + Send + Sync)) -> bool {
+/// A relation rather than a branch inside the constructor, so the constructor states the
+/// decision and this states the comparison. It answers with all three outcomes rather than
+/// with *collapsed or not*: a boolean here would have to spell "at least one role produced
+/// no key" as `false`, which is the same token the compared-and-separate case uses, and the
+/// caller could then no longer tell them apart even if it wanted to.
+fn compare_roles(source: &(dyn KeySource + Send + Sync)) -> RoleSeparation {
     match (
         response_role_identity(source),
         channel_role_identity(source),
     ) {
         (RoleIdentity::Key(response), RoleIdentity::Key(channel)) => {
-            response.raw_point() == channel.raw_point()
+            if response.raw_point() == channel.raw_point() {
+                RoleSeparation::Collapsed
+            } else {
+                RoleSeparation::Distinct
+            }
         }
-        _ => false,
-    }
-}
-
-/// The response role's identity: its public verification key, in this crate's canonical
-/// form.
-///
-/// A backend that does not answer yields `NoKey` — see the note on
-/// [`channel_role_identity`], which is the same argument on the other side.
-///
-/// There is no failure arm for the canonical form, and no panic standing in for one. The
-/// value owner's `for_point` is total — a thirty-two-byte point has exactly one canonical
-/// RFC 8410 encoding — so the only question here is whether the backend answered.
-///
-/// It used to write the point out and interpret it back, which manufactured an `Err` arm for
-/// an outcome that owner's own contract says cannot occur, and filled it with
-/// `unreachable!`. `unreachable!` is not covered by the ADR-MCPRE-061 §6 lints, so it
-/// carried no obligation to justify itself while making exactly the kind of claim they
-/// exist to hold to account.
-fn response_role_identity(source: &(dyn KeySource + Send + Sync)) -> RoleIdentity {
-    let Ok(key) = source.response_public_key() else {
-        return RoleIdentity::NoKey;
-    };
-    RoleIdentity::Key(Ed25519PublicKeyValue::for_point(key.to_bytes()))
-}
-
-/// The channel role's identity: the public key inside the leaf of the credential chain this
-/// deployment serves.
-///
-/// The leaf is the right operand on BOTH custody paths. Under delegated channel custody the
-/// resolver already refuses a signer whose key does not match this leaf, and under exported
-/// custody the served chain is what the handshake authenticates as. So asking the
-/// certificate asks the key that actually signs the handshake, without either path having
-/// to expose private material to be compared.
-///
-/// # Infallible, and why that is not fail-open
-///
-/// An unreadable, absent or empty credential chain yields `NoKey` rather than a refusal, and
-/// the same holds for the response role. This authority owns ONE proposition — *the two
-/// roles are two keys* — and whether a backend answers belongs to the owner of that
-/// material. Refusing here would give this relation an opinion about a thing it does not
-/// own, and would move where an operator is told about it: a deployment with a missing
-/// certificate would start reporting the fault as a signing-role collapse.
-///
-/// It also cannot become a way to SKIP the comparison, because there is no execution in
-/// which a role produced no key and serving proceeds. The composition root reads the served
-/// chain immediately afterwards to build the listener, and the response public key to build
-/// the delegation — so a deployment where either is unavailable starts no server. The only
-/// executions this arm admits are executions that never serve.
-///
-/// That is also what keeps `build_key_source` a construction rather than a probe: a key
-/// source has always been buildable without the material being present, and a relation that
-/// turned an absent seed file into a role error would have changed what constructibility
-/// means.
-fn channel_role_identity(source: &(dyn KeySource + Send + Sync)) -> RoleIdentity {
-    let Ok(chain) = source.tls_server_cert_chain() else {
-        return RoleIdentity::NoKey;
-    };
-    let Some(leaf) = chain.first() else {
-        return RoleIdentity::NoKey;
-    };
-    match CertificateChainEvidence::from_leaf_der(leaf.as_ref()).interpret_credential_public_key() {
-        Ok(evidence) => RoleIdentity::Key(evidence.key()),
-        Err(_) => RoleIdentity::NoKey,
+        _ => RoleSeparation::NotCompared,
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::role_identity::tests::ed25519_leaf;
+    use super::super::role_identity::tests::RolesFixture;
     use super::*;
     use mcp_re_core::VerificationKey;
 
+    /// The three outcomes are three, and the third is not either other one.
+    ///
+    /// THE control for this module's shape. `establish` answers `Ok` for both
+    /// [`RoleSeparation::Distinct`] and [`RoleSeparation::NotCompared`], so every control
+    /// that asserts `is_ok()` passes under an implementation that folds them together — and
+    /// a folded pair is a boundary reporting *the roles are separate* about an execution
+    /// where nothing was compared. This asserts the relation itself, where the difference
+    /// is representable.
     #[test]
-    fn the_response_identity_round_trips_its_own_point() {
+    fn a_role_that_produced_no_key_is_not_reported_as_a_separated_one() {
         let (leaf, key) = ed25519_leaf();
-        let source = RolesFixture {
-            response: key.clone(),
-            channel_leaf: leaf,
-        };
+        let (other_leaf, _) = ed25519_leaf();
         assert_eq!(
-            response_role_identity(&source),
-            RoleIdentity::Key(
-                Ed25519PublicKeyValue::interpret_rfc8410_spki(
-                    &Ed25519PublicKeyValue::spki_der_for_point(key.to_bytes())
-                )
-                .expect("canonical")
-            )
+            compare_roles(&RolesFixture {
+                response: key.clone(),
+                channel_leaf: other_leaf,
+            }),
+            RoleSeparation::Distinct
         );
-    }
-
-    #[test]
-    fn two_different_keys_have_two_different_identities() {
-        let (leaf_a, a) = ed25519_leaf();
-        let (leaf_b, b) = ed25519_leaf();
-        let ia = response_role_identity(&RolesFixture {
-            response: a,
-            channel_leaf: leaf_a,
-        });
-        let ib = response_role_identity(&RolesFixture {
-            response: b,
-            channel_leaf: leaf_b,
-        });
-        assert_ne!(
-            ia, ib,
-            "two distinct keys must not share an identity, or the comparison is vacuous"
+        assert_eq!(
+            compare_roles(&RolesFixture {
+                response: key,
+                channel_leaf: leaf,
+            }),
+            RoleSeparation::Collapsed
         );
-    }
-
-    /// A credential whose key is not a canonical Ed25519 key contributes no comparison —
-    /// and that is a STATEMENT, because the response role's key always is one, so the two
-    /// cannot be equal.
-    #[test]
-    fn a_non_ed25519_credential_is_incomparable_rather_than_a_failure() {
-        let garbage = vec![0x30, 0x03, 0x02, 0x01, 0x00];
-        assert!(CertificateChainEvidence::from_leaf_der(&garbage)
-            .interpret_credential_public_key()
-            .is_err());
-    }
-
-    /// A key source whose two roles are whatever the fixture says they are.
-    ///
-    /// It answers the two questions the relation asks and nothing else: every other method
-    /// is unreachable from `establish`, so a fixture that implemented them would be
-    /// describing a capability this authority does not consult.
-    struct RolesFixture {
-        response: VerificationKey,
-        channel_leaf: Vec<u8>,
-    }
-
-    impl crate::key_source::ResponseSigner for RolesFixture {
-        fn sign_response(&self, _preimage: &[u8]) -> Result<String, KeyError> {
-            unreachable!("the role relation never signs")
-        }
-        fn response_public_key(&self) -> Result<VerificationKey, KeyError> {
-            Ok(self.response.clone())
-        }
-    }
-
-    impl KeySource for RolesFixture {
-        fn tls_server_cert_chain(
-            &self,
-        ) -> Result<Vec<rustls_pki_types::CertificateDer<'static>>, KeyError> {
-            Ok(vec![rustls_pki_types::CertificateDer::from(
-                self.channel_leaf.clone(),
-            )])
-        }
-        fn tls_server_key(&self) -> Result<rustls_pki_types::PrivateKeyDer<'static>, KeyError> {
-            unreachable!("the role relation never exports a private key")
-        }
-        fn client_ca_roots(
-            &self,
-        ) -> Result<Vec<rustls_pki_types::CertificateDer<'static>>, KeyError> {
-            unreachable!("the role relation never reads the trust anchors")
-        }
-    }
-
-    /// A self-signed Ed25519 leaf certificate, and the verification key it presents.
-    ///
-    /// The key is read back out of the CERTIFICATE rather than from the generator, so the
-    /// fixture pairs exactly what the relation will read — a fixture that reported the
-    /// generator's key would agree with the relation by construction and prove nothing.
-    fn ed25519_leaf() -> (Vec<u8>, VerificationKey) {
-        let pair = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519).expect("keypair");
-        let params = rcgen::CertificateParams::new(vec!["localhost".to_string()]).expect("params");
-        let cert = params.self_signed(&pair).expect("self-signed leaf");
-        let der = cert.der().to_vec();
-        let key = CertificateChainEvidence::from_leaf_der(&der)
-            .interpret_credential_public_key()
-            .expect("rcgen emits a canonical Ed25519 SPKI")
-            .key();
-        let verification =
-            VerificationKey::from_bytes(&key.raw_point()).expect("a generated key is a point");
-        (der, verification)
+        // A channel credential of another profile produced no comparable key. Not a
+        // collapse, and — the half a bool cannot say — not a separation either.
+        assert_eq!(
+            compare_roles(&RolesFixture {
+                response: ed25519_leaf().1,
+                channel_leaf: vec![0x30, 0x03, 0x02, 0x01, 0x00],
+            }),
+            RoleSeparation::NotCompared
+        );
     }
 
     /// THE refusal. One key serving both roles cannot become a serving capability.
