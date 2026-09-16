@@ -4027,3 +4027,49 @@ weakening = """
 expect_red = [
   "tests/integration_async#admission_currency_serving_test::a_degraded_serve_and_a_live_confirmed_one_are_different_records",
 ]
+
+[[probe]]
+id = "M168-a-full-queue-at-drain-time-reports-a-clean-shutdown"
+unit = "proxy.audit_delivery"
+conjunct = "a drain that could not be queued or acknowledged reports OutcomeUnknown, never Drained"
+# The weakening is the one r11 R11-169 measured as undetectable: report a queue that cannot
+# accept the Flush as a clean drain. That is the shutdown-under-load case the bound exists for
+# — the records already handed over are exactly the decisions taken last — and the old battery
+# stayed green through it, because both of its controls exercised `drain_line`, a pure
+# formatter over an already-decided outcome.
+path = "mcp-re-proxy/src/audit_sink/drain.rs"
+anchor = """
+    if queue.try_send(AuditMessage::Flush(ack)).is_err() {
+        return AuditDrain::OutcomeUnknown;
+    }
+"""
+weakening = """
+    if queue.try_send(AuditMessage::Flush(ack)).is_err() {
+        return AuditDrain::Drained;
+    }
+"""
+expect_red = [
+  "lib#audit_sink::drain::tests::a_queue_that_cannot_accept_the_flush_is_unknown_not_drained",
+]
+
+[[probe]]
+id = "M169-the-write-latch-is-read-before-the-acknowledgement"
+unit = "proxy.audit_delivery"
+conjunct = "`Drained` means the records ARRIVED, which is what reading the failure latch behind the acknowledgement establishes"
+# The weakening drops the latch read entirely. The ack says the lines ahead of it were
+# DEQUEUED and written AT, never that they arrived — the writer swallows individual write
+# errors by design, so a shutdown in which every `write_all` returned EPIPE acknowledges
+# exactly as fast as one in which they all landed. Without the latch, `Drained` silently
+# weakens from ARRIVED to ATTEMPTED.
+path = "mcp-re-proxy/src/audit_sink/drain.rs"
+anchor = """
+    if writes_failed() {
+        return AuditDrain::OutcomeUnknown;
+    }
+"""
+weakening = """
+    let _ = writes_failed;
+"""
+expect_red = [
+  "lib#audit_sink::drain::tests::an_acknowledged_drain_with_a_failed_write_behind_it_is_unknown",
+]
