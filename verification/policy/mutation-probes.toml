@@ -3524,14 +3524,14 @@ conjunct = "No tuple can be spelled as a different one by moving a boundary betw
 # shared store can open a leg against one dispatch boundary and answer it against the other.
 # Every positive control in the battery still passes under this weakening — which is why it
 # is registered rather than argued.
-path = "mcp-re-proxy/src/continuation_store/mod.rs"
+path = "mcp-re-proxy/src/continuation_store/key.rs"
 anchor = """
     hasher.update((audience_id.len() as u64).to_be_bytes());
 """
 weakening = """
 """
 expect_red = [
-  "lib#continuation_store::tests::no_boundary_between_the_keys_fields_can_be_moved",
+  "lib#continuation_store::key::tests::no_boundary_between_the_keys_fields_can_be_moved",
 ]
 
 [[probe]]
@@ -3542,14 +3542,14 @@ conjunct = "No tuple can be spelled as a different one by moving a boundary betw
 # The boundary that separates ACTORS. Without this prefix one actor names another's entry by
 # spelling the split differently, and the store hands it the victim's retained bases — which
 # is another actor answering a human-approval round trip, not a denial of service.
-path = "mcp-re-proxy/src/continuation_store/mod.rs"
+path = "mcp-re-proxy/src/continuation_store/key.rs"
 anchor = """
     hasher.update((actor_id.len() as u64).to_be_bytes());
 """
 weakening = """
 """
 expect_red = [
-  "lib#continuation_store::tests::no_boundary_between_the_keys_fields_can_be_moved",
+  "lib#continuation_store::key::tests::no_boundary_between_the_keys_fields_can_be_moved",
 ]
 
 [[probe]]
