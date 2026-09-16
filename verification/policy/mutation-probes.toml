@@ -3712,6 +3712,60 @@ expect_red = [
 ]
 
 [[probe]]
+id = "M150-the-unattributed-ceiling-is-chosen-by-the-record"
+unit = "proxy.audit_delivery"
+conjunct = "a record with no verifier-resolved actor is admitted at a strictly lower queue depth than an attributed one"
+# The weakening hands every record the full depth, which is what the reservation exists to
+# prevent: an unauthenticated peer sets the rate of unattributed records, so filling the queue
+# hands that peer the choice of which OTHER decision is dropped. Nothing is admitted that was
+# not admitted before — the audit stream simply loses a different record — and the flood
+# control next door stays green under it, because it passes `ceiling` by hand and therefore
+# measures `offer` respecting a ceiling it was GIVEN.
+path = "mcp-re-proxy/src/audit_sink/mod.rs"
+anchor = """
+fn admission_ceiling(record: &AuditRecord) -> usize {
+    if record.actor_id.is_some() {
+        STDERR_AUDIT_QUEUE_DEPTH
+    } else {
+        STDERR_AUDIT_UNATTRIBUTED_CEILING
+    }
+}
+"""
+weakening = """
+fn admission_ceiling(_record: &AuditRecord) -> usize {
+    STDERR_AUDIT_QUEUE_DEPTH
+}
+"""
+expect_red = [
+  "lib#audit_sink::tests::the_ceiling_a_record_is_admitted_at_is_chosen_by_its_attribution",
+]
+
+[[probe]]
+id = "M151-a-stopped-burst-still-reports-what-it-cost"
+unit = "proxy.audit_delivery"
+conjunct = "the writer loop's timeout arm reports the drops a stopped burst already cost"
+# The weakening reports only when a record arrived, which leaves the Flush arm and the
+# ordinary line path untouched and kills the TIMEOUT arm — the one that makes a burst that
+# stopped report at all. Nothing is admitted and no record is lost that was not lost before;
+# what is lost is the FACT that they were, so the stream ends in a silence that reads exactly
+# like no traffic. `the_drop_count_is_reported_without_a_following_record` calls `report_drops`
+# directly and stays green under it, which is the asymmetry this probe exists to show.
+path = "mcp-re-proxy/src/audit_sink/writer.rs"
+anchor = """
+        let mut stderr = std::io::stderr().lock();
+        report_drops(&mut stderr, dropped, failed);
+"""
+weakening = """
+        let mut stderr = std::io::stderr().lock();
+        if line.is_some() {
+            report_drops(&mut stderr, dropped, failed);
+        }
+"""
+expect_red = [
+  "lib#audit_sink::writer::tests::a_burst_that_stops_still_reports_what_it_cost",
+]
+
+[[probe]]
 id = "M148-an-oversized-trust-document-is-refused-not-truncated"
 unit = "proxy.trust_plane_runtime"
 conjunct = "a --trust document past the read bound is refused whole, never handed to the parser cut in half"
