@@ -23,6 +23,7 @@ use std::sync::Arc;
 
 use mcp_re_core::b64url_decode;
 use mcp_re_core::SigningKey;
+use mcp_re_http_profile::custody::DelegatedKeyWindow;
 use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::pdp_decision::issue_authorization_decision;
 use mcp_re_http_profile::pdp_decision::DecidedActor;
@@ -291,8 +292,7 @@ fn ready_signer() -> Arc<DelegatedServerSigner> {
                 server_role: "server".into(),
                 server_trust_domain: TRUST_DOMAIN.into(),
                 server_subject: "did:example:server".into(),
-                ttl: 300,
-                overlap: 60,
+                window: DelegatedKeyWindow::of(300, 60).expect("0 < overlap < ttl"),
             },
             issue_cred,
             factory,

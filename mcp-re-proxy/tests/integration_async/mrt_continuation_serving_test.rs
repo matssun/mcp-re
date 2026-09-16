@@ -22,6 +22,7 @@
 use std::sync::Arc;
 
 use mcp_re_core::SigningKey;
+use mcp_re_http_profile::custody::DelegatedKeyWindow;
 use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::ActorIdentity;
@@ -142,8 +143,7 @@ fn custody_cfg() -> CustodyConfig {
         server_role: "server".into(),
         server_trust_domain: "example.com".into(),
         server_subject: "did:example:server".into(),
-        ttl: TTL,
-        overlap: OVERLAP,
+        window: DelegatedKeyWindow::of(TTL, OVERLAP).expect("0 < overlap < ttl"),
     }
 }
 
@@ -2019,8 +2019,15 @@ fn signer_with_credential_ttl(ttl: i64) -> Arc<DelegatedServerSigner> {
         n = n.wrapping_add(1);
         SigningKey::from_seed_bytes(&[n; 32])
     };
+    // The overlap must sit strictly inside the TTL. Before the window was sealed this
+    // fixture built `ttl: 40` over `custody_cfg()`'s `overlap: 60` — an `overlap >= ttl`
+    // pair, the very one that makes every instant "due for rotation" and puts the root on
+    // the per-request path. It compiled because the two were independent `pub i64`s.
+    //
+    // Half the life is strictly inside any `ttl > 1`, and the rotor here is driven exactly
+    // once, so the rotation threshold this picks is never consulted by these tests.
     let cfg = CustodyConfig {
-        ttl,
+        window: DelegatedKeyWindow::of(ttl, ttl / 2).expect("0 < ttl/2 < ttl for ttl > 1"),
         ..custody_cfg()
     };
     let mut rotor = DelegatedRotor::new(

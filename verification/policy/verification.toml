@@ -4357,9 +4357,18 @@ description = "The delegated-signing credential lifecycle: the root is never tou
 paths = [
   "mcp-re-http-profile/src/custody/mod.rs",
   "mcp-re-http-profile/src/custody/issuance_terms.rs",
+  "mcp-re-http-profile/src/custody/key_window.rs",
 ]
 exported_contracts = []
-evidence = ["test://http_profile/delegated_signing_custody/credential_lifecycle"]
+# TWO classes, for the reason `http_profile.verifier_results` carries two. The seal added by
+# R11-307/R11-036 is a NEGATIVE conjunct — an illegal `(ttl, overlap)` pair has no inhabitant
+# — and a green battery is not evidence that the refusal is load-bearing. The compile-time
+# half (private fields, `of` the sole producer) no runtime weakening can move; the runtime
+# half is `of`'s two refusals, and those are exactly what a probe can delete.
+evidence = [
+  "test://http_profile/delegated_signing_custody/credential_lifecycle",
+  "mutation://http_profile/delegated_signing_custody/key_window_relation",
+]
 tested_symbols = [
   "lib#custody::tests::signing_never_touches_the_root_within_a_key_life",
   "lib#custody::tests::rotation_mints_successor_in_the_overlap_window",
@@ -4373,10 +4382,16 @@ tested_symbols = [
   "lib#custody::tests::a_declined_reissue_leaves_the_predecessor_untouched",
   "lib#custody::tests::the_minted_credential_carries_the_configured_scope_and_trust_epoch",
   "lib#custody::tests::an_unrepresentable_expiry_refuses_rather_than_wrapping",
-  "lib#custody::tests::an_uncomputable_rotation_threshold_rotates_rather_than_holding_the_key",
   "lib#custody::tests::a_signature_window_that_cannot_be_computed_clamps_to_the_credential",
   "lib#custody::issuance_terms::tests::every_term_fails_restrictively",
   "lib#custody::issuance_terms::tests::the_retry_interval_has_a_floor",
+  "lib#custody::issuance_terms::tests::an_uncomputable_rotation_threshold_reads_as_due",
+  # The window's own relation. `key_window.rs` entered `paths` with this slice, so it was a
+  # fingerprint input whose controls no unit named — the file could have been emptied and
+  # every declared symbol would still have passed.
+  "lib#custody::key_window::tests::an_overlap_outside_the_ttl_is_not_a_window",
+  "lib#custody::key_window::tests::a_legal_pair_is_a_window_and_projects_what_it_was_given",
+  "lib#custody::key_window::tests::the_magnitude_ceiling_is_not_this_types_to_apply",
 ]
 
 [[unit]]

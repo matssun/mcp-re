@@ -406,8 +406,8 @@ mod tests {
             server_role: "server".into(),
             server_trust_domain: "example.com".into(),
             server_subject: "did:example:server".into(),
-            ttl: T,
-            overlap: O,
+            window: mcp_re_http_profile::custody::DelegatedKeyWindow::of(T, O)
+                .expect("0 < overlap < ttl"),
         }
     }
 

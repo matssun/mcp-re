@@ -40,6 +40,7 @@ use std::sync::Arc;
 
 use mcp_re_core::b64url_decode;
 use mcp_re_core::SigningKey;
+use mcp_re_http_profile::custody::DelegatedKeyWindow;
 use mcp_re_http_profile::issue_delegation_credential_with_signer;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::ActorIdentity;
@@ -240,8 +241,7 @@ fn custody_cfg() -> CustodyConfig {
         server_role: "server".into(),
         server_trust_domain: "example.com".into(),
         server_subject: "did:example:server".into(),
-        ttl: TTL,
-        overlap: OVERLAP,
+        window: DelegatedKeyWindow::of(TTL, OVERLAP).expect("0 < overlap < ttl"),
     }
 }
 

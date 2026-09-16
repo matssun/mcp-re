@@ -147,7 +147,7 @@ impl SigningPlane {
         let crate::delegated_wiring::DelegatedSigningWiring {
             signer,
             mut rotor,
-            overlap,
+            window,
         } = crate::delegated_wiring::build_delegated_signing(plan, root_signer);
         // Resolve the shared trust epoch BEFORE the first key is minted, so the very
         // first credential carries the globally comparable `<base>#<counter>` label
@@ -185,9 +185,9 @@ impl SigningPlane {
         })?;
         eprintln!(
             "mcp-re-proxy: response signing = DELEGATED (ADR-MCPRE-052): the root issuer is off \
-             the request path; delegated key TTL {}s / overlap {overlap}s; issuer kid {:?}. \
+             the request path; delegated key {window}; issuer kid {:?}. \
              Initial delegated key issued.",
-            plan.custody.ttl, plan.custody.issuer_kid,
+            plan.custody.issuer_kid,
         );
         // Cold-path rotation worker: rotate within the overlap window before each key's
         // exp so the KMS/root stays off the per-core serving runtimes. It also watches the
@@ -199,7 +199,7 @@ impl SigningPlane {
             &mut workers,
             rotor,
             Arc::clone(&signer),
-            overlap,
+            window.overlap(),
             epoch_watch,
         );
         Ok(SigningPlane { signer, workers })
@@ -720,8 +720,8 @@ mod rotation_owner_tests {
                 server_role: "server".to_string(),
                 server_trust_domain: "example.com".to_string(),
                 server_subject: "did:example:server".to_string(),
-                ttl: TTL,
-                overlap: OVERLAP,
+                window: mcp_re_http_profile::custody::DelegatedKeyWindow::of(TTL, OVERLAP)
+                    .expect("0 < overlap < ttl"),
             },
             epoch,
         }

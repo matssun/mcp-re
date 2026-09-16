@@ -266,10 +266,11 @@ impl SigningPlan {
                 server_role: identity.role.clone(),
                 server_trust_domain: identity.trust_domain.clone(),
                 server_subject: identity.subject.clone(),
-                // The pair as the owner validated it. Reading two independent integers
-                // here is what let a validated TTL be paired with an arbitrary overlap.
-                ttl: rotation.ttl_secs(),
-                overlap: rotation.overlap_secs(),
+                // The owner's sealed pair, PROJECTED — not two accessors read back and
+                // re-paired here, which is what let a validated TTL meet an arbitrary
+                // overlap. This composition root combines owner-provided facts; it does
+                // not reconstruct one. No fallible step exists to get wrong.
+                window: rotation,
             },
             epoch,
         }

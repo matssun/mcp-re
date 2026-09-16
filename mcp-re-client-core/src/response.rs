@@ -371,6 +371,7 @@ mod delegated_tests {
     use mcp_re_core::SigningKey;
     use mcp_re_http_profile::build_delegated_rejection;
     use mcp_re_http_profile::build_delegated_rejection_preflight;
+    use mcp_re_http_profile::custody::DelegatedKeyWindow;
     use mcp_re_http_profile::sign_response_full;
     use mcp_re_http_profile::ActorIdentity;
     use mcp_re_http_profile::AudienceTuple;
@@ -481,8 +482,7 @@ mod delegated_tests {
             server_role: "server".into(),
             server_trust_domain: "example.com".into(),
             server_subject: "did:example:server".into(),
-            ttl: 300,
-            overlap: 60,
+            window: DelegatedKeyWindow::of(300, 60).expect("0 < overlap < ttl"),
         }
     }
     fn custody() -> DelegatedSigningCustody<

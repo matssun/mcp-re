@@ -131,4 +131,30 @@ mod tests {
         assert_eq!(retry_interval(0), MIN_ISSUANCE_RETRY_SECS);
         assert_eq!(retry_interval(-100), MIN_ISSUANCE_RETRY_SECS);
     }
+
+    /// An `overlap` that cannot be subtracted from `exp` reads as DUE, not as far away.
+    ///
+    /// This is the direction that matters. Wrapping would put `exp - overlap` far in the
+    /// future, `now >= threshold` would answer false, and the key would stay in service
+    /// past the window it should have been replaced in — a restrictive value turned
+    /// permissive by an arithmetic accident.
+    ///
+    /// Driven here rather than through a `CustodyConfig`, because a config can no longer
+    /// carry this value: [`DelegatedKeyWindow`](super::DelegatedKeyWindow) refuses a
+    /// non-positive overlap outright. The operation still takes a bare `i64`, so the
+    /// restrictive direction is still a property of THIS function and still needs saying —
+    /// the seal removed one way to reach it, not the obligation.
+    #[test]
+    fn an_uncomputable_rotation_threshold_reads_as_due() {
+        assert!(
+            rotation_due(0, i64::MIN, 1),
+            "a threshold that cannot be computed must not read as `not yet due`"
+        );
+        // The computable neighbours, so the assertion above is not true of everything.
+        assert!(
+            !rotation_due(1_000, 60, 900),
+            "well inside the credential's life"
+        );
+        assert!(rotation_due(1_000, 60, 950), "inside the overlap window");
+    }
 }

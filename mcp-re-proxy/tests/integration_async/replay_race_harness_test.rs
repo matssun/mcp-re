@@ -516,6 +516,7 @@ mod http_profile_full_stack {
     use std::sync::Arc;
 
     use mcp_re_core::SigningKey;
+    use mcp_re_http_profile::custody::DelegatedKeyWindow;
     use mcp_re_http_profile::issue_delegation_credential;
     use mcp_re_http_profile::sign_request_full;
     use mcp_re_http_profile::ActorIdentity;
@@ -618,8 +619,7 @@ mod http_profile_full_stack {
             server_role: "server".into(),
             server_trust_domain: "example.com".into(),
             server_subject: "did:example:server".into(),
-            ttl: 300,
-            overlap: 60,
+            window: DelegatedKeyWindow::of(300, 60).expect("0 < overlap < ttl"),
         }
     }
 
