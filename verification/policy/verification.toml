@@ -2011,6 +2011,7 @@ description = "ADR-MCPRE-065 Slice 2: whether an authenticated decision is ABOUT
 paths = [
   "mcp-re-proxy/src/authorization/pdp/relation.rs",
   "mcp-re-proxy/src/authorization/pdp/policy.rs",
+  "mcp-re-proxy/src/authorization/pdp/authority.rs",
   "mcp-re-proxy/src/authorization/pdp/evidence.rs",
   "mcp-re-proxy/src/authorization/pdp/refusal.rs",
   "mcp-re-proxy/src/authorization/pdp/mod.rs",
@@ -2045,6 +2046,9 @@ tested_symbols = [
   "tests/integration_async#pdp_authorization_serving_test::a_stale_decision_is_refused_even_inside_its_own_validity_window",
   "tests/integration_async#pdp_authorization_serving_test::a_decision_issued_for_another_enforcement_point_is_refused",
   "tests/integration_async#pdp_authorization_serving_test::a_deployment_running_no_decision_profile_is_unaffected",
+  "tests/integration_async#pdp_authorization_serving_test::the_record_names_the_enrolled_authority_and_not_the_one_the_decision_claims_to_be",
+  "lib#authorization::pdp::authority::tests::an_enrolled_authority_answers_with_the_name_it_was_enrolled_under",
+  "lib#authorization::pdp::authority::tests::the_name_and_the_key_are_one_value",
 ]
 
 [[unit]]

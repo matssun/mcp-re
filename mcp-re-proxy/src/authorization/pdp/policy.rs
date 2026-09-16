@@ -3,19 +3,26 @@
 
 use std::sync::Arc;
 
-use mcp_re_core::VerificationKey;
 use mcp_re_http_profile::pdp_decision::DecisionScope;
 use mcp_re_http_profile::pdp_decision::PdpDecisionFreshness;
 
-/// Resolves a decision's `issuer_kid` to an authorization authority's root key.
+use super::authority::EnrolledAuthority;
+
+/// Resolves a decision's `issuer_kid` to the authorization authority this deployment
+/// enrolled under it.
 ///
 /// Its own seam, deliberately not the request-signer trust resolver. *This key signs
 /// requests* and *this key decides permission* are different authorities; a deployment may
 /// back both with one key infrastructure, but it says so twice rather than having the second
 /// inferred from the first. Returning `None` means **this deployment does not trust that
 /// issuer to authorize**, whatever else it may trust that key for.
+///
+/// It yields an [`EnrolledAuthority`] rather than a bare key because the enforcement point
+/// needs both halves of the enrolment: the key to authenticate the decision, and the name to
+/// attribute the grant to. A seam that answered with the key alone left the name to be taken
+/// from the decision's own `iss` claim, which is the signer choosing its own attribution.
 pub type AuthorizationAuthorityResolver =
-    Arc<dyn Fn(&str) -> Option<VerificationKey> + Send + Sync>;
+    Arc<dyn Fn(&str) -> Option<EnrolledAuthority> + Send + Sync>;
 
 /// The deployment's PDP-decision profile.
 pub struct PdpDecisionPolicy {

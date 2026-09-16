@@ -92,6 +92,7 @@ pub(crate) use dispatch::AuthorizedRequestBody;
 pub use evaluator::AuthorizationEvaluator;
 pub use evaluator::AuthorizedDecision;
 pub use grant::GrantAttribution;
+pub use pdp::EnrolledAuthority;
 pub use pdp::PdpDecisionEvaluator;
 pub use pdp::PdpDecisionPolicy;
 pub use posture::AuthorizationPosture;
