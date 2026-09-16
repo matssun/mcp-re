@@ -902,6 +902,7 @@ tested_symbols = [
   # The mirror: a GENUINE outage still reads as one, so the clause above is a
   # classification and not a verifier that reports everything the same way.
   "lib#admission_source::in_memory::tests::an_outage_is_distinguishable_from_an_unknown_workload",
+  "lib#admission_source::in_memory::tests::a_panic_under_the_record_lock_does_not_close_the_source",
   # And the accepting half, so none of the above is satisfied by a source that refuses
   # everything.
   "lib#admission_source::in_memory::tests::revoking_keeps_the_generation_and_changes_the_status",
