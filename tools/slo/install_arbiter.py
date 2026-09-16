@@ -116,7 +116,15 @@ def installed_drift(root: Path = ROOT, mirror: Path = MIRROR, here: Path = HERE)
         drift.append(_expect(root / "bin" / filename, WRAPPER.format(root=root, command=command)))
     for command, filename in (("job-started", "vm-job-started.sh"),
                               ("job-completed", "vm-job-completed.sh")):
-        drift.append(_expect(mirror / "bin" / filename, WRAPPER.format(root=root, command=command)))
+        # VM_WRAPPER, not WRAPPER. These two templates differ in the interpreter path they
+        # exec -- the VM's names `vm_admission_hook.py` under the mirror, because /opt is
+        # not mounted in the guest at all. Comparing the VM wrapper against the HOST
+        # template asked whether a file in the VM contained a /opt path it could never
+        # contain, so `--verify` returned 1 no matter what was installed. That is a FALSE
+        # RED on the gate at slo.yml:168, and the worst kind: the lane reported drift
+        # while the installed bytes were exactly what the installer writes.
+        drift.append(_expect(mirror / "bin" / filename,
+                             VM_WRAPPER.format(mirror=mirror, command=command)))
     return drift
 
 
