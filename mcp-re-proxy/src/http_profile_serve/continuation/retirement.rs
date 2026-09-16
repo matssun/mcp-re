@@ -120,7 +120,7 @@ mod tests {
         let plane = ContinuationPlane::wired(store.clone(), 300);
         let key = continuation_key("aud", "actor-1", b"s-1");
         store
-            .store(
+            .create(
                 &key,
                 &RetainedBases {
                     previous_request_base: b"req".to_vec(),
@@ -158,13 +158,14 @@ mod tests {
     struct UnansweringStore;
 
     impl AsyncContinuationStore for UnansweringStore {
-        fn store<'a>(
+        fn create<'a>(
             &'a self,
             _key: &'a str,
             _bases: &'a RetainedBases,
             _ttl_secs: i64,
-        ) -> crate::continuation_store::ContinuationFuture<'a, ()> {
-            Box::pin(async { Ok(()) })
+        ) -> crate::continuation_store::ContinuationFuture<'a, crate::continuation_store::Creation>
+        {
+            Box::pin(async { Ok(crate::continuation_store::Creation::Stored) })
         }
 
         fn peek<'a>(

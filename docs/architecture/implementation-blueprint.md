@@ -150,7 +150,7 @@ without new debt accumulating behind it:
 
 | gate | stage | holds |
 |---|---|---|
-| `scripts/module_size_gate.py` | 1 (no build) | 200 production lines per file, baselined in `config/module-size-debt.toml` |
+| `scripts/module_size_gate.py` | 1 (no build) | 200 production lines per file, baselined in `config/module-size-debt.toml`; and the baseline itself, which may only be raised by a one-shot §14 growth authorization checked against `origin/main` |
 | `scripts/clippy_ratchet_gate.py` | 2 (with the build) | `unwrap_used` at zero; `expect_used`, `indexing_slicing`, `too_many_lines`, `excessive_nesting`, `arithmetic_side_effects` at per-crate baselines in `config/clippy-debt.toml`; and the shape of every exception |
 
 Two things about them are load-bearing for this method:

@@ -845,12 +845,15 @@ fn replica_without_store(inner: Box<dyn AsyncInnerServer>) -> HttpProfileProxy {
 struct WriteFailingStore(InMemoryContinuationStore);
 
 impl AsyncContinuationStore for WriteFailingStore {
-    fn store<'a>(
+    fn create<'a>(
         &'a self,
         _key: &'a str,
         _bases: &'a mcp_re_proxy::continuation_store::RetainedBases,
         _ttl_secs: i64,
-    ) -> mcp_re_proxy::continuation_store::ContinuationFuture<'a, ()> {
+    ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
+        'a,
+        mcp_re_proxy::continuation_store::Creation,
+    > {
         Box::pin(async {
             Err(
                 mcp_re_proxy::continuation_store::ContinuationStoreError::Unavailable {
@@ -1698,10 +1701,17 @@ fn assert_retry_posture(body: &[u8], expected: Option<&str>) {
 #[tokio::test]
 async fn a_request_refused_on_the_continuation_binding_has_not_burned_its_nonce() {
     const STATE: &str = "state-token-G1";
+    // B's inner backend mints a DIFFERENT state from A's, so B's own open leg below
+    // establishes a key of its own. With one shared state the retry would be a second
+    // open leg on A's still-live key, which the store now answers `Collision` — a
+    // correct refusal, but one that would fail this test for a reason having nothing to
+    // do with the nonce it is about. The proposition here is the replay slot; the
+    // continuation-key uniqueness rule has its own controls.
+    const STATE_B: &str = "state-token-G1-b";
     const NONCE: &str = "nonce-shared-G1";
     let store: Arc<dyn AsyncContinuationStore> = Arc::new(InMemoryContinuationStore::new());
     let a = replica(ready_signer(), Arc::clone(&store), STATE);
-    let b = replica(ready_signer(), Arc::clone(&store), STATE);
+    let b = replica(ready_signer(), Arc::clone(&store), STATE_B);
 
     let (d_prev, _d_irr, state) = open_on(&a, STATE).await;
 
@@ -2128,18 +2138,21 @@ async fn a_signed_reply_never_advertises_validity_past_its_delegated_credential(
 // backend count — rather than the status alone, which every one of these shares with the
 // behaviour it replaced.
 
-/// A continuation store whose `peek` always fails. `store`/`consume` behave normally, so
+/// A continuation store whose `peek` always fails. `create`/`consume` behave normally, so
 /// an answer leg fails at exactly the read the shared tier serves it from.
 struct PeekFailingStore(Arc<dyn AsyncContinuationStore>);
 
 impl AsyncContinuationStore for PeekFailingStore {
-    fn store<'a>(
+    fn create<'a>(
         &'a self,
         key: &'a str,
         bases: &'a mcp_re_proxy::continuation_store::RetainedBases,
         ttl_secs: i64,
-    ) -> mcp_re_proxy::continuation_store::ContinuationFuture<'a, ()> {
-        self.0.store(key, bases, ttl_secs)
+    ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
+        'a,
+        mcp_re_proxy::continuation_store::Creation,
+    > {
+        self.0.create(key, bases, ttl_secs)
     }
     fn peek<'a>(
         &'a self,
@@ -2169,13 +2182,16 @@ impl AsyncContinuationStore for PeekFailingStore {
 struct ConsumeFailingStore(Arc<dyn AsyncContinuationStore>);
 
 impl AsyncContinuationStore for ConsumeFailingStore {
-    fn store<'a>(
+    fn create<'a>(
         &'a self,
         key: &'a str,
         bases: &'a mcp_re_proxy::continuation_store::RetainedBases,
         ttl_secs: i64,
-    ) -> mcp_re_proxy::continuation_store::ContinuationFuture<'a, ()> {
-        self.0.store(key, bases, ttl_secs)
+    ) -> mcp_re_proxy::continuation_store::ContinuationFuture<
+        'a,
+        mcp_re_proxy::continuation_store::Creation,
+    > {
+        self.0.create(key, bases, ttl_secs)
     }
     fn peek<'a>(
         &'a self,

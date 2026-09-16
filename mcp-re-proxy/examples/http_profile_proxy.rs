@@ -65,6 +65,7 @@ use mcp_re_http_profile::RetainedContinuation;
 use mcp_re_proxy::async_inner::AsyncInnerServer;
 use mcp_re_proxy::continuation_store::continuation_key;
 use mcp_re_proxy::continuation_store::AsyncContinuationStore;
+use mcp_re_proxy::continuation_store::Creation;
 use mcp_re_proxy::continuation_store::InMemoryContinuationStore;
 use mcp_re_proxy::continuation_store::RetainedBases;
 use mcp_re_proxy::http_inner::HttpInnerPool;
@@ -419,12 +420,16 @@ async fn handle(
                     &verified.resolved_actor().actor_id(),
                     request_state.as_bytes(),
                 );
-                if state
-                    .continuations
-                    .store(&key, &bases, CONTINUATION_TTL_SECS)
-                    .await
-                    .is_err()
-                {
+                // Anything but a fresh entry fails the leg closed: an outage could not
+                // record it, and a collision means a live continuation for this actor and
+                // `requestState` is already outstanding and must not be displaced.
+                if !matches!(
+                    state
+                        .continuations
+                        .create(&key, &bases, CONTINUATION_TTL_SECS)
+                        .await,
+                    Ok(Creation::Stored)
+                ) {
                     return Ok(to_hyper(rejection(
                         Some(&http_req),
                         Some(verified.evidence()),

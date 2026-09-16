@@ -80,6 +80,31 @@ and what tests or review evidence compensate for the size. **"It is complicated"
 exception.** A record that cannot answer those in concrete terms is a census that has not
 finished, and its unit stays `unreviewed`.
 
+## Authorizing an upward baseline — the one-shot growth record
+
+A `reviewed-exception` is a decision to keep a unit **intact at its measured size**. It is
+not a licence to grow: `scripts/module_size_gate.py` fails a registered file that exceeds
+its `baseline_prod_loc` whatever its status. Raising the baseline is therefore a separate
+event, and until EX-013 below it was an event that **authorized itself** — nothing compared
+`baseline_prod_loc` against `origin/main`, so the number constraining a file was editable
+in the same commit as the growth it was meant to refuse.
+
+An upward transition now requires, all together:
+
+| condition | why |
+|---|---|
+| `new_baseline > old_baseline` on `origin/main` | the trigger |
+| measured production LOC **==** `new_baseline` | exactly the growth that happened, never headroom |
+| `status = "reviewed-exception"` | only a unit a §8 census kept INTACT may grow |
+| `growth_from_prod_loc == old_baseline` | the authorization names the transition it is for |
+| `growth_ref` names a record here containing `growth-authorization: <path> <old> -> <new>` | the record is about this file and this pair |
+
+The last two make it **one-shot**. Once merged, `origin/main` holds the new number, so the
+spent authorization matches no later transition: a further increase needs a fresh record
+naming the new pair. A growth record is an `EX-` record like any other — it adjudicates a
+unit, and the transition line is the machine-readable half of a decision whose reasoning is
+the prose around it.
+
 ---
 
 ## EX-001 — `mcp-re-proxy/src/exchange_state.rs`
@@ -2316,3 +2341,121 @@ The retention authority's own census. `transparency/durability.rs` shrank in thi
 remains registered and `unreviewed`: the reservation/commitment/completion state machine, the
 bounded write queue and the writer thread have not been examined, and losing the read side
 does not adjudicate them.
+
+---
+
+## EX-013 — `mcp-re-core/src/error.rs` — **reviewed exception, and the first one-shot growth authorization**
+
+**Status:** `reviewed-exception`. **Measured:** 454 production lines (690 total) on
+`security/r11-348-continuation-create-if-absent` @ `b1d067a`, by
+`scripts/module_size_gate.py::production_lines`. **Occasioned by:** #949, which adds
+`McpReError::ContinuationConflict` so a continuation collision stops being spelled as an
+outage.
+
+```text
+growth-authorization: mcp-re-core/src/error.rs 442 -> 454
+```
+
+That line is the machine-readable half of this record. `scripts/module_size_gate.py`
+refuses the registry's raised `baseline_prod_loc` unless it finds exactly this string in a
+document named by the entry's `growth_ref`. It authorizes **one** transition: after merge,
+454 is the ratchet ceiling, and a further increase needs a new record naming `454 -> <n>`.
+
+### §8 question 1 — what single fact does this unit own?
+
+**Which `mcp-re.*` tokens exist, and what each one means.** No "and": the enum, the
+`wire_code` projection and `ALL_ERRORS` are three *spellings* of one set, not three facts.
+
+### §8 question 2 — how many independently describable authorities?
+
+**One.** The candidate seams were examined and each fails on the same point:
+
+| candidate split | why it is not an authority boundary |
+|---|---|
+| by protocol area (draft-01 / draft-02 / delegation / HTTP-profile) | the areas are not disjoint in the projection — `wire_code` must stay one exhaustive match over the whole set, so every split leaves the match behind, in one file, importing all the parts |
+| enum here, `wire_code` next door | the projection is `&'static str` per variant with no logic; separating it creates two files that must be edited in lockstep and a compile error that no longer points at the variant |
+| `ALL_ERRORS` next door | it is the membership fact restated; moving it puts the list further from the enum it must match, which is the drift this file has already suffered once |
+
+The unit is large because the **vocabulary** is large — 49 tokens — not because several
+authorities are sharing a file. Question 2's answer is the disposition; size only chose the
+order in which it was examined.
+
+### Why decomposition would damage the reasoning
+
+`wire_code` is exhaustive over the enum, so **the compiler is the control** that every
+variant has a wire token: adding a variant without a token does not build. That property is
+purchased by the match and the enum being one closed vocabulary. Any split by protocol area
+gives up nothing of the size (the match stays whole) and gives up the locality that lets a
+reviewer read a variant, its doc comment and its frozen token as three adjacent lines.
+
+The tokens are frozen by ADR-MCPS-035 and rendered by two published SDKs. A reviewer
+checking that a token is spelled right is checking a wire contract, and the cheapest form of
+that check is reading the file top to bottom. Splitting it makes the contract's *inventory*
+something a reader assembles rather than something they read.
+
+### What invariant requires locality
+
+> Enum membership and the `wire_code` projection are **one closed vocabulary**, and every
+> inhabitant has exactly one frozen token.
+
+Physical decomposition turns that single fact into **two authorities that must remain
+synchronized** — a variant list in one file and a token map in another — and synchronization
+between two owners is precisely the property this project refuses to hold by remembering.
+The compile error that today lands on the missing match arm would become, at best, a runtime
+assertion in a test.
+
+### Why the subordinate responsibilities cannot be separated
+
+There are no subordinate responsibilities. The file contains one enum, one `match` with 49
+one-line arms, one `const` list and a type alias. Its longest function is `wire_code`, whose
+49 arms are each a single line — the same shape as `parse_args` in EX-007, and reviewed the
+same way: arm count is vocabulary size, not control flow.
+
+### §8 question 10 — facts represented more than once, and what closed the gap
+
+Membership is written **three** times: the variant, the match arm, the `ALL_ERRORS` entry.
+
+- variant ↔ match arm: held by the compiler (exhaustive match). Sound.
+- match arm ↔ `ALL_ERRORS`: was held by **nothing**. The doc comment on `ALL_ERRORS`
+  claimed the list "is checked against it by `all_wire_codes_is_exhaustive`", and that test
+  **did not exist** anywhere in the workspace. The test that did exist,
+  `all_errors_is_exhaustive_and_duplicate_free`, asserted only that the list names no token
+  twice and that each starts with `mcp-re.` — both statements quantified over the list, so a
+  variant missing from the list was invisible to it, and to
+  `audit::reason_label::tests::every_verdict_has_its_own_sentence`, which quantifies over the
+  same list.
+
+This census wrote the missing control rather than recording it as future work.
+`all_wire_codes_is_exhaustive` reads the file's own source through `include_str!`, extracts
+the variant names from the `wire_code` region and from the `ALL_ERRORS` region, and compares
+the sets. It is a source-level test because the fact is about source text: no value-level
+test in Rust can enumerate an enum's variants. Probed by deleting
+`McpReError::ContinuationConflict` from `ALL_ERRORS`: red, naming the count mismatch. Both
+tests live in the test region and cost zero production lines.
+
+### §8 question 8 — public interface existing only because tests need it
+
+None. `McpReError`, `wire_code`, `ALL_ERRORS` and `McpReResult` are all consumed in
+production, `ALL_ERRORS` by `audit::reason_label` as the containment guard's domain.
+
+### §8 question 12 — which lane establishes each property
+
+| property | lane |
+|---|---|
+| every variant's `Display` equals its `wire_code`, and both are bare `mcp-re.*` tokens | `error::tests::{full_taxonomy,delegation,draft02,http_profile_signed_rejection}_wire_strings` (cargo lib) |
+| a new variant cannot ship without a wire token | **the compiler** — `wire_code` is an exhaustive match |
+| `ALL_ERRORS` names every variant exactly once | `error::all_errors_tests::all_wire_codes_is_exhaustive` + `all_errors_is_duplicate_free` (cargo lib) |
+| every variant has its own auditor sentence | `audit::reason_label::tests::every_verdict_has_its_own_sentence` (cargo lib), whose domain is `ALL_ERRORS` and so rests on the row above |
+| `ContinuationConflict` is what a live-key collision serves | `continuation_store::tests`, the Redis NIL-reply arm, and the two-replica e2e — see #949 |
+
+### What this record does NOT close
+
+- **The growth.** 454 is a ceiling, not an allowance. The next token added to the taxonomy
+  needs its own `454 -> <n>` authorization and its own re-census, and this record's reasoning
+  does not carry over to it automatically: a vocabulary that keeps growing is evidence about
+  the vocabulary, not about the file.
+- **Whether the taxonomy should be this large.** The census asks whether `error.rs` is one
+  authority, and it is. Whether 49 frozen tokens is the right vocabulary for the protocol is
+  an ADR-MCPS-035 question, not a §14 one.
+- **`mcp-re-http-profile/src/error.rs`**, a separate 294-line registered entry, still
+  `unreviewed`. A ruling about one error taxonomy is not a ruling about the other.

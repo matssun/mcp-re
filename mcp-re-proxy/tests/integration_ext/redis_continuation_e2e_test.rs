@@ -14,8 +14,9 @@
 //!   * `consume` must report whether IT removed the entry (`DEL`'s count), because
 //!     that count — not the read — is what makes a continuation answerable at most
 //!     once across replicas;
-//!   * `store` must apply a bounded TTL, so an unanswered continuation does not
-//!     linger forever.
+//!   * `create` must apply a bounded TTL, so an unanswered continuation does not
+//!     linger forever, and must refuse a LIVE key rather than overwrite it — the
+//!     atomicity of that refusal is `SET NX`'s, which no in-memory tier can witness.
 //!
 //! None of that is observable from the in-memory store, and the serving-path tests
 //! (`mrt_continuation_serving_test.rs`) run against the in-memory one. Until this
@@ -25,6 +26,7 @@
 
 use mcp_re_proxy::continuation_store::continuation_key;
 use mcp_re_proxy::continuation_store::AsyncContinuationStore;
+use mcp_re_proxy::continuation_store::Creation;
 use mcp_re_proxy::continuation_store::RetainedBases;
 use mcp_re_proxy::redis_continuation_store::RedisContinuationStore;
 
@@ -93,7 +95,7 @@ async fn peek_is_non_destructive_and_consume_is_one_shot_across_replicas() {
     let expected = bases("one-shot");
 
     // OPEN on A.
-    a.store(&key, &expected, 300)
+    a.create(&key, &expected, 300)
         .await
         .expect("A records the open leg");
 
@@ -145,7 +147,7 @@ async fn one_actors_continuation_is_not_reachable_by_another() {
         "the same requestState under two actors is two keys"
     );
 
-    a.store(&a_key, &bases("scoped"), 300)
+    a.create(&a_key, &bases("scoped"), 300)
         .await
         .expect("A records");
 
@@ -179,7 +181,7 @@ async fn a_recorded_continuation_carries_a_bounded_ttl() {
     let key = continuation_key(AUD, ACTOR_A, state.as_bytes());
 
     store
-        .store(&key, &bases("ttl"), 1)
+        .create(&key, &bases("ttl"), 1)
         .await
         .expect("records with a 1s TTL");
     assert!(
@@ -193,4 +195,42 @@ async fn a_recorded_continuation_carries_a_bounded_ttl() {
         None,
         "Redis expired the entry — an unanswered continuation does not linger"
     );
+}
+
+/// R11-348 CONTROL 5, live: two replicas opening the SAME key yield exactly one
+/// `Stored`, and the loser never displaces the winner's bases.
+///
+/// The in-memory twin measures the same rule under a mutex, which is a different
+/// mechanism: there the atomicity is the lock's, here it is `SET NX`'s, evaluated inside
+/// a single-threaded Redis against writers in two processes that cannot see each other.
+/// That is the arrangement the cross-replica deployment actually runs, and it is the only
+/// one in which a read-then-write implementation would visibly fail.
+#[tokio::test]
+async fn two_replicas_opening_one_key_yield_exactly_one_stored() {
+    let Some(url) = redis_url() else {
+        return;
+    };
+    let (a, b) = two_replicas(&url).await;
+    let state = format!("state-{}", run_id());
+    let key = continuation_key(AUD, ACTOR_A, state.as_bytes());
+
+    let winner = bases("replica-a");
+    let loser = bases("replica-b");
+
+    let first = a.create(&key, &winner, 300).await.expect("A's open leg");
+    let second = b.create(&key, &loser, 300).await.expect("B's open leg");
+
+    assert_eq!(first, Creation::Stored, "the first open leg establishes it");
+    assert_eq!(
+        second,
+        Creation::Collision,
+        "a live key is not the second leg's to take"
+    );
+
+    // The bases a later answer leg binds against are the WINNER's, on either replica.
+    assert_eq!(a.peek(&key).await.expect("A peeks"), Some(winner.clone()));
+    assert_eq!(b.peek(&key).await.expect("B peeks"), Some(winner));
+
+    // And the approval in flight is still answerable exactly once.
+    assert!(b.consume(&key).await.expect("B consumes"));
 }

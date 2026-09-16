@@ -210,6 +210,16 @@ pub enum McpReError {
     #[error("mcp-re.continuation_binding_failed")]
     ContinuationBindingFailed,
 
+    /// A live MRTR continuation already exists for this `(audience, verifier-resolved
+    /// actor, requestState)`: the arriving OPEN leg was refused, the incumbent untouched.
+    ///
+    /// Not [`McpReError::ContinuationBindingFailed`] — no answer leg, so nothing failed to
+    /// match. Not [`McpReError::ReplayCacheUnavailable`] — the tier answered, so a retry
+    /// finds the same key taken. Issued PAST the execution threshold, so the execution
+    /// disposition stays the exchange machine's and this never means "nothing ran".
+    #[error("mcp-re.continuation_conflict")]
+    ContinuationConflict,
+
     // Delegated signing-key attestation (ADR-MCPRE-052 §8). A delegated-key
     // response is fail-closed on any uncertainty in the credential → root chain.
     /// A delegated-key-signed response carried no inline delegation credential
@@ -357,6 +367,7 @@ impl McpReError {
             McpReError::ArtifactBindingFailed => "mcp-re.artifact_binding_failed",
             McpReError::RequestBindingMismatch => "mcp-re.request_binding_mismatch",
             McpReError::ContinuationBindingFailed => "mcp-re.continuation_binding_failed",
+            McpReError::ContinuationConflict => "mcp-re.continuation_conflict",
             // Delegated signing-key attestation (ADR-MCPRE-052 §8).
             McpReError::DelegationCredentialMissing => "mcp-re.delegation_credential_missing",
             McpReError::DelegationCredentialInvalid => "mcp-re.delegation_credential_invalid",
@@ -382,7 +393,7 @@ impl McpReError {
 /// The single source for "what is in the taxonomy", so a containment guard cannot
 /// silently fall behind: `wire_code` above is an exhaustive match, so adding a variant
 /// is a compile error there, and this list is checked against it by
-/// [`all_wire_codes_is_exhaustive`](self::tests::all_wire_codes_is_exhaustive). Two
+/// [`all_wire_codes_is_exhaustive`](self::all_errors_tests::all_wire_codes_is_exhaustive). Two
 /// hand-written copies of this set had already drifted — `ContinuationTypeUnsupported`
 /// and `TrustResolverUnavailable` were emitted and neither was checked.
 pub const ALL_ERRORS: &[McpReError] = &[
@@ -423,6 +434,7 @@ pub const ALL_ERRORS: &[McpReError] = &[
     McpReError::ArtifactBindingFailed,
     McpReError::RequestBindingMismatch,
     McpReError::ContinuationBindingFailed,
+    McpReError::ContinuationConflict,
     McpReError::DelegationCredentialMissing,
     McpReError::DelegationCredentialInvalid,
     McpReError::DelegationCredentialExpired,
@@ -657,11 +669,9 @@ mod all_errors_tests {
     use super::McpReError;
     use super::ALL_ERRORS;
 
-    /// `ALL_ERRORS` must name every variant exactly once. `wire_code` is an exhaustive
-    /// match, so a NEW variant is a compile error there; this catches the other half —
-    /// a variant added to the match and forgotten here.
+    /// `ALL_ERRORS` names no wire code twice, and every token it names is a `mcp-re.*` one.
     #[test]
-    fn all_errors_is_exhaustive_and_duplicate_free() {
+    fn all_errors_is_duplicate_free() {
         let codes: std::collections::BTreeSet<&'static str> =
             ALL_ERRORS.iter().map(McpReError::wire_code).collect();
         assert_eq!(
@@ -669,10 +679,70 @@ mod all_errors_tests {
             ALL_ERRORS.len(),
             "ALL_ERRORS names a wire code twice"
         );
-        // Every wire code the enum can produce is reachable from ALL_ERRORS. Written
-        // as a per-variant assertion so the failure names the missing one.
         for error in ALL_ERRORS {
             assert!(error.wire_code().starts_with("mcp-re."));
         }
+    }
+
+    /// The variant names a `McpReError::` path region mentions, in source order.
+    fn variants_in(region: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut rest = region;
+        while let Some(at) = rest.find("McpReError::") {
+            rest = &rest[at + "McpReError::".len()..];
+            let end = rest
+                .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                .unwrap_or(rest.len());
+            out.push(rest[..end].to_string());
+            rest = &rest[end..];
+        }
+        out
+    }
+
+    /// The source between `open` and the first line equal to `close` after it.
+    fn region<'a>(source: &'a str, open: &str, close: &str) -> &'a str {
+        let start = source.find(open).expect("region opener is present");
+        let tail = &source[start..];
+        let end = tail
+            .find(&format!("\n{close}\n"))
+            .expect("region closer is present");
+        &tail[..end]
+    }
+
+    /// `ALL_ERRORS` must name every variant of the taxonomy exactly once.
+    ///
+    /// `wire_code`'s match is exhaustive over the enum, so the COMPILER establishes that
+    /// every variant has a token. It establishes nothing about `ALL_ERRORS`, which is a
+    /// hand-written list — and every containment guard downstream quantifies over that
+    /// list, so a variant missing from it is a variant nothing checks. This reads the two
+    /// regions out of the file itself and compares them, because the fact being asserted
+    /// is about the source text: no value-level test can enumerate the enum's variants.
+    #[test]
+    fn all_wire_codes_is_exhaustive() {
+        let source = include_str!("error.rs");
+        let arms = variants_in(region(source, "    pub fn wire_code(", "    }"));
+        let listed = variants_in(region(source, "pub const ALL_ERRORS", "];"));
+
+        assert_eq!(
+            arms.len(),
+            ALL_ERRORS.len(),
+            "the parsed match has {} arms but ALL_ERRORS holds {} entries — the parse is \
+             wrong, or the list is",
+            arms.len(),
+            ALL_ERRORS.len()
+        );
+        let arms: std::collections::BTreeSet<String> = arms.into_iter().collect();
+        let listed: std::collections::BTreeSet<String> = listed.into_iter().collect();
+        let missing: Vec<&String> = arms.difference(&listed).collect();
+        assert!(
+            missing.is_empty(),
+            "in wire_code but not in ALL_ERRORS, so nothing downstream checks them: \
+             {missing:?}"
+        );
+        let extra: Vec<&String> = listed.difference(&arms).collect();
+        assert!(
+            extra.is_empty(),
+            "in ALL_ERRORS but not a variant: {extra:?}"
+        );
     }
 }

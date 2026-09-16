@@ -247,6 +247,18 @@ increases what is known. **Nothing returns to `unreviewed`.** A registry may onl
 file that grows fails — whatever its status, neither reviewed state is a licence to grow —
 and a file that drops to the threshold fails until its entry is removed.
 
+**Raising a baseline is its own event, and one authorization buys one transition.** The
+ratchet constrains a file against `baseline_prod_loc`; nothing used to constrain
+`baseline_prod_loc`, so raising it in the same commit as the growth switched the ratchet
+off for that file. An upward transition, judged against `origin/main`, now needs all of:
+the measured production LOC **equal** to the new baseline (no headroom), `status =
+"reviewed-exception"` (only a unit a census kept intact may grow), `growth_from_prod_loc`
+equal to the old baseline, and a `growth_ref` naming a §14 record that contains the literal
+`growth-authorization: <path> <old> -> <new>`. After merge the old baseline has moved, so
+the spent authorization matches nothing: **a previous authorization never authorizes a
+later increase.** The worked example is `EX-013` — `mcp-re-core/src/error.rs` `442 -> 454`,
+for one frozen error token.
+
 **Review granularity equals exception granularity.** A function-level exception does not
 make its file a reviewed exception. `parse_args` is a reviewed exception; `cli.rs` is not.
 `run_validated` is a reviewed exception; `app.rs` is `reviewed-action-required` — its

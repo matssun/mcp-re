@@ -53,6 +53,17 @@
 //! One-shot survives the split: `consume` reports whether IT removed the entry, so of
 //! two concurrent answer legs exactly one is admitted and the other fails closed.
 //!
+//! **A live entry is never overwritten.** `requestState` is minted by the inner application
+//! and treated as opaque, so two approvals open for one actor under one `requestState` are
+//! whatever that application does; recording the second over the first destroys bases the
+//! first still needs. The contract this replaced said "a fresh open leg supersedes a stale
+//! one", which asserts an ORDER nothing establishes — the legs may be concurrent, and both
+//! carry the same key and TTL shape. Whether a live entry EXISTS is decidable, so that is
+//! the rule. See [`Creation`] and [`AsyncContinuationStore::create`].
+//!
+//! It is not a uniqueness assumption about `requestState`: the store refuses a collision it
+//! can observe in its own keyspace, and assumes nothing about how the value was minted.
+//!
 //! **What the store is trusted for.** PROVENANCE — that an entry
 //! under `mcp-re:cont:` was written by an open leg of this deployment. The dispatcher
 //! compares the client's signed digests against the bytes this store returned, and
@@ -74,7 +85,13 @@ use std::future::Future;
 use std::pin::Pin;
 
 mod in_memory;
+mod key;
+
 pub use in_memory::InMemoryContinuationStore;
+// Re-exported rather than relocated: the key and the contract are one public surface to
+// every consumer, and both legs reach for them together.
+pub use key::continuation_key;
+pub use key::CONTINUATION_KEY_PREFIX;
 
 /// The retained open-leg signature bases an answer leg binds to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,15 +124,31 @@ impl std::fmt::Display for ContinuationStoreError {
     }
 }
 
+/// What establishing a continuation entry found.
+///
+/// Two named outcomes and not a `bool`: at this boundary a boolean reads as "did it work",
+/// which both arms answer yes to. Deliberately not a [`ContinuationStoreError`] variant
+/// either — a collision is the store answering correctly, and folding it into the error arm
+/// would make it indistinguishable from an outage at the one site that must tell them
+/// apart: an outage may be retried, a taken key never will be.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Creation {
+    /// No live entry existed; this call established one.
+    Stored,
+    /// A live entry already exists under this key. It was NOT replaced.
+    Collision,
+}
+
 /// A boxed store future (the store's ops are `async`, awaited on the serving path).
 pub type ContinuationFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, ContinuationStoreError>> + Send + 'a>>;
 
 /// The fleet-shared MRTR continuation correlation tier.
 ///
-/// `store` records the open-leg bases under `key` (an actor-scoped `requestState`
-/// digest) with a bounded TTL; `peek` reads them without side effects; `consume`
-/// atomically removes them and reports whether it was the caller that did so.
+/// `create` establishes the open-leg bases under `key` (an actor-scoped `requestState`
+/// digest) with a bounded TTL, refusing to disturb a live entry; `peek` reads them
+/// without side effects; `consume` atomically removes them and reports whether it was
+/// the caller that did so.
 /// Implementations MUST be non-blocking — all three are awaited on the per-core
 /// request path.
 ///
@@ -124,14 +157,31 @@ pub type ContinuationFuture<'a, T> =
 /// request has been admitted: a destructive read would let an unadmitted request —
 /// one whose continuation binding is about to fail — destroy a live entry.
 pub trait AsyncContinuationStore: Send + Sync {
-    /// Record the retained bases under `key` with a `ttl_secs` lifetime. Overwrites
-    /// any prior entry for the same key (a fresh open leg supersedes a stale one).
-    fn store<'a>(
+    /// Establish the retained bases under `key` with a `ttl_secs` lifetime, WITHOUT
+    /// disturbing a live entry:
+    ///
+    /// ```text
+    /// absent or expired key  ->  Ok(Creation::Stored)
+    /// live key               ->  Ok(Creation::Collision), existing value unchanged
+    /// backing failure        ->  Err(Unavailable)
+    /// ```
+    ///
+    /// Implementations MUST make the test-and-set ATOMIC. A read followed by a write is
+    /// two operations with a window between them, and the shape this refuses — two open
+    /// legs racing on one key — is precisely the shape that lands in that window. Redis
+    /// has the primitive (`SET key value NX PX ttl`); the single-process tier holds its
+    /// map lock across both halves.
+    ///
+    /// The outcome is a VALUE rather than an error because `Collision` is not a failure
+    /// of the store. The store did exactly what it was asked and is reporting what it
+    /// found, and the caller's response differs from its response to an outage: an
+    /// outage may be retried, a collision may not — the key will still be taken.
+    fn create<'a>(
         &'a self,
         key: &'a str,
         bases: &'a RetainedBases,
         ttl_secs: i64,
-    ) -> ContinuationFuture<'a, ()>;
+    ) -> ContinuationFuture<'a, Creation>;
 
     /// Read the retained bases for `key` WITHOUT removing them. `Ok(None)` means no
     /// live entry (never opened, expired, or already answered) — the answer leg then
@@ -148,56 +198,6 @@ pub trait AsyncContinuationStore: Send + Sync {
     fn consume<'a>(&'a self, key: &'a str) -> ContinuationFuture<'a, bool>;
 }
 
-/// The key prefix for a continuation correlation entry in the shared store.
-pub const CONTINUATION_KEY_PREFIX: &str = "mcp-re:cont:";
-
-/// Domain separator, so this digest cannot collide with any other SHA-256 the
-/// profile computes over the same bytes.
-const CONTINUATION_KEY_DOMAIN: &[u8] = b"mcp-re/continuation-key/v1";
-
-/// Derive the shared-store key for a continuation from the dispatch AUDIENCE, the
-/// RESOLVED ACTOR and the opaque `requestState` bytes:
-/// `mcp-re:cont:<b64url(SHA-256(domain || len(aud) || aud || len(actor) || actor || state))>`.
-///
-/// Both legs derive it the same way: the open leg from the state it minted into the reply,
-/// the answer leg from the state the client re-presents. Why it is the VERIFIER's actor is
-/// the module header's argument and is not restated here.
-///
-/// The AUDIENCE is in the key as it is in the replay composite key. Without it two
-/// MCP-RE deployments — different audiences, different inner backends —
-/// pointed at one Redis share a single continuation namespace, and nothing in config
-/// or code enforced the assumption that they would not be. An actor trusted by both
-/// could then open a leg against one dispatch boundary and answer it against the
-/// other. The audience is what makes a signed request valid HERE and nowhere else, so
-/// it belongs in any key that crosses a shared store.
-///
-/// Every boundary between the fields is pinned: `audience_id` and `actor_id` each carry
-/// their length, and `request_state` is last, so the remaining bytes are all of it. No
-/// tuple can be spelled as a different one by moving a boundary — which is the property;
-/// a length prefix on the final field would add nothing to it.
-///
-/// `actor_id` is `role:trust_domain:subject:keyid`, so the scope is the KEY, not the
-/// subject: both legs must be signed with the same key. This is a narrower identity than
-/// the replay tier's `principal`, which drops the keyid deliberately
-/// (`mcp_re_http_profile::replay`) — the two co-located designs do not use one notion of
-/// "the same actor", and the difference is load-bearing in both directions. Here it is
-/// what keeps a second key from collecting a human approval it did not ask for; there it
-/// is what keeps one subject's rotation from reading as several budgets.
-pub fn continuation_key(audience_id: &str, actor_id: &str, request_state: &[u8]) -> String {
-    use sha2::Digest;
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(CONTINUATION_KEY_DOMAIN);
-    hasher.update((audience_id.len() as u64).to_be_bytes());
-    hasher.update(audience_id.as_bytes());
-    hasher.update((actor_id.len() as u64).to_be_bytes());
-    hasher.update(actor_id.as_bytes());
-    hasher.update(request_state);
-    format!(
-        "{CONTINUATION_KEY_PREFIX}{}",
-        mcp_re_core::b64url_encode(&hasher.finalize())
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,17 +205,6 @@ mod tests {
     /// The dispatch boundary the key is scoped to; a second deployment on the same
     /// shared store has a different one.
     const AUD: &str = "did:example:server-1";
-
-    /// Two deployments sharing one Redis must not share one continuation namespace.
-    /// The audience is what makes a signed request valid at THIS dispatch boundary,
-    /// so an actor trusted by both cannot open a leg against one and answer it
-    /// against the other.
-    #[test]
-    fn the_key_is_scoped_to_the_audience() {
-        let here = continuation_key(AUD, ACTOR_A, b"state-1");
-        let elsewhere = continuation_key("did:example:server-2", ACTOR_A, b"state-1");
-        assert_ne!(here, elsewhere);
-    }
 
     const ACTOR_A: &str = "client:example.com:did:example:host-a:client-key-1";
     const ACTOR_B: &str = "client:example.com:did:example:host-b:client-key-2";
@@ -231,7 +220,7 @@ mod tests {
     async fn peek_does_not_consume_and_consume_is_one_shot() {
         let store = InMemoryContinuationStore::new();
         let key = continuation_key(AUD, ACTOR_A, b"state-1");
-        store.store(&key, &bases(), 300).await.unwrap();
+        store.create(&key, &bases(), 300).await.unwrap();
 
         // Reading is free of side effects: the binding is checked against these bytes
         // BEFORE anything is removed, so a request that fails the binding cannot
@@ -250,7 +239,7 @@ mod tests {
         // The cross-actor denial this scoping exists to stop: B naming A's requestState.
         let store = InMemoryContinuationStore::new();
         let a_key = continuation_key(AUD, ACTOR_A, b"state-1");
-        store.store(&a_key, &bases(), 300).await.unwrap();
+        store.create(&a_key, &bases(), 300).await.unwrap();
 
         let b_key = continuation_key(AUD, ACTOR_B, b"state-1");
         assert_ne!(a_key, b_key);
@@ -260,52 +249,154 @@ mod tests {
         assert_eq!(store.peek(&a_key).await.unwrap(), Some(bases()));
     }
 
-    #[test]
-    fn key_is_stable_and_specific_to_both_inputs() {
+    // ----------------------------------------------------------------- R11-348 controls
+    //
+    // The contract `create` states, measured on the tier any test can run. The Redis twin
+    // carries the same contract through `SET NX PX`, and its wire evidence is asserted in
+    // `redis_continuation_store` — a mechanism-level fact these cannot see.
+
+    /// CONTROL 1 — the first live open establishes the entry.
+    ///
+    /// The vacuity guard for everything below it: a `create` that refused unconditionally
+    /// would satisfy controls 2, 3 and 4 while making the store useless.
+    #[tokio::test]
+    async fn the_first_open_leg_stores() {
+        let store = InMemoryContinuationStore::new();
+        let key = continuation_key(AUD, ACTOR_A, b"state-1");
         assert_eq!(
-            continuation_key(AUD, ACTOR_A, b"abc"),
-            continuation_key(AUD, ACTOR_A, b"abc")
+            store.create(&key, &bases(), 300).await.unwrap(),
+            Creation::Stored
         );
-        assert_ne!(
-            continuation_key(AUD, ACTOR_A, b"abc"),
-            continuation_key(AUD, ACTOR_A, b"abd")
-        );
-        assert_ne!(
-            continuation_key(AUD, ACTOR_A, b"abc"),
-            continuation_key(AUD, ACTOR_B, b"abc")
-        );
-        assert!(continuation_key(AUD, ACTOR_A, b"abc").starts_with(CONTINUATION_KEY_PREFIX));
+        assert_eq!(store.peek(&key).await.unwrap(), Some(bases()));
     }
 
-    /// No boundary in the key can be moved — over BOTH of the key's interior boundaries,
-    /// which is what the derivation claims.
+    /// CONTROL 2, 3 and 4 — a second open on a live key is refused, changes nothing, and
+    /// leaves the incumbent answerable.
     ///
-    /// The actor/state half is the reachable attack: without `actor_id`'s length prefix
-    /// `("ab", "c")` and `("a", "bc")` hash the same bytes, and one actor names another's
-    /// entry by spelling the split differently.
-    ///
-    /// The audience/actor half needs a constructed witness, and the construction is the
-    /// point. `("ab", "c")` versus `("a", "bc")` does NOT separate it — the actor prefix
-    /// that follows pins that boundary from the right — so the obvious pair passes
-    /// whether `audience_id` carries its length or not, and a control written that way
-    /// would report a check it never exercised. Moving this boundary means absorbing the
-    /// FOLLOWING length prefix into the audience, which is what the pair below does: the
-    /// two tuples differ, and their unprefixed encodings are byte-identical.
-    #[test]
-    fn no_boundary_between_the_keys_fields_can_be_moved() {
-        assert_ne!(
-            continuation_key(AUD, "ab", b"c"),
-            continuation_key(AUD, "a", b"bc")
-        );
+    /// One test because they are one event seen from three sides, and separating them
+    /// would let the interesting one pass while another silently stopped holding: the
+    /// refusal is only worth anything if the incumbent's bases SURVIVE it, and surviving
+    /// is only worth anything if the incumbent can still be answered.
+    #[tokio::test]
+    async fn a_second_open_on_a_live_key_is_refused_and_changes_nothing() {
+        let store = InMemoryContinuationStore::new();
+        let key = continuation_key(AUD, ACTOR_A, b"state-1");
+        store.create(&key, &bases(), 300).await.unwrap();
 
-        // ("A", "X", 0x00*8 ++ "Z") and ("A" ++ len8("X") ++ "X", "", "Z") encode to the
-        // same bytes once `audience_id`'s length is dropped: the first tuple's actor
-        // prefix becomes part of the second tuple's audience.
-        let mut state = vec![0u8; 8];
-        state.push(b'Z');
-        assert_ne!(
-            continuation_key("A", "X", &state),
-            continuation_key("A\0\0\0\0\0\0\0\u{1}X", "", b"Z")
+        let intruder = RetainedBases {
+            previous_request_base: b"second-leg-prev".to_vec(),
+            input_required_response_base: b"second-leg-irr".to_vec(),
+        };
+        // CONTROL 2.
+        assert_eq!(
+            store.create(&key, &intruder, 300).await.unwrap(),
+            Creation::Collision,
+        );
+        // CONTROL 3. The bytes the FIRST approval will be answered against are the ones
+        // still there — the defect this replaces is precisely that they were not.
+        assert_eq!(store.peek(&key).await.unwrap(), Some(bases()));
+        assert_ne!(store.peek(&key).await.unwrap(), Some(intruder));
+        // CONTROL 4. And it is still answerable: one-shot consumption still succeeds, so
+        // the human approval in flight completes rather than failing at the binding.
+        assert!(store.consume(&key).await.unwrap());
+    }
+
+    /// CONTROL 5 — concurrent creators across the shared-store seam: exactly one Stored.
+    ///
+    /// Driven through `Arc<dyn AsyncContinuationStore>` rather than the concrete type,
+    /// because the seam is where a caller could reintroduce a test-then-set: the property
+    /// belongs to the trait, not to one implementation's internals.
+    ///
+    /// Two is the number the defect needs. A wider fan-out would measure the same thing
+    /// with more scheduling noise; what must be impossible is that BOTH are told they
+    /// stored, because both would then believe their bases are the ones retained.
+    #[tokio::test]
+    async fn concurrent_creators_yield_exactly_one_stored() {
+        let store: std::sync::Arc<dyn AsyncContinuationStore> =
+            std::sync::Arc::new(InMemoryContinuationStore::new());
+        let key = continuation_key(AUD, ACTOR_A, b"state-1");
+
+        let mut outcomes = Vec::new();
+        for _ in 0..2 {
+            let store = store.clone();
+            let key = key.clone();
+            outcomes.push(tokio::spawn(async move {
+                store.create(&key, &bases(), 300).await.unwrap()
+            }));
+        }
+        let mut stored = 0;
+        let mut collided = 0;
+        for handle in outcomes {
+            match handle.await.expect("the task completed") {
+                Creation::Stored => stored += 1,
+                Creation::Collision => collided += 1,
+            }
+        }
+        assert_eq!((stored, collided), (1, 1));
+    }
+
+    /// CONTROL 6 — an expired key may be established again.
+    ///
+    /// Expiry is the one thing that frees a key, and it needs no exception in `create`:
+    /// an expired entry is not a live one. Without this the refusal would be permanent
+    /// for any `requestState` an application reuses across approvals, which would turn a
+    /// safety property into an outage.
+    #[tokio::test]
+    async fn an_expired_key_may_be_established_again() {
+        let store = InMemoryContinuationStore::new();
+        let key = continuation_key(AUD, ACTOR_A, b"state-1");
+        // A TTL already in the past: the entry is written and is immediately not live.
+        store.create(&key, &bases(), -1).await.unwrap();
+        assert_eq!(store.peek(&key).await.unwrap(), None, "already expired");
+
+        let next = RetainedBases {
+            previous_request_base: b"later-prev".to_vec(),
+            input_required_response_base: b"later-irr".to_vec(),
+        };
+        assert_eq!(
+            store.create(&key, &next, 300).await.unwrap(),
+            Creation::Stored
+        );
+        assert_eq!(store.peek(&key).await.unwrap(), Some(next));
+    }
+
+    /// CONTROL 7 — a backing-store failure stays `Unavailable` and never reads as a
+    /// collision.
+    ///
+    /// The two have opposite consequences at the open leg: an outage is transient and is
+    /// retried, a collision is permanent and is not. Folding a fault into `Collision`
+    /// would fail a leg that a retry would have recorded; folding a collision into a
+    /// fault would spend the retry budget and then overwrite nothing — but would also
+    /// report the wrong cause for a continuation that can never be opened.
+    #[tokio::test]
+    async fn a_backing_failure_is_unavailable_and_never_a_collision() {
+        struct BrokenStore;
+
+        impl AsyncContinuationStore for BrokenStore {
+            fn create<'a>(
+                &'a self,
+                _key: &'a str,
+                _bases: &'a RetainedBases,
+                _ttl_secs: i64,
+            ) -> ContinuationFuture<'a, Creation> {
+                Box::pin(async {
+                    Err(ContinuationStoreError::Unavailable {
+                        details: "the shared tier is down".to_owned(),
+                    })
+                })
+            }
+            fn peek<'a>(&'a self, _key: &'a str) -> ContinuationFuture<'a, Option<RetainedBases>> {
+                Box::pin(async { Ok(None) })
+            }
+            fn consume<'a>(&'a self, _key: &'a str) -> ContinuationFuture<'a, bool> {
+                Box::pin(async { Ok(false) })
+            }
+        }
+
+        let outcome = BrokenStore.create("k", &bases(), 300).await;
+        assert!(
+            matches!(outcome, Err(ContinuationStoreError::Unavailable { .. })),
+            "a tier that could not answer must not be reported as a taken key"
         );
     }
 }
