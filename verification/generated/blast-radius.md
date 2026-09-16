@@ -333,3 +333,4 @@ attestations this view cannot see.
 | ASM-0046 | description, justification, scope or mechanism | http_profile.admission_currency, http_profile.artifact_typing, http_profile.continuation_binding, http_profile.continuation_unbypassability, http_profile.freshness_window | assumption review |
 | ASM-0047 | description, justification, scope or mechanism | proxy.continuation_correlation_store | assumption review |
 | ASM-0048 | description, justification, scope or mechanism | proxy.continuation_correlation_store | assumption review |
+| ASM-0049 | description, justification, scope or mechanism | proxy.tls_listener_state | assumption review |

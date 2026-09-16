@@ -3076,7 +3076,7 @@ weakening = """
 """
 expect_red = [
   "lib#tls_listener_state::auth_epoch::tests::a_session_stored_under_a_withdrawn_anchor_does_not_resume",
-  "lib#tls_listener_state::auth_epoch::tests::a_rebuild_with_withdrawn_trust_advances_the_epoch_and_stops_resumption",
+  "lib#tls_listener_state::auth_epoch::tests::republishing_a_different_epoch_supersedes_the_stores_sessions",
   "lib#tls_listener_state::resumption_acceptance::handshakes::withdrawing_a_trusted_ca_stops_resumption_and_forces_a_full_handshake",
 ]
 

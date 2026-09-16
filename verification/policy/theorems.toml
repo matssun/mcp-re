@@ -1253,12 +1253,16 @@ establish that the certificate is trusted, current or unrevoked, that the signer
 authorized or holds the private half of the key it exported, that any handshake will
 succeed, that the peer is admitted, or that a channel exists.
 
-It says nothing whatsoever about an arbitrary `ResolvesServerCert` supplied to
-`TlsListenerSecurityState::build_delegated_resolver_config`. That escape hatch exists for
-custody arrangements MCP-RE does not model, validates no credential of its own, and is
-deliberately outside this claim — a resolver reaching the serving path through it carries
-no correspondence guarantee, and the two operations must not be read as making the same
-promise.
+Within the API this crate publishes, delegated-resolver materialization has no route that
+bypasses the validated correspondence gate. `build_delegated_resolver_config` is private and
+its one caller goes through `materialize`, and the handshake signing key's constructor is
+reachable only inside `crate::delegated_tls`.
+
+That is a fact about what this crate PUBLISHES, not unconstructibility. `rustls::sign::SigningKey`
+and `RawEd25519TlsSigner` are public traits, so an embedder that writes its own
+`ResolvesServerCert` is outside this claim exactly as before: such a resolver validates no
+credential of its own and carries no correspondence guarantee, and the two must not be read
+as making the same promise.
 
 The witness is not projected, so no consumer can read the facts back out; the claim is that
 the value could not exist without them, not that it exposes them.
@@ -2417,29 +2421,40 @@ statement = """
 Every MCP-RE construction path obtains a listener's trust anchors, epoch-bound session
 store, signing budget and client-certificate verifier through one
 `TlsListenerSecurityState`; the terms cannot be supplied to it independently. The epoch is a
-function of the anchor set alone, a rebuild that republishes the same trust keeps the
-resumption cache while a rebuild with withdrawn trust advances the epoch and stops
-resumption, and no configuration this owner builds can resume outside the store.
+function of the anchor set alone, so a replacement listener and session-cache boundary does
+not carry resumption authority across the replacement when the epoch differs: a different
+anchor set is a different state with its own empty resumption cache, while a rebuild that
+republishes the same trust keeps its cache. No configuration this owner builds can resume
+outside the store.
 """
 security_consequence = """
-A withdrawn trust anchor cannot be survived by a resumed session, and a listener cannot be
-assembled with anchors from one source and a session store or signing budget from another —
+A withdrawn trust anchor cannot be survived by a resumed session ACROSS THE REPLACEMENT
+that withdrawing it performs — the replacement's cache is empty — and a listener cannot be
+assembled with anchors from one source and a session store or signing budget from another,
 the pairing that lets a session outlive the trust that admitted it.
 """
 scope = """
-Establishes that the terms travel together and that the epoch tracks the anchors. It does
-not establish that the client-certificate verifier denies unknown revocation status: that is
-a property of one construction site over a foreign trait object, not of any type this owner
-holds, and it is registered separately as an open proposition. It says nothing about the
-handshake's own correctness.
+Establishes that the terms travel together and that the epoch is a function of the anchor
+set. It establishes NOTHING about a live listener's epoch advancing. Anchors are immutable
+for a listener's lifetime, so the publication's change branch never fires on any build path,
+and the safety property across an anchor change is cache NON-CONTINUITY: the change replaces
+the listener and therefore replaces the store. Changing the trust-anchor set requires
+listener replacement or restart for the new trust epoch to become authoritative — an operator
+obligation, stated here and proved by nothing, which a reader must not take this claim as
+relieving. ADR-MCPRE-062, superseding ADR-MCPRE-055, chose that model deliberately.
+
+It does not establish that the client-certificate verifier denies unknown revocation status:
+that is a property of one construction site over a foreign trait object, not of any type this
+owner holds, and it is registered separately as an open proposition. It says nothing about
+the handshake's own correctness.
 """
 owner = "proxy.tls_listener_state"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.tls_listener_state"]
-# The clause "a rebuild with withdrawn trust advances the epoch and stops resumption" USES
-# the store's contract: that a session tagged with a superseded epoch is not returned. This
-# claim is about the owner's terms travelling together; THM-0103 is about what the store
-# answers, and both directions of it are witnessed at real rustls handshakes.
+# The non-continuity clause USES the store's contract: that a session tagged with a
+# superseded epoch is not returned. This claim is about the owner's terms travelling
+# together and about the epoch being a function of the anchor set; THM-0103 is about what
+# the store answers, including the `republish` capability no listener build path reaches.
 depends_on = ["THM-0103"]
 
 [[theorem]]
@@ -2995,10 +3010,17 @@ title = "A response-signing credential exists only while a valid delegated key d
 statement = """
 The response signer publishes a credential snapshot only from a successful rotation, and
 yields none before the first rotation, past the published key's expiry, after a fail-closed
-issuance has retired the snapshot, after a terminal retirement — including for a mint that
-lands afterwards — and when its snapshot lock is poisoned. An issuance failure serves the
-still-valid key and then fails closed at its expiry rather than extending it, and the
-retry schedule never sleeps past a still-valid key.
+issuance has retired the snapshot, and after a terminal retirement — including for a mint
+that lands afterwards. Terminal retirement dominates every later read and publication. An
+issuance failure serves the still-valid key and then fails closed at its expiry rather than
+extending it, and the retry schedule never sleeps past a still-valid key.
+
+The snapshot is whole-value state — one `Option<Arc<..>>` swapped entire — so no partially
+mutated invariant can become visible and a poisoned snapshot lock is RECOVERED rather than
+treated as a retirement. Recovery yields exactly the verdict a healthy lock yields and
+overrides neither terminal retirement nor expiration: it is the reads above that decide,
+never the lock's poison bit. A signer that failed closed on poison would let one unrelated
+panic anywhere in the process retire this replica's signing for its lifetime.
 """
 security_consequence = """
 A response cannot be signed under a credential the deployment no longer holds, under one
@@ -4641,7 +4663,7 @@ depends_on = []
 # is the one the deployment selected — and it is THM-0096, under THM-0077.
 [[theorem]]
 id = "THM-0087"
-title = "A continuation entry is reachable only by the actor the verifier resolved"
+title = "Through MCP-RE, a continuation entry is reachable only by the actor the verifier resolved"
 statement = """
 The MRTR continuation correlation entry is keyed on the actor the VERIFIER resolved together
 with the opaque `requestState`, never on anything the request asserts, and a read that does
@@ -4651,6 +4673,10 @@ security_consequence = """
 A second verified actor who knows the open leg's public signature-base digests cannot obtain
 the victim's retained bases, so it cannot complete a human-approval round trip that was not
 its own. A refused or transiently-failed read cannot destroy a live approval either.
+
+The consequence is about an actor reaching the store THROUGH this proxy. One that can write
+the keyspace directly needs no victim's bases — it plants its own — and that is ASM-0047's,
+not this claim's.
 """
 scope = """
 RUNTIME CORRELATION AND REACHABILITY ONLY. It is about which actor can reach a live
@@ -4688,6 +4714,17 @@ No type makes this true by construction, and none is claimed to. `ResolvedActor`
 deliberately unsealed and legitimately constructible through the resolver seam, so a projection
 of one establishes only what it was handed; the provenance is earned by the chain above and by
 the controls, never by a constructor's argument type.
+
+WHAT "REACHABLE" QUANTIFIES OVER: requests that reach this proxy. Every path by which an
+entry is read or removed through MCP-RE derives its key from the resolved actor, and that is
+the whole of what is measured. A party with direct WRITE access to the `mcp-re:cont:`
+keyspace falls outside the quantifier — it does not reach the victim's entry, it creates its
+own under a key derived from its own actor, and the answer leg's digest equality then holds
+against bytes this fleet never produced. That premise is ASM-0047, registered rather than
+argued, because the reading the title would otherwise invite — that the entry is unreachable
+full stop — is one no deployment can support. ASM-0048 carries the rest of what the store
+contributes: the `DEL` count that makes removal one-shot across replicas, and the `PX` expiry
+that bounds an unanswered approval's life.
 
 It says nothing about what an acknowledged write durably establishes, and nothing about the
 continuation binding itself, which is `mcp-re-http-profile`'s.

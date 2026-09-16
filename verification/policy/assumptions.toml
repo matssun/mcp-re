@@ -1543,3 +1543,49 @@ introduced_by = "r11 R11-518 (security funnel round 11, tracker #879)"
 review_requirement = "Owner review; any change to the commands the tier issues, and any Redis topology in which the two legs of one continuation can reach different primaries."
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
+
+# ---------------------------------------------------------------------------
+# Owner ruling, r11 R11-586 — the weak form, and NOT ASM-0037
+# ---------------------------------------------------------------------------
+
+[[assumption]]
+id = "ASM-0049"
+description = "For any two distinct trust-anchor sets this deployment admits across listener replacements, the canonical trust-epoch derivation produces distinct SHA-256 digest values."
+justification = """
+`TlsAuthEpoch::compute` digests the epoch domain string and the sorted anchor digests, and
+`unwrap_if_current` decides resumption by comparing those 32 bytes. So THM-0103's *a session
+stored under withdrawn trust does not resume* is conditional on two distinct anchor sets not
+digesting alike, and `proxy.tls_listener_state` registered no premise saying so. A claim may
+not exceed its evidence closure; this entry is the missing premise, stated at the strength
+the claim actually needs.
+
+It is deliberately WEAKER than ASM-0037, and widening that entry to cover this unit was
+refused. The difference is the quantifier, and it is the whole argument:
+
+  collision resistance (ASM-0037)   the adversary chooses BOTH strings — the keyid claim,
+                                    where the adversary enrols the key it wants selected
+  second-preimage (ASM-0028)        the adversary is handed one string and finds another
+  THIS premise                      the OPERATOR chooses both anchor sets and the adversary
+                                    chooses NEITHER
+
+Two specific operator-deployed anchor sets not colliding is weaker than either registered
+property. Registering ASM-0037 here would report a premise stronger than the claim needs —
+the failure ASM-0037's own justification records the owner ruling against: *a scope is not a
+restatement, and a premise a consumer does not actually rely on is not made true by naming
+that consumer.* This entry therefore inherits nothing from the keyid selector, and nothing
+here may be read as MCP-RE having assumed, still less proved, SHA-256 collision resistance.
+
+What it costs is the same honest remainder ASM-0037 states: SHA-256 is not injective, so
+colliding anchor sets EXIST. The claim is that no deployment's own two sets are among them —
+computational and deployment-scoped, not mathematical, and no wording may upgrade it.
+
+It stops being acceptable if the epoch derivation moves to a digest without SHA-256's
+standing, or if anchor sets ever stop being operator-chosen — an anchor set an adversary
+could steer would need ASM-0037's strength, not this.
+"""
+scope = ["unit://proxy.tls_listener_state", "boundary://boundary.crypto_primitives"]
+owner = "mats@sundvall.name"
+introduced_by = "r11 R11-586 owner ruling (security funnel round 11, tracker #879)"
+review_requirement = "Owner review; any change to the trust-epoch derivation's digest algorithm, and any deployment model in which the trust-anchor set is not operator-chosen."
+affected_contracts = []
+tool_specific_mechanism = "none:trusted-primitive"

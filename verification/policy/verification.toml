@@ -541,7 +541,14 @@ tested_symbols = [
   "lib#tls_listener_state::auth_epoch::tests::a_session_stored_under_a_withdrawn_anchor_does_not_resume",
   "lib#tls_listener_state::auth_epoch::tests::a_stale_session_is_evicted_by_get_not_left_to_be_re_rejected",
   "lib#tls_listener_state::auth_epoch::tests::a_rebuild_that_republishes_the_same_trust_keeps_the_cache",
-  "lib#tls_listener_state::auth_epoch::tests::a_rebuild_with_withdrawn_trust_advances_the_epoch_and_stops_resumption",
+  # A STORE capability, and THM-0103's subject. It was named
+  # `a_rebuild_with_withdrawn_trust_advances_the_epoch_and_stops_resumption` and read as
+  # evidence for a listener-level epoch advance that no build path performs:
+  # `bind_resumption` hands `republish` the epoch the store already holds, so the change
+  # branch never fires outside a call made by hand. THM-0048 now states cache
+  # NON-CONTINUITY across a listener replacement and claims no live advance; this unit
+  # supports both theorems, so the name is what keeps the two propositions apart.
+  "lib#tls_listener_state::auth_epoch::tests::republishing_a_different_epoch_supersedes_the_stores_sessions",
   "lib#tls_listener_state::auth_epoch::tests::withdrawing_an_anchor_changes_the_epoch",
   "lib#tls_listener_state::auth_epoch::tests::the_anchor_set_alone_determines_the_epoch",
   # Registered by the #581 slice: five controls existed in the module and were named by no
@@ -3125,7 +3132,7 @@ tested_symbols = [
   "lib#delegated_server_signer::tests::backoff_once_expired_uses_the_ceiling_not_the_negative_ttl",
   "lib#delegated_server_signer::terminal_retirement_tests::a_mint_landing_after_the_owner_is_gone_cannot_restore_signing",
   "lib#delegated_server_signer::terminal_retirement_tests::a_rotor_retirement_is_still_undone_by_the_next_successful_mint",
-  "lib#delegated_server_signer::terminal_retirement_tests::a_poisoned_snapshot_lock_fails_closed_and_still_recovers",
+  "lib#delegated_server_signer::terminal_retirement_tests::a_poisoned_snapshot_lock_is_recovered_and_retirement_still_dominates",
 ]
 
 [[unit]]
