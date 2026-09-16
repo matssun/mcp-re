@@ -2287,6 +2287,53 @@ expect_red = [
 # ---------------------------------------------------------------------------------------
 
 [[probe]]
+id = "M94-an-illegal-key-window-has-no-inhabitant"
+unit = "http_profile.delegated_signing_custody"
+conjunct = "0 < overlap < ttl is true of every DelegatedKeyWindow that exists"
+# R11-307 and R11-036 are the two ends of ONE seam, and this is the falsifier for the fix
+# that closed both. `0 < O < T` is a RELATION between two fields, so no owner outside the
+# struct can hold it: while `CustodyConfig` carried `pub ttl: i64` and `pub overlap: i64`,
+# `CustodyConfig { ttl: 60, overlap: 60 }` was an ordinary expression, and with
+# `overlap >= ttl` the rotor finds the credential due on every pass — the root/KMS issuer on
+# the per-request path, which delegated custody exists to prevent.
+#
+# The seal has two halves and only one is mutable here. Private fields plus `of` as the sole
+# producer is a COMPILE-time property no runtime weakening can move. `of`'s refusal is the
+# runtime half, and deleting it restores the exact pre-fix legality: the type still exists,
+# every call site still compiles, and an illegal pair is once again constructible.
+path = "mcp-re-http-profile/src/custody/key_window.rs"
+anchor = """
+        if overlap >= ttl {
+            return Err(KeyWindowError::OverlapNotInsideTtl);
+        }
+"""
+weakening = """
+"""
+expect_red = [
+  "lib#custody::key_window::tests::an_overlap_outside_the_ttl_is_not_a_window",
+]
+
+[[probe]]
+id = "M95-a-rotation-that-never-begins-is-not-a-window"
+unit = "http_profile.delegated_signing_custody"
+conjunct = "a non-positive overlap is refused, so a window never means a rotation that cannot start"
+# The other refusal, registered separately because it is a different mistake with a different
+# consequence: `overlap <= 0` is not a root-on-the-hot-path failure, it is a rotation that
+# never begins, so the credential runs to `exp` and the node fails closed at expiry. One
+# probe covering both arms would pass while either survived.
+path = "mcp-re-http-profile/src/custody/key_window.rs"
+anchor = """
+        if overlap <= 0 {
+            return Err(KeyWindowError::NonPositiveOverlap);
+        }
+"""
+weakening = """
+"""
+expect_red = [
+  "lib#custody::key_window::tests::an_overlap_outside_the_ttl_is_not_a_window",
+]
+
+[[probe]]
 id = "M81-an-illegal-advance-is-latched-not-ignored"
 unit = "proxy.exchange_lifecycle"
 conjunct = "an advance the relation does not admit latches an anomaly, in every build"

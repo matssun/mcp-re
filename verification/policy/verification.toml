@@ -4359,7 +4359,15 @@ paths = [
   "mcp-re-http-profile/src/custody/key_window.rs",
 ]
 exported_contracts = []
-evidence = ["test://http_profile/delegated_signing_custody/credential_lifecycle"]
+# TWO classes, for the reason `http_profile.verifier_results` carries two. The seal added by
+# R11-307/R11-036 is a NEGATIVE conjunct — an illegal `(ttl, overlap)` pair has no inhabitant
+# — and a green battery is not evidence that the refusal is load-bearing. The compile-time
+# half (private fields, `of` the sole producer) no runtime weakening can move; the runtime
+# half is `of`'s two refusals, and those are exactly what a probe can delete.
+evidence = [
+  "test://http_profile/delegated_signing_custody/credential_lifecycle",
+  "mutation://http_profile/delegated_signing_custody/key_window_relation",
+]
 tested_symbols = [
   "lib#custody::tests::signing_never_touches_the_root_within_a_key_life",
   "lib#custody::tests::rotation_mints_successor_in_the_overlap_window",
@@ -4377,6 +4385,12 @@ tested_symbols = [
   "lib#custody::tests::a_signature_window_that_cannot_be_computed_clamps_to_the_credential",
   "lib#custody::issuance_terms::tests::every_term_fails_restrictively",
   "lib#custody::issuance_terms::tests::the_retry_interval_has_a_floor",
+  # The window's own relation. `key_window.rs` entered `paths` with this slice, so it was a
+  # fingerprint input whose controls no unit named — the file could have been emptied and
+  # every declared symbol would still have passed.
+  "lib#custody::key_window::tests::an_overlap_outside_the_ttl_is_not_a_window",
+  "lib#custody::key_window::tests::a_legal_pair_is_a_window_and_projects_what_it_was_given",
+  "lib#custody::key_window::tests::the_magnitude_ceiling_is_not_this_types_to_apply",
 ]
 
 [[unit]]
