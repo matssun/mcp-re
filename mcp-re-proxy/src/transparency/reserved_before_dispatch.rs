@@ -11,6 +11,7 @@ use mcp_re_http_profile::scitt::EvidenceDigest;
 use super::durable_job::AdmissionPermit;
 use super::durable_job::JobKind;
 use super::durable_job::WriteJob;
+use super::retained_record::RetainedRequest;
 
 /// The extension a marker carries while its exchange has not committed to dispatching.
 ///
@@ -62,6 +63,14 @@ pub(super) const RESERVED_EXTENSION: &str = "reserved";
 /// not depend on.
 pub struct ReservedBeforeDispatch {
     digest: EvidenceDigest,
+    /// The retained projection of the request this obligation was accepted for.
+    ///
+    /// Carried rather than re-supplied at completion. `digest` is its digest, so the two
+    /// are one fact; a completion that took a request from its caller would let the hop
+    /// discharging this crossing describe a different exchange, and nothing on disk or in
+    /// the API would detect it. It is the REDACTED projection — the same value `reserve`
+    /// digested — so nothing is held here that the marker was kept clear of.
+    retained: RetainedRequest,
     marker: PathBuf,
     /// Cloned from the store, because [`Drop`] cannot await. A rescind is therefore
     /// queued, never awaited — the caller is already leaving, and nothing downstream reads
@@ -85,12 +94,14 @@ impl ReservedBeforeDispatch {
     /// machine goes on to treat as *a refusal here is still free and still honest*.
     pub(super) fn over(
         digest: EvidenceDigest,
+        retained: RetainedRequest,
         marker: PathBuf,
         jobs: SyncSender<WriteJob>,
         permit: Arc<AdmissionPermit>,
     ) -> Self {
         ReservedBeforeDispatch {
             digest,
+            retained,
             marker,
             jobs,
             permit,
@@ -110,6 +121,11 @@ impl ReservedBeforeDispatch {
     /// The admission permit, shared onward to the committed state.
     pub(super) fn permit(&self) -> Arc<AdmissionPermit> {
         Arc::clone(&self.permit)
+    }
+
+    /// The retained request this obligation was accepted for, moved on to the commitment.
+    pub(super) fn retained(&self) -> RetainedRequest {
+        self.retained.clone()
     }
 }
 
@@ -139,6 +155,15 @@ mod tests {
     use super::*;
     use tokio::sync::Semaphore;
 
+    fn retained() -> RetainedRequest {
+        super::super::retained_record::retained_request(&mcp_re_http_profile::HttpRequest {
+            method: "POST".to_owned(),
+            target_uri: "https://mcp.example.com/rpc".to_owned(),
+            headers: Vec::new(),
+            body: b"{}".to_vec(),
+        })
+    }
+
     fn permit() -> Arc<AdmissionPermit> {
         Arc::new(
             Arc::new(Semaphore::new(1))
@@ -159,6 +184,7 @@ mod tests {
         let marker = PathBuf::from("/store/abc.reserved");
         let reserved = ReservedBeforeDispatch::over(
             EvidenceDigest::of(b"request"),
+            retained(),
             marker.clone(),
             jobs,
             permit(),
@@ -192,6 +218,7 @@ mod tests {
         let (jobs, _queued) = std::sync::mpsc::sync_channel(4);
         let reserved = ReservedBeforeDispatch::over(
             EvidenceDigest::of(b"request"),
+            retained(),
             PathBuf::from("/store/abc.reserved"),
             jobs,
             held,
@@ -220,6 +247,7 @@ mod tests {
         let (jobs, _queued) = std::sync::mpsc::sync_channel(4);
         let reserved = ReservedBeforeDispatch::over(
             EvidenceDigest::of(b"request"),
+            retained(),
             PathBuf::from("/store/abc.reserved"),
             jobs,
             held,
@@ -263,6 +291,7 @@ mod tests {
 
         let reserved = ReservedBeforeDispatch::over(
             EvidenceDigest::of(b"request"),
+            retained(),
             PathBuf::from("/store/abc.reserved"),
             jobs,
             permit(),

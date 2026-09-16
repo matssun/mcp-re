@@ -87,9 +87,18 @@ pub(super) struct RetainedResponse {
 ///
 impl RetainedHopRecord {
     pub(super) fn of(request: &HttpRequest, response: &HttpResponse) -> Self {
+        RetainedHopRecord::over(retained_request(request), response)
+    }
+
+    /// The same record, built from a retained projection an owner already holds.
+    ///
+    /// What [`super::EvidenceRetention::complete`] uses: the projection comes from the
+    /// commitment rather than from the caller, so the hop cannot describe an exchange other
+    /// than the one whose crossing it discharges.
+    pub(super) fn over(request: RetainedRequest, response: &HttpResponse) -> Self {
         RetainedHopRecord {
             schema: RETAINED_HOP_SCHEMA.to_owned(),
-            request: retained_request(request),
+            request,
             response: RetainedResponse {
                 status: response.status,
                 headers: covered_headers(&response.headers, mcp_re_http_profile::RESPONSE_LABEL),

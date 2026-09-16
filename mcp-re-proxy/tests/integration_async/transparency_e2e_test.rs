@@ -856,7 +856,7 @@ async fn a_retention_failure_after_execution_is_indeterminate_and_leaves_its_res
     std::fs::write(&evidence, b"not a directory").expect("occupy the path");
 
     retention
-        .complete(&committed, &request, &response)
+        .complete(&committed, &response)
         .await
         .expect_err("completion must fail once the store is gone");
 
