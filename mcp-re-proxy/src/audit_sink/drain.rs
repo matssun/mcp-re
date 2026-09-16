@@ -66,6 +66,34 @@ fn flush(timeout: Duration) -> AuditDrain {
         // Nothing ever recorded, so there is nothing to drain.
         return AuditDrain::Drained;
     };
+    drain_queue(queue, timeout, writes_have_failed)
+}
+
+/// The drain DECISION, over a queue and a latch it is handed.
+///
+/// Split from [`flush`] because `flush` reaches two process globals, and a function that
+/// looks a decision's inputs up cannot be driven to its own arms: every one of these three
+/// was asserted by the contract and measured by nothing (r11 `R11-167`, `R11-169`). Flipping
+/// the full-queue arm from `OutcomeUnknown` to `Drained` left the whole battery green.
+///
+/// ```text
+/// ensures  the Flush cannot be queued       => OutcomeUnknown
+///          no acknowledgement inside bound  => OutcomeUnknown
+///          acknowledged, a write had failed => OutcomeUnknown
+///          acknowledged, no write failed    => Drained
+/// ```
+///
+/// `writes_failed` is read AFTER the acknowledgement and not before, and the ordering is the
+/// claim: the ack says the lines ahead of it were DEQUEUED and written AT, never that they
+/// arrived — the writer swallows individual write errors by design, so a shutdown in which
+/// every `write_all` returned EPIPE acknowledges exactly as fast as one in which they all
+/// landed. Reading the latch behind the ack is what keeps `Drained` meaning ARRIVED rather
+/// than attempted.
+fn drain_queue(
+    queue: &std::sync::mpsc::SyncSender<AuditMessage>,
+    timeout: Duration,
+    writes_failed: impl Fn() -> bool,
+) -> AuditDrain {
     let (ack, acked) = std::sync::mpsc::sync_channel(1);
     if queue.try_send(AuditMessage::Flush(ack)).is_err() {
         return AuditDrain::OutcomeUnknown;
@@ -73,13 +101,7 @@ fn flush(timeout: Duration) -> AuditDrain {
     if acked.recv_timeout(timeout).is_err() {
         return AuditDrain::OutcomeUnknown;
     }
-    // The acknowledgement says the lines ahead of it were DEQUEUED and written AT. It says
-    // nothing about whether they arrived: the writer swallows individual write errors by
-    // design, so a shutdown in which every `write_all` returned EPIPE acknowledges exactly
-    // as fast as one in which they all landed. Reading the latch here — after the ack has
-    // ordered it behind every write this drain is reporting on — is what keeps `Drained`
-    // meaning arrived rather than attempted.
-    if writes_have_failed() {
+    if writes_failed() {
         return AuditDrain::OutcomeUnknown;
     }
     AuditDrain::Drained
@@ -162,6 +184,80 @@ mod tests {
         // function that always spoke.
         assert!(drain_line(AuditDrain::Drained, false).is_none());
         assert!(drain_line(AuditDrain::OutcomeUnknown, false).is_none());
+    }
+
+    /// **R11-167 / R11-169.** A queue that cannot accept the Flush is `OutcomeUnknown`.
+    ///
+    /// G15 asserted this and nothing measured it: flipping the arm to `Drained` left the
+    /// whole battery green. A full queue at drain time is the shutdown-under-load case the
+    /// bound exists for — the records already handed over are exactly the decisions taken
+    /// last, and reporting a clean drain there would state that they reached stderr when
+    /// nobody can say whether they did.
+    ///
+    /// The receiver is dropped rather than the queue filled: `try_send` fails either way,
+    /// and a disconnected channel is the one a test can stage deterministically.
+    #[test]
+    fn a_queue_that_cannot_accept_the_flush_is_unknown_not_drained() {
+        let (queue, receiver) = std::sync::mpsc::sync_channel::<AuditMessage>(1);
+        drop(receiver);
+        assert_eq!(
+            drain_queue(&queue, Duration::from_millis(50), || false),
+            AuditDrain::OutcomeUnknown,
+        );
+    }
+
+    /// **G14.** The wait RETURNS under a writer that never acknowledges, and says unknown.
+    ///
+    /// Two properties in one control, and the first is why the bound exists: a stalled log
+    /// collector must cost a bounded shutdown delay, never a process that will not exit. A
+    /// control that only asserted the verdict would pass against a wait that never returned
+    /// — it would simply hang, which reads as a slow suite rather than as a failure.
+    #[test]
+    fn a_writer_that_never_acknowledges_returns_bounded_and_unknown() {
+        let (queue, _receiver) = std::sync::mpsc::sync_channel::<AuditMessage>(1);
+        let started = std::time::Instant::now();
+        let outcome = drain_queue(&queue, Duration::from_millis(50), || false);
+        assert_eq!(outcome, AuditDrain::OutcomeUnknown);
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "the wait must be BOUNDED; it took {:?}",
+            started.elapsed()
+        );
+    }
+
+    /// An acknowledged drain over which a write had already failed is `OutcomeUnknown`.
+    ///
+    /// The ack says the lines ahead of it were dequeued and written AT, never that they
+    /// arrived — the writer swallows individual write errors by design, so a shutdown in
+    /// which every `write_all` returned EPIPE acknowledges exactly as fast as one in which
+    /// they all landed. Reading the latch BEHIND the ack is what keeps `Drained` meaning
+    /// arrived; reading it before would report a clean drain for records that went nowhere.
+    #[test]
+    fn an_acknowledged_drain_with_a_failed_write_behind_it_is_unknown() {
+        assert_eq!(acknowledging_drain(|| true), AuditDrain::OutcomeUnknown);
+    }
+
+    /// **The mirror, and it is not optional.** An acknowledged drain with no failed write is
+    /// `Drained` — otherwise every control above passes against a function that never
+    /// reports success, which would make every clean shutdown state an uncertainty it does
+    /// not have.
+    #[test]
+    fn an_acknowledged_drain_with_no_failed_write_is_drained() {
+        assert_eq!(acknowledging_drain(|| false), AuditDrain::Drained);
+    }
+
+    /// Drive `drain_queue` against a writer that answers the Flush, with `writes_failed`
+    /// under the test's control.
+    fn acknowledging_drain(writes_failed: impl Fn() -> bool) -> AuditDrain {
+        let (queue, receiver) = std::sync::mpsc::sync_channel::<AuditMessage>(1);
+        let writer = std::thread::spawn(move || {
+            if let Ok(AuditMessage::Flush(ack)) = receiver.recv() {
+                let _ = ack.send(());
+            }
+        });
+        let outcome = drain_queue(&queue, Duration::from_secs(5), writes_failed);
+        writer.join().expect("the fixture writer must not panic");
+        outcome
     }
 
     /// The unknown case is not the failure case, and the type is what keeps them apart:

@@ -4615,6 +4615,20 @@ tested_symbols = [
   "lib#audit_sink::tests::concurrent_offers_at_the_ceiling_admit_only_the_remaining_slots",
   "lib#audit_sink::tests::the_no_audit_sink_records_nothing_and_does_not_panic",
   "lib#audit_sink::drain::tests::a_timed_out_audit_drain_never_reads_as_a_completed_one",
+  # r11 R11-167 / R11-169. The two above exercise `drain_line`, a pure formatter over an
+  # ALREADY-DECIDED outcome, so the WORDING was measured and the classification was not:
+  # flipping the full-queue arm from `OutcomeUnknown` to `Drained` left the whole battery
+  # green. `flush` could not be driven to its arms because it looks its inputs up in two
+  # process globals; the decision is now `drain_queue`, which is handed them.
+  #
+  # The bounded-return control asserts elapsed time as well as the verdict: one that checked
+  # only the verdict would pass against a wait that never returned, which reads as a slow
+  # suite rather than a failure. The last is the mirror — without it the other three pass
+  # against a function that never reports success.
+  "lib#audit_sink::drain::tests::a_queue_that_cannot_accept_the_flush_is_unknown_not_drained",
+  "lib#audit_sink::drain::tests::a_writer_that_never_acknowledges_returns_bounded_and_unknown",
+  "lib#audit_sink::drain::tests::an_acknowledged_drain_with_a_failed_write_behind_it_is_unknown",
+  "lib#audit_sink::drain::tests::an_acknowledged_drain_with_no_failed_write_is_drained",
   "lib#audit_sink::drain::tests::the_unknown_outcome_is_its_own_case",
 ]
 
