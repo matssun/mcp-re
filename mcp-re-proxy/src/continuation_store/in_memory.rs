@@ -64,6 +64,35 @@ impl InMemoryContinuationStore {
     }
 }
 
+impl InMemoryContinuationStore {
+    /// The whole of `create`, synchronously — this tier does no I/O, so the async wrapper
+    /// next door is a shape the trait asks for and not a thing this store does.
+    ///
+    /// Written as its own function so the critical section is a plain body with an early
+    /// return rather than a branch nested inside a pinned async block. The lock is what
+    /// makes the test and the set ATOMIC: releasing it between the occupancy check and the
+    /// insert would reopen the window two racing open legs land in, which is the shape
+    /// `create` exists to refuse. The Redis twin gets the same property from `SET NX`.
+    fn insert_if_absent(
+        &self,
+        key: String,
+        bases: RetainedBases,
+        ttl_secs: i64,
+    ) -> Result<Creation, ContinuationStoreError> {
+        let now = Self::now();
+        let mut entries = self.entries.lock().map_err(poisoned)?;
+        // Drop everything already expired on the way past, so an abandoned chain does not
+        // accumulate — and so the occupancy test below reads LIVE entries only. An expired
+        // key is not a collision; it is a key that is free again.
+        entries.retain(|_, (_, expires_at)| *expires_at > now);
+        if entries.contains_key(&key) {
+            return Ok(Creation::Collision);
+        }
+        entries.insert(key, (bases, now.saturating_add(ttl_secs)));
+        Ok(Creation::Stored)
+    }
+}
+
 impl AsyncContinuationStore for InMemoryContinuationStore {
     fn create<'a>(
         &'a self,
@@ -73,24 +102,7 @@ impl AsyncContinuationStore for InMemoryContinuationStore {
     ) -> ContinuationFuture<'a, Creation> {
         let key = key.to_string();
         let bases = bases.clone();
-        Box::pin(async move {
-            let now = Self::now();
-            // ONE lock across the test and the set. That is this tier's whole claim to
-            // atomicity: releasing it between the occupancy check and the insert would
-            // reopen the window two racing open legs land in, which is the shape
-            // `create` exists to refuse. The Redis twin gets the same property from
-            // `SET NX` rather than from a lock.
-            let mut entries = self.entries.lock().map_err(poisoned)?;
-            // Drop everything already expired on the way past, so an abandoned chain
-            // does not accumulate — and so the occupancy test below reads LIVE entries
-            // only. An expired key is not a collision; it is a key that is free again.
-            entries.retain(|_, (_, expires_at)| *expires_at > now);
-            if entries.contains_key(&key) {
-                return Ok(Creation::Collision);
-            }
-            entries.insert(key, (bases, now.saturating_add(ttl_secs)));
-            Ok(Creation::Stored)
-        })
+        Box::pin(async move { self.insert_if_absent(key, bases, ttl_secs) })
     }
 
     fn peek<'a>(&'a self, key: &'a str) -> ContinuationFuture<'a, Option<RetainedBases>> {

@@ -12,6 +12,9 @@ use crate::continuation_store::Creation;
 use crate::continuation_store::RetainedBases;
 use crate::exchange_state::Established;
 use crate::exchange_state::ExchangeEvent;
+
+/// The event a recorded open leg establishes, by the short name the match arm needs.
+const OPEN_LEG_RECORDED: ExchangeEvent = ExchangeEvent::OpenLegRecorded;
 use crate::http_profile_serve::Exchange;
 use crate::refusal::Refusal;
 
@@ -78,15 +81,14 @@ impl ContinuationPlane {
             input_required_response_base: response_base,
         };
         let key = continuation_key(audience_id, ex.actor_id, state.as_bytes());
+        // Arms as expressions, not blocks: `Err` spends an attempt (the transient case the
+        // budget exists for), `Collision` stops immediately (a taken key answers the same
+        // way every time), `Stored` is the only way out with an answerable leg.
         for _ in 0..RECORD_ATTEMPTS {
             match store.create(&key, &bases, self.ttl_secs).await {
-                Ok(Creation::Stored) => {
-                    return Ok(Established::new((), ExchangeEvent::OpenLegRecorded))
-                }
-                // Fail closed immediately. Retrying a taken key re-reads the same
-                // answer, and the budget exists for transient faults.
+                Ok(Creation::Stored) => return Ok(Established::new((), OPEN_LEG_RECORDED)),
                 Ok(Creation::Collision) => break,
-                Err(_) => continue,
+                Err(_) => (),
             }
         }
         Err(Refusal::after_admission(
