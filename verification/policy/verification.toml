@@ -2041,6 +2041,10 @@ tested_symbols = [
   "tests/integration_async#pdp_authorization_serving_test::a_decision_from_an_authority_this_deployment_does_not_trust_is_refused",
   "tests/integration_async#pdp_authorization_serving_test::a_decision_signed_by_the_wrong_key_under_a_trusted_kid_is_refused",
   "tests/integration_async#pdp_authorization_serving_test::a_configured_profile_refuses_a_request_that_presents_no_decision",
+  # r11 R11-525, through the production PEP: replay admission refuses AFTER the policy
+  # permitted, and the record must not say that no policy verdict was reached. The unit
+  # controls state the mapping; this states that the serving path reaches it.
+  "tests/integration_async#pdp_authorization_serving_test::a_replay_refusal_after_a_permit_is_not_recorded_as_refused_before_policy",
   "tests/integration_async#pdp_authorization_serving_test::a_reference_binding_can_never_satisfy_the_enforcement_profile",
   "tests/integration_async#pdp_authorization_serving_test::a_decision_scoped_differently_from_the_deployments_profile_is_refused",
   "tests/integration_async#pdp_authorization_serving_test::a_credential_scoped_deployment_binds_the_signing_key",
@@ -2466,6 +2470,12 @@ tested_symbols = [
   "lib#refusal::cause::tests::a_policy_denial_reaches_the_record_as_policy_provenance",
   "lib#refusal::cause::tests::a_policy_denial_has_no_core_verdict_to_be_recorded_under",
   "lib#refusal::cause::tests::a_core_verdict_never_attributes_a_refusal_to_a_policy",
+  # r11 R11-525. The other direction, and the one the cause's KIND cannot answer: the same
+  # Core verdict is reachable on both sides of the policy, so the coordinate reports what the
+  # exchange reached and only reports `BeforePolicy` where nothing did. Without these two the
+  # negative control above is satisfied by a function that answers `BeforePolicy` always.
+  "lib#refusal::cause::tests::a_core_verdict_after_a_permit_reports_the_permit_and_not_before_policy",
+  "lib#refusal::cause::tests::an_authorization_cause_answers_for_itself_whatever_the_exchange_reached",
 ]
 
 [[unit]]

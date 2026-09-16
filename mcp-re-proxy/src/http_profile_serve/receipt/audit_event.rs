@@ -43,6 +43,7 @@ impl ResponseSigning {
         actor_id: Option<String>,
         execution: ExecutionDisposition,
         snapshot: Option<Arc<mcp_re_http_profile::ActiveDelegatedKey>>,
+        authorization: Option<&crate::authorization::AuthorizationFacet>,
     ) -> ServedHttpResponse {
         crate::audit_record::record_to(
             audit,
@@ -53,7 +54,7 @@ impl ResponseSigning {
                     // authorization coordinate below, never in Core's `reason`.
                     None => mcp_re_core::audit::AuditEvent::request_rejected_elsewhere(),
                 },
-                cause.authorization_facet(),
+                cause.authorization_facet(authorization),
             ),
             actor_id,
             status,

@@ -132,6 +132,7 @@ mod tests {
             actor_id: &actor_id,
             now: 1,
             key: None,
+            authorization: None,
         };
 
         let established = plane

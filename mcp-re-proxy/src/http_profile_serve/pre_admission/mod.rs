@@ -78,6 +78,10 @@ impl HttpProfileProxy {
                 None,
                 Self::disposition(progress, None),
                 None,
+                // No exchange exists yet, so no authorization verdict can have been
+                // reached — the one place where that is a fact about the pipeline's shape
+                // rather than about this call.
+                None,
             )),
         }
     }
@@ -89,7 +93,7 @@ impl HttpProfileProxy {
     /// receives the ADR-MCPRE-064 product whole; it never reopens it.
     pub(super) async fn admit_request(
         &self,
-        ex: &Exchange<'_>,
+        ex: &mut Exchange<'_>,
         peer: Option<&crate::communication_assurance::AuthenticatedChannelPeer>,
         progress: &mut ExchangeProgress,
     ) -> Result<AdmittedRequest, ServedHttpResponse> {
@@ -111,6 +115,10 @@ impl HttpProfileProxy {
         let authorized = self
             .authorization_stage(ex, decided_over.as_ref())
             .map_err(|refusal| self.refuse(ex, refusal, progress))?;
+        // The verdict this exchange was permitted under, recorded where it is obtained. A
+        // refusal named by a later stage then reports what the policy decided, instead of
+        // deriving "no policy decided" from the kind of verdict that refused it.
+        ex.authorization = Some(authorized.audit_facet());
         Ok(AdmittedRequest {
             outstanding,
             authorized,

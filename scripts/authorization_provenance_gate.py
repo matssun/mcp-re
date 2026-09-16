@@ -633,7 +633,7 @@ def selftest() -> int:
         # pre-admission region would dispatch without ever reaching the decision.
         ("the pre-admission region no longer ordered", check_serving,
          read(REPO, SERVING).replace(
-             ".admit_request(&ex, req.peer.as_ref(), &mut progress)", ".no_region()"), 1),
+             ".admit_request(&mut ex, req.peer.as_ref(), &mut progress)", ".no_region()"), 1),
         ("a second producer of the dispatchable body",
          lambda t: check_dispatch(
              read(REPO, STAGES), t, read(REPO, SERVING), read(REPO, PLANE)),

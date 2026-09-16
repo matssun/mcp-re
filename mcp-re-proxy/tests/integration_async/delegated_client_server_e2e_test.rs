@@ -819,17 +819,19 @@ fn a_replay_emits_exactly_one_rejection_carrying_the_frozen_wire_code() {
     // 409 Conflict is the replay status; the record carries the status actually
     // returned, so a reader can correlate the audit line with the HTTP response.
     assert_eq!(record.status, 409);
-    // ADR-MCPRE-066 Slice 1: a replay never reached a policy, so the authorization
-    // coordinate says only that — it does not restate the Core reason beside it.
+    // ADR-MCPRE-066 Slice 1: the authorization coordinate reports what this deployment's
+    // authorization authority said, and does not restate the Core reason beside it. Replay
+    // admission runs AFTER authorization, so `BeforePolicy` — whose meaning the ADR fixes as
+    // *no policy verdict was reached* — would be a claim about a stage this exchange had
+    // already passed. This server configures no policy, so the authority's own projection is
+    // `NotConfigured`: nobody asked, which is neither an allow nor an examination.
     assert_eq!(
         record.subject,
         mcp_re_proxy::AuditSubject::request(
             mcp_re_core::audit::AuditEvent::request_rejected(
                 &mcp_re_core::McpReError::ReplayDetected
             ),
-            mcp_re_proxy::authorization::AuthorizationFacet::Refused(
-                mcp_re_proxy::authorization::AuthorizationRefusalFacet::BeforePolicy
-            ),
+            mcp_re_proxy::authorization::AuthorizationFacet::NotConfigured,
         )
     );
 }

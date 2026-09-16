@@ -112,11 +112,25 @@ impl RefusalCause {
         }
     }
 
-    pub(crate) fn authorization_facet(&self) -> AuthorizationFacet {
+    /// What the AUTHORIZATION authority says about a refusal with this cause.
+    ///
+    /// `reached` is what the exchange had established when the refusal was named, and
+    /// `None` states that no authorization verdict had been reached. A Core cause cannot
+    /// answer that from its own kind: the same verdict is reachable on both sides of the
+    /// policy — a replay-admission 409 or an absent signing window refuses AFTER a PERMIT —
+    /// so deriving WHEN from WHAT KIND records "no policy verdict was reached" for
+    /// exchanges whose policy reached one.
+    ///
+    /// An authorization cause is the exception, and it is the only one: it IS the verdict,
+    /// so it answers for itself whatever the exchange had reached before.
+    pub(crate) fn authorization_facet(
+        &self,
+        reached: Option<&AuthorizationFacet>,
+    ) -> AuthorizationFacet {
         match self {
-            RefusalCause::Core(_) => {
-                AuthorizationFacet::Refused(AuthorizationRefusalFacet::BeforePolicy)
-            }
+            RefusalCause::Core(_) => reached.cloned().unwrap_or(AuthorizationFacet::Refused(
+                AuthorizationRefusalFacet::BeforePolicy,
+            )),
             RefusalCause::Authorization(r) => r.audit_facet(),
         }
     }
@@ -203,10 +217,44 @@ mod tests {
             RefusalCause::from(ProxyDispatchError::NoDeclaredReplayTier),
         ] {
             assert_eq!(
-                c.authorization_facet(),
+                c.authorization_facet(None),
                 AuthorizationFacet::Refused(AuthorizationRefusalFacet::BeforePolicy)
             );
         }
+    }
+
+    #[test]
+    fn a_core_verdict_after_a_permit_reports_the_permit_and_not_before_policy() {
+        // The other half, and the one the kind alone cannot answer. These same causes refuse
+        // AFTER the policy permitted — replay admission, an absent signing window — and a
+        // record saying no policy verdict was reached would be false for exactly the
+        // exchanges an operator most wants to trace.
+        use crate::authorization::AuthorizationFacet;
+        let permitted = AuthorizationFacet::NotConfigured;
+        for c in [
+            RefusalCause::from(McpReError::ReplayDetected),
+            RefusalCause::from(HttpProfileError::InvalidSignature),
+            RefusalCause::from(ProxyDispatchError::NoDeclaredReplayTier),
+        ] {
+            assert_eq!(c.authorization_facet(Some(&permitted)), permitted);
+        }
+    }
+
+    #[test]
+    fn an_authorization_cause_answers_for_itself_whatever_the_exchange_reached() {
+        // The exception, and the reason it is one: an authorization cause IS the verdict.
+        // Preferring a verdict reached earlier would let a later refusal overwrite the
+        // authority's own statement about why it refused.
+        use crate::authorization::AuthorizationFacet;
+        let permitted = AuthorizationFacet::NotConfigured;
+        let denied = RefusalCause::from(AuthorizationRefusal::PolicyRefused(
+            PolicyError::AuthorizationScopeDenied,
+        ));
+        assert_eq!(
+            denied.authorization_facet(Some(&permitted)),
+            denied.authorization_facet(None)
+        );
+        assert_ne!(denied.authorization_facet(Some(&permitted)), permitted);
     }
 
     #[test]
@@ -220,7 +268,7 @@ mod tests {
             PolicyError::AuthorizationScopeDenied,
         ));
         assert_eq!(
-            c.authorization_facet(),
+            c.authorization_facet(None),
             AuthorizationFacet::Refused(AuthorizationRefusalFacet::ByPolicy(
                 PolicyError::AuthorizationScopeDenied
             ))

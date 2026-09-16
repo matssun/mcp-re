@@ -37,7 +37,7 @@ const EMITTERS: &[&str] = &["rejection", "response_rejection"];
 /// What an emitter must reach: the record boundary, and the typed projections it feeds it.
 const RECORD: &str = "record_to(";
 const CORE_PROJECTION: &str = "cause.core_verdict()";
-const AUTHORIZATION_PROJECTION: &str = "cause.authorization_facet()";
+const AUTHORIZATION_PROJECTION: &str = "cause.authorization_facet(authorization)";
 
 /// What must come AFTER the record, never before.
 const MINT: &str = "self.signed_rejection(";
@@ -208,8 +208,10 @@ fn each_emitter_records_the_typed_projections() {
     }
     assert!(
         body_of(&source, "rejection").contains(AUTHORIZATION_PROJECTION),
-        "the request-side emitter no longer asks the cause for its authorization facet. That \
-         coordinate is what keeps a policy denial from being recorded as a Core verdict."
+        "the request-side emitter no longer asks the cause for its authorization facet, given \
+         what the exchange reached. That coordinate is what keeps a policy denial from being \
+         recorded as a Core verdict — and the argument is what keeps a refusal AFTER a permit \
+         from being recorded as one before any policy ran."
     );
 }
 
