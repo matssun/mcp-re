@@ -1427,6 +1427,7 @@ tested_symbols = [
   "lib#communication_assurance::credential_key_correspondence::tests::a_credential_side_failure_is_attributed_to_the_credential_side",
   "lib#communication_assurance::credential_key_correspondence::tests::a_signing_side_failure_is_attributed_to_the_signing_side",
   "lib#communication_assurance::credential_key_correspondence::tests::an_unavailable_signer_is_not_reported_as_a_mismatch",
+  "lib#communication_assurance::credential_key_correspondence::tests::an_absent_credential_is_reported_on_the_credential_side",
   "lib#communication_assurance::credential_key_correspondence::tests::an_export_of_another_algorithm_refuses_on_the_signing_side_profile_rule",
   "lib#communication_assurance::credential_key_correspondence::tests::a_mismatch_carries_no_key_material",
   # --- the same law over real certificates and a real signer seam ---
