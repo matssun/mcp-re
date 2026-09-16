@@ -295,10 +295,12 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/exchange_state.rs"
-baseline_prod_loc = 789
-baseline_sha = "d1fc5fa"
+baseline_prod_loc = 906
+baseline_sha = "a15fc1e"
 status = "reviewed-exception"
 review_ref = "EX-001 in docs/architecture/review-dispositions.md"
+growth_from_prod_loc = 789
+growth_ref = "EX-001 growth authorization in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-proxy/src/aws_sts.rs"
@@ -503,12 +505,12 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-core/src/error.rs"
-baseline_prod_loc = 454
-baseline_sha = "b1d067a"
+baseline_prod_loc = 472
+baseline_sha = "dc4c833"
 status = "reviewed-exception"
 review_ref = "EX-013 in docs/architecture/review-dispositions.md"
-growth_from_prod_loc = 442
-growth_ref = "EX-013 in docs/architecture/review-dispositions.md"
+growth_from_prod_loc = 454
+growth_ref = "EX-013 growth authorization 2 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-proxy/src/trust_plane/trust_cache.rs"

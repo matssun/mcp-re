@@ -20,8 +20,8 @@ use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::RequestEvidence;
 
 use crate::async_serve::ServedHttpResponse;
-use crate::exchange_state::ExchangeEvent;
 use crate::exchange_state::ExchangeProgress;
+use crate::exchange_state::ServedSuccess;
 use crate::request_stages::RetentionDisposition;
 
 use super::super::reply::ReplyClass;
@@ -44,6 +44,24 @@ impl HttpProfileProxy {
         reply: SignedReply,
         retention: &RetentionDisposition,
     ) -> ServedHttpResponse {
+        // Two terminals, because the exchange makes a different claim in each: one says the
+        // call is over, the other says the client may continue — and the second is only
+        // reachable now that the continuation it depends on is durable.
+        let success = match reply.class {
+            ReplyClass::Terminal => ServedSuccess::Terminal,
+            ReplyClass::Open(_) => ServedSuccess::OpenLeg,
+        };
+        // BEFORE anything publishes the claim. Retention and the `response.signed` record
+        // are both assertions that this exchange succeeded, so a tuple the machine cannot
+        // vouch for has to be caught while a refusal is still reachable — which is why this
+        // is not a `debug_assert!` and not a check after the fact.
+        if progress.may_publish(success).is_err() {
+            let refusal = crate::refusal::Refusal::after_admission(
+                mcp_re_core::McpReError::ExchangeInvariantViolation,
+                500,
+            );
+            return self.refuse_retained(ex, refusal, progress, retention).await;
+        }
         if let Some(rejection) = self
             .retain_accepted(
                 ex.http_req,
@@ -59,7 +77,6 @@ impl HttpProfileProxy {
         {
             return rejection;
         }
-        progress.advance(ExchangeEvent::EvidenceRetained);
         crate::audit_record::record_to(
             &self.audit,
             crate::audit_record::AuditSubject::response_signed(),
@@ -67,15 +84,7 @@ impl HttpProfileProxy {
             reply.response.status,
             ex.now,
         );
-        // Two terminals, because the exchange makes a different claim in each: one says the
-        // call is over, the other says the client may continue — and the second is only
-        // reachable now that the continuation it depends on is durable.
-        progress.advance(match reply.class {
-            ReplyClass::Terminal => ExchangeEvent::TerminalResponseServed,
-            ReplyClass::Open(_) => ExchangeEvent::OpenLegResponseServed,
-        });
-        debug_assert!(progress.state().is_terminal());
-        debug_assert!(progress.invariant_violation().is_none());
+        progress.publish(success);
         served(reply.response)
     }
 
@@ -185,6 +194,76 @@ impl HttpProfileProxy {
 #[cfg(test)]
 mod tests {
     use crate::request_stages::RetentionDisposition;
+
+    /// The refusal a publication failure serves, asserted whole.
+    ///
+    /// Not merely that it refuses. `mcp-re.exchange_invariant_violation` says *this
+    /// deployment's execution no longer satisfied its exchange model — a transition was
+    /// illegal, or the resulting cross-machine state was incoherent*, at 500 because the
+    /// fault is the proxy's and `AfterAdmission` because the request verified and crossed
+    /// the execution threshold. And
+    /// `execution_refinement` is `None`: the refusal states nothing about whether the
+    /// backend ran, so the exchange machine's derivation stands — which, with the anomaly
+    /// latched, is `possibly_executed`.
+    #[test]
+    fn the_publication_refusal_says_the_proxy_disagreed_with_itself_and_nothing_about_the_backend()
+    {
+        let refusal = crate::refusal::Refusal::after_admission(
+            mcp_re_core::McpReError::ExchangeInvariantViolation,
+            500,
+        );
+        assert_eq!(
+            refusal.cause.wire_code(),
+            "mcp-re.exchange_invariant_violation"
+        );
+        assert_eq!(refusal.status, 500);
+        assert_eq!(
+            refusal.posture,
+            crate::refusal::RefusalPosture::AfterAdmission
+        );
+        assert_eq!(refusal.execution_refinement, None);
+    }
+
+    /// The decision is taken BEFORE anything publishes the success claim.
+    ///
+    /// Retention and the `response.signed` record are both assertions that this exchange
+    /// succeeded, so `may_publish` refusing after either would leave a retained hop and an
+    /// audit record for a success that was then refused — the contradiction that makes an
+    /// audit stream unusable, arriving through the control meant to prevent one.
+    ///
+    /// Asserted over the source because the fact is an ORDER between three statements, and
+    /// no value-level test can reach it: the incoherent tuple is unconstructible through
+    /// the public serving path, which is exactly why the enforcement is needed at all.
+    #[test]
+    fn the_publication_decision_precedes_retention_and_the_response_signed_record() {
+        let source = include_str!("accepted.rs");
+        let body = source
+            .split_once("async fn serve_retained(")
+            .expect("serve_retained is in this file")
+            .1;
+        // Branched on, not merely called — see the same assertion in `notification.rs`.
+        let decision = body
+            .find("progress.may_publish(success).is_err()")
+            .expect("the publication decision is branched on");
+        let retention = body
+            .find(".retain_accepted(")
+            .expect("retention is discharged");
+        let record = body
+            .find("AuditSubject::response_signed()")
+            .expect("the response.signed record is emitted");
+        let commit = body
+            .find("progress.publish(")
+            .expect("the terminal is committed");
+        assert!(
+            decision < retention && decision < record && decision < commit,
+            "a success claim must not be published before it is decided: \
+             decision {decision}, retention {retention}, record {record}, commit {commit}"
+        );
+        assert!(
+            body[decision..retention].contains("return self.refuse_retained("),
+            "the refusing arm must exit before retention discharges"
+        );
+    }
 
     /// A deployment that retains nothing owes nothing, and the disposition says so rather
     /// than being inferred from an absent store at the discharge site. Reconstructing it

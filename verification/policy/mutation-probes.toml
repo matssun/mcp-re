@@ -2309,6 +2309,130 @@ expect_red = [
 ]
 
 [[probe]]
+id = "M90-a-success-the-machine-cannot-vouch-for-is-not-published"
+unit = "proxy.exchange_lifecycle"
+conjunct = "an exchange whose prospective terminal does not satisfy the model publishes no success"
+# THE LOAD-BEARING NEGATIVE for the enforcement that replaced two `debug_assert!`s. Those
+# assertions were the reason this probe is necessary: the machine detected the violation and
+# latched it, the assertion was compiled out of release, and the shipped binary served the
+# success anyway — so a fully green battery said nothing about whether anything STOPPED it.
+#
+# The weakening keeps the prospective run, the latch and every projection intact and makes
+# only the ANSWER non-load-bearing. A probe that deleted the whole function would also be
+# caught by the compiler; this one leaves code that builds, behaves identically on every
+# legal exchange, and differs only where a success may not be published.
+path = "mcp-re-proxy/src/exchange_state.rs"
+anchor = """
+        let violation = if prospective.request.is_success_terminal() {
+            prospective.anomaly?
+        } else {
+            NOT_A_SUCCESS
+        };
+        self.latch(violation);
+        Some(violation)
+"""
+weakening = """
+        let _ = (prospective, NOT_A_SUCCESS);
+        None
+"""
+expect_red = [
+  "lib#exchange_state::tests::an_open_leg_with_no_durable_record_is_not_published",
+  "lib#exchange_state::tests::a_reply_that_opens_a_leg_is_not_published_as_a_terminal_completion",
+  "lib#exchange_state::tests::synthesized_transport_failure_bytes_are_not_published_as_a_success",
+  "lib#exchange_state::tests::an_exchange_already_carrying_an_anomaly_publishes_no_success",
+  "lib#exchange_state::tests::a_publication_refused_leaves_the_exchange_where_it_legally_was",
+  "lib#exchange_state::tests::a_refused_publication_reports_the_exchange_as_possibly_executed",
+  "lib#exchange_state::tests::the_notification_terminal_is_refused_on_the_same_terms",
+  "lib#exchange_state::tests::a_tail_that_reaches_no_success_terminal_is_refused_rather_than_passed",
+]
+
+[[probe]]
+id = "M91-a-refused-publication-is-remembered-not-re-derived"
+unit = "proxy.exchange_lifecycle"
+conjunct = "a refused publication latches on the live machine, so a later attempt cannot succeed"
+# THE PROPOSITION, stated so it cannot drift back:
+#
+#   post-dispatch state itself is already sufficient for NotRetrySafe;
+#   the anomaly latch is load-bearing because it REMEMBERS that the model/code
+#   correspondence failed, so later projections cannot pretend the exchange was coherent.
+#
+# The latch does NOT create the post-dispatch retry disposition, and nothing here may say it
+# does. At a success terminal `backend_may_have_executed()` already holds, so
+# `retry_semantics` answers `NotRetrySafe` from the state alone, latch or no latch.
+#
+# This probe's first form claimed exactly that wrong thing, and the probe REFUSED it: the
+# check was deleted and every named control stayed green. The claim was true — the refusal
+# does carry `possibly_executed` — and the control was vacuous, because the state would have
+# produced it anyway. What is load-bearing is memory, and this is the control for it: delete
+# the latch and an exchange the machine has already declined to vouch for forgets, so the
+# next publication succeeds.
+path = "mcp-re-proxy/src/exchange_state.rs"
+anchor = """
+        self.latch(violation);
+        Some(violation)
+"""
+weakening = """
+        Some(violation)
+"""
+expect_red = [
+  "lib#exchange_state::tests::a_refused_publication_is_remembered_by_the_machine",
+]
+
+[[probe]]
+id = "M93-the-202-is-not-minted-before-its-terminal-is-authorized"
+unit = "proxy.exchange_lifecycle"
+conjunct = "the notification terminal is decided before the 202 is signed, and the refusal exits"
+# The notification half of the same proposition M92 covers for the bodied path, and the one
+# the unit could not state until `notification.rs` entered its `paths`.
+#
+# The weakening is deliberately NOT a deletion. It keeps the call, so `establish_terminal`
+# has a consumer and nothing goes dead; it keeps the latch, so the machine still records the
+# disagreement; and it DISCARDS THE ANSWER. That is the pre-enforcement behaviour restored
+# exactly — the 202 is signed, retained and recorded for an exchange the machine has just
+# said it cannot vouch for — and it is the mutation an order-only control reads as clean,
+# which is why the control asserts the refusing form and the exit rather than the order.
+path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/notification.rs"
+anchor = """
+        if progress.establish_terminal(acknowledged).is_err() {
+            let refusal = crate::refusal::Refusal::after_admission(
+                mcp_re_core::McpReError::ExchangeInvariantViolation,
+                500,
+            );
+            return self.refuse_retained(ex, refusal, progress, retention).await;
+        }
+"""
+weakening = """
+        let _ = progress.establish_terminal(acknowledged);
+"""
+expect_red = [
+  "lib#http_profile_serve::reply_assembly::notification::tests::the_terminal_is_decided_before_the_202_is_minted",
+]
+
+[[probe]]
+id = "M92-the-publication-decision-is-not-bypassed-in-the-serving-path"
+unit = "proxy.retention_commitment"
+conjunct = "the success terminal is decided before retention discharges and before response.signed"
+# The owner half is M90; this is the half where the serving path could simply stop asking.
+# Deleting the branch leaves a proxy that retains, records `response.signed` and serves every
+# success exactly as before — the pre-enforcement behaviour, restored silently, with the
+# enforcement still present and simply never consulted.
+path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/accepted.rs"
+anchor = """
+        if progress.may_publish(success).is_err() {
+            let refusal = crate::refusal::Refusal::after_admission(
+                mcp_re_core::McpReError::ExchangeInvariantViolation,
+                500,
+            );
+            return self.refuse_retained(ex, refusal, progress, retention).await;
+        }
+"""
+weakening = """
+"""
+expect_red = [
+  "lib#http_profile_serve::reply_assembly::accepted::tests::the_publication_decision_precedes_retention_and_the_response_signed_record",
+]
+
+[[probe]]
 id = "M82-the-backend-projection-is-derived-not-asserted"
 unit = "proxy.exchange_lifecycle"
 conjunct = "the backend projection is derived from the request state, so the two cannot disagree"

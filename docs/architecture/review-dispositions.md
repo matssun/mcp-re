@@ -179,6 +179,66 @@ because there is no subordinate: the file is deep, not wide.
 - Nothing here is an exception for `http_profile_serve.rs`, which is a separate unit with
   a separate census (#586, #587).
 
+### EX-001 growth authorization — the success-publication boundary, `789 -> 906`
+
+```text
+growth-authorization: mcp-re-proxy/src/exchange_state.rs 789 -> 906
+```
+
+**Occasioned by:** the owner ruling that the cross-machine invariants must PREVENT an
+invalid success claim rather than describe one. The enforcement they replaced was
+`debug_assert!(progress.invariant_violation().is_none())` in two reply-assembly files: the
+machine detected the violation and latched it, the assertion was compiled out of release
+builds, and the release binary served the success anyway. Nothing stopped the claim being
+published, and the latch was never the thing that would: past the execution threshold
+`NotRetrySafe` follows from the state alone. The latch records that model/code
+correspondence failed, which is what stops later projections treating the exchange as
+coherent — a different job, established separately by probe M91.
+
+**What was added:** `ServedSuccess` and its `tail()`, and three operations on
+`ExchangeProgress` — `may_publish`, `publish`, `establish_terminal` — over one private
+`prospective_refusal`.
+
+**§8 question 2 on the addition — still ONE authority.** The question is *what may be
+claimed from this position in the relation*, which is the same fact `retry_semantics` and
+`invariant_violation` already answer; `prospective_refusal` answers it about a position the
+exchange has not reached yet. It reads the private tuple and nothing else, executes no I/O,
+and decides nothing about a request.
+
+**Why it is not a new module.** EX-001's finding stands: *every subsequent split of this
+module re-opens the same seam.* The prospective evaluation runs `advance` over a copy, so it
+depends on the transition relation, on `establishes`, on the monotone floor and on the
+anomaly latch — four things that live here and whose agreement is the module's whole claim.
+A sibling module would need all of them widened out of the owner to reach them, which trades
+117 lines of file length for a representation exposed crate-wide.
+
+**Why the tail is a value.** `ServedSuccess::tail()` is read twice — once to decide whether a
+success may be published, once to publish it. Two event lists at the two call sites would be
+a correspondence held by remembering, which is the defect class `Established<T>` exists to
+remove; one list in the owner makes the checked tail and the driven tail the same object.
+
+**Why the whole prospective run refuses, not only an `invariant_violation`.** An illegal
+transition into the terminal is the same fact as an incoherent tuple — the model and the code
+driving it disagree — and `retry_semantics` already declines to vouch for either. A machine
+that cannot vouch for an exchange does not publish its success. Stated because it is broader
+than the literal ruling, which named the cross-machine tuple.
+
+**What compensates for the growth:** ten controls, in this module's own test region, plus
+the two serving-path halves that say WHERE the decision sits, and four mutation probes that
+each turn one of them red. Two controls are the ones the `debug_assert!`s could not be: a
+refused publication leaves the exchange at the state it legally reached rather than
+half-committing the terminal it refused, and it is REMEMBERED, so a later attempt on the
+same exchange cannot succeed.
+
+The refusal carries `possibly_executed`, and that is the exchange's post-dispatch state
+speaking, not the latch — probe M91 established the distinction by deleting the latch and
+watching every control that asserted the disposition stay green.
+
+**What this does NOT authorize.** 906 is the new ceiling. `invariant_violation` and
+`ExchangeProgress::state` were narrowed to private and `#[cfg(test)]` respectively in the
+same change, because the serving path no longer reads either — the next addition here starts
+from a census, not from this one.
+
 ---
 
 ## EX-002 — `mcp-re-proxy/src/app.rs` — **census complete, disposition: decompose first**
@@ -2459,3 +2519,43 @@ production, `ALL_ERRORS` by `audit::reason_label` as the containment guard's dom
   an ADR-MCPS-035 question, not a §14 one.
 - **`mcp-re-http-profile/src/error.rs`**, a separate 294-line registered entry, still
   `unreviewed`. A ruling about one error taxonomy is not a ruling about the other.
+
+### EX-013 growth authorization 2 — one token for the publication refusal, `454 -> 472`
+
+```text
+growth-authorization: mcp-re-core/src/error.rs 454 -> 472
+```
+
+**Occasioned by:** the owner ruling on the exchange-invariant enforcement (see EX-001's
+growth record above), which grants a new frozen token:
+
+```text
+McpReError::ExchangeInvariantViolation
+wire    mcp-re.exchange_invariant_violation
+HTTP    500
+posture AfterAdmission
+```
+
+The census is unchanged and is not re-argued: enum membership and the frozen `wire_code`
+projection are one closed vocabulary, and physical decomposition would introduce two
+authorities that must remain synchronized. What is re-measured is the number. 18 production
+lines: a variant, its `wire_code` arm, its `ALL_ERRORS` entry, and a doc comment that has to
+define "invariant" at the exchange-MODEL level — either a transition was illegal or the
+resulting cross-machine state was incoherent. Naming only the incoherent tuple would be six
+lines cheaper and would leave the other half of what this token reports described by nothing,
+which is the trade the ratchet exists to make visible rather than to decide.
+
+**It says nothing about whether the backend executed, and that is enforced by absence.** No
+case was added to `retry_semantics` and `execution_refinement` stays `None`, so the
+disposition keeps coming from the exchange machine — which, with the anomaly latched before
+the refusal is constructed, reports `possibly_executed`. A code-keyed special case is how a
+token starts implying *nothing ran*.
+
+**This is a second authorization, not the first one reused.** EX-013's `442 -> 454` was spent
+when it merged; `scripts/module_size_gate.py` refused this growth against it by name until
+this record and a fresh `growth_from_prod_loc` were written. 472 is the new ceiling.
+
+It was re-measured once during this slice, too. The record first authorized `454 -> 466`, and
+widening the token's definition to cover an illegal transition cost six more lines — so the
+gate refused the stale pair exactly as it refuses a spent one. The number in a growth record
+is a measurement of the tree it ships with, not an estimate made when the record was drafted.

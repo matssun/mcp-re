@@ -12,6 +12,67 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Changed — the exchange model now REFUSES a success instead of asserting about one
+
+The exchange machine's cross-machine invariants — an open leg served with no durable
+continuation record, a leg-opening reply served as a terminal completion, synthesized
+transport-failure bytes served as a success, a backend projection that disagrees with the
+exchange state — were enforced in the serving path by
+`debug_assert!(progress.invariant_violation().is_none())`. The machine detected the
+violation and latched it, the assertion was compiled out of the release build, and the
+release binary served the success anyway. Nothing stopped the claim being published — and
+the latch was never going to: past the execution threshold `NotRetrySafe` already follows
+from the state, so the latch changed no disposition there. What it did, and does, is
+remember that model/code correspondence failed, so later projections cannot treat the
+exchange as coherent.
+
+The decision now happens BEFORE anything publishes it. On the bodied success path and on
+the bodyless 202 alike:
+
+```text
+candidate signed reply
+  -> the prospective success terminal is derived
+  -> the prospective run is checked against the exchange model:
+     was any transition illegal, is the resulting tuple incoherent,
+     had an anomaly already been latched
+
+invalid   latch, retain nothing, emit no response.signed,
+          mint a signed post-dispatch refusal, retain THAT terminal, serve it
+valid     retain, emit response.signed, commit the terminal, serve the success
+```
+
+### Added — `mcp-re.exchange_invariant_violation`
+
+```text
+McpReError::ExchangeInvariantViolation
+wire   mcp-re.exchange_invariant_violation
+HTTP   500
+```
+
+*the proxy's execution no longer satisfied its exchange model: either a transition was
+illegal or the resulting cross-machine state was incoherent, so MCP-RE refused to publish a
+success claim.*
+
+**Both halves, deliberately.** Naming only the incoherent tuple would leave an illegal
+transition whose resulting tuple happens to be coherent described by no token, and it is the
+same fact: once the exchange machine has latched an anomaly it has said the model and the
+running pipeline disagree, and publishing a success after that is exactly the contradiction
+being removed.
+
+It is not about the client's request and not about the backend: it reports that the
+deployment is running code that disagrees with its own exchange model. 500 because the
+fault is the proxy's; `AfterAdmission` because the request verified and crossed the
+execution threshold.
+
+**It carries no retry advice.** No case was added to the retry contract and
+`execution_refinement` stays `None`, so the disposition still comes from the exchange
+machine, which reports `possibly_executed` because the exchange is past the execution
+threshold. The anomaly is latched before the refusal is constructed so that no later
+projection can treat the exchange as coherent — not to produce that disposition, which the
+state already establishes.
+
+`ALL_ERRORS`, `wire_code()` and the audit reason label move with it in the same slice.
+
 ### Added — `mcp-re.continuation_conflict`, and the frozen taxonomy grows by exactly one
 
 A second MRTR open leg for one `(audience, verifier-resolved actor, requestState)` now
