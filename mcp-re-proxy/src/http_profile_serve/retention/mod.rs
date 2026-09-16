@@ -166,21 +166,21 @@ impl Retention {
     ///           Failed        => the crossing is NOT discharged and its marker SURVIVES
     /// ```
     ///
-    /// **`Failed` is a true answer, not a leftover** — see [`RetentionOutcome`]. It returns
-    /// three cases rather than a `Result<(), Refusal>` because its two callers need
-    /// different things from the failure: a SUCCESS exit turns it into a refusal, and a
-    /// REFUSAL exit cannot, having no further exit to fall through to. A `Result` would
-    /// have made the second caller discard an error.
+    /// **`Failed` is a true answer, not a leftover** — see [`RetentionOutcome`]. Three cases
+    /// rather than a `Result`, because a SUCCESS exit turns a failure into a refusal and a
+    /// REFUSAL exit cannot, having no further exit to fall through to.
+    ///
+    /// The request is NOT a parameter: the crossing carries the retained projection it was
+    /// taken for, so no caller can discharge one exchange's crossing with another's hop.
     pub(super) async fn complete(
         &self,
         owed: &RetentionDisposition,
-        request: &HttpRequest,
         response: &HttpResponse,
     ) -> RetentionOutcome {
         let RetentionDisposition::Committed { store, crossing } = owed else {
             return RetentionOutcome::NotConfigured;
         };
-        match store.complete(crossing, request, response).await {
+        match store.complete(crossing, response).await {
             Ok(_) => RetentionOutcome::Retained,
             Err(e) => {
                 eprintln!(
@@ -305,9 +305,7 @@ mod tests {
             body: b"{}".to_vec(),
         };
         assert_eq!(
-            retention
-                .complete(&disposition, &request(), &response)
-                .await,
+            retention.complete(&disposition, &response).await,
             RetentionOutcome::NotConfigured,
             "an unconfigured deployment owes nothing, which is not the same fact as a \
              record having landed"

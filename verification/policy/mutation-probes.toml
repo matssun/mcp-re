@@ -3924,13 +3924,13 @@ path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/accepted.rs"
 anchor = """
         let _accounted = self
             .retention
-            .complete(retention_owed, request, &served_bytes)
+            .complete(retention_owed, &served_bytes)
             .await
             .is_accounted_for();
         rejection
 """
 weakening = """
-        let _ = (retention_owed, request, served_bytes);
+        let _ = (retention_owed, served_bytes);
         rejection
 """
 expect_red = [

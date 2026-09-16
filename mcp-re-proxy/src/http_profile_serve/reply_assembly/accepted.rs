@@ -126,7 +126,6 @@ impl HttpProfileProxy {
         retention_owed: &RetentionDisposition,
     ) -> ServedHttpResponse {
         let rejection = self.refuse(ex, refusal, progress);
-        let request = ex.http_req;
         let served_bytes = HttpResponse {
             status: rejection.status,
             headers: rejection.headers.clone(),
@@ -137,7 +136,7 @@ impl HttpProfileProxy {
         // served is accounted for.
         let _accounted = self
             .retention
-            .complete(retention_owed, request, &served_bytes)
+            .complete(retention_owed, &served_bytes)
             .await
             .is_accounted_for();
         rejection
@@ -157,7 +156,7 @@ impl HttpProfileProxy {
     ) -> Option<ServedHttpResponse> {
         if self
             .retention
-            .complete(retention_owed, request, response)
+            .complete(retention_owed, response)
             .await
             .is_accounted_for()
         {

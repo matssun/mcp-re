@@ -8,6 +8,7 @@ use std::sync::Arc;
 use mcp_re_http_profile::scitt::EvidenceDigest;
 
 use super::durable_job::AdmissionPermit;
+use super::retained_record::RetainedRequest;
 
 /// The extension a marker carries once its exchange has committed to dispatching.
 ///
@@ -47,6 +48,15 @@ pub(super) const PENDING_EXTENSION: &str = "pending";
 #[derive(Debug)]
 pub struct DispatchCommitted {
     digest: EvidenceDigest,
+    /// The retained request this crossing was taken for.
+    ///
+    /// Possession of a commitment is a capability to write ONE hop, and this is what makes
+    /// it a capability to write one hop ABOUT THIS EXCHANGE. Without it `complete` took the
+    /// request from its caller and compared it to nothing, so a serving-path bug or a
+    /// future stage that rewrote the request between reserve and complete would discharge
+    /// the crossing marker for request D with a hop describing D\' — leaving the one fact an
+    /// auditor cannot recover WRONG rather than missing.
+    retained: RetainedRequest,
     /// Held for the whole span from `reserve` to `complete`, which is what guarantees the
     /// completion job always has somewhere to go. Shared with the reservation this was
     /// advanced from, which drops immediately afterwards, and with the completion job
@@ -62,9 +72,14 @@ impl DispatchCommitted {
     /// and that advance is durable. Constructing one earlier would make possession mean
     /// *a dispatch is intended*, and every exit from here is answerable as though the
     /// backend may already have acted.
-    pub(super) fn over(digest: EvidenceDigest, permit: Arc<AdmissionPermit>) -> Self {
+    pub(super) fn over(
+        digest: EvidenceDigest,
+        retained: RetainedRequest,
+        permit: Arc<AdmissionPermit>,
+    ) -> Self {
         DispatchCommitted {
             digest,
+            retained,
             permit,
             completion: AtomicBool::new(true),
         }
@@ -78,6 +93,11 @@ impl DispatchCommitted {
     /// The slot this crossing was admitted against, shared onward to its completion job.
     pub(super) fn permit(&self) -> Arc<AdmissionPermit> {
         Arc::clone(&self.permit)
+    }
+
+    /// The retained request this crossing was taken for, for the hop that discharges it.
+    pub(super) fn retained(&self) -> RetainedRequest {
+        self.retained.clone()
     }
 
     /// Take this commitment's single completion, reporting whether it was still there.
@@ -95,6 +115,15 @@ mod tests {
     use super::*;
     use tokio::sync::Semaphore;
 
+    fn retained() -> RetainedRequest {
+        super::super::retained_record::retained_request(&mcp_re_http_profile::HttpRequest {
+            method: "POST".to_owned(),
+            target_uri: "https://mcp.example.com/rpc".to_owned(),
+            headers: Vec::new(),
+            body: b"{}".to_vec(),
+        })
+    }
+
     fn permit() -> Arc<AdmissionPermit> {
         Arc::new(
             Arc::new(Semaphore::new(1))
@@ -106,7 +135,8 @@ mod tests {
     /// One crossing is worth one completion, and the second taker loses.
     #[test]
     fn a_commitment_is_worth_exactly_one_completion() {
-        let committed = DispatchCommitted::over(EvidenceDigest::of(b"request"), permit());
+        let committed =
+            DispatchCommitted::over(EvidenceDigest::of(b"request"), retained(), permit());
         assert!(committed.take_completion(), "the first taker gets it");
         assert!(!committed.take_completion(), "the second does not");
         assert!(!committed.take_completion());
@@ -126,7 +156,7 @@ mod tests {
                 .try_acquire_owned()
                 .expect("the permit"),
         );
-        let committed = DispatchCommitted::over(EvidenceDigest::of(b"request"), held);
+        let committed = DispatchCommitted::over(EvidenceDigest::of(b"request"), retained(), held);
         assert_eq!(permits.available_permits(), 0);
         drop(committed);
         assert_eq!(

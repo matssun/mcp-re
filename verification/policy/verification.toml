@@ -3958,6 +3958,12 @@ tested_symbols = [
   # serve anything it cannot retain, which would lose the cause the client needs.
   "tests/integration_async#transparency_e2e_test::a_post_dispatch_refusal_leaves_no_dangling_crossing",
   "tests/integration_async#transparency_e2e_test::a_post_dispatch_refusal_is_served_the_same_where_nothing_is_retained",
+  # r11 R11-632. The hop that discharges a crossing describes the exchange the crossing was
+  # taken for. The main half of that is NOT a control and cannot be one: `complete` takes no
+  # request, so a hop for a different exchange is not expressible and the consumer closure
+  # compiling is the evidence. What IS assertable is the step before — that the projection
+  # the reservation carries is the one its digest was taken over — and nothing asserted it.
+  "lib#transparency::durability::tests::the_hop_that_discharges_a_crossing_digests_back_to_its_marker",
 ]
 
 [[unit]]

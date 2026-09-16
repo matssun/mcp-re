@@ -278,8 +278,12 @@ impl EvidenceRetention {
                 "retention queue is full",
             ))
         })?);
+        // Projected ONCE, and carried. The digest is this value's digest, so a completion
+        // that took a request from its caller could discharge this crossing with a hop
+        // describing a different exchange; carrying it is what removes the second input.
+        let retained = retained_request(request);
         let digest = EvidenceDigest::of(
-            &serde_json::to_vec(&retained_request(request))
+            &serde_json::to_vec(&retained)
                 .map_err(|_| RetentionError::Malformed("retained request does not serialize"))?,
         );
         let marker = self.marker_path(&digest, RESERVED_EXTENSION);
@@ -295,6 +299,7 @@ impl EvidenceRetention {
         .await?;
         Ok(ReservedBeforeDispatch::over(
             digest,
+            retained,
             marker,
             self.jobs.clone(),
             permit,
@@ -334,7 +339,11 @@ impl EvidenceRetention {
             reserved.permit(),
         )
         .await?;
-        Ok(DispatchCommitted::over(digest, reserved.permit()))
+        Ok(DispatchCommitted::over(
+            digest,
+            reserved.retained(),
+            reserved.permit(),
+        ))
     }
 
     /// Complete a commitment with the exchange the backend actually produced.
@@ -349,16 +358,25 @@ impl EvidenceRetention {
     /// A commitment is worth exactly one completion, and a second attempt is refused with
     /// [`RetentionError::AlreadyCompleted`] before any job is queued —
     /// [`DispatchCommitted`] owns that fact.
+    ///
+    /// # It takes no request, and that is the repair
+    ///
+    /// The hop's request half comes from the commitment, which has carried it since
+    /// `reserve` digested it. There is therefore no second input to disagree with the
+    /// marker being cleared. A caller-supplied request compared to nothing would let a
+    /// serving-path bug — or a future stage that normalises a header, rewrites a body or
+    /// retries a backend call between reserve and complete — discharge the crossing for
+    /// request D with a hop describing D\', and the one fact an auditor cannot recover
+    /// would be WRONG rather than missing, with nothing on disk or in the API to detect it.
     pub async fn complete(
         &self,
         committed: &DispatchCommitted,
-        request: &HttpRequest,
         response: &HttpResponse,
     ) -> Result<EvidenceDigest, RetentionError> {
         if !committed.take_completion() {
             return Err(RetentionError::AlreadyCompleted);
         }
-        let bytes = serde_json::to_vec(&RetainedHopRecord::of(request, response))
+        let bytes = serde_json::to_vec(&RetainedHopRecord::over(committed.retained(), response))
             .map_err(|_| RetentionError::Malformed("retained hop does not serialize"))?;
         let digest = EvidenceDigest::of(&bytes);
         self.submit(
@@ -847,20 +865,19 @@ mod tests {
             let mut request = request.clone();
             request.body.push(i);
             let reserved = retention.reserve(&request).await.expect("reserve");
-            held.push((
-                request.clone(),
+            held.push(
                 retention
                     .commit_to_dispatch(reserved)
                     .await
                     .expect("commit"),
-            ));
+            );
         }
         // Every permit is now taken, so no further call could be admitted.
         assert!(retention.reserve(&request).await.is_err());
 
-        for (request, committed) in &held {
+        for committed in &held {
             retention
-                .complete(committed, request, &response)
+                .complete(committed, &response)
                 .await
                 .expect("a committed call always has somewhere to put its evidence");
         }
@@ -897,7 +914,7 @@ mod tests {
         );
 
         retention
-            .complete(&committed, &request, &response)
+            .complete(&committed, &response)
             .await
             .expect("complete");
         assert!(
@@ -910,6 +927,51 @@ mod tests {
             .reserve(&successor)
             .await
             .expect("and then the successor is admitted");
+    }
+
+    /// The hop discharging a crossing describes the exchange the crossing was taken for.
+    ///
+    /// `complete` takes no request, so a hop for a different exchange is not expressible —
+    /// the compiler carries that half. What is still assertable, and what this pins, is the
+    /// step before it: the projection the reservation CARRIES is the one its digest was
+    /// taken over. If `reserve` ever digested one value and carried another, the marker
+    /// being cleared and the hop clearing it would describe different exchanges again, with
+    /// nothing on disk to detect it.
+    #[tokio::test]
+    async fn the_hop_that_discharges_a_crossing_digests_back_to_its_marker() {
+        let dir = TempDir::new("identity");
+        let retention = EvidenceRetention::open(&dir.0).expect("open");
+        let (request, response) = exchange();
+
+        let reserved = retention.reserve(&request).await.expect("reserve");
+        let crossing = reserved.digest().clone();
+        let committed = retention
+            .commit_to_dispatch(reserved)
+            .await
+            .expect("commit");
+        let hop_digest = retention
+            .complete(&committed, &response)
+            .await
+            .expect("complete");
+
+        let hop = retention
+            .archive()
+            .load(&hop_digest)
+            .expect("load")
+            .expect("present");
+        let round_tripped = EvidenceDigest::of(
+            &serde_json::to_vec(&retained_request(&HttpRequest {
+                method: hop.request.method.clone(),
+                target_uri: hop.request.target_uri.clone(),
+                headers: hop.request.headers.clone(),
+                body: hop.request.body.clone(),
+            }))
+            .expect("the retained request serializes"),
+        );
+        assert_eq!(
+            round_tripped, crossing,
+            "the hop's request half must digest to the marker it cleared"
+        );
     }
 
     /// The two stages are two artefacts, and the commitment is the move between them.
@@ -961,7 +1023,7 @@ mod tests {
         );
 
         let hop = retention
-            .complete(&committed, &request, &response)
+            .complete(&committed, &response)
             .await
             .expect("complete");
 
@@ -1001,7 +1063,7 @@ mod tests {
 
         // The completed hop is where the full retained message belongs, and it is there.
         let hop = retention
-            .complete(&committed, &request, &response)
+            .complete(&committed, &response)
             .await
             .expect("complete");
         let retained = std::fs::read_to_string(dir.0.join(hop.as_str())).expect("hop");
@@ -1031,15 +1093,13 @@ mod tests {
             .await
             .expect("commit");
         let first = retention
-            .complete(&committed, &request, &response)
+            .complete(&committed, &response)
             .await
             .expect("the reserved completion is always available");
 
         let mut second_response = response.clone();
         second_response.body = b"{\"jsonrpc\":\"2.0\",\"result\":\"again\"}".to_vec();
-        let second = retention
-            .complete(&committed, &request, &second_response)
-            .await;
+        let second = retention.complete(&committed, &second_response).await;
 
         assert!(
             matches!(second, Err(RetentionError::AlreadyCompleted)),
