@@ -125,6 +125,23 @@ mod tests {
         0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
     ];
 
+    /// A real Ed25519 leaf certificate, in DER.
+    ///
+    /// Minted rather than spelled: the credential adapter parses X.509 and reads the SPKI
+    /// bytes verbatim, so no literal stands in for a legal credential here. `rcgen` is
+    /// already this crate's minting tool in `ocsp.rs`'s unit tests.
+    fn ed25519_leaf_der() -> Vec<u8> {
+        let key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519).expect("an ed25519 key pair");
+        let params = rcgen::CertificateParams::new(vec!["mcp-re-test".to_string()])
+            .expect("leaf certificate parameters");
+        params
+            .self_signed(&key)
+            .expect("a self-signed leaf")
+            .der()
+            .as_ref()
+            .to_vec()
+    }
+
     fn canonical_spki(point: u8) -> Vec<u8> {
         let mut der = CANONICAL_PREFIX.to_vec();
         der.extend_from_slice(&[point; 32]);
@@ -166,19 +183,69 @@ mod tests {
         );
     }
 
+    /// An unavailable signer is reported as the signing side's refusal.
+    ///
+    /// # What establishes this, and what this control adds
+    ///
+    /// The proposition is **STRUCTURALLY ESTABLISHED**: under the current type
+    /// representation and composition API, an unavailable signing key cannot inhabit the
+    /// mismatch path. `correspond` is reached only once BOTH evidences have been
+    /// interpreted, and the two refusals are disjoint variants of
+    /// [`CredentialKeyCorrespondenceRefusal`], so there is no value of
+    /// [`SigningKeyExportEvidence`] that arrives at a `Mismatch`.
+    ///
+    /// That is a statement about the representation and the API as they stand — not a
+    /// claim that no future edit could introduce such an inhabitant. It is exactly the
+    /// kind of property a source edit CAN remove, which is why it is written down here
+    /// rather than left to be re-derived by the next reader.
+    ///
+    /// This control is the **positive mirror**, not the proof. It establishes that the
+    /// composition actually reaches the signing-key adapter and returns that side's
+    /// refusal — so a permanently-refusing, mis-wired, or short-circuiting composition
+    /// cannot satisfy the battery vacuously. Before the repair it established neither:
+    /// its fixture passed `CertificateChainEvidence::absent()`, the credential arm
+    /// short-circuited, and the signing side was never consulted at all.
     #[test]
     fn an_unavailable_signer_is_not_reported_as_a_mismatch() {
-        // Requires a legal credential, which the certificate adapter can only produce from
-        // real DER; the mismatch-vs-side distinction over minted certificates is pinned in
-        // the tls delegated-credential suite. Here the point is narrower and still worth
-        // stating: nothing in this composition turns a missing key into a mismatch.
+        // A LEGAL credential, so the composition reaches the signing-key adapter at all.
+        //
+        // With `CertificateChainEvidence::absent()` the CREDENTIAL arm short-circuits first
+        // (`CredentialKeyRefusal::Absent`), the signing-key adapter is never consulted, and
+        // the assertion below then holds for a reason that has nothing to do with this
+        // test's name. A registered symbol naming a signing-side scenario its fixture
+        // cannot create is evidence about a path nothing ran.
+        let leaf = ed25519_leaf_der();
+        let refusal = establish_credential_key_correspondence(
+            CertificateChainEvidence::from_leaf_der(&leaf),
+            SigningKeyExportEvidence::unavailable(),
+        );
+        // Positive, not a negation: asserting only "not a Mismatch" is satisfied by every
+        // refusal in the algebra, including the credential-side one this fixture used to
+        // produce. The claim is that an ABSENT SIGNING KEY is reported as the signing
+        // side's refusal.
+        assert!(
+            matches!(
+                refusal,
+                Err(CredentialKeyCorrespondenceRefusal::SigningKey(_))
+            ),
+            "an unavailable signer must be reported as the signing side's refusal, never as \
+             a disagreement between two keys that were both read"
+        );
+    }
+
+    /// The other half of the same distinction, kept so the credential arm's short-circuit
+    /// is still covered now that the test above no longer exercises it by accident.
+    #[test]
+    fn an_absent_credential_is_reported_on_the_credential_side() {
         let refusal = establish_credential_key_correspondence(
             CertificateChainEvidence::absent(),
             SigningKeyExportEvidence::unavailable(),
         );
-        assert!(!matches!(
+        assert!(matches!(
             refusal,
-            Err(CredentialKeyCorrespondenceRefusal::Mismatch(_))
+            Err(CredentialKeyCorrespondenceRefusal::Credential(
+                CredentialKeyRefusal::Absent
+            ))
         ));
     }
 
