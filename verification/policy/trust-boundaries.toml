@@ -324,6 +324,11 @@ paths = [
   # terminate — so it is a production deadline, and it trusts exactly what this boundary
   # names.
   "mcp-re-proxy/src/transparency/auditor/registration/scrapi/mod.rs",
+  # R11-108: how long the admission authority has been unreachable is a DURATION, so the
+  # §5.2 degraded window is measured on `Instant` and not on unix seconds. `proxy.admission_
+  # currency_gate` is V0, so crossing this boundary needs no premise — the declaration is
+  # what makes the cap live if the unit is ever raised.
+  "mcp-re-proxy/src/admission_enforcer/**/*.rs",
 ]
 beyond = "That the monotonic clock advances, and that it advances at a rate which makes an elapsed measurement a duration. It is not comparable to any peer's clock, which is why it is not boundary.clock."
 max_class_without_assumption = "V0"
