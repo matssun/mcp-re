@@ -321,7 +321,6 @@ pub use delegated_wiring::DelegatedSigningWiring;
 pub use delegated_wiring::ProdDelegatedRotor;
 // ADR-MCPS-028 §G: delegated TLS signing (generic mechanism).
 pub use delegated_tls::DelegatedCertResolver;
-pub use delegated_tls::DelegatedEd25519SigningKey;
 pub use delegated_tls::RawEd25519TlsSigner;
 // ADR-MCPS-028 §C: the GCP Cloud KMS Ed25519 backend (feature-gated).
 pub use audit_record::AuditRecord;
