@@ -87,8 +87,11 @@ impl HttpProfileProxy {
     /// refused; `None` means it is retained, or retention is not configured, and the
     /// caller may serve.
     ///
-    /// EVERY accepted exit goes through here — the bodied reply and the bodyless 202
-    /// alike, which is why it is one function and not a block copied twice.
+    /// EVERY SUCCESS exit goes through here — the bodied reply and the bodyless 202 alike,
+    /// which is why it is one function and not a block copied twice. A REFUSAL exit cannot
+    /// use it: refusing a refusal has no exit to fall through to, so those go through
+    /// [`retain_terminal_refusal`](Self::retain_terminal_refusal), which retains best-effort
+    /// and serves the refusal whatever the outcome.
     ///
     /// Retention runs BEFORE the response goes out and before its `response.signed`
     /// record: everything above can still discard this response, and retaining an exchange
@@ -96,6 +99,52 @@ impl HttpProfileProxy {
     /// issued about. A deployment with retention on asserts it can account for what it
     /// served, and refusing when the evidence cannot be kept is the only thing that keeps
     /// that true.
+    /// Retain a POST-DISPATCH REFUSAL as the terminal this exchange actually served, and
+    /// serve it whatever the retention outcome.
+    ///
+    /// The marker's meaning is *this request crossed the execution threshold AND no durable
+    /// retained terminal exchange discharges that responsibility.* A refusal the proxy
+    /// minted and can make durable discharges it exactly as a reply does: the archive then
+    /// records what happened, and the marker clears. Leaving it instead would let any caller
+    /// who can produce a post-dispatch refusal on demand — an unrecognised `resultType`
+    /// yields 502 — accumulate *indeterminate* crossings at will, drowning the signal the
+    /// marker exists to carry in the cheapest thing a caller can do.
+    ///
+    /// **The ordering inverts here, and it has to.** On a success exit retention runs first
+    /// and a failure REFUSES. A refusal exit cannot refuse: there is no further exit to fall
+    /// through to, and converting one refusal into another loses the cause the client needs.
+    /// So the refusal is minted, retention is attempted, and the refusal is served — and a
+    /// `Failed` outcome leaves the marker, which under the invariant above is the true
+    /// statement about the exchange rather than a failure to clean up.
+    ///
+    /// Nothing here weakens what the refusal CLAIMS. `ExecutionDisposition` is untouched, so
+    /// a retained refusal hop records *the backend may have executed and this is what the
+    /// client was told* — more than the store holds today, not less.
+    pub(in crate::http_profile_serve) async fn refuse_retained(
+        &self,
+        ex: &Exchange<'_>,
+        refusal: crate::refusal::Refusal,
+        progress: &ExchangeProgress,
+        retention_owed: &RetentionDisposition,
+    ) -> ServedHttpResponse {
+        let rejection = self.refuse(ex, refusal, progress);
+        let request = ex.http_req;
+        let served_bytes = HttpResponse {
+            status: rejection.status,
+            headers: rejection.headers.clone(),
+            body: rejection.body.clone(),
+        };
+        // Best effort, and the outcome is CONSUMED rather than dropped — `RetentionOutcome`
+        // is `#[must_use]` precisely so a terminal cannot silently forget whether what it
+        // served is accounted for.
+        let _accounted = self
+            .retention
+            .complete(retention_owed, request, &served_bytes)
+            .await
+            .is_accounted_for();
+        rejection
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn retain_accepted(
         &self,
@@ -108,13 +157,20 @@ impl HttpProfileProxy {
         execution: ExecutionDisposition,
         snapshot: Option<Arc<mcp_re_http_profile::ActiveDelegatedKey>>,
     ) -> Option<ServedHttpResponse> {
-        let Err(refusal) = self
+        if self
             .retention
             .complete(retention_owed, request, response)
             .await
-        else {
+            .is_accounted_for()
+        {
             return None;
-        };
+        }
+        // The call executed and the record did not land. INDETERMINATE, and deliberately
+        // not 503: the backend has already run, and 503 is the status clients retry.
+        let refusal = crate::refusal::Refusal::after_admission(
+            mcp_re_core::McpReError::EvidenceRetentionIndeterminate,
+            500,
+        );
         Some(self.responses.response_rejection(
             &self.audit,
             request,

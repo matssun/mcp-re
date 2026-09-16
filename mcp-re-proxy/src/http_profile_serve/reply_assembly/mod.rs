@@ -23,6 +23,7 @@ use crate::exchange_state::ExchangeEvent;
 use crate::exchange_state::ExchangeProgress;
 use crate::exchange_state::OpenLeg;
 use crate::refusal::Refusal;
+use crate::request_stages::RetentionDisposition;
 
 use super::reply::ReplyClass;
 use super::reply::ValidatedReply;
@@ -85,6 +86,14 @@ impl HttpProfileProxy {
     /// is VALIDATED, the result is CLASSIFIED, and only then is anything signed. The
     /// obligation an open leg creates latches at classification — nothing downstream can
     /// decide this exchange opens no leg after the classifier decided it does.
+    ///
+    /// Every refusal arm below is POST-DISPATCH: the backend has run, so the exchange holds
+    /// a `DispatchCommitted` crossing and the refusal this stage mints is the terminal it
+    /// actually serves. Discharging the crossing with it is done HERE, inside the stage that
+    /// produces the answer, and not by the caller — an `Err` arm in `handle` returns the
+    /// binding its stage produced and nothing else, which `refusal_provenance_gate` enforces
+    /// against THM-0081.
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn assemble_reply(
         &self,
         ex: &Exchange<'_>,
@@ -92,10 +101,13 @@ impl HttpProfileProxy {
         outcome: DispatchedOutcome,
         outstanding: &OutstandingId,
         window: &SigningWindow,
+        retention: &RetentionDisposition,
     ) -> Result<SignedReply, ServedHttpResponse> {
         let inner_bytes = match self.inner_async.observe_reply(progress, outcome) {
             Ok(bytes) => progress.establish(bytes),
-            Err(refusal) => return Err(self.refuse(ex, refusal, progress)),
+            Err(refusal) => {
+                return Err(self.refuse_retained(ex, refusal, progress, retention).await)
+            }
         };
         let mut response = HttpResponse {
             status: 200,
@@ -104,10 +116,15 @@ impl HttpProfileProxy {
         };
         let class = match self.read_reply(progress, &response, outstanding) {
             Ok(class) => class,
-            Err(refusal) => return Err(self.refuse(ex, refusal, progress)),
+            Err(refusal) => {
+                return Err(self.refuse_retained(ex, refusal, progress, retention).await)
+            }
         };
         let response_base = match self.responses.sign_reply(ex, &mut response, window) {
             Ok(base) => progress.establish(base),
+            // SIGNING failed, so there is no signed terminal to retain. The marker stays,
+            // and it is the true statement: this exchange crossed and no durable retained
+            // terminal discharges it.
             Err(refusal) => return Err(self.refuse(ex, refusal, progress)),
         };
         self.record_continuation_leg(ex, progress, &class, response_base)

@@ -119,7 +119,13 @@ impl HttpProfileProxy {
     ) -> ServedHttpResponse {
         match self.inner_async.observe_acknowledgement(progress, outcome) {
             Ok(acknowledged) => progress.establish(acknowledged),
-            Err(refusal) => return self.refuse(ex, refusal, progress),
+            // The message may not have arrived, and this refusal is the signed statement
+            // saying so. It IS a terminal the proxy constructed, so it discharges the
+            // crossing: an operator reading the archive then finds *the backend may have
+            // executed and the client was told this*, instead of a bare surviving marker
+            // that says only *unaccounted for*. The stronger case — never transmitted —
+            // cannot reach here; it is refused before the exchange commits.
+            Err(refusal) => return self.refuse_retained(ex, refusal, progress, retention).await,
         }
         debug_assert!(progress.state().is_terminal());
         debug_assert!(progress.invariant_violation().is_none());
