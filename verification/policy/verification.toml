@@ -2989,6 +2989,31 @@ paths = [
   # one of them — so a supervisor that stopped retiring the snapshot would have left this
   # claim standing on a fingerprint that never moved.
   "mcp-re-proxy/src/signing_plane/rotation.rs",
+  # r11 R11-571, and the same argument one level down. `rotation.rs` was registered; the two
+  # modules the loop was SPLIT INTO were not, so the mint-honesty rule and the epoch-advance
+  # rule sat in no fingerprint at all. Both are transitions of this credential:
+  #
+  #   mint_successor       a successor was issued, or issuance FAILED while the current key
+  #                        is still valid — and only the first is progress. Reading the
+  #                        second as success gives a root outage a tight retry loop that
+  #                        mints a fresh keypair every pass for the whole overlap window.
+  #   trust_epoch_advance  an unreadable or regressed epoch stops minting ENTIRELY, because a
+  #                        credential without a comparable epoch is unrevokable; a declined
+  #                        advance leaves the label where it was so the next pass retries.
+  "mcp-re-proxy/src/signing_plane/mint_successor.rs",
+  "mcp-re-proxy/src/signing_plane/trust_epoch_advance.rs",
+  # And the file the loop is STARTED from, because that is where its refusals are driven
+  # from end to end. `trust_epoch_advance`'s two functions take a `ProdDelegatedRotor` and a
+  # `managed_worker::Halt` whose constructors are `pub(super)` to the worker owner, so an
+  # in-file battery would mean widening a production visibility for a test — the one thing
+  # ADR-MCPRE-061 §4 refuses. The controls that reach it therefore live here, and a unit may
+  # not cite a control whose source it does not measure.
+  #
+  # It is SHARED with `proxy.signing_credential_provenance`, which claims a different thing
+  # about the same file — where the installed signer came from. Sharing a path is not sharing
+  # a claim: this unit's fingerprint moving on a composition change is over-inclusive, and
+  # the alternative was the loop's own refusals sitting in no closure at all.
+  "mcp-re-proxy/src/signing_plane/mod.rs",
 ]
 exported_contracts = []
 evidence = [
@@ -3017,6 +3042,42 @@ tested_symbols = [
   # `current()` — what the response path reads — with the key still inside its own window,
   # so "retired at once" cannot be satisfied by "expired on its own".
   "lib#signing_plane::rotation::tests::a_panicking_rotor_retires_the_snapshot_immediately_not_at_exp",
+  # r11 R11-571. The mint-honesty rule, measured at the decision itself. The battery moved to
+  # `mint_successor.rs` with this slice: it drove `rotation_made_progress` from the plane's
+  # own file, which is how the decision ended up one file away from every closure that
+  # claimed it.
+  "lib#signing_plane::mint_successor::tests::a_new_kid_is_progress",
+  "lib#signing_plane::mint_successor::tests::unchanged_kid_inside_the_overlap_window_is_not_progress",
+  "lib#signing_plane::mint_successor::tests::unchanged_kid_outside_the_overlap_window_is_not_a_failure",
+  "lib#signing_plane::mint_successor::tests::nothing_published_is_not_progress",
+  # And the epoch half, through the loop. `trust_epoch_advance.rs` carries NO in-file battery
+  # and deliberately gets none: its two functions take a `ProdDelegatedRotor` and a
+  # `managed_worker::Halt` whose constructors are `pub(super)` to the worker owner, so an
+  # in-file control would mean widening a production visibility for a test — which is the one
+  # thing ADR-MCPRE-061 §4 refuses. The refusal it owns is driven end to end from here
+  # instead: the loop observes an unreadable epoch and stops minting.
+  "lib#signing_plane::rotation_owner_tests::an_unreadable_shared_epoch_stops_the_loop_minting",
+  "lib#signing_plane::rotation_owner_tests::a_root_outage_inside_the_overlap_window_backs_off_instead_of_re_entering",
+  "lib#signing_plane::rotation_owner_tests::materialize_refuses_when_the_configured_shared_epoch_cannot_be_read",
+  # What the shared counter SAYS, which is the input both refusals read. `a_regressed_counter`
+  # and `an_outage_yields_no_label` are the two the fail-closed arm exists for.
+  "lib#signing_plane::trust_epoch_watch_tests::a_regressed_counter_is_refused_not_rebased",
+  "lib#signing_plane::trust_epoch_watch_tests::an_outage_yields_no_label_so_minting_stops",
+  "lib#signing_plane::trust_epoch_watch_tests::reconnect_after_an_outage_resumes_and_sees_missed_increments",
+  "lib#signing_plane::trust_epoch_watch_tests::label_is_always_base_hash_counter_never_the_bare_base",
+  "lib#signing_plane::trust_epoch_watch_tests::all_replicas_agree_regardless_of_start_time",
+  "lib#signing_plane::trust_epoch_watch_tests::an_increment_survives_a_replica_restart",
+  "lib#signing_plane::trust_epoch_watch_tests::full_sequence_increment_outage_restart_reconnect_continued_issuance",
+  # A key that outlives the thing keeping it in force is the same transition read from the
+  # other end: the credential must stop existing when the plane that rotates it is gone, and
+  # a mint landing inside the drop-join window must not restore it.
+  "lib#signing_plane::handle_lifetime_tests::a_signer_that_outlives_the_plane_stops_signing",
+  "lib#signing_plane::handle_lifetime_tests::a_mint_completing_inside_the_drop_join_window_cannot_restore_signing",
+  "lib#signing_plane::handle_lifetime_tests::a_surviving_signer_does_not_keep_the_rotation_worker_alive",
+  # And the deployment-time half of the same refusal: a planned epoch source that cannot be
+  # read refuses at materialization rather than minting unrevocably later.
+  "lib#signing_plane::epoch_watch_wiring_tests::a_planned_but_unusable_epoch_url_refuses_instead_of_minting_unrevocably",
+  "lib#signing_plane::epoch_watch_wiring_tests::no_planned_epoch_source_is_still_accepted",
   "lib#delegated_server_signer::tests::metrics_count_success_and_reset_the_failure_streak",
   "lib#delegated_server_signer::tests::backoff_is_exponential_then_ceilinged",
   "lib#delegated_server_signer::tests::backoff_never_sleeps_past_a_still_valid_key",

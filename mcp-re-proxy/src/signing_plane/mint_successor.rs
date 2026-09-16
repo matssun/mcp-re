@@ -147,3 +147,83 @@ pub(super) fn rotation_made_progress(
         .checked_sub(overlap)
         .is_some_and(|due_from| now < due_from)
 }
+
+/// Whether a rotation attempt actually minted a successor.
+///
+/// Beside its subject rather than in the plane's own file: the distinction these pin is
+/// this module's whole reason to exist, and a battery one file away from the decision it
+/// measures is how the decision ends up in no unit's closure.
+#[cfg(test)]
+mod tests {
+    use super::rotation_made_progress;
+
+    use crate::delegated_server_signer::DelegatedServerSigner;
+    use mcp_re_core::SigningKey;
+    use mcp_re_http_profile::ActiveDelegatedKey;
+    use mcp_re_http_profile::ActorIdentity;
+    use std::sync::Arc;
+
+    const OVERLAP: i64 = 60;
+
+    fn key(kid: &str, exp: i64) -> ActiveDelegatedKey {
+        ActiveDelegatedKey {
+            key: Arc::new(SigningKey::from_seed_bytes(&[7u8; 32])),
+            delegated_kid: kid.to_string(),
+            server_signer: ActorIdentity {
+                role: "server".into(),
+                trust_domain: "example.com".into(),
+                subject: "did:example:server".into(),
+                keyid: kid.to_string(),
+            },
+            credential: "cred".into(),
+            nbf: 0,
+            exp,
+        }
+    }
+
+    /// The defect this guards: `ensure_active` reports `Ok(())` both when a successor
+    /// was minted AND when issuance failed while the current key is still valid. Taking
+    /// the second as success reset `consecutive_failures`, collapsed the steady-state
+    /// wake time to now (we are already past `exp - overlap`), and re-entered the
+    /// rotate arm immediately — a tight loop against the root KMS/HSM, minting a fresh
+    /// keypair each pass, for the entire overlap window.
+    #[test]
+    fn unchanged_kid_inside_the_overlap_window_is_not_progress() {
+        let signer = DelegatedServerSigner::new();
+        let now = crate::clock::now_unix();
+        // Published key is inside its overlap window: a rotation is DUE.
+        signer.publish(key("K1", now + OVERLAP - 1));
+        let before = Some("K1".to_string());
+        assert!(
+            !rotation_made_progress(&signer, &before, OVERLAP),
+            "a due rotation that did not change the kid means issuance failed"
+        );
+    }
+
+    #[test]
+    fn a_new_kid_is_progress() {
+        let signer = DelegatedServerSigner::new();
+        let now = crate::clock::now_unix();
+        signer.publish(key("K2", now + 300));
+        let before = Some("K1".to_string());
+        assert!(rotation_made_progress(&signer, &before, OVERLAP));
+    }
+
+    /// Outside the overlap window an unchanged kid is expected, not a failure — the
+    /// backoff must not engage in steady state.
+    #[test]
+    fn unchanged_kid_outside_the_overlap_window_is_not_a_failure() {
+        let signer = DelegatedServerSigner::new();
+        let now = crate::clock::now_unix();
+        signer.publish(key("K1", now + 10 * OVERLAP));
+        let before = Some("K1".to_string());
+        assert!(rotation_made_progress(&signer, &before, OVERLAP));
+    }
+
+    /// Nothing published: the `Err` arm owns that case; report no progress.
+    #[test]
+    fn nothing_published_is_not_progress() {
+        let signer = DelegatedServerSigner::new();
+        assert!(!rotation_made_progress(&signer, &None, OVERLAP));
+    }
+}
