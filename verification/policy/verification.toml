@@ -711,7 +711,8 @@ description = "What a presented admission assertion has to be before any verdict
 # separate unit for assertion validity as the discharge rather than an `ensures` added
 # there. This is that unit. Nothing here is inside the Verus cone.
 paths = [
-  "mcp-re-http-profile/src/admission.rs",
+  "mcp-re-http-profile/src/admission/mod.rs",
+  "mcp-re-http-profile/src/admission/verdict.rs",
   "mcp-re-http-profile/src/admission_policy.rs",
 ]
 exported_contracts = []
@@ -739,7 +740,8 @@ description = "#415 §7 admission currency: an Ok verdict is Admitted at the bou
 # publishing a second construction that does not require it, is exactly the change that
 # would make the conjunct unprovable while every other file here stayed byte-identical.
 paths = [
-  "mcp-re-http-profile/src/admission.rs",
+  "mcp-re-http-profile/src/admission/mod.rs",
+  "mcp-re-http-profile/src/admission/verdict.rs",
   "mcp-re-http-profile/src/admission_policy.rs",
   "mcp-re-http-profile/src/authoritative_admission/mod.rs",
   "mcp-re-http-profile/src/verus_std_specs.rs",
@@ -779,6 +781,16 @@ tested_symbols = [
   "lib#admission::tests::a_revoked_workload_cannot_be_served_on_another_workloads_admitted_record",
   "lib#authoritative_admission::tests::the_subject_is_projected_back_exactly_as_supplied",
   "lib#authoritative_admission::tests::two_workloads_at_the_same_generation_are_different_states",
+  # R11-014. THM-0005 now states two kinds of Ok as two VARIANTS, and these measure what the
+  # variants buy over the `degraded: bool` they replaced: the arms are distinguishable, both
+  # project the same facts about the call so a consumer reading identity does not branch,
+  # and the admitted call carries no flag a second enforcement point could read past. The
+  # REPLICA-WIDE P bound is not here and is not this unit's — it belongs to
+  # `proxy.admission_currency_gate`, whose monotonic window converts a candidate into a
+  # serve, and THM-0005's scope says so in as many words.
+  "lib#admission::verdict::tests::a_candidate_is_not_a_live_verdict",
+  "lib#admission::verdict::tests::both_arms_project_the_same_facts_about_the_call",
+  "lib#admission::verdict::tests::the_admitted_call_carries_no_degraded_flag",
 ]
 proved_symbols = ["mcp_re_http_profile::admission::check_admission"]
 features = ["verify"]
@@ -4083,7 +4095,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.admission_currency_gate"
 class = "V0"
-description = "The §7 admission gate: a call declaring no admission is refused where the deployment requires one, an unreachable authority is tolerated only while this replica's own window is unexhausted, and a store that ANSWERED with nothing this deployment will act on is a refusal rather than an entry to the degraded fork."
+description = "The §7 admission gate: a call declaring no admission is refused where the deployment requires one, a store that ANSWERED with nothing this deployment will act on is a refusal rather than an entry to the degraded fork, and — the conjunct THM-0005 explicitly does NOT establish — a DegradedCandidate becomes a serve only while this replica's own monotonic window over its successful authority reads is unexhausted."
 paths = [
   "mcp-re-proxy/src/admission_enforcer/mod.rs",
   "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",

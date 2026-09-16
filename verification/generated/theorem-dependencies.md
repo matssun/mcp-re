@@ -23,7 +23,7 @@ graph BT
     THM_0001["THM-0001<br/>Admitted request parameters imply a current freshness window"]
     THM_0003["THM-0003<br/>Admission verdict integrity"]
     THM_0004["THM-0004<br/>Admission anti-rollback"]
-    THM_0005["THM-0005<br/>Degraded admission requires deployment opt-in"]
+    THM_0005["THM-0005<br/>A degraded admission is a CANDIDATE, and requires deployment opt-in"]
     THM_0006["THM-0006<br/>Presenter binding"]
     THM_0007["THM-0007<br/>A typed artifact verifier admits only its own type"]
     THM_0008["THM-0008<br/>No untyped artifact binding leaves the verifier as verified"]

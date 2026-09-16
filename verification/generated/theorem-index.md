@@ -43,7 +43,7 @@ any of them is closed.
 | THM-0002 | RFC 3339 parsing is total and range-bounded | core.time_rfc3339 | unit://core.time_rfc3339 | live |
 | THM-0003 | Admission verdict integrity | http_profile.admission_currency | unit://http_profile.admission_currency | live |
 | THM-0004 | Admission anti-rollback | http_profile.admission_currency | unit://http_profile.admission_currency | live |
-| THM-0005 | Degraded admission requires deployment opt-in | http_profile.admission_currency | unit://http_profile.admission_currency | live |
+| THM-0005 | A degraded admission is a CANDIDATE, and requires deployment opt-in | http_profile.admission_currency | unit://http_profile.admission_currency | live |
 | THM-0006 | Presenter binding | http_profile.admission_currency | unit://http_profile.admission_currency | live |
 | THM-0007 | A typed artifact verifier admits only its own type | http_profile.artifact_typing | unit://http_profile.artifact_typing | live |
 | THM-0008 | No untyped artifact binding leaves the verifier as verified | http_profile.artifact_verification_boundary | unit://http_profile.artifact_verification_boundary | live |
@@ -212,13 +212,13 @@ any of them is closed.
 
 **Review requirement.** Owner security-specification review
 
-### THM-0005 — Degraded admission requires deployment opt-in
+### THM-0005 — A degraded admission is a CANDIDATE, and requires deployment opt-in
 
-**Statement.** A degraded Ok verdict implies the authoritative admission state was unreachable and the deployment policy explicitly allows degraded mode.
+**Statement.** This check has two kinds of Ok, and they are two types rather than a flag: A LIVE verdict implies the authoritative current-state relation held — the state was about this workload, at the bound generation, and admitted. A DEGRADED CANDIDATE verdict implies the authoritative state was unreachable, that the deployment policy explicitly allows degraded mode, and that the assertion the caller presented satisfies the assertion-level freshness rules. It is not permission to serve.
 
-**Security consequence.** No default deployment can reach a degraded admission; serving on a last-known snapshot is always a choice someone made.
+**Security consequence.** No default deployment can reach a degraded admission; serving on a last-known snapshot is always a choice someone made. And no consumer can reach one BY ACCIDENT: the two answers are separate variants, so a second enforcement point built on this public API has a compiler-visible degraded arm rather than a boolean it can read past.
 
-**Scope — what this does NOT establish.** Establishes the opt-in, not the bound. That a degraded verdict is confined to the propagation window P is enforced in the body and is not a conjunct of this contract. Says nothing about assertion authenticity or freshness (ASM-0012).
+**Scope — what this does NOT establish.** THIS CONTRACT DOES NOT ESTABLISH THE REPLICA-WIDE ELAPSED-OUTAGE P BOUND, and no reading of it may supply one. This is a STATELESS relation over one call and one snapshot. Elapsed time since this replica last reached the authority is replica HISTORY, not a property of any assertion, and a function that cannot see it cannot bound it. The freshness term in the degraded arm is assertion-level and is the CALLER's to satisfy: during an outage the issuer keeps minting, so a caller that refetches meets it for the whole outage, however long that runs. That is why the arm is a candidate. The bound belongs to the stateful admission enforcer, which holds a monotonic window over its own successful reads and converts a candidate into a serve only while that window is unexhausted; it is registered under `unit://proxy.admission_currency_gate` and not here. Says nothing about assertion authenticity or freshness of the JWS itself (ASM-0012).
 
 **Review requirement.** Owner security-specification review
 

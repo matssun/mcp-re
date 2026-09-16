@@ -214,11 +214,11 @@ pub struct VerifiedAdmission {
     /// nothing would catch a refactor that dropped the presenter check.
     pub admitted_actor: String,
     pub status: AdmissionStatus,
-    /// True when the verdict was reached in degraded mode (authoritative state
-    /// unreachable, within the P bound). An auditor can tell a live-confirmed
-    /// admission from a degraded-mode one.
-    pub degraded: bool,
 }
+
+mod verdict;
+
+pub use verdict::AdmissionVerdict;
 
 /// Issue a signed admission assertion (compact JWS), signing with the authority
 /// root via `sign_root` (the same external-signer seam the delegation credential
@@ -395,16 +395,24 @@ fn s_seg_to_b64url(s_seg: &str) -> Result<String, HttpProfileError> {
 //     through a refactor that dropped it.
 #[cfg_attr(feature = "verify", verus_spec(out =>
     ensures
-        out matches Ok(v) ==> {
+        out matches Ok(AdmissionVerdict::Live(v)) ==> {
             &&& v.status == AdmissionStatus::Admitted
             &&& v.generation == binding.generation
             &&& v.admission_id@ == binding.admission_id@
             &&& v.admitted_actor@ == presenter_actor_id@
-            &&& !v.degraded ==> (authoritative matches Some(state)
-                    && state.admission_id@ == binding.admission_id@
+            &&& authoritative matches Some(state)
+            &&& authoritative matches Some(state) ==> (
+                    state.admission_id@ == binding.admission_id@
                     && binding.generation == state.generation
                     && state.status == AdmissionStatus::Admitted)
-            &&& v.degraded ==> (authoritative is None && policy.allow_degraded_mode)
+        },
+        out matches Ok(AdmissionVerdict::DegradedCandidate(v)) ==> {
+            &&& v.status == AdmissionStatus::Admitted
+            &&& v.generation == binding.generation
+            &&& v.admission_id@ == binding.admission_id@
+            &&& v.admitted_actor@ == presenter_actor_id@
+            &&& authoritative is None
+            &&& policy.allow_degraded_mode
         },
 ))]
 pub fn check_admission(
@@ -417,7 +425,7 @@ pub fn check_admission(
     policy: &AdmissionPolicy,
     now: i64,
     resolve_issuer: impl Fn(&str) -> Option<VerificationKey>,
-) -> Result<VerifiedAdmission, HttpProfileError> {
+) -> Result<AdmissionVerdict, HttpProfileError> {
     let claims = verify_admission_assertion(
         assertion_jws,
         expected_profile,
@@ -473,13 +481,12 @@ pub fn check_admission(
             if state.status != AdmissionStatus::Admitted {
                 return Err(HttpProfileError::AdmissionNotCurrent);
             }
-            Ok(VerifiedAdmission {
+            Ok(AdmissionVerdict::Live(VerifiedAdmission {
                 admission_id: claims.mcp_re_admission_id,
                 generation: claims.mcp_re_admission_generation,
                 admitted_actor: claims.mcp_re_admitted_actor,
                 status: AdmissionStatus::Admitted,
-                degraded: false,
-            })
+            }))
         }
         None => {
             // Authoritative state unreachable. Fail closed unless the deployment
@@ -487,22 +494,26 @@ pub fn check_admission(
             if !policy.allow_degraded_mode {
                 return Err(HttpProfileError::AdmissionStateUnavailable);
             }
+            // An ASSERTION-LEVEL freshness rule, and only that. It bounds the age of the
+            // assertion THIS CALLER presented, which the caller controls: during an outage
+            // the issuer keeps minting, so a caller that refetches satisfies it for the
+            // whole outage however long that is. The replica-wide bound — how long the
+            // authority has been unreachable — is elapsed HISTORY this stateless relation
+            // cannot see, and it belongs to the stateful enforcer's monotonic window. That
+            // is why the arm below is a CANDIDATE.
             if now.saturating_sub(claims.iat)
                 > policy
                     .degraded_propagation_bound
                     .saturating_add(policy.max_clock_skew)
             {
-                // Past P: a revocation could have propagated by now and we would not
-                // know. Stop serving on the stale snapshot.
                 return Err(HttpProfileError::AdmissionStateUnavailable);
             }
-            Ok(VerifiedAdmission {
+            Ok(AdmissionVerdict::DegradedCandidate(VerifiedAdmission {
                 admission_id: claims.mcp_re_admission_id,
                 generation: claims.mcp_re_admission_generation,
                 admitted_actor: claims.mcp_re_admitted_actor,
                 status: AdmissionStatus::Admitted,
-                degraded: true,
-            })
+            }))
         }
     }
 }
@@ -594,7 +605,7 @@ mod tests {
         c: &AdmissionClaims,
         auth: Option<&AuthoritativeAdmission>,
         pol: &AdmissionPolicy,
-    ) -> Result<VerifiedAdmission, HttpProfileError> {
+    ) -> Result<AdmissionVerdict, HttpProfileError> {
         let jws = issue(c);
         let binding = AdmissionBinding::opaque_from(c);
         check_admission(
@@ -616,8 +627,11 @@ mod tests {
         let auth =
             AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Admitted);
         let v = check(&c, Some(&auth), &AdmissionPolicy::default()).expect("current");
-        assert_eq!(v.generation, 5);
-        assert!(!v.degraded);
+        assert_eq!(v.verified().generation, 5);
+        assert!(
+            matches!(v, AdmissionVerdict::Live(_)),
+            "a confirmed authoritative state is a LIVE verdict, not a candidate"
+        );
     }
 
     /// A borrowed assertion. Genuine, current, signed by the real authority, and
@@ -809,8 +823,8 @@ mod tests {
         let recent = claims(5, AdmissionStatus::Admitted, NOW - 20);
         let v = check(&recent, None, &policy(true, 60)).expect("within P");
         assert!(
-            v.degraded,
-            "the verdict records that it was reached degraded"
+            matches!(v, AdmissionVerdict::DegradedCandidate(_)),
+            "an unreachable authority yields a CANDIDATE, never a live verdict"
         );
 
         // Beyond P: a revocation could have propagated; stop serving the snapshot.
@@ -842,7 +856,7 @@ mod tests {
         // Inside the skew term, with P contributing nothing: still SERVED.
         let inside = claims(5, AdmissionStatus::Admitted, NOW - 10);
         let v = check(&inside, None, &pol).expect("P=0 does not close the window");
-        assert!(v.degraded);
+        assert!(matches!(v, AdmissionVerdict::DegradedCandidate(_)));
 
         // Past the skew term: closed, which is the only reason P=0 looks safe from far
         // enough away.
@@ -1003,8 +1017,8 @@ mod tests {
             AuthoritativeAdmission::new("workload-7".to_owned(), 5, AdmissionStatus::Admitted);
         let binding = AdmissionBinding::opaque_from(&c);
         let live = check(&c, Some(&auth), &AdmissionPolicy::default()).expect("current");
-        assert_eq!(live.admission_id, binding.admission_id);
+        assert_eq!(live.verified().admission_id, binding.admission_id);
         let degraded = check(&c, None, &policy(true, 60)).expect("within P");
-        assert_eq!(degraded.admission_id, binding.admission_id);
+        assert_eq!(degraded.verified().admission_id, binding.admission_id);
     }
 }

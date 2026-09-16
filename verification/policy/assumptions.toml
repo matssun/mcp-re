@@ -272,7 +272,7 @@ introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review; MUST be discharged before any theorem claiming the binding commits to the assertion's admitted state."
 affected_contracts = ["contract://http_profile/admission/check_admission"]
 sites = [
-  "mcp-re-http-profile/src/admission.rs#AdmissionBinding::matches_state",
+  "mcp-re-http-profile/src/admission/mod.rs#AdmissionBinding::matches_state",
 ]
 tool_specific_mechanism = "verus:external_body"
 
@@ -299,7 +299,7 @@ introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review; a separate unit for assertion validity is the discharge, not an ensures added here."
 affected_contracts = ["contract://http_profile/admission/check_admission"]
 sites = [
-  "mcp-re-http-profile/src/admission.rs#verify_admission_assertion",
+  "mcp-re-http-profile/src/admission/mod.rs#verify_admission_assertion",
 ]
 tool_specific_mechanism = "verus:external_body"
 
@@ -1399,6 +1399,11 @@ sites = [
   "mcp-re-http-profile/src/verus_std_specs.rs#ExAdmissionBinding",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExAuthoritativeAdmission",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExVerifiedAdmission",
+  # R11-014. TRANSPARENT, and it has to be: THM-0005 states a different postcondition for
+  # each arm, so the prover must be able to tell `Live` from `DegradedCandidate`. An opaque
+  # specification here would collapse the two into one unknown value and the contract could
+  # say nothing about either — which is the `degraded: bool` defect over again, one level up.
+  "mcp-re-http-profile/src/verus_std_specs.rs#ExAdmissionVerdict",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExAdmissionPolicy",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExArtifactType",
   "mcp-re-http-profile/src/verus_std_specs.rs#ExArtifactBinding",

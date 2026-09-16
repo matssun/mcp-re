@@ -174,10 +174,12 @@ crate = "mcp-re-proxy"
 lint = "arithmetic_side_effects"
 count = 0
 
+# 72 -> 71: R11-014 replaced the enforcer's `.map(|_| ())` tail, which discarded the
+# verdict, with a match on its two arms. The nesting site went with the discarded value.
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "excessive_nesting"
-count = 72
+count = 71
 
 [[debt]]
 crate = "mcp-re-proxy"
