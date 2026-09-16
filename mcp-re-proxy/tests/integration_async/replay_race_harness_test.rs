@@ -522,6 +522,7 @@ mod http_profile_full_stack {
     use mcp_re_http_profile::ArtifactBinding;
     use mcp_re_http_profile::ArtifactType;
     use mcp_re_http_profile::AudienceTuple;
+    use mcp_re_http_profile::custody::DelegatedKeyWindow;
     use mcp_re_http_profile::CustodyConfig;
     use mcp_re_http_profile::DelegatedSigningCustody;
     use mcp_re_http_profile::DelegationClaims;
@@ -618,8 +619,7 @@ mod http_profile_full_stack {
             server_role: "server".into(),
             server_trust_domain: "example.com".into(),
             server_subject: "did:example:server".into(),
-            ttl: 300,
-            overlap: 60,
+            window: DelegatedKeyWindow::of(300, 60).expect("0 < overlap < ttl"),
         }
     }
 

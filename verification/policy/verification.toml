@@ -4356,6 +4356,7 @@ description = "The delegated-signing credential lifecycle: the root is never tou
 paths = [
   "mcp-re-http-profile/src/custody/mod.rs",
   "mcp-re-http-profile/src/custody/issuance_terms.rs",
+  "mcp-re-http-profile/src/custody/key_window.rs",
 ]
 exported_contracts = []
 evidence = ["test://http_profile/delegated_signing_custody/credential_lifecycle"]

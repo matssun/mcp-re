@@ -254,8 +254,7 @@ fn custody_cfg() -> CustodyConfig {
         server_role: "server".into(),
         server_trust_domain: "example.com".into(),
         server_subject: "did:example:server".into(),
-        ttl: TTL,
-        overlap: OVERLAP,
+        window: DelegatedKeyWindow::of(TTL, OVERLAP).expect("0 < overlap < ttl"),
     }
 }
 

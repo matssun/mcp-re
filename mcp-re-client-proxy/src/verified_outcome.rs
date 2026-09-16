@@ -123,6 +123,7 @@ mod tests {
     use mcp_re_client_core::SignerSlot;
     use mcp_re_client_core::StaticRevocationList;
     use mcp_re_core::SigningKey;
+    use mcp_re_http_profile::custody::DelegatedKeyWindow;
     use mcp_re_http_profile::ActorIdentity;
     use mcp_re_http_profile::CustodyConfig;
     use mcp_re_http_profile::DelegatedSigningCustody;
@@ -204,8 +205,7 @@ mod tests {
                 server_role: "server".into(),
                 server_trust_domain: "example.com".into(),
                 server_subject: "did:example:server".into(),
-                ttl: 300,
-                overlap: 60,
+                window: DelegatedKeyWindow::of(300, 60).expect("0 < overlap < ttl"),
             },
             issue,
             factory,

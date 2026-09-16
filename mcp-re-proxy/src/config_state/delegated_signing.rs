@@ -22,13 +22,15 @@
 //! while minting under another. [`DelegatedSigningFacts`] resolves both once, and nothing
 //! after this point can see that a default was ever involved.
 //!
-//! **The TTL and the overlap are checked here and kept in `DeploymentRequest`.** They are this owner's
-//! invariant, so the guards belong to it. The values do not, because nothing downstream
-//! re-derives them: planning reads an `i64` and hands it to a `CustodyConfig` field that is
-//! an `i64`. A normalized witness here would strengthen only the middle hop and widen again
-//! at the consumer, so the guard would still not reach it. Strengthening
-//! `mcp_re_http_profile::CustodyConfig` is what would make that hold, and that is a
-//! different type in a different crate.
+//! **The two guards have two owners, and only one of them is here.** The CEILING
+//! `ttl <= MAX_DELEGATED_TTL_SECS` is a deployment policy number and is this owner's. The
+//! RELATION `0 < overlap < ttl` is not: it holds between two fields of
+//! `mcp_re_http_profile::custody::DelegatedKeyWindow`, and only that struct can hold a relation
+//! between its own fields. This owner produces one and never restates it — while the pair
+//! travelled as two `pub i64`s, the validated values were re-pairable one crate away, and
+//! `CustodyConfig { ttl: 60, overlap: 60 }` stayed an ordinary expression.
+
+use mcp_re_http_profile::custody::DelegatedKeyWindow;
 
 use crate::deployment_request::{DelegatedSigningRequest, DeploymentRequest};
 
@@ -53,32 +55,6 @@ const _: () = {
     assert!(DEFAULT_DELEGATED_OVERLAP_SECS < DEFAULT_DELEGATED_TTL_SECS);
 };
 
-/// The rotation window this owner validated: the credential life `T` and the overlap `O`
-/// the rotor mints a successor within.
-///
-/// One value, because `0 < overlap < ttl` is a relation between the two and a relation
-/// cannot be carried by either half. The fields are private to this module and the only
-/// producer is [`classify_and_validate`], so possessing one IS the statement that the pair
-/// satisfies the guard — two independent `i64`s re-paired downstream would leave
-/// `overlap >= ttl` constructible.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RotationWindow {
-    ttl_secs: i64,
-    overlap_secs: i64,
-}
-
-impl RotationWindow {
-    /// The life of every delegated response-signing credential, in seconds.
-    pub fn ttl_secs(&self) -> i64 {
-        self.ttl_secs
-    }
-
-    /// How long before expiry the rotor mints the successor, in seconds.
-    pub fn overlap_secs(&self) -> i64 {
-        self.overlap_secs
-    }
-}
-
 /// What layer A established about delegated response signing.
 ///
 /// Built only where the required value is present, so holding one is evidence that the
@@ -88,7 +64,7 @@ pub struct DelegatedSigningFacts {
     trust_epoch: String,
     issuer_kid: String,
     audience_hash: String,
-    rotation: RotationWindow,
+    rotation: DelegatedKeyWindow,
 }
 
 impl DelegatedSigningFacts {
@@ -111,13 +87,14 @@ impl DelegatedSigningFacts {
         &self.issuer_kid
     }
 
-    /// The validated rotation window.
+    /// The validated rotation window — the pair, never the halves, all the way to the
+    /// custody config minted from it.
     ///
-    /// The pair, never the halves: a consumer that needs the TTL needs the overlap that was
-    /// checked against it. Where the two are handed to a type in another crate whose fields
-    /// are plain integers, the seal stops at that seam — it holds up to it, which is where
-    /// planning re-paired them before.
-    pub fn rotation_window(&self) -> RotationWindow {
+    /// It IS `mcp-re-http-profile`'s sealed value, not a local wrapper around one. A
+    /// wrapper here would carry no invariant of its own — the relation is the profile
+    /// type's and the ceiling is applied during validation, not held by a type — so it
+    /// would be a second name for one fact and one more place for a consumer to unpack.
+    pub fn rotation_window(&self) -> DelegatedKeyWindow {
         self.rotation
     }
 
@@ -166,15 +143,17 @@ pub fn classify_and_validate(
     let Some(trust_epoch) = epoch else {
         return (None, violations);
     };
+    // Construction IS the gate: `ttl_violations` reported every defect for the operator,
+    // and this is the one value that may go on.
+    let Ok(window) = DelegatedKeyWindow::of(requested.ttl_secs, requested.overlap_secs) else {
+        return (None, violations);
+    };
     if !window_is_valid {
         return (None, violations);
     }
     let facts = DelegatedSigningFacts {
         trust_epoch,
-        rotation: RotationWindow {
-            ttl_secs: requested.ttl_secs,
-            overlap_secs: requested.overlap_secs,
-        },
+        rotation: window,
         issuer_kid: requested
             .issuer_kid
             .clone()
@@ -261,11 +240,13 @@ fn ttl_violations(requested: &DelegatedSigningRequest) -> Vec<String> {
             requested.ttl_secs
         ));
     }
-    if requested.overlap_secs <= 0 || requested.overlap_secs >= requested.ttl_secs {
+    // The RELATION is asked of its owner rather than restated: a second copy of
+    // `0 < overlap < ttl` here would be a second place for it to be right.
+    if let Err(why) = DelegatedKeyWindow::of(requested.ttl_secs, requested.overlap_secs) {
         out.push(format!(
-            "--delegated-overlap-secs must satisfy 0 < overlap < ttl (got overlap={}, ttl={}); \
-             the rotor mints a successor one overlap before expiry, so outside that range \
-             response signing either never rotates or stops",
+            "--delegated-overlap-secs must satisfy 0 < overlap < ttl (got overlap={}, ttl={}): \
+             {why}; the rotor mints a successor one overlap before expiry, so outside that \
+             range response signing either never rotates or stops",
             requested.overlap_secs, requested.ttl_secs
         ));
     }
@@ -474,7 +455,7 @@ mod tests {
     /// The pairing the window exists to hold: `0 < overlap < ttl`, as one value.
     ///
     /// The operational test for the seal — delete the guard and an invalid pair is still
-    /// unconstructible — holds because `RotationWindow`'s fields are private to this module
+    /// unconstructible — holds because `DelegatedKeyWindow`'s fields are private to its module
     /// and `classify_and_validate` is its only producer. Planning can no longer take a
     /// validated TTL and pair it with an overlap nothing checked.
     #[test]
@@ -494,7 +475,7 @@ mod tests {
         });
         let window = facts.expect("a legal pair resolves").rotation_window();
         assert!(violations.is_empty(), "{violations:?}");
-        assert_eq!((window.ttl_secs(), window.overlap_secs()), (300, 60));
+        assert_eq!((window.ttl(), window.overlap()), (300, 60));
     }
 
     #[test]

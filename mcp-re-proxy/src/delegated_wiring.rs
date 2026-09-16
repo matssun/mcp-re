@@ -23,6 +23,7 @@ use std::sync::Arc;
 use mcp_re_core::b64url_decode;
 use mcp_re_core::verify_ed25519;
 use mcp_re_core::SigningKey;
+use mcp_re_http_profile::custody::DelegatedKeyWindow;
 use mcp_re_http_profile::issue_delegation_credential_with_signer;
 use mcp_re_http_profile::DelegatedSigningCustody;
 use mcp_re_http_profile::DelegationClaims;
@@ -59,8 +60,12 @@ pub struct DelegatedSigningWiring {
     /// (fail-closed at startup if the root cannot issue) and then hands the rotor to a
     /// background thread that rotates within the overlap window.
     pub rotor: ProdDelegatedRotor,
-    /// The rotation-overlap window `O` in seconds (`0 < O < T`).
-    pub overlap: i64,
+    /// The key lifecycle window this wiring was built from: `T` and `O`, `0 < O < T`.
+    ///
+    /// The sealed pair rather than the overlap alone. A consumer that reports or schedules
+    /// on the overlap needs the TTL it was checked against, and handing back one number
+    /// beside a config holding the other is the re-pairing this type exists not to do.
+    pub window: DelegatedKeyWindow,
 }
 
 /// Build the delegated-signing wiring from a [`SigningPlan`](crate::startup_plan::SigningPlan)
@@ -82,7 +87,7 @@ pub fn build_delegated_signing(
     root_signer: impl ResponseSigner + Send + 'static,
 ) -> DelegatedSigningWiring {
     let cfg = plan.custody.clone();
-    let overlap = cfg.overlap;
+    let window = cfg.window;
 
     // The key the root issuer says it signs under, read ONCE at build. A backend that
     // cannot state its own public key cannot have its issuance checked against anything, and
@@ -143,7 +148,7 @@ pub fn build_delegated_signing(
     DelegatedSigningWiring {
         signer,
         rotor,
-        overlap,
+        window,
     }
 }
 
@@ -226,7 +231,7 @@ mod tests {
     fn builds_and_first_rotate_publishes_a_snapshot() {
         let root = SigningKey::from_seed_bytes(&ROOT_SEED);
         let mut wiring = build_delegated_signing(&delegated_plan(), root);
-        assert_eq!(wiring.overlap, 60);
+        assert_eq!((wiring.window.ttl(), wiring.window.overlap()), (300, 60));
         // No key until the first rotate (fail-closed until issuance).
         assert!(wiring.signer.current(NOW).is_none());
         wiring.rotor.rotate(NOW).expect("initial issuance");

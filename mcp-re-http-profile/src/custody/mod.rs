@@ -49,6 +49,8 @@ use crate::message::HttpResponse;
 use crate::sign::sign_delegated_response_full;
 
 mod issuance_terms;
+mod key_window;
+pub use key_window::{DelegatedKeyWindow, KeyWindowError};
 
 /// A failure of the custody layer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,9 +97,9 @@ pub struct CustodyConfig {
     pub server_role: String,
     pub server_trust_domain: String,
     pub server_subject: String,
-    /// Delegated-key TTL `T` and rotation-overlap window `O` (0 < O < T), seconds.
-    pub ttl: i64,
-    pub overlap: i64,
+    /// The delegated key's lifecycle window: TTL `T` and rotation overlap `O`, as ONE
+    /// sealed value — `0 < O < T` is a relation, and neither half can carry it.
+    pub window: DelegatedKeyWindow,
 }
 
 /// The currently-active delegated key and its credential. `key` is an `Arc`
@@ -255,7 +257,7 @@ where
     pub fn ensure_active(&mut self, now: i64) -> Result<(), CustodyError> {
         let needs = match &self.active {
             None => true,
-            Some(a) => issuance_terms::rotation_due(a.exp, self.cfg.overlap, now),
+            Some(a) => issuance_terms::rotation_due(a.exp, self.cfg.window.overlap(), now),
         };
         self.issue_if(needs, now)
     }
@@ -288,7 +290,8 @@ where
         if needs && self.attempt_allowed(now) {
             let is_rotation = self.active.as_ref().map(|a| now < a.exp).unwrap_or(false);
 
-            let (exp, next_counter) = issuance_terms::mintable(now, self.cfg.ttl, self.counter)?;
+            let (exp, next_counter) =
+                issuance_terms::mintable(now, self.cfg.window.ttl(), self.counter)?;
             let key = (self.factory)();
             self.counter = next_counter;
             let (kid, signer, header, claims) = self.build(now, exp, &key);
@@ -323,8 +326,10 @@ where
                 None => {
                     // Issuance failed. Hold off the next attempt so a root outage
                     // cannot be amplified into one root call per inbound request.
-                    self.next_attempt_at =
-                        Some(issuance_terms::next_attempt_after(now, self.cfg.overlap));
+                    self.next_attempt_at = Some(issuance_terms::next_attempt_after(
+                        now,
+                        self.cfg.window.overlap(),
+                    ));
                     // If the current key is still valid we keep signing with it and
                     // retry the successor later (no gap yet).
                     let current_valid = self.active.as_ref().map(|a| now < a.exp).unwrap_or(false);
@@ -384,7 +389,7 @@ where
             a.key.as_ref(),
             &a.delegated_kid,
             now,
-            issuance_terms::signature_valid_until(now, self.cfg.ttl, a.exp),
+            issuance_terms::signature_valid_until(now, self.cfg.window.ttl(), a.exp),
         )
         .map(|_base| ())
         .map_err(CustodyError::Sign)
@@ -497,8 +502,7 @@ mod tests {
             server_role: "server".into(),
             server_trust_domain: "example.com".into(),
             server_subject: "did:example:server".into(),
-            ttl: T,
-            overlap: O,
+            window: DelegatedKeyWindow::of(T, O).expect("0 < overlap < ttl"),
         }
     }
 
@@ -934,16 +938,17 @@ mod tests {
     /// A `ttl` that cannot be added to `now` refuses the issuance instead of minting a
     /// credential whose `exp` has wrapped.
     ///
-    /// `CustodyConfig` carries `ttl` and `overlap` as bare `i64` fields. The
-    /// `0 < overlap < ttl <= MAX_DELEGATED_TTL_SECS` guard that bounds them belongs to the
-    /// proxy's configuration owner and does not reach this type — the module owning that
-    /// guard says so itself — so this crate's own consumers, and any embedder, can present
-    /// a value the lifecycle arithmetic cannot take. A wrapped `exp` would be signed into
-    /// the credential and read by every `now < exp` test that follows it.
+    /// [`DelegatedKeyWindow`] bounds the RELATION `0 < O < T`, not the MAGNITUDE of `T`.
+    /// The ceiling `T <= MAX_DELEGATED_TTL_SECS` is a deployment policy number owned by the
+    /// proxy's configuration owner and does not reach this crate, so a window this type
+    /// accepts can still carry a `ttl` that `now + ttl` cannot represent — which any
+    /// embedder may present. A wrapped `exp` would be signed into the credential and read
+    /// by every `now < exp` test that follows it.
     #[test]
     fn an_unrepresentable_expiry_refuses_rather_than_wrapping() {
         let mut cfg = cfg();
-        cfg.ttl = i64::MAX;
+        cfg.window = DelegatedKeyWindow::of(i64::MAX, 1)
+            .expect("the relation holds; the ceiling is not this type's");
         let mut c = DelegatedSigningCustody::new(cfg, ok_issuer(), factory());
         assert_eq!(
             c.ensure_active(1_000).unwrap_err(),
@@ -956,33 +961,6 @@ mod tests {
             "no lifecycle event describes a non-key"
         );
     }
-
-    /// An `overlap` that cannot be subtracted from `exp` rotates, rather than reading the
-    /// wrapped threshold as "not yet due".
-    ///
-    /// This is the direction that matters. Wrapping puts `exp - overlap` far in the
-    /// future, `now >= threshold` answers false, and the key stays in service past the
-    /// window it should have been replaced in — a restrictive value turned permissive by
-    /// an arithmetic accident.
-    #[test]
-    fn an_uncomputable_rotation_threshold_rotates_rather_than_holding_the_key() {
-        let mut cfg = cfg();
-        cfg.overlap = i64::MIN;
-        let mut c = DelegatedSigningCustody::new(cfg, ok_issuer(), factory());
-        c.ensure_active(1_000).expect("first issuance");
-        let first = c.active_kid().expect("a key").to_string();
-        assert_eq!(c.root_invocations(), 1);
-
-        // Well inside the credential's life: with a computable overlap this would NOT
-        // rotate. With one that is not computable, the threshold reads as reached.
-        c.ensure_active(1_001).expect("still serving");
-        assert_ne!(
-            c.active_kid().expect("a key"),
-            first,
-            "an uncomputable threshold must not read as `not yet due`"
-        );
-    }
-
     /// The signature's stated validity never outlives the credential authorizing it, and
     /// an unrepresentable `now + ttl` clamps to `exp` rather than to a wrapped instant.
     #[test]
