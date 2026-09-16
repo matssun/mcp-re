@@ -183,6 +183,28 @@ mod tests {
         );
     }
 
+    /// An unavailable signer is reported as the signing side's refusal.
+    ///
+    /// # What establishes this, and what this control adds
+    ///
+    /// The proposition is **STRUCTURALLY ESTABLISHED**: under the current type
+    /// representation and composition API, an unavailable signing key cannot inhabit the
+    /// mismatch path. `correspond` is reached only once BOTH evidences have been
+    /// interpreted, and the two refusals are disjoint variants of
+    /// [`CredentialKeyCorrespondenceRefusal`], so there is no value of
+    /// [`SigningKeyExportEvidence`] that arrives at a `Mismatch`.
+    ///
+    /// That is a statement about the representation and the API as they stand — not a
+    /// claim that no future edit could introduce such an inhabitant. It is exactly the
+    /// kind of property a source edit CAN remove, which is why it is written down here
+    /// rather than left to be re-derived by the next reader.
+    ///
+    /// This control is the **positive mirror**, not the proof. It establishes that the
+    /// composition actually reaches the signing-key adapter and returns that side's
+    /// refusal — so a permanently-refusing, mis-wired, or short-circuiting composition
+    /// cannot satisfy the battery vacuously. Before the repair it established neither:
+    /// its fixture passed `CertificateChainEvidence::absent()`, the credential arm
+    /// short-circuited, and the signing side was never consulted at all.
     #[test]
     fn an_unavailable_signer_is_not_reported_as_a_mismatch() {
         // A LEGAL credential, so the composition reaches the signing-key adapter at all.
