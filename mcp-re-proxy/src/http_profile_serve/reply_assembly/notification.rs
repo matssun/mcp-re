@@ -164,15 +164,25 @@ mod tests {
             .split_once("async fn answer_notification_terminal(")
             .expect("the terminal is in this file")
             .1;
+        // BRANCHED ON, not merely called. `let _ = progress.establish_terminal(..)` takes
+        // the decision, latches the anomaly, and mints the 202 anyway — the pre-enforcement
+        // behaviour with the enforcement still present and simply not acted on. An order
+        // check alone reads that as clean, so the refusing form is what is asserted.
         let decision = body
-            .find("establish_terminal(")
-            .expect("the terminal is decided");
+            .find("progress.establish_terminal(acknowledged).is_err()")
+            .expect("the terminal decision is branched on");
         let mint = body
             .find("self.answer_notification(")
             .expect("the 202 is minted");
         assert!(
             decision < mint,
             "the 202 must not be signed before the exchange may claim its terminal"
+        );
+        // And the refusing arm must LEAVE. A refusal that falls through to the 202 decides
+        // nothing.
+        assert!(
+            body[decision..mint].contains("return self.refuse_retained("),
+            "the refusing arm must exit before the 202 is signed"
         );
     }
 

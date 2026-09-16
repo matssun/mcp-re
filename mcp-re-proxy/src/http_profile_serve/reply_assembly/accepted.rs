@@ -241,7 +241,10 @@ mod tests {
             .split_once("async fn serve_retained(")
             .expect("serve_retained is in this file")
             .1;
-        let decision = body.find("may_publish(").expect("the decision is taken");
+        // Branched on, not merely called — see the same assertion in `notification.rs`.
+        let decision = body
+            .find("progress.may_publish(success).is_err()")
+            .expect("the publication decision is branched on");
         let retention = body
             .find(".retain_accepted(")
             .expect("retention is discharged");
@@ -255,6 +258,10 @@ mod tests {
             decision < retention && decision < record && decision < commit,
             "a success claim must not be published before it is decided: \
              decision {decision}, retention {retention}, record {record}, commit {commit}"
+        );
+        assert!(
+            body[decision..retention].contains("return self.refuse_retained("),
+            "the refusing arm must exit before retention discharges"
         );
     }
 

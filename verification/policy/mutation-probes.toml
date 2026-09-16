@@ -2350,16 +2350,22 @@ expect_red = [
 id = "M91-a-refused-publication-is-remembered-not-re-derived"
 unit = "proxy.exchange_lifecycle"
 conjunct = "a refused publication latches on the live machine, so a later attempt cannot succeed"
-# The LATCH inside the refusal, which is a separate fact from the refusal. Delete it and
-# every control that checks THAT a publication was refused still passes — the prospective run
-# re-derives the same answer from the same tuple each time. What changes is an exchange the
-# machine has already declined to vouch for: it forgets, and the next publication succeeds.
+# THE PROPOSITION, stated so it cannot drift back:
 #
-# This probe's first form claimed the latch was what made the refusal carry
-# `possibly_executed`, and the probe REFUSED it: at a success terminal the exchange is past
-# the execution threshold, so `retry_semantics` answers `NotRetrySafe` from the state alone
-# and the assertion held with the latch deleted. The claim was true and the control was
-# vacuous. What is actually load-bearing is memory, and this is the control for it.
+#   post-dispatch state itself is already sufficient for NotRetrySafe;
+#   the anomaly latch is load-bearing because it REMEMBERS that the model/code
+#   correspondence failed, so later projections cannot pretend the exchange was coherent.
+#
+# The latch does NOT create the post-dispatch retry disposition, and nothing here may say it
+# does. At a success terminal `backend_may_have_executed()` already holds, so
+# `retry_semantics` answers `NotRetrySafe` from the state alone, latch or no latch.
+#
+# This probe's first form claimed exactly that wrong thing, and the probe REFUSED it: the
+# check was deleted and every named control stayed green. The claim was true — the refusal
+# does carry `possibly_executed` — and the control was vacuous, because the state would have
+# produced it anyway. What is load-bearing is memory, and this is the control for it: delete
+# the latch and an exchange the machine has already declined to vouch for forgets, so the
+# next publication succeeds.
 path = "mcp-re-proxy/src/exchange_state.rs"
 anchor = """
         self.latch(violation);
@@ -2370,6 +2376,36 @@ weakening = """
 """
 expect_red = [
   "lib#exchange_state::tests::a_refused_publication_is_remembered_by_the_machine",
+]
+
+[[probe]]
+id = "M93-the-202-is-not-minted-before-its-terminal-is-authorized"
+unit = "proxy.exchange_lifecycle"
+conjunct = "the notification terminal is decided before the 202 is signed, and the refusal exits"
+# The notification half of the same proposition M92 covers for the bodied path, and the one
+# the unit could not state until `notification.rs` entered its `paths`.
+#
+# The weakening is deliberately NOT a deletion. It keeps the call, so `establish_terminal`
+# has a consumer and nothing goes dead; it keeps the latch, so the machine still records the
+# disagreement; and it DISCARDS THE ANSWER. That is the pre-enforcement behaviour restored
+# exactly — the 202 is signed, retained and recorded for an exchange the machine has just
+# said it cannot vouch for — and it is the mutation an order-only control reads as clean,
+# which is why the control asserts the refusing form and the exit rather than the order.
+path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/notification.rs"
+anchor = """
+        if progress.establish_terminal(acknowledged).is_err() {
+            let refusal = crate::refusal::Refusal::after_admission(
+                mcp_re_core::McpReError::ExchangeInvariantViolation,
+                500,
+            );
+            return self.refuse_retained(ex, refusal, progress, retention).await;
+        }
+"""
+weakening = """
+        let _ = progress.establish_terminal(acknowledged);
+"""
+expect_red = [
+  "lib#http_profile_serve::reply_assembly::notification::tests::the_terminal_is_decided_before_the_202_is_minted",
 ]
 
 [[probe]]
