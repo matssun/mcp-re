@@ -51,6 +51,7 @@ attestations this view cannot see.
 | unit://http_profile.admission_state_provenance | source, contracts or evidence | THM-0129 | _no consumer_ |
 | unit://http_profile.artifact_typing | source, contracts or evidence | THM-0007 | _no consumer_ |
 | unit://http_profile.artifact_verification_boundary | source, contracts or evidence | THM-0008, THM-0015 | _no consumer_ |
+| unit://http_profile.bodyless_acknowledgement | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://http_profile.continuation_binding | source, contracts or evidence | THM-0010 | http_profile.continuation_unbypassability (PROOF_DEPENDENCY) |
 | unit://http_profile.continuation_unbypassability | source, contracts or evidence | THM-0009 | _no consumer_ |
 | unit://http_profile.delegated_signing_custody | source, contracts or evidence | _no theorem_ | _no consumer_ |
@@ -61,6 +62,7 @@ attestations this view cannot see.
 | unit://http_profile.replay_key | source, contracts or evidence | THM-0079 | _no consumer_ |
 | unit://http_profile.request_envelope | source, contracts or evidence | THM-0083 | _no consumer_ |
 | unit://http_profile.response_emission_binding | source, contracts or evidence | THM-0065, THM-0075 | _no consumer_ |
+| unit://http_profile.retained_chain_record | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://http_profile.scitt_receipt_offline | source, contracts or evidence | THM-0041, THM-0072 | _no consumer_ |
 | unit://http_profile.scitt_retained_correspondence | source, contracts or evidence | THM-0042 | _no consumer_ |
 | unit://http_profile.scitt_service_pin | source, contracts or evidence | THM-0068, THM-0072 | _no consumer_ |
@@ -81,6 +83,7 @@ attestations this view cannot see.
 | unit://proxy.authorization_posture | source, contracts or evidence | THM-0056 | _no consumer_ |
 | unit://proxy.aws_kms_adapter | source, contracts or evidence | THM-0116 | _no consumer_ |
 | unit://proxy.aws_sts_credentials | source, contracts or evidence | THM-0117 | _no consumer_ |
+| unit://proxy.capsule_anchor_registration_leaf | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.certificate_identity | source, contracts or evidence | THM-0024 | proxy.channel_associated_identity (COMPILE_DEPENDENCY) |
 | unit://proxy.channel_associated_credential | source, contracts or evidence | THM-0028 | proxy.channel_associated_identity (CONTRACT_CONSUMES), proxy.mechanism_verified_credential (CONTRACT_CONSUMES) |
 | unit://proxy.channel_associated_identity | source, contracts or evidence | THM-0029 | proxy.authenticated_relationship_peer (CONTRACT_CONSUMES) |
@@ -110,6 +113,7 @@ attestations this view cannot see.
 | unit://proxy.kms_endpoint_authority | source, contracts or evidence | THM-0089 | _no consumer_ |
 | unit://proxy.mechanism_verified_credential | source, contracts or evidence | THM-0030 | proxy.authenticated_relationship_peer (CONTRACT_CONSUMES), proxy.credential_currency (CONTRACT_CONSUMES) |
 | unit://proxy.online_ocsp_reachability | source, contracts or evidence | THM-0013 | _no consumer_ |
+| unit://proxy.operator_facing_redaction | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.outbound_destination | source, contracts or evidence | THM-0090 | _no consumer_ |
 | unit://proxy.outstanding_id_provenance | source, contracts or evidence | THM-0083 | _no consumer_ |
 | unit://proxy.pdp_decision_relation | source, contracts or evidence | THM-0040, THM-0052 | _no consumer_ |
@@ -128,6 +132,7 @@ attestations this view cannot see.
 | unit://proxy.retained_record_content | source, contracts or evidence | THM-0112 | _no consumer_ |
 | unit://proxy.retention_commitment | source, contracts or evidence | THM-0088 | _no consumer_ |
 | unit://proxy.runtime_lifecycle | source, contracts or evidence | THM-0012 | _no consumer_ |
+| unit://proxy.scrapi_registration_leaf | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.serving_drain | source, contracts or evidence | THM-0104 | _no consumer_ |
 | unit://proxy.serving_identity_provenance | source, contracts or evidence | THM-0080 | _no consumer_ |
 | unit://proxy.serving_trust_seam | source, contracts or evidence | THM-0066, THM-0099 | _no consumer_ |

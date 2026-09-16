@@ -242,6 +242,12 @@ on:
       - "mcp-re-proxy/src/authorization/audit/**"
       # Stage 8: the replay five-tuple, found by the missing-edge pass.
       - "mcp-re-http-profile/src/replay.rs"
+      # W4: the two request fields that carry credentials and may never be printed as
+      # configured. Named individually rather than as `deployment_request/**`: the rest of
+      # that subtree is the CLI-neutral request model, which validates nothing and
+      # participates in no unit's fingerprint.
+      - "mcp-re-proxy/src/deployment_request/secret_string.rs"
+      - "mcp-re-proxy/src/deployment_request/inner_backend_display.rs"
       # MCPRE-137: the listener-lifetime TLS security state, its subordinates, and the
       # production wiring that gives a listener a lifetime at all.
       - "mcp-re-proxy/src/tls_listener_state/**"
@@ -526,6 +532,12 @@ on:
       - "mcp-re-proxy/src/authorization/audit/**"
       # Stage 8: the replay five-tuple, found by the missing-edge pass.
       - "mcp-re-http-profile/src/replay.rs"
+      # W4: the two request fields that carry credentials and may never be printed as
+      # configured. Named individually rather than as `deployment_request/**`: the rest of
+      # that subtree is the CLI-neutral request model, which validates nothing and
+      # participates in no unit's fingerprint.
+      - "mcp-re-proxy/src/deployment_request/secret_string.rs"
+      - "mcp-re-proxy/src/deployment_request/inner_backend_display.rs"
       # MCPRE-137: the listener-lifetime TLS security state, its subordinates, and the
       # production wiring that gives a listener a lifetime at all.
       - "mcp-re-proxy/src/tls_listener_state/**"

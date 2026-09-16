@@ -2118,6 +2118,70 @@ tested_symbols = [
 ]
 
 [[unit]]
+id = "http_profile.retained_chain_record"
+class = "V0"
+description = "Whether a SET of retained hops is a complete call record (#416 rev 2 §9.1/§9.3). Per-turn binding proves one answer belongs to one question; it does not prove a chain is whole. Given hops R0->S0 and R2->S2 with R1->S1 missing, every retained message still verifies on its own and S2 still looks like a good terminal answer — so the output is never a bare boolean: a chain is Complete, or it is Incomplete and NAMES the hop that broke it, because the label is embedded in a SCITT Signed Statement an auditor reads."
+paths = [
+  "mcp-re-http-profile/src/chain/mod.rs",
+  "mcp-re-http-profile/src/chain/hop.rs",
+  "mcp-re-http-profile/src/chain/record.rs",
+  "mcp-re-http-profile/src/chain/reconstruction.rs",
+]
+exported_contracts = []
+evidence = ["test://http_profile/chain/retained_record_completeness"]
+# `submitted_identity.rs` is deliberately NOT here: `http_profile.submitted_hop_identity`
+# owns what identifies a submission, which is a different proposition from whether a set of
+# submissions is a whole record, and its own battery establishes it.
+tested_symbols = [
+  "tests/chain_reconstruction_test#multi_hop_chain_reconstructs_complete",
+  "tests/chain_reconstruction_test#single_terminal_hop_reconstructs_complete",
+  "tests/chain_reconstruction_test#complete_chain_reports_every_hops_evidence",
+  "tests/chain_reconstruction_test#missing_middle_hop_is_incomplete_not_a_complete_terminal",
+  "tests/chain_reconstruction_test#per_hop_validity_does_not_imply_a_complete_chain",
+  "tests/chain_reconstruction_test#chain_ending_non_terminally_is_incomplete",
+  "tests/chain_reconstruction_test#front_truncated_chain_is_incomplete_not_a_complete_record",
+  "tests/chain_reconstruction_test#an_opening_hop_without_a_continuation_still_opens_a_complete_record",
+  "tests/chain_reconstruction_test#later_hop_without_a_continuation_is_incomplete",
+  "tests/chain_reconstruction_test#continuation_from_another_chain_is_incomplete",
+  "tests/chain_reconstruction_test#terminal_before_the_end_is_incomplete",
+  "tests/chain_reconstruction_test#handles_swapped_between_roles_do_not_relink",
+  "tests/chain_reconstruction_test#tampered_hop_is_named_by_index",
+  "tests/chain_reconstruction_test#empty_chain_is_incomplete",
+  "tests/chain_reconstruction_test#a_truncated_chain_cannot_be_relabelled_complete",
+  "tests/chain_reconstruction_test#terminality_is_derived_from_protected_content",
+  "tests/chain_reconstruction_test#an_unrecognized_result_type_makes_the_record_incomplete_at_that_hop",
+  "tests/chain_reconstruction_test#an_unrecognized_result_type_mid_chain_is_named_for_what_it_is",
+  "tests/chain_reconstruction_test#an_aged_multi_hop_record_still_reconstructs_complete",
+  "tests/chain_reconstruction_test#the_aged_chains_hops_really_are_out_of_window_at_audit_time",
+  "tests/chain_reconstruction_test#a_hop_created_after_the_audit_instant_is_refused",
+  "tests/chain_reconstruction_test#the_audit_ceiling_tolerates_the_configured_skew",
+  "tests/chain_reconstruction_test#an_over_wide_window_is_still_refused_in_an_aged_record",
+  "tests/chain_reconstruction_test#a_degenerate_window_is_still_refused_in_an_aged_record",
+  "tests/chain_reconstruction_test#a_hop_whose_block_names_another_target_is_not_a_verified_hop",
+  "tests/chain_reconstruction_test#a_hop_with_no_evidence_block_is_not_a_verified_hop",
+  "tests/chain_reconstruction_test#an_honest_block_still_reconstructs_complete",
+  "tests/chain_reconstruction_test#a_hop_whose_audience_is_not_the_verifiers_own_breaks_the_chain",
+  "tests/chain_reconstruction_test#a_binding_with_no_obtainable_credential_breaks_the_chain",
+  "tests/chain_reconstruction_test#two_records_that_verified_nothing_are_still_distinguishable",
+  "tests/chain_reconstruction_test#every_retained_field_of_a_hop_is_part_of_its_identity",
+  "tests/chain_reconstruction_test#the_submitted_identity_is_a_function_of_the_bytes_alone",
+  "lib#chain::tests::an_absent_result_type_is_terminal",
+  "lib#chain::tests::an_explicit_complete_result_type_is_terminal",
+  "lib#chain::tests::an_input_required_result_expects_a_continuation",
+  "lib#chain::tests::an_unrecognized_result_type_is_not_terminal",
+  "lib#chain::tests::every_retained_header_is_inside_the_submitted_identity",
+  "lib#chain::tests::field_boundaries_cannot_be_shifted_without_changing_the_commitment",
+  "lib#chain::tests::header_order_is_part_of_the_submission_identity",
+  "lib#chain::tests::only_the_complete_label_reports_complete",
+  "lib#chain::tests::the_hop_count_is_part_of_the_submitted_identity",
+  "lib#chain::tests::the_response_status_is_part_of_the_submitted_identity",
+  "lib#chain::tests::the_signature_is_part_of_the_submitted_identity",
+  "lib#chain::record::tests::a_later_hop_links_only_to_its_own_predecessor",
+  "lib#chain::record::tests::an_unrecognized_result_type_breaks_the_chain_at_either_end",
+  "lib#chain::record::tests::hop_zero_may_not_name_a_predecessor",
+]
+
+[[unit]]
 id = "http_profile.submitted_hop_identity"
 class = "V0"
 description = "What identifies a SUBMISSION: two retained submitted hops that differ in any retained fact are two submissions. The representation is closed — a hop IS its retained request and response, entire — because a curated field list is how an identity comes to omit something, and the omission it already made was `signature-input`, the header naming what was signed."
@@ -3381,6 +3445,75 @@ tested_symbols = [
 # leaf about agreement, not about reachability. Folding the second into the first would
 # widen an authority by renaming it, which #742 rules out in as many words.
 [[unit]]
+id = "proxy.capsule_anchor_registration_leaf"
+class = "V0"
+description = "ONE operated service's registration contract — what capsule-anchor does with a Signed Statement and what its answer means. A SECOND mechanism leaf beside the SCRAPI one and not a configuration of it: measured against the service's published OpenAPI document the two agree on nothing the leaf owns — different path, different request encoding, different success shape, and no polling at all. Certainty is decided here on this contract's own terms: a submission that never went out, an undefined status and an accepted submission whose answer will not parse are all INDETERMINATE, and only a pre-acceptance answer is a definitive negative. What crosses upward is bytes and a refusal in the neutral vocabulary — never the JSON, and never the unsigned log coordinates beside the receipt."
+paths = [
+  "mcp-re-proxy/src/transparency/auditor/registration/capsule_anchor/mod.rs",
+  "mcp-re-proxy/src/transparency/auditor/registration/capsule_anchor/fault.rs",
+  "mcp-re-proxy/src/transparency/auditor/registration/capsule_anchor/wire.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/transparency/capsule_anchor_registration_certainty"]
+# `wire.rs` carries no controls of its own — its vocabulary is exercised through the two
+# modules above, whose fixtures drive real request and response shapes. It is in `paths`
+# because a change to it changes what those controls measure; it is not cited, because
+# there is nothing here to cite and inventing a symbol would be worse.
+tested_symbols = [
+  "lib#transparency::auditor::registration::capsule_anchor::tests::a_submission_that_never_went_out_is_indeterminate",
+  "lib#transparency::auditor::registration::capsule_anchor::tests::an_accepted_submission_with_an_unreadable_answer_does_not_report_a_failure",
+  "lib#transparency::auditor::registration::capsule_anchor::tests::the_statement_is_submitted_verbatim_to_this_contracts_resource",
+  "lib#transparency::auditor::registration::capsule_anchor::tests::a_receipt_about_another_statement_is_refused",
+  "lib#transparency::auditor::registration::capsule_anchor::tests::a_receipt_this_leaf_brings_back_is_accepted_only_after_it_verifies",
+  "lib#transparency::auditor::registration::capsule_anchor::tests::the_unsigned_log_coordinates_beside_the_receipt_are_not_consumed",
+  "lib#transparency::auditor::registration::capsule_anchor::fault::tests::a_transport_failure_is_not_a_failure_to_register",
+  "lib#transparency::auditor::registration::capsule_anchor::fault::tests::an_undefined_status_is_unknown_rather_than_a_refusal",
+  "lib#transparency::auditor::registration::capsule_anchor::fault::tests::only_a_pre_acceptance_answer_is_a_definitive_negative",
+  "lib#transparency::auditor::registration::capsule_anchor::fault::tests::an_accepted_submission_with_an_unreadable_answer_is_indeterminate_and_says_so",
+]
+
+[[unit]]
+id = "proxy.scrapi_registration_leaf"
+class = "V0"
+description = "ONE draft revision's registration state machine — what `draft-ietf-scitt-scrapi-11` does with a Signed Statement, and what each of its answers MEANS. Certainty is decided here and once: only an explicit client-error refusal and an explicit rate limit are definitive negatives, while a transport failure while submitting, a 201 whose body will not parse, a 202 with no Location and an exhausted budget all leave registration INDETERMINATE. Everything version-specific stops at this leaf; the capability above it holds a refusal vocabulary that would read the same against a successor protocol."
+paths = [
+  "mcp-re-proxy/src/transparency/auditor/registration/scrapi/mod.rs",
+  "mcp-re-proxy/src/transparency/auditor/registration/scrapi/answer.rs",
+  "mcp-re-proxy/src/transparency/auditor/registration/scrapi/fault.rs",
+  "mcp-re-proxy/src/transparency/auditor/registration/scrapi/wire.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/transparency/scrapi_registration_certainty"]
+# The capsule-anchor leaf is deliberately NOT here. Two registration mechanisms with
+# different wire vocabularies and different fault algebras are two units: a union would
+# invent an exclusion the deployment does not have, and a peer differing on a leaf's own
+# axes is a SECOND leaf rather than a configuration of the first.
+tested_symbols = [
+  "lib#transparency::auditor::registration::scrapi::tests::a_synchronous_registration_yields_a_receipt_that_verifies",
+  "lib#transparency::auditor::registration::scrapi::tests::an_asynchronous_registration_polls_until_the_receipt_is_ready",
+  "lib#transparency::auditor::registration::scrapi::tests::a_client_error_is_a_definitive_refusal",
+  "lib#transparency::auditor::registration::scrapi::tests::every_post_submission_fault_is_indeterminate",
+  "lib#transparency::auditor::registration::scrapi::tests::an_exhausted_budget_is_indeterminate",
+  "lib#transparency::auditor::registration::scrapi::tests::a_lost_receipt_resource_is_indeterminate_and_not_a_refusal",
+  "lib#transparency::auditor::registration::scrapi::tests::a_transport_failure_while_polling_is_retried_within_the_budget",
+  "lib#transparency::auditor::registration::scrapi::tests::a_rate_limit_is_throttled_and_a_503_is_not",
+  "lib#transparency::auditor::registration::scrapi::tests::a_location_outside_the_service_is_never_fetched",
+  "lib#transparency::auditor::registration::scrapi::tests::the_submitted_body_is_the_statement_verbatim",
+  "lib#transparency::auditor::registration::scrapi::tests::the_protocol_revision_is_a_draft_and_names_itself",
+  "lib#transparency::auditor::registration::scrapi::answer::tests::a_submission_rate_limit_and_a_503_are_different_faults",
+  "lib#transparency::auditor::registration::scrapi::answer::tests::a_202_without_a_location_is_its_own_fault",
+  "lib#transparency::auditor::registration::scrapi::answer::tests::a_location_outside_the_service_is_refused_by_the_reader",
+  "lib#transparency::auditor::registration::scrapi::answer::tests::a_pending_answer_is_neither_success_nor_failure",
+  "lib#transparency::auditor::registration::scrapi::answer::tests::a_receipt_body_is_read_only_under_the_cose_media_type",
+  "lib#transparency::auditor::registration::scrapi::fault::tests::the_phase_reaches_the_message",
+  "lib#transparency::auditor::registration::scrapi::fault::tests::every_refusal_names_the_draft_revision",
+  "lib#transparency::auditor::registration::scrapi::fault::tests::only_a_pre_acceptance_answer_is_a_definitive_negative",
+  "lib#transparency::auditor::registration::scrapi::wire::tests::rate_limiting_is_not_a_refusal",
+  "lib#transparency::auditor::registration::scrapi::wire::tests::the_entries_url_has_exactly_one_separator",
+  "lib#transparency::auditor::registration::scrapi::wire::tests::the_cose_type_is_matched_past_its_parameters",
+]
+
+[[unit]]
 id = "proxy.outbound_destination"
 class = "V0"
 description = "A destination this proxy reaches out to has passed the guard its provenance requires: an operator-configured URL the scheme allowlist, a certificate-derived one that plus private-address protection over the address a parser actually resolves."
@@ -4165,6 +4298,30 @@ tested_symbols = [
 ]
 
 [[unit]]
+id = "proxy.operator_facing_redaction"
+class = "V0"
+description = "What of a deployment REQUEST may reach an operator's eyes. Two fields carry credentials and neither may be printed as configured: the PKCS#11 User PIN, which unlocks a token holding the response-signing key and so sits in the same custody class as the key, and `--inner-http-url`, whose authority component is a place credentials ride along. Both are owned by a type whose sole constructor performs the removal and whose representation is private, so possession of the rendered form IS the statement that the secret is already gone — never a call site that remembered to redact."
+paths = [
+  "mcp-re-proxy/src/deployment_request/secret_string.rs",
+  "mcp-re-proxy/src/deployment_request/inner_backend_display.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/deployment_request/operator_facing_redaction"]
+# `capability_materialization::key_source::pin` asserts the same property at the CONSUMER and
+# is deliberately NOT named: its source is not in this unit's `paths`, so citing it would be
+# the SF-1 defect — evidence whose file the unit does not measure, rewritable under the same
+# name without moving the fingerprint. The closure gate refuses it, which is the gate working.
+tested_symbols = [
+  "lib#deployment_request::secret_string::tests::the_debug_rendering_carries_no_part_of_the_secret",
+  "lib#deployment_request::secret_string::tests::the_value_is_still_readable_where_it_is_needed",
+  "lib#deployment_request::inner_backend_display::tests::userinfo_never_reaches_the_rendered_text",
+  "lib#deployment_request::inner_backend_display::tests::a_credential_free_url_renders_without_the_marker",
+  "lib#deployment_request::inner_backend_display::tests::a_shape_the_projection_cannot_decompose_is_named_not_echoed",
+  "lib#deployment_request::inner_backend_display::tests::every_backend_in_the_list_is_projected",
+  "lib#deployment_request::inner_backend_display::tests::an_empty_backend_list_renders_as_an_empty_list",
+]
+
+[[unit]]
 id = "proxy.audit_delivery"
 class = "V0"
 description = "Whether the record stream is honest about what reached it: bounded and non-blocking, order-preserving, every record sequence-numbered, drops counted and reported, and a timed-out drain distinguishable from a completed one."
@@ -4218,6 +4375,59 @@ tested_symbols = [
 # five-tuple has an injectivity argument in prose, and no theorem named either. Found by
 # asking of each root what it requires rather than by reading the registry upward.
 # ---------------------------------------------------------------------------------------
+
+[[unit]]
+id = "http_profile.bodyless_acknowledgement"
+class = "V0"
+description = "What a bodyless message signs and what its acknowledgement establishes (#415 rev 2 §3.4/§8.1, #418, #424, owner ruling C019b). The named component sets are enforced as sets — a verifier never NOTICES a body is absent and drops a requirement — and a signed 202 claims exactly that the enforcement boundary authenticated and accepted THIS transmission. The binding is instance-level: `;req` alone distinguishes notification A from a different notification B but not from a byte-identical retransmission A', so the 202 additionally covers `mcp-re-request-evidence`, the digest of the request's own signature base and therefore of its nonce."
+paths = [
+  "mcp-re-http-profile/src/bodyless/mod.rs",
+  "mcp-re-http-profile/src/bodyless/acknowledged.rs",
+  "mcp-re-http-profile/src/bodyless/delegated_ack.rs",
+  "mcp-re-http-profile/src/bodyless/delegated_credential.rs",
+]
+exported_contracts = []
+evidence = ["test://http_profile/bodyless/acknowledgement_component_sets"]
+# Two DEDICATED batteries, both already in the tree and both driving the production
+# verifier over real signed messages. They are listed whole rather than filtered to the
+# controls that look most on-point: the unit's claim is about the SETS, and a control that
+# a bodied message still requires its content-type is as much a statement about the sets as
+# one that a bodyless message must not carry it.
+tested_symbols = [
+  "tests/bodyless_202_test#signed_202_verifies_against_its_notification",
+  "tests/bodyless_202_test#an_acknowledgement_binds_to_one_transmission_not_to_content",
+  "tests/bodyless_202_test#a_forged_request_evidence_header_is_refused",
+  "tests/bodyless_202_test#a_missing_request_evidence_header_is_refused",
+  "tests/bodyless_202_test#content_injected_into_a_signed_202_is_caught",
+  "tests/bodyless_202_test#content_type_on_a_bodyless_202_is_rejected",
+  "tests/bodyless_202_test#a_202_without_its_req_binding_is_rejected",
+  "tests/bodyless_202_test#a_bodyless_response_that_is_not_202_is_rejected",
+  "tests/bodyless_202_test#a_202_signed_by_a_request_key_fails_the_response_slot",
+  "tests/bodyless_202_test#bodyless_request_round_trips",
+  "tests/bodyless_202_test#bodyless_get_request_round_trips",
+  "tests/bodyless_202_test#content_type_on_a_bodyless_request_is_rejected",
+  "tests/bodyless_202_test#the_bodied_request_set_still_requires_content_type",
+  "tests/bodyless_202_test#a_bodyless_request_covers_a_present_authorization_header",
+  "tests/bodyless_202_test#swapping_a_covered_bearer_token_on_a_bodyless_request_is_caught",
+  "tests/bodyless_202_test#an_uncovered_authorization_header_on_a_bodyless_request_is_rejected",
+  "tests/bodyless_202_test#uncovered_dpop_and_mcp_transport_headers_on_a_bodyless_request_are_rejected",
+  "tests/bodyless_202_test#the_bodyless_signer_covers_every_conditionally_mandatory_header",
+  "tests/bodyless_202_test#a_configured_transport_contract_is_refused_rather_than_ignored",
+  "tests/delegated_202_test#a_delegated_202_verifies_via_the_credential_chain",
+  "tests/delegated_202_test#a_credential_header_not_covered_is_rejected",
+  "tests/delegated_202_test#a_missing_credential_header_is_rejected",
+  "tests/delegated_202_test#a_duplicated_credential_header_is_rejected",
+  "tests/delegated_202_test#an_oversized_credential_header_is_rejected",
+  "tests/delegated_202_test#a_revoked_delegated_key_is_rejected",
+  "tests/delegated_202_test#a_delegated_202_refuses_a_content_distinct_notification",
+  "tests/delegated_202_test#a_delegated_202_refuses_a_retransmission_of_the_same_notification",
+  "tests/delegated_202_test#a_stale_trust_epoch_is_rejected",
+  "lib#bodyless::acknowledged::tests::the_pinned_coordinate_is_the_root_anchor_and_not_the_rotating_delegated_kid",
+  "lib#bodyless::acknowledged::tests::taking_the_actor_is_the_only_way_to_consume_one",
+  "lib#bodyless::delegated_credential::tests::a_credential_scoped_to_another_signer_is_refused",
+  "lib#bodyless::delegated_credential::tests::the_scoped_keyid_is_read_through_the_actor_field_escape",
+  "lib#bodyless::delegated_credential::tests::the_credential_header_is_present_exactly_once_and_bounded",
+]
 
 [[unit]]
 id = "http_profile.replay_key"
