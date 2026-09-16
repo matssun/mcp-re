@@ -12,7 +12,7 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
-### Changed — a cross-machine invariant now REFUSES a success instead of asserting about one
+### Changed — the exchange model now REFUSES a success instead of asserting about one
 
 The exchange machine's cross-machine invariants — an open leg served with no durable
 continuation record, a leg-opening reply served as a terminal completion, synthesized
@@ -20,8 +20,11 @@ transport-failure bytes served as a success, a backend projection that disagrees
 exchange state — were enforced in the serving path by
 `debug_assert!(progress.invariant_violation().is_none())`. The machine detected the
 violation and latched it, the assertion was compiled out of the release build, and the
-release binary served the success anyway. The latch degraded the retry claim; it did not
-stop the claim being published.
+release binary served the success anyway. Nothing stopped the claim being published — and
+the latch was never going to: past the execution threshold `NotRetrySafe` already follows
+from the state, so the latch changed no disposition there. What it did, and does, is
+remember that model/code correspondence failed, so later projections cannot treat the
+exchange as coherent.
 
 The decision now happens BEFORE anything publishes it. On the bodied success path and on
 the bodyless 202 alike:
@@ -29,7 +32,9 @@ the bodyless 202 alike:
 ```text
 candidate signed reply
   -> the prospective success terminal is derived
-  -> the prospective cross-machine tuple is validated
+  -> the prospective run is checked against the exchange model:
+     was any transition illegal, is the resulting tuple incoherent,
+     had an anomaly already been latched
 
 invalid   latch, retain nothing, emit no response.signed,
           mint a signed post-dispatch refusal, retain THAT terminal, serve it
@@ -61,8 +66,10 @@ execution threshold.
 
 **It carries no retry advice.** No case was added to the retry contract and
 `execution_refinement` stays `None`, so the disposition still comes from the exchange
-machine — and because the anomaly is latched before the refusal is constructed, that
-machine reports `possibly_executed`.
+machine, which reports `possibly_executed` because the exchange is past the execution
+threshold. The anomaly is latched before the refusal is constructed so that no later
+projection can treat the exchange as coherent — not to produce that disposition, which the
+state already establishes.
 
 `ALL_ERRORS`, `wire_code()` and the audit reason label move with it in the same slice.
 

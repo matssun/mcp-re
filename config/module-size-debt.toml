@@ -295,8 +295,8 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/exchange_state.rs"
-baseline_prod_loc = 894
-baseline_sha = "fa1a422"
+baseline_prod_loc = 906
+baseline_sha = "a15fc1e"
 status = "reviewed-exception"
 review_ref = "EX-001 in docs/architecture/review-dispositions.md"
 growth_from_prod_loc = 789

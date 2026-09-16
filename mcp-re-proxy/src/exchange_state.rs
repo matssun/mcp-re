@@ -680,10 +680,22 @@ impl ExchangeProgress {
     ///
     /// Nor is it a panic. Aborting the task would turn a model/code disagreement into a
     /// dropped connection, whose retry contract is *nothing at all* — strictly less than the
-    /// machine already knows. The latch is the enforcement: it is consumed by
-    /// [`retry_semantics`](Self::retry_semantics), which degrades to the strongest claim
-    /// about consequence, so an exchange the model cannot vouch for is reported as one that
-    /// may have executed rather than as one that provably did not.
+    /// machine already knows.
+    ///
+    /// # What the latch does, stated precisely
+    ///
+    /// It RECORDS that the model/code correspondence failed, and that record is what stops
+    /// later projections treating the exchange as coherent. Where the exchange has not yet
+    /// crossed the execution threshold, that record is also what moves
+    /// [`retry_semantics`](Self::retry_semantics) off `SafeNothingExecuted` — an exchange
+    /// that skipped a stage must not report as one that provably did not execute.
+    ///
+    /// PAST the threshold it moves nothing: `backend_may_have_executed()` already holds, so
+    /// `NotRetrySafe` follows from the state alone, latch or no latch. So at a success
+    /// terminal the latch is not the enforcement — [`may_publish`](Self::may_publish) is —
+    /// and the latch's job there is memory. Both halves are measured, and the second was
+    /// established by a mutation probe refusing the claim that the latch produced the
+    /// post-dispatch disposition.
     pub(crate) fn advance(&mut self, event: ExchangeEvent) {
         if transition(self.request, event).is_err() {
             self.latch("the serving path drove an illegal exchange transition");
@@ -754,8 +766,8 @@ impl ExchangeProgress {
     /// that lags claims LESS happened than did, and refusing there would err in the one
     /// direction a refusal must not. At the terminal the opposite holds: there IS somewhere
     /// else to go, a post-dispatch refusal, and the claim about to be committed is the
-    /// strongest MCP-RE makes. This is the boundary where an incoherent tuple stops being a
-    /// degraded retry claim and becomes a refusal.
+    /// strongest MCP-RE makes. This is the boundary where an exchange the machine cannot
+    /// vouch for stops being served and becomes a refusal.
     ///
     /// Any anomaly the prospective run holds refuses, not only an
     /// [`invariant_violation`](Self::invariant_violation): an illegal transition into the

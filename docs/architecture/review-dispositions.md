@@ -179,18 +179,21 @@ because there is no subordinate: the file is deep, not wide.
 - Nothing here is an exception for `http_profile_serve.rs`, which is a separate unit with
   a separate census (#586, #587).
 
-### EX-001 growth authorization — the success-publication boundary, `789 -> 894`
+### EX-001 growth authorization — the success-publication boundary, `789 -> 906`
 
 ```text
-growth-authorization: mcp-re-proxy/src/exchange_state.rs 789 -> 894
+growth-authorization: mcp-re-proxy/src/exchange_state.rs 789 -> 906
 ```
 
 **Occasioned by:** the owner ruling that the cross-machine invariants must PREVENT an
 invalid success claim rather than describe one. The enforcement they replaced was
 `debug_assert!(progress.invariant_violation().is_none())` in two reply-assembly files: the
 machine detected the violation and latched it, the assertion was compiled out of release
-builds, and the release binary served the success anyway. The latch degraded the retry
-claim; it did not stop the claim being published.
+builds, and the release binary served the success anyway. Nothing stopped the claim being
+published, and the latch was never the thing that would: past the execution threshold
+`NotRetrySafe` follows from the state alone. The latch records that model/code
+correspondence failed, which is what stops later projections treating the exchange as
+coherent — a different job, established separately by probe M91.
 
 **What was added:** `ServedSuccess` and its `tail()`, and three operations on
 `ExchangeProgress` — `may_publish`, `publish`, `establish_terminal` — over one private
@@ -207,7 +210,7 @@ module re-opens the same seam.* The prospective evaluation runs `advance` over a
 depends on the transition relation, on `establishes`, on the monotone floor and on the
 anomaly latch — four things that live here and whose agreement is the module's whole claim.
 A sibling module would need all of them widened out of the owner to reach them, which trades
-110 lines of file length for a representation exposed crate-wide.
+117 lines of file length for a representation exposed crate-wide.
 
 **Why the tail is a value.** `ServedSuccess::tail()` is read twice — once to decide whether a
 success may be published, once to publish it. Two event lists at the two call sites would be
@@ -220,13 +223,18 @@ driving it disagree — and `retry_semantics` already declines to vouch for eith
 that cannot vouch for an exchange does not publish its success. Stated because it is broader
 than the literal ruling, which named the cross-machine tuple.
 
-**What compensates for the growth:** ten controls, in this module's own test region, listed
-under EX-013's sibling record below and in the commit. Two of them are the ones the
-`debug_assert!`s could not be: the refused publication leaves the exchange at the state it
-legally reached, and it reports `NotRetrySafe` so the refusal that follows carries
-`possibly_executed`.
+**What compensates for the growth:** ten controls, in this module's own test region, plus
+the two serving-path halves that say WHERE the decision sits, and four mutation probes that
+each turn one of them red. Two controls are the ones the `debug_assert!`s could not be: a
+refused publication leaves the exchange at the state it legally reached rather than
+half-committing the terminal it refused, and it is REMEMBERED, so a later attempt on the
+same exchange cannot succeed.
 
-**What this does NOT authorize.** 894 is the new ceiling. `invariant_violation` and
+The refusal carries `possibly_executed`, and that is the exchange's post-dispatch state
+speaking, not the latch — probe M91 established the distinction by deleting the latch and
+watching every control that asserted the disposition stay green.
+
+**What this does NOT authorize.** 906 is the new ceiling. `invariant_violation` and
 `ExchangeProgress::state` were narrowed to private and `#[cfg(test)]` respectively in the
 same change, because the serving path no longer reads either — the next addition here starts
 from a census, not from this one.
