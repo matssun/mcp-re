@@ -12,6 +12,37 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Added — `mcp-re.continuation_conflict`, and the frozen taxonomy grows by exactly one
+
+A second MRTR open leg for one `(audience, verifier-resolved actor, requestState)` now
+refuses with its own token instead of borrowing one that means something else.
+
+```text
+McpReError::ContinuationConflict
+wire   mcp-re.continuation_conflict
+HTTP   409
+```
+
+*a live continuation for that triple already exists; the arriving open leg was refused and
+the incumbent was not modified.*
+
+It is not `mcp-re.replay_cache_unavailable`: the shared tier answered, correctly and
+promptly, so advising a retry would be advice that cannot come true — the retry finds the
+same key taken. It is not `mcp-re.continuation_binding_failed` either: no answer leg
+existed and no binding was attempted, so that token would tell a client its continuation
+handles were wrong when they were never examined.
+
+**It says nothing about whether the backend executed.** The refusal is issued past the
+execution threshold — the elicitation being recorded is one the backend has already
+produced — so the execution/retry disposition still comes from the exchange machine and
+still reports `possibly_executed`. No case was added to the retry contract, deliberately:
+a code-keyed special case is exactly how a token starts implying "nothing ran".
+
+Deriving consumers move with it in the same slice: `ALL_ERRORS`, `wire_code()`, and the
+audit reason label. The ADR-MCPS-035 drift guard reads both files from disk, so the
+addition is checked against reality rather than trusted as written.
+
+
 ### Changed — the SLO lane runs where nothing else does, and one anchor per hardware class
 
 A minor release does not owe a whole SLO run; it owes a green build and a green test

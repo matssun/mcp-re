@@ -33,7 +33,7 @@ impl ContinuationPlane {
     ///
     /// ```text
     /// ensures   Ok  => the retained bases THIS leg produced are in the shared tier
-    ///           Err => 503 (shared tier), bound
+    ///           Err => 503 (shared tier unavailable) or 409 (the key is taken), bound
     /// refusal   NOT free
     /// ```
     ///
@@ -55,6 +55,15 @@ impl ContinuationPlane {
     /// is the one refused. That is the opposite of the overwrite this replaced, where the
     /// arriving leg silently destroyed an approval already in flight and the victim failed
     /// one leg later at the binding, where it reads like an attack signal.
+    ///
+    /// The two refusals are DIFFERENT facts and are reported as such.
+    /// [`McpReError::ReplayCacheUnavailable`] at 503 means the tier could not answer and a
+    /// retry may well work. [`McpReError::ContinuationConflict`] at 409 means it answered,
+    /// correctly, that the key is taken — so a retry finds the same thing, and 503's
+    /// "try again" would be advice that cannot come true. Both are `after_admission`: the
+    /// backend produced the elicitation before either could be reached, so the exchange
+    /// machine's `possibly_executed` disposition stands over both and neither token may be
+    /// read as "nothing ran".
     pub(in crate::http_profile_serve) async fn record_open_leg(
         &self,
         ex: &Exchange<'_>,
@@ -81,13 +90,16 @@ impl ContinuationPlane {
             input_required_response_base: response_base,
         };
         let key = continuation_key(audience_id, ex.actor_id, state.as_bytes());
+        // Named so the arm below stays an EXPRESSION: a block arm is a nesting level, and
+        // this function is inside a loop inside a method already.
+        let conflict = || Refusal::after_admission(McpReError::ContinuationConflict, 409);
         // Arms as expressions, not blocks: `Err` spends an attempt (the transient case the
         // budget exists for), `Collision` stops immediately (a taken key answers the same
         // way every time), `Stored` is the only way out with an answerable leg.
         for _ in 0..RECORD_ATTEMPTS {
             match store.create(&key, &bases, self.ttl_secs).await {
                 Ok(Creation::Stored) => return Ok(Established::new((), OPEN_LEG_RECORDED)),
-                Ok(Creation::Collision) => break,
+                Ok(Creation::Collision) => return Err(conflict()),
                 Err(_) => (),
             }
         }
@@ -233,10 +245,23 @@ mod tests {
         let outcome = plane
             .record_open_leg(&ex, "aud", "s-1", b"irr".to_vec())
             .await;
-        assert!(
-            outcome.is_err(),
-            "a leg whose bases were not retained must never be returned as answerable"
+        // `Established<()>` is deliberately not `Debug` (it is a capability, not data), so
+        // the refusal is taken by pattern rather than by `expect_err`.
+        let Err(refusal) = outcome else {
+            panic!("a leg whose bases were not retained must never be returned as answerable")
+        };
+        // The token is the point, not merely that it refused. A collision reported as
+        // `replay_cache_unavailable`/503 tells a client the tier is down and to retry —
+        // and the retry finds the same key taken, so that advice cannot come true.
+        assert_eq!(refusal.cause.wire_code(), "mcp-re.continuation_conflict");
+        assert_eq!(refusal.status, 409);
+        // Past the execution threshold, so the exchange machine's disposition stands: the
+        // token must not be readable as "the backend did not run".
+        assert_eq!(
+            refusal.posture,
+            crate::refusal::RefusalPosture::AfterAdmission
         );
+        assert_eq!(refusal.execution_refinement, None);
         assert_eq!(
             store.0.load(Ordering::SeqCst),
             1,

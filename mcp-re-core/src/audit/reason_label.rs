@@ -58,6 +58,7 @@ pub fn reason_label(error: &McpReError) -> &'static str {
         McpReError::ArtifactBindingFailed => "Artifact binding failed",
         McpReError::RequestBindingMismatch => "Response/request binding mismatch",
         McpReError::ContinuationBindingFailed => "Continuation binding failed",
+        McpReError::ContinuationConflict => "Continuation already open for this request state",
         // Delegated signing-key attestation (ADR-MCPRE-052).
         McpReError::DelegationCredentialMissing => "Delegation credential missing",
         McpReError::DelegationCredentialInvalid => "Delegation credential invalid",

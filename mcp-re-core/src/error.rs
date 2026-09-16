@@ -210,6 +210,16 @@ pub enum McpReError {
     #[error("mcp-re.continuation_binding_failed")]
     ContinuationBindingFailed,
 
+    /// A live MRTR continuation already exists for this `(audience, verifier-resolved
+    /// actor, requestState)`: the arriving OPEN leg was refused, the incumbent untouched.
+    ///
+    /// Not [`McpReError::ContinuationBindingFailed`] — no answer leg, so nothing failed to
+    /// match. Not [`McpReError::ReplayCacheUnavailable`] — the tier answered, so a retry
+    /// finds the same key taken. Issued PAST the execution threshold, so the execution
+    /// disposition stays the exchange machine's and this never means "nothing ran".
+    #[error("mcp-re.continuation_conflict")]
+    ContinuationConflict,
+
     // Delegated signing-key attestation (ADR-MCPRE-052 §8). A delegated-key
     // response is fail-closed on any uncertainty in the credential → root chain.
     /// A delegated-key-signed response carried no inline delegation credential
@@ -357,6 +367,7 @@ impl McpReError {
             McpReError::ArtifactBindingFailed => "mcp-re.artifact_binding_failed",
             McpReError::RequestBindingMismatch => "mcp-re.request_binding_mismatch",
             McpReError::ContinuationBindingFailed => "mcp-re.continuation_binding_failed",
+            McpReError::ContinuationConflict => "mcp-re.continuation_conflict",
             // Delegated signing-key attestation (ADR-MCPRE-052 §8).
             McpReError::DelegationCredentialMissing => "mcp-re.delegation_credential_missing",
             McpReError::DelegationCredentialInvalid => "mcp-re.delegation_credential_invalid",
@@ -423,6 +434,7 @@ pub const ALL_ERRORS: &[McpReError] = &[
     McpReError::ArtifactBindingFailed,
     McpReError::RequestBindingMismatch,
     McpReError::ContinuationBindingFailed,
+    McpReError::ContinuationConflict,
     McpReError::DelegationCredentialMissing,
     McpReError::DelegationCredentialInvalid,
     McpReError::DelegationCredentialExpired,
