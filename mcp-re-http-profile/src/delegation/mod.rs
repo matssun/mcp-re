@@ -22,13 +22,11 @@
 //! under `cnf.jwk` (§3 step 8) are the response-verifier's job — this module
 //! returns the delegated key it needs. `alg` is pinned to `EdDSA`; no agility.
 
-use mcp_re_core::b64url_decode;
 use mcp_re_core::verify_ed25519_with;
 use mcp_re_core::VerificationKey;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::error::HttpProfileError;
 use crate::policy::VerifierPolicy;
 
 /// The frozen credential media type (ADR-MCPRE-052 §1; vocabulary firewall).
@@ -163,7 +161,19 @@ fn bounded_skew(configured: i64) -> i64 {
 }
 
 /// ADR-MCPRE-052 §3 steps 2–8: what must hold before a delegated key may be believed.
+/// The credential's ENCODING — splitting a compact JWS and decoding its segments. A
+/// different authority from deciding whether what they say may be believed.
+mod parse;
+pub(crate) use parse::parse_credential;
+use parse::{decode_json, split_compact_jws};
+
 mod verify;
+/// `pub(crate)` for the issuance side. The `cnf` consistency rule — a wrong key type, a
+/// wrong curve, or a `jwk.kid` that is not the credential's own `delegated_kid` makes the
+/// credential invalid — belongs to the verifier. The custody machine needs the key a
+/// credential attests in order to check it against the key it just generated, and restating
+/// that rule there would be a second copy of it.
+pub(crate) use verify::delegated_key as delegated_key_of;
 pub use verify::verify_delegation_credential;
 
 /// Minting a credential — the root custody seam, which is a different authority from
@@ -196,29 +206,11 @@ pub struct DelegationVerifyParams<'a> {
     pub accepted_epochs: &'a [&'a str],
 }
 
-/// Split a compact JWS into its three base64url segments. Not exactly three parts,
-/// or an empty segment ⇒ an invalid credential.
-fn split_compact_jws(jws: &str) -> Result<(&str, &str, &str), HttpProfileError> {
-    let mut parts = jws.split('.');
-    match (parts.next(), parts.next(), parts.next(), parts.next()) {
-        (Some(h), Some(p), Some(s), None) if !h.is_empty() && !p.is_empty() && !s.is_empty() => {
-            Ok((h, p, s))
-        }
-        _ => Err(HttpProfileError::DelegationCredentialInvalid),
-    }
-}
-
-/// Decode a base64url-no-pad JWS segment and parse its JSON. Any failure ⇒ an
-/// invalid credential.
-fn decode_json<T: for<'de> Deserialize<'de>>(segment: &str) -> Result<T, HttpProfileError> {
-    let bytes =
-        b64url_decode(segment).map_err(|_| HttpProfileError::DelegationCredentialInvalid)?;
-    serde_json::from_slice(&bytes).map_err(|_| HttpProfileError::DelegationCredentialInvalid)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::HttpProfileError;
+    use mcp_re_core::b64url_decode;
     use mcp_re_core::SigningKey;
 
     const PROFILE: &str = "mcp-re-http-v1";

@@ -152,7 +152,9 @@ fn check_epoch_and_revocation(
 ///
 /// A self-inconsistent `cnf` — wrong key type or curve, or a `jwk.kid` that is not the
 /// credential's own `delegated_kid` — is an invalid credential, not a key to try anyway.
-fn delegated_key(claims: &DelegationClaims) -> Result<VerificationKey, HttpProfileError> {
+pub(crate) fn delegated_key(
+    claims: &DelegationClaims,
+) -> Result<VerificationKey, HttpProfileError> {
     let jwk = &claims.cnf.jwk;
     if jwk.kty != JWK_KTY_OKP || jwk.crv != JWK_CRV_ED25519 || jwk.kid != claims.delegated_kid {
         return Err(HttpProfileError::DelegationCredentialInvalid);

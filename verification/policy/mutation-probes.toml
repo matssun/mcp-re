@@ -2334,6 +2334,85 @@ expect_red = [
 ]
 
 [[probe]]
+id = "M96-the-window-served-under-is-the-credentials-own"
+unit = "http_profile.delegated_signing_custody"
+conjunct = "nbf/exp are read out of the published credential, never taken from the request"
+# R11-356. The row said "an `exp` beside a `credential` that nothing compares", and the
+# sharper defect underneath it is that the two answered DIFFERENT questions: the fields were
+# what the issuance REQUESTED, `credential` is what the root ISSUED. A root that clamps a
+# requested validity — legitimate issuer behaviour — left this node signing, and
+# `SigningWindow` advertising validity, under a window the fleet had stopped accepting.
+#
+# The structural half is not mutable here: the fields are private and `issued` is the sole
+# producer, so no caller can supply a window at all. What IS mutable is where `issued` reads
+# it from, and taking it from the request is exactly the pre-fix behaviour with the seal
+# still in place — which is the point of the probe. Before the fix this proposition had no
+# falsifier: both values came from one argument, so any control over them passed over every
+# implementation.
+path = "mcp-re-http-profile/src/custody/active_key.rs"
+anchor = """
+            delegated_kid: claims.delegated_kid,
+            nbf: claims.nbf,
+            exp: claims.exp,
+"""
+weakening = """
+            delegated_kid: claims.delegated_kid,
+            nbf: requested_claims.nbf,
+            exp: requested_claims.exp,
+"""
+expect_red = [
+  "lib#custody::active_key::tests::the_window_served_under_is_the_one_the_root_issued_not_the_one_requested",
+  "lib#custody::tests::the_audit_records_the_issued_window_not_the_requested_one",
+]
+
+[[probe]]
+id = "M97-a-credential-for-another-key-publishes-nothing"
+unit = "http_profile.delegated_signing_custody"
+conjunct = "the credential a snapshot carries attests the key that snapshot holds"
+# The half a verifier cannot check. `cnf` binds the credential to a public key and the
+# verifier enforces that binding; only the issuing process knows whether that key is the one
+# it just generated. Without this comparison a root wired to the wrong key — or an adapter
+# returning a well-formed credential for a stale key — publishes a snapshot whose RFC 9421
+# `keyid` names a key this process does not hold, and every response it signs is rejected
+# fleet-wide, discovered at the next request rather than at the issuance.
+path = "mcp-re-http-profile/src/custody/active_key.rs"
+anchor = """
+        if delegated_key_of(&claims)?.to_bytes() != key.public_key().to_bytes() {
+            return Err(HttpProfileError::DelegationCredentialInvalid);
+        }
+"""
+weakening = """
+"""
+expect_red = [
+  "lib#custody::active_key::tests::a_credential_for_another_key_is_not_a_key_to_serve_on",
+]
+
+[[probe]]
+id = "M98-what-the-root-echoed-is-what-was-asked-for"
+unit = "http_profile.delegated_signing_custody"
+conjunct = "every claim except the window comes back exactly as the issuance asked for it"
+# The static delegation context: issuer, audience, profile, scope, epoch, key use, `jti`,
+# `cnf`. Compared as a whole closed claim set rather than field by field, so a claim added to
+# `DelegationClaims` later is covered the day it is added.
+#
+# Deleting it leaves a node that will serve on whatever the root sends back as long as it
+# attests the right key — a credential scoped to another deployment, minted under a stale
+# trust epoch, or authorising a different key use. The verifiers would refuse it, which is
+# the point: the failure would be discovered at the next request instead of at issuance.
+path = "mcp-re-http-profile/src/custody/active_key.rs"
+anchor = """
+        if header != *requested_header || claims != as_requested {
+            return Err(HttpProfileError::DelegationCredentialInvalid);
+        }
+"""
+weakening = """
+"""
+expect_red = [
+  "lib#custody::active_key::tests::a_claim_the_root_did_not_echo_is_refused_field_by_field",
+  "lib#custody::active_key::tests::a_header_the_root_did_not_echo_is_refused",
+]
+
+[[probe]]
 id = "M81-an-illegal-advance-is-latched-not-ignored"
 unit = "proxy.exchange_lifecycle"
 conjunct = "an advance the relation does not admit latches an anomaly, in every build"

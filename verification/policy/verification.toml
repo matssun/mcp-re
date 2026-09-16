@@ -172,6 +172,7 @@ paths = [
   # closure follows all three — a unit that named only `mod.rs` would fingerprint the
   # types while the verification steps it depends on moved outside its provenance.
   "mcp-re-http-profile/src/delegation/mod.rs",
+  "mcp-re-http-profile/src/delegation/parse.rs",
   "mcp-re-http-profile/src/delegation/verify.rs",
   "mcp-re-http-profile/src/delegation/issue.rs",
   "mcp-re-http-profile/src/block.rs",
@@ -4358,6 +4359,7 @@ paths = [
   "mcp-re-http-profile/src/custody/mod.rs",
   "mcp-re-http-profile/src/custody/issuance_terms.rs",
   "mcp-re-http-profile/src/custody/key_window.rs",
+  "mcp-re-http-profile/src/custody/active_key.rs",
 ]
 exported_contracts = []
 # TWO classes, for the reason `http_profile.verifier_results` carries two. The seal added by
@@ -4386,6 +4388,17 @@ tested_symbols = [
   "lib#custody::issuance_terms::tests::every_term_fails_restrictively",
   "lib#custody::issuance_terms::tests::the_retry_interval_has_a_floor",
   "lib#custody::issuance_terms::tests::an_uncomputable_rotation_threshold_reads_as_due",
+  # The published credential is the authority on the window this node serves under, and the
+  # snapshot carries no second representation of it to disagree.
+  "lib#custody::active_key::tests::a_credential_attesting_this_issuance_is_accepted_and_read_for_its_window",
+  "lib#custody::active_key::tests::the_window_served_under_is_the_one_the_root_issued_not_the_one_requested",
+  "lib#custody::active_key::tests::a_credential_for_another_key_is_not_a_key_to_serve_on",
+  "lib#custody::active_key::tests::a_claim_the_root_did_not_echo_is_refused_field_by_field",
+  "lib#custody::active_key::tests::a_header_the_root_did_not_echo_is_refused",
+  "lib#custody::active_key::tests::a_window_that_is_not_a_window_is_refused",
+  "lib#custody::active_key::tests::an_unreadable_credential_publishes_nothing",
+  "lib#custody::tests::a_credential_attesting_another_key_fails_the_issuance_closed",
+  "lib#custody::tests::the_audit_records_the_issued_window_not_the_requested_one",
   # The window's own relation. `key_window.rs` entered `paths` with this slice, so it was a
   # fingerprint input whose controls no unit named — the file could have been emptied and
   # every declared symbol would still have passed.

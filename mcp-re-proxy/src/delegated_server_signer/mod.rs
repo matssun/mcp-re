@@ -168,7 +168,7 @@ impl DelegatedServerSigner {
         // `None` means NO KEY IS PUBLISHED and must not come to mean anything else, so an
         // unrepresentable difference saturates instead. `i64::MIN` reads as "long
         // expired", the fail-closed end the caller's `<= 0` test already handles.
-        guard.as_ref().map(|a| a.exp.saturating_sub(now))
+        guard.as_ref().map(|a| a.exp().saturating_sub(now))
     }
 
     /// Publish a freshly-issued/rotated delegated key snapshot for the hot path.
@@ -240,7 +240,7 @@ impl DelegatedServerSigner {
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         match guard.as_ref() {
-            Some(a) if now < a.exp => Some(Arc::clone(a)),
+            Some(a) if now < a.exp() => Some(Arc::clone(a)),
             _ => None,
         }
     }
@@ -346,7 +346,7 @@ where
         let before_kid = self
             .custody
             .active_snapshot()
-            .map(|active| active.delegated_kid);
+            .map(|active| active.delegated_kid().to_owned());
         self.custody.set_trust_epoch(epoch);
         match self.custody.reissue(now) {
             // Same shape as `rotate`: an absent snapshot is the fail-closed outcome.
@@ -355,7 +355,7 @@ where
                     self.signer.retire();
                     return Err(CustodyError::FailClosedIssuance);
                 };
-                if Some(&snapshot.delegated_kid) == before_kid.as_ref() {
+                if Some(snapshot.delegated_kid()) == before_kid.as_deref() {
                     // The predecessor is untouched and still serving until its own `exp`
                     // (ADR-MCPRE-052 §6) — not retired, because a root blip must not
                     // compose an epoch advance into an outage.
@@ -448,7 +448,7 @@ mod tests {
         // Profile-issued keys carry the RFC 7638 thumbprint of their own key as
         // their kid (#415 rev 2 §1.5); the rotor's factory mints seed [101; 32] first.
         assert_eq!(
-            snap.delegated_kid,
+            snap.delegated_kid(),
             mcp_re_http_profile::jwk_thumbprint_ed25519(
                 &SigningKey::from_seed_bytes(&[101u8; 32])
                     .public_key()
@@ -468,8 +468,8 @@ mod tests {
         let first_kid = signer
             .current(NOW)
             .expect("K1 serves")
-            .delegated_kid
-            .clone();
+            .delegated_kid()
+            .to_owned();
         assert_eq!(rotor.trust_epoch(), "epoch-1");
 
         assert_eq!(
@@ -481,7 +481,8 @@ mod tests {
         assert_eq!(rotor.trust_epoch(), "epoch-1#2");
         let snap = signer.current(NOW + 5).expect("a key is published");
         assert_ne!(
-            snap.delegated_kid, first_kid,
+            snap.delegated_kid(),
+            first_kid,
             "a fresh key under the new epoch"
         );
         assert_eq!(
@@ -520,8 +521,8 @@ mod tests {
         let k1 = signer
             .current(NOW)
             .expect("K1 serves")
-            .delegated_kid
-            .clone();
+            .delegated_kid()
+            .to_owned();
 
         assert_eq!(
             rotor
@@ -534,7 +535,7 @@ mod tests {
             signer
                 .current(NOW + 5)
                 .expect("the predecessor keeps serving until its own exp")
-                .delegated_kid,
+                .delegated_kid(),
             k1,
             "no fresh key was minted, so the replica is still signing under the epoch \
              the operator just revoked"
@@ -594,8 +595,8 @@ mod tests {
         let k1 = signer
             .current(NOW)
             .expect("K1 serves")
-            .delegated_kid
-            .clone();
+            .delegated_kid()
+            .to_owned();
         assert_eq!(
             k1,
             mcp_re_http_profile::jwk_thumbprint_ed25519(
@@ -616,7 +617,7 @@ mod tests {
             signer
                 .current(in_overlap)
                 .expect("K1 still serves")
-                .delegated_kid,
+                .delegated_kid(),
             k1,
             "still the same key — no stale successor minted, no signing gap"
         );
@@ -707,27 +708,13 @@ mod tests {
 #[cfg(test)]
 mod terminal_retirement_tests {
     use super::DelegatedServerSigner;
-    use mcp_re_core::SigningKey;
     use mcp_re_http_profile::ActiveDelegatedKey;
-    use mcp_re_http_profile::ActorIdentity;
     use std::sync::Arc;
 
     const NOW: i64 = 1_700_000_100;
 
     fn key(exp: i64) -> ActiveDelegatedKey {
-        ActiveDelegatedKey {
-            key: Arc::new(SigningKey::from_seed_bytes(&[9u8; 32])),
-            delegated_kid: "delegated-1".into(),
-            server_signer: ActorIdentity {
-                role: "server".into(),
-                trust_domain: "example.com".into(),
-                subject: "did:example:server".into(),
-                keyid: "delegated-1".into(),
-            },
-            credential: "cred".into(),
-            nbf: 0,
-            exp,
-        }
+        crate::delegated_wiring::test_support::issued_expiring_at(exp, 9)
     }
 
     /// The transition this guards: `Retired(terminal) -> Active` must not exist.

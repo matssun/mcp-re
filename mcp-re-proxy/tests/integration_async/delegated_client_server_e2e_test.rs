@@ -194,8 +194,8 @@ fn build_server_with_kid() -> (HttpProfileProxy, String) {
         .signer
         .current(NOW)
         .expect("the first delegated key is published")
-        .delegated_kid
-        .clone();
+        .delegated_kid()
+        .to_owned();
     let expected_audience = AudienceTuple {
         audience_id: config.audience.clone(),
         target_uri: config.target_uri.clone(),
@@ -216,7 +216,7 @@ fn build_server_with_kid() -> (HttpProfileProxy, String) {
         300,
         Arc::clone(&wiring.signer),
     );
-    (proxy, issued_kid)
+    (proxy, issued_kid.to_owned())
 }
 
 // ---- the in-process "network" ---------------------------------------------
@@ -649,8 +649,8 @@ fn the_issuer_pin_survives_a_delegated_key_rotation() {
         .signer
         .current(NOW)
         .expect("published")
-        .delegated_kid
-        .clone();
+        .delegated_kid()
+        .to_owned();
     let server = HttpProfileProxy::new_delegated(
         server_resolver(),
         AudienceTuple {
@@ -689,8 +689,8 @@ fn the_issuer_pin_survives_a_delegated_key_rotation() {
         .signer
         .current(ROTATED_AT)
         .expect("published")
-        .delegated_kid
-        .clone();
+        .delegated_kid()
+        .to_owned();
     assert_ne!(
         first_kid, second_kid,
         "the delegated kid must actually rotate"

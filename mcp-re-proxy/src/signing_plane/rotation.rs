@@ -156,7 +156,7 @@ fn wait_for_window(
         // Class R: a window start that cannot be computed wakes the worker NOW. Wrapping
         // parks this worker for the life of the process, so the key is never rotated.
         Some(a) => a
-            .exp
+            .exp()
             .checked_sub(overlap)
             .unwrap_or(i64::MIN)
             .max(now_unix()),
@@ -188,28 +188,14 @@ fn wait_for_window(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mcp_re_core::SigningKey;
     use mcp_re_http_profile::ActiveDelegatedKey;
-    use mcp_re_http_profile::ActorIdentity;
 
     const NOW: i64 = 1_700_000_100;
 
     /// A snapshot valid for another hour, so "retired at once" is distinguishable from
     /// "expired on its own".
     fn live_key() -> ActiveDelegatedKey {
-        ActiveDelegatedKey {
-            key: Arc::new(SigningKey::from_seed_bytes(&[9u8; 32])),
-            delegated_kid: "delegated-1".into(),
-            server_signer: ActorIdentity {
-                role: "server".into(),
-                trust_domain: "example.com".into(),
-                subject: "did:example:server".into(),
-                keyid: "delegated-1".into(),
-            },
-            credential: "cred".into(),
-            nbf: 0,
-            exp: NOW + 3600,
-        }
+        crate::delegated_wiring::test_support::issued_expiring_at(NOW + 3600, 9)
     }
 
     /// T2. A panic in the rotor retires the snapshot AT ONCE, while its key is still

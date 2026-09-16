@@ -48,8 +48,10 @@ use crate::message::HttpRequest;
 use crate::message::HttpResponse;
 use crate::sign::sign_delegated_response_full;
 
+mod active_key;
 mod issuance_terms;
 mod key_window;
+pub use active_key::ActiveDelegatedKey;
 pub use key_window::{DelegatedKeyWindow, KeyWindowError};
 
 /// A failure of the custody layer.
@@ -102,40 +104,6 @@ pub struct CustodyConfig {
     pub window: DelegatedKeyWindow,
 }
 
-/// The currently-active delegated key and its credential. `key` is an `Arc`
-/// because a delegated `SigningKey` is deliberately not `Clone`, and the hot-path
-/// signer needs a shared handle to sign off ([`DelegatedSigningCustody::active_snapshot`]).
-struct ActiveKey {
-    key: Arc<SigningKey>,
-    delegated_kid: String,
-    server_signer: ActorIdentity,
-    credential: String,
-    nbf: i64,
-    exp: i64,
-}
-
-/// An owned, cheaply-cloned snapshot of the current delegated key + its root-signed
-/// credential (ADR-MCPRE-052 §4). A hot-path response signer publishes this and
-/// signs per request off it — the root is never touched on that path; issuance and
-/// rotation stay inside the custody state machine. `key` is shared (`Arc`) because
-/// the delegated `SigningKey` is intentionally non-`Clone`.
-#[derive(Clone)]
-pub struct ActiveDelegatedKey {
-    /// The in-memory delegated Ed25519 signing key (shared, never the root).
-    pub key: Arc<SigningKey>,
-    /// The delegated key id — the RFC 9421 `keyid` the response signs under, and
-    /// the block's `server_signer.keyid`.
-    pub delegated_kid: String,
-    /// The server-signer identity naming this delegated key.
-    pub server_signer: ActorIdentity,
-    /// The inline root-signed delegation credential (compact JWS).
-    pub credential: String,
-    /// Credential not-before / expiry (`exp` is the fail-closed bound: a signer
-    /// MUST stop signing off this snapshot once `now >= exp`).
-    pub nbf: i64,
-    pub exp: i64,
-}
-
 /// The delegated-signing custody state machine.
 ///
 /// `Issue` is the root issuer (KMS/HSM in production): given a header+claims it
@@ -145,7 +113,7 @@ pub struct DelegatedSigningCustody<Issue, Factory> {
     cfg: CustodyConfig,
     issue: Issue,
     factory: Factory,
-    active: Option<ActiveKey>,
+    active: Option<ActiveDelegatedKey>,
     audit: Vec<KeyLifecycleEvent>,
     root_invocations: u64,
     counter: u64,
@@ -187,7 +155,7 @@ where
 
     /// The current delegated key id, if a key is active.
     pub fn active_kid(&self) -> Option<&str> {
-        self.active.as_ref().map(|a| a.delegated_kid.as_str())
+        self.active.as_ref().map(ActiveDelegatedKey::delegated_kid)
     }
 
     /// The trust epoch currently minted into new credentials.
@@ -227,7 +195,7 @@ where
         // that branch unreachable, and an operator auditing the key lifecycle saw a key
         // appear with no record of the one it displaced. It also made `is_rotation`
         // false, so the successor was labelled `issued` rather than `rotated`.
-        let previous_kid = self.active.as_ref().map(|a| a.delegated_kid.clone());
+        let previous_kid = self.active.as_ref().map(|a| a.delegated_kid().to_owned());
         // Mint first. `issue_now` does not consult the overlap window, so this is an
         // unconditional issuance attempt; a failure leaves `active` untouched and the
         // node keeps serving on the superseded key until its own `exp` — bounded,
@@ -236,7 +204,11 @@ where
         // Success: the predecessor is gone from `active` (replaced), so record its
         // retirement. Matched by kid so a failed attempt above cannot log one.
         if let Some(kid) = previous_kid {
-            if self.active.as_ref().is_some_and(|a| a.delegated_kid != kid) {
+            if self
+                .active
+                .as_ref()
+                .is_some_and(|a| a.delegated_kid() != kid)
+            {
                 self.audit.push(KeyLifecycleEvent {
                     event_type: event_type::DELEGATED_KEY_RETIRED,
                     delegated_kid: kid,
@@ -257,7 +229,7 @@ where
     pub fn ensure_active(&mut self, now: i64) -> Result<(), CustodyError> {
         let needs = match &self.active {
             None => true,
-            Some(a) => issuance_terms::rotation_due(a.exp, self.cfg.window.overlap(), now),
+            Some(a) => issuance_terms::rotation_due(a.exp(), self.cfg.window.overlap(), now),
         };
         self.issue_if(needs, now)
     }
@@ -288,73 +260,86 @@ where
 
     fn issue_if(&mut self, needs: bool, now: i64) -> Result<(), CustodyError> {
         if needs && self.attempt_allowed(now) {
-            let is_rotation = self.active.as_ref().map(|a| now < a.exp).unwrap_or(false);
-
-            let (exp, next_counter) =
-                issuance_terms::mintable(now, self.cfg.window.ttl(), self.counter)?;
-            let key = (self.factory)();
-            self.counter = next_counter;
-            let (kid, signer, header, claims) = self.build(now, exp, &key);
-            // A metric an operator reads, not a value any decision is taken on: the count
-            // stops being exact at the ceiling rather than wrapping through zero.
-            self.root_invocations = self.root_invocations.saturating_add(1);
-            match (self.issue)(&header, &claims) {
-                Some(credential) => {
-                    self.next_attempt_at = None;
-                    self.audit.push(KeyLifecycleEvent {
-                        event_type: if is_rotation {
-                            event_type::DELEGATED_KEY_ROTATED
-                        } else {
-                            event_type::DELEGATED_KEY_ISSUED
-                        },
-                        delegated_kid: kid.clone(),
-                        issuer_kid: self.cfg.issuer_kid.clone(),
-                        nbf: claims.nbf,
-                        exp: claims.exp,
-                        jti: claims.jti.clone(),
-                        at: now,
-                    });
-                    self.active = Some(ActiveKey {
-                        key: Arc::new(key),
-                        delegated_kid: kid,
-                        server_signer: signer,
-                        credential,
-                        nbf: claims.nbf,
-                        exp: claims.exp,
-                    });
-                }
-                None => {
-                    // Issuance failed. Hold off the next attempt so a root outage
-                    // cannot be amplified into one root call per inbound request.
-                    self.next_attempt_at = Some(issuance_terms::next_attempt_after(
-                        now,
-                        self.cfg.window.overlap(),
-                    ));
-                    // If the current key is still valid we keep signing with it and
-                    // retry the successor later (no gap yet).
-                    let current_valid = self.active.as_ref().map(|a| now < a.exp).unwrap_or(false);
-                    if !current_valid {
-                        // The current key (if any) has expired: retire it and stop.
-                        if let Some(a) = self.active.take() {
-                            self.audit.push(KeyLifecycleEvent {
-                                event_type: event_type::DELEGATED_KEY_RETIRED,
-                                delegated_kid: a.delegated_kid,
-                                issuer_kid: self.cfg.issuer_kid.clone(),
-                                nbf: a.nbf,
-                                exp: a.exp,
-                                jti: String::new(),
-                                at: now,
-                            });
-                        }
-                        return Err(CustodyError::FailClosedIssuance);
-                    }
-                }
-            }
+            self.attempt_issuance(now)?;
         }
         match &self.active {
-            Some(a) if now < a.exp => Ok(()),
+            Some(a) if now < a.exp() => Ok(()),
             _ => Err(CustodyError::FailClosedIssuance),
         }
+    }
+
+    /// One approach to the root: mint a key, ask for a credential over it, and adopt the
+    /// pair only if the credential attests the issuance that asked for it.
+    fn attempt_issuance(&mut self, now: i64) -> Result<(), CustodyError> {
+        let is_rotation = self.active.as_ref().map(|a| now < a.exp()).unwrap_or(false);
+        let (exp, next_counter) =
+            issuance_terms::mintable(now, self.cfg.window.ttl(), self.counter)?;
+        let key = (self.factory)();
+        self.counter = next_counter;
+        let (signer, header, claims) = self.build(now, exp, &key);
+        // A metric an operator reads, not a value any decision is taken on: the count
+        // stops being exact at the ceiling rather than wrapping through zero.
+        self.root_invocations = self.root_invocations.saturating_add(1);
+        // A credential that does not attest THIS issuance is not a key to serve on. It
+        // fails the issuance exactly as an unavailable root does — the predecessor keeps
+        // serving until its own `exp` and then the deployment fails closed — because the
+        // outcome is the same one: this node has nothing it can publish.
+        let issued = (self.issue)(&header, &claims).and_then(|credential| {
+            ActiveDelegatedKey::issued(Arc::new(key), signer, (&header, &claims), credential).ok()
+        });
+        match issued {
+            Some(active) => {
+                self.adopt(active, &claims.jti, is_rotation, now);
+                Ok(())
+            }
+            None => self.hold_off(now),
+        }
+    }
+
+    /// Publish what the root issued, and audit the window it issued — which is what the
+    /// fleet verifies against and what this node will serve under, not the one requested.
+    fn adopt(&mut self, active: ActiveDelegatedKey, jti: &str, is_rotation: bool, now: i64) {
+        self.next_attempt_at = None;
+        self.audit.push(KeyLifecycleEvent {
+            event_type: if is_rotation {
+                event_type::DELEGATED_KEY_ROTATED
+            } else {
+                event_type::DELEGATED_KEY_ISSUED
+            },
+            delegated_kid: active.delegated_kid().to_owned(),
+            issuer_kid: self.cfg.issuer_kid.clone(),
+            nbf: active.nbf(),
+            exp: active.exp(),
+            jti: jti.to_owned(),
+            at: now,
+        });
+        self.active = Some(active);
+    }
+
+    /// The issuance produced nothing publishable. Hold off the next attempt so a root
+    /// outage cannot be amplified into one root call per inbound request, and keep signing
+    /// on the predecessor while it is still valid — that is a bounded gap, not a gap.
+    /// Once it has expired there is nothing left to serve on: retire it and stop.
+    fn hold_off(&mut self, now: i64) -> Result<(), CustodyError> {
+        self.next_attempt_at = Some(issuance_terms::next_attempt_after(
+            now,
+            self.cfg.window.overlap(),
+        ));
+        if self.active.as_ref().is_some_and(|a| now < a.exp()) {
+            return Ok(());
+        }
+        if let Some(a) = self.active.take() {
+            self.audit.push(KeyLifecycleEvent {
+                event_type: event_type::DELEGATED_KEY_RETIRED,
+                delegated_kid: a.delegated_kid().to_owned(),
+                issuer_kid: self.cfg.issuer_kid.clone(),
+                nbf: a.nbf(),
+                exp: a.exp(),
+                jti: String::new(),
+                at: now,
+            });
+        }
+        Err(CustodyError::FailClosedIssuance)
     }
 
     /// Sign `response` with the current delegated key, issuing/rotating as needed.
@@ -384,12 +369,12 @@ where
             response,
             request,
             request_evidence,
-            &a.server_signer,
-            &a.credential,
-            a.key.as_ref(),
-            &a.delegated_kid,
+            a.server_signer(),
+            a.credential(),
+            a.key(),
+            a.delegated_kid(),
             now,
-            issuance_terms::signature_valid_until(now, self.cfg.window.ttl(), a.exp),
+            issuance_terms::signature_valid_until(now, self.cfg.window.ttl(), a.exp()),
         )
         .map(|_base| ())
         .map_err(CustodyError::Sign)
@@ -399,25 +384,20 @@ where
     /// first issuance or after fail-closed retirement). A hot-path signer publishes
     /// this and signs off it without touching the root (ADR-MCPRE-052 §4).
     pub fn active_snapshot(&self) -> Option<ActiveDelegatedKey> {
-        self.active.as_ref().map(|a| ActiveDelegatedKey {
-            key: Arc::clone(&a.key),
-            delegated_kid: a.delegated_kid.clone(),
-            server_signer: a.server_signer.clone(),
-            credential: a.credential.clone(),
-            nbf: a.nbf,
-            exp: a.exp,
-        })
+        self.active.clone()
     }
 
-    /// Build the (delegated_kid, server_signer, header, claims) for a fresh key.
+    /// Build the (server_signer, header, claims) this issuance asks the root to attest.
     /// `exp` is decided by the caller, not recomputed here: it is the value whose
-    /// representability made the issuance legal in the first place.
+    /// representability made the issuance legal in the first place — and it is a REQUEST,
+    /// which [`ActiveDelegatedKey`] deliberately does not take as the authority on the
+    /// window it serves under.
     fn build(
         &self,
         now: i64,
         exp: i64,
         key: &SigningKey,
-    ) -> (String, ActorIdentity, DelegationHeader, DelegationClaims) {
+    ) -> (ActorIdentity, DelegationHeader, DelegationClaims) {
         // The delegated key is profile-issued, so its kid is the RFC 7638 JWK
         // thumbprint of the key itself (#415 rev 2 §1.5) — self-describing and
         // collision-resistant, rather than a counter only this issuer can
@@ -474,7 +454,7 @@ where
                 },
             },
         };
-        (delegated_kid, server_signer, header, claims)
+        (server_signer, header, claims)
     }
 }
 
@@ -541,6 +521,63 @@ mod tests {
         );
         assert_eq!(c.audit().len(), 1);
         assert_eq!(c.audit()[0].event_type, "mcp-re.delegated_key.issued");
+    }
+
+    /// A root that answers with a credential for a DIFFERENT key publishes nothing.
+    ///
+    /// Not a stricter reading of a usable credential: a snapshot built from it would sign
+    /// under a `keyid` naming a key the root never delegated to, and every verifier in the
+    /// fleet would reject every response it produced. With no predecessor to fall back on
+    /// this is the fail-closed verdict, which is the same one an unavailable root gets —
+    /// because it is the same situation: this node has nothing it can publish.
+    #[test]
+    fn a_credential_attesting_another_key_fails_the_issuance_closed() {
+        let root = SigningKey::from_seed_bytes(&[33u8; 32]);
+        let stranger = SigningKey::from_seed_bytes(&[200u8; 32]);
+        let mut c = DelegatedSigningCustody::new(
+            cfg(),
+            move |h: &DelegationHeader, claims: &DelegationClaims| {
+                // Everything the issuance asked for, over a key it did not generate.
+                let x = stranger.public_key().to_b64url();
+                let kid = jwk_thumbprint_ed25519(&x);
+                let mut c = claims.clone();
+                c.delegated_kid = kid.clone();
+                c.cnf.jwk.kid = kid;
+                c.cnf.jwk.x = x;
+                Some(issue_delegation_credential(&root, h, &c))
+            },
+            factory(),
+        );
+        assert_eq!(
+            c.ensure_active(1_000),
+            Err(CustodyError::FailClosedIssuance)
+        );
+        assert!(c.active_snapshot().is_none(), "nothing may be published");
+        assert!(
+            c.audit().is_empty(),
+            "an issuance that published nothing is not an issuance event"
+        );
+    }
+
+    /// The window the audit records is the one the root ISSUED. An operator reading the
+    /// lifecycle log to answer "until when is this key good" must get the answer every
+    /// verifier will give, not the one this node asked for.
+    #[test]
+    fn the_audit_records_the_issued_window_not_the_requested_one() {
+        let root = SigningKey::from_seed_bytes(&[33u8; 32]);
+        let mut c = DelegatedSigningCustody::new(
+            cfg(),
+            move |h: &DelegationHeader, claims: &DelegationClaims| {
+                let mut clamped = claims.clone();
+                clamped.exp = claims.exp - 100;
+                Some(issue_delegation_credential(&root, h, &clamped))
+            },
+            factory(),
+        );
+        c.ensure_active(1_000).expect("a clamp is legitimate");
+        let snapshot = c.active_snapshot().expect("published");
+        assert_eq!(snapshot.exp(), 1_000 + T - 100);
+        assert_eq!(c.audit()[0].exp, snapshot.exp());
     }
 
     /// Rotation overlap: crossing `exp − O` mints a successor (a `rotated` event)
@@ -727,7 +764,7 @@ mod tests {
     fn the_signature_expiry_never_outlives_the_credential() {
         let mut c = DelegatedSigningCustody::new(cfg(), ok_issuer(), factory());
         c.ensure_active(1_000).expect("issue");
-        let exp = c.active_snapshot().expect("active").exp;
+        let exp = c.active_snapshot().expect("active").exp();
         assert_eq!(exp, 1_000 + T, "issued at 1_000 for one TTL");
 
         let now = 1_100;
@@ -894,8 +931,8 @@ mod tests {
         c.ensure_active(1_000).expect("issue");
         let first = c.active_snapshot().expect("a key is active");
         let verified = verify_minted(
-            &first.credential,
-            &first.delegated_kid,
+            first.credential(),
+            first.delegated_kid(),
             &["epoch-1"],
             1_000,
             &root_public,
@@ -903,10 +940,10 @@ mod tests {
         .expect("the credential verifies under the configured scope");
         assert_eq!(verified.trust_epoch, "epoch-1");
         assert_eq!(verified.issuer_kid, ROOT_KID);
-        assert_eq!(verified.delegated_kid, first.delegated_kid);
+        assert_eq!(verified.delegated_kid, first.delegated_kid());
         assert_eq!(
             verified.delegated_key.to_b64url(),
-            first.key.public_key().to_b64url(),
+            first.key().public_key().to_b64url(),
             "cnf.jwk names the delegated key the snapshot signs with"
         );
 
@@ -915,8 +952,8 @@ mod tests {
         let second = c.active_snapshot().expect("a successor is active");
         assert_eq!(
             verify_minted(
-                &second.credential,
-                &second.delegated_kid,
+                second.credential(),
+                second.delegated_kid(),
                 &["epoch-1"],
                 1_010,
                 &root_public,
@@ -925,8 +962,8 @@ mod tests {
             HttpProfileError::DelegationTrustEpochStale
         );
         let advanced = verify_minted(
-            &second.credential,
-            &second.delegated_kid,
+            second.credential(),
+            second.delegated_kid(),
             &["epoch-1#2"],
             1_010,
             &root_public,
@@ -967,7 +1004,7 @@ mod tests {
     fn a_signature_window_that_cannot_be_computed_clamps_to_the_credential() {
         let mut c = DelegatedSigningCustody::new(cfg(), ok_issuer(), factory());
         c.ensure_active(1_000).expect("issue");
-        let exp = c.active_snapshot().expect("a key").exp;
+        let exp = c.active_snapshot().expect("a key").exp();
         assert_eq!(exp, 1_000 + T);
         // `min(now + ttl, exp)` is `exp` for every `now` in the second half of the life,
         // and the checked form must agree with the plain one everywhere it is defined.

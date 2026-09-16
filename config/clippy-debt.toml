@@ -149,10 +149,13 @@ crate = "mcp-re-http-profile"
 lint = "arithmetic_side_effects"
 count = 0
 
+# 17 -> 15: R11-356 split `issue_if` into the three authorities it had grown — one approach
+# to the root, adopting what it issued, and holding off when it issued nothing publishable.
+# Two nesting sites went with the arms that moved out.
 [[debt]]
 crate = "mcp-re-http-profile"
 lint = "excessive_nesting"
-count = 17
+count = 15
 
 [[debt]]
 crate = "mcp-re-http-profile"
