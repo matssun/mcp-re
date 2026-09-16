@@ -3014,6 +3014,10 @@ paths = [
   # a claim: this unit's fingerprint moving on a composition change is over-inclusive, and
   # the alternative was the loop's own refusals sitting in no closure at all.
   "mcp-re-proxy/src/signing_plane/mod.rs",
+  # r11 R11-377. Where the root's signature on a credential is produced, and — since this
+  # slice — checked. It was in no unit at all, so the seam deciding whether this deployment
+  # publishes a credential the fleet can verify sat in no fingerprint.
+  "mcp-re-proxy/src/delegated_wiring.rs",
 ]
 exported_contracts = []
 evidence = [
@@ -3085,6 +3089,17 @@ tested_symbols = [
   # read refuses at materialization rather than minting unrevocably later.
   "lib#signing_plane::epoch_watch_wiring_tests::a_planned_but_unusable_epoch_url_refuses_instead_of_minting_unrevocably",
   "lib#signing_plane::epoch_watch_wiring_tests::no_planned_epoch_source_is_still_accepted",
+  # r11 R11-377. FIRST issuance, which is the transition every later one is measured against,
+  # and the pairing that makes it publishable. `issue_delegation_credential_with_signer` only
+  # length-checks what the root hands back, so a backend wired to the wrong key produced a
+  # credential of exactly the right shape that every verifier rejects — and nothing noticed
+  # until the next request. The mirror is not decoration: without it the refusal is satisfied
+  # by a wiring that refuses every issuance.
+  "lib#delegated_wiring::tests::a_root_signing_under_a_key_it_does_not_advertise_publishes_no_credential",
+  "lib#delegated_wiring::tests::a_root_signing_under_its_advertised_key_still_issues",
+  "lib#delegated_wiring::tests::builds_and_first_rotate_publishes_a_snapshot",
+  "lib#delegated_wiring::tests::ttl_bounds_the_published_snapshot",
+  "lib#delegated_wiring::tests::failing_root_fails_closed_at_first_issuance",
   "lib#delegated_server_signer::tests::metrics_count_success_and_reset_the_failure_streak",
   "lib#delegated_server_signer::tests::backoff_is_exponential_then_ceilinged",
   "lib#delegated_server_signer::tests::backoff_never_sleeps_past_a_still_valid_key",

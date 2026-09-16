@@ -21,6 +21,7 @@
 use std::sync::Arc;
 
 use mcp_re_core::b64url_decode;
+use mcp_re_core::verify_ed25519;
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::issue_delegation_credential_with_signer;
 use mcp_re_http_profile::DelegatedSigningCustody;
@@ -83,14 +84,33 @@ pub fn build_delegated_signing(
     let cfg = plan.custody.clone();
     let overlap = cfg.overlap;
 
+    // The key the root issuer says it signs under, read ONCE at build. A backend that
+    // cannot state its own public key cannot have its issuance checked against anything, and
+    // an unverifiable issuer is not one this deployment publishes credentials from.
+    let root_public_key = root_signer.response_public_key().ok();
+
     // ROOT ISSUER: sign the credential's compact-JWS signing input with the root
     // ResponseSigner (KMS/HSM/file), decoding its base64url raw Ed25519 signature to
     // the 64 bytes the JWS carries. Invoked at issuance/rotation ONLY. A transient
     // root failure → `None` → the custody treats it as a fail-closed issuance.
+    //
+    // The signature is then RE-VERIFIED under the key the root advertises, which is what the
+    // response seam next door already does and this one did not. Downstream,
+    // `issue_delegation_credential_with_signer` only length-checks the bytes that come back,
+    // so before this a root backend wired to the wrong key — or one whose adapter returned
+    // the right number of wrong bytes — published a credential every verifier in the fleet
+    // rejects, discovered at the next request rather than at the first issuance. Fail-closed
+    // here means the current key keeps serving until its own `exp`, which is the outcome the
+    // custody state machine already guarantees.
     let issue: BoxedIssuer = Box::new(move |h, c| {
         issue_delegation_credential_with_signer(h, c, |input| {
             let b64 = root_signer
                 .sign_response(input)
+                .map_err(|_| HttpProfileError::DelegationCredentialInvalid)?;
+            let public_key = root_public_key
+                .as_ref()
+                .ok_or(HttpProfileError::DelegationCredentialInvalid)?;
+            verify_ed25519(input, &b64, public_key)
                 .map_err(|_| HttpProfileError::DelegationCredentialInvalid)?;
             b64url_decode(&b64).map_err(|_| HttpProfileError::DelegationCredentialInvalid)
         })
@@ -231,6 +251,65 @@ mod tests {
         // Valid within [nbf, exp); fails closed at exp (ttl = 300 default).
         assert!(wiring.signer.current(NOW + 299).is_some());
         assert!(wiring.signer.current(NOW + 300).is_none());
+    }
+
+    /// A root that signs under a key it does not advertise issues NOTHING.
+    ///
+    /// The seam's opaque callback is alg-agnostic, so the bytes it returns are not evidence
+    /// of anything on their own — and downstream only their LENGTH is checked. A KMS or
+    /// PKCS#11 adapter wired to the wrong key therefore produced a credential of exactly the
+    /// right shape that every verifier in the fleet rejects, discovered at the next request
+    /// rather than at the first issuance.
+    ///
+    /// The response seam next door has re-verified under its advertised key since #22; this
+    /// is the producer half catching up to its own sibling.
+    struct RootSigningUnderAnotherKey {
+        signing: SigningKey,
+        advertised: VerificationKey,
+    }
+    impl ResponseSigner for RootSigningUnderAnotherKey {
+        fn sign_response(&self, preimage: &[u8]) -> Result<String, KeyError> {
+            self.signing.sign_response(preimage)
+        }
+        fn response_public_key(&self) -> Result<VerificationKey, KeyError> {
+            Ok(self.advertised.clone())
+        }
+    }
+
+    #[test]
+    fn a_root_signing_under_a_key_it_does_not_advertise_publishes_no_credential() {
+        let mismatched = RootSigningUnderAnotherKey {
+            signing: SigningKey::from_seed_bytes(&ROOT_SEED),
+            advertised: SigningKey::from_seed_bytes(&[34u8; 32]).public_key(),
+        };
+        let mut wiring = build_delegated_signing(&delegated_plan(), mismatched);
+
+        assert!(
+            wiring.rotor.rotate(NOW).is_err(),
+            "a signature that does not verify under the advertised key is not an issuance"
+        );
+        assert!(
+            wiring.signer.current(NOW).is_none(),
+            "and nothing is published: the fleet never sees a credential it would reject"
+        );
+    }
+
+    /// The mirror: a root that signs under the key it advertises still issues.
+    ///
+    /// Without it the refusal above is satisfied by a wiring that refuses every issuance,
+    /// which would fail the deployment closed at startup and establish nothing about the
+    /// pairing.
+    #[test]
+    fn a_root_signing_under_its_advertised_key_still_issues() {
+        let root = SigningKey::from_seed_bytes(&ROOT_SEED);
+        let advertised = root.public_key();
+        let matched = RootSigningUnderAnotherKey {
+            signing: SigningKey::from_seed_bytes(&ROOT_SEED),
+            advertised,
+        };
+        let mut wiring = build_delegated_signing(&delegated_plan(), matched);
+        wiring.rotor.rotate(NOW).expect("issuance");
+        assert!(wiring.signer.current(NOW).is_some());
     }
 
     #[test]
