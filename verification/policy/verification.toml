@@ -5623,6 +5623,40 @@ tested_symbols = [
 # refused with 401 is retried once with a fresh one, and when the SECOND call fails an
 # operator needs both. The cause travels ALONGSIDE the body rather than appended to it, which
 # is the conjunct this lane — and only this lane — can measure.
+# r11 R11-534 / R11-535 / R11-536. G18 claims "every remote-signer exchange is bounded at
+# 5s" and NOTHING measured it: the only control over `NETWORK_TIMEOUT` asserted it was `<=
+# 10s` — a comparison between two literals written in the same file. Deleting every
+# `.timeout(NETWORK_TIMEOUT)` from the transports left it, and every other control in the
+# three units citing G18, green.
+#
+# Its own unit rather than a member of either `remote_signer_call_*`: the claim spans BOTH
+# providers, and those two are per-provider by construction because each module exists only
+# under its own non-default feature. This one reads the transports as TEXT, so it needs no
+# feature and runs in the default lane — which is also the only way one control can cover
+# providers whose code never compiles together.
+[[unit]]
+id = "proxy.remote_signer_egress_bound"
+class = "V0"
+description = "Every remote-signer exchange is bounded by ONE shared deadline: in each transport that reaches a signer, each dispatch is matched by a `.timeout(NETWORK_TIMEOUT)`, no second duration appears, and the egress the dispatch travels through carries the same bound. Evidence about which requests this crate BUILDS — ureq's timeout is optional by construction, so an unbounded one compiles."
+paths = [
+  "mcp-re-proxy/src/remote_signer_call/wire_limits.rs",
+  "mcp-re-proxy/src/aws_sts.rs",
+  "mcp-re-proxy/src/aws_kms_keysource.rs",
+  "mcp-re-proxy/src/gcp_kms_keysource.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/remote_signer/egress_bound"]
+# The equality is the point, not a presence check: a presence check is satisfied by one
+# bounded request in a file that also makes three unbounded ones. And the last member is not
+# decoration — four rules over source text are vacuously true the moment a matcher stops
+# matching, so the battery that would report a clean pass over a moved transport must also
+# demonstrate it still detects each regression.
+tested_symbols = [
+  "tests/integration#remote_signer_bound_test::every_remote_signer_dispatch_is_bounded_by_the_shared_timeout",
+  "tests/integration#remote_signer_bound_test::every_credential_egress_a_transport_builds_carries_the_shared_timeout",
+  "tests/integration#remote_signer_bound_test::the_rules_would_catch_each_regression",
+]
+
 [[unit]]
 id = "proxy.remote_signer_call_gcp"
 class = "V0"

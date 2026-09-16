@@ -121,6 +121,7 @@ not an omission to hide.
 | proxy.refusal_site_totality | V0 | THM-0081 | 0 |
 | proxy.remote_signer_call_aws | V0 | THM-0115 | 0 |
 | proxy.remote_signer_call_gcp | V0 | _none_ | 0 |
+| proxy.remote_signer_egress_bound | V0 | _none_ | 0 |
 | proxy.replay_admission_gate | V0 | THM-0092 | 2 |
 | proxy.replay_materialization | V0 | THM-0086 | 0 |
 | proxy.request_peer_binding | V0 | THM-0034 | 0 |

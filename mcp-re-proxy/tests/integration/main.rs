@@ -45,6 +45,7 @@ mod outstanding_id_provenance_test;
 mod plane_config_reachback_test;
 mod refusal_audit_emission_test;
 mod refusal_site_totality_test;
+mod remote_signer_bound_test;
 mod revocation_serving_wiring_test;
 mod serving_identity_provenance_test;
 mod serving_trust_seam_test;

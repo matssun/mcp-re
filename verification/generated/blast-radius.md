@@ -125,6 +125,7 @@ attestations this view cannot see.
 | unit://proxy.refusal_site_totality | source, contracts or evidence | THM-0081 | _no consumer_ |
 | unit://proxy.remote_signer_call_aws | source, contracts or evidence | THM-0115 | _no consumer_ |
 | unit://proxy.remote_signer_call_gcp | source, contracts or evidence | THM-0115 | _no consumer_ |
+| unit://proxy.remote_signer_egress_bound | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.replay_admission_gate | source, contracts or evidence | THM-0092 | _no consumer_ |
 | unit://proxy.replay_materialization | source, contracts or evidence | THM-0086 | _no consumer_ |
 | unit://proxy.request_peer_binding | source, contracts or evidence | THM-0034 | _no consumer_ |

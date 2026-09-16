@@ -4073,3 +4073,42 @@ weakening = """
 expect_red = [
   "lib#audit_sink::drain::tests::an_acknowledged_drain_with_a_failed_write_behind_it_is_unknown",
 ]
+
+[[probe]]
+id = "M170-a-remote-signer-dispatch-goes-out-unbounded"
+unit = "proxy.remote_signer_egress_bound"
+conjunct = "in each transport that reaches a signer, each dispatch is matched by a `.timeout(NETWORK_TIMEOUT)`"
+# The weakening drops the bound from one dispatch — the regression r11 measured as
+# undetectable across THREE units citing G18. `ureq`'s timeout is optional by construction, so
+# the request still compiles and still goes out; it simply waits on the default. A signer
+# behind a stalled TLS handshake then holds the calling thread indefinitely, which is the
+# outcome the 5s bound exists to refuse rather than queue.
+path = "mcp-re-proxy/src/aws_kms_keysource.rs"
+anchor = """
+            .timeout(NETWORK_TIMEOUT);
+"""
+weakening = """
+            ;
+"""
+expect_red = [
+  "tests/integration#remote_signer_bound_test::every_remote_signer_dispatch_is_bounded_by_the_shared_timeout",
+]
+
+[[probe]]
+id = "M171-a-transport-carries-a-second-deadline"
+unit = "proxy.remote_signer_egress_bound"
+conjunct = "no second duration appears in a transport that reaches a signer"
+# The weakening substitutes a literal for the shared constant. Every dispatch stays bounded,
+# so a presence check would pass — and G18's claim is about ONE deadline this deployment
+# configures, not about each transport having picked something. A 600s literal is still "a
+# bound" and is none of what the operator set.
+path = "mcp-re-proxy/src/aws_kms_keysource.rs"
+anchor = """
+            .timeout(NETWORK_TIMEOUT);
+"""
+weakening = """
+            .timeout(std::time::Duration::from_secs(600));
+"""
+expect_red = [
+  "tests/integration#remote_signer_bound_test::every_remote_signer_dispatch_is_bounded_by_the_shared_timeout",
+]
