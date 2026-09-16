@@ -145,6 +145,15 @@ mod tests {
                       Content-Type: application/json\r\n\
                       Content-Length: 2\r\n\r\n{}",
                 );
+                let _ = stream.flush();
+                // Say there is nothing more coming, then DRAIN whatever the client still
+                // had in flight before the stream drops. Closing a socket with unread
+                // received data sends RST, and an RST discards the response just written —
+                // the one `read` above takes the request in a single segment most of the
+                // time and not always.
+                let _ = stream.shutdown(std::net::Shutdown::Write);
+                let mut rest = Vec::new();
+                let _ = stream.read_to_end(&mut rest);
             }
         });
 
