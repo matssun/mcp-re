@@ -2353,12 +2353,27 @@ tested_symbols = [
 [[unit]]
 id = "proxy.dispatch_commitment"
 class = "V0"
-description = "The one pre-dispatch boundary the compiler holds: the backend is reached only by consuming a ReadyForDispatch, which cannot be assembled without the inner plane's real dispatch capability — itself obtainable only from an authorization-released body — a signing window snapshotted before the backend runs, and a discharged retention disposition. Crossing it is one-way, and the transmission happens inside the crossing."
+description = "The one pre-dispatch boundary the compiler holds: the backend is reached only by consuming a ReadyForDispatch, which cannot be assembled without the inner plane's real dispatch capability — itself obtainable only from an authorization-released body — a signing window snapshotted before the backend runs and shown to survive that plane's own declared completion bound, and a discharged retention disposition. Crossing it is one-way, and the transmission happens inside the crossing."
 paths = [
   "mcp-re-proxy/src/request_stages.rs",
-  "mcp-re-proxy/src/async_inner.rs",
+  "mcp-re-proxy/src/async_inner/mod.rs",
+  # The seam became a directory when the boundary gained a second question. `PreparedInnerDispatch`
+  # owns the CAPABILITY, `completion_bound.rs` owns what the plane says about COMPLETION, and
+  # `outcome.rs` owns the two answers on opposite sides of the threshold — the distinction this
+  # unit is about, which is why all three are in the closure and not just the one that moved.
+  "mcp-re-proxy/src/async_inner/completion_bound.rs",
+  "mcp-re-proxy/src/async_inner/outcome.rs",
   "mcp-re-proxy/src/authorization/dispatch.rs",
   "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs",
+  # R11-481. The boundary now asks one more question, and this file is where the answer
+  # lives: `SigningWindow::covers` is the projection the crossing consults. It is also in
+  # `proxy.response_signing`, which is correct — that unit claims what a window ADVERTISES,
+  # this one claims what the crossing REFUSES on, and neither is the other.
+  #
+  # `http_inner/mod.rs` is deliberately ABSENT. That the pool states `Within(request_timeout)`
+  # is a fact about one implementation; this unit claims the boundary asks every plane and
+  # refuses an `Unstated` answer, which is measured through a fixture plane that states one.
+  "mcp-re-proxy/src/http_profile_serve/signing_window.rs",
 ]
 exported_contracts = []
 evidence = ["test://proxy/serving/dispatch_commitment_boundary"]
@@ -2384,6 +2399,22 @@ tested_symbols = [
   "lib#async_inner::tests::preparing_transmits_nothing",
   "lib#async_inner::tests::dropping_a_prepared_dispatch_transmits_nothing_and_releases_what_it_held",
   "lib#authorization::dispatch::tests::an_unconfigured_deployment_still_releases_a_body",
+  # R11-481, the freshness precondition. The arithmetic first — a window that does not
+  # cover the budget, one that does, an UNSTATED bound refused rather than assumed, the
+  # sub-second rounding that must not claim an earlier finish, and the far end asked
+  # through `mcp_re_http_profile::window_admits` so a signer cannot quietly disagree with
+  # the floor it is signing for.
+  "lib#http_profile_serve::signing_window::tests::a_credential_shorter_than_the_dispatch_budget_does_not_cover_it",
+  "lib#http_profile_serve::signing_window::tests::a_credential_longer_than_the_dispatch_budget_covers_it",
+  "lib#http_profile_serve::signing_window::tests::a_plane_that_states_no_bound_is_refused_however_long_the_credential_lives",
+  "lib#http_profile_serve::signing_window::tests::a_sub_second_budget_is_measured_at_the_second_it_can_still_be_running_in",
+  "lib#http_profile_serve::signing_window::tests::admissibility_ends_at_expires_exactly_as_the_floor_says_it_does",
+  # And the same property through the production `HttpProfileProxy`, which is the only
+  # thing that can say the boundary CONSULTS it. The mirror is not optional: the hostile
+  # control alone passes against a proxy that refuses every dispatch it ever makes.
+  "tests/integration_async#delegated_serving_test::a_credential_that_cannot_outlive_the_dispatch_refuses_before_the_backend_runs",
+  "tests/integration_async#delegated_serving_test::a_credential_with_room_for_the_dispatch_still_reaches_the_backend",
+  "tests/integration_async#delegated_serving_test::an_inner_plane_that_states_no_completion_bound_is_refused_before_the_backend_runs",
 ]
 
 [[unit]]

@@ -102,7 +102,9 @@ use hyper_util::rt::TokioExecutor;
 use tokio::sync::Semaphore;
 
 use crate::async_inner::AsyncInnerServer;
+use crate::async_inner::DispatchCompletionBound;
 use crate::async_inner::DispatchedOutcome;
+use crate::async_inner::InnerResponseFuture;
 use crate::async_inner::NotAdmitted;
 use crate::async_inner::PreparedInnerDispatch;
 
@@ -499,7 +501,12 @@ impl AsyncInnerServer for HttpInnerPool {
         let req = Self::build_request(backend.uri.clone(), Bytes::copy_from_slice(request))?;
         let client = self.client.clone();
         let timeout = self.request_timeout;
-        Ok(PreparedInnerDispatch::over(move || {
+        // The bound this plane can honestly state, and it is the same value the round trip
+        // is actually run under. `round_trip` gives up at `request_timeout` and reports
+        // `Indeterminate`, so a dispatch begun now is no longer running after it — which is
+        // what makes this a bound and not an estimate.
+        let completion = DispatchCompletionBound::Within(timeout);
+        let transmit = move || {
             Box::pin(async move {
                 // Moved in, so the permit and the trial slot are held for exactly the
                 // round trip and released with this future however it ends.
@@ -515,8 +522,9 @@ impl AsyncInnerServer for HttpInnerPool {
                 let healthy = matches!(outcome, DispatchedOutcome::Replied(_));
                 self.record_outcome(idx, is_probe, healthy, done);
                 outcome
-            })
-        }))
+            }) as InnerResponseFuture<'a>
+        };
+        Ok(PreparedInnerDispatch::over(transmit, completion))
     }
 }
 

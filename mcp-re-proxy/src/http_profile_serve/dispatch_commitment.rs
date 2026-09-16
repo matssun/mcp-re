@@ -1,10 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The last three things asked before the backend is reached, in the only order that keeps
+//! The last four things asked before the backend is reached, in the only order that keeps
 //! the durable record honest.
 //!
 //! Local saturation and a fully-ejected backend set are facts about this proxy, knowable
 //! without writing anything, and they are settled first — by TAKING the plane's capacity
 //! rather than predicting it, so nothing can refuse on them later.
+//!
+//! Then the question that needs the capability to exist before it can be asked: does the
+//! signing window this exchange already holds survive the worst instant a dispatch under
+//! this plane's own bound can complete at? A reply signed under a window the client refuses
+//! is a well-formed signature over a dead assertion — the caller learns about it by
+//! failing, after the backend has run, and an ordinary retry runs the action twice. Asking
+//! before the threshold turns that into a refusal the client can act on, while refusing is
+//! still free.
 //!
 //! What writes comes after, in two steps that are two facts. The retention obligation is
 //! ACCEPTED, which asserts nothing about execution and is rescinded by dropping the value
@@ -13,6 +21,8 @@
 //! `DispatchCommitted` is the state the dispatch leaves from, so a pipeline that recorded
 //! the crossing before asking the questions that could still refuse would be rejected by
 //! the machine rather than merely recorded oddly.
+
+use mcp_re_core::McpReError;
 
 use crate::async_inner::PreparedInnerDispatch;
 use crate::async_serve::ServedHttpResponse;
@@ -24,6 +34,7 @@ use crate::refusal::Refusal;
 use crate::request_stages::RetentionDisposition;
 
 use super::body_boundary::ForwardedBody;
+use super::signing_window::SigningWindow;
 use super::Exchange;
 use super::HttpProfileProxy;
 
@@ -59,10 +70,12 @@ impl HttpProfileProxy {
     /// possible.
     ///
     /// The body is prepared first because preparing it decides nothing; the inner plane is
-    /// prepared second because its refusal is free and leaves nothing behind; the
-    /// retention obligation is accepted third because it is the only one that writes; and
-    /// the crossing is recorded LAST, because recording it is what makes every earlier
-    /// refusal free and every later one impossible.
+    /// prepared second because its refusal is free and leaves nothing behind; the signing
+    /// window is checked against that plane's completion bound third, because the bound
+    /// does not exist until the capability does; the retention obligation is accepted
+    /// fourth because it is the only one that writes; and the crossing is recorded LAST,
+    /// because recording it is what makes every earlier refusal free and every later one
+    /// impossible.
     ///
     /// The inner-plane capability is HELD from here to the dispatch. If the reservation
     /// then refuses, the prepared dispatch is dropped on the way out and everything it took
@@ -74,6 +87,7 @@ impl HttpProfileProxy {
         &'p self,
         ex: &Exchange<'_>,
         authorized: AuthorizationPosture,
+        window: &SigningWindow,
         progress: &mut ExchangeProgress,
     ) -> Result<(PreparedInnerDispatch<'p>, RetentionDisposition), ServedHttpResponse> {
         let forwarded = match self.forward_body_stage(ex) {
@@ -84,6 +98,17 @@ impl HttpProfileProxy {
             Ok(prepared) => progress.establish(prepared),
             Err(refusal) => return Err(self.refuse(ex, refusal, progress)),
         };
+        // The signing window must still be admissible at the worst instant this dispatch
+        // can complete at — asked HERE because this is the first point where the bound
+        // exists and the last where refusing is free. The capability is already held, so a
+        // refusal drops it and returns everything it took.
+        if !window.covers(prepared.completion_bound()) {
+            return Err(self.refuse(
+                ex,
+                Refusal::after_admission(McpReError::DelegatedSigningUnavailable, 503),
+                progress,
+            ));
+        }
         let accepted = match self.retention.reserve(ex.http_req).await {
             Ok(accepted) => accepted,
             Err(refusal) => return Err(self.refuse(ex, refusal, progress)),

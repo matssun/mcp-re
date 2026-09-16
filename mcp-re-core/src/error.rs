@@ -263,13 +263,13 @@ pub enum McpReError {
     #[error("mcp-re.delegation_revoked")]
     DelegationRevoked,
 
-    /// SERVER-SIDE availability fault (ADR-MCPRE-052 §6): the server is in
-    /// delegated-required signing mode but has no active valid delegated key to sign
-    /// with — startup issuance failed, or rotation could not re-issue before the
-    /// current key expired, so the server fails closed rather than emit an unsigned or
-    /// root-signed response. This is emitted by the signer, NOT a client verification
-    /// verdict: a client's own credential faults keep their specific
-    /// `delegation_*` tokens above.
+    /// SERVER-SIDE availability fault (ADR-MCPRE-052 §6): delegated-required mode with no
+    /// credential able to sign THIS exchange's response, so the server fails closed rather
+    /// than emit an unsigned or root-signed one. Two ways, one token: no active valid key
+    /// exists (issuance failed, or rotation missed the expiry), or the one that does has
+    /// less life left than the inner dispatch it would authorize — the reply it could sign
+    /// is one the client's freshness floor must refuse. Emitted by the SIGNER, not a client
+    /// verdict: a client's own faults keep their `delegation_*` tokens above.
     #[error("mcp-re.delegated_signing_unavailable")]
     DelegatedSigningUnavailable,
 
