@@ -46,10 +46,20 @@ conclusion, cancelled, skipped, timed_out, neutral. `failure` and `timed_out` ar
 as FAILED rather than NOT_READY because they are verdicts about the code and the next
 action differs: NOT_READY means wait or re-run, FAILED means fix.
 
-WHAT THIS DOES NOT PROVE: that the required lanes are the right ones (that is the
-manifest's claim), that a passing lane measured what it says (that is the lane's), or that
-branch protection agrees. It proves that what the manifest asks for has completed
-successfully at this exact commit.
+WHEN THE CLOSURE IS EMPTY. A change can touch no declared unit at all — a gate script, a
+workflow, a document. The manifest then asks for nothing, and answering READY on that basis
+would be the emptiest false green available: "no lane was required" and "every required lane
+passed" are different facts. So the gate falls back to the authority that DOES govern such a
+change, and reads it from where it actually lives — the repository's own branch ruleset, via
+the API. That is not a second list: it is not maintained here, and a required check added or
+renamed in the ruleset is picked up on the next run.
+
+Both paths answer the same four conditions and the same three states. What differs is only
+which checks are required, and the report says which authority it used.
+
+WHAT THIS DOES NOT PROVE: that the required lanes are the right ones (that is the manifest's
+claim), or that a passing lane measured what it says (that is the lane's). It proves that
+what the governing authority asks for has completed successfully at this exact commit.
 
 Run:  python3 scripts/merge_readiness_gate.py --sha <candidate>
       python3 scripts/merge_readiness_gate.py --pr 946
@@ -291,6 +301,52 @@ def check_runs(repo: str, sha: str) -> dict[str, dict]:
     return latest
 
 
+def ruleset_required_checks(repo: str, base: str) -> list[str]:
+    """The check contexts the repository's own ruleset requires on the target branch.
+
+    Read from the API rather than transcribed, so this file holds no opinion about which
+    checks are required and cannot drift from the ruleset. An empty or unreadable answer
+    RAISES: a fallback authority that turns out to require nothing would make every
+    unit-less change READY, which is the same false green the fallback exists to avoid.
+    """
+    branch = base.split("/")[-1]
+    raw = subprocess.run(
+        ["gh", "api", f"repos/{repo}/rulesets", "--jq",
+         '.[] | select(.enforcement == "active") | .id'],
+        capture_output=True, text=True,
+    )
+    if raw.returncode != 0:
+        raise Undecidable(f"gh api rulesets: {raw.stderr.strip()}")
+    ids = [line.strip() for line in raw.stdout.splitlines() if line.strip()]
+    contexts: set[str] = set()
+    for rid in ids:
+        detail = subprocess.run(
+            ["gh", "api", f"repos/{repo}/rulesets/{rid}", "--jq", "@json"],
+            capture_output=True, text=True,
+        )
+        if detail.returncode != 0:
+            continue
+        payload = json.loads(detail.stdout or "{}")
+        conditions = payload.get("conditions", {}).get("ref_name", {})
+        include = conditions.get("include", [])
+        if include and not any(
+            token in ("~ALL", "~DEFAULT_BRANCH", f"refs/heads/{branch}") for token in include
+        ):
+            continue
+        for rule in payload.get("rules", []):
+            if rule.get("type") != "required_status_checks":
+                continue
+            for check in rule.get("parameters", {}).get("required_status_checks", []):
+                if check.get("context"):
+                    contexts.add(check["context"])
+    if not contexts:
+        raise Undecidable(
+            f"no declared unit is affected and the ruleset for '{branch}' requires no status "
+            "check, so nothing at all governs this candidate; decide it deliberately"
+        )
+    return sorted(contexts)
+
+
 def changed_files(sha: str, base: str) -> set[str]:
     merge_base = git("merge-base", base, sha)
     return set(git("diff", "--name-only", f"{merge_base}..{sha}").splitlines())
@@ -299,11 +355,15 @@ def changed_files(sha: str, base: str) -> set[str]:
 # --------------------------------------------------------------------------------- main
 
 
-def report(sha: str, units: set[str], rows: list[tuple], state: str) -> None:
+def report(sha: str, units: set[str], rows: list[tuple], state: str, authority: str) -> None:
     print(f"candidate      {sha}")
+    print(f"authority      {authority}")
     print(f"affected units {len(units)}")
     for lane, check, mark, why in rows:
-        print(f"  {mark:<14} {lane:<16} {check}  [{why}]")
+        # Under the ruleset authority the "lane" IS the check, so printing both would be
+        # the same string twice.
+        label = check if lane == check else f"{lane:<16} {check}"
+        print(f"  {mark:<14} {label}  [{why}]")
     print(f"MERGE-READINESS: {state}")
 
 
@@ -332,14 +392,16 @@ def main(argv: list[str]) -> int:
         for unit in units:
             if unit["id"] in affected:
                 lanes |= required_lanes(unit)
-        if not lanes:
-            raise Undecidable(
-                "the change touches no declared unit, so this gate cannot state that "
-                "anything measured it; widen the manifest or merge by another authority"
-            )
-        required = checks_for_lanes(lanes, lane_scripts())
+        if lanes:
+            authority = "verification-unit closure"
+            required = checks_for_lanes(lanes, lane_scripts())
+        else:
+            # No declared unit is affected, so the manifest asks for nothing. Fall back to
+            # the ruleset rather than reading "nothing required" as "everything passed".
+            authority = "branch ruleset (no declared unit affected)"
+            required = {name: [name] for name in ruleset_required_checks(args.repo, args.base)}
         state, rows = decide(required, check_runs(args.repo, sha), sha)
-        report(sha, affected, rows, state)
+        report(sha, affected, rows, state, authority)
         return {READY: 0, NOT_READY: 1, FAILED: 2}[state]
     except Undecidable as exc:
         print(f"MERGE-READINESS: UNDECIDABLE — {exc}", file=sys.stderr)
@@ -392,6 +454,19 @@ def selftest() -> int:
         if lane not in resolved:
             print(f"  FAIL lane '{lane}' resolved to no check")
             bad += 1
+
+    # The fallback authority answers the SAME four conditions. A ruleset check that is
+    # queued must not read as READY just because the manifest asked for nothing.
+    fallback = {c: [c] for c in ("cargo build + test (1.97.1)",)}
+    queued = {"cargo build + test (1.97.1)": {
+        "name": "cargo build + test (1.97.1)", "head_sha": sha,
+        "status": "queued", "conclusion": None}}
+    if decide(fallback, queued, sha)[0] != NOT_READY:
+        print("  FAIL a queued ruleset check read as ready under the fallback authority")
+        bad += 1
+    if decide(fallback, {}, sha)[0] != NOT_READY:
+        print("  FAIL a missing ruleset check read as ready under the fallback authority")
+        bad += 1
 
     # A build-input change must widen to every unit, not to the units that declare it.
     manifest = load_verification()
