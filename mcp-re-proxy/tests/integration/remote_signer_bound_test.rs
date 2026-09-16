@@ -24,7 +24,7 @@
 //! a stalled TLS handshake returns within it. Those are the transport's, and ASM-0040's
 //! neighbours cover what a foreign dependency is trusted for.
 
-use std::path::Path;
+use std::path::PathBuf;
 
 /// The transports that reach a remote signer. Named rather than globbed: a glob would
 /// silently stop covering a transport that moved, and the failure mode of a stale matcher
@@ -54,8 +54,24 @@ fn code_only(source: &str) -> String {
         .join("\n")
 }
 
+/// The directory the named transports live in.
+///
+/// Resolved through an anchor the path resolver knows in both lanes rather than through
+/// `CARGO_MANIFEST_DIR`: this suite also compiles under Bazel, whose sandbox delivers
+/// sources through runfiles and has no manifest directory for a path to be relative to.
+/// A file-not-found there would fail every rule below on the read instead of on the
+/// property, which is a red that says nothing. `client_verifier_posture_test` walks the
+/// same seam from the same anchor.
+fn transport_root() -> PathBuf {
+    let anchor = mcp_re_test_paths::resolve_runfile("MCP_RE_APP_SRC");
+    anchor
+        .parent()
+        .unwrap_or_else(|| panic!("{anchor:?} has no parent directory"))
+        .to_path_buf()
+}
+
 fn transport_source(file: &str) -> String {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join(file);
+    let path = transport_root().join(file);
     let source = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("a named transport must exist: {path:?}: {e}"));
     code_only(&source)
