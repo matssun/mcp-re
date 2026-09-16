@@ -13,6 +13,7 @@
 
 use std::sync::Arc;
 
+use mcp_re_http_profile::admission::AdmissionVerdict;
 use mcp_re_http_profile::check_admission;
 use mcp_re_http_profile::AdmissionPolicy;
 use mcp_re_http_profile::HttpProfileError;
@@ -129,20 +130,16 @@ impl AdmissionEnforcer {
                 self.window.record_read(elapsed_at);
                 return Err(HttpProfileError::AdmissionNotCurrent);
             }
-            // The source is unreachable. Whether the §5.2 degraded fork may be entered
-            // at all is decided HERE, by how long the authority has been unreachable —
-            // not downstream by how fresh the caller's assertion is, which the caller
-            // controls.
-            Err(_) => {
-                if self.window.exhausted(&self.policy, elapsed_at) {
-                    return Err(HttpProfileError::AdmissionStateUnavailable);
-                }
-                None
-            }
+            // The source is unreachable — the ONLY input that reaches the §5.2 degraded
+            // fork. Whether this replica may still SERVE on it is decided below, where the
+            // candidate is converted, and not here: one check, at the conversion, so that
+            // deleting it makes an out-of-window serve reachable rather than leaving a
+            // second copy still enforcing.
+            Err(_) => None,
         };
 
         let resolve = Arc::clone(&self.resolve_authority);
-        check_admission(
+        let verdict = check_admission(
             binding,
             assertion,
             // The VERIFIER-RESOLVED actor — the FULL signing actor, keyid included, never
@@ -160,16 +157,34 @@ impl AdmissionEnforcer {
             &self.policy,
             now,
             move |kid: &str| resolve(kid),
-        )
-        // Admitted. Note what is NOT recorded: `VerifiedAdmission::degraded`
-        // distinguishes a live-confirmed admission from one served on a stale
-        // snapshot inside the P window, and the audit stream cannot currently
-        // carry that difference — ADR-MCPS-035 §3 freezes the success-event
-        // allowlist and says no third success event may be minted without an
-        // ADR. So a degraded-mode serve is indistinguishable in audit from a
-        // confirmed one. That is a real gap in the record, named here rather
-        // than closed by quietly widening a pinned vocabulary.
-        .map(|_| ())
+        )?;
+
+        // THE CONVERSION, and this authority's own conjunct. `check_admission` is
+        // stateless: it saw one call against one snapshot, and a `DegradedCandidate` says
+        // only that the authority was unreachable, that the deployment opted in, and that
+        // the assertion the CALLER presented is recent. That last term is the caller's to
+        // choose — during an outage the issuer keeps minting, so a client that refetches
+        // satisfies it for the whole outage however long it runs.
+        //
+        // What bounds the outage is elapsed time since this replica last reached the
+        // authority, which is replica HISTORY and which only this owner holds. Its window
+        // is monotonic and judged against the SAME `elapsed_at` the lookup was timed at, so
+        // the instant the read is recorded at and the instant the window is judged against
+        // cannot differ by the time the lookup took.
+        match verdict {
+            AdmissionVerdict::Live(_) => Ok(()),
+            AdmissionVerdict::DegradedCandidate(_)
+                if self.window.exhausted(&self.policy, elapsed_at) =>
+            {
+                Err(HttpProfileError::AdmissionStateUnavailable)
+            }
+            AdmissionVerdict::DegradedCandidate(_) => Ok(()),
+        }
+        // Note what is NOT recorded: which arm this was. A serve on a stale snapshot inside
+        // P is indistinguishable in audit from a live-confirmed one, because ADR-MCPS-035
+        // §3 freezes the success-event allowlist. R11-106's ruling is an ADR-MCPRE-066
+        // addendum carrying an `AdmissionFacet` as its own typed coordinate — the allowlist
+        // constrains the vocabulary, not the requirement — and it is separate work.
     }
 }
 

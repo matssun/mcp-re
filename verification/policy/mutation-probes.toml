@@ -3884,3 +3884,28 @@ expect_red = [
   "lib#http_profile_serve::signing_window::tests::a_plane_that_states_no_bound_is_refused_however_long_the_credential_lives",
   "tests/integration_async#delegated_serving_test::an_inner_plane_that_states_no_completion_bound_is_refused_before_the_backend_runs",
 ]
+
+[[probe]]
+id = "M162-a-degraded-candidate-is-served-without-asking-this-replicas-window"
+unit = "proxy.admission_currency_gate"
+conjunct = "a DegradedCandidate becomes a serve only while this replica's own monotonic window over its successful authority reads is unexhausted"
+# The weakening is the one the type exists to make impossible to write by accident: treat the
+# degraded arm as permission. It is exactly what `.map(|_| ())` did before R11-014 — the
+# verdict's degraded fact was discarded, and the only thing bounding the outage was a check at
+# one call site. Under it a replica that lost the authority hours ago keeps serving any caller
+# whose assertion is recent, and the caller controls that: the issuer keeps minting during an
+# outage, so refetching satisfies the assertion-level rule for as long as the outage runs.
+path = "mcp-re-proxy/src/admission_enforcer/mod.rs"
+anchor = """
+            AdmissionVerdict::DegradedCandidate(_)
+                if self.window.exhausted(&self.policy, elapsed_at) =>
+            {
+                Err(HttpProfileError::AdmissionStateUnavailable)
+            }
+"""
+weakening = """
+"""
+expect_red = [
+  "tests/integration_async#admission_currency_serving_test::an_unreachable_authority_serves_within_p_and_fails_closed_past_it",
+  "tests/integration_async#admission_currency_serving_test::a_replica_that_never_reached_the_authority_does_not_enter_degraded_mode",
+]

@@ -8,7 +8,9 @@
 //! not yet specify for signed integers, and the policy accessors, which are field reads
 //! the verifier is told to treat as an unknown-but-fixed value per policy object.
 
-use crate::admission::{AdmissionBinding, AdmissionClaims, AdmissionStatus, VerifiedAdmission};
+use crate::admission::{
+    AdmissionBinding, AdmissionClaims, AdmissionStatus, AdmissionVerdict, VerifiedAdmission,
+};
 use crate::admission_policy::AdmissionPolicy;
 use crate::authoritative_admission::AuthoritativeAdmission;
 use crate::block::BindingType;
@@ -91,6 +93,10 @@ pub struct ExAdmissionBinding(AdmissionBinding);
 pub struct ExAuthoritativeAdmission(AuthoritativeAdmission);
 #[verifier::external_type_specification]
 pub struct ExVerifiedAdmission(VerifiedAdmission);
+/// The verdict, TRANSPARENT: THM-0005 states a different postcondition per arm, so opaque
+/// would collapse them into one unknown value — the `degraded: bool` defect, one level up.
+#[verifier::external_type_specification]
+pub struct ExAdmissionVerdict(AdmissionVerdict);
 
 /// `#[derive(PartialEq)]` on a fieldless enum is structural equality. Trusted against the
 /// derive rather than against a hand-written impl: without it the currency check's

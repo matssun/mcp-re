@@ -241,7 +241,8 @@ kind = "proof-lane"
 paths = [
   "mcp-re-core/src/verus_proofs.rs",
   "mcp-re-core/src/time/mod.rs",
-  "mcp-re-http-profile/src/admission.rs",
+  "mcp-re-http-profile/src/admission/mod.rs",
+  "mcp-re-http-profile/src/admission/verdict.rs",
   "mcp-re-http-profile/src/artifact.rs",
   "mcp-re-http-profile/src/authoritative_admission/mod.rs",
   "mcp-re-http-profile/src/block.rs",
