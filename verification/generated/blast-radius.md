@@ -83,6 +83,7 @@ attestations this view cannot see.
 | unit://proxy.authorization_posture | source, contracts or evidence | THM-0056 | _no consumer_ |
 | unit://proxy.aws_kms_adapter | source, contracts or evidence | THM-0116 | _no consumer_ |
 | unit://proxy.aws_sts_credentials | source, contracts or evidence | THM-0117 | _no consumer_ |
+| unit://proxy.capsule_anchor_registration_leaf | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.certificate_identity | source, contracts or evidence | THM-0024 | proxy.channel_associated_identity (COMPILE_DEPENDENCY) |
 | unit://proxy.channel_associated_credential | source, contracts or evidence | THM-0028 | proxy.channel_associated_identity (CONTRACT_CONSUMES), proxy.mechanism_verified_credential (CONTRACT_CONSUMES) |
 | unit://proxy.channel_associated_identity | source, contracts or evidence | THM-0029 | proxy.authenticated_relationship_peer (CONTRACT_CONSUMES) |

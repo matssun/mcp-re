@@ -79,6 +79,7 @@ not an omission to hide.
 | proxy.authorization_posture | V0 | THM-0056 | 0 |
 | proxy.aws_kms_adapter | V0 | THM-0116 | 0 |
 | proxy.aws_sts_credentials | V0 | THM-0117 | 0 |
+| proxy.capsule_anchor_registration_leaf | V0 | _none_ | 0 |
 | proxy.certificate_identity | V0 | THM-0024 | 1 |
 | proxy.channel_associated_credential | V0 | THM-0028 | 1 |
 | proxy.channel_associated_identity | V0 | THM-0029 | 1 |

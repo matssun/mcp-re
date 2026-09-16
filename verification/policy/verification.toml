@@ -3432,6 +3432,34 @@ tested_symbols = [
 # leaf about agreement, not about reachability. Folding the second into the first would
 # widen an authority by renaming it, which #742 rules out in as many words.
 [[unit]]
+id = "proxy.capsule_anchor_registration_leaf"
+class = "V0"
+description = "ONE operated service's registration contract — what capsule-anchor does with a Signed Statement and what its answer means. A SECOND mechanism leaf beside the SCRAPI one and not a configuration of it: measured against the service's published OpenAPI document the two agree on nothing the leaf owns — different path, different request encoding, different success shape, and no polling at all. Certainty is decided here on this contract's own terms: a submission that never went out, an undefined status and an accepted submission whose answer will not parse are all INDETERMINATE, and only a pre-acceptance answer is a definitive negative. What crosses upward is bytes and a refusal in the neutral vocabulary — never the JSON, and never the unsigned log coordinates beside the receipt."
+paths = [
+  "mcp-re-proxy/src/transparency/auditor/registration/capsule_anchor/mod.rs",
+  "mcp-re-proxy/src/transparency/auditor/registration/capsule_anchor/fault.rs",
+  "mcp-re-proxy/src/transparency/auditor/registration/capsule_anchor/wire.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/transparency/capsule_anchor_registration_certainty"]
+# `wire.rs` carries no controls of its own — its vocabulary is exercised through the two
+# modules above, whose fixtures drive real request and response shapes. It is in `paths`
+# because a change to it changes what those controls measure; it is not cited, because
+# there is nothing here to cite and inventing a symbol would be worse.
+tested_symbols = [
+  "lib#transparency::auditor::registration::capsule_anchor::tests::a_submission_that_never_went_out_is_indeterminate",
+  "lib#transparency::auditor::registration::capsule_anchor::tests::an_accepted_submission_with_an_unreadable_answer_does_not_report_a_failure",
+  "lib#transparency::auditor::registration::capsule_anchor::tests::the_statement_is_submitted_verbatim_to_this_contracts_resource",
+  "lib#transparency::auditor::registration::capsule_anchor::tests::a_receipt_about_another_statement_is_refused",
+  "lib#transparency::auditor::registration::capsule_anchor::tests::a_receipt_this_leaf_brings_back_is_accepted_only_after_it_verifies",
+  "lib#transparency::auditor::registration::capsule_anchor::tests::the_unsigned_log_coordinates_beside_the_receipt_are_not_consumed",
+  "lib#transparency::auditor::registration::capsule_anchor::fault::tests::a_transport_failure_is_not_a_failure_to_register",
+  "lib#transparency::auditor::registration::capsule_anchor::fault::tests::an_undefined_status_is_unknown_rather_than_a_refusal",
+  "lib#transparency::auditor::registration::capsule_anchor::fault::tests::only_a_pre_acceptance_answer_is_a_definitive_negative",
+  "lib#transparency::auditor::registration::capsule_anchor::fault::tests::an_accepted_submission_with_an_unreadable_answer_is_indeterminate_and_says_so",
+]
+
+[[unit]]
 id = "proxy.scrapi_registration_leaf"
 class = "V0"
 description = "ONE draft revision's registration state machine — what `draft-ietf-scitt-scrapi-11` does with a Signed Statement, and what each of its answers MEANS. Certainty is decided here and once: only an explicit client-error refusal and an explicit rate limit are definitive negatives, while a transport failure while submitting, a 201 whose body will not parse, a 202 with no Location and an exhausted budget all leave registration INDETERMINATE. Everything version-specific stops at this leaf; the capability above it holds a refusal vocabulary that would read the same against a successor protocol."
