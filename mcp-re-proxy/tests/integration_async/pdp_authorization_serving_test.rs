@@ -1048,3 +1048,49 @@ async fn a_core_verification_failure_still_records_its_frozen_core_reason() {
         &AuthorizationFacet::Refused(AuthorizationRefusalFacet::BeforePolicy)
     );
 }
+
+/// A refusal raised AFTER the policy permitted is not recorded as one before any policy ran.
+///
+/// Replay admission runs after authorization and before the accepted record, so the SAME
+/// Core verdict is reachable on both sides of the policy. Deriving the audit coordinate from
+/// the verdict's kind wrote `refused-before-policy` for an exchange whose authority returned
+/// an explicit Permit — sending an operator to inspect a grant that was consulted and
+/// honoured, and hiding that the decision had already been taken.
+///
+/// Driven through the production PEP twice on ONE proxy, because the property is about the
+/// second exchange's relationship to the first.
+#[tokio::test]
+async fn a_replay_refusal_after_a_permit_is_not_recorded_as_refused_before_policy() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let sink = Arc::new(mcp_re_proxy::CollectingAuditSink::new());
+    let p = proxy(Arc::clone(&calls)).with_audit_sink(sink.clone());
+    let d = issue(&decision_for(Some("read"), "tools/call"), &pdp_key());
+
+    let (first, body) = serve(&p, signed_call("read", "n-replayed", Some(&d))).await;
+    assert_eq!(first, 200, "the first call is permitted: {body}");
+    let (second, body) = serve(&p, signed_call("read", "n-replayed", Some(&d))).await;
+    assert_eq!(second, 409, "the same nonce is a replay: {body}");
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "the replay must not reach the backend"
+    );
+
+    let rejected = sink
+        .records()
+        .into_iter()
+        .find(|r| r.status == 409)
+        .expect("the replay refusal is recorded");
+    let mcp_re_proxy::AuditSubject::Request { authorization, .. } = &rejected.subject else {
+        panic!("a refusal before the accepted record is a REQUEST record");
+    };
+    assert_ne!(
+        authorization,
+        &AuthorizationFacet::Refused(AuthorizationRefusalFacet::BeforePolicy),
+        "the policy reached a verdict on this exchange and it was Permit"
+    );
+    assert!(
+        matches!(authorization, AuthorizationFacet::Authorized(_)),
+        "and the record carries that verdict: {authorization:?}"
+    );
+}

@@ -87,6 +87,7 @@ mod request_admission;
 /// Everything asked before this deployment will spend anything, and the two facts that
 /// outlive it.
 mod pre_admission;
+mod resolvers;
 
 /// Reaching *answerable and committed*: the continuation read, replay admission, the
 /// signing window, and the retirement that spends the approval.
@@ -99,19 +100,18 @@ mod dispatch_commitment;
 /// Everything after the backend has acted — where no exit can claim nothing happened.
 mod reply_assembly;
 pub use body_boundary::extract_request_state;
-use mcp_re_core::VerificationKey;
 use mcp_re_http_profile::AdmissionPolicy;
 use mcp_re_http_profile::AudienceTuple;
 use mcp_re_http_profile::ExecutionDisposition;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::OutstandingId;
-use mcp_re_http_profile::ResolverOutcome;
-use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedContextPolicy;
 use mcp_re_http_profile::VerifiedMcpRequest;
 use mcp_re_http_profile::VerifierPolicy;
 
+pub use self::resolvers::ActorResolver;
+pub use self::resolvers::AdmissionAuthorityResolver;
 use crate::admission_enforcer::AdmissionEnforcement;
 use crate::admission_enforcer::AdmissionEnforcer;
 use crate::admission_source::AsyncAdmissionSource;
@@ -119,6 +119,7 @@ use crate::async_inner::AsyncInnerServer;
 use crate::async_serve::ServedHttpRequest;
 use crate::async_serve::ServedHttpResponse;
 use crate::authorization::AuthorizationEvaluator;
+use crate::authorization::AuthorizationFacet;
 use crate::authorization::AuthorizationStage;
 use crate::continuation_store::AsyncContinuationStore;
 use crate::delegated_server_signer::DelegatedServerSigner;
@@ -135,30 +136,12 @@ use crate::transport::TransportBinding;
 /// [`HttpProfileProxy::with_continuation_store`].
 pub const DEFAULT_CONTINUATION_TTL_SECS: i64 = 300;
 
-/// The trust seam: resolve a presented keyid FOR a signing slot to a structured
-/// actor (identity + verification key). A key not trusted for `slot` resolves to
-/// `None` (fail closed). `Send + Sync` so one `HttpProfileProxy` serves every core.
-/// The proxy's trust seam. Returns a [`ResolverOutcome`] rather than an `Option` so a
-/// store OUTAGE is distinguishable from an UNKNOWN KEYID (C079): both fail closed, but
-/// only one of them is a statement about the caller's key.
-pub type ActorResolver = Box<dyn Fn(&str, SignerSlot) -> ResolverOutcome + Send + Sync>;
-
-/// Resolves an admission assertion's `issuer_kid` to the admission authority's root
-/// key. `None` means the issuer is not one this deployment trusts to admit anything —
-/// a kid never introduces trust, so an assertion naming an unresolvable issuer is
-/// refused exactly as an unknown request keyid is.
-///
-/// Separate from [`ActorResolver`] because admitting a workload and signing a message
-/// are different authorities: a key trusted for one must not be usable for the other
-/// by sharing a seam.
-pub type AdmissionAuthorityResolver = Arc<dyn Fn(&str) -> Option<VerificationKey> + Send + Sync>;
-
 /// One exchange's identity, as every stage past VERIFIED needs it.
 ///
-/// Grouped because these four travel together and never independently: the request a
-/// refusal binds to, the evidence that makes binding possible, the actor it is attributed
-/// to, and the instant the whole exchange is judged at. `now` is fixed for the exchange, so
-/// a key valid at ANSWERABLE is still valid at RESPONSE-SIGNED.
+/// Grouped because these travel together and never independently: the request a refusal
+/// binds to, the evidence that makes binding possible, the actor it is attributed to, and
+/// the instant the whole exchange is judged at. `now` is fixed for the exchange, so a key
+/// valid at ANSWERABLE is still valid at RESPONSE-SIGNED.
 pub(super) struct Exchange<'a> {
     http_req: &'a HttpRequest,
     verified: &'a VerifiedMcpRequest,
@@ -172,6 +155,16 @@ pub(super) struct Exchange<'a> {
     /// nothing and degrades the refusal to an unsigned error — on exactly the exits that
     /// most need to state, under signature, that the backend may have acted.
     key: Option<Arc<mcp_re_http_profile::ActiveDelegatedKey>>,
+    /// What this deployment's authorization authority established for this exchange.
+    ///
+    /// `None` states that no authorization verdict has been reached — the thing a refusal
+    /// named before the policy ran has to report, and a fact NO refusal cause can derive
+    /// from its own kind: the same Core verdict is reachable on both sides of the policy,
+    /// so a stage refusing after a PERMIT would otherwise record that no policy decided.
+    ///
+    /// Written by the admission region, which is the authority that obtains it, and read
+    /// by the refusal composition. A stage between them neither sets nor clears it.
+    authorization: Option<AuthorizationFacet>,
 }
 
 /// The RFC 9421 server-side PEP run by the async fleet (ADR-MCPRE-051).
@@ -461,6 +454,7 @@ impl HttpProfileProxy {
             actor_id: &actor_id,
             now,
             key: None,
+            authorization: None,
         };
 
         // Nothing irreversible happens on a request's behalf until it is both admitted and
@@ -468,7 +462,7 @@ impl HttpProfileProxy {
         // continuation read before admission let an about-to-be-rejected request destroy a
         // live approval leg.
         let admitted = match self
-            .admit_request(&ex, req.peer.as_ref(), &mut progress)
+            .admit_request(&mut ex, req.peer.as_ref(), &mut progress)
             .await
         {
             Ok(admitted) => admitted,

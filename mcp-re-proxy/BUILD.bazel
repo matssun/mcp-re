@@ -416,6 +416,7 @@ _PROXY_LIB_SRCS = [
     "src/http_profile_serve/continuation/retirement.rs",
     "src/http_profile_serve/inner_plane.rs",
     "src/http_profile_serve/reply.rs",
+    "src/http_profile_serve/resolvers.rs",
     "src/http_profile_serve/request_admission.rs",
     "src/http_profile_serve/retention.rs",
     "src/http_profile_serve/signing_window.rs",
