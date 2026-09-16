@@ -82,7 +82,13 @@ fn run_batch(store: &FsRetainedEvidenceStore, batch: Vec<WriteJob>) {
             &withdrawal_barrier,
             store,
         );
-        let _ = job.ack.send(outcome);
+        let WriteJob { kind: _, ack, slot } = job;
+        // The slot goes back BEFORE the acknowledgement. This job has been acted on and is
+        // out of the queue, so it no longer needs accounting for — and returning it after
+        // would make a freed slot's availability depend on this loop's scheduling rather
+        // than on the queue, which is what the caller resuming from the `await` reads.
+        drop(slot);
+        let _ = ack.send(outcome);
     }
 }
 

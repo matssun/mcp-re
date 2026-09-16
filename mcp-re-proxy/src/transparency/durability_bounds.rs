@@ -27,9 +27,16 @@ pub(super) const MAX_RESERVATIONS: usize = 1024;
 ///
 /// **One AWAITED job at a time.** `reserve`, `commit_to_dispatch` and `complete` each
 /// `submit`, and `submit` awaits the writer's acknowledgement — which the writer sends
-/// only after it has dequeued the job, acted and crossed the barrier. So an awaited job
-/// holds a slot only while its caller is parked in the `await`, and the caller cannot be
-/// in two of them at once.
+/// only after it has dequeued the job, acted and crossed the barrier. A caller cannot be
+/// in two of those at once.
+///
+/// It is the JOB that holds the slot, not the parked caller. A request future dropped at
+/// its `await` — what hyper does to every in-flight service future when a connection goes
+/// — leaves its job in the queue, and a slot released there would admit a successor
+/// alongside an orphan that nothing is counting any more. Repeated often enough that is
+/// not a tight bound but no bound at all, so
+/// [`WriteJob::accounted`](super::durable_job::WriteJob::accounted) carries the permit and
+/// the writer returns it as it acknowledges.
 ///
 /// **Plus at most one UN-AWAITED rescind.** `commit_to_dispatch` takes the
 /// [`ReservedBeforeDispatch`](super::ReservedBeforeDispatch) BY VALUE, so the guard drops
@@ -37,11 +44,12 @@ pub(super) const MAX_RESERVATIONS: usize = 1024;
 /// rescind is therefore still in the channel while the following `complete` sends — which
 /// is the real pair, and the one a census counting only awaited work misses.
 ///
-/// **And no third.** The permit is `Arc`-shared with
-/// [`DispatchCommitted`](super::DispatchCommitted) and released only when the last holder
-/// is gone, so no successor can be admitted while a commitment is outstanding: the
-/// successor's `reserve` can only coexist with the predecessor's rescind, never with its
-/// completion as well. The FIFO acknowledgement is what keeps the awaited half at one.
+/// **And no third.** The permit is `Arc`-shared — with
+/// [`DispatchCommitted`](super::DispatchCommitted) and with the awaited job itself — and
+/// released only when the last holder is gone, so no successor can be admitted while any
+/// part of a commitment is outstanding: the successor's `reserve` can only coexist with
+/// the predecessor's rescind, never with its completion as well. The FIFO acknowledgement
+/// is what keeps the awaited half at one.
 ///
 /// So at `2K` the send can never find the channel full, and `complete` is never refused
 /// for capacity — which is the whole point of taking the admission decision before

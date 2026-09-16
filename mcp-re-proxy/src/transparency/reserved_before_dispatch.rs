@@ -49,6 +49,17 @@ pub(super) const RESERVED_EXTENSION: &str = "reserved";
 /// a stale `.reserved` marker — cleanup debt, and readable as exactly that: it says an
 /// obligation was accepted and says nothing about execution. That the residue is honest
 /// rather than merely rare is the reason the pre-dispatch stage has its own name on disk.
+///
+/// # The rescind owns no admission permit
+///
+/// The permit belongs to the awaited, security-bearing durable transitions — `reserve`,
+/// `commit_to_dispatch`, `complete` — and is held across all of them, each returning only
+/// once the writer has acknowledged. The withdrawal queued here is cleanup, so it holds
+/// nothing and is answerable to nobody: it may outlive the permit, and
+/// [`super::durability_bounds::write_queue_capacity`] is sized for exactly that overlap. A
+/// permit carried on the rescind instead would make the slot's tenure depend on when a
+/// best-effort job happened to be drained, which is the one thing an admission bound may
+/// not depend on.
 pub struct ReservedBeforeDispatch {
     digest: EvidenceDigest,
     marker: PathBuf,
@@ -114,7 +125,7 @@ impl Drop for ReservedBeforeDispatch {
     /// cleanup debt, not evidence.
     fn drop(&mut self) {
         let (ack, _) = tokio::sync::oneshot::channel();
-        let _ = self.jobs.try_send(WriteJob::new(
+        let _ = self.jobs.try_send(WriteJob::cleanup(
             JobKind::Rescind {
                 marker: self.marker.clone(),
             },
@@ -190,6 +201,48 @@ mod tests {
         assert_eq!(permits.available_permits(), 1);
     }
 
+    /// Advancing to a commitment does not hand the permit back when the reservation goes.
+    ///
+    /// This is the half the two drop controls above cannot state on their own, and the one
+    /// the queue bound rests on. `commit_to_dispatch` takes the reservation BY VALUE, so it
+    /// drops as that call returns — and the rescind it emits there is best-effort cleanup,
+    /// which owns no permit. If the drop released the slot, a successor could be admitted
+    /// while the predecessor's completion was still to come, putting a third job behind one
+    /// permit and making `2K` an under-count rather than an exact bound.
+    #[test]
+    fn a_reservation_advanced_to_a_commitment_keeps_the_slot_when_it_drops() {
+        let permits = Arc::new(Semaphore::new(1));
+        let held = Arc::new(
+            Arc::clone(&permits)
+                .try_acquire_owned()
+                .expect("the permit"),
+        );
+        let (jobs, _queued) = std::sync::mpsc::sync_channel(4);
+        let reserved = ReservedBeforeDispatch::over(
+            EvidenceDigest::of(b"request"),
+            PathBuf::from("/store/abc.reserved"),
+            jobs,
+            held,
+        );
+
+        // What the commitment takes: a clone, standing for the onward durable stage.
+        let onward = reserved.permit();
+        drop(reserved);
+        assert_eq!(
+            permits.available_permits(),
+            0,
+            "the slot belongs to the exchange's durable stages, not to the value that \
+             happened to be dropped first"
+        );
+
+        drop(onward);
+        assert_eq!(
+            permits.available_permits(),
+            1,
+            "and the last of the two holders is what returns it"
+        );
+    }
+
     /// A rescind that cannot be queued is dropped, not blocked.
     ///
     /// `Drop` runs on the request future's own task and cannot await, so a full queue must
@@ -200,7 +253,7 @@ mod tests {
         let (jobs, queued) = std::sync::mpsc::sync_channel(1);
         // Fill it.
         let (ack, _) = tokio::sync::oneshot::channel();
-        jobs.try_send(WriteJob::new(
+        jobs.try_send(WriteJob::cleanup(
             JobKind::Rescind {
                 marker: PathBuf::from("/store/other.reserved"),
             },
