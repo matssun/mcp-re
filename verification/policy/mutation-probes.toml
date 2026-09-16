@@ -3612,3 +3612,49 @@ impl Clone for AsyncReplayTier {
 expect_red = [
   "lib#async_replay::tests::every_clone_of_a_tier_budgets_against_the_same_account",
 ]
+
+[[probe]]
+id = "M154-the-outage-reading-only-moves-forward"
+unit = "proxy.admission_currency_gate"
+conjunct = "a read completing out of order cannot re-open a degraded window a later read closed"
+# The weakening stores every reading unconditionally. Two authoritative reads completing out
+# of order then let the EARLIER one become the window's anchor, so a window a later read had
+# closed re-opens and the replica serves on last-known state it is no longer entitled to.
+path = "mcp-re-proxy/src/admission_enforcer/degraded_window.rs"
+anchor = """
+        if last.is_none_or(|previous| at > previous) {
+            *last = Some(at);
+        }
+"""
+weakening = """
+        *last = Some(at);
+"""
+expect_red = [
+  "lib#admission_enforcer::degraded_window::tests::an_out_of_order_read_does_not_rewind_the_window",
+]
+
+[[probe]]
+id = "M155-the-skew-allowance-does-not-widen-the-outage-window"
+unit = "proxy.admission_currency_gate"
+conjunct = "the degraded window is exactly P, and the wall-clock skew allowance does not extend it"
+# The weakening adds `max_clock_skew` back, which is what the wall-clock form did. Nothing is
+# admitted that P alone would have admitted — the window simply stays open longer than the
+# bound the operator configured and was told about, and a revocation that propagated in that
+# extra time is one this replica keeps serving against.
+path = "mcp-re-proxy/src/admission_enforcer/degraded_window.rs"
+anchor = """
+    Duration::from_secs(u64::try_from(policy.degraded_propagation_bound).unwrap_or(0))
+"""
+weakening = """
+    Duration::from_secs(
+        u64::try_from(
+            policy
+                .degraded_propagation_bound
+                .saturating_add(policy.max_clock_skew),
+        )
+        .unwrap_or(0),
+    )
+"""
+expect_red = [
+  "lib#admission_enforcer::degraded_window::tests::the_skew_allowance_does_not_widen_the_outage_window",
+]
