@@ -79,6 +79,15 @@ Two details are load-bearing because each is a count this project got wrong:
 - **Counting RESUMES after a region closes.** "Lines before the first test module" is a
   different and wrong rule: it discards every production item below the tests. Under it
   `mcp-re-proxy/src/trust_plane.rs` measures 134 lines; it is 690.
+- **A region closes with the item the attribute introduces, brace-delimited or not.** Not
+  every `#[cfg(test)]` introduces a module: it is also written on a `const`, a `use` or a
+  type alias, which ends at `;` and opens no braces at all. Scanning on until the first
+  brace closes then swallowed the NEXT item — production code — into the test region. Four
+  files were undercounted this way, `mcp-re-proxy/src/trust_plane/mod.rs` by 23 lines and
+  `mcp-re-proxy/src/signing_plane/mod.rs` by 17, and both were REGISTERED, so the ratchet
+  was holding a ceiling below the real size and the difference was free headroom. It is
+  also a bypass anyone could reach for: a `#[cfg(test)] const` placed above an item hides
+  that item from the count.
 
 A counter that silently undercounts is worse than no counter, so both details are exercised
 by `--selftest`, and the rule is PRINTED on every run so prose describing it cannot drift
@@ -300,6 +309,11 @@ def production_source(text: str) -> list[str]:
                 i += 1
                 if opened and depth <= 0:
                     break
+                # An item with no brace-delimited body — a `const`, a `use`, a type alias —
+                # ends at its own `;`. Scanning past it swallows the NEXT item, which is
+                # production code, into the test region.
+                if not opened and depth <= 0 and ";" in code:
+                    break
             continue
         kept.append(lines[i])
         i += 1
@@ -490,6 +504,26 @@ def selftest() -> int:
             "two test regions",
             "fn a() {}\n#[cfg(test)]\nmod t1 {\n}\nfn b() {}\n#[cfg(all(test, feature = \"x\"))]\nmod t2 {\n}\nfn c() {}\n",
             3,
+        ),
+        (
+            "#[cfg(test)] on a const closes at its `;` — the item BELOW it is production",
+            '#[cfg(test)]\nconst K: &str = "k";\nimpl Drop for T {\n    fn drop(&mut self) {}\n}\n',
+            3,
+        ),
+        (
+            "#[cfg(test)] on a `use` closes at its `;`",
+            "#[cfg(test)]\nuse std::x::Y;\nfn a() {}\nfn b() {}\n",
+            2,
+        ),
+        (
+            "a multi-line #[cfg(test)] const still closes at its own `;`",
+            '#[cfg(test)]\nconst K: &[&str] = &[\n    "a",\n];\nfn a() {}\n',
+            1,
+        ),
+        (
+            "an attribute followed by a comment still reaches the item it introduces",
+            "#[cfg(test)]\n// a note\nmod tests {\n    fn t() {}\n}\nfn a() {}\n",
+            1,
         ),
         ("empty file", "", 0),
     ]
@@ -695,10 +729,11 @@ def selftest() -> int:
     if selftest_baseline_growth() != 0:
         return 1
 
-    print("module-size gate selftest: PASS (7 counter cases, ratchet in both directions, "
+    print("module-size gate selftest: PASS (11 counter cases, ratchet in both directions, "
           "empty scope, stale + malformed registry entries, the §14 disposition lifecycle "
           "and its refusals, the pre-rename `exception_ref` field, and the one-shot upward "
-          "baseline authorization — nine refusals and the two arrangements that pass)")
+          "baseline authorization, and the measurement correction that buys nothing — "
+          "thirteen refusals and the three arrangements that pass)")
     return 0
 
 
@@ -781,6 +816,36 @@ def selftest_baseline_growth() -> int:
             print("selftest FAIL: a merged authorization authorized a second increase")
             return 1
 
+        # The measurement correction, which is the OTHER way to a raised baseline — and the
+        # narrow one. Refusals first, again, because it buys nothing and must be shown to
+        # buy nothing.
+        bare = {rel: {k: v for k, v in entry()[rel].items()
+                      if k not in ("growth_from_prod_loc", "growth_ref")}}
+        # It cannot travel with an edit to the file it re-baselines.
+        if not any("no growth authorization" in p for p in
+                   check_baseline_growth(before, bare, at_454, root, lambda _r: False)):
+            print("selftest FAIL: a changed file was re-baselined as a measurement correction")
+            return 1
+        # A path git cannot answer for is not an unchanged path.
+        if not any("no growth authorization" in p for p in
+                   check_baseline_growth(before, bare, at_454, root, lambda _r: None)):
+            print("selftest FAIL: an unanswerable path was re-baselined as a correction")
+            return 1
+        # It grants no headroom: the new baseline must EQUAL the measurement.
+        roomy = {rel: dict(bare[rel], baseline_prod_loc=600)}
+        if not any("no growth authorization" in p for p in
+                   check_baseline_growth(before, roomy, at_454, root, lambda _r: True)):
+            print("selftest FAIL: a measurement correction granted headroom")
+            return 1
+        # An unchanged file pinned at exactly its measured size: accepted, and the status is
+        # NOT required to be `reviewed-exception` — correcting a number is not a review.
+        plain = {rel: dict(bare[rel], status="unreviewed")}
+        del plain[rel]["review_ref"]
+        if check_baseline_growth(before, plain, at_454, root, lambda _r: True):
+            print("selftest FAIL: a measurement correction on an unchanged file was refused: "
+                  f"{check_baseline_growth(before, plain, at_454, root, lambda _r: True)}")
+            return 1
+
         # A shrink needs no authorization at all; the ratchet already permits it.
         shrink = {rel: {"path": rel, "baseline_prod_loc": 430, "baseline_sha": "x",
                         "status": "unreviewed"}}
@@ -857,11 +922,33 @@ def growth_authorization_line(rel: str, old: int, new: int) -> str:
     return f"growth-authorization: {rel} {old} -> {new}"
 
 
+def file_is_unchanged(rel: str, ref: str = "origin/main") -> bool | None:
+    """Whether `rel` has the same bytes here as at `ref`. `None` when `ref` cannot be read.
+
+    The discriminator between a file that GREW and a file that was MIS-MEASURED. Growth is a
+    fact about the source; a measurement correction is a fact about this script. They are
+    told apart by asking whether the source moved, which no one can answer in their own
+    favour: to grow a file you must change it, and a changed file gets no correction.
+    """
+    try:
+        blob = subprocess.run(
+            ["git", "show", f"{ref}:{rel}"],
+            cwd=REPO, capture_output=True, check=True,
+        ).stdout
+    except Exception:  # noqa: BLE001 - a path absent at ref is not an unchanged path
+        return None
+    here = REPO / rel
+    if not here.exists():
+        return None
+    return here.read_bytes() == blob
+
+
 def check_baseline_growth(
     previous: dict[str, dict],
     current: dict[str, dict],
     measured: dict[str, int],
     root: Path,
+    unchanged=file_is_unchanged,
 ) -> list[str]:
     """Refuse an upward `baseline_prod_loc` transition that is not separately authorized.
 
@@ -903,7 +990,25 @@ def check_baseline_growth(
                 )
             continue
 
-        # An upward transition. Every condition below is required; they are reported
+        # An upward transition. There are two, and only two, ways to reach one.
+        #
+        # A MEASUREMENT CORRECTION is the narrow one: this script's own counting changed, so
+        # the old baseline described a size the file never had. It is strictly weaker than
+        # an authorization — it buys nothing. The file's bytes must be identical to
+        # `origin/main`, so it cannot travel with an edit to the file it re-baselines, and
+        # the new baseline must EQUAL the measurement, so it grants no headroom: the file is
+        # pinned at its true size and still cannot grow by one line. Anyone wanting room has
+        # to come back through the authorization below.
+        #
+        # It is a separate instrument rather than a lenient reading of the authorization
+        # because the authorization requires `status = "reviewed-exception"`, and a file that
+        # was merely counted wrong has not thereby been reviewed. Correcting a number must
+        # not launder a disposition.
+        actual = measured.get(rel)
+        if frm is None and actual is not None and actual == new and unchanged(rel):
+            continue
+
+        # Otherwise it is growth, and every condition below is required; they are reported
         # together rather than at the first failure, so one run names the whole gap.
         if frm is None:
             problems.append(
@@ -918,7 +1023,6 @@ def check_baseline_growth(
                 f"{old} — an authorization is for one exact transition, and a spent one does "
                 f"not authorize the next"
             )
-        actual = measured.get(rel)
         if actual is not None and actual != new:
             problems.append(
                 f"{rel}: the raised baseline is {new} but the file measures {actual} "

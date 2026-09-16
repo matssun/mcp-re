@@ -356,6 +356,8 @@ baseline_sha = "b142a7a"
 status = "reviewed-exception"
 review_ref = "EX-008 in docs/architecture/review-dispositions.md"
 
+# 425 -> 448: the same measurement correction. Two `#[cfg(test)]` consts here hid 23
+# production lines from the count. The file has not changed.
 [[debt]]
 # MCPRE-149 gave the trust subtree a facade: `trust_plane.rs` became `trust_plane/mod.rs`
 # and four subordinates moved under it as PRIVATE modules. The debt moves WITH each file —
@@ -365,7 +367,7 @@ review_ref = "EX-008 in docs/architecture/review-dispositions.md"
 # did too: 690 -> 425. It gained EIGHT module declarations on the way and still shrank,
 # which is the test a facade has to pass.
 path = "mcp-re-proxy/src/trust_plane/mod.rs"
-baseline_prod_loc = 425
+baseline_prod_loc = 448
 baseline_sha = "a9b2bc1"
 status = "unreviewed"
 
@@ -399,9 +401,14 @@ status = "unreviewed"
 # MCPRE-175: keeping a delegated key in force — the schedule, the trust-epoch override and
 # what a root outage costs — left for `signing_plane/rotation.rs`, so `signing_plane.rs`
 # became `signing_plane/mod.rs`. The debt moves WITH the file.
+# 321 -> 340: a measurement correction, not growth. The file has not changed. A
+# `#[cfg(test)] const TEST_KID` sat above `impl Drop for SigningPlane`, and the region
+# scanner ran from the attribute to the first closing brace it found — which was the Drop
+# impl's, so 19 production lines counted as test code and the ratchet held a ceiling below
+# the file's real size.
 [[debt]]
 path = "mcp-re-proxy/src/signing_plane/mod.rs"
-baseline_prod_loc = 321
+baseline_prod_loc = 340
 baseline_sha = "255465e"
 status = "unreviewed"
 
