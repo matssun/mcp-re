@@ -60,9 +60,7 @@ use crate::sigbase::SignatureParams;
 ))]
 #[must_use]
 pub fn window_admits(created: i64, expires: i64, now: i64, skew: i64) -> bool {
-    created.saturating_sub(skew) <= now
-        && now < expires.saturating_add(skew)
-        && created < expires
+    created.saturating_sub(skew) <= now && now < expires.saturating_add(skew) && created < expires
 }
 
 /// Shared parameter gate: tag, algorithm, freshness window, keyid presence.
