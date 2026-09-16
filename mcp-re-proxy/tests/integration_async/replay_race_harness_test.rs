@@ -516,13 +516,13 @@ mod http_profile_full_stack {
     use std::sync::Arc;
 
     use mcp_re_core::SigningKey;
+    use mcp_re_http_profile::custody::DelegatedKeyWindow;
     use mcp_re_http_profile::issue_delegation_credential;
     use mcp_re_http_profile::sign_request_full;
     use mcp_re_http_profile::ActorIdentity;
     use mcp_re_http_profile::ArtifactBinding;
     use mcp_re_http_profile::ArtifactType;
     use mcp_re_http_profile::AudienceTuple;
-    use mcp_re_http_profile::custody::DelegatedKeyWindow;
     use mcp_re_http_profile::CustodyConfig;
     use mcp_re_http_profile::DelegatedSigningCustody;
     use mcp_re_http_profile::DelegationClaims;

@@ -142,6 +142,7 @@ mod serving_path {
     use mcp_re_core::TrustResolverError;
     use mcp_re_core::VerificationKey;
 
+    use mcp_re_http_profile::custody::DelegatedKeyWindow;
     use mcp_re_http_profile::issue_delegation_credential;
     use mcp_re_http_profile::sign_request_full;
     use mcp_re_http_profile::ActorIdentity;
