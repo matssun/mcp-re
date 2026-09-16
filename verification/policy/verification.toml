@@ -4381,10 +4381,10 @@ tested_symbols = [
   "lib#custody::tests::a_declined_reissue_leaves_the_predecessor_untouched",
   "lib#custody::tests::the_minted_credential_carries_the_configured_scope_and_trust_epoch",
   "lib#custody::tests::an_unrepresentable_expiry_refuses_rather_than_wrapping",
-  "lib#custody::tests::an_uncomputable_rotation_threshold_rotates_rather_than_holding_the_key",
   "lib#custody::tests::a_signature_window_that_cannot_be_computed_clamps_to_the_credential",
   "lib#custody::issuance_terms::tests::every_term_fails_restrictively",
   "lib#custody::issuance_terms::tests::the_retry_interval_has_a_floor",
+  "lib#custody::issuance_terms::tests::an_uncomputable_rotation_threshold_reads_as_due",
   # The window's own relation. `key_window.rs` entered `paths` with this slice, so it was a
   # fingerprint input whose controls no unit named — the file could have been emptied and
   # every declared symbol would still have passed.
