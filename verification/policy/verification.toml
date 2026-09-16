@@ -3536,8 +3536,14 @@ evidence = ["test://proxy/audit/record_coordinates"]
 # before any policy ran must not borrow a policy token, because a reader holding one cannot
 # tell whether a policy was ever consulted.
 tested_symbols = [
-  "lib#audit_record::subject::tests::a_request_record_always_states_an_authorization_outcome",
-  "lib#audit_record::subject::tests::a_response_record_has_no_authorization_coordinate_to_carry",
+  # r11 R11-164. The two controls these replace asserted the value they had just constructed:
+  # R3's structural half is the absence of an `Option` in the enum, which is a compile-time
+  # fact no runtime control can fail to observe, and the citation spent a test-evidence slot
+  # on it. What CAN regress is the DELEGATION — an arm that rebuilds, filters or renames what
+  # the authority produced — so that is what is measured, against the facet's own projection
+  # rather than a literal.
+  "lib#audit_record::subject::tests::a_request_record_contributes_the_authorization_authoritys_own_fields",
+  "lib#audit_record::subject::tests::a_response_record_contributes_nothing_to_say",
   "lib#audit_record::tests::the_two_coordinates_stay_separate_on_one_record",
   "lib#authorization::audit::tests::an_unconfigured_deployment_is_not_rendered_as_an_authorized_one",
   "lib#authorization::audit::tests::a_policy_denial_puts_its_token_in_the_authorization_coordinate",
