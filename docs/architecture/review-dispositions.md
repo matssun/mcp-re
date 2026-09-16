@@ -2512,10 +2512,10 @@ production, `ALL_ERRORS` by `audit::reason_label` as the containment guard's dom
 - **`mcp-re-http-profile/src/error.rs`**, a separate 294-line registered entry, still
   `unreviewed`. A ruling about one error taxonomy is not a ruling about the other.
 
-### EX-013 growth authorization 2 — one token for the publication refusal, `454 -> 466`
+### EX-013 growth authorization 2 — one token for the publication refusal, `454 -> 472`
 
 ```text
-growth-authorization: mcp-re-core/src/error.rs 454 -> 466
+growth-authorization: mcp-re-core/src/error.rs 454 -> 472
 ```
 
 **Occasioned by:** the owner ruling on the exchange-invariant enforcement (see EX-001's
@@ -2530,10 +2530,12 @@ posture AfterAdmission
 
 The census is unchanged and is not re-argued: enum membership and the frozen `wire_code`
 projection are one closed vocabulary, and physical decomposition would introduce two
-authorities that must remain synchronized. What is re-measured is the number. 12 production
-lines, the same floor as `ContinuationConflict`: a variant, its `wire_code` arm, its
-`ALL_ERRORS` entry and a doc comment cut to the four lines that say what the token means and
-what it does not.
+authorities that must remain synchronized. What is re-measured is the number. 18 production
+lines: a variant, its `wire_code` arm, its `ALL_ERRORS` entry, and a doc comment that has to
+define "invariant" at the exchange-MODEL level — either a transition was illegal or the
+resulting cross-machine state was incoherent. Naming only the incoherent tuple would be six
+lines cheaper and would leave the other half of what this token reports described by nothing,
+which is the trade the ratchet exists to make visible rather than to decide.
 
 **It says nothing about whether the backend executed, and that is enforced by absence.** No
 case was added to `retry_semantics` and `execution_refinement` stays `None`, so the
@@ -2543,4 +2545,9 @@ token starts implying *nothing ran*.
 
 **This is a second authorization, not the first one reused.** EX-013's `442 -> 454` was spent
 when it merged; `scripts/module_size_gate.py` refused this growth against it by name until
-this record and a fresh `growth_from_prod_loc` were written. 466 is the new ceiling.
+this record and a fresh `growth_from_prod_loc` were written. 472 is the new ceiling.
+
+It was re-measured once during this slice, too. The record first authorized `454 -> 466`, and
+widening the token's definition to cover an illegal transition cost six more lines — so the
+gate refused the stale pair exactly as it refuses a spent one. The number in a growth record
+is a measurement of the tree it ships with, not an estimate made when the record was drafted.

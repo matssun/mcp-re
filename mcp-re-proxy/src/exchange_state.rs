@@ -1941,6 +1941,24 @@ mod tests {
     }
 
     #[test]
+    fn a_refused_publication_is_remembered_by_the_machine() {
+        let mut p = signed_and_settled(ExchangeEvent::ContinuationNotRequired);
+        // A tail that reaches no success terminal. The caller asked the wrong question,
+        // which is itself the model and the code driving it disagreeing.
+        let witness = Established::new((), ExchangeEvent::TransportBindingChecked);
+        assert!(p.establish_terminal(witness).is_err());
+        // It LATCHED on the live machine, not only on the discarded copy. The exchange is
+        // otherwise coherent and this tail IS legal, so without the latch the very next
+        // publication would succeed — published by a machine that has already said it
+        // cannot vouch for this exchange. The refusal has to be remembered, not re-derived.
+        assert_eq!(
+            p.may_publish(ServedSuccess::Terminal),
+            Err("a success publication was checked against a tail that \
+                 reaches no success terminal")
+        );
+    }
+
+    #[test]
     fn an_exchange_already_carrying_an_anomaly_publishes_no_success() {
         let mut p = signed_and_settled(ExchangeEvent::ContinuationNotRequired);
         // An illegal transition somewhere above. The TUPLE stays coherent — this is not an

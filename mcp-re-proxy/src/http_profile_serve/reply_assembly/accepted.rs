@@ -198,8 +198,10 @@ mod tests {
     /// The refusal a publication failure serves, asserted whole.
     ///
     /// Not merely that it refuses. `mcp-re.exchange_invariant_violation` says *this
-    /// deployment's own projections disagree*, at 500 because the fault is the proxy's, and
-    /// `AfterAdmission` because the request verified and crossed the threshold. And
+    /// deployment's execution no longer satisfied its exchange model — a transition was
+    /// illegal, or the resulting cross-machine state was incoherent*, at 500 because the
+    /// fault is the proxy's and `AfterAdmission` because the request verified and crossed
+    /// the execution threshold. And
     /// `execution_refinement` is `None`: the refusal states nothing about whether the
     /// backend ran, so the exchange machine's derivation stands — which, with the anomaly
     /// latched, is `possibly_executed`.

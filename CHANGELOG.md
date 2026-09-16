@@ -44,8 +44,15 @@ wire   mcp-re.exchange_invariant_violation
 HTTP   500
 ```
 
-*the proxy's own exchange-state projections became mutually inconsistent, so MCP-RE refused
-to publish a success claim.*
+*the proxy's execution no longer satisfied its exchange model: either a transition was
+illegal or the resulting cross-machine state was incoherent, so MCP-RE refused to publish a
+success claim.*
+
+**Both halves, deliberately.** Naming only the incoherent tuple would leave an illegal
+transition whose resulting tuple happens to be coherent described by no token, and it is the
+same fact: once the exchange machine has latched an anomaly it has said the model and the
+running pipeline disagree, and publishing a success after that is exactly the contradiction
+being removed.
 
 It is not about the client's request and not about the backend: it reports that the
 deployment is running code that disagrees with its own exchange model. 500 because the

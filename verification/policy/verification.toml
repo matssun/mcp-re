@@ -2325,6 +2325,21 @@ tested_symbols = [
   "lib#exchange_state::tests::the_latch_keeps_the_first_anomaly",
   "lib#exchange_state::tests::an_illegal_advance_still_never_moves_consequence_backward",
   "lib#exchange_state::tests::an_illegal_transition_names_both_halves",
+  # PUBLISHING a success, which is a different proposition from the tuple being incoherent.
+  # The invariants above were enforced in the serving path by `debug_assert!`, so the
+  # shipped binary detected the violation, latched it, and served the success anyway. These
+  # are the controls over the refusal that replaced it — including the case the cross-machine
+  # predicate cannot see, a latched illegal transition whose resulting tuple is coherent.
+  "lib#exchange_state::tests::an_open_leg_with_no_durable_record_is_not_published",
+  "lib#exchange_state::tests::a_reply_that_opens_a_leg_is_not_published_as_a_terminal_completion",
+  "lib#exchange_state::tests::synthesized_transport_failure_bytes_are_not_published_as_a_success",
+  "lib#exchange_state::tests::an_exchange_already_carrying_an_anomaly_publishes_no_success",
+  "lib#exchange_state::tests::a_publication_refused_leaves_the_exchange_where_it_legally_was",
+  "lib#exchange_state::tests::a_refused_publication_reports_the_exchange_as_possibly_executed",
+  "lib#exchange_state::tests::a_refused_publication_is_remembered_by_the_machine",
+  "lib#exchange_state::tests::a_coherent_success_is_published_and_reaches_its_terminal",
+  "lib#exchange_state::tests::the_notification_terminal_is_refused_on_the_same_terms",
+  "lib#exchange_state::tests::a_tail_that_reaches_no_success_terminal_is_refused_rather_than_passed",
 ]
 
 # ---------------------------------------------------------------------------
@@ -3978,6 +3993,15 @@ tested_symbols = [
   # compiling is the evidence. What IS assertable is the step before — that the projection
   # the reservation carries is the one its digest was taken over — and nothing asserted it.
   "lib#transparency::durability::tests::the_hop_that_discharges_a_crossing_digests_back_to_its_marker",
+  # WHEN the success terminal is decided, relative to the two steps that publish it. This
+  # unit owns `accepted.rs` because that is where a terminal discharges the crossing, and
+  # the discharge and the `response.signed` record are both assertions that the exchange
+  # SUCCEEDED. An enforcement that ran after either would leave a retained hop and an audit
+  # record for a success it then refused — the contradiction, arriving through the control
+  # meant to prevent one. Asserted over the source because the incoherent tuple is
+  # unconstructible through the serving path, which is why the enforcement exists at all.
+  "lib#http_profile_serve::reply_assembly::accepted::tests::the_publication_decision_precedes_retention_and_the_response_signed_record",
+  "lib#http_profile_serve::reply_assembly::accepted::tests::the_publication_refusal_says_the_proxy_disagreed_with_itself_and_nothing_about_the_backend",
 ]
 
 [[unit]]

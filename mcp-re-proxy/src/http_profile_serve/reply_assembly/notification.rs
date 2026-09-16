@@ -125,9 +125,9 @@ impl HttpProfileProxy {
             // cannot reach here; it is refused before the exchange commits.
             Err(refusal) => return self.refuse_retained(ex, refusal, progress, retention).await,
         };
-        // The 202 is a signed success claim, so an exchange whose projections disagree may
-        // not mint one — and the decision is taken before the acknowledgement is committed,
-        // while the exchange can still reach a post-dispatch refusal instead.
+        // The 202 is a signed success claim, so an exchange that no longer satisfies its
+        // model may not mint one — and the decision is taken before the acknowledgement is
+        // committed, while the exchange can still reach a post-dispatch refusal instead.
         if progress.establish_terminal(acknowledged).is_err() {
             let refusal = crate::refusal::Refusal::after_admission(
                 mcp_re_core::McpReError::ExchangeInvariantViolation,

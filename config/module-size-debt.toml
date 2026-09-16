@@ -505,8 +505,8 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-core/src/error.rs"
-baseline_prod_loc = 466
-baseline_sha = "fa1a422"
+baseline_prod_loc = 472
+baseline_sha = "dc4c833"
 status = "reviewed-exception"
 review_ref = "EX-013 in docs/architecture/review-dispositions.md"
 growth_from_prod_loc = 454

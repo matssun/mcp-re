@@ -128,8 +128,14 @@ pub enum McpReError {
     #[error("mcp-re.evidence_retention_indeterminate")]
     EvidenceRetentionIndeterminate,
 
-    /// The proxy's own exchange-state projections became mutually inconsistent, so MCP-RE
-    /// refused to publish a success claim it cannot vouch for.
+    /// The proxy's execution no longer satisfied its exchange model: either a transition
+    /// was illegal or the resulting cross-machine state was incoherent, so MCP-RE refused
+    /// to publish a success claim.
+    ///
+    /// **Invariant** here is at the exchange-MODEL level, not only at the tuple's. Naming
+    /// just the incoherent tuple would leave the other half — an illegal transition whose
+    /// resulting tuple happens to be coherent — described by no token, and it is the same
+    /// fact: the model and the running pipeline disagree.
     ///
     /// Not about the client's request and not about the backend: it reports that this
     /// deployment is running code that disagrees with its own exchange model. Carries no
