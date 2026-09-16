@@ -389,6 +389,61 @@ mod tests {
         );
     }
 
+    /// EVERY builder installs THIS state's epoch-bound store — which is what
+    /// `bind_resumption` is for, and what nothing measured.
+    ///
+    /// `resumption_acceptance` drives real rustls handshakes, but against a `ServerConfig`
+    /// it ASSEMBLES ITSELF — its own verifier, its own epoch-bound store. So it establishes
+    /// the STORE's contract and says nothing about the owner's build path: delete both
+    /// `bind_resumption` calls and all four of those controls stay green, because the
+    /// configs they test are not the ones this owner produces. A deployment would then get
+    /// rustls' default store, which resumes happily and knows nothing about an epoch.
+    ///
+    /// The discriminating move is to build through the owner and then advance THIS state's
+    /// epoch: only a config carrying this state's own store can see that happen. Both
+    /// builders are driven, because `bind_resumption` has two call sites and a control over
+    /// one of them is a claim about half the paths out of this owner.
+    #[test]
+    fn every_config_this_owner_builds_carries_this_states_epoch_bound_store() {
+        let (chain, key) = credential();
+        let (delegated_chain, signer) = delegated_credential();
+        let state = TlsListenerSecurityState::new(vec![ca()]);
+
+        let configs = [
+            state
+                .build_exported_key_config(chain, key, Vec::new())
+                .expect("exported-key build"),
+            state
+                .build_delegated_config(delegated_chain, signer, Vec::new())
+                .expect("delegated build"),
+        ];
+
+        // Stored through each config, and readable, while the epoch stands. Both halves
+        // matter: a store that never returned anything would satisfy the assertion below
+        // for the wrong reason.
+        for (n, config) in configs.iter().enumerate() {
+            let key = vec![n as u8];
+            assert!(config.session_storage.put(key.clone(), b"session".to_vec()));
+            assert_eq!(
+                config.session_storage.get(&key),
+                Some(b"session".to_vec()),
+                "a session stored under the current epoch must read back"
+            );
+        }
+
+        // Advance the epoch on the STATE, not on any config. A config whose store this
+        // owner did not install cannot be reached by this.
+        state.resumption.republish(TlsAuthEpoch::compute(&[]));
+
+        for (n, config) in configs.iter().enumerate() {
+            assert_eq!(
+                config.session_storage.get(&[n as u8]),
+                None,
+                "a session tagged under the superseded epoch must stop being a shortcut"
+            );
+        }
+    }
+
     /// Stateless tickets stay disabled on every path out of this owner. They are a SECOND
     /// resumption mechanism that bypasses the store entirely, so a build that enabled them
     /// would bypass the epoch tag and everything claimed above with it.

@@ -803,6 +803,32 @@ expect_red = [
 ]
 
 [[probe]]
+id = "T05-the-build-path-installs-no-epoch-bound-store"
+unit = "proxy.tls_listener_state"
+conjunct = "every config this owner builds carries this state's epoch-bound session store"
+# The defect R11-604 named. `resumption_acceptance` drives REAL handshakes, but against a
+# `ServerConfig` it assembles itself — its own verifier, its own epoch-bound store — so it
+# establishes the STORE's contract and nothing about the owner's build path. Under this
+# weakening a deployment gets rustls' default store, which resumes happily and knows
+# nothing about an epoch, and all four of those handshake controls stay green.
+#
+# Distinct from T01, which keeps the binding and gives it a FRESH store per build. This one
+# removes the binding altogether, which is the weaker precondition: T01 cannot fire if
+# nothing is bound in the first place.
+path = "mcp-re-proxy/src/tls_listener_state/mod.rs"
+anchor = """
+        let epoch = *self.resumption.epoch();
+        resumption_binding::epoch_bound_resumption(config, &self.resumption, epoch)
+"""
+weakening = """
+        let _ = *self.resumption.epoch();
+        config
+"""
+expect_red = [
+  "lib#tls_listener_state::tests::every_config_this_owner_builds_carries_this_states_epoch_bound_store",
+]
+
+[[probe]]
 id = "T02-epoch-not-from-the-owners-anchors"
 unit = "proxy.tls_listener_state"
 conjunct = "the epoch a config is bound under digests the anchors this state owns"
