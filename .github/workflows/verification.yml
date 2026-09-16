@@ -944,7 +944,7 @@ jobs:
       # directory the next run will not reuse.
       - name: The records the verdict was composed from
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: verification-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.evidence.outputs.dir }}

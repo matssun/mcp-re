@@ -271,7 +271,7 @@ jobs:
       # an UNANCHORED run all produce reports worth reading, and the failing one most of all.
       - name: Reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: slo-reports-${{ steps.context.outputs.hardware_class }}-${{ github.run_id }}
           path: target/slo-local/
