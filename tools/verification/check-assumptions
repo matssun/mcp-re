@@ -322,14 +322,22 @@ def proved_symbol_defects() -> list[str]:
     """
     doc = load_verification()
     defects: list[str] = []
+    # Expanded ONCE. `unit_files()` reloads verification.toml and re-globs every declared
+    # path in the repository, so calling it inside the comprehension made this function
+    # quadratic in the manifest: 6 units x 381 declared .rs files = 2292 full expansions,
+    # measured at 264s for a function that decides nothing about any of them. Deliberately
+    # a local, not a module-level cache -- these self-tests substitute manifests on purpose,
+    # and a cache that outlived one call would let a test read the previous test's world.
+    owners_by_file = unit_files()
+    ordered_files = sorted(owners_by_file)
     for unit in doc.get("unit", []):
         symbols = unit.get("proved_symbols", [])
         if not symbols:
             continue
         sources = [
             path
-            for path in sorted(declared_unit_files())
-            if path.suffix == ".rs" and unit["id"] in unit_files()[path]
+            for path in ordered_files
+            if path.suffix == ".rs" and unit["id"] in owners_by_file[path]
         ]
         for symbol in symbols:
             name = symbol.rsplit("::", 1)[-1]
