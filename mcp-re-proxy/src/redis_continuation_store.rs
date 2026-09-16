@@ -4,7 +4,9 @@
 //!
 //! The async analogue of the design in [`crate::async_redis_store`]: one
 //! auto-reconnecting, multiplexed [`ConnectionManager`] cloned per op. The open leg
-//! records the retained bases with `SET key <bases> PX <ttl_ms>`; the answer leg
+//! establishes the retained bases with `SET key <bases> NX PX <ttl_ms>` — `NX` is what
+//! makes a live key a collision rather than an overwrite, and it is in the same command
+//! as the write so the test and the set cannot be interleaved; the answer leg
 //! reads them with a non-destructive `GET`, then removes them with a `DEL` whose
 //! returned count is the one-shot verdict (a continuation can be answered at most
 //! once). Redis executes the `DEL` atomically, so across replicas exactly one of two
@@ -19,6 +21,7 @@ use redis::aio::ConnectionManager;
 use crate::continuation_store::AsyncContinuationStore;
 use crate::continuation_store::ContinuationFuture;
 use crate::continuation_store::ContinuationStoreError;
+use crate::continuation_store::Creation;
 use crate::continuation_store::RetainedBases;
 
 /// The on-the-wire value: the two retained signature bases, each base64url-encoded
@@ -43,7 +46,7 @@ fn decode_bases(value: &str) -> Option<RetainedBases> {
     })
 }
 
-/// A durable, cross-process ASYNC continuation store backed by Redis `SET ... PX`, a
+/// A durable, cross-process ASYNC continuation store backed by Redis `SET ... NX PX`, a
 /// non-destructive `GET`, and a `DEL` whose returned count is the one-shot verdict.
 ///
 /// Not `GETDEL`: that is the destructive read the peek/consume split exists to forbid,
@@ -72,12 +75,12 @@ impl RedisContinuationStore {
 }
 
 impl AsyncContinuationStore for RedisContinuationStore {
-    fn store<'a>(
+    fn create<'a>(
         &'a self,
         key: &'a str,
         bases: &'a RetainedBases,
         ttl_secs: i64,
-    ) -> ContinuationFuture<'a, ()> {
+    ) -> ContinuationFuture<'a, Creation> {
         let key = key.to_string();
         let value = encode_bases(bases);
         let mut conn = self.conn.clone();
@@ -85,16 +88,38 @@ impl AsyncContinuationStore for RedisContinuationStore {
         // degenerate window still records a briefly-live entry rather than erroring.
         let ttl_ms = (ttl_secs.max(1)) * 1000;
         Box::pin(async move {
-            let result: Result<(), redis::RedisError> = redis::cmd("SET")
+            // `NX` and `PX` in ONE command. Not GET-then-SET: that is two round trips
+            // with a window between them, and two open legs racing on one key land in
+            // exactly that window — so the read-then-write form would hand both of them
+            // a "free" key and the second would still overwrite the first. Redis
+            // evaluates NX and the write atomically, which is the whole reason the
+            // uniqueness rule can live in the store rather than in a caller's ordering
+            // assumption.
+            //
+            // `PX` must ride along for the same reason. Setting the value and then
+            // expiring it separately leaves a window in which a crash strands an entry
+            // with NO expiry — permanently occupying a key that `NX` will then refuse
+            // for ever, which converts a transient fault into a continuation that can
+            // never be opened again.
+            let reply: Result<Option<String>, redis::RedisError> = redis::cmd("SET")
                 .arg(&key)
                 .arg(value)
+                .arg("NX")
                 .arg("PX")
                 .arg(ttl_ms)
                 .query_async(&mut conn)
                 .await;
-            result.map_err(|e| ContinuationStoreError::Unavailable {
-                details: format!("redis SET continuation failed: {e}"),
-            })
+            // The reply distinguishes the two outcomes and nothing else does: `SET NX`
+            // answers `OK` when it wrote and a NIL bulk string when the key was taken.
+            // Mapping NIL to an error would make a collision indistinguishable from an
+            // outage at the one site that has to tell them apart.
+            match reply {
+                Ok(Some(_)) => Ok(Creation::Stored),
+                Ok(None) => Ok(Creation::Collision),
+                Err(e) => Err(ContinuationStoreError::Unavailable {
+                    details: format!("redis SET NX continuation failed: {e}"),
+                }),
+            }
         })
     }
 
@@ -270,13 +295,30 @@ mod tests {
         assert_eq!(decode_bases("aaaa.not!base64"), None);
     }
 
+    /// CONTROL 8 — the wire evidence: `NX` and `PX` are both requested, in ONE command.
+    ///
+    /// The whole uniqueness argument rests on this being a single atomic operation. A
+    /// GET-then-SET, or a SET followed by a separate EXPIRE, reads identically from the
+    /// caller's side and from every higher-level test — the difference is only visible
+    /// here, in the bytes. So it is asserted here.
     #[tokio::test]
-    async fn the_open_leg_records_the_bases_under_a_bounded_px_ttl() {
+    async fn the_open_leg_records_the_bases_under_an_nx_guarded_bounded_px_ttl() {
         let (store, seen) = store_against("+OK\r\n").await;
-        store.store(KEY, &bases(), 300).await.expect("SET accepted");
+        assert_eq!(
+            store
+                .create(KEY, &bases(), 300)
+                .await
+                .expect("SET accepted"),
+            Creation::Stored,
+            "an OK reply is the key having been established by THIS call"
+        );
 
         let commands = recorded(&seen);
-        assert_eq!(commands.len(), 1);
+        assert_eq!(
+            commands.len(),
+            1,
+            "one command: a test-then-set pair would be two, with a race between them"
+        );
         let set = &commands[0];
         assert_eq!(set[0], "SET");
         assert_eq!(set[1], KEY);
@@ -285,12 +327,39 @@ mod tests {
             Some(bases()),
             "the recorded value is the pair the answer leg binds against"
         );
-        assert_eq!(set.len(), 5);
+        assert_eq!(set.len(), 6);
         assert_eq!(
-            set[3], "PX",
+            set[3], "NX",
+            "without NX this is the overwrite that destroys a live approval"
+        );
+        assert_eq!(
+            set[4], "PX",
             "an entry with no expiry retains signature bases forever"
         );
-        assert_eq!(set[4], "300000", "the TTL is seconds, the argument is ms");
+        assert_eq!(set[5], "300000", "the TTL is seconds, the argument is ms");
+    }
+
+    /// CONTROL 2 + 3, at the mechanism: a NIL reply is a collision, and it is NOT an error.
+    ///
+    /// `SET NX` answers NIL when the key was taken, which is the one signal that
+    /// distinguishes a refused write from a successful one. Reading it as an error would
+    /// send the open leg into its retry budget — three more attempts at a key that will
+    /// still be taken — and would make a collision indistinguishable from an outage.
+    #[tokio::test]
+    async fn a_taken_key_answers_collision_and_not_an_error() {
+        let (store, seen) = store_against("$-1\r\n").await;
+        assert_eq!(
+            store
+                .create(KEY, &bases(), 300)
+                .await
+                .expect("a NIL reply is an ANSWER, not a transport failure"),
+            Creation::Collision,
+        );
+        // Exactly one attempt was made, and it carried NX: the incumbent's value was
+        // never sent a second time and no unguarded write followed the refusal.
+        let commands = recorded(&seen);
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0][3], "NX");
     }
 
     #[tokio::test]
@@ -299,9 +368,9 @@ mod tests {
         // open leg closed on a merely degenerate window.
         for ttl_secs in [0, -5] {
             let (store, seen) = store_against("+OK\r\n").await;
-            store.store(KEY, &bases(), ttl_secs).await.expect("SET");
+            store.create(KEY, &bases(), ttl_secs).await.expect("SET");
             let commands = recorded(&seen);
-            assert_eq!(commands[0][4], "1000", "ttl_secs {ttl_secs} must clamp up");
+            assert_eq!(commands[0][5], "1000", "ttl_secs {ttl_secs} must clamp up");
         }
     }
 
@@ -364,7 +433,7 @@ mod tests {
         let (store, _) = store_against("-ERR backend down\r\n").await;
 
         let store_err = store
-            .store(KEY, &bases(), 300)
+            .create(KEY, &bases(), 300)
             .await
             .expect_err("an unrecorded open leg cannot be honoured cross-replica");
         let ContinuationStoreError::Unavailable { details } = store_err;

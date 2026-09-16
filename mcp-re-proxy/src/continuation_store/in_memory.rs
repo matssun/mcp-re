@@ -11,6 +11,7 @@
 use super::AsyncContinuationStore;
 use super::ContinuationFuture;
 use super::ContinuationStoreError;
+use super::Creation;
 use super::RetainedBases;
 
 /// A poisoned correlation map, as the verdict this store already has for it.
@@ -52,7 +53,7 @@ impl InMemoryContinuationStore {
         }
     }
 
-    /// Wall-clock seconds. The store owns its own clock because the trait's `store`
+    /// Wall-clock seconds. The store owns its own clock because the trait's `create`
     /// takes a DURATION, not an instant, so there is no caller-supplied `now` to
     /// anchor expiry to.
     fn now() -> i64 {
@@ -64,22 +65,31 @@ impl InMemoryContinuationStore {
 }
 
 impl AsyncContinuationStore for InMemoryContinuationStore {
-    fn store<'a>(
+    fn create<'a>(
         &'a self,
         key: &'a str,
         bases: &'a RetainedBases,
         ttl_secs: i64,
-    ) -> ContinuationFuture<'a, ()> {
+    ) -> ContinuationFuture<'a, Creation> {
         let key = key.to_string();
         let bases = bases.clone();
         Box::pin(async move {
             let now = Self::now();
+            // ONE lock across the test and the set. That is this tier's whole claim to
+            // atomicity: releasing it between the occupancy check and the insert would
+            // reopen the window two racing open legs land in, which is the shape
+            // `create` exists to refuse. The Redis twin gets the same property from
+            // `SET NX` rather than from a lock.
             let mut entries = self.entries.lock().map_err(poisoned)?;
             // Drop everything already expired on the way past, so an abandoned chain
-            // does not accumulate.
+            // does not accumulate — and so the occupancy test below reads LIVE entries
+            // only. An expired key is not a collision; it is a key that is free again.
             entries.retain(|_, (_, expires_at)| *expires_at > now);
+            if entries.contains_key(&key) {
+                return Ok(Creation::Collision);
+            }
             entries.insert(key, (bases, now.saturating_add(ttl_secs)));
-            Ok(())
+            Ok(Creation::Stored)
         })
     }
 

@@ -385,13 +385,14 @@ pub(in crate::http_profile_serve) mod tests {
     }
 
     impl AsyncContinuationStore for PeekRecordingStore {
-        fn store<'a>(
+        fn create<'a>(
             &'a self,
             _key: &'a str,
             _bases: &'a RetainedBases,
             _ttl_secs: i64,
-        ) -> crate::continuation_store::ContinuationFuture<'a, ()> {
-            Box::pin(async { Ok(()) })
+        ) -> crate::continuation_store::ContinuationFuture<'a, crate::continuation_store::Creation>
+        {
+            Box::pin(async { Ok(crate::continuation_store::Creation::Stored) })
         }
 
         fn peek<'a>(
