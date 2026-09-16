@@ -202,16 +202,25 @@ impl std::fmt::Debug for DelegatedEd25519SigningKey {
 }
 
 impl DelegatedEd25519SigningKey {
-    /// A signing key guarded by the default handshake-signature budget
-    /// ([`DEFAULT_TLS_SIGN_RATE_PER_SEC`] / [`DEFAULT_TLS_SIGN_BURST`]).
-    pub fn new(signer: Arc<dyn RawEd25519TlsSigner>) -> Self {
-        DelegatedEd25519SigningKey::with_budget(signer, Arc::new(TlsHandshakeSignBudget::default()))
-    }
-
-    /// A signing key guarded by a caller-supplied budget, so an embedder sized against a
-    /// different KMS quota (or several servers sharing one account) can hand the same
-    /// budget to each.
-    pub fn with_budget(
+    /// A signing key guarded by the budget its caller was given.
+    ///
+    /// Reachable only inside [`crate::delegated_tls`], which has exactly one producer:
+    /// [`resolver::DelegatedCertResolver::materialize`], the correspondence gate. This
+    /// wraps a live capability to invoke a non-exporting KMS or PKCS#11 key, and a
+    /// published constructor for it was MCP-RE's own shortcut past that gate — a
+    /// delegated-shaped handshake signer that had been checked against no credential and
+    /// drew on whatever bucket the caller chose.
+    ///
+    /// Narrowing does not make an unbudgeted delegated signer unconstructible, and is not
+    /// claimed to: `rustls::sign::SigningKey` and [`RawEd25519TlsSigner`] are public
+    /// traits, so an embedder can write its own. What it removes is this crate publishing
+    /// the shortcut and then documenting elsewhere that the gate is the only way in.
+    ///
+    /// The budget-free sibling is gone with it. It minted
+    /// `TlsHandshakeSignBudget::default()` per key, so two keys built that way shared no
+    /// bucket — the opposite of what the listener's budget is for — and its only callers
+    /// were this module's own tests.
+    pub(in crate::delegated_tls) fn with_budget(
         signer: Arc<dyn RawEd25519TlsSigner>,
         budget: Arc<TlsHandshakeSignBudget>,
     ) -> Self {
@@ -358,9 +367,10 @@ mod tests {
 
     #[test]
     fn offers_ed25519_only() {
-        let key = DelegatedEd25519SigningKey::new(Arc::new(LocalEd25519(
-            McpReSigningKey::from_seed_bytes(&[1u8; 32]),
-        )));
+        let key = DelegatedEd25519SigningKey::with_budget(
+            Arc::new(LocalEd25519(McpReSigningKey::from_seed_bytes(&[1u8; 32]))),
+            Arc::new(TlsHandshakeSignBudget::default()),
+        );
         assert_eq!(key.algorithm(), SignatureAlgorithm::ED25519);
         assert!(key.choose_scheme(&[SignatureScheme::ED25519]).is_some());
         // No Ed25519 on offer → fail closed (no signer), never a wrong algorithm.
@@ -371,9 +381,10 @@ mod tests {
 
     #[test]
     fn signer_scheme_is_ed25519_and_signature_is_64_bytes() {
-        let key = DelegatedEd25519SigningKey::new(Arc::new(LocalEd25519(
-            McpReSigningKey::from_seed_bytes(&[2u8; 32]),
-        )));
+        let key = DelegatedEd25519SigningKey::with_budget(
+            Arc::new(LocalEd25519(McpReSigningKey::from_seed_bytes(&[2u8; 32]))),
+            Arc::new(TlsHandshakeSignBudget::default()),
+        );
         let signer = key
             .choose_scheme(&[SignatureScheme::ED25519])
             .expect("signer");
@@ -399,7 +410,10 @@ mod tests {
                 )
             }
         }
-        let key = DelegatedEd25519SigningKey::new(Arc::new(ShortSig));
+        let key = DelegatedEd25519SigningKey::with_budget(
+            Arc::new(ShortSig),
+            Arc::new(TlsHandshakeSignBudget::default()),
+        );
         let signer = key.choose_scheme(&[SignatureScheme::ED25519]).unwrap();
         assert!(signer.sign(b"x").is_err());
     }
