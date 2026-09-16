@@ -437,6 +437,127 @@ fn a_served_notification_is_retained_like_any_other_accepted_exchange() {
     );
 }
 
+/// **R11-461, the hostile control.** A caller that can produce a post-dispatch refusal on
+/// demand must not be able to accumulate `.pending` crossings.
+///
+/// An unrecognised `resultType` is refused AFTER the dispatch — the backend ran, and MCP
+/// 2026-07-28 requires the unrecognised one be rejected. When the retention hook sat only on
+/// the success exits, every such exchange left a `DispatchCommitted` marker with no
+/// completion record. An operator reconciling then read thousands of *indeterminate*
+/// crossings that were in fact ordinary refusals, which is the signal the marker exists to
+/// carry being drowned by the cheapest thing a caller can do.
+///
+/// The invariant: a `.pending` marker means *this request crossed the execution threshold
+/// AND no durable retained terminal exchange discharges that responsibility.* The proxy
+/// holds the exact signed refusal it is about to serve, so it can discharge it — and the
+/// archive then records what happened instead of saying only *unaccounted for*.
+#[test]
+fn a_post_dispatch_refusal_leaves_no_dangling_crossing() {
+    let scratch = Scratch::new("refusal-retained");
+    let retention =
+        Arc::new(EvidenceRetention::open(scratch.join("evidence")).expect("open retention"));
+    let dispatches = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let proxy = build_server_refusing(Some(Arc::clone(&retention)), Arc::clone(&dispatches));
+
+    let status = serve_one(&proxy, "nonce-transparency-postdispatch-refusal-1");
+    assert_ne!(status, 200, "an unrecognised resultType is refused");
+    assert_eq!(
+        dispatches.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "the refusal is POST-dispatch: the backend ran, which is what makes the crossing \
+         real"
+    );
+
+    assert_eq!(
+        retention.pending_reservations().expect("list"),
+        Vec::<String>::new(),
+        "the refusal is a terminal the proxy constructed and retained, so the crossing is \
+         discharged; a surviving marker here would say the exchange is unaccounted for when \
+         the archive holds exactly what happened"
+    );
+    let retained: Vec<_> = std::fs::read_dir(scratch.join("evidence"))
+        .expect("the store directory exists")
+        .filter_map(Result::ok)
+        .filter(|e| !e.file_name().to_string_lossy().ends_with(".pending"))
+        .collect();
+    assert_eq!(
+        retained.len(),
+        1,
+        "the served refusal IS the terminal hop, and the archive records it"
+    );
+}
+
+/// **The mirror.** A deployment with retention OFF still serves the same refusal.
+///
+/// Without it the control above passes against a proxy that refuses to serve anything it
+/// cannot retain — which would turn every unretainable refusal into a different refusal and
+/// lose the cause the client needs.
+#[test]
+fn a_post_dispatch_refusal_is_served_the_same_where_nothing_is_retained() {
+    let dispatches = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let with_store = Scratch::new("refusal-mirror");
+    let retention =
+        Arc::new(EvidenceRetention::open(with_store.join("evidence")).expect("open retention"));
+    let retained_status = serve_one(
+        &build_server_refusing(Some(retention), Arc::clone(&dispatches)),
+        "nonce-transparency-postdispatch-mirror-1",
+    );
+
+    let bare_status = serve_one(
+        &build_server_refusing(None, Arc::clone(&dispatches)),
+        "nonce-transparency-postdispatch-mirror-2",
+    );
+
+    assert_eq!(
+        retained_status, bare_status,
+        "retention changes what the ARCHIVE holds, never what the client is told"
+    );
+    assert_eq!(
+        dispatches.load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "both exchanges crossed the threshold"
+    );
+}
+
+/// An inner plane that answers with an MCP result the protocol does not recognise, so the
+/// exchange is refused AFTER the dispatch.
+fn build_server_refusing(
+    retention: Option<Arc<EvidenceRetention>>,
+    dispatches: Arc<std::sync::atomic::AtomicUsize>,
+) -> HttpProfileProxy {
+    let config = server_config();
+    let wiring = mcp_re_proxy::build_delegated_signing(&signing_plan(&config), root_key());
+    let mut rotor = wiring.rotor;
+    rotor.rotate(NOW).expect("first delegated key");
+    let expected_audience = AudienceTuple {
+        audience_id: config.audience.clone(),
+        target_uri: config.target_uri.clone(),
+        route: config.route.clone(),
+    };
+    let proxy = HttpProfileProxy::new_delegated(
+        resolver(),
+        expected_audience,
+        AsyncReplayTier::new(
+            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ),
+        ProxyDispatchConfig {
+            fleet_strict: false,
+            tier: None,
+        },
+        Box::new(move |_forwarded: &[u8]| -> Vec<u8> {
+            dispatches.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            br#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"something_new"}}"#.to_vec()
+        }),
+        300,
+        Arc::clone(&wiring.signer),
+    );
+    match retention {
+        Some(retention) => proxy.with_evidence_retention(retention),
+        None => proxy,
+    }
+}
+
 /// The whole vertical: serve, retain, reconstruct, attest, register, verify offline.
 #[test]
 fn a_served_call_becomes_an_offline_verifiable_receipt() {

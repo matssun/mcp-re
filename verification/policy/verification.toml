@@ -2468,7 +2468,8 @@ paths = [
   # whose paths are globs can declare no in-crate control at all. This is the first unit to
   # cite one; the check refuses it until the file is spelled out, which is the message it
   # prints. The glob still owns the subtree — this entry owns the CITATION.
-  "mcp-re-proxy/src/http_profile_serve/retention.rs",
+  "mcp-re-proxy/src/http_profile_serve/retention/mod.rs",
+  "mcp-re-proxy/src/http_profile_serve/retention/outcome.rs",
   "mcp-re-proxy/src/async_serve/request.rs",
   "mcp-re-proxy/src/async_serve/mod.rs",
 ]
@@ -2492,6 +2493,10 @@ tested_symbols = [
   "tests/integration#refusal_site_totality_test::the_one_post_exchange_frame_exit_advertises_no_retry",
   "tests/integration#refusal_site_totality_test::the_retry_contract_is_derived_from_the_exchange_machine",
   "tests/integration#refusal_site_totality_test::the_rules_would_catch_each_regression",
+  # R11-461. A completion that did NOT land is its own answer: `NotConfigured` and
+  # `Retained` both mean the store owes nothing further, `Failed` is neither, and the success
+  # exit's indeterminate refusal is what folding it onto the safe side would delete.
+  "lib#http_profile_serve::retention::tests::a_failed_completion_is_not_accounted_for_and_the_other_two_are",
 ]
 
 [[unit]]
@@ -3834,7 +3839,7 @@ test_features = ["aws_kms_keysource", "gcp_kms_keysource"]
 [[unit]]
 id = "proxy.retention_commitment"
 class = "V0"
-description = "WHEN the deployment became answerable for an exchange, as two durable stages under two names: an obligation accepted, which asserts nothing about execution and withdraws itself, and a crossing of the execution threshold, which is recorded by renaming the first and survives being dropped."
+description = "WHEN the deployment became answerable for an exchange, as two durable stages under two names: an obligation accepted, which asserts nothing about execution and withdraws itself, and a crossing of the execution threshold, which is recorded by renaming the first, survives being dropped, and is discharged by the terminal response the exchange actually served — refusal included."
 paths = [
   "mcp-re-proxy/src/transparency/durability.rs",
   "mcp-re-proxy/src/transparency/durable_job.rs",
@@ -3849,6 +3854,12 @@ paths = [
   # is never refused for capacity — rather than a separate authority.
   "mcp-re-proxy/src/transparency/durability_bounds.rs",
   "mcp-re-proxy/src/transparency/mod.rs",
+  # R11-461. WHICH terminals discharge the crossing is this unit's fact — the marker's
+  # meaning is *crossed, and no durable retained terminal discharges it* — and
+  # `retain_terminal_refusal` is where a refusal does. That is a different question from
+  # WHICH REFUSAL each failure earns, which stays with `proxy.refusal_site_totality` and is
+  # why `http_profile_serve/retention/` is still absent below.
+  "mcp-re-proxy/src/http_profile_serve/reply_assembly/accepted.rs",
 ]
 exported_contracts = []
 evidence = [
@@ -3856,13 +3867,17 @@ evidence = [
   # Declared so the probe below is not decoration: a `[[probe]]` naming a unit that does not
   # claim mutation evidence writes no record.
   "mutation://proxy/retention_commitment/two_stages_and_their_dispositions",
+  # R11-461's half is measured through the production `HttpProfileProxy`, because the claim
+  # is about which SERVED terminals discharge the crossing and nothing below the serving
+  # path can say that.
+  "test://proxy/transparency/retained_record_content",
 ]
 # `retained_record.rs` and `covered_set.rs` are deliberately ABSENT. WHAT a hop contains is
 # a different authority from WHEN responsibility was accepted and crossed, and this claim
 # says nothing about the first — the marker's own content is here only as an ABSENCE, which
 # is a fact about the marker rather than about the record.
 #
-# `http_profile_serve/retention.rs` is absent for the same reason in the other direction: it
+# `http_profile_serve/retention/` is absent for the same reason in the other direction: it
 # is the CONSUMER, and which refusal each failure earns belongs to the serving unit. Folding
 # it in would let one fingerprint stand for two owners' evidence.
 tested_symbols = [
@@ -3919,6 +3934,12 @@ tested_symbols = [
   # channel does not close when this authority closes its own. Without a budget the drop
   # waits for a writer that is waiting for a sender a parked reservation still holds.
   "lib#transparency::durability::tests::dropping_the_store_under_a_live_reservation_still_terminates",
+  # R11-461. The crossing is discharged by the terminal the exchange SERVED, and a caller
+  # who can produce a post-dispatch refusal on demand must not accumulate dangling ones. The
+  # mirror is not optional: the first control alone passes against a proxy that refuses to
+  # serve anything it cannot retain, which would lose the cause the client needs.
+  "tests/integration_async#transparency_e2e_test::a_post_dispatch_refusal_leaves_no_dangling_crossing",
+  "tests/integration_async#transparency_e2e_test::a_post_dispatch_refusal_is_served_the_same_where_nothing_is_retained",
 ]
 
 [[unit]]

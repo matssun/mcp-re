@@ -157,40 +157,45 @@ impl Retention {
         }
     }
 
-    /// Discharge the obligation with what was actually served.
+    /// Discharge the obligation with the terminal response this exchange will actually
+    /// return — success or refusal alike.
     ///
     /// ```text
-    /// ensures   Ok  => nothing is owed: the record is complete, or none was ever owed
-    ///           Err => 500 INDETERMINATE — the call executed and the record did not land
-    /// refusal   NOT free, and deliberately NOT 503
+    /// ensures   Retained      => the crossing is discharged and its marker is cleared
+    ///           NotConfigured => nothing was ever owed
+    ///           Failed        => the crossing is NOT discharged and its marker SURVIVES
     /// ```
     ///
-    /// The refusal names the exchange indeterminate rather than unavailable: the backend
-    /// has already run, and 503 is the status clients retry.
+    /// **`Failed` is a true answer, not a leftover** — see [`RetentionOutcome`]. It returns
+    /// three cases rather than a `Result<(), Refusal>` because its two callers need
+    /// different things from the failure: a SUCCESS exit turns it into a refusal, and a
+    /// REFUSAL exit cannot, having no further exit to fall through to. A `Result` would
+    /// have made the second caller discard an error.
     pub(super) async fn complete(
         &self,
         owed: &RetentionDisposition,
         request: &HttpRequest,
         response: &HttpResponse,
-    ) -> Result<(), Refusal> {
+    ) -> RetentionOutcome {
         let RetentionDisposition::Committed { store, crossing } = owed else {
-            return Ok(());
+            return RetentionOutcome::NotConfigured;
         };
         match store.complete(crossing, request, response).await {
-            Ok(_) => Ok(()),
+            Ok(_) => RetentionOutcome::Retained,
             Err(e) => {
                 eprintln!(
                     "evidence retention failed AFTER the call executed; the exchange is \
                      indeterminate and MUST NOT be blindly retried: {e}"
                 );
-                Err(Refusal::after_admission(
-                    McpReError::EvidenceRetentionIndeterminate,
-                    500,
-                ))
+                RetentionOutcome::Failed
             }
         }
     }
 }
+
+mod outcome;
+
+pub(in crate::http_profile_serve) use outcome::RetentionOutcome;
 
 #[cfg(test)]
 mod tests {
@@ -299,9 +304,32 @@ mod tests {
             headers: vec![],
             body: b"{}".to_vec(),
         };
-        assert!(retention
-            .complete(&disposition, &request(), &response)
-            .await
-            .is_ok());
+        assert_eq!(
+            retention
+                .complete(&disposition, &request(), &response)
+                .await,
+            RetentionOutcome::NotConfigured,
+            "an unconfigured deployment owes nothing, which is not the same fact as a \
+             record having landed"
+        );
+    }
+
+    /// The three outcomes are three values, and only two of them mean the exchange is
+    /// accounted for.
+    ///
+    /// Stated as a control because the property that matters is exactly that `Failed` does
+    /// not fold into the safe side. A `bool` here — or a `Result` whose error a refusal path
+    /// discards — would make *the completion did not land* indistinguishable from *nothing
+    /// was owed*, and the surviving `DispatchCommitted` marker is the only evidence an
+    /// operator has that an exchange is unaccounted for.
+    #[test]
+    fn a_failed_completion_is_not_accounted_for_and_the_other_two_are() {
+        assert!(RetentionOutcome::Retained.is_accounted_for());
+        assert!(RetentionOutcome::NotConfigured.is_accounted_for());
+        assert!(
+            !RetentionOutcome::Failed.is_accounted_for(),
+            "a failed completion leaves the crossing standing; its marker is the true answer"
+        );
+        assert_ne!(RetentionOutcome::Retained, RetentionOutcome::NotConfigured);
     }
 }
