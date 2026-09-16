@@ -247,6 +247,16 @@ increases what is known. **Nothing returns to `unreviewed`.** A registry may onl
 file that grows fails — whatever its status, neither reviewed state is a licence to grow —
 and a file that drops to the threshold fails until its entry is removed.
 
+**A measurement correction is not growth, and is the other way a baseline moves.** When
+this script's own counting changes, the old baseline described a size the file never had.
+That transition needs no §14 record and no `reviewed-exception` — being counted wrong is not
+a review, and correcting a number must not launder a disposition — but it buys nothing: the
+file's bytes must be IDENTICAL to `origin/main`, so a correction cannot travel with an edit
+to the file it re-baselines, and the new baseline must EQUAL the measurement, so the file is
+pinned at its true size and still cannot grow by one line. The worked examples are
+`signing_plane/mod.rs` `321 -> 340` and `trust_plane/mod.rs` `425 -> 448`, where a
+`#[cfg(test)]` **const** above a braced item had been hiding that item from the count.
+
 **Raising a baseline is its own event, and one authorization buys one transition.** The
 ratchet constrains a file against `baseline_prod_loc`; nothing used to constrain
 `baseline_prod_loc`, so raising it in the same commit as the growth switched the ratchet
