@@ -12,8 +12,11 @@
 //! asserting it could account for a call while the evidence was still in a queue.
 //!
 //! The queue is bounded by the reservations, not the other way round: a reservation
-//! contributes at most one queued job at any instant, so `K` reservations bound the queue at
-//! `K` jobs. Exceeding the ceiling is refused before dispatch.
+//! contributes at most TWO queued jobs at any instant — one awaited, plus the un-awaited
+//! rescind its guard emits as `commit_to_dispatch` returns — so `K` reservations bound the
+//! queue at `2K` jobs. [`super::durability_bounds::write_queue_capacity`] carries the
+//! census; this sentence and that one are the same claim, so they move together. Exceeding
+//! the ceiling is refused before dispatch.
 //!
 //! Nothing here decides what a record CONTAINS, and nothing in the record owner decides
 //! when a write has landed. Two copies of either fact is how they would come to disagree.
@@ -32,6 +35,7 @@ use crate::retained_evidence::FsRetainedArchive;
 use crate::retained_evidence::FsRetainedEvidenceStore;
 
 use super::dispatch_committed::PENDING_EXTENSION;
+use super::durable_job::AdmissionPermit;
 use super::durable_job::JobFault;
 use super::durable_job::JobKind;
 use super::durable_job::WriteJob;
@@ -180,12 +184,23 @@ impl EvidenceRetention {
         })
     }
 
-    /// Hand the writer a job and await its acknowledgement.
+    /// Hand the writer a security-bearing job and await its acknowledgement.
     ///
     /// The `await` is the point of the whole arrangement: the runtime worker is free
     /// while the fsync runs. Every failure mode — a full queue, a dead writer, a dropped
     /// acknowledgement — is a store failure, never a silent success.
-    async fn submit(&self, kind: JobKind) -> Result<(), RetentionError> {
+    ///
+    /// `slot` is the permit this call was admitted against, and the job holds it too. The
+    /// caller's future can be dropped at the `await` — hyper does exactly that when a
+    /// connection goes — and the job it already queued does not leave with it. Without the
+    /// job holding the slot, a cancelled call would hand its permit straight back and its
+    /// orphaned job would still be in the queue, so the reservation ceiling would stop
+    /// bounding the queue at all.
+    async fn submit(
+        &self,
+        kind: JobKind,
+        slot: Arc<AdmissionPermit>,
+    ) -> Result<(), RetentionError> {
         let (ack, acked) = tokio::sync::oneshot::channel();
         // `Full` and `Disconnected` are two facts and they demand two answers. A full queue
         // is genuine backpressure and an ordinary retry is correct — the capacity argument
@@ -194,7 +209,7 @@ impl EvidenceRetention {
         // accepted, so answering it as transient tells a client to retry something that
         // cannot succeed until this replica is restarted.
         self.jobs
-            .try_send(WriteJob::new(kind, ack))
+            .try_send(WriteJob::accounted(kind, ack, slot))
             .map_err(|e| match e {
                 std::sync::mpsc::TrySendError::Full(_) => RetentionError::Store(
                     std::io::Error::new(std::io::ErrorKind::WouldBlock, "retention queue is full"),
@@ -257,12 +272,12 @@ impl EvidenceRetention {
         &self,
         request: &HttpRequest,
     ) -> Result<ReservedBeforeDispatch, RetentionError> {
-        let permit = Arc::clone(&self.permits).try_acquire_owned().map_err(|_| {
+        let permit = Arc::new(Arc::clone(&self.permits).try_acquire_owned().map_err(|_| {
             RetentionError::Store(std::io::Error::new(
                 std::io::ErrorKind::WouldBlock,
                 "retention queue is full",
             ))
-        })?;
+        })?);
         let digest = EvidenceDigest::of(
             &serde_json::to_vec(&retained_request(request))
                 .map_err(|_| RetentionError::Malformed("retained request does not serialize"))?,
@@ -270,16 +285,19 @@ impl EvidenceRetention {
         let marker = self.marker_path(&digest, RESERVED_EXTENSION);
         // A marker that is not durable proves nothing about an obligation the exchange is
         // about to rely on, so the acknowledgement is awaited before the caller may go on.
-        self.submit(JobKind::PublishOrWithdraw {
-            path: marker.clone(),
-            bytes: ReservationMarker::of(&digest).to_bytes()?,
-        })
+        self.submit(
+            JobKind::PublishOrWithdraw {
+                path: marker.clone(),
+                bytes: ReservationMarker::of(&digest).to_bytes()?,
+            },
+            Arc::clone(&permit),
+        )
         .await?;
         Ok(ReservedBeforeDispatch::over(
             digest,
             marker,
             self.jobs.clone(),
-            Arc::new(permit),
+            permit,
         ))
     }
 
@@ -308,10 +326,13 @@ impl EvidenceRetention {
         reserved: ReservedBeforeDispatch,
     ) -> Result<DispatchCommitted, RetentionError> {
         let digest = reserved.digest().clone();
-        self.submit(JobKind::Commit {
-            reserved: reserved.marker().to_path_buf(),
-            committed: self.marker_path(&digest, PENDING_EXTENSION),
-        })
+        self.submit(
+            JobKind::Commit {
+                reserved: reserved.marker().to_path_buf(),
+                committed: self.marker_path(&digest, PENDING_EXTENSION),
+            },
+            reserved.permit(),
+        )
         .await?;
         Ok(DispatchCommitted::over(digest, reserved.permit()))
     }
@@ -340,11 +361,14 @@ impl EvidenceRetention {
         let bytes = serde_json::to_vec(&RetainedHopRecord::of(request, response))
             .map_err(|_| RetentionError::Malformed("retained hop does not serialize"))?;
         let digest = EvidenceDigest::of(&bytes);
-        self.submit(JobKind::Publish {
-            path: self.object_path(&digest)?,
-            bytes,
-            clear_marker: Some(self.marker_path(committed.digest(), PENDING_EXTENSION)),
-        })
+        self.submit(
+            JobKind::Publish {
+                path: self.object_path(&digest)?,
+                bytes,
+                clear_marker: Some(self.marker_path(committed.digest(), PENDING_EXTENSION)),
+            },
+            committed.permit(),
+        )
         .await?;
         Ok(digest)
     }
@@ -410,21 +434,24 @@ impl EvidenceRetention {
     ) -> Result<EvidenceDigest, RetentionError> {
         // The same admission permit a reservation holds, so the queue-capacity argument
         // covers every job that can reach the writer rather than most of them.
-        let _permit = Arc::clone(&self.permits).try_acquire_owned().map_err(|_| {
+        let permit = Arc::new(Arc::clone(&self.permits).try_acquire_owned().map_err(|_| {
             RetentionError::Store(std::io::Error::new(
                 std::io::ErrorKind::WouldBlock,
                 "retention queue is full",
             ))
-        })?;
+        })?);
         let bytes = serde_json::to_vec(&RetainedHopRecord::of(request, response))
             .map_err(|_| RetentionError::Malformed("retained hop does not serialize"))?;
         let digest = EvidenceDigest::of(&bytes);
         let path = self.object_path(&digest)?;
-        self.submit(JobKind::Publish {
-            path,
-            bytes,
-            clear_marker: None,
-        })
+        self.submit(
+            JobKind::Publish {
+                path,
+                bytes,
+                clear_marker: None,
+            },
+            permit,
+        )
         .await?;
         Ok(digest)
     }
@@ -837,6 +864,52 @@ mod tests {
                 .await
                 .expect("a committed call always has somewhere to put its evidence");
         }
+    }
+
+    /// The slot is held across the whole chain, and the pre-dispatch rescind does not own it.
+    ///
+    /// `reserve -> commit_to_dispatch -> complete` are the awaited, security-bearing durable
+    /// transitions, and the permit spans all three. `commit_to_dispatch` takes the
+    /// reservation BY VALUE, so the rescind it emits on the way out is best-effort cleanup
+    /// with no permit ownership — its only possible residue is a stale `.reserved` marker,
+    /// and the transient overlap it causes is what the second half of `2K` accounts for.
+    ///
+    /// At a ceiling of one this reads directly: if any of those steps returned the slot, the
+    /// successor admitted here would have its jobs behind the same permit as the outstanding
+    /// completion, and the queue bound would stop being a bound.
+    #[tokio::test]
+    async fn a_committed_call_holds_its_slot_until_the_completion_has_landed() {
+        let dir = TempDir::new("slot-span");
+        let retention = EvidenceRetention::open_bounded(&dir.0, 1).expect("open");
+        let (request, response) = exchange();
+        let mut successor = request.clone();
+        successor.body.push(0x01);
+
+        let reserved = retention.reserve(&request).await.expect("reserve");
+        let committed = retention
+            .commit_to_dispatch(reserved)
+            .await
+            .expect("commit");
+        assert!(
+            retention.reserve(&successor).await.is_err(),
+            "the reservation dropped inside `commit_to_dispatch`, and its rescind is \
+             cleanup — neither hands the slot on"
+        );
+
+        retention
+            .complete(&committed, &request, &response)
+            .await
+            .expect("complete");
+        assert!(
+            retention.reserve(&successor).await.is_err(),
+            "a completed commitment still holds the slot; the last holder is what returns it"
+        );
+
+        drop(committed);
+        retention
+            .reserve(&successor)
+            .await
+            .expect("and then the successor is admitted");
     }
 
     /// The two stages are two artefacts, and the commitment is the move between them.

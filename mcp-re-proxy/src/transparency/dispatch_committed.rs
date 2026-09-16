@@ -49,8 +49,9 @@ pub struct DispatchCommitted {
     digest: EvidenceDigest,
     /// Held for the whole span from `reserve` to `complete`, which is what guarantees the
     /// completion job always has somewhere to go. Shared with the reservation this was
-    /// advanced from, which drops immediately afterwards.
-    _permit: Arc<AdmissionPermit>,
+    /// advanced from, which drops immediately afterwards, and with the completion job
+    /// itself, so a cancelled caller does not hand the slot back ahead of its own write.
+    permit: Arc<AdmissionPermit>,
     completion: AtomicBool,
 }
 
@@ -64,7 +65,7 @@ impl DispatchCommitted {
     pub(super) fn over(digest: EvidenceDigest, permit: Arc<AdmissionPermit>) -> Self {
         DispatchCommitted {
             digest,
-            _permit: permit,
+            permit,
             completion: AtomicBool::new(true),
         }
     }
@@ -72,6 +73,11 @@ impl DispatchCommitted {
     /// The request digest this commitment is keyed by.
     pub fn digest(&self) -> &EvidenceDigest {
         &self.digest
+    }
+
+    /// The slot this crossing was admitted against, shared onward to its completion job.
+    pub(super) fn permit(&self) -> Arc<AdmissionPermit> {
+        Arc::clone(&self.permit)
     }
 
     /// Take this commitment's single completion, reporting whether it was still there.

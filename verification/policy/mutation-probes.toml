@@ -3789,3 +3789,32 @@ weakening = """
 expect_red = [
   "lib#trust_plane::snapshot::tests::a_document_past_the_read_bound_is_refused_and_says_so",
 ]
+
+[[probe]]
+id = "M156-a-queued-job-outlives-its-cancelled-caller"
+unit = "proxy.retention_commitment"
+conjunct = "the reservation ceiling bounds the write queue, which requires the slot to be held for as long as the job is in it"
+# The weakening restores the code as it shipped: the slot lived in the caller's future and the
+# job carried none. A request future dropped at its `await` — what hyper does to every
+# in-flight service future when a connection goes — then handed the slot straight back while
+# its job stayed queued, so repeated cancellations orphaned one job each and the ceiling
+# stopped bounding the queue at all.
+path = "mcp-re-proxy/src/transparency/durable_job.rs"
+anchor = """
+        WriteJob {
+            kind,
+            ack,
+            slot: Some(slot),
+        }
+"""
+weakening = """
+        drop(slot);
+        WriteJob {
+            kind,
+            ack,
+            slot: None,
+        }
+"""
+expect_red = [
+  "lib#transparency::durable_job::tests::an_accounted_job_holds_its_slot_after_its_caller_is_gone",
+]

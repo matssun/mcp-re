@@ -3749,6 +3749,20 @@ tested_symbols = [
   # r11 R11-644. The capacity refusal is only retry-safe while it is distinguishable from a
   # store that will never accept anything again, and both used to answer `WouldBlock`.
   "lib#transparency::durability::tests::a_dead_writer_is_a_terminal_fault_and_a_full_queue_is_not",
+  # r11 R11-656. WHO owns the admission permit, which is what makes `2K` a bound rather than
+  # an estimate: the awaited chain `reserve -> commit_to_dispatch -> complete` holds it
+  # throughout, and the best-effort rescind the reservation emits as it is consumed owns
+  # nothing. Without these two, a permit returned at the commitment would admit a successor
+  # alongside an outstanding completion — three jobs behind one slot — and every control
+  # above would still pass.
+  "lib#transparency::durability::tests::a_committed_call_holds_its_slot_until_the_completion_has_landed",
+  "lib#transparency::reserved_before_dispatch::tests::a_reservation_advanced_to_a_commitment_keeps_the_slot_when_it_drops",
+  # And the cancellation half, stated where it is decidable rather than raced against the
+  # writer: the job holds the slot, so a caller dropped at its `await` does not hand one
+  # back while its orphaned job is still queued. A store-level reproduction of this would
+  # be a timing test over a decision the job type already owns.
+  "lib#transparency::durable_job::tests::an_accounted_job_holds_its_slot_after_its_caller_is_gone",
+  "lib#transparency::durable_job::tests::a_cleanup_job_owns_no_slot",
   # r11 R11-633/635. `reserve` hands every reservation a clone of the job sender, so the
   # channel does not close when this authority closes its own. Without a budget the drop
   # waits for a writer that is waiting for a sender a parked reservation still holds.
