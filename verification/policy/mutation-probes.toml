@@ -3572,3 +3572,43 @@ weakening = """
 expect_red = [
   "tests/integration_async#pdp_authorization_serving_test::the_record_names_the_enrolled_authority_and_not_the_one_the_decision_claims_to_be",
 ]
+
+[[probe]]
+id = "M147-every-clone-budgets-against-one-account"
+unit = "proxy.async_replay_retention"
+conjunct = "the per-core tiers of one replica hold one retention account between them, not one each"
+# The weakening gives every clone a ledger of its own. Nothing is admitted that a single
+# tier would not admit, and every other control in the module holds ONE tier — so all of
+# them stay green while a deployment's real ceiling is multiplied by its core count.
+# Measured by hand before registering: under this weakening exactly ONE control fails.
+path = "mcp-re-proxy/src/async_replay/mod.rs"
+anchor = """
+#[derive(Clone)]
+pub struct AsyncReplayTier {
+    store: Arc<dyn AsyncAtomicReplayStore>,
+    freshness: FreshnessWindow,
+    /// Shared by every clone, so the per-core tiers of one replica budget against one
+    /// account rather than one each.
+    ledger: Arc<RetentionLedger>,
+}
+"""
+weakening = """
+pub struct AsyncReplayTier {
+    store: Arc<dyn AsyncAtomicReplayStore>,
+    freshness: FreshnessWindow,
+    ledger: Arc<RetentionLedger>,
+}
+
+impl Clone for AsyncReplayTier {
+    fn clone(&self) -> Self {
+        AsyncReplayTier {
+            store: Arc::clone(&self.store),
+            freshness: self.freshness,
+            ledger: Arc::new(RetentionLedger::new(ASYNC_MAX_ENTRIES)),
+        }
+    }
+}
+"""
+expect_red = [
+  "lib#async_replay::tests::every_clone_of_a_tier_budgets_against_the_same_account",
+]
