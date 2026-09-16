@@ -16,6 +16,7 @@ mod file;
 mod gcp;
 mod pin;
 mod pkcs11;
+mod role_identity;
 mod role_separation;
 
 pub use pin::read_pkcs11_pin;

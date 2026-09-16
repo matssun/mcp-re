@@ -3190,6 +3190,7 @@ description = "The relation between what the two custody machines materialized: 
 # comparison.
 paths = [
   "mcp-re-proxy/src/capability_materialization/key_source/role_separation.rs",
+  "mcp-re-proxy/src/capability_materialization/key_source/role_identity.rs",
   "mcp-re-proxy/src/capability_materialization/key_source/mod.rs",
 ]
 exported_contracts = []
@@ -3202,12 +3203,13 @@ evidence = ["test://proxy/materialization/signing_role_separation"]
 # this authority claiming a proposition it does not own.
 tested_symbols = [
   "lib#capability_materialization::key_source::role_separation::tests::a_deployment_whose_two_roles_are_one_key_cannot_be_materialized",
+  "lib#capability_materialization::key_source::role_separation::tests::a_role_that_produced_no_key_is_not_reported_as_a_separated_one",
   "lib#capability_materialization::key_source::role_separation::tests::two_distinct_roles_materialize",
   "lib#capability_materialization::key_source::role_separation::tests::an_incomparable_channel_credential_materializes",
   "lib#capability_materialization::key_source::role_separation::tests::a_source_over_absent_material_materializes_on_either_side",
-  "lib#capability_materialization::key_source::role_separation::tests::the_response_identity_round_trips_its_own_point",
-  "lib#capability_materialization::key_source::role_separation::tests::two_different_keys_have_two_different_identities",
-  "lib#capability_materialization::key_source::role_separation::tests::a_non_ed25519_credential_is_incomparable_rather_than_a_failure",
+  "lib#capability_materialization::key_source::role_identity::tests::the_response_identity_round_trips_its_own_point",
+  "lib#capability_materialization::key_source::role_identity::tests::two_different_keys_have_two_different_identities",
+  "lib#capability_materialization::key_source::role_identity::tests::a_non_ed25519_credential_is_incomparable_rather_than_a_failure",
 ]
 
 [[unit]]

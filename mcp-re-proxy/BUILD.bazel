@@ -206,6 +206,7 @@ _PROXY_LIB_SRCS = [
     "src/capability_materialization/key_source/mod.rs",
     "src/capability_materialization/key_source/pin.rs",
     "src/capability_materialization/key_source/pkcs11.rs",
+    "src/capability_materialization/key_source/role_identity.rs",
     "src/capability_materialization/key_source/role_separation.rs",
     "src/capability_materialization/mod.rs",
     "src/capability_materialization/revocation.rs",
