@@ -1,10 +1,12 @@
-# CodeQL triage — the two recurring Rust false positives
+# CodeQL triage — the recurring alert shapes and their standing verdicts
 
 CodeQL runs from [`.github/workflows/codeql.yml`](../../.github/workflows/codeql.yml)
 against [`.github/codeql/codeql-config.yml`](../../.github/codeql/codeql-config.yml):
-`push: main`, `merge_group`, and a weekly sweep. Two Rust rules produce essentially all
-of this repo's alerts, and neither has ever produced a true positive here. This page is
-the standing verdict so each new batch is triaged in one pass instead of re-derived.
+`push: main`, `merge_group`, and a weekly sweep, over the Rust code and the workflow
+files. Two Rust rules produce essentially all of this repo's alerts, and neither has ever
+produced a true positive here; the Actions analysis has produced one, and it was fixed.
+This page is the standing verdict so each new batch is triaged in one pass instead of
+re-derived.
 
 ## 1. `rust/hard-coded-cryptographic-value` — excluded by query id
 
@@ -73,6 +75,22 @@ That batch also introduced a **third taint source** alongside `Config::tls_cert`
 appears (test assert messages), and the same reasoning applies -- a public certificate is
 not key material.
 
+### The sources, and why each is not a secret
+
+| source | what it actually is |
+|---|---|
+| `Config::tls_cert` / `DeploymentRequest` credential chain | the **path** to the public PEM chain |
+| `cert_der` (`ocsp.rs`) | the DER of a **public** certificate |
+| `parse_cert_lifetime` ([`cli/channel_flags.rs`](../../mcp-re-proxy/src/cli/channel_flags.rs)) | a `Duration` parsed from `--max-client-cert-lifetime` — a **ceiling in seconds** |
+
+The third arrived on 2026-09-15 and produced a 17-alert batch by itself. It is the
+sharpest illustration of the heuristic at work: the flagged expression is the *return
+value of a number parser*, sensitive for no reason but the `cert` in its name, and once it
+reaches `DeploymentRequest` the field-insensitive smear reports every sink that prints any
+part of that request — four boot-posture lines (a CRL reload cadence, a trust-store reload
+window, a delegated-key TTL and issuer kid, an in-flight bound) and thirteen `#[cfg(test)]`
+assert and `panic!` messages. Not one of them reads the parsed lifetime, let alone a key.
+
 ### The one alert that was not just dismissed
 
 `app.rs`'s inner-backend startup line was a Shape A false positive like the rest -- the
@@ -108,7 +126,37 @@ the argument.
 An alert that fits **neither** shape is not covered by this verdict — a logged value that
 is itself secret-derived is a real finding, and the fix is to stop logging it.
 
-## The exclusion this repo deliberately has not taken
+## 3. `actions/cache-poisoning/poisonable-step` — fixed, not dismissed
+
+Reported once, on [`release-assurance.yml`](../../.github/workflows/release-assurance.yml)
+(alert #297, 2026-09-15). Unlike the Rust rules above, this one named something real.
+
+The lane is `workflow_dispatch` with a `ref` input, and it **executes the target ref's own
+tooling**: `tools/verification/release-assurance` and the five authorities it calls are
+Python read from the checkout. Three facts compose into the finding:
+
+- a dispatched run's Actions cache scope is the **dispatch branch's**, normally `main`, and
+  every branch cut from `main` restores that scope — `ci.yml` restores `~/.cache/bazel`
+  from it under a loose `bazel-${{ runner.os }}-` restore key;
+- the job runs on the **persistent self-hosted host**, which also holds the durable SLO
+  evidence store at `/opt/verification/slo`;
+- the checked-out ref was constrained only by being *a ref of this repository*.
+
+The header's original argument — a repo ref is a trusted commit, unlike a fork head — is
+the thing the alert refuted. A collaborator can point a branch, or a tag, at any code; "it
+is one of ours" is a claim about the pusher, not about the commit.
+
+The fix is a guard step that refuses a target not reachable from `origin/main`, placed
+before anything from the checkout executes. It lives in the workflow file, which comes from
+the **dispatch branch**, so the target ref cannot edit the guard that admits it.
+Qualifying an unmerged commit is now refused on purpose; relaxing the set to `origin/*` or
+to tags would restore exactly the property the alert names.
+
+CodeQL's query is syntactic — checkout of `inputs.ref`, then a `run:` step — so it does not
+see the guard and the alert may return. It is then dismissed against **this** section, not
+against the old header sentence, and only while the guard is still in the file.
+
+## The exclusion this repo deliberately has not taken (`rust/cleartext-logging`)
 
 Excluding `rust/cleartext-logging` by query id, the way shape 1 is excluded, would end
 the recurrence outright. It is left enabled on purpose: the FP rate is a naming heuristic
