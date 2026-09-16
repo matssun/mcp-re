@@ -34,7 +34,9 @@ use mcp_re_http_profile::DelegationClaims;
 use mcp_re_http_profile::DelegationHeader;
 use mcp_re_http_profile::KeyLifecycleEvent;
 
+mod reader;
 mod retry_schedule;
+pub use reader::DelegatedSigningReader;
 pub use retry_schedule::rotation_backoff;
 
 /// Cold-path rotation observability (ADR-MCPRE-052 §6, MCPRE-122). Plain atomic
@@ -138,6 +140,18 @@ impl DelegatedServerSigner {
         }
     }
 
+    /// Narrow this shared signer to its READ half, for a value on the serving path.
+    ///
+    /// The serving path needs [`current`](Self::current) and nothing else, while an
+    /// `Arc<Self>` also confers [`publish`](Self::publish), [`retire`](Self::retire) and
+    /// [`retire_permanently`](Self::retire_permanently). A receipt path holding the wide
+    /// handle can withdraw the very key it signs under; holding a
+    /// [`DelegatedSigningReader`] it cannot, and that is a fact about the type rather than
+    /// about which methods the serving code happens to call.
+    pub fn reader(self: &Arc<Self>) -> DelegatedSigningReader {
+        DelegatedSigningReader::over(Arc::clone(self))
+    }
+
     /// The cold-path rotation metrics (rotor health; never the hot path).
     pub fn metrics(&self) -> &DelegatedRotationMetrics {
         &self.metrics
@@ -202,6 +216,21 @@ impl DelegatedServerSigner {
     /// `None` before the first issuance, after retirement, or once `now >= exp` —
     /// the fail-closed expiry bound (the credential is never honored past its
     /// window, matching the verifier, ADR-MCPRE-052 §6).
+    ///
+    /// # What retirement bounds, and what it does not
+    ///
+    /// The returned `Arc` is a usable signing capability that its holder keeps: a
+    /// [`retire`](Self::retire) or [`retire_permanently`](Self::retire_permanently) landing
+    /// afterwards does not reach into it. So retirement is not an instant at which signing
+    /// stops everywhere — it is the instant after which **no new window opens**, and the
+    /// windows already taken run to their own `exp`.
+    ///
+    /// That is the intended bound rather than a gap. An exchange that has committed to
+    /// answering must be able to sign its receipt, which is exactly why
+    /// `http_profile_serve::SigningWindow` snapshots the credential once per exchange
+    /// instead of re-reading it at the reply. The bound on the
+    /// outstanding authority is therefore an exchange's lifetime, and the credential's own
+    /// `exp` above that — never longer than either.
     pub fn current(&self, now: i64) -> Option<Arc<ActiveDelegatedKey>> {
         if self.is_terminal() {
             return None;
