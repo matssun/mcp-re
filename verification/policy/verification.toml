@@ -5731,12 +5731,15 @@ tested_symbols = [
 [[unit]]
 id = "core.replay_seam"
 class = "V0"
-description = "The replay seam: an injected cache keyed by the verified (signer, principal, nonce) triple, consulted only after the signature verifies, returning a DECISION on success and an operational ERROR on failure — never an allow. Every failure the reference cache owns is a value rather than a panic, and every implementation self-declares a durability class that defaults, fail-closed, to the single-process one."
+description = "The replay seam: an injected cache keyed by the verified (signer, audience, nonce) triple — the principal is what a retained entry is CHARGED to and is deliberately not part of the key — consulted only after the signature verifies, returning a DECISION on success and an operational ERROR on failure — never an allow. Every failure the reference cache owns is a value rather than a panic, and every implementation self-declares a durability class that defaults, fail-closed, to the single-process one."
 paths = ["mcp-re-core/src/replay.rs"]
 exported_contracts = []
 evidence = ["test://core/replay_seam/decision_and_outage"]
 # The key's shape is the first three: a nonce is fresh again under a different signer or a
-# different principal, which is what makes the triple a triple rather than a nonce.
+# different AUDIENCE, which is what makes the triple a triple rather than a nonce. There is no
+# principal control because the principal is not in the key — it is the retention budget's
+# identity, measured by the async tier, and a control here would pin a discriminator the cache
+# does not have.
 tested_symbols = [
   "lib#replay::tests::first_insert_is_fresh",
   "lib#replay::tests::same_triple_again_is_replay",

@@ -6251,9 +6251,16 @@ statement = """
 The replay seam returns a DECISION on success — `Fresh` or `Replay` — and an operational
 ERROR on failure. There is no third arm and no path on which a failure yields `Fresh`.
 
-The key is the verified triple `(signer, principal, nonce)`: the same nonce under a different
-signer, or accounted to a different principal, is fresh, and an entry becomes admissible again
+The key is the verified triple `(signer, audience, nonce)`: the same nonce under a different
+signer, or presented to a different audience, is fresh, and an entry becomes admissible again
 only after its retain-until instant has passed.
+
+The PRINCIPAL is not part of that key and must not be read as if it were. It is the identity a
+retained entry is CHARGED to, which is a different question with a different answer: `signer`
+carries the keyid so two keys of one subject never collapse onto one replay key, while a budget
+charged per key would hand a subject one allowance per key it holds — routine during rotation,
+and in a fleet issuing a client key per replica. Two nonces alike under one signer and audience
+are the same entry however they are accounted.
 
 Every failure the reference cache owns is an error VALUE and not a panic — a poisoned lock and
 the entry ceiling both refuse as an outage, and a clone of a poisoned cache admits nothing.
@@ -6286,9 +6293,12 @@ NOT THE PIPELINE'S ORDERING. That the cache is consulted only AFTER the signatur
 so invalid-signature garbage cannot burn a legitimate nonce — is the verification pipeline's,
 and is stated by its owner rather than measured here.
 
-NOT A RETENTION BOUND. What is established is that an entry is readmitted only after its
-retain-until instant; whether the caller computed that instant from the right clock is the
-caller's.
+NOT A RETENTION BOUND, AND NOT A BUDGET. What is established is that an entry is readmitted
+only after its retain-until instant; whether the caller computed that instant from the right
+clock is the caller's. What a principal may OCCUPY is the async tier's, which is why
+`ReplayKey::principal` reaches `Charge::reserve` and is deliberately absent from
+`composite_replay_key`. This claim is about which requests collide, not about who pays for
+the collision space.
 
 Executable, class V0, measured in the default cargo lane.
 """
