@@ -33,8 +33,10 @@
 //! member of `McpReError::wire_code()`, and that the success set is exactly the
 //! two-item allowlist below.
 
+mod half;
 mod reason_label;
 
+pub use half::AuditHalf;
 pub use reason_label::reason_label;
 
 use crate::error::McpReError;

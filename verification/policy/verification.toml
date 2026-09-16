@@ -5914,8 +5914,16 @@ tested_symbols = [
 [[unit]]
 id = "core.audit_vocabulary"
 class = "V0"
-description = "What a security record may say: a rejection reason is a frozen Core token by TYPE, since no constructor takes a string; the success set is exactly two events the error enum cannot express and the key-lifecycle set exactly three; and the non-normative display label is never a token."
-paths = ["mcp-re-core/src/audit.rs", "mcp-re-core/src/audit/reason_label.rs"]
+description = "What a security record may say: a rejection reason is a frozen Core token by TYPE, since no constructor takes a string; the success set is exactly two events the error enum cannot express and the key-lifecycle set exactly three; the non-normative display label is never a token; and every pinned event type names the exchange half it describes, so no consumer keeps a second copy of that mapping."
+paths = [
+  "mcp-re-core/src/audit.rs",
+  "mcp-re-core/src/audit/reason_label.rs",
+  # R11-161. The exchange half is a PROJECTION of the sets above and not a new token — the
+  # drift guard still reports the success set as exactly two and the lifecycle set as exactly
+  # three. It is here because the mapping is part of what the vocabulary MEANS, and because a
+  # consumer deriving it from a list of its own is the defect the projection removes.
+  "mcp-re-core/src/audit/half.rs",
+]
 exported_contracts = []
 evidence = ["test://core/audit_vocabulary/frozen_reasons"]
 # The in-crate controls state the type property. The conformance guard is what makes it a
@@ -5932,6 +5940,15 @@ tested_symbols = [
   # indistinguishable in a record.
   "lib#audit::reason_label::tests::a_label_is_never_a_wire_token",
   "lib#audit::reason_label::tests::every_verdict_has_its_own_sentence",
+  # R11-161. `event_type` is a `&'static str`, so the half mapping's match cannot be checked
+  # for exhaustiveness by the compiler and a newly minted event would fall silently into
+  # `NonExchange` — the direction that reads as an ANSWER rather than as an error. The first
+  # control walks all three pinned allowlists and is what makes the catch-all safe; the
+  # second reads the halves off the real constructors, so a constructor that changed its
+  # `event_type` moves it.
+  "lib#audit::half::tests::every_pinned_event_type_is_given_a_half",
+  "lib#audit::half::tests::the_constructors_land_on_the_half_their_names_claim",
+  "lib#audit::half::tests::the_three_halves_are_distinguishable",
 ]
 
 # The deployable client's local serving pipeline. `client.local_ingress_authority` (THM-0091)
