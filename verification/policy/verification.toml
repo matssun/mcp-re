@@ -3432,6 +3432,47 @@ tested_symbols = [
 # leaf about agreement, not about reachability. Folding the second into the first would
 # widen an authority by renaming it, which #742 rules out in as many words.
 [[unit]]
+id = "proxy.scrapi_registration_leaf"
+class = "V0"
+description = "ONE draft revision's registration state machine — what `draft-ietf-scitt-scrapi-11` does with a Signed Statement, and what each of its answers MEANS. Certainty is decided here and once: only an explicit client-error refusal and an explicit rate limit are definitive negatives, while a transport failure while submitting, a 201 whose body will not parse, a 202 with no Location and an exhausted budget all leave registration INDETERMINATE. Everything version-specific stops at this leaf; the capability above it holds a refusal vocabulary that would read the same against a successor protocol."
+paths = [
+  "mcp-re-proxy/src/transparency/auditor/registration/scrapi/mod.rs",
+  "mcp-re-proxy/src/transparency/auditor/registration/scrapi/answer.rs",
+  "mcp-re-proxy/src/transparency/auditor/registration/scrapi/fault.rs",
+  "mcp-re-proxy/src/transparency/auditor/registration/scrapi/wire.rs",
+]
+exported_contracts = []
+evidence = ["test://proxy/transparency/scrapi_registration_certainty"]
+# The capsule-anchor leaf is deliberately NOT here. Two registration mechanisms with
+# different wire vocabularies and different fault algebras are two units: a union would
+# invent an exclusion the deployment does not have, and a peer differing on a leaf's own
+# axes is a SECOND leaf rather than a configuration of the first.
+tested_symbols = [
+  "lib#transparency::auditor::registration::scrapi::tests::a_synchronous_registration_yields_a_receipt_that_verifies",
+  "lib#transparency::auditor::registration::scrapi::tests::an_asynchronous_registration_polls_until_the_receipt_is_ready",
+  "lib#transparency::auditor::registration::scrapi::tests::a_client_error_is_a_definitive_refusal",
+  "lib#transparency::auditor::registration::scrapi::tests::every_post_submission_fault_is_indeterminate",
+  "lib#transparency::auditor::registration::scrapi::tests::an_exhausted_budget_is_indeterminate",
+  "lib#transparency::auditor::registration::scrapi::tests::a_lost_receipt_resource_is_indeterminate_and_not_a_refusal",
+  "lib#transparency::auditor::registration::scrapi::tests::a_transport_failure_while_polling_is_retried_within_the_budget",
+  "lib#transparency::auditor::registration::scrapi::tests::a_rate_limit_is_throttled_and_a_503_is_not",
+  "lib#transparency::auditor::registration::scrapi::tests::a_location_outside_the_service_is_never_fetched",
+  "lib#transparency::auditor::registration::scrapi::tests::the_submitted_body_is_the_statement_verbatim",
+  "lib#transparency::auditor::registration::scrapi::tests::the_protocol_revision_is_a_draft_and_names_itself",
+  "lib#transparency::auditor::registration::scrapi::answer::tests::a_submission_rate_limit_and_a_503_are_different_faults",
+  "lib#transparency::auditor::registration::scrapi::answer::tests::a_202_without_a_location_is_its_own_fault",
+  "lib#transparency::auditor::registration::scrapi::answer::tests::a_location_outside_the_service_is_refused_by_the_reader",
+  "lib#transparency::auditor::registration::scrapi::answer::tests::a_pending_answer_is_neither_success_nor_failure",
+  "lib#transparency::auditor::registration::scrapi::answer::tests::a_receipt_body_is_read_only_under_the_cose_media_type",
+  "lib#transparency::auditor::registration::scrapi::fault::tests::the_phase_reaches_the_message",
+  "lib#transparency::auditor::registration::scrapi::fault::tests::every_refusal_names_the_draft_revision",
+  "lib#transparency::auditor::registration::scrapi::fault::tests::only_a_pre_acceptance_answer_is_a_definitive_negative",
+  "lib#transparency::auditor::registration::scrapi::wire::tests::rate_limiting_is_not_a_refusal",
+  "lib#transparency::auditor::registration::scrapi::wire::tests::the_entries_url_has_exactly_one_separator",
+  "lib#transparency::auditor::registration::scrapi::wire::tests::the_cose_type_is_matched_past_its_parameters",
+]
+
+[[unit]]
 id = "proxy.outbound_destination"
 class = "V0"
 description = "A destination this proxy reaches out to has passed the guard its provenance requires: an operator-configured URL the scheme allowlist, a certificate-derived one that plus private-address protection over the address a parser actually resolves."
