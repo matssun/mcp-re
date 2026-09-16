@@ -3100,6 +3100,15 @@ tested_symbols = [
   "lib#delegated_wiring::tests::builds_and_first_rotate_publishes_a_snapshot",
   "lib#delegated_wiring::tests::ttl_bounds_the_published_snapshot",
   "lib#delegated_wiring::tests::failing_root_fails_closed_at_first_issuance",
+  # r11 R11-353. `delegated_response_signer.rs` has been in this unit's `paths` all along and
+  # its four controls appeared in no `tested_symbols`, so the file could be rewritten under a
+  # standing attestation. They are the RESPONSE seam's half of the same property this slice
+  # gives the producer half: a signature is re-verified under the key its owner advertises,
+  # and a seam that cannot is a fail-closed refusal rather than an unchecked pass-through.
+  "lib#delegated_response_signer::tests::delegated_signature_verifies_under_advertised_public_key",
+  "lib#delegated_response_signer::tests::signature_not_matching_advertised_key_fails_closed",
+  "lib#delegated_response_signer::tests::malformed_callback_signature_fails_closed",
+  "lib#delegated_response_signer::tests::delegated_sign_failure_propagates",
   "lib#delegated_server_signer::tests::metrics_count_success_and_reset_the_failure_streak",
   "lib#delegated_server_signer::tests::backoff_is_exponential_then_ceilinged",
   "lib#delegated_server_signer::tests::backoff_never_sleeps_past_a_still_valid_key",
