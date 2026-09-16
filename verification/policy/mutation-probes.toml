@@ -1974,7 +1974,7 @@ conjunct = "a live verdict implies the authoritative state is about the workload
 # because a generation is a per-workload counter and any workload at the same number
 # satisfies them. What makes this probe possible at all is that the state now HAS a subject
 # — before, there was no check here to delete.
-path = "mcp-re-http-profile/src/admission.rs"
+path = "mcp-re-http-profile/src/admission/mod.rs"
 anchor = """
             if state.admission_id != binding.admission_id {
                 return Err(HttpProfileError::AdmissionStateUnavailable);
