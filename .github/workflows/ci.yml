@@ -286,7 +286,9 @@ jobs:
       # structural claims: a lane no workflow runs must refuse rather than resolve empty,
       # and a workspace build-input change must widen to every unit.
       - name: Merge-readiness gate
-        run: python3 scripts/merge_readiness_gate.py --selftest
+        run: |
+          python3 scripts/merge_readiness_gate.py --selftest
+          python3 scripts/merge_verified_pr.py --selftest
 
       # ADR-MCPRE-061 §5 — THE TWO RATCHETS. Both existed and neither ran on the merge
       # path: `scripts/local_gate.sh` was their only caller, so a PR that did not run the

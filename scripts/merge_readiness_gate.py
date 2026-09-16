@@ -17,8 +17,34 @@ this one.
 
 WHY A CONTROL AND NOT A CONVENTION. The weaker query is always available and always easier:
 `gh pr checks` prints a list a reader summarises, and summarising is where the four
-distinctions below are lost. So this gate does not advise — it answers, and the answer is
-tri-state with no raw material attached for a caller to re-interpret.
+distinctions below are lost. So this gate does not advise — it answers, and the answer
+carries no raw material for a caller to re-interpret.
+
+THE STATES ARE FOUR, AND THE RULE OVER THEM IS ONE:
+
+    READY        every lane the governing authority requires is completed/success HERE
+    NOT_READY    the measurement is incomplete — wait, or re-run
+    FAILED       a lane's OWN verdict establishes that it failed — fix
+    UNDECIDABLE  the gate cannot answer; it says why
+
+    ONLY `READY` PERMITS A MERGE. Every other state refuses.
+
+`UNDECIDABLE` is kept rather than folded into `NOT_READY` because the two call for
+different actions: one is waiting, the other is a question about the gate's own inputs.
+Neither permits a merge, so the distinction is diagnostic and never permissive.
+
+ATTRIBUTION, WHICH IS WHY `FAILED` IS NARROW. One job — the umbrella `verify` — runs
+several lanes. Its verdict is therefore attributable to a LANE only in one direction:
+
+    umbrella completed/success       may satisfy every lane it actually contains
+    umbrella pending or unavailable  those lanes are NOT_READY
+    umbrella FAILURE                 says nothing about WHICH lane failed
+
+A lane is `FAILED` only where a check whose verdict IS that lane's own establishes it —
+which means a dedicated, single-lane job. Reporting "the V0 test lane failed" because an
+unrelated Lean or extraction step went red inside the umbrella would be a fabricated
+verdict, and it would send someone to fix a lane that never ran badly. The umbrella's
+failure still refuses the merge; it refuses as NOT_READY, with the reason saying so.
 
 WHAT "REQUIRED" MEANS HERE, and where it comes from. Not a list in this file. A second list
 of required evidence is the defect it would exist to prevent: it would drift from the
@@ -65,7 +91,9 @@ Run:  python3 scripts/merge_readiness_gate.py --sha <candidate>
       python3 scripts/merge_readiness_gate.py --pr 946
       python3 scripts/merge_readiness_gate.py --selftest
 
-Exit status: 0 READY, 1 NOT_READY, 2 FAILED, 3 the gate could not decide.
+Exit status: 0 READY, 1 NOT_READY, 2 FAILED, 3 UNDECIDABLE.
+Only 0 permits a merge, and `scripts/merge_verified_pr.py` is the only thing that acts
+on it — see that file for why the decision has to be re-bound to the head it was made about.
 """
 
 from __future__ import annotations
@@ -150,6 +178,17 @@ def workflow_jobs() -> list[tuple[str, str, set[str]]]:
             name = named.group(1).strip("\"'") if named else key
             jobs.append((path.name, name, set(INVOCATION.findall(body))))
     return jobs
+
+
+def umbrella_checks() -> set[str]:
+    """The check names that run the umbrella, and therefore several lanes at once.
+
+    Kept apart from the per-lane mapping because it answers a different question: not
+    "which job runs this lane" but "whose failure is attributable to one lane". Derived
+    the same way, from the workflows, so a job that stops invoking the umbrella stops
+    being treated as one.
+    """
+    return {name for _wf, name, invoked in workflow_jobs() if UMBRELLA in invoked}
 
 
 def checks_for_lanes(lanes: set[str], scripts: dict[str, str]) -> dict[str, list[str]]:
@@ -238,14 +277,23 @@ def classify(check: dict | None, sha: str) -> tuple[bool, str]:
 
 
 def decide(
-    required: dict[str, list[str]], runs: dict[str, dict], sha: str
+    required: dict[str, list[str]],
+    runs: dict[str, dict],
+    sha: str,
+    shared: set[str] | None = None,
 ) -> tuple[str, list[tuple]]:
-    """The tri-state answer, plus one row per required lane for the human-readable table.
+    """The answer, plus one row per required lane for the human-readable table.
 
-    A lane is satisfied when ANY job that runs it met all four conditions. It is FAILED
-    when none did and at least one returned a verdict about the code; otherwise the
-    measurement is merely incomplete, which is NOT_READY and a different next action.
+    A lane is satisfied when ANY job that runs it met all four conditions — including the
+    umbrella, whose SUCCESS does cover every lane it contains.
+
+    It is `FAILED` only when a check whose verdict is that lane's OWN establishes failure.
+    `shared` names the jobs that run several lanes; their failure is not attributable to
+    any one of them, so it refuses as NOT_READY with the reason saying which job went red.
+    Inventing a per-lane verdict from a shared job's failure would send someone to fix a
+    lane that never ran badly.
     """
+    shared = shared or set()
     rows, satisfied, failing = [], True, False
     for lane, names in sorted(required.items()):
         verdicts = [(name, *classify(runs.get(name), sha)) for name in names]
@@ -254,11 +302,21 @@ def decide(
             rows.append((lane, winner[0], "OK", winner[2]))
             continue
         satisfied = False
-        if any((runs.get(name) or {}).get("conclusion") in FAILING_CONCLUSIONS for name in names):
+        own = [n for n in names if n not in shared]
+        attributable = [n for n in own if (runs.get(n) or {}).get("conclusion") in FAILING_CONCLUSIONS]
+        if attributable:
             failing = True
+            rows.append((lane, attributable[0], "FAILED", "this lane's own job failed"))
+            continue
         name, _ok, why = verdicts[0]
-        detail = why if len(verdicts) == 1 else f"{why}; none of {len(verdicts)} jobs satisfied it"
-        rows.append((lane, name, "NOT SATISFIED", detail))
+        red_shared = [n for n in names if n in shared
+                      and (runs.get(n) or {}).get("conclusion") in FAILING_CONCLUSIONS]
+        if red_shared:
+            why = (f"{red_shared[0]} failed, but it runs several lanes — its verdict is not "
+                   f"attributable to '{lane}'")
+        elif len(verdicts) > 1:
+            why = f"{why}; none of {len(verdicts)} jobs satisfied it"
+        rows.append((lane, name, "NOT SATISFIED", why))
     if failing:
         return FAILED, rows
     return (READY if satisfied else NOT_READY), rows
@@ -400,7 +458,7 @@ def main(argv: list[str]) -> int:
             # the ruleset rather than reading "nothing required" as "everything passed".
             authority = "branch ruleset (no declared unit affected)"
             required = {name: [name] for name in ruleset_required_checks(args.repo, args.base)}
-        state, rows = decide(required, check_runs(args.repo, sha), sha)
+        state, rows = decide(required, check_runs(args.repo, sha), sha, umbrella_checks())
         report(sha, affected, rows, state, authority)
         return {READY: 0, NOT_READY: 1, FAILED: 2}[state]
     except Undecidable as exc:
@@ -454,6 +512,46 @@ def selftest() -> int:
         if lane not in resolved:
             print(f"  FAIL lane '{lane}' resolved to no check")
             bad += 1
+
+    # ATTRIBUTION. A shared job's failure must never be reported as a lane's own verdict.
+    UMB = "verification platform"
+    DED = "V0 evidence self-test (mutation probes)"
+    red_umbrella = {UMB: {"name": UMB, "head_sha": sha,
+                          "status": "completed", "conclusion": "failure"}}
+
+    # Only the umbrella runs this lane, and it went red: NOT_READY, never FAILED.
+    state, rows = decide({"lean": [UMB]}, red_umbrella, sha, {UMB})
+    if state != NOT_READY:
+        print(f"  FAIL an umbrella failure was attributed to a single lane: {state}")
+        bad += 1
+    if "not attributable" not in rows[0][3]:
+        print("  FAIL the row does not say the umbrella's verdict is unattributable")
+        bad += 1
+
+    # A lane with its OWN job: that job's failure IS the lane's verdict.
+    state, _ = decide({"mutation": [DED]},
+                      {DED: {"name": DED, "head_sha": sha,
+                             "status": "completed", "conclusion": "failure"}}, sha, {UMB})
+    if state != FAILED:
+        print(f"  FAIL a dedicated job's failure did not read as FAILED: {state}")
+        bad += 1
+
+    # The umbrella is red, but the lane's own job passed: satisfied, because a lane is
+    # satisfied by ANY job that actually measured it.
+    both = dict(red_umbrella)
+    both[DED] = {"name": DED, "head_sha": sha, "status": "completed", "conclusion": "success"}
+    state, _ = decide({"mutation": [DED, UMB]}, both, sha, {UMB})
+    if state != READY:
+        print(f"  FAIL a passing dedicated job was overridden by a red umbrella: {state}")
+        bad += 1
+
+    # And the umbrella's SUCCESS does cover a lane it contains.
+    state, _ = decide({"lean": [UMB]},
+                      {UMB: {"name": UMB, "head_sha": sha,
+                             "status": "completed", "conclusion": "success"}}, sha, {UMB})
+    if state != READY:
+        print(f"  FAIL a successful umbrella did not satisfy a lane it runs: {state}")
+        bad += 1
 
     # The fallback authority answers the SAME four conditions. A ruleset check that is
     # queued must not read as READY just because the manifest asked for nothing.
