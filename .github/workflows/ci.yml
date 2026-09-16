@@ -272,6 +272,24 @@ jobs:
           python3 scripts/lifecycle_purity_gate.py --selftest
           python3 scripts/lifecycle_purity_gate.py
 
+      # Merge readiness — the authority that decides whether a candidate may merge. ONLY
+      # its selftest runs here, and that is the whole of what CI can establish about it:
+      # the gate asks whether this commit's required lanes have COMPLETED, so a job
+      # running inside those same lanes would be asking about itself and would answer
+      # NOT_READY every time by construction.
+      #
+      # What the selftest establishes is the part that can go wrong silently. The gate's
+      # value is entirely in the shapes it REFUSES — queued, missing, null conclusion,
+      # green-at-another-SHA — and a predicate that has quietly stopped refusing them
+      # prints exactly what a working one prints. The catalogue drives every such shape
+      # through the real decision function and fails if any reads as READY, plus the
+      # structural claims: a lane no workflow runs must refuse rather than resolve empty,
+      # and a workspace build-input change must widen to every unit.
+      - name: Merge-readiness gate
+        run: |
+          python3 scripts/merge_readiness_gate.py --selftest
+          python3 scripts/merge_verified_pr.py --selftest
+
       # ADR-MCPRE-061 §5 — THE TWO RATCHETS. Both existed and neither ran on the merge
       # path: `scripts/local_gate.sh` was their only caller, so a PR that did not run the
       # local gate could grow a registered file or a lint baseline and nothing would say
