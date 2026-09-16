@@ -1330,8 +1330,7 @@ mod tests {
             // an absent seq means "lost at exit" rather than "refused by the queue".
             for i in 0..BATCH {
                 crate::audit_sink::StderrAuditSink.record(&crate::audit_record::AuditRecord {
-                    subject: crate::audit_record::AuditSubject::request(
-                        AuditEvent::request_accepted(),
+                    subject: crate::audit_record::AuditSubject::request_accepted(
                         crate::authorization::AuthorizationFacet::NotConfigured,
                     ),
                     actor_id: Some("teardown-actor".to_string()),

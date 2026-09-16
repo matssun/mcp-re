@@ -3960,3 +3960,48 @@ weakening = """
 expect_red = [
   "lib#http_profile_serve::retention::tests::a_failed_completion_is_not_accounted_for_and_the_other_two_are",
 ]
+
+[[probe]]
+id = "M165-a-record-states-its-half-twice-and-the-two-can-disagree"
+unit = "proxy.audit_record_coordinates"
+conjunct = "which half of the exchange a record is about is stated once, by the event CORE minted, and the arm cannot contradict it"
+# The weakening rewires one constructor to the wrong half's Core call — the mistake the old
+# shape made possible by handing every constructor an arbitrary `AuditEvent`. Under it a
+# record says `Request` in its arm and `mcp-re.response.signed` in its `event_type`, so an
+# auditor reading the two coordinates of one record gets two different answers about which
+# half it describes, and neither is marked as the wrong one.
+path = "mcp-re-proxy/src/audit_record/subject.rs"
+anchor = """
+        AuditSubject(Subject::Request {
+            event: AuditEvent::request_accepted(),
+            authorization,
+        })
+"""
+weakening = """
+        AuditSubject(Subject::Request {
+            event: AuditEvent::response_signed(),
+            authorization,
+        })
+"""
+expect_red = [
+  "lib#audit_record::subject::tests::every_constructor_lands_on_the_arm_core_says_it_is_about",
+]
+
+[[probe]]
+id = "M166-a-policys-refusal-is-written-into-cores-reason"
+unit = "proxy.audit_record_coordinates"
+conjunct = "a rejection Core did not decide carries no Core reason"
+# The weakening collapses the two rejection shapes: a verdict Core reached and one it did not
+# become the same record. ADR-MCPRE-066 §1.1 refuses it — the authority that terminated the
+# exchange is not always Core, and writing a policy's refusal into Core's `reason` claims a
+# verdict Core never reached.
+path = "mcp-re-proxy/src/audit_record/subject.rs"
+anchor = """
+                None => AuditEvent::request_rejected_elsewhere(),
+"""
+weakening = """
+                None => AuditEvent::request_rejected(&McpReError::ReplayDetected),
+"""
+expect_red = [
+  "lib#audit_record::subject::tests::a_verdict_core_did_not_reach_carries_no_core_reason",
+]

@@ -77,9 +77,7 @@ impl HttpProfileProxy {
                 // client actually receives.
                 crate::audit_record::record_to(
                     &self.audit,
-                    crate::audit_record::AuditSubject::response(
-                        mcp_re_core::audit::AuditEvent::response_signed(),
-                    ),
+                    crate::audit_record::AuditSubject::response_signed(),
                     Some(actor_id),
                     202,
                     now,

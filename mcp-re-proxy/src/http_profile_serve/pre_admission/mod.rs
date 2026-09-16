@@ -143,13 +143,10 @@ impl HttpProfileProxy {
     ) {
         crate::audit_record::record_to(
             &self.audit,
-            crate::audit_record::AuditSubject::request(
-                mcp_re_core::audit::AuditEvent::request_accepted(),
-                // The live product, asked for its own projection. Nothing here reconstructs
-                // an authorization fact, and an unconfigured deployment says so rather than
-                // reading as an allow (ADR-MCPRE-066 §1.1, invariant 5).
-                admitted.authorized.audit_facet(),
-            ),
+            // The live product, asked for its own projection. Nothing here reconstructs an
+            // authorization fact, and an unconfigured deployment says so rather than reading
+            // as an allow (ADR-MCPRE-066 §1.1, invariant 5).
+            crate::audit_record::AuditSubject::request_accepted(admitted.authorized.audit_facet()),
             Some(actor_id.to_owned()),
             200,
             now,

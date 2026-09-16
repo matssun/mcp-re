@@ -863,8 +863,8 @@ async fn an_authorized_request_records_which_policy_permitted_what() {
         .iter()
         .find(|r| r.event().event_type == "mcp-re.request.accepted")
         .expect("the admitted request is recorded");
-    let mcp_re_proxy::AuditSubject::Request { authorization, .. } = &accepted.subject else {
-        panic!("a request record");
+    let Some(authorization) = accepted.subject.authorization() else {
+        panic!("a request record carries the authorization coordinate");
     };
     let AuthorizationFacet::Authorized(a) = authorization else {
         panic!("a policy permitted this, and the record must say so: {authorization:?}");
@@ -930,8 +930,8 @@ async fn the_record_names_the_enrolled_authority_and_not_the_one_the_decision_cl
         .iter()
         .find(|r| r.event().event_type == "mcp-re.request.accepted")
         .expect("the admitted request is recorded");
-    let mcp_re_proxy::AuditSubject::Request { authorization, .. } = &accepted.subject else {
-        panic!("a request record");
+    let Some(authorization) = accepted.subject.authorization() else {
+        panic!("a request record carries the authorization coordinate");
     };
     let AuthorizationFacet::Authorized(a) = authorization else {
         panic!("a policy permitted this, and the record must say so: {authorization:?}");
@@ -964,8 +964,8 @@ async fn a_policy_denial_is_recorded_as_a_policy_denial_and_not_merely_as_a_reje
         .iter()
         .find(|r| r.event().event_type == "mcp-re.request.rejected")
         .expect("the denial is recorded");
-    let mcp_re_proxy::AuditSubject::Request { authorization, .. } = &rejected.subject else {
-        panic!("a request record");
+    let Some(authorization) = rejected.subject.authorization() else {
+        panic!("a request record carries the authorization coordinate");
     };
     assert!(
         matches!(
@@ -1005,8 +1005,8 @@ async fn a_request_refused_before_any_policy_ran_is_not_attributed_to_one() {
         .iter()
         .find(|r| r.event().event_type == "mcp-re.request.rejected")
         .expect("the refusal is recorded");
-    let mcp_re_proxy::AuditSubject::Request { authorization, .. } = &rejected.subject else {
-        panic!("a request record");
+    let Some(authorization) = rejected.subject.authorization() else {
+        panic!("a request record carries the authorization coordinate");
     };
     assert_ne!(
         authorization,
@@ -1040,8 +1040,8 @@ async fn a_core_verification_failure_still_records_its_frozen_core_reason() {
     );
     // And the authorization coordinate says no policy ever ran, which is true: the request
     // never got that far.
-    let mcp_re_proxy::AuditSubject::Request { authorization, .. } = &rejected.subject else {
-        panic!("a request record");
+    let Some(authorization) = rejected.subject.authorization() else {
+        panic!("a request record carries the authorization coordinate");
     };
     assert_eq!(
         authorization,
@@ -1081,7 +1081,7 @@ async fn a_replay_refusal_after_a_permit_is_not_recorded_as_refused_before_polic
         .into_iter()
         .find(|r| r.status == 409)
         .expect("the replay refusal is recorded");
-    let mcp_re_proxy::AuditSubject::Request { authorization, .. } = &rejected.subject else {
+    let Some(authorization) = rejected.subject.authorization() else {
         panic!("a refusal before the accepted record is a REQUEST record");
     };
     assert_ne!(

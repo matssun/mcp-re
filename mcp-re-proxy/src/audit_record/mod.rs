@@ -179,8 +179,8 @@ mod tests {
         // Co-location is not conflation. Core's token is in `reason`; the policy's is in the
         // authorization field; neither appears in the other.
         let r = AuditRecord {
-            subject: AuditSubject::request(
-                AuditEvent::request_rejected(&mcp_re_core::McpReError::DigestMismatch),
+            subject: AuditSubject::request_rejected(
+                Some(&mcp_re_core::McpReError::DigestMismatch),
                 AuthorizationFacet::Refused(AuthorizationRefusalFacet::ByPolicy(
                     PolicyError::AuthorizationScopeDenied,
                 )),

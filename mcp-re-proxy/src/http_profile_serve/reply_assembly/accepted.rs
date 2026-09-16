@@ -62,9 +62,7 @@ impl HttpProfileProxy {
         progress.advance(ExchangeEvent::EvidenceRetained);
         crate::audit_record::record_to(
             &self.audit,
-            crate::audit_record::AuditSubject::response(
-                mcp_re_core::audit::AuditEvent::response_signed(),
-            ),
+            crate::audit_record::AuditSubject::response_signed(),
             Some(ex.actor_id.to_owned()),
             reply.response.status,
             ex.now,
