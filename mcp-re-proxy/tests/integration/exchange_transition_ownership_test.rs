@@ -36,10 +36,13 @@ use std::collections::BTreeSet;
 
 /// The transitions the assembly states itself, and why each is the assembly's fact.
 ///
-/// A stage establishes what its own work justifies. These six are not any stage's: they
-/// are established by the shape of the pipeline around the stages, so there is no function
+/// A stage establishes what its own work justifies. These are not any stage's: they are
+/// established by the shape of the pipeline around the stages, so there is no function
 /// whose success could carry them. "The assembly" is `handle` together with its region
 /// functions — the code that COMPOSES stages rather than performing one.
+///
+/// A transition leaves this list when a stage or an owner takes it; see
+/// [`RELOCATED_TO_THE_OWNER`] for the three that did.
 const ASSEMBLY_OWNED: &[(&str, &str)] = &[
     (
         "ContinuationRetired",
@@ -59,21 +62,25 @@ const ASSEMBLY_OWNED: &[(&str, &str)] = &[
         "the absence of an obligation. No work establishes it — it is what the classifier \
          NOT having opened a leg means, and the arm that states it calls nothing",
     ),
-    (
-        "EvidenceRetained",
-        "`retain_accepted` answers with the refusal or with nothing, because it is shared \
-         with the notification terminal, which reaches it from a different state",
-    ),
-    (
-        "TerminalResponseServed",
-        "the exchange is served on the next line; nothing runs between the fact and the \
-         claim, so there is no work to carry it",
-    ),
-    (
-        "OpenLegResponseServed",
-        "the other terminal, chosen from the same reply class. Both are the assembly \
-         which claim this reply makes, not a step either of them performs",
-    ),
+];
+
+/// Transitions this list used to hold, and the owner that took them.
+///
+/// `EvidenceRetained`, `TerminalResponseServed` and `OpenLegResponseServed` were the
+/// assembly's own until the cross-machine invariants became an ENFORCEMENT: a success the
+/// exchange machine cannot vouch for is now refused rather than asserted about, and the
+/// decision has to be taken before retention and the `response.signed` record publish the
+/// claim. So the three moved together into `ServedSuccess::tail()`, where the sequence is
+/// written once and read twice — once to decide whether the success may be published, once
+/// to publish it. Two lists at two call sites would have been the same remembered
+/// correspondence `Established<T>` exists to remove.
+///
+/// They left this inventory for the reason the `stale` assertion exists: the list measures
+/// what the serving path advances, and the serving path no longer advances them.
+const RELOCATED_TO_THE_OWNER: &[&str] = &[
+    "EvidenceRetained",
+    "TerminalResponseServed",
+    "OpenLegResponseServed",
 ];
 
 /// Every `ExchangeEvent::` variant named inside the balanced argument list of each `call`.
@@ -193,7 +200,7 @@ fn no_transition_a_stage_establishes_is_also_advanced_by_the_serving_path() {
     );
 }
 
-/// The assembly states exactly the six transitions that are its own.
+/// The assembly states exactly the transitions that are its own, and no others.
 #[test]
 fn the_serving_path_states_only_the_assembly_s_own_transitions() {
     let declared: BTreeSet<String> = ASSEMBLY_OWNED.iter().map(|(e, _)| e.to_string()).collect();
@@ -212,6 +219,26 @@ fn the_serving_path_states_only_the_assembly_s_own_transitions() {
         stale.is_empty(),
         "ASSEMBLY_OWNED names {stale:?}, which the serving path no longer advances. An event \
          that found a stage should leave this list, so the list stays a measurement."
+    );
+}
+
+/// The relocated terminals stay relocated.
+///
+/// The three events below are the ones a success claim is published by, and the enforcement
+/// that refuses an incoherent one works by driving them from a single tail inside the owner.
+/// An `advance` for any of them reappearing in the serving path would be a second way to
+/// reach a success terminal — one the publication decision does not guard — so the absence
+/// is asserted rather than left to the inventory's prose.
+#[test]
+fn no_terminal_the_owner_publishes_is_advanced_by_the_serving_path_again() {
+    let advanced = events_named_in(&serving_source(), ".advance(");
+    let back: Vec<&&str> = RELOCATED_TO_THE_OWNER
+        .iter()
+        .filter(|e| advanced.contains(**e))
+        .collect();
+    assert!(
+        back.is_empty(),
+        "{back:?} is advanced by the serving path again. A success terminal reached outside          `ServedSuccess::tail()` is one the publication decision never saw."
     );
 }
 

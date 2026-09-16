@@ -12,6 +12,53 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Changed — a cross-machine invariant now REFUSES a success instead of asserting about one
+
+The exchange machine's cross-machine invariants — an open leg served with no durable
+continuation record, a leg-opening reply served as a terminal completion, synthesized
+transport-failure bytes served as a success, a backend projection that disagrees with the
+exchange state — were enforced in the serving path by
+`debug_assert!(progress.invariant_violation().is_none())`. The machine detected the
+violation and latched it, the assertion was compiled out of the release build, and the
+release binary served the success anyway. The latch degraded the retry claim; it did not
+stop the claim being published.
+
+The decision now happens BEFORE anything publishes it. On the bodied success path and on
+the bodyless 202 alike:
+
+```text
+candidate signed reply
+  -> the prospective success terminal is derived
+  -> the prospective cross-machine tuple is validated
+
+invalid   latch, retain nothing, emit no response.signed,
+          mint a signed post-dispatch refusal, retain THAT terminal, serve it
+valid     retain, emit response.signed, commit the terminal, serve the success
+```
+
+### Added — `mcp-re.exchange_invariant_violation`
+
+```text
+McpReError::ExchangeInvariantViolation
+wire   mcp-re.exchange_invariant_violation
+HTTP   500
+```
+
+*the proxy's own exchange-state projections became mutually inconsistent, so MCP-RE refused
+to publish a success claim.*
+
+It is not about the client's request and not about the backend: it reports that the
+deployment is running code that disagrees with its own exchange model. 500 because the
+fault is the proxy's; `AfterAdmission` because the request verified and crossed the
+execution threshold.
+
+**It carries no retry advice.** No case was added to the retry contract and
+`execution_refinement` stays `None`, so the disposition still comes from the exchange
+machine — and because the anomaly is latched before the refusal is constructed, that
+machine reports `possibly_executed`.
+
+`ALL_ERRORS`, `wire_code()` and the audit reason label move with it in the same slice.
+
 ### Added — `mcp-re.continuation_conflict`, and the frozen taxonomy grows by exactly one
 
 A second MRTR open leg for one `(audience, verifier-resolved actor, requestState)` now

@@ -115,8 +115,8 @@ impl HttpProfileProxy {
         window: &SigningWindow,
         retention: &RetentionDisposition,
     ) -> ServedHttpResponse {
-        match self.inner_async.observe_acknowledgement(progress, outcome) {
-            Ok(acknowledged) => progress.establish(acknowledged),
+        let acknowledged = match self.inner_async.observe_acknowledgement(progress, outcome) {
+            Ok(acknowledged) => acknowledged,
             // The message may not have arrived, and this refusal is the signed statement
             // saying so. It IS a terminal the proxy constructed, so it discharges the
             // crossing: an operator reading the archive then finds *the backend may have
@@ -124,9 +124,17 @@ impl HttpProfileProxy {
             // that says only *unaccounted for*. The stronger case — never transmitted —
             // cannot reach here; it is refused before the exchange commits.
             Err(refusal) => return self.refuse_retained(ex, refusal, progress, retention).await,
+        };
+        // The 202 is a signed success claim, so an exchange whose projections disagree may
+        // not mint one — and the decision is taken before the acknowledgement is committed,
+        // while the exchange can still reach a post-dispatch refusal instead.
+        if progress.establish_terminal(acknowledged).is_err() {
+            let refusal = crate::refusal::Refusal::after_admission(
+                mcp_re_core::McpReError::ExchangeInvariantViolation,
+                500,
+            );
+            return self.refuse_retained(ex, refusal, progress, retention).await;
         }
-        debug_assert!(progress.state().is_terminal());
-        debug_assert!(progress.invariant_violation().is_none());
         self.answer_notification(
             ex.http_req,
             window,
@@ -142,6 +150,32 @@ impl HttpProfileProxy {
 
 #[cfg(test)]
 mod tests {
+    /// The 202 is not minted until the exchange is allowed to claim the terminal.
+    ///
+    /// `answer_notification` signs the acknowledgement, retains it and records
+    /// `response.signed` — three publications of one success claim. The same order rule as
+    /// the bodied path, asserted the same way and for the same reason: the tuple this
+    /// refuses is unconstructible through the serving path, so the order is the only thing
+    /// a test can reach.
+    #[test]
+    fn the_terminal_is_decided_before_the_202_is_minted() {
+        let source = include_str!("notification.rs");
+        let body = source
+            .split_once("async fn answer_notification_terminal(")
+            .expect("the terminal is in this file")
+            .1;
+        let decision = body
+            .find("establish_terminal(")
+            .expect("the terminal is decided");
+        let mint = body
+            .find("self.answer_notification(")
+            .expect("the 202 is minted");
+        assert!(
+            decision < mint,
+            "the 202 must not be signed before the exchange may claim its terminal"
+        );
+    }
+
     /// The 202 is minted only for a message the inner plane is known to have received. The
     /// refused outcome is the one that says it may not have got there — a signed statement
     /// that a backend accepted something no backend is known to have seen is the failure

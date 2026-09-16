@@ -128,6 +128,16 @@ pub enum McpReError {
     #[error("mcp-re.evidence_retention_indeterminate")]
     EvidenceRetentionIndeterminate,
 
+    /// The proxy's own exchange-state projections became mutually inconsistent, so MCP-RE
+    /// refused to publish a success claim it cannot vouch for.
+    ///
+    /// Not about the client's request and not about the backend: it reports that this
+    /// deployment is running code that disagrees with its own exchange model. Carries no
+    /// retry advice — the disposition stays the exchange machine's, which reports the
+    /// crossing it observed.
+    #[error("mcp-re.exchange_invariant_violation")]
+    ExchangeInvariantViolation,
+
     // ----- Draft-02 (v0.6) fail-closed codes (ADR-MCPS-040 / decision F.1) -----
     // Granular for protocol/profile-confusion failures; low-level JSON
     // value-domain failures stay coarse under `SerializationFailed`. All nine
@@ -347,6 +357,7 @@ impl McpReError {
             McpReError::ReplayCacheUnavailable => "mcp-re.replay_cache_unavailable",
             McpReError::EvidenceRetentionUnavailable => "mcp-re.evidence_retention_unavailable",
             McpReError::EvidenceRetentionIndeterminate => "mcp-re.evidence_retention_indeterminate",
+            McpReError::ExchangeInvariantViolation => "mcp-re.exchange_invariant_violation",
             // Draft-02 (v0.6) — ADR-MCPS-040 / decision F.1.
             McpReError::AuthorizationBindingMissing => "mcp-re.authorization_binding_missing",
             McpReError::AuthorizationBindingTypeUnsupported => {
@@ -419,6 +430,7 @@ pub const ALL_ERRORS: &[McpReError] = &[
     McpReError::ReplayCacheUnavailable,
     McpReError::EvidenceRetentionUnavailable,
     McpReError::EvidenceRetentionIndeterminate,
+    McpReError::ExchangeInvariantViolation,
     McpReError::AuthorizationBindingMissing,
     McpReError::AuthorizationBindingTypeUnsupported,
     McpReError::AuthorizationBindingMalformed,
