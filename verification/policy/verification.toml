@@ -3058,7 +3058,14 @@ tested_symbols = [
   # instead: the loop observes an unreadable epoch and stops minting.
   "lib#signing_plane::rotation_owner_tests::an_unreadable_shared_epoch_stops_the_loop_minting",
   "lib#signing_plane::rotation_owner_tests::a_root_outage_inside_the_overlap_window_backs_off_instead_of_re_entering",
-  "lib#signing_plane::rotation_owner_tests::materialize_refuses_when_the_configured_shared_epoch_cannot_be_read",
+  # `materialize_refuses_when_the_configured_shared_epoch_cannot_be_read` is deliberately NOT
+  # here. It is `#[cfg(feature = "redis_replay")]`, so the default battery this unit's
+  # evidence is issued from compiles it to ZERO tests — the lane reported it as `never ran`,
+  # which is the correct answer to a declared control that does not exist in the lane that
+  # declares it. A test property includes the build lane the test exists in, and naming it
+  # here would claim default-lane evidence for a feature-lane fact. The proposition it
+  # carries — a CONFIGURED kill switch whose counter cannot be read is a startup refusal — is
+  # a different one from the loop refusing to mint, which the control above does cover.
   # What the shared counter SAYS, which is the input both refusals read. `a_regressed_counter`
   # and `an_outage_yields_no_label` are the two the fail-closed arm exists for.
   "lib#signing_plane::trust_epoch_watch_tests::a_regressed_counter_is_refused_not_rebased",
