@@ -17,6 +17,7 @@ use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::OutstandingId;
 use mcp_re_http_profile::VerifiedMcpRequest;
 
+use crate::admission_enforcer::AdmissionFacet;
 use crate::async_serve::ServedHttpResponse;
 use crate::authorization::AuthorizationPosture;
 use crate::exchange_state::ExchangeProgress;
@@ -78,9 +79,11 @@ impl HttpProfileProxy {
                 None,
                 Self::disposition(progress, None),
                 None,
-                // No exchange exists yet, so no authorization verdict can have been
-                // reached — the one place where that is a fact about the pipeline's shape
-                // rather than about this call.
+                // No exchange exists yet, so neither authority can have reached a verdict —
+                // the one place where that is a fact about the pipeline's shape rather than
+                // about this call. The admission coordinate reads `NotReached`, which is its
+                // own answer and not a stand-in for one of the gate's four.
+                None,
                 None,
             )),
         }
@@ -107,18 +110,20 @@ impl HttpProfileProxy {
             .transport_binding_stage(ex, peer)
             .map(|established| progress.establish(established))
             .map_err(|refusal| self.refuse(ex, refusal, progress))?;
-        let decided_over = self
-            .admission_stage(ex, bound.as_ref())
-            .await
-            .map(|established| progress.establish(established))
-            .map_err(|refusal| self.refuse(ex, refusal, progress))?;
+        let (decided_over, admission) = match self.admission_stage(ex, bound.as_ref()).await {
+            Ok((established, facet)) => (progress.establish(established), facet),
+            Err(refusal) => return Err(self.refuse(ex, refusal, progress)),
+        };
+        // The gate's verdict, recorded where it is obtained — the same rule the
+        // authorization line below follows, and for the same reason.
+        ex.verdicts.admission = Some(admission);
         let authorized = self
             .authorization_stage(ex, decided_over.as_ref())
             .map_err(|refusal| self.refuse(ex, refusal, progress))?;
         // The verdict this exchange was permitted under, recorded where it is obtained. A
         // refusal named by a later stage then reports what the policy decided, instead of
         // deriving "no policy decided" from the kind of verdict that refused it.
-        ex.authorization = Some(authorized.audit_facet());
+        ex.verdicts.authorization = Some(authorized.audit_facet());
         Ok(AdmittedRequest {
             outstanding,
             authorized,
@@ -138,6 +143,7 @@ impl HttpProfileProxy {
     pub(super) fn record_request_accepted(
         &self,
         admitted: &AdmittedRequest,
+        admission: Option<AdmissionFacet>,
         actor_id: &str,
         now: i64,
     ) {
@@ -146,7 +152,13 @@ impl HttpProfileProxy {
             // The live product, asked for its own projection. Nothing here reconstructs an
             // authorization fact, and an unconfigured deployment says so rather than reading
             // as an allow (ADR-MCPRE-066 §1.1, invariant 5).
-            crate::audit_record::AuditSubject::request_accepted(admitted.authorized.audit_facet()),
+            crate::audit_record::AuditSubject::request_accepted(
+                admitted.authorized.audit_facet(),
+                // Read back from the exchange, never re-derived from the fact that nothing
+                // refused. `None` cannot occur on this path — an accepted request reached
+                // the gate — and `NotReached` is the honest reading if it ever did.
+                admission.unwrap_or(AdmissionFacet::NotReached),
+            ),
             Some(actor_id.to_owned()),
             200,
             now,

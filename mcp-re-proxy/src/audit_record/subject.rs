@@ -31,6 +31,8 @@
 use mcp_re_core::audit::AuditEvent;
 use mcp_re_core::McpReError;
 
+use crate::admission_enforcer::AdmissionFacet;
+
 use crate::audit_record::text::AuditField;
 use crate::authorization::AuthorizationFacet;
 
@@ -56,6 +58,9 @@ enum Subject {
         event: AuditEvent,
         /// What the authorization authority says about this request.
         authorization: AuthorizationFacet,
+        /// What the §7 ADMISSION authority says about it — an independent coordinate on the
+        /// same terms, never expressed in the other's vocabulary (R11-106).
+        admission: AdmissionFacet,
     },
     /// The response half: a Core lifecycle outcome, and nothing about authorization.
     Response {
@@ -66,10 +71,11 @@ enum Subject {
 
 impl AuditSubject {
     /// A record for an ACCEPTED request. The facet is required, not defaulted.
-    pub fn request_accepted(authorization: AuthorizationFacet) -> Self {
+    pub fn request_accepted(authorization: AuthorizationFacet, admission: AdmissionFacet) -> Self {
         AuditSubject(Subject::Request {
             event: AuditEvent::request_accepted(),
             authorization,
+            admission,
         })
     }
 
@@ -78,6 +84,7 @@ impl AuditSubject {
     pub fn request_rejected(
         verdict: Option<&McpReError>,
         authorization: AuthorizationFacet,
+        admission: AdmissionFacet,
     ) -> Self {
         AuditSubject(Subject::Request {
             event: match verdict {
@@ -85,6 +92,7 @@ impl AuditSubject {
                 None => AuditEvent::request_rejected_elsewhere(),
             },
             authorization,
+            admission,
         })
     }
 
@@ -127,6 +135,17 @@ impl AuditSubject {
         }
     }
 
+    /// What the §7 admission authority said, when this record is entitled to carry it.
+    ///
+    /// `None` on a response record, for the same reason as the projection above: admission
+    /// is a request-side decision and a response has nothing to say about it.
+    pub fn admission(&self) -> Option<AdmissionFacet> {
+        match &self.0 {
+            Subject::Request { admission, .. } => Some(*admission),
+            Subject::Response { .. } => None,
+        }
+    }
+
     /// The authority-specific fields, composed from what each authority named in its own
     /// vocabulary. A response record contributes nothing: there is nothing it may say.
     ///
@@ -136,7 +155,17 @@ impl AuditSubject {
     /// decides it.
     pub(crate) fn audit_fields(&self) -> Vec<AuditField<'_>> {
         match &self.0 {
-            Subject::Request { authorization, .. } => authorization.audit_fields(),
+            // Two authorities, two coordinates, composed rather than merged. Each named its
+            // own fields in its own vocabulary and neither is expressed in the other's.
+            Subject::Request {
+                authorization,
+                admission,
+                ..
+            } => {
+                let mut fields = authorization.audit_fields();
+                fields.extend(admission.audit_fields());
+                fields
+            }
             Subject::Response { .. } => Vec::new(),
         }
     }
@@ -161,15 +190,27 @@ mod tests {
             AuthorizationFacet::Refused(crate::authorization::AuthorizationRefusalFacet::ByPolicy(
                 mcp_re_policy::PolicyError::AuthorizationScopeDenied,
             ));
-        let subject = AuditSubject::request_accepted(facet.clone());
+        let subject = AuditSubject::request_accepted(facet.clone(), AdmissionFacet::NotConfigured);
+        let own = facet.audit_fields();
+        assert!(
+            !own.is_empty(),
+            "the authority did say something, or the comparison below is vacuous"
+        );
+        // VERBATIM and in order. The record now composes TWO authorities, so this can no
+        // longer be an equality against one of them — but the proposition is unchanged and
+        // is the stronger half: whatever the authorization authority named appears exactly
+        // as it named it. A record that reinterpreted, reordered or dropped one of these
+        // would make the coordinate this type's opinion rather than the authority's
+        // statement.
         assert_eq!(
-            subject.audit_fields(),
-            facet.audit_fields(),
+            subject.audit_fields()[..own.len()],
+            own[..],
             "the arm carries what the authority said; it does not restate it"
         );
-        assert!(
-            !subject.audit_fields().is_empty(),
-            "and the authority did say something, or the comparison above is vacuous"
+        assert_eq!(
+            subject.audit_fields().len(),
+            own.len() + AdmissionFacet::NotConfigured.audit_fields().len(),
+            "and it adds only the OTHER authority's own fields — nothing this type invented"
         );
     }
 
@@ -198,9 +239,20 @@ mod tests {
         use mcp_re_core::audit::AuditHalf;
         let err = mcp_re_core::McpReError::ReplayDetected;
         let request_side = [
-            AuditSubject::request_accepted(AuthorizationFacet::NotConfigured),
-            AuditSubject::request_rejected(Some(&err), AuthorizationFacet::NotConfigured),
-            AuditSubject::request_rejected(None, AuthorizationFacet::NotConfigured),
+            AuditSubject::request_accepted(
+                AuthorizationFacet::NotConfigured,
+                AdmissionFacet::LiveConfirmed,
+            ),
+            AuditSubject::request_rejected(
+                Some(&err),
+                AuthorizationFacet::NotConfigured,
+                AdmissionFacet::Refused,
+            ),
+            AuditSubject::request_rejected(
+                None,
+                AuthorizationFacet::NotConfigured,
+                AdmissionFacet::NotReached,
+            ),
         ];
         for s in &request_side {
             assert_eq!(s.event().half(), AuditHalf::Request);
@@ -223,6 +275,42 @@ mod tests {
         }
     }
 
+    /// **R11-106.** The two authorities contribute SEPARATE coordinates, and neither is
+    /// expressed in the other's vocabulary.
+    ///
+    /// `decide` used to end in `.map(|_| ())`, so a serve on a stale snapshot inside P was
+    /// indistinguishable in audit from a live-confirmed one, and *admission was checked and
+    /// passed* produced the same trace as *the call declared no admission and this
+    /// deployment tolerates that.* Composing the two field sets is what restores the
+    /// difference; MERGING them — one token meaning "both authorities are content" — would
+    /// lose it again in a way no reader could detect.
+    #[test]
+    fn the_admission_and_authorization_coordinates_are_both_present_and_distinct() {
+        let subject = AuditSubject::request_accepted(
+            AuthorizationFacet::NotConfigured,
+            AdmissionFacet::Degraded,
+        );
+        let names: Vec<_> = subject.audit_fields().iter().map(|f| f.name).collect();
+        assert!(
+            names.contains(&"authz"),
+            "the authorization coordinate: {names:?}"
+        );
+        assert!(
+            names.contains(&"admission"),
+            "the admission coordinate: {names:?}"
+        );
+        assert_eq!(
+            subject.admission(),
+            Some(AdmissionFacet::Degraded),
+            "a degraded serve is READABLE, which is the whole of R11-106"
+        );
+        assert_eq!(
+            AuditSubject::response_signed().admission(),
+            None,
+            "admission is request-side; a response has nothing to say about it"
+        );
+    }
+
     /// A rejection whose verdict CORE reached keeps its token; one it did not reach carries
     /// none, and the two are different records.
     ///
@@ -232,8 +320,16 @@ mod tests {
     #[test]
     fn a_verdict_core_did_not_reach_carries_no_core_reason() {
         let err = mcp_re_core::McpReError::ReplayDetected;
-        let decided = AuditSubject::request_rejected(Some(&err), AuthorizationFacet::NotConfigured);
-        let elsewhere = AuditSubject::request_rejected(None, AuthorizationFacet::NotConfigured);
+        let decided = AuditSubject::request_rejected(
+            Some(&err),
+            AuthorizationFacet::NotConfigured,
+            AdmissionFacet::LiveConfirmed,
+        );
+        let elsewhere = AuditSubject::request_rejected(
+            None,
+            AuthorizationFacet::NotConfigured,
+            AdmissionFacet::LiveConfirmed,
+        );
         assert_eq!(decided.event().reason, Some(err.wire_code()));
         assert_eq!(elsewhere.event().reason, None);
         assert_ne!(decided.event(), elsewhere.event());

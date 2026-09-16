@@ -24,6 +24,9 @@ use crate::http_profile_serve::AdmissionAuthorityResolver;
 
 /// How long a replica may serve on last-known state while the authority is unreachable.
 mod degraded_window;
+mod facet;
+
+pub use facet::AdmissionFacet;
 
 use degraded_window::DegradedWindow;
 
@@ -92,7 +95,7 @@ impl AdmissionEnforcer {
         actor_id: &str,
         audience_id: &str,
         now: i64,
-    ) -> Result<(), HttpProfileError> {
+    ) -> Result<AdmissionFacet, HttpProfileError> {
         let block = verified.request_block();
         let (binding, assertion) = match (
             block.admission.as_ref(),
@@ -105,7 +108,10 @@ impl AdmissionEnforcer {
                 if self.enforcement == AdmissionEnforcement::Required {
                     return Err(HttpProfileError::AdmissionStateUnavailable);
                 }
-                return Ok(());
+                // The call declared no admission and this deployment tolerates that. NOT
+                // the same fact as having been checked and passed, and the record now says
+                // which one it was (R11-106).
+                return Ok(AdmissionFacet::NotConfigured);
             }
         };
 
@@ -171,20 +177,19 @@ impl AdmissionEnforcer {
         // is monotonic and judged against the SAME `elapsed_at` the lookup was timed at, so
         // the instant the read is recorded at and the instant the window is judged against
         // cannot differ by the time the lookup took.
+        //
+        // The arm is REPORTED, not discarded. `.map(|_| ())` here was R11-106: a serve on a
+        // stale snapshot inside P became indistinguishable in audit from a live-confirmed
+        // one, and the facet is what the record now carries instead.
         match verdict {
-            AdmissionVerdict::Live(_) => Ok(()),
+            AdmissionVerdict::Live(_) => Ok(AdmissionFacet::LiveConfirmed),
             AdmissionVerdict::DegradedCandidate(_)
                 if self.window.exhausted(&self.policy, elapsed_at) =>
             {
                 Err(HttpProfileError::AdmissionStateUnavailable)
             }
-            AdmissionVerdict::DegradedCandidate(_) => Ok(()),
+            AdmissionVerdict::DegradedCandidate(_) => Ok(AdmissionFacet::Degraded),
         }
-        // Note what is NOT recorded: which arm this was. A serve on a stale snapshot inside
-        // P is indistinguishable in audit from a live-confirmed one, because ADR-MCPS-035
-        // §3 freezes the success-event allowlist. R11-106's ruling is an ADR-MCPRE-066
-        // addendum carrying an `AdmissionFacet` as its own typed coordinate — the allowlist
-        // constrains the vocabulary, not the requirement — and it is separate work.
     }
 }
 

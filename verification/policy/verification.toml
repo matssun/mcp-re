@@ -3527,6 +3527,10 @@ description = "What a security record may say, and in whose vocabulary: a reques
 paths = [
   "mcp-re-proxy/src/audit_record/mod.rs",
   "mcp-re-proxy/src/audit_record/subject.rs",
+  # R11-106. The exchange-side CARRIER of the two verdicts this unit composes. It is here
+  # rather than in the serving unit because what the record may SAY about each authority is
+  # this unit's claim, and the carrier is what guarantees the two never move together.
+  "mcp-re-proxy/src/http_profile_serve/authority_verdicts.rs",
   "mcp-re-proxy/src/authorization/audit.rs",
   "mcp-re-proxy/src/authorization/audit/fields.rs",
 ]
@@ -3555,6 +3559,16 @@ tested_symbols = [
   # `reason`.
   "lib#audit_record::subject::tests::every_constructor_lands_on_the_arm_core_says_it_is_about",
   "lib#audit_record::subject::tests::a_verdict_core_did_not_reach_carries_no_core_reason",
+  # R11-106 / ADR-MCPRE-066 Addendum 1. THREE authorities now, still composed and never
+  # merged: one token meaning "both are content" would lose the distinction in a way no
+  # reader could detect. The control also reads a Degraded serve back off the record, which
+  # is the whole of what R11-106 asked for.
+  "lib#audit_record::subject::tests::the_admission_and_authorization_coordinates_are_both_present_and_distinct",
+  # The carrier, which the module-size ratchet found: two verdict fields on the serving root
+  # became a type when the admission one joined, and the property is that they do NOT move
+  # together — an exchange can refuse after admission and before authorization, and a single
+  # "verdicts reached" flag could not say so.
+  "lib#http_profile_serve::authority_verdicts::tests::the_two_verdicts_start_absent_and_are_set_independently",
   "lib#audit_record::tests::the_two_coordinates_stay_separate_on_one_record",
   "lib#authorization::audit::tests::an_unconfigured_deployment_is_not_rendered_as_an_authorized_one",
   "lib#authorization::audit::tests::a_policy_denial_puts_its_token_in_the_authorization_coordinate",
@@ -4138,6 +4152,10 @@ description = "The §7 admission gate: a call declaring no admission is refused 
 paths = [
   "mcp-re-proxy/src/admission_enforcer/mod.rs",
   "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
+  # R11-106. The gate's verdict as a record coordinate. It is in THIS closure and not the
+  # audit record's because the vocabulary is the gate's — what the RECORD does with it is
+  # `proxy.audit_record_coordinates`, which measures that the two authorities stay separate.
+  "mcp-re-proxy/src/admission_enforcer/facet.rs",
 ]
 exported_contracts = []
 evidence = [
@@ -4164,6 +4182,18 @@ tested_symbols = [
   "lib#admission_enforcer::degraded_window::tests::a_negative_bound_is_no_window_rather_than_a_long_one",
   "lib#admission_enforcer::degraded_window::tests::an_out_of_order_read_does_not_rewind_the_window",
   "lib#admission_enforcer::degraded_window::tests::without_the_opt_in_there_is_no_window_at_all",
+  # R11-106. `decide` ended in `.map(|_| ())`, so three facts died at once: a degraded serve
+  # read as live-confirmed, an unconfigured deployment read as checked-and-passed, and the
+  # source's reason read as nothing. The five verdicts must stay five — a vocabulary that
+  # rendered two alike would reintroduce the defect one layer out, where the record LOOKS
+  # populated.
+  "lib#admission_enforcer::facet::tests::every_verdict_renders_its_own_token",
+  "lib#admission_enforcer::facet::tests::the_three_the_discarded_result_folded_together_are_distinct",
+  # And the same property through the production proxy, which is the only thing that can say
+  # `decide` REPORTS its arm rather than that the enum can render one. Both serves are on one
+  # replica in one run: a control reading only the degraded record would pass against an
+  # enforcer that reported `Degraded` for everything.
+  "tests/integration_async#admission_currency_serving_test::a_degraded_serve_and_a_live_confirmed_one_are_different_records",
   "tests/integration_async#admission_currency_serving_test::a_call_without_admission_evidence_is_refused_when_required_and_served_when_optional",
   "tests/integration_async#admission_currency_serving_test::an_unreachable_authority_fails_closed_by_default",
   "tests/integration_async#admission_currency_serving_test::an_unreachable_authority_serves_within_p_and_fails_closed_past_it",

@@ -3975,12 +3975,14 @@ anchor = """
         AuditSubject(Subject::Request {
             event: AuditEvent::request_accepted(),
             authorization,
+            admission,
         })
 """
 weakening = """
         AuditSubject(Subject::Request {
             event: AuditEvent::response_signed(),
             authorization,
+            admission,
         })
 """
 expect_red = [
@@ -4004,4 +4006,24 @@ weakening = """
 """
 expect_red = [
   "lib#audit_record::subject::tests::a_verdict_core_did_not_reach_carries_no_core_reason",
+]
+
+[[probe]]
+id = "M167-a-degraded-serve-is-recorded-as-a-live-confirmed-one"
+unit = "proxy.admission_currency_gate"
+conjunct = "the gate's own verdict is reported, so a serve on a stale snapshot inside P is distinguishable in audit from a live-confirmed one"
+# The weakening is R11-106 itself, restored one level up from the `.map(|_| ())` that caused
+# it: report the degraded arm as live-confirmed. The exchange still serves, every test of
+# WHETHER it serves still passes, and the only thing lost is an operator's ability to find the
+# serves this deployment made without confirmation — which is exactly how the defect survived
+# a green battery for as long as it did.
+path = "mcp-re-proxy/src/admission_enforcer/mod.rs"
+anchor = """
+            AdmissionVerdict::DegradedCandidate(_) => Ok(AdmissionFacet::Degraded),
+"""
+weakening = """
+            AdmissionVerdict::DegradedCandidate(_) => Ok(AdmissionFacet::LiveConfirmed),
+"""
+expect_red = [
+  "tests/integration_async#admission_currency_serving_test::a_degraded_serve_and_a_live_confirmed_one_are_different_records",
 ]

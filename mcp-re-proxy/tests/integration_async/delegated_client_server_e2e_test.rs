@@ -771,6 +771,7 @@ fn an_unconfigured_deployments_records_say_so_rather_than_claiming_an_authorizat
         accepted.subject,
         mcp_re_proxy::AuditSubject::request_accepted(
             mcp_re_proxy::authorization::AuthorizationFacet::NotConfigured,
+            mcp_re_proxy::admission_enforcer::AdmissionFacet::NotConfigured
         ),
         "no policy is deployed, and the record says exactly that — never `Authorized`"
     );
@@ -829,6 +830,7 @@ fn a_replay_emits_exactly_one_rejection_carrying_the_frozen_wire_code() {
         mcp_re_proxy::AuditSubject::request_rejected(
             Some(&mcp_re_core::McpReError::ReplayDetected),
             mcp_re_proxy::authorization::AuthorizationFacet::NotConfigured,
+            mcp_re_proxy::admission_enforcer::AdmissionFacet::NotConfigured
         )
     );
 }

@@ -46,6 +46,7 @@ pub(crate) mod receipt;
 
 /// The PEP's read/write boundary inside the client's JSON-RPC body: what it reads out,
 /// what it strips because it owns it, and what it writes because it is entitled to.
+mod authority_verdicts;
 mod body_boundary;
 
 /// The ADR-MCPS-047 continuation plane: a human's approval opened, read without being
@@ -119,7 +120,6 @@ use crate::async_inner::AsyncInnerServer;
 use crate::async_serve::ServedHttpRequest;
 use crate::async_serve::ServedHttpResponse;
 use crate::authorization::AuthorizationEvaluator;
-use crate::authorization::AuthorizationFacet;
 use crate::authorization::AuthorizationStage;
 use crate::continuation_store::AsyncContinuationStore;
 use crate::delegated_server_signer::DelegatedServerSigner;
@@ -129,6 +129,7 @@ use crate::exchange_state::RetrySemantics;
 use crate::http_profile_dispatch::ProxyDispatchConfig;
 use crate::request_stages::ReadyForDispatch;
 use crate::transport::TransportBinding;
+use authority_verdicts::AuthorityVerdicts;
 
 /// Default lifetime of a recorded MRTR continuation in the shared correlation store
 /// (ADR-MCPS-047): long enough for a client to answer an `InputRequiredResult`,
@@ -155,16 +156,8 @@ pub(super) struct Exchange<'a> {
     /// nothing and degrades the refusal to an unsigned error — on exactly the exits that
     /// most need to state, under signature, that the backend may have acted.
     key: Option<Arc<mcp_re_http_profile::ActiveDelegatedKey>>,
-    /// What this deployment's authorization authority established for this exchange.
-    ///
-    /// `None` states that no authorization verdict has been reached — the thing a refusal
-    /// named before the policy ran has to report, and a fact NO refusal cause can derive
-    /// from its own kind: the same Core verdict is reachable on both sides of the policy,
-    /// so a stage refusing after a PERMIT would otherwise record that no policy decided.
-    ///
-    /// Written by the admission region, which is the authority that obtains it, and read
-    /// by the refusal composition. A stage between them neither sets nor clears it.
-    authorization: Option<AuthorizationFacet>,
+    /// What the request-side authorities established; see [`AuthorityVerdicts`].
+    verdicts: AuthorityVerdicts,
 }
 
 /// The RFC 9421 server-side PEP run by the async fleet (ADR-MCPRE-051).
@@ -454,7 +447,7 @@ impl HttpProfileProxy {
             actor_id: &actor_id,
             now,
             key: None,
-            authorization: None,
+            verdicts: AuthorityVerdicts::default(),
         };
 
         // Nothing irreversible happens on a request's behalf until it is both admitted and
@@ -472,7 +465,7 @@ impl HttpProfileProxy {
             Ok(window) => window,
             Err(rejection) => return rejection,
         };
-        self.record_request_accepted(&admitted, &actor_id, now);
+        self.record_request_accepted(&admitted, ex.verdicts.admission, &actor_id, now);
         let commitment = self.commit_to_dispatch(&ex, admitted.authorized, &window, &mut progress);
         let (prepared, retention) = match commitment.await {
             Ok(committed) => committed,
