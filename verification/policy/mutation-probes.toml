@@ -3818,3 +3818,23 @@ weakening = """
 expect_red = [
   "lib#transparency::durable_job::tests::an_accounted_job_holds_its_slot_after_its_caller_is_gone",
 ]
+
+[[probe]]
+id = "M159-root-issuance-verifies-under-the-advertised-key"
+unit = "proxy.delegated_signing_credential"
+conjunct = "a published delegated credential is one this deployment can demonstrate verifies"
+# The weakening restores the code as it shipped: the root's bytes accepted on length alone.
+# Under it a KMS or PKCS#11 adapter wired to the wrong key publishes a credential of exactly
+# the right shape that every verifier in the fleet rejects — discovered at the next request
+# rather than at the first issuance, and after the fleet has already rotated onto it.
+path = "mcp-re-proxy/src/delegated_wiring.rs"
+anchor = """
+            verify_ed25519(input, &b64, public_key)
+                .map_err(|_| HttpProfileError::DelegationCredentialInvalid)?;
+"""
+weakening = """
+            let _ = public_key;
+"""
+expect_red = [
+  "lib#delegated_wiring::tests::a_root_signing_under_a_key_it_does_not_advertise_publishes_no_credential",
+]
