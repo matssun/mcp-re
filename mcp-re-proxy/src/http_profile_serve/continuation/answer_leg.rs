@@ -198,7 +198,7 @@ pub(in crate::http_profile_serve) mod tests {
             actor_id: &actor_id,
             now: 1,
             key: None,
-            authorization: None,
+            verdicts: Default::default(),
         };
 
         let Err(refusal) = ContinuationPlane::disabled().prepare(&ex, "aud").await else {
@@ -229,7 +229,7 @@ pub(in crate::http_profile_serve) mod tests {
             actor_id: &actor_id,
             now: 1,
             key: None,
-            authorization: None,
+            verdicts: Default::default(),
         };
 
         let established = ContinuationPlane::disabled()
@@ -347,7 +347,7 @@ pub(in crate::http_profile_serve) mod tests {
             actor_id: &actor_id,
             now: 1,
             key: None,
-            authorization: None,
+            verdicts: Default::default(),
         };
 
         // A store that answers a MISS and records what it was asked for. The plane must be

@@ -168,6 +168,7 @@ pub(crate) fn record_to(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::admission_enforcer::AdmissionFacet;
     use crate::audit_record::text::render_record;
     use crate::authorization::AuthorizationFacet;
     use crate::authorization::AuthorizationRefusalFacet;
@@ -183,6 +184,7 @@ mod tests {
                 AuthorizationFacet::Refused(AuthorizationRefusalFacet::ByPolicy(
                     PolicyError::AuthorizationScopeDenied,
                 )),
+                AdmissionFacet::LiveConfirmed,
             ),
             actor_id: Some("did:example:agent-1".to_owned()),
             status: 403,

@@ -627,6 +627,81 @@ fn an_unreachable_authority_fails_closed_by_default() {
 /// Degraded mode is a BOUNDED window a deployment opts into, not a fallback — and the
 /// thing P has to bound is how long this replica may serve on last-known state while the
 /// authority is unreachable. Applied to the presented assertion's `iat` it bounded the
+/// **R11-106.** A degraded serve is READABLE as one: the record says `degraded`, and a
+/// live-confirmed serve on the same replica says `live-confirmed`.
+///
+/// `decide` ended in `.map(|_| ())`, so both produced the same trace and an operator could
+/// not find the serves this deployment had made WITHOUT confirmation. The fix is not a new
+/// Core success event — ADR-MCPS-035 §3 freezes that allowlist — but an independent typed
+/// coordinate, on the terms ADR-MCPRE-066 already gives authorization. See
+/// `docs/architecture/admission-facet.md`.
+///
+/// Both halves are asserted on ONE replica in ONE run, because the defect was precisely that
+/// the two were indistinguishable: a control reading only the degraded record would pass
+/// against an enforcer that reported `Degraded` for everything.
+#[test]
+fn a_degraded_serve_and_a_live_confirmed_one_are_different_records() {
+    let source = Arc::new(admission_store());
+    publish_admitted(&source, 5);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let policy = AdmissionPolicy {
+        allow_degraded_mode: true,
+        degraded_propagation_bound: 1,
+        ..strict_policy()
+    };
+    let sink = Arc::new(mcp_re_proxy::CollectingAuditSink::new());
+    let proxy = replica(
+        Arc::clone(&source) as Arc<dyn AsyncAdmissionSource>,
+        policy,
+        AdmissionEnforcement::Required,
+        Arc::clone(&calls),
+    )
+    .with_audit_sink(sink.clone());
+
+    let confirmed = admission_claims(5, AdmissionStatus::Admitted, NOW - 30);
+    assert_eq!(
+        block_on(proxy.handle(
+            served_of(&signed_call(
+                Some((&confirmed, &authority_key())),
+                "n-facet-live",
+            )),
+            NOW,
+        ))
+        .status,
+        200,
+    );
+
+    source.set_unavailable(true);
+    let fresh = admission_claims(5, AdmissionStatus::Admitted, NOW + 55);
+    assert_eq!(
+        block_on(proxy.handle(
+            served_of(&signed_call(
+                Some((&fresh, &authority_key())),
+                "n-facet-degraded",
+            )),
+            NOW + 60,
+        ))
+        .status,
+        200,
+        "inside P, the replica serves on its last-known state",
+    );
+
+    let admissions: Vec<_> = sink
+        .records()
+        .iter()
+        .filter(|r| r.event().event_type == "mcp-re.request.accepted")
+        .filter_map(|r| r.subject.admission())
+        .collect();
+    assert_eq!(
+        admissions,
+        vec![
+            mcp_re_proxy::admission_enforcer::AdmissionFacet::LiveConfirmed,
+            mcp_re_proxy::admission_enforcer::AdmissionFacet::Degraded,
+        ],
+        "the two serves are different records; before R11-106 they were the same one"
+    );
+}
+
 /// wrong thing: the revocation channel IS the store, so during a store outage the
 /// issuer never learns of a revocation and keeps minting assertions with a current
 /// `iat`, and a caller that simply keeps fetching them was served for the whole outage,

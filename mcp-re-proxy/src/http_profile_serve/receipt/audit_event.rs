@@ -44,14 +44,20 @@ impl ResponseSigning {
         execution: ExecutionDisposition,
         snapshot: Option<Arc<mcp_re_http_profile::ActiveDelegatedKey>>,
         authorization: Option<&crate::authorization::AuthorizationFacet>,
+        admission: Option<crate::admission_enforcer::AdmissionFacet>,
     ) -> ServedHttpResponse {
         crate::audit_record::record_to(
             audit,
             // `None` means Core reached no verdict: a policy did. Its token belongs in the
             // authorization coordinate, never in Core's `reason`.
+            //
+            // A `None` ADMISSION facet means the exchange ended before the gate was
+            // consulted, which is `NotReached` and is its own answer — not a stand-in for
+            // one of the four the gate can give (R11-106).
             crate::audit_record::AuditSubject::request_rejected(
                 cause.core_verdict().as_ref(),
                 cause.authorization_facet(authorization),
+                admission.unwrap_or(crate::admission_enforcer::AdmissionFacet::NotReached),
             ),
             actor_id,
             status,

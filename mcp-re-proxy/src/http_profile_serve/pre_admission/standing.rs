@@ -13,6 +13,7 @@
 
 use mcp_re_core::McpReError;
 
+use crate::admission_enforcer::AdmissionFacet;
 use crate::communication_assurance::request_peer_binding::http_profile_adapter::verified_request_subject;
 use crate::communication_assurance::RequestPeerBindingFacts;
 use crate::exchange_state::Established;
@@ -78,10 +79,13 @@ impl HttpProfileProxy {
         &self,
         ex: &Exchange<'_>,
         bound: Option<&RequestPeerBindingFacts>,
-    ) -> Result<Established<Option<RequestPeerBindingFacts>>, Refusal> {
+    ) -> Result<(Established<Option<RequestPeerBindingFacts>>, AdmissionFacet), Refusal> {
         let admitted = || Established::new(bound.cloned(), ExchangeEvent::AdmissionCurrencyChecked);
+        // No enforcer is deployed for this call. `NotConfigured`, and NOT an allow: the
+        // record says the call declared no admission and this deployment tolerates that,
+        // which is a different fact from having been checked (R11-106).
         let Some(enforcer) = self.admission.as_ref() else {
-            return Ok(admitted());
+            return Ok((admitted(), AdmissionFacet::NotConfigured));
         };
         match enforcer
             .decide(
@@ -92,7 +96,10 @@ impl HttpProfileProxy {
             )
             .await
         {
-            Ok(()) => Ok(admitted()),
+            // The gate's own verdict travels with the stage's product, so nothing
+            // downstream reconstructs what admission decided from the fact that it did not
+            // refuse. A live-confirmed serve and a degraded one are different serves.
+            Ok(facet) => Ok((admitted(), facet)),
             Err(e) => Err(Refusal::before_admission(e, 403)),
         }
     }

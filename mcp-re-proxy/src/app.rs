@@ -1331,6 +1331,7 @@ mod tests {
                 crate::audit_sink::StderrAuditSink.record(&crate::audit_record::AuditRecord {
                     subject: crate::audit_record::AuditSubject::request_accepted(
                         crate::authorization::AuthorizationFacet::NotConfigured,
+                        crate::admission_enforcer::AdmissionFacet::NotConfigured,
                     ),
                     actor_id: Some("teardown-actor".to_string()),
                     status: 200,
