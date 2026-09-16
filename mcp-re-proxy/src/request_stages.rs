@@ -13,10 +13,8 @@
 //! state it establishes is [`crate::exchange_state::Established`] — a stage returns the
 //! event it justifies, so the serving path cannot state one the stage did not.
 //!
-//! This module doc used to restate the whole sequence as a prose table, and the table had
-//! drifted: it listed the retention reservation and the inner-plane admission in the
-//! opposite order to the relation. Two statements of one fact is one statement and one
-//! liability, and a comment is the half nothing checks.
+//! It deliberately does NOT restate the sequence as a prose table: two statements of one
+//! fact is one statement and one liability, and a comment is the half nothing checks.
 //!
 //! What is worth saying here, because no other file says it: three pre-dispatch steps are
 //! already irreversible on their own — the burned replay nonce, the consumed continuation,
@@ -47,6 +45,9 @@ use crate::async_inner::DispatchedOutcome;
 use crate::async_inner::PreparedInnerDispatch;
 use crate::http_profile_serve::signing_window::SigningWindow;
 use crate::transparency::DispatchCommitted;
+use std::sync::Arc;
+
+use crate::transparency::EvidenceRetention;
 use crate::transparency::ReservedBeforeDispatch;
 
 /// What this exchange owes the evidence store BEFORE it commits to a dispatch.
@@ -61,7 +62,15 @@ pub(crate) enum PreDispatchRetention {
     /// This deployment retains nothing, so there is no obligation to accept.
     NotConfigured,
     /// The obligation is durably accepted, and nothing has run. Dropping this rescinds it.
-    Reserved(ReservedBeforeDispatch),
+    ///
+    /// The STORE travels with the reservation, so holding a `Reserved` IS holding the store
+    /// that made it. Re-fetching it at each later step needed an arm for an absent one, and
+    /// the only answer available there was `NotConfigured` — *this deployment retains
+    /// nothing*, said about a deployment that retains and has lost its store.
+    Reserved {
+        store: Arc<EvidenceRetention>,
+        reservation: ReservedBeforeDispatch,
+    },
 }
 
 /// What this exchange owes the evidence store, as a closed set.
@@ -87,8 +96,12 @@ pub(crate) enum RetentionDisposition {
     /// This deployment retains nothing, so there is no obligation to discharge.
     NotConfigured,
     /// The execution threshold is durably recorded, and this exchange must complete the
-    /// record before it is served.
-    Committed(DispatchCommitted),
+    /// record before it is served. Carries the store that recorded it, for the same reason
+    /// [`PreDispatchRetention::Reserved`] does.
+    Committed {
+        store: Arc<EvidenceRetention>,
+        crossing: DispatchCommitted,
+    },
 }
 
 /// Every pre-dispatch prerequisite, in hand.
@@ -209,7 +222,7 @@ mod tests {
         let disposition = RetentionDisposition::NotConfigured;
         let owed = match disposition {
             RetentionDisposition::NotConfigured => false,
-            RetentionDisposition::Committed(_) => true,
+            RetentionDisposition::Committed { .. } => true,
         };
         assert!(
             !owed,

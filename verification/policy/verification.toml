@@ -2344,16 +2344,29 @@ description = "Where a served request can be answered from: the serving assembly
 # constructor is a change to what the claim is about, even though the module is not a site.
 paths = [
   "mcp-re-proxy/src/http_profile_serve/**/*.rs",
+  # Named explicitly ALONGSIDE the glob above, and it has to be: `_validate_in_crate_selectors`
+  # compares a cited `lib#` symbol's module file against `paths` as a literal set, so a unit
+  # whose paths are globs can declare no in-crate control at all. This is the first unit to
+  # cite one; the check refuses it until the file is spelled out, which is the message it
+  # prints. The glob still owns the subtree — this entry owns the CITATION.
+  "mcp-re-proxy/src/http_profile_serve/retention.rs",
   "mcp-re-proxy/src/async_serve/request.rs",
   "mcp-re-proxy/src/async_serve/mod.rs",
 ]
 exported_contracts = []
-evidence = ["test://proxy/refusal/site_totality"]
+evidence = [
+  "test://proxy/refusal/site_totality",
+  # Declared WITH its first probe: a `[[probe]]` on a unit claiming no mutation evidence
+  # writes no record, so `attest` issues the unit from the ordinary battery regardless.
+  "mutation://proxy/refusal/pre_dispatch_retention",
+]
 # Six members, and the last is not decoration. Four rules over source text are vacuously
 # true the moment a matcher stops matching, so the battery that would report a clean pass
 # over a moved subtree is the battery that must also demonstrate it still detects each
 # regression.
 tested_symbols = [
+  "lib#http_profile_serve::retention::tests::each_pre_dispatch_fault_earns_its_own_answer",
+  "lib#http_profile_serve::retention::tests::no_pre_dispatch_fault_claims_the_backend_ran",
   "tests/integration#refusal_site_totality_test::the_serving_subtree_answers_only_through_its_one_wrapper",
   "tests/integration#refusal_site_totality_test::every_error_arm_of_handle_returns_what_its_stage_produced",
   "tests/integration#refusal_site_totality_test::the_answers_outside_the_exchange_are_exactly_the_transport_frames",

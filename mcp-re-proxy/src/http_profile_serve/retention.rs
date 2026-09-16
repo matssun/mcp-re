@@ -83,7 +83,10 @@ impl Retention {
             return Ok(PreDispatchRetention::NotConfigured);
         };
         match store.reserve(request).await {
-            Ok(reservation) => Ok(PreDispatchRetention::Reserved(reservation)),
+            Ok(reservation) => Ok(PreDispatchRetention::Reserved {
+                store: Arc::clone(store),
+                reservation,
+            }),
             Err(e) => Err(Self::pre_dispatch_refusal(&e, "accept the exchange")),
         }
     }
@@ -105,17 +108,14 @@ impl Retention {
     ) -> Result<Established<RetentionDisposition>, Refusal> {
         let committed =
             |d: RetentionDisposition| Established::new(d, ExchangeEvent::RetentionCommitted);
-        let PreDispatchRetention::Reserved(reservation) = accepted else {
-            return Ok(committed(RetentionDisposition::NotConfigured));
-        };
-        // A disposition can only be `Reserved` if the store was present when it was built,
-        // and the store is owned for the proxy's whole life — so this is the same value
-        // that accepted the obligation.
-        let Some(store) = self.store.as_ref() else {
+        let PreDispatchRetention::Reserved { store, reservation } = accepted else {
             return Ok(committed(RetentionDisposition::NotConfigured));
         };
         match store.commit_to_dispatch(reservation).await {
-            Ok(crossing) => Ok(committed(RetentionDisposition::Committed(crossing))),
+            Ok(crossing) => Ok(committed(RetentionDisposition::Committed {
+                store,
+                crossing,
+            })),
             Err(e) => Err(Self::pre_dispatch_refusal(&e, "record the crossing")),
         }
     }
@@ -173,13 +173,7 @@ impl Retention {
         request: &HttpRequest,
         response: &HttpResponse,
     ) -> Result<(), Refusal> {
-        let RetentionDisposition::Committed(crossing) = owed else {
-            return Ok(());
-        };
-        // A disposition can only be `Reserved` if the store was present when it was built,
-        // and the store is owned for the proxy's whole life — so this is the same value
-        // that made the reservation.
-        let Some(store) = self.store.as_ref() else {
+        let RetentionDisposition::Committed { store, crossing } = owed else {
             return Ok(());
         };
         match store.complete(crossing, request, response).await {
@@ -208,6 +202,74 @@ mod tests {
             target_uri: "https://example.test/mcp".into(),
             headers: vec![],
             body: b"{}".to_vec(),
+        }
+    }
+
+    fn io(kind: std::io::ErrorKind) -> std::io::Error {
+        std::io::Error::new(kind, "fixture")
+    }
+
+    /// The three pre-dispatch faults are three answers, and the module's whole argument is
+    /// that they are not one.
+    ///
+    /// Before this the file had exactly ONE control — the negative, that a deployment
+    /// retaining nothing owes nothing — so every failing branch of the refusal was
+    /// unmeasured. A `503` for all three would have satisfied the battery while telling a
+    /// client to keep retrying a replica that will never accept another write, and while
+    /// dropping the disposition that says an unresolved crossing may be on disk.
+    #[test]
+    fn each_pre_dispatch_fault_earns_its_own_answer() {
+        // Backpressure: retry, and the permit scheme's argument is that refusing here is
+        // free.
+        let full = Retention::pre_dispatch_refusal(
+            &RetentionError::Store(io(std::io::ErrorKind::WouldBlock)),
+            "accept the exchange",
+        );
+        assert_eq!(full.status, 503);
+        assert!(full.execution_refinement.is_none());
+
+        // A retired writer accepts nothing again until this replica restarts, so 503 —
+        // the status clients retry — is the wrong thing to say.
+        let retired = Retention::pre_dispatch_refusal(
+            &RetentionError::StoreRetired(io(std::io::ErrorKind::BrokenPipe)),
+            "accept the exchange",
+        );
+        assert_eq!(retired.status, 500);
+        assert!(retired.execution_refinement.is_none());
+
+        // An unresolved crossing leaves something on disk that may read as a threshold the
+        // exchange never crossed (R9-C099), and the refusal has to CARRY that.
+        let unresolved = Retention::pre_dispatch_refusal(
+            &RetentionError::Unresolved(io(std::io::ErrorKind::Other)),
+            "record the crossing",
+        );
+        assert_eq!(unresolved.status, 500);
+        assert_eq!(
+            unresolved.execution_refinement,
+            Some(ExecutionDisposition::NothingExecutedRetentionUnresolved)
+        );
+    }
+
+    /// Every pre-dispatch refusal is free, whichever fault produced it.
+    ///
+    /// `after_admission` is the posture that says the fault is on the response side and
+    /// records `mcp-re.response.rejected`; all three arms must take it, because the backend
+    /// has NOT run in any of them and a `request.rejected` would contradict the accepted
+    /// record for the same request.
+    #[test]
+    fn no_pre_dispatch_fault_claims_the_backend_ran() {
+        for error in [
+            RetentionError::Store(io(std::io::ErrorKind::WouldBlock)),
+            RetentionError::StoreRetired(io(std::io::ErrorKind::BrokenPipe)),
+            RetentionError::Unresolved(io(std::io::ErrorKind::Other)),
+        ] {
+            let refusal = Retention::pre_dispatch_refusal(&error, "accept the exchange");
+            assert_eq!(
+                refusal.cause,
+                crate::refusal::RefusalCause::from(McpReError::EvidenceRetentionUnavailable),
+                "a pre-dispatch retention fault is UNAVAILABLE, never INDETERMINATE: the \
+                 indeterminate code is what `complete` uses once the call has executed"
+            );
         }
     }
 

@@ -3612,3 +3612,29 @@ impl Clone for AsyncReplayTier {
 expect_red = [
   "lib#async_replay::tests::every_clone_of_a_tier_budgets_against_the_same_account",
 ]
+
+[[probe]]
+id = "M152-a-retired-retention-writer-is-not-backpressure"
+unit = "proxy.refusal_site_totality"
+conjunct = "a pre-dispatch retention fault earns the answer its own kind deserves, and a retired writer is not a full queue"
+# The weakening drops the retired-writer arm so it falls through to the backpressure one.
+# Nothing is admitted: the exchange is refused either way and the backend does not run. What
+# changes is what the client is told — 503 is the status clients retry, and this replica will
+# accept no further write until it restarts, so the retry can never succeed. The battery's one
+# pre-existing control is the negative (a deployment retaining nothing owes nothing) and cannot
+# see it.
+path = "mcp-re-proxy/src/http_profile_serve/retention.rs"
+anchor = """
+            RetentionError::StoreRetired(_) => {
+                eprintln!(
+                    "evidence retention could not {attempted}, and this replica will not \\
+                     accept the next one either: {error}"
+                );
+                unavailable(500)
+            }
+"""
+weakening = """
+"""
+expect_red = [
+  "lib#http_profile_serve::retention::tests::each_pre_dispatch_fault_earns_its_own_answer",
+]
