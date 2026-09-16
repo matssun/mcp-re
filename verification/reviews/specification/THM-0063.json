@@ -4,13 +4,13 @@
     "encoding_version": 1,
     "theorem_claim": "sha256:eb4cdd9d67ec490bbcd229a812cad5dc012928d320ecf1cfa0375f93999bb90c",
     "theorem_dependencies": {
-      "THM-0062": "sha256:84b35f28c53710c8f439b9ca783a411ac0621427f14e9ad5995d6425bea24f27"
+      "THM-0062": "sha256:55b0e7920cde5eadfb5f316ed36d00befbd4dc733c97a19da3f458e2052db976"
     },
     "theorem_id": "THM-0063",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner specification-review ruling of 2026-08-31, given over verification/reviews/packets/owner-specification-review-2026-08-31.md. The ruling declared the consolidated review COMPLETE and approved every packet theorem not named in its bounded correction set at its current fingerprint. This theorem was not named, and its statement, security consequence and scope are unchanged from the packet the owner read.",
-  "reviewed_fingerprint": "sha256:5da956f936e34f7ba3570e8a82af7f130bbbb297340034944e98d027829fdef2",
+  "notes": "OWNER SPECIFICATION REVIEW EVENT, r11 Part A (the ten-row owner packet), 2026-09-16.\nRecorded under the r11 closure mandate's AFK review authority on explicit owner rulings,\ntranscribed verbatim in work/r11-campaign/RULINGS-OWNER-10.md.\n\nDEPENDENCY-ONLY RE-AFFIRMATION. This theorem's own claim text, security consequence, scope,\nowner and review requirement are BYTE-IDENTICAL to the reviewed version: `theorem_claim` is\nunchanged and only `theorem_dependencies` moved. What moved in its closure, and why each is\na CLAIM CORRECTION bringing the registry to what the code already does:\n\n  - THM-0062's statement stopped claiming the response signer yields no credential under a poisoned snapshot lock; poison is RECOVERED because the protected snapshot is one whole-value swap, and terminal retirement and expiration still dominate. A claim correction to what `current` already does.\n\nNo conjunct of this theorem was broadened. Each premise edit NARROWS or restates a\nregistered claim to what its evidence reaches; none licenses anything this theorem did not\nalready have. The one addition in the same event, ASM-0049, registers a premise\n(`proxy.tls_listener_state` trust-epoch digest distinctness) that was previously unstated,\nwhich makes the trusted-premise set larger and the claims resting on it no stronger.",
+  "reviewed_fingerprint": "sha256:ce4cdcd343b66cf0f24ba23bf0b5ff07821db5dbe0a908e3861a6e32569b764a",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0063"
 }

@@ -99,7 +99,7 @@ graph BT
     THM_0084["THM-0084<br/>The shipped client proxy verifies against the request it sent"]
     THM_0085["THM-0085<br/>Every exchange-owned refusal reaches the audit boundary, typed, before it is answered"]
     THM_0086["THM-0086<br/>The established replay tier is the selected one, and never a weaker substitute"]
-    THM_0087["THM-0087<br/>A continuation entry is reachable only by the actor the verifier resolved"]
+    THM_0087["THM-0087<br/>Through MCP-RE, a continuation entry is reachable only by the actor the verifier resolved"]
     THM_0088["THM-0088<br/>A retention artefact reads as a crossing only for an exchange that crossed"]
     THM_0089["THM-0089<br/>A KMS or STS endpoint reaches the authority its text names"]
     THM_0090["THM-0090<br/>A credential leaves this proxy only to the endpoint its rule admitted"]

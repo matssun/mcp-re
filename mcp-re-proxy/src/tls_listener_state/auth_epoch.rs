@@ -393,10 +393,16 @@ mod tests {
         assert_eq!(store.take(b"key"), Some(b"session".to_vec()));
     }
 
-    /// A rebuild that republishes DIFFERENT trust reports the change and the sessions
-    /// stored under the old trust stop resuming.
+    /// `republish` with a DIFFERENT epoch reports the change and the sessions stored under
+    /// the superseded one stop resuming.
+    ///
+    /// A claim about the STORE, which is THM-0103's subject, and about no listener. No build
+    /// path reaches this call with a changed epoch: `bind_resumption` hands `republish` the
+    /// epoch the store already holds, because anchors are immutable for a listener's
+    /// lifetime. THM-0048 states cache non-continuity across a listener REPLACEMENT and does
+    /// not claim a live advance, so this control must not be read as evidence for one.
     #[test]
-    fn a_rebuild_with_withdrawn_trust_advances_the_epoch_and_stops_resumption() {
+    fn republishing_a_different_epoch_supersedes_the_stores_sessions() {
         let first = TlsAuthEpoch::compute(&[anchor(1), anchor(2)]);
         let store = EpochBoundSessionStore::memory_backed(first, 64);
         assert!(store.put(b"key".to_vec(), b"session".to_vec()));

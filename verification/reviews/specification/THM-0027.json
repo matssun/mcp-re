@@ -2,7 +2,7 @@
   "axis": "specification",
   "components": {
     "encoding_version": 1,
-    "theorem_claim": "sha256:694cd5270497ed5c4880f3cd04306bcec0f7adcb506ec88ea4e6a8057cc44df3",
+    "theorem_claim": "sha256:938d91ba4de4499350969c94e0a841a6f599f9f8608ef35c46fe341f79b915da",
     "theorem_dependencies": {
       "THM-0025": "sha256:842f2d7c83658f810f1beaa1e5feac028eedab8234b8f418c5fe9e64129ca54e",
       "THM-0026": "sha256:120750929aa1f77dd3432379326cf55c92a72da3986378a9df5663d5a2e0d585"
@@ -10,8 +10,8 @@
     "theorem_id": "THM-0027",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "Owner security-specification ruling of 2026-08-30, given over the five consolidated family packets in verification/reviews/packets/owner-specification-review-2026-08-30.md. Thirty-two current fingerprints were approved as prepared; five theorem IDs were returned for correction first. C4. APPROVED as prepared, under the ratified family discipline.",
-  "reviewed_fingerprint": "sha256:6d9b496dcfd57d35d786be1955aa53472f2e3ed723a4d3a7f239ab942770866c",
+  "notes": "OWNER SPECIFICATION REVIEW EVENT, r11 Part A (the ten-row owner packet), 2026-09-16.\nRecorded under the r11 closure mandate's AFK review authority on an explicit owner ruling,\ntranscribed verbatim in work/r11-campaign/RULINGS-OWNER-10.md. This is a CLAIM CORRECTION:\nthe registry is brought to what the code already does, and no implementation was weakened.\n\nRULING (row 4): ACCEPT the replacement. Scope-only; `statement` and `security_consequence`\nare unchanged.\n\nSOURCE: not an R11 row. Surfaced by fixing R11-598 / R11-370.\n\nWHAT MOVED: one paragraph of `scope`. It disclaimed \"an arbitrary `ResolvesServerCert`\nsupplied to `TlsListenerSecurityState::build_delegated_resolver_config`\" and said \"That\nescape hatch exists for custody arrangements MCP-RE does not model\".\n\nWHY THAT WAS WRONG, descriptively. `build_delegated_resolver_config` became PRIVATE in\na50d4070 (#886, closing R11-594). Its only caller is `build_delegated_config`, which goes\nthrough `validated_delegated_resolver` -> `DelegatedCertResolver::materialize` \u2014 the\ncorrespondence gate, with the listener's own budget. The paragraph disclaimed a route that no\nlonger exists, so it was vacuous; worse, it told a reader an unsupported public route into\ndelegated serving is available, which is the opposite of true. The R11-594 adjudication\nflagged this prose as needing a re-read once the second half was fixed.\n\nTHE CORRECTED SCOPE says positively that within the API this crate publishes,\ndelegated-resolver materialization has no route that bypasses the validated correspondence\ngate \u2014 `build_delegated_resolver_config` is private and its one caller goes through\n`materialize`, and the handshake signing key's constructor is reachable only inside\n`crate::delegated_tls`. It then keeps the true boundary explicitly outside the claim: that is\na fact about what this crate PUBLISHES, not unconstructibility, because\n`rustls::sign::SigningKey` and `RawEd25519TlsSigner` are public traits and an embedder\nwriting its own resolver is outside this claim exactly as before.\n\nWHY THE OLD TEXT WAS NOT MERELY HARMLESS. \"The escape hatch exists for custody arrangements\nMCP-RE does not model\" is the kind of sentence a future author reads as permission to reopen\none. Historical permission text is not preserved because a hatch used to exist.",
+  "reviewed_fingerprint": "sha256:de6907c5993e5439fe27992b3bc1e34a33f962e2eeaf8187c1b462b3d1f4e8d5",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0027"
 }

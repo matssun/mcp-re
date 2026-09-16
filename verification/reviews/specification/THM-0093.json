@@ -11,13 +11,13 @@
       "THM-0015": "sha256:c54f383311f5c8347262ac5c712e9246e5e249727587255dcfa2364448c2a961",
       "THM-0047": "sha256:9b77e3660176bc1bfb2d09da1184c1a684f823b581c1c6c5762c8700133edd96",
       "THM-0051": "sha256:0631a9c33148bba5a12d006e99ae805d7541b3b4c695e28650cadc4897f62c5a",
-      "THM-0087": "sha256:da4d310a19bbbe160954ef6f26e43538c6a91be221cf45ca5f9ad6589cc2e0ef"
+      "THM-0087": "sha256:3e3f96c2752a661f5bb4ba4779be2edceaf28bd2d15e39f2217c61fdab7c6a78"
     },
     "theorem_id": "THM-0093",
     "theorem_review_requirement": "Owner security-specification review"
   },
-  "notes": "OWNER SPECIFICATION-REVIEW RULING OF 2026-09-05, recorded by the implementing agent as a MECHANICAL TRANSCRIPTION. The review authority is the owner's ruling; the agent wrote the file and did not approve the change. The owner named this exact reviewed_fingerprint and this exact theorem_claim in the ruling, and both were recomputed on the tree before this record was written and match. The reviewed tree is the merge commit 401cea18 of #814 head 0c1dc2e3 into main e0d9ad05 -- the tree that merges, not the branch tip. APPROVED: the DEPENDENCY CLOSURE incorporating the corrected THM-0087 scope. THE THEOREM TEXT ITSELF IS UNCHANGED -- statement, security consequence and scope are byte-identical, and the fingerprint moved only because a premise's claim digest moved beneath it. THIS REVIEW DOES NOT BROADEN THM-0093 and does not make it the authority over startup or materialization behaviour; that remains THM-0096's. THM-0093 continues to own only what an answer leg may proceed on and how a request-time absence is attributed between the caller and the deployment.",
-  "reviewed_fingerprint": "sha256:5bf69489f5ee853325dce99e23e0aad4e847b8590a431ff1dcdf023486105a5c",
+  "notes": "OWNER SPECIFICATION REVIEW EVENT, r11 Part A (the ten-row owner packet), 2026-09-16.\nRecorded under the r11 closure mandate's AFK review authority on explicit owner rulings,\ntranscribed verbatim in work/r11-campaign/RULINGS-OWNER-10.md.\n\nDEPENDENCY-ONLY RE-AFFIRMATION. This theorem's own claim text, security consequence, scope,\nowner and review requirement are BYTE-IDENTICAL to the reviewed version: `theorem_claim` is\nunchanged and only `theorem_dependencies` moved. What moved in its closure, and why each is\na CLAIM CORRECTION bringing the registry to what the code already does:\n\n  - THM-0087's title, consequence and scope now say what \"reachable\" quantifies over \u2014 requests reaching this proxy \u2014 with direct keyspace write authority outside the quantifier as the already-registered ASM-0047.\n\nNo conjunct of this theorem was broadened. Each premise edit NARROWS or restates a\nregistered claim to what its evidence reaches; none licenses anything this theorem did not\nalready have. The one addition in the same event, ASM-0049, registers a premise\n(`proxy.tls_listener_state` trust-epoch digest distinctness) that was previously unstated,\nwhich makes the trusted-premise set larger and the claims resting on it no stronger.",
+  "reviewed_fingerprint": "sha256:e189c716fb6ce0e3b3a96d8b968c571fb20e095c0af05b6d00f29a9557ab5bdc",
   "reviewer": "mats@sundvall.name",
   "subject": "THM-0093"
 }

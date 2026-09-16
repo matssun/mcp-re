@@ -777,16 +777,20 @@ mod terminal_retirement_tests {
         );
     }
 
-    /// A poisoned snapshot lock must fail CLOSED, not panic.
+    /// A poisoned snapshot lock is RECOVERED, and retirement still dominates it.
     ///
     /// Poison is sticky. `SigningPlane::drop` takes the write side during an unwind, so a
     /// panic anywhere that unwinds through it poisons this lock for the process lifetime.
-    /// With `.expect(...)` every later `current()` — read on every request and every
-    /// signed rejection — panicked inside the request future, so the designed 503
-    /// `delegated_signing_unavailable` became a connection reset with no audit reason, and
-    /// the rotor's own `publish` panicked too, so the replica could not self-heal.
+    /// The snapshot is one `Option<Arc<..>>` swapped whole, so no partially mutated
+    /// invariant can become visible and the poison bit decides nothing: `current` recovers
+    /// the guard and the ordinary expiry and retirement reads give the verdict. Treating
+    /// poison as a retirement instead would let one unrelated panic anywhere in the process
+    /// retire this replica's signing for its lifetime — and with `.expect(...)` every later
+    /// `current()`, read on every request and every signed rejection, panicked inside the
+    /// request future, so the designed 503 `delegated_signing_unavailable` became a
+    /// connection reset with no audit reason and the rotor's own `publish` panicked too.
     #[test]
-    fn a_poisoned_snapshot_lock_fails_closed_and_still_recovers() {
+    fn a_poisoned_snapshot_lock_is_recovered_and_retirement_still_dominates() {
         let signer = Arc::new(DelegatedServerSigner::new());
         signer.publish(key(NOW + 300));
 

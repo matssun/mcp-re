@@ -23,7 +23,7 @@ about the boundary.
 | boundary | kind | class cap | premises crossing it | reaches theorems |
 |---|---|---|---|---|
 | boundary.clock | environment | V0 | _no premise_ | _no theorem_ |
-| boundary.crypto_primitives | cryptographic | V0 | ASM-0027, ASM-0028, ASM-0037 | THM-0014, THM-0015, THM-0016, THM-0017, THM-0018, THM-0019, THM-0020, THM-0021, THM-0022, THM-0050, THM-0065 |
+| boundary.crypto_primitives | cryptographic | V0 | ASM-0027, ASM-0028, ASM-0037, ASM-0049 | THM-0014, THM-0015, THM-0016, THM-0017, THM-0018, THM-0019, THM-0020, THM-0021, THM-0022, THM-0048, THM-0050, THM-0054, THM-0065, THM-0103 |
 | boundary.external_kms | external-service | V0 | _no premise_ | _no theorem_ |
 | boundary.libc | ffi | V0 | _no premise_ | _no theorem_ |
 | boundary.monotonic_clock | environment | V0 | _no premise_ | _no theorem_ |
