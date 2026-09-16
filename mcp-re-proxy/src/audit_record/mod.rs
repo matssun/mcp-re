@@ -171,7 +171,6 @@ mod tests {
     use crate::audit_record::text::render_record;
     use crate::authorization::AuthorizationFacet;
     use crate::authorization::AuthorizationRefusalFacet;
-    use mcp_re_core::audit::AuditEvent;
     use mcp_re_policy::PolicyError;
 
     #[test]

@@ -229,7 +229,6 @@ mod tests {
     use crate::audit_record::AuditSubject;
     use crate::authorization::AuthorizationFacet;
     use crate::authorization::AuthorizationRefusalFacet;
-    use mcp_re_core::audit::AuditEvent;
 
     /// One record is one line, whatever the resolved actor's identity contains.
     ///

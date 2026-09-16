@@ -1313,7 +1313,6 @@ mod tests {
     #[test]
     fn a_record_enqueued_immediately_before_teardown_still_reaches_stderr() {
         use crate::audit_sink::AuditSink;
-        use mcp_re_core::audit::AuditEvent;
 
         const BATCH: u64 = 2000;
         const CHILD_MARKER: &str = "MCP_RE_AUDIT_FLUSH_TEARDOWN_CHILD";
