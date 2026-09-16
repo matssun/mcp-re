@@ -573,7 +573,9 @@ _PROXY_LIB_SRCS = [
     "src/async_replay/l1_fast_reject.rs",
     # ADR-MCPRE-051 §3: the async inner-server seam — the only inner path; the
     # serving path awaits it (a stdio server is fronted by mcp-re-stdio-bridge over HTTP).
-    "src/async_inner.rs",
+    "src/async_inner/mod.rs",
+    "src/async_inner/completion_bound.rs",
+    "src/async_inner/outcome.rs",
     # ADR-MCPRE-051 §3: the production async inner plane — pooled hyper client to
     # stateless Streamable-HTTP inner backends.
     "src/http_inner/mod.rs",

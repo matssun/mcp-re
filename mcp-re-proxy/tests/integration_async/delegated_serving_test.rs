@@ -508,6 +508,184 @@ async fn a_request_that_cannot_be_answered_never_reaches_the_backend() {
     );
 }
 
+/// An inner plane that counts dispatches and STATES a finite completion bound.
+///
+/// The closure inner states `Duration::ZERO` — correct for an in-process backend, and
+/// useless for measuring a budget, because a zero-length dispatch fits inside every
+/// window. This one declares a real one.
+struct BoundedCountingInner {
+    dispatched: Arc<std::sync::atomic::AtomicUsize>,
+    bound: std::time::Duration,
+}
+
+impl mcp_re_proxy::async_inner::AsyncInnerServer for BoundedCountingInner {
+    fn prepare<'a>(
+        &'a self,
+        _request: &[u8],
+    ) -> Result<
+        mcp_re_proxy::async_inner::PreparedInnerDispatch<'a>,
+        mcp_re_proxy::async_inner::NotAdmitted,
+    > {
+        let counter = Arc::clone(&self.dispatched);
+        Ok(mcp_re_proxy::async_inner::PreparedInnerDispatch::over(
+            move || {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Box::pin(async {
+                    mcp_re_proxy::async_inner::DispatchedOutcome::Replied(
+                        br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec(),
+                    )
+                })
+            },
+            mcp_re_proxy::async_inner::DispatchCompletionBound::Within(self.bound),
+        ))
+    }
+}
+
+fn proxy_over(
+    signer: Arc<DelegatedServerSigner>,
+    inner: Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer>,
+) -> HttpProfileProxy {
+    HttpProfileProxy::new_delegated(
+        actor_resolver(),
+        audience(),
+        AsyncReplayTier::new(
+            Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+            mcp_re_proxy::config_state::FreshnessWindow::new(60).expect("bounded"),
+        ),
+        ProxyDispatchConfig {
+            fleet_strict: false,
+            tier: None,
+        },
+        inner,
+        300,
+        signer,
+    )
+}
+
+/// **R11-481, the hostile control.** A credential whose remaining life is shorter than the
+/// dispatch it would authorize refuses BEFORE the threshold, and the backend is untouched.
+///
+/// The defect: the exchange takes ONE clock reading and signs the reply with
+/// `expires = min(now + sig_ttl, key.exp)`. Nothing re-reads the clock, so the response's
+/// whole RFC 9421 freshness window is consumed by dispatch latency, and a reply minted
+/// under a nearly-closed credential is refused by the client's floor — after the tool call
+/// has already run. 503 is a status a client retries, so the action then runs twice.
+///
+/// The credential is issued 280s before the exchange with a 300s TTL, so it has 20s left;
+/// the plane declares it may take 60s. Nothing crosses the execution threshold.
+#[tokio::test]
+async fn a_credential_that_cannot_outlive_the_dispatch_refuses_before_the_backend_runs() {
+    let dispatched = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let signer = Arc::new(DelegatedServerSigner::new());
+    let mut rotor = make_rotor(Arc::clone(&signer));
+    rotor.rotate(NOW - 280).expect("issue a nearly-closed key");
+
+    let proxy = proxy_over(
+        Arc::clone(&signer),
+        Box::new(BoundedCountingInner {
+            dispatched: Arc::clone(&dispatched),
+            bound: std::time::Duration::from_secs(60),
+        }),
+    );
+
+    let (req, _ev, _v) = signed_request("nonce-window-shorter-than-dispatch");
+    let served = proxy.handle(served_of(&req), NOW).await;
+
+    assert_eq!(
+        served.status, 503,
+        "a reply the client would have to refuse is refused before the backend runs"
+    );
+    assert_eq!(
+        dispatched.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "the execution threshold must not have been crossed"
+    );
+}
+
+/// **The mirror.** The same deployment, the same plane, a credential with room — and the
+/// dispatch proceeds.
+///
+/// Without this the control above passes against a proxy that refuses every dispatch it
+/// ever makes, which is a far worse defect than the one being fixed.
+#[tokio::test]
+async fn a_credential_with_room_for_the_dispatch_still_reaches_the_backend() {
+    let dispatched = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let signer = Arc::new(DelegatedServerSigner::new());
+    let mut rotor = make_rotor(Arc::clone(&signer));
+    rotor.rotate(NOW).expect("issue a fresh key");
+
+    let proxy = proxy_over(
+        Arc::clone(&signer),
+        Box::new(BoundedCountingInner {
+            dispatched: Arc::clone(&dispatched),
+            bound: std::time::Duration::from_secs(60),
+        }),
+    );
+
+    let (req, _ev, _v) = signed_request("nonce-window-covers-dispatch");
+    let served = proxy.handle(served_of(&req), NOW).await;
+
+    assert_eq!(served.status, 200, "a covered dispatch is served normally");
+    assert_eq!(
+        dispatched.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "the backend must run when the window covers the budget"
+    );
+}
+
+/// **The unstated bound.** A plane that cannot say how long a dispatch may take cannot
+/// participate in a posture claiming the response is still fresh when it completes.
+///
+/// Refused rather than assumed: there is no worst completion instant to evaluate the
+/// window at, so picking one on the plane's behalf would assume the very thing being
+/// checked. The credential here is fresh, so nothing else can explain the refusal.
+#[tokio::test]
+async fn an_inner_plane_that_states_no_completion_bound_is_refused_before_the_backend_runs() {
+    struct UnboundedInner(Arc<std::sync::atomic::AtomicUsize>);
+    impl mcp_re_proxy::async_inner::AsyncInnerServer for UnboundedInner {
+        fn prepare<'a>(
+            &'a self,
+            _request: &[u8],
+        ) -> Result<
+            mcp_re_proxy::async_inner::PreparedInnerDispatch<'a>,
+            mcp_re_proxy::async_inner::NotAdmitted,
+        > {
+            let counter = Arc::clone(&self.0);
+            Ok(mcp_re_proxy::async_inner::PreparedInnerDispatch::over(
+                move || {
+                    counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    Box::pin(async {
+                        mcp_re_proxy::async_inner::DispatchedOutcome::Replied(
+                            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec(),
+                        )
+                    })
+                },
+                mcp_re_proxy::async_inner::DispatchCompletionBound::Unstated,
+            ))
+        }
+    }
+
+    let dispatched = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let signer = Arc::new(DelegatedServerSigner::new());
+    let mut rotor = make_rotor(Arc::clone(&signer));
+    rotor.rotate(NOW).expect("issue a fresh key");
+
+    let proxy = proxy_over(
+        Arc::clone(&signer),
+        Box::new(UnboundedInner(Arc::clone(&dispatched))),
+    );
+
+    let (req, _ev, _v) = signed_request("nonce-unstated-bound");
+    let served = proxy.handle(served_of(&req), NOW).await;
+
+    assert_eq!(served.status, 503, "an unstated bound is refused");
+    assert_eq!(
+        dispatched.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "no bound means no dispatch, not an assumed bound"
+    );
+}
+
 // --- required mode: a direct-root response is rejected ----------------------
 
 #[test]

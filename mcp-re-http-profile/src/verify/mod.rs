@@ -37,6 +37,12 @@
 
 pub(crate) mod bound_request;
 pub(crate) mod floor;
+// The §5.1 freshness rule has ONE statement, and a signer deciding whether a window it has
+// not minted yet will still be admissible needs the rule itself rather than a second formula
+// agreeing with it. Published from here rather than from the crate root because `lib.rs` is
+// at its module-size baseline and `verify` is already `pub` — the export costs a line either
+// way, and this is the line that is free to spend.
+pub use floor::params::window_admits;
 pub(crate) mod full;
 
 pub use full::DelegationExpectations;

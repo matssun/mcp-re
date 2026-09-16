@@ -64,46 +64,16 @@
 //! that the exchange machine gets to know which one it is, and that the first three are now
 //! decided where refusing is still free.
 
+mod completion_bound;
+mod outcome;
+
+pub use completion_bound::DispatchCompletionBound;
+pub use outcome::DispatchedOutcome;
+pub use outcome::NotAdmitted;
+
 use std::future::Future;
 use std::pin::Pin;
-
-/// What the inner plane did once the dispatch was committed.
-///
-/// Three facts, and every one of them is compatible with the action having executed. The
-/// fourth case a reader might expect — *nothing was transmitted* — is deliberately absent:
-/// it is decided before commitment, by [`AsyncInnerServer::prepare`], and reported as
-/// [`NotAdmitted`]. A post-commitment value that could say it would let a caller walk an
-/// exchange's consequence back after the threshold, which is the one direction the
-/// exchange machine may never move.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DispatchedOutcome {
-    /// The backend answered with a 2xx JSON body. Whether that body is a LEGAL response is
-    /// a separate question, decided by the envelope validator — this says only that the
-    /// bytes are the backend's own.
-    Replied(Vec<u8>),
-    /// The request was transmitted and the transport then failed — timeout, reset,
-    /// truncation. **Whether the action executed is unknown**, and the honest answer is to
-    /// say so rather than to pick the flattering reading.
-    Indeterminate(&'static str),
-    /// The backend answered, and its answer cannot be used: a non-2xx status, a
-    /// non-JSON media type (an SSE stream, an HTML error page), an unreadable or
-    /// over-cap body.
-    ///
-    /// Separate from [`Indeterminate`](Self::Indeterminate) because the backend DID act,
-    /// and separate from [`Replied`](Self::Replied) because there is nothing here to
-    /// classify as an MCP response.
-    InvalidUpstream(&'static str),
-}
-
-/// Why a dispatch cannot begin, decided WITHOUT transmitting anything.
-///
-/// Returned by [`AsyncInnerServer::prepare`] so the serving path can refuse on the
-/// retry-safe side of the execution threshold. That is the entire point: local saturation
-/// is a fact about this proxy, and answering it after the threshold turns a
-/// definitely-not-executed outage into an exchange that must claim `possibly_executed`
-/// forever after.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct NotAdmitted(pub &'static str);
+use std::time::Duration;
 
 /// The boxed, `Send` future a committed dispatch resolves through.
 pub type InnerResponseFuture<'a> = Pin<Box<dyn Future<Output = DispatchedOutcome> + Send + 'a>>;
@@ -125,6 +95,12 @@ pub struct PreparedInnerDispatch<'a> {
     /// capability, so the capability is CAPTURED here rather than looked up again at the
     /// dispatch — which is exactly the re-lookup that made the old seam observational.
     transmit: Box<dyn FnOnce() -> InnerResponseFuture<'a> + Send + 'a>,
+    /// What the plane that granted this capability says about its own completion.
+    ///
+    /// Travels WITH the capability rather than beside it: the two are one fact about one
+    /// dispatch, and a caller that had to fetch the bound separately could hold a
+    /// capability from one plane and a bound from another.
+    completion: DispatchCompletionBound,
 }
 
 impl std::fmt::Debug for PreparedInnerDispatch<'_> {
@@ -141,10 +117,21 @@ impl<'a> PreparedInnerDispatch<'a> {
     /// have moved the execution threshold to the wrong side of the reservation.
     pub fn over(
         transmit: impl FnOnce() -> InnerResponseFuture<'a> + Send + 'a,
+        completion: DispatchCompletionBound,
     ) -> PreparedInnerDispatch<'a> {
         PreparedInnerDispatch {
             transmit: Box::new(transmit),
+            completion,
         }
+    }
+
+    /// What this plane says about how long the dispatch may still be running.
+    ///
+    /// Read before the execution threshold and nowhere else: past the threshold the
+    /// question has no answer that can change anything.
+    #[must_use]
+    pub fn completion_bound(&self) -> DispatchCompletionBound {
+        self.completion
     }
 
     /// **The execution threshold.** Surrender the capability and transmit.
@@ -190,10 +177,16 @@ where
 {
     fn prepare<'a>(&'a self, request: &[u8]) -> Result<PreparedInnerDispatch<'a>, NotAdmitted> {
         let request = request.to_vec();
-        Ok(PreparedInnerDispatch::over(move || {
+        let transmit = move || {
             let response = self(&request);
-            Box::pin(async move { DispatchedOutcome::Replied(response) })
-        }))
+            Box::pin(async move { DispatchedOutcome::Replied(response) }) as InnerResponseFuture<'a>
+        };
+        // ZERO, and measured rather than assumed: the closure is evaluated synchronously
+        // inside `dispatch` and the future it returns is already ready, so the dispatch
+        // cannot still be running at any later instant. An in-process inner IS the backend;
+        // there is no transport to be slow.
+        let completion = DispatchCompletionBound::Within(Duration::ZERO);
+        Ok(PreparedInnerDispatch::over(transmit, completion))
     }
 }
 
@@ -284,10 +277,16 @@ mod tests {
             let prepared = counted.prepare(b"{}").expect("prepares");
             // The capability a real plane captures — a permit, a probe claim — modelled
             // as something whose release is observable.
-            let prepared = PreparedInnerDispatch::over(move || {
-                let _held = held;
-                prepared.dispatch()
-            });
+            let bound = prepared.completion_bound();
+            let prepared = PreparedInnerDispatch::over(
+                move || {
+                    let _held = held;
+                    prepared.dispatch()
+                },
+                // The wrapper re-states the wrapped plane's bound rather than inventing
+                // one: it adds a captured capability, not latency.
+                bound,
+            );
             drop(prepared);
         }
         assert_eq!(calls.load(Ordering::SeqCst), 0, "a dropped dispatch ran");

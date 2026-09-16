@@ -1116,6 +1116,12 @@ impl AsyncInnerServer for IndeterminateInner {
                     )
                 })
             },
+            // A stub that never answers still states a finite bound: the serving path
+            // refuses an UNSTATED one, so a stub declaring none would be measuring that
+            // refusal instead of the behaviour under test.
+            mcp_re_proxy::async_inner::DispatchCompletionBound::Within(
+                std::time::Duration::from_secs(1),
+            ),
         ))
     }
 }
@@ -2445,6 +2451,12 @@ impl AsyncInnerServer for FixedOutcomeInner {
         let outcome = self.0.clone();
         Ok(mcp_re_proxy::async_inner::PreparedInnerDispatch::over(
             move || Box::pin(async move { outcome }),
+            // A fixture inner still states a finite bound; the serving path refuses an
+            // UNSTATED one, and a fixture declaring none would measure that refusal
+            // instead of the behaviour under test.
+            mcp_re_proxy::async_inner::DispatchCompletionBound::Within(
+                std::time::Duration::from_secs(1),
+            ),
         ))
     }
 }
@@ -2552,6 +2564,12 @@ impl AsyncInnerServer for SignerRetiringInner {
                 signer.retire();
                 Box::pin(async { DispatchedOutcome::Indeterminate("inner request timed out") })
             },
+            // A fixture inner still states a finite bound; the serving path refuses an
+            // UNSTATED one, and a fixture declaring none would measure that refusal
+            // instead of the behaviour under test.
+            mcp_re_proxy::async_inner::DispatchCompletionBound::Within(
+                std::time::Duration::from_secs(1),
+            ),
         ))
     }
 }

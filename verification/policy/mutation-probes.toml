@@ -3838,3 +3838,49 @@ weakening = """
 expect_red = [
   "lib#delegated_wiring::tests::a_root_signing_under_a_key_it_does_not_advertise_publishes_no_credential",
 ]
+
+[[probe]]
+id = "M160-a-window-shorter-than-the-dispatch-still-crosses-the-threshold"
+unit = "proxy.dispatch_commitment"
+conjunct = "a signing window snapshotted before the backend runs and shown to survive that plane's own declared completion bound"
+# The weakening restores the code as it shipped: the boundary never asked. `answerable_stage`
+# validates the credential at `ex.now` only, and that snapshot then signs a reply whose whole
+# RFC 9421 freshness window is consumed by dispatch latency — so a dispatch longer than the
+# credential's remaining life yields a well-formed signature over a dead assertion. The client
+# refuses it AFTER the tool call has run, and 503 is a status it retries, so the action runs
+# twice. Deleting the question is the defect, and the battery must go red on it.
+path = "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs"
+anchor = """
+        if !window.covers(prepared.completion_bound()) {
+"""
+weakening = """
+        if false {
+"""
+expect_red = [
+  "tests/integration_async#delegated_serving_test::a_credential_that_cannot_outlive_the_dispatch_refuses_before_the_backend_runs",
+  "tests/integration_async#delegated_serving_test::an_inner_plane_that_states_no_completion_bound_is_refused_before_the_backend_runs",
+]
+
+[[probe]]
+id = "M161-an-unstated-completion-bound-is-treated-as-zero"
+unit = "proxy.dispatch_commitment"
+conjunct = "an inner plane that states no finite completion bound cannot participate in a posture claiming the response is still fresh when the dispatch completes"
+# The weakening picks a number on the plane's behalf — the tempting reading of "no bound
+# stated" as "no delay expected". It is the assumption the boundary exists to refuse: a plane
+# that cannot bound its own completion supports no claim about what is true at that
+# completion, and treating silence as zero makes every such plane pass.
+path = "mcp-re-proxy/src/async_inner/completion_bound.rs"
+anchor = """
+        let DispatchCompletionBound::Within(d) = self else {
+            return None;
+        };
+"""
+weakening = """
+        let DispatchCompletionBound::Within(d) = self else {
+            return Some(started);
+        };
+"""
+expect_red = [
+  "lib#http_profile_serve::signing_window::tests::a_plane_that_states_no_bound_is_refused_however_long_the_credential_lives",
+  "tests/integration_async#delegated_serving_test::an_inner_plane_that_states_no_completion_bound_is_refused_before_the_backend_runs",
+]

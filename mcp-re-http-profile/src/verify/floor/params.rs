@@ -25,6 +25,44 @@ use crate::policy::ProfileAlgorithm;
 use crate::policy::VerifierPolicy;
 use crate::sigbase::SignatureParams;
 
+/// §5.1 freshness: does the window `[created, expires)` admit `now` under `skew`?
+///
+/// THE predicate, not a copy of it. [`check_params`] applies it to what a message
+/// presented; a signer applies it to a window it has not minted yet, to decide whether a
+/// verifier will still accept that window at the latest instant its own exchange can
+/// reach. Those are the same question about different instants, and a second formula
+/// written for the second one would be a claim that happened to agree rather than the
+/// rule itself.
+///
+/// The skew tolerance is symmetric and bounded: a `created` slightly in the future and an
+/// `expires` slightly in the past are honest clock disagreement, not staleness. A
+/// degenerate `expires <= created` is refused SKEW-FREE — that is a property of the window
+/// itself, and no amount of clock disagreement makes it well-formed.
+///
+/// It decides freshness ONLY. The width bound of §5.1 is a separate question about the
+/// window's own extent, `check_params` asks it separately, and a caller must not read a
+/// `true` here as the window being admissible on every axis.
+///
+/// It carries its own Verus postcondition rather than an `assume_specification`. The
+/// freshness conjuncts are THM-0001's, and factoring the rule out of [`check_params`] must
+/// not turn a proved conjunct into a trusted one: a predicate whose behaviour the prover
+/// assumes would leave the theorem resting on a premise nobody agreed to. The clamps are
+/// what make the integer form safe at the extremes — a `created - skew` below `i64::MIN`
+/// saturates, and the saturated value is still no greater than `now`.
+#[cfg_attr(feature = "verify", verus_verify)]
+#[cfg_attr(feature = "verify", verus_spec(out =>
+    ensures
+        out ==> {
+            &&& created - skew <= now
+            &&& now < expires + skew
+            &&& created < expires
+        },
+))]
+#[must_use]
+pub fn window_admits(created: i64, expires: i64, now: i64, skew: i64) -> bool {
+    created.saturating_sub(skew) <= now && now < expires.saturating_add(skew) && created < expires
+}
+
 /// Shared parameter gate: tag, algorithm, freshness window, keyid presence.
 ///
 /// Algorithm acceptance and clock-skew tolerance are read from `policy`, never
@@ -72,16 +110,12 @@ pub(crate) fn check_params(
         .ok_or(HttpProfileError::UnsupportedAlgorithm)?;
     let created = params.created.ok_or(HttpProfileError::StaleWindow)?;
     let expires = params.expires.ok_or(HttpProfileError::StaleWindow)?;
-    // Freshness with a bounded, symmetric skew tolerance (§5.1): a `created`
-    // slightly in the future and an `expires` slightly in the past are honest
-    // clock disagreement, not evidence of staleness. `expires <= created` is
-    // skew-free — a degenerate window is a property of the message itself, and
-    // no amount of clock disagreement makes it well-formed.
+    // Freshness with a bounded, symmetric skew tolerance (§5.1), through the one
+    // predicate that states it. A signer deciding whether a window it is about to mint
+    // will still be acceptable when its exchange completes asks the SAME function, so the
+    // two cannot drift into a pair of agreeing formulas.
     let skew = policy.max_clock_skew();
-    if created.saturating_sub(skew) > now
-        || expires.saturating_add(skew) <= now
-        || expires <= created
-    {
+    if !window_admits(created, expires, now, skew) {
         return Err(HttpProfileError::StaleWindow);
     }
     // Bound how WIDE the signer may declare its own window (§5.1). Freshness above
