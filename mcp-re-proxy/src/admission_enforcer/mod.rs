@@ -108,6 +108,11 @@ impl AdmissionEnforcer {
             }
         };
 
+        // The degraded window is a DURATION, so it is read from the monotonic clock and
+        // never from `now` — see `degraded_window`. One reading for the whole decision, so
+        // the instant a read is recorded at and the instant the window is judged against
+        // cannot differ by the time the lookup took.
+        let elapsed_at = std::time::Instant::now();
         // The authoritative lookup. An outage yields `None` — the ONLY input that
         // reaches the §5.2 degraded fork — while a store that ANSWERED is a definitive
         // negative whenever it has nothing this deployment will act on: no record, or a
@@ -117,11 +122,11 @@ impl AdmissionEnforcer {
         // issuing one.
         let authoritative = match self.source.current(&binding.admission_id, now).await {
             Ok(Some(state)) => {
-                self.window.record_read(now);
+                self.window.record_read(elapsed_at);
                 Some(state)
             }
             Ok(None) => {
-                self.window.record_read(now);
+                self.window.record_read(elapsed_at);
                 return Err(HttpProfileError::AdmissionNotCurrent);
             }
             // The source is unreachable. Whether the §5.2 degraded fork may be entered
@@ -129,7 +134,7 @@ impl AdmissionEnforcer {
             // not downstream by how fresh the caller's assertion is, which the caller
             // controls.
             Err(_) => {
-                if self.window.exhausted(&self.policy, now) {
+                if self.window.exhausted(&self.policy, elapsed_at) {
                     return Err(HttpProfileError::AdmissionStateUnavailable);
                 }
                 None
@@ -196,7 +201,9 @@ mod tests {
             Arc::new(|_kid: &str| None),
         );
         assert!(
-            enforcer.window.exhausted(&enforcer.policy, 1_000),
+            enforcer
+                .window
+                .exhausted(&enforcer.policy, std::time::Instant::now()),
             "a gate must not treat its own construction as a confirmation"
         );
     }

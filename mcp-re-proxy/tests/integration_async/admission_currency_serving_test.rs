@@ -636,9 +636,13 @@ fn an_unreachable_authority_serves_within_p_and_fails_closed_past_it() {
     let source = Arc::new(admission_store());
     publish_admitted(&source, 5);
     let calls = Arc::new(AtomicUsize::new(0));
+    // P is ONE SECOND, because the window is elapsed time on the monotonic clock and the
+    // control ages the OUTAGE by waiting — which is the only thing that ages it. A 120s
+    // bound would need a 120s test. `max_clock_skew` keeps the strict policy's value: it
+    // governs the assertion-freshness comparison below and does NOT widen this window.
     let policy = AdmissionPolicy {
         allow_degraded_mode: true,
-        degraded_propagation_bound: 120,
+        degraded_propagation_bound: 1,
         ..strict_policy()
     };
     let proxy = replica(
@@ -673,9 +677,15 @@ fn an_unreachable_authority_serves_within_p_and_fails_closed_past_it() {
     assert_eq!(served.status, 200, "within P, degraded mode serves");
     assert_eq!(calls.load(Ordering::SeqCst), 2);
 
-    // 160s into the same outage — past P + skew — with an EQUALLY FRESH assertion. A
-    // revocation could have propagated by now and this replica would not know it, and no
-    // assertion the caller can obtain moves this clock, which is the whole point.
+    // Past P, with an EQUALLY FRESH assertion. A revocation could have propagated by now
+    // and this replica would not know it.
+    //
+    // TWO clocks are moving and only one of them matters. `now` advances by 100 seconds and
+    // the assertion is minted just before it, so everything the CALLER controls says this
+    // call is as current as the one before it. What closes the window is the outage having
+    // lasted longer than P on the monotonic clock — which nothing the caller can obtain
+    // moves, in either direction.
+    std::thread::sleep(std::time::Duration::from_millis(1_100));
     let just_issued = admission_claims(5, AdmissionStatus::Admitted, NOW + 155);
     let served = block_on(proxy.handle(
         served_of(&signed_call(

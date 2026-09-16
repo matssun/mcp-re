@@ -3799,7 +3799,12 @@ paths = [
   "mcp-re-proxy/src/admission_enforcer/degraded_window.rs",
 ]
 exported_contracts = []
-evidence = ["test://proxy/admission_currency_gate/degraded_window_and_declaration"]
+evidence = [
+  "test://proxy/admission_currency_gate/degraded_window_and_declaration",
+  # Declared WITH its first probes: a `[[probe]]` on a unit claiming no mutation evidence
+  # writes no record, so `attest` issues the unit from the ordinary battery regardless.
+  "mutation://proxy/admission_currency_gate/degraded_window_clock",
+]
 # TWO TARGETS, and the split is the point. The in-file controls measure the window's
 # arithmetic, which no request can reach; the integration battery drives `decide` through the
 # production `HttpProfileProxy`, which is the only thing that can say the gate is CONSULTED.
@@ -3811,7 +3816,11 @@ evidence = ["test://proxy/admission_currency_gate/degraded_window_and_declaratio
 tested_symbols = [
   "lib#admission_enforcer::tests::a_new_enforcer_has_a_window_nobody_earned",
   "lib#admission_enforcer::degraded_window::tests::a_replica_that_never_reached_the_authority_has_no_window",
-  "lib#admission_enforcer::degraded_window::tests::the_degraded_window_closes_p_after_the_last_successful_read",
+  "lib#admission_enforcer::degraded_window::tests::the_degraded_window_closes_exactly_p_after_the_last_successful_read",
+  "lib#admission_enforcer::degraded_window::tests::a_wall_clock_excursion_cannot_widen_the_window",
+  "lib#admission_enforcer::degraded_window::tests::the_skew_allowance_does_not_widen_the_outage_window",
+  "lib#admission_enforcer::degraded_window::tests::an_unbounded_window_does_not_make_an_unearned_one_open",
+  "lib#admission_enforcer::degraded_window::tests::a_negative_bound_is_no_window_rather_than_a_long_one",
   "lib#admission_enforcer::degraded_window::tests::an_out_of_order_read_does_not_rewind_the_window",
   "lib#admission_enforcer::degraded_window::tests::without_the_opt_in_there_is_no_window_at_all",
   "tests/integration_async#admission_currency_serving_test::a_call_without_admission_evidence_is_refused_when_required_and_served_when_optional",
