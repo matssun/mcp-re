@@ -112,6 +112,7 @@ attestations this view cannot see.
 | unit://proxy.kms_endpoint_authority | source, contracts or evidence | THM-0089 | _no consumer_ |
 | unit://proxy.mechanism_verified_credential | source, contracts or evidence | THM-0030 | proxy.authenticated_relationship_peer (CONTRACT_CONSUMES), proxy.credential_currency (CONTRACT_CONSUMES) |
 | unit://proxy.online_ocsp_reachability | source, contracts or evidence | THM-0013 | _no consumer_ |
+| unit://proxy.operator_facing_redaction | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.outbound_destination | source, contracts or evidence | THM-0090 | _no consumer_ |
 | unit://proxy.outstanding_id_provenance | source, contracts or evidence | THM-0083 | _no consumer_ |
 | unit://proxy.pdp_decision_relation | source, contracts or evidence | THM-0040, THM-0052 | _no consumer_ |

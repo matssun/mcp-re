@@ -108,6 +108,7 @@ not an omission to hide.
 | proxy.kms_endpoint_authority | V0 | THM-0089 | 0 |
 | proxy.mechanism_verified_credential | V0 | THM-0030 | 1 |
 | proxy.online_ocsp_reachability | V0 | THM-0013 | 0 |
+| proxy.operator_facing_redaction | V0 | _none_ | 0 |
 | proxy.outbound_destination | V0 | THM-0090 | 0 |
 | proxy.outstanding_id_provenance | V0 | _none_ | 0 |
 | proxy.pdp_decision_relation | V0 | THM-0040 | 0 |
