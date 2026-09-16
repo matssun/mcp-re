@@ -22,6 +22,35 @@ records what was already oversized at a baseline SHA. From that point:
 The last two are what stop the registry rotting into a permanent allowlist: an entry that
 no longer describes reality is an error, not a shrug.
 
+# A raised baseline is a ONE-SHOT event, and it does not authorize itself
+
+"A registered file grows -> FAIL" was enforced against `baseline_prod_loc` and nothing
+enforced anything against `baseline_prod_loc`. Raising the number in the same commit as
+the growth turned the whole ratchet off for that file, silently, with no reviewer seeing
+anything but a larger integer in a TOML table. **A control whose input the controlled
+party may edit is not a control** — it is the same defect class as a threshold
+parameterising a lint nobody switched on.
+
+So an upward baseline transition, judged against `origin/main`, is its own event with its
+own authorization. It requires ALL of:
+
+    new_baseline > old_baseline               the trigger: an upward transition
+    actual production LOC == new_baseline     no headroom; exactly the growth that happened
+    status == "reviewed-exception"            only a unit a §14 census kept INTACT may grow
+    growth_from_prod_loc == old_baseline      the authorization names the transition it is for
+    growth_ref names a §14 record that
+      contains the exact literal line
+      `growth-authorization: <path> <old> -> <new>`
+
+The fourth and fifth conditions are what make it one-shot. An authorization is written for
+one exact pair of integers; once merged, `old_baseline` on `origin/main` has moved to the
+new value, so the spent authorization matches no future transition and a further increase
+needs a fresh §14 record naming the new pair. **A previous authorization never authorizes
+a later increase**, and the new ceiling is not general permission for the file to grow.
+
+`actual == new_baseline` is the anti-headroom condition: without it, "442 -> 600" would
+buy 146 lines of unexamined future growth from one review.
+
 # Investigation status and disposition are separate facts
 
 An entry's `status` says what is KNOWN about a unit, and there are three states because
@@ -97,8 +126,19 @@ STATUSES = {"unreviewed", "reviewed-exception", "reviewed-action-required"}
 #: exception, so the reference is to an adjudication, not to a grant.
 REVIEWED = {"reviewed-exception", "reviewed-action-required"}
 
+#: The two halves of a ONE-SHOT upward-baseline authorization. They are a pair: a
+#: `growth_from_prod_loc` with no record is an unevidenced claim, and a `growth_ref` with no
+#: transition does not say WHICH increase was authorized.
+GROWTH_FIELDS = {"growth_from_prod_loc", "growth_ref"}
+
 #: Anything else in a `[[debt]]` table is a typo or a stale field name, and both fail.
-ENTRY_FIELDS = {"path", "baseline_prod_loc", "baseline_sha", "status", "review_ref"}
+ENTRY_FIELDS = {
+    "path",
+    "baseline_prod_loc",
+    "baseline_sha",
+    "status",
+    "review_ref",
+} | GROWTH_FIELDS
 
 #: The permitted disposition transitions, as ADR-MCPRE-061 §14 defines the lifecycle.
 #: Every one of them either preserves or increases what is known about a unit; none
@@ -307,11 +347,18 @@ def load_registry(path: Path) -> dict[str, dict]:
     return entries
 
 
-def check(root: Path, registry: dict[str, dict]) -> tuple[list[str], int]:
-    """Return (problems, files_examined)."""
+def check(
+    root: Path, registry: dict[str, dict], out_measured: dict[str, int] | None = None
+) -> tuple[list[str], int]:
+    """Return (problems, files_examined), filling `out_measured` with path -> production LOC.
+
+    `check_baseline_growth` needs the same measurement to decide whether a raised baseline
+    matches the file it describes. It is handed out rather than measured again: two passes
+    over the tree are two chances for the two numbers to differ.
+    """
     problems: list[str] = []
     sources = rust_sources(root)
-    measured: dict[str, int] = {}
+    measured: dict[str, int] = out_measured if out_measured is not None else {}
 
     for p in sources:
         rel = str(p.relative_to(root))
@@ -645,9 +692,106 @@ def selftest() -> int:
         print("selftest FAIL: unknown status was accepted")
         return 1
 
+    if selftest_baseline_growth() != 0:
+        return 1
+
     print("module-size gate selftest: PASS (7 counter cases, ratchet in both directions, "
           "empty scope, stale + malformed registry entries, the §14 disposition lifecycle "
-          "and its refusals, and the pre-rename `exception_ref` field)")
+          "and its refusals, the pre-rename `exception_ref` field, and the one-shot upward "
+          "baseline authorization — nine refusals and the two arrangements that pass)")
+    return 0
+
+
+def selftest_baseline_growth() -> int:
+    """The one-shot upward-baseline authorization, asserted through every way it is refused.
+
+    The hole this closes was invisible precisely because raising `baseline_prod_loc` looked
+    like bookkeeping, so the positive case is asserted LAST: every refusal first, then the
+    one arrangement that passes, so a rule that accepted everything could not read as green.
+    """
+    rel = "mcp-re-probe/src/big.rs"
+
+    def entry(**over) -> dict[str, dict]:
+        base = {"path": rel, "baseline_prod_loc": 454, "baseline_sha": "x",
+                "status": "reviewed-exception", "review_ref": "EX-000 in record.md",
+                "growth_from_prod_loc": 442, "growth_ref": "GR-000 in record.md"}
+        base.update(over)
+        return {rel: base}
+
+    before = {rel: {"path": rel, "baseline_prod_loc": 442, "baseline_sha": "x",
+                    "status": "unreviewed"}}
+    at_454 = {rel: 454}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        record = root / "record.md"
+        record.write_text(
+            "# a §14 record\n\n"
+            f"{growth_authorization_line(rel, 442, 454)}\n"
+        )
+
+        cases: list[tuple[str, dict[str, dict], dict[str, int], str]] = [
+            # Raising the number with nothing else is the whole defect, in one line.
+            ("a bare raised baseline", entry(growth_from_prod_loc=None, growth_ref=None),
+             at_454, "no growth authorization"),
+            # Headroom: 442 -> 600 would buy 146 unreviewed lines from one review.
+            ("headroom above the measured file", entry(baseline_prod_loc=600), {rel: 454},
+             "never headroom"),
+            # A unit already owed a decomposition may not grow while owing it.
+            ("growth under reviewed-action-required",
+             entry(status="reviewed-action-required"), at_454, "kept it INTACT"),
+            # The one-shot property: an authorization written for an earlier transition.
+            ("a spent authorization reused", entry(growth_from_prod_loc=400), at_454,
+             "does not authorize the next"),
+            # The record must be about THIS transition, not about growth in general.
+            ("a record not naming this exact transition",
+             entry(growth_ref="GR-001 in absent.md"), at_454,
+             "must authorize this exact transition"),
+            # Half an authorization is not one.
+            ("growth_ref with no transition", entry(growth_from_prod_loc=None), at_454,
+             "must appear together"),
+            ("a transition with no record", entry(growth_ref=None), at_454,
+             "must appear together"),
+        ]
+        for name, current, meas, needle in cases:
+            current[rel] = {k: v for k, v in current[rel].items() if v is not None}
+            got = check_baseline_growth(before, current, meas, root)
+            if not any(needle in p for p in got):
+                print(f"selftest FAIL: {name} was not refused ({needle!r} absent): {got}")
+                return 1
+
+        # A spent authorization must not linger once the file has shrunk back past it.
+        settled = {rel: dict(entry()[rel], baseline_prod_loc=440)}
+        if not any("paid back" in p for p in
+                   check_baseline_growth({rel: dict(settled[rel])}, settled, {rel: 440}, root)):
+            print("selftest FAIL: an authorization at or above the current baseline lingered")
+            return 1
+
+        # Fully authorized: every condition met, and it passes.
+        if check_baseline_growth(before, entry(), at_454, root):
+            print("selftest FAIL: a fully authorized one-shot growth was refused: "
+                  f"{check_baseline_growth(before, entry(), at_454, root)}")
+            return 1
+
+        # ...and having been spent, it authorizes nothing further. `origin/main` now holds
+        # 454, so the SAME entry raised again is a second transition with a stale pair.
+        spent = {rel: dict(entry()[rel], baseline_prod_loc=466)}
+        if not any("does not authorize the next" in p for p in
+                   check_baseline_growth(entry(), spent, {rel: 466}, root)):
+            print("selftest FAIL: a merged authorization authorized a second increase")
+            return 1
+
+        # A shrink needs no authorization at all; the ratchet already permits it.
+        shrink = {rel: {"path": rel, "baseline_prod_loc": 430, "baseline_sha": "x",
+                        "status": "unreviewed"}}
+        if check_baseline_growth(before, shrink, {rel: 430}, root):
+            print("selftest FAIL: a shrinking baseline was made to justify itself")
+            return 1
+
+    # The growth fields are part of the schema, not unknown fields.
+    if validate_registry(entry()):
+        print("selftest FAIL: the growth authorization fields were rejected as unknown")
+        return 1
     return 0
 
 
@@ -703,6 +847,111 @@ def check_transitions(previous: dict[str, dict], current: dict[str, dict]) -> li
     return problems
 
 
+def growth_authorization_line(rel: str, old: int, new: int) -> str:
+    """The exact literal a §14 record must contain to authorize `old -> new` for `rel`.
+
+    Path and BOTH integers, because each one is a thing the record has to have been written
+    about. A record that says only "error.rs may grow" authorizes every future increase; a
+    record that says only "442 -> 454" could be cited by any file.
+    """
+    return f"growth-authorization: {rel} {old} -> {new}"
+
+
+def check_baseline_growth(
+    previous: dict[str, dict],
+    current: dict[str, dict],
+    measured: dict[str, int],
+    root: Path,
+) -> list[str]:
+    """Refuse an upward `baseline_prod_loc` transition that is not separately authorized.
+
+    `check` compares a file against its baseline. Nothing compared the BASELINE against
+    anything, so raising it authorized itself — the ratchet's own input was writable by the
+    party it constrains. This is the missing half, and it is deliberately the strictest rule
+    in the file: a raised ceiling is the one edit that makes every other check weaker.
+    """
+    problems: list[str] = []
+    for rel, entry in current.items():
+        frm = entry.get("growth_from_prod_loc")
+        ref = entry.get("growth_ref")
+        if (frm is None) != (ref is None):
+            problems.append(
+                f"{rel}: `growth_from_prod_loc` and `growth_ref` are one authorization and "
+                f"must appear together — a transition with no record is unevidenced, and a "
+                f"record with no transition does not say which increase it authorized"
+            )
+            continue
+
+        before = previous.get(rel)
+        new = entry.get("baseline_prod_loc")
+        if before is None or new is None or before.get("baseline_prod_loc") is None:
+            # Not a transition. A newly registered entry is new debt (the threshold rules
+            # judge it) and a malformed one is `validate_registry`'s to report.
+            continue
+        old, new = int(before["baseline_prod_loc"]), int(new)
+
+        if new <= old:
+            # No upward transition. A lingering authorization is the RECORD of the last one
+            # and is inert — but only while it describes a transition already spent. One
+            # that reaches the current baseline is stale, and a stale authorization is
+            # exactly what the one-shot rule exists to refuse.
+            if frm is not None and int(frm) >= new:
+                problems.append(
+                    f"{rel}: `growth_from_prod_loc` is {frm} and the baseline is {new} — a "
+                    f"spent authorization must sit strictly below the ceiling it bought; "
+                    f"remove it, the growth it recorded has been paid back"
+                )
+            continue
+
+        # An upward transition. Every condition below is required; they are reported
+        # together rather than at the first failure, so one run names the whole gap.
+        if frm is None:
+            problems.append(
+                f"{rel}: `baseline_prod_loc` was raised {old} -> {new} with no growth "
+                f"authorization — a raised ceiling turns the ratchet off for this file, so "
+                f"it needs an ADR-MCPRE-061 §14 record, not a larger integer"
+            )
+            continue
+        if int(frm) != old:
+            problems.append(
+                f"{rel}: `growth_from_prod_loc` is {frm} but the baseline on origin/main is "
+                f"{old} — an authorization is for one exact transition, and a spent one does "
+                f"not authorize the next"
+            )
+        actual = measured.get(rel)
+        if actual is not None and actual != new:
+            problems.append(
+                f"{rel}: the raised baseline is {new} but the file measures {actual} "
+                f"production lines — an upward baseline authorizes exactly the growth that "
+                f"happened, never headroom for growth that has not been reviewed"
+            )
+        status = entry.get("status")
+        if status != "reviewed-exception":
+            problems.append(
+                f"{rel}: `baseline_prod_loc` was raised {old} -> {new} while status is "
+                f"`{status}` — only a unit whose §14 census deliberately kept it INTACT may "
+                f"grow; anything else is growing a unit already owed a decomposition"
+            )
+        want = growth_authorization_line(rel, old, new)
+        named = referenced_documents(str(ref))
+        if not named:
+            problems.append(
+                f"{rel}: `growth_ref` names no document — cite the record's file so the "
+                f"authorization can be read"
+            )
+        elif not any(
+            (root / doc).exists()
+            and want in (root / doc).read_text(encoding="utf-8", errors="replace")
+            for doc in named
+        ):
+            problems.append(
+                f"{rel}: no document named by `growth_ref` contains the line "
+                f"`{want}` — the record must authorize this exact transition, for this "
+                f"exact file, in words a reader and this gate agree on"
+            )
+    return problems
+
+
 def baseline_sha() -> str:
     try:
         return subprocess.run(
@@ -743,6 +992,13 @@ def emit_registry() -> int:
         print(f'status = "{status}"')
         if prior.get("review_ref"):
             print(f'review_ref = "{prior["review_ref"]}"')
+        # Carried forward, never invented. Re-emitting must not silently mint an upward
+        # authorization for a number this tool just raised on its own; if the pair no longer
+        # describes a spent transition, `check_baseline_growth` says so.
+        if prior.get("growth_from_prod_loc") is not None:
+            print(f'growth_from_prod_loc = {prior["growth_from_prod_loc"]}')
+        if prior.get("growth_ref"):
+            print(f'growth_ref = "{prior["growth_ref"]}"')
     return 0
 
 
@@ -754,10 +1010,19 @@ def main() -> int:
 
     registry = load_registry(REGISTRY)
     schema_problems = validate_registry(registry, REPO)
-    problems, examined = check(REPO, registry)
+    measured: dict[str, int] = {}
+    problems, examined = check(REPO, registry, measured)
     previous, baseline_note = previous_registry()
-    transition_problems = check_transitions(previous, registry) if previous is not None else []
-    problems = schema_problems + problems + transition_problems
+    if previous is None:
+        # Both origin/main checks are skipped together, and the skip is PRINTED. A gate that
+        # quietly stops checking the one edit that disables it is the "green that measured
+        # nothing" failure aimed at the gate itself.
+        baseline_problems: list[str] = []
+    else:
+        baseline_problems = check_transitions(previous, registry) + check_baseline_growth(
+            previous, registry, measured, REPO
+        )
+    problems = schema_problems + problems + baseline_problems
 
     if empty_scope_is_failure(examined):
         print("module-size gate: FAIL — examined 0 production Rust files. A gate that "
@@ -784,7 +1049,8 @@ def main() -> int:
         f"{THRESHOLD}-line threshold (production lines = every line not inside a test region (a region opens at ^#[cfg((all()?test and closes with its module; counting resumes after it); ADR-MCPRE-061 §5.1). Debt registry: "
         f"{len(registry)} file(s) — {unreviewed} unreviewed, {excepted} reviewed-exception, "
         f"{action_required} reviewed-action-required. No new oversized file, no registered "
-        f"file grew. Disposition transitions checked {baseline_note}."
+        f"file grew. Disposition transitions and upward baseline authorizations checked "
+        f"{baseline_note}."
     )
     return 0
 

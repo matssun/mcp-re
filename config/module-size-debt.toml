@@ -503,9 +503,12 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-core/src/error.rs"
-baseline_prod_loc = 442
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
+baseline_prod_loc = 454
+baseline_sha = "b1d067a"
+status = "reviewed-exception"
+review_ref = "EX-013 in docs/architecture/review-dispositions.md"
+growth_from_prod_loc = 442
+growth_ref = "EX-013 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-proxy/src/trust_plane/trust_cache.rs"
