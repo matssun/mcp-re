@@ -127,14 +127,15 @@ impl AuditSink for StderrAuditSink {
             &STDERR_AUDIT_DROPPED,
             &STDERR_AUDIT_QUEUED,
             line,
-            admission_ceiling(record.actor_id.is_some()),
+            admission_ceiling(record),
         );
     }
 }
 
-/// The queue depth a record of this attribution may be admitted at.
-fn admission_ceiling(attributed: bool) -> usize {
-    if attributed {
+/// The queue depth a record may be admitted at, decided from the record's OWN attribution
+/// — so the mapping is a fact a control can drive, not one a call site supplies.
+fn admission_ceiling(record: &AuditRecord) -> usize {
+    if record.actor_id.is_some() {
         STDERR_AUDIT_QUEUE_DEPTH
     } else {
         STDERR_AUDIT_UNATTRIBUTED_CEILING
@@ -282,6 +283,50 @@ mod tests {
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].event().event_type, "mcp-re.request.accepted");
         assert_eq!(records[1].event().reason, Some("mcp-re.replay_detected"));
+    }
+
+    /// A record's ATTRIBUTION is what chooses its ceiling, and the unattributed one is
+    /// strictly lower.
+    ///
+    /// The property `STDERR_AUDIT_UNATTRIBUTED_CEILING` exists for, measured where it is
+    /// decided. The neighbouring flood control builds its own channel, its own counters and
+    /// passes `ceiling` by hand, so it establishes that `offer` respects a ceiling it was
+    /// GIVEN — and stays green under an implementation that hands every record the full
+    /// depth. This drives the mapping from the record instead, which is the fact the
+    /// unattributed reservation actually rests on.
+    ///
+    /// Both halves matter. Lower is the reservation; equal-to-the-depth for an attributed
+    /// record is what makes the reserved headroom reachable by exactly the class it is held
+    /// for, rather than the two simply being different numbers.
+    #[test]
+    fn the_ceiling_a_record_is_admitted_at_is_chosen_by_its_attribution() {
+        let attributed = AuditRecord {
+            subject: AuditSubject::request(
+                AuditEvent::request_accepted(),
+                AuthorizationFacet::NotConfigured,
+            ),
+            actor_id: Some("client:example.com:a".into()),
+            status: 200,
+            at_unix: 10,
+        };
+        let unattributed = AuditRecord {
+            subject: AuditSubject::request(
+                AuditEvent::request_rejected(&mcp_re_core::McpReError::ReplayDetected),
+                AuthorizationFacet::Refused(AuthorizationRefusalFacet::BeforePolicy),
+            ),
+            actor_id: None,
+            status: 403,
+            at_unix: 11,
+        };
+        assert_eq!(admission_ceiling(&attributed), STDERR_AUDIT_QUEUE_DEPTH);
+        assert!(
+            admission_ceiling(&unattributed) < admission_ceiling(&attributed),
+            "an unattributed record must not be admitted at the attributed ceiling"
+        );
+        assert_eq!(
+            admission_ceiling(&unattributed),
+            STDERR_AUDIT_UNATTRIBUTED_CEILING
+        );
     }
 
     /// R7-C145: the emission must never wait on the reader. `record` is reached from

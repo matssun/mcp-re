@@ -95,8 +95,13 @@ fn drain_line(outcome: AuditDrain, report: bool) -> Option<String> {
         return None;
     }
     Some(match outcome {
+        // BEFORE this drain, and the qualification is load-bearing: `Drained` means every
+        // record queued ahead of the Flush reached stderr, and at shutdown in-flight
+        // exchanges are still recording. A record offered during or after the flush is
+        // outside the claim, so a line that said "every record" would be claiming an
+        // ordering nothing establishes.
         AuditDrain::Drained => "mcp-re-proxy: audit stream drained at shutdown: every record \
-                                handed to the audit writer reached stderr"
+                                handed to the audit writer before this drain reached stderr"
             .to_string(),
         AuditDrain::OutcomeUnknown => format!(
             "mcp-re-proxy: WARNING: the audit stream did not complete a clean drain — it either \

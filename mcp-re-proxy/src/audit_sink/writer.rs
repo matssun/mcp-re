@@ -83,7 +83,15 @@ pub(super) fn stderr_audit_writer() -> &'static std::sync::mpsc::SyncSender<Audi
         // shutdown report is a different question from the request path's.
         let started = std::thread::Builder::new()
             .name("mcp-re-audit".to_owned())
-            .spawn(move || write_until_disconnected(&receiver));
+            .spawn(move || {
+                write_until_disconnected(
+                    &receiver,
+                    STDERR_AUDIT_DROP_REPORT_INTERVAL,
+                    &STDERR_AUDIT_DROPPED,
+                    &STDERR_AUDIT_QUEUED,
+                    &STDERR_AUDIT_WRITES_FAILED,
+                );
+            });
         if started.is_err() {
             // The sender is still installed: the channel is disconnected, so `try_send`
             // fails, `offer` releases its reservation and every record is counted as
@@ -102,10 +110,23 @@ pub(super) fn stderr_audit_writer() -> &'static std::sync::mpsc::SyncSender<Audi
 }
 
 /// Drain the queue until the sender side is gone.
-fn write_until_disconnected(receiver: &std::sync::mpsc::Receiver<AuditMessage>) {
+///
+/// The cadence and the three counters are PARAMETERS for the reason [`report_drops`]
+/// already gives about its own: the globals are process-wide and monotonic, so a battery
+/// that drove this loop over them would make every later drain in the same process report
+/// `OutcomeUnknown`. Passing them is also what makes the loop's own decisions measurable —
+/// the timeout arm below is the whole reason the drop report is ever emitted for a burst
+/// that stopped, and calling `report_drops` directly cannot establish that it is reached.
+fn write_until_disconnected(
+    receiver: &std::sync::mpsc::Receiver<AuditMessage>,
+    report_interval: std::time::Duration,
+    dropped: &AtomicU64,
+    queued: &AtomicUsize,
+    failed: &AtomicBool,
+) {
     use std::io::Write;
     loop {
-        let message = match receiver.recv_timeout(STDERR_AUDIT_DROP_REPORT_INTERVAL) {
+        let message = match receiver.recv_timeout(report_interval) {
             Ok(message) => Some(message),
             // Nothing arrived. A burst that stopped must still report the records it
             // cost, or the stream ends in a silence that reads exactly like no traffic
@@ -115,29 +136,21 @@ fn write_until_disconnected(receiver: &std::sync::mpsc::Receiver<AuditMessage>) 
         };
         let line = match message {
             Some(AuditMessage::Line(line)) => {
-                STDERR_AUDIT_QUEUED.fetch_sub(1, Ordering::Relaxed);
+                queued.fetch_sub(1, Ordering::Relaxed);
                 Some(line)
             }
             Some(AuditMessage::Flush(ack)) => {
-                report_drops(
-                    &mut std::io::stderr().lock(),
-                    &STDERR_AUDIT_DROPPED,
-                    &STDERR_AUDIT_WRITES_FAILED,
-                );
+                report_drops(&mut std::io::stderr().lock(), dropped, failed);
                 let _ = ack.try_send(());
                 continue;
             }
             None => None,
         };
         let mut stderr = std::io::stderr().lock();
-        report_drops(
-            &mut stderr,
-            &STDERR_AUDIT_DROPPED,
-            &STDERR_AUDIT_WRITES_FAILED,
-        );
+        report_drops(&mut stderr, dropped, failed);
         if let Some(line) = line {
             if stderr.write_all(line.as_bytes()).is_err() || stderr.write_all(b"\n").is_err() {
-                STDERR_AUDIT_WRITES_FAILED.store(true, Ordering::Relaxed);
+                failed.store(true, Ordering::Relaxed);
             }
         }
     }
@@ -179,6 +192,44 @@ fn report_drops(stderr: &mut impl std::io::Write, counter: &AtomicU64, failed: &
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A burst that STOPS still reports the records it cost.
+    ///
+    /// The loop's timeout arm is the only thing that makes that true: with nothing arriving
+    /// there is no Flush and no line, so the drop count would sit in the counter until the
+    /// process ended and the stream would end in a silence that reads exactly like no
+    /// traffic at all. `the_drop_count_is_reported_without_a_following_record` next door
+    /// calls `report_drops` DIRECTLY — it establishes that the function reports, and stays
+    /// green if the timeout arm stops reaching it. This drives the loop.
+    #[test]
+    fn a_burst_that_stops_still_reports_what_it_cost() {
+        let (tx, rx) = std::sync::mpsc::sync_channel::<AuditMessage>(4);
+        let dropped = AtomicU64::new(5);
+        let queued = AtomicUsize::new(0);
+        let failed = AtomicBool::new(false);
+        let interval = std::time::Duration::from_millis(20);
+
+        // `Receiver` is `Send` and not `Sync`, so it is MOVED into the writer thread — the
+        // shape production uses. The three counters cross as shared references.
+        let (d, q, f) = (&dropped, &queued, &failed);
+        std::thread::scope(|scope| {
+            scope.spawn(move || write_until_disconnected(&rx, interval, d, q, f));
+            // Nothing is sent, so only the timeout arm can run. Ten intervals is far more
+            // than the one turn the property needs and keeps the control off the scheduler's
+            // exact timing.
+            std::thread::sleep(interval * 10);
+            assert_eq!(
+                dropped.load(Ordering::Relaxed),
+                0,
+                "a stopped burst must still have its drop count reported"
+            );
+            assert!(
+                !failed.load(Ordering::Relaxed),
+                "the report itself succeeded"
+            );
+            drop(tx);
+        });
+    }
 
     /// A write that fails does not consume the drop count: the next successful report
     /// still names those records. Without the put-back the gap is erased silently, and
