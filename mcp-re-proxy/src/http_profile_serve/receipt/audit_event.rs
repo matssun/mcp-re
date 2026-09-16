@@ -47,13 +47,10 @@ impl ResponseSigning {
     ) -> ServedHttpResponse {
         crate::audit_record::record_to(
             audit,
-            crate::audit_record::AuditSubject::request(
-                match cause.core_verdict() {
-                    Some(e) => mcp_re_core::audit::AuditEvent::request_rejected(&e),
-                    // Core reached no verdict: a policy did. Its token belongs in the
-                    // authorization coordinate below, never in Core's `reason`.
-                    None => mcp_re_core::audit::AuditEvent::request_rejected_elsewhere(),
-                },
+            // `None` means Core reached no verdict: a policy did. Its token belongs in the
+            // authorization coordinate, never in Core's `reason`.
+            crate::audit_record::AuditSubject::request_rejected(
+                cause.core_verdict().as_ref(),
                 cause.authorization_facet(authorization),
             ),
             actor_id,
@@ -94,10 +91,7 @@ impl ResponseSigning {
     ) -> ServedHttpResponse {
         crate::audit_record::record_to(
             audit,
-            crate::audit_record::AuditSubject::response(match cause.core_verdict() {
-                Some(e) => mcp_re_core::audit::AuditEvent::response_rejected(&e),
-                None => mcp_re_core::audit::AuditEvent::response_rejected_elsewhere(),
-            }),
+            crate::audit_record::AuditSubject::response_rejected(cause.core_verdict().as_ref()),
             actor_id,
             status,
             now,

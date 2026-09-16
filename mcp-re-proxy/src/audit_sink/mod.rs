@@ -229,7 +229,6 @@ mod tests {
     use crate::audit_record::AuditSubject;
     use crate::authorization::AuthorizationFacet;
     use crate::authorization::AuthorizationRefusalFacet;
-    use mcp_re_core::audit::AuditEvent;
 
     /// One record is one line, whatever the resolved actor's identity contains.
     ///
@@ -239,10 +238,7 @@ mod tests {
     #[test]
     fn one_record_writes_exactly_one_line_for_any_actor_id() {
         let record = AuditRecord {
-            subject: AuditSubject::request(
-                AuditEvent::request_accepted(),
-                AuthorizationFacet::NotConfigured,
-            ),
+            subject: AuditSubject::request_accepted(AuthorizationFacet::NotConfigured),
             actor_id: Some("client:example.com:a\nmcp-re-proxy: audit seq=8 status=200".into()),
             status: 200,
             at_unix: 10,
@@ -262,17 +258,14 @@ mod tests {
     fn the_collector_preserves_emission_order() {
         let sink = CollectingAuditSink::new();
         sink.record(&AuditRecord {
-            subject: AuditSubject::request(
-                AuditEvent::request_accepted(),
-                AuthorizationFacet::NotConfigured,
-            ),
+            subject: AuditSubject::request_accepted(AuthorizationFacet::NotConfigured),
             actor_id: Some("actor-a".into()),
             status: 200,
             at_unix: 10,
         });
         sink.record(&AuditRecord {
-            subject: AuditSubject::request(
-                AuditEvent::request_rejected(&mcp_re_core::McpReError::ReplayDetected),
+            subject: AuditSubject::request_rejected(
+                Some(&mcp_re_core::McpReError::ReplayDetected),
                 AuthorizationFacet::Refused(AuthorizationRefusalFacet::BeforePolicy),
             ),
             actor_id: None,
@@ -301,17 +294,14 @@ mod tests {
     #[test]
     fn the_ceiling_a_record_is_admitted_at_is_chosen_by_its_attribution() {
         let attributed = AuditRecord {
-            subject: AuditSubject::request(
-                AuditEvent::request_accepted(),
-                AuthorizationFacet::NotConfigured,
-            ),
+            subject: AuditSubject::request_accepted(AuthorizationFacet::NotConfigured),
             actor_id: Some("client:example.com:a".into()),
             status: 200,
             at_unix: 10,
         };
         let unattributed = AuditRecord {
-            subject: AuditSubject::request(
-                AuditEvent::request_rejected(&mcp_re_core::McpReError::ReplayDetected),
+            subject: AuditSubject::request_rejected(
+                Some(&mcp_re_core::McpReError::ReplayDetected),
                 AuthorizationFacet::Refused(AuthorizationRefusalFacet::BeforePolicy),
             ),
             actor_id: None,
@@ -452,17 +442,14 @@ mod tests {
     fn every_record_carries_a_sequence_number() {
         let first = STDERR_AUDIT_SEQ.load(std::sync::atomic::Ordering::SeqCst);
         StderrAuditSink.record(&AuditRecord {
-            subject: AuditSubject::request(
-                AuditEvent::request_accepted(),
-                AuthorizationFacet::NotConfigured,
-            ),
+            subject: AuditSubject::request_accepted(AuthorizationFacet::NotConfigured),
             actor_id: Some("actor-a".into()),
             status: 200,
             at_unix: 10,
         });
         StderrAuditSink.record(&AuditRecord {
-            subject: AuditSubject::request(
-                AuditEvent::request_rejected(&mcp_re_core::McpReError::ReplayDetected),
+            subject: AuditSubject::request_rejected(
+                Some(&mcp_re_core::McpReError::ReplayDetected),
                 AuthorizationFacet::Refused(AuthorizationRefusalFacet::BeforePolicy),
             ),
             actor_id: None,
@@ -485,7 +472,7 @@ mod tests {
     #[test]
     fn the_no_audit_sink_records_nothing_and_does_not_panic() {
         NoAuditSink.record(&AuditRecord {
-            subject: AuditSubject::response(AuditEvent::response_signed()),
+            subject: AuditSubject::response_signed(),
             actor_id: None,
             status: 200,
             at_unix: 1,

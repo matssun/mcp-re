@@ -49,20 +49,44 @@
 //! would model a producer that does not exist.
 
 pub(crate) mod scalar;
+pub(crate) mod subject;
 pub(crate) mod text;
 
 use mcp_re_core::audit::AuditEvent;
 use mcp_re_core::audit::Decision;
 
 use crate::audit_record::text::AuditField;
-use crate::authorization::AuthorizationFacet;
+
+pub use subject::AuditSubject;
 
 /// One audit record: what happened, to whom, and when.
 ///
-/// `actor_id` is the VERIFIER-RESOLVED actor for an accepted request (the same value the
-/// continuation key is domain-separated by), and `None` when the request was rejected
-/// before an actor could be resolved — which is itself the useful signal, so it is
-/// represented rather than defaulted to a placeholder.
+/// # What holding one proves, and what it does not
+///
+/// A record is a CARRIER. Possession of one is not evidence that this proxy emitted it,
+/// and the type does not attempt to make it so: the fields are open, and any code that can
+/// name the type can compose a record saying whatever it likes.
+///
+/// Provenance is owned where records are produced — [`record_to`] and the serving path
+/// that calls it — because that is where a record's values are projections of decisions an
+/// authority already took. The structural algebra is owned by [`AuditSubject`], and that
+/// part IS the record's: no caller can build a request record without stating an
+/// authorization outcome, or a response record that claims one.
+///
+/// Sealing construction would buy nothing here. Every consumer is an
+/// [`AuditSink`](crate::audit_sink::AuditSink) installed by this process's own composition
+/// root, the type has no deserialization and no wire form, and nothing outside the crate
+/// produces a record — the public surface exists so an embedder can INSTALL a sink and
+/// read what reached it. A sealed constructor would therefore not exclude one record a
+/// reader currently has to trust.
+///
+/// `actor_id` carries the verifier-resolved actor when the serving path had one — the same
+/// value the continuation key is domain-separated by — and `None` when the request was
+/// rejected before an actor could be resolved, which is itself the useful signal and so is
+/// represented rather than defaulted to a placeholder. Its meaning is that producer's
+/// claim, not this type's guarantee, and the delivery ceiling that reads it
+/// ([`crate::audit_sink`]) is accounting for its own queue rather than adjudicating
+/// provenance.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditRecord {
     /// Which half of the exchange this record is about, and what each authority said.
@@ -75,60 +99,6 @@ pub struct AuditRecord {
     /// independently-read clock — two clocks would let the record disagree with the
     /// freshness decision it describes).
     pub at_unix: i64,
-}
-
-/// Which half of the exchange a record is about — and therefore which authorities may speak.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AuditSubject {
-    /// The request half: a Core lifecycle outcome and this deployment's authorization
-    /// outcome, as two separately-typed coordinates that happen to share a record.
-    Request {
-        /// The frozen Core event (type + decision + `mcp-re.*` reason for a rejection).
-        event: AuditEvent,
-        /// What the authorization authority says about this request.
-        authorization: AuthorizationFacet,
-    },
-    /// The response half: a Core lifecycle outcome, and nothing about authorization.
-    Response {
-        /// The frozen Core event.
-        event: AuditEvent,
-    },
-}
-
-impl AuditSubject {
-    /// A record about the request half. The facet is required, not defaulted.
-    pub fn request(event: AuditEvent, authorization: AuthorizationFacet) -> Self {
-        AuditSubject::Request {
-            event,
-            authorization,
-        }
-    }
-
-    /// A record about the response half.
-    pub fn response(event: AuditEvent) -> Self {
-        AuditSubject::Response { event }
-    }
-
-    /// The frozen Core event, which every kind carries.
-    pub fn event(&self) -> &AuditEvent {
-        match self {
-            AuditSubject::Request { event, .. } | AuditSubject::Response { event } => event,
-        }
-    }
-
-    /// The authority-specific fields, composed from what each authority named in its own
-    /// vocabulary. A response record contributes nothing: there is nothing it may say.
-    ///
-    /// Fields rather than text, because text is where the property dies: a finished string
-    /// cannot tell a separator its owner emitted from one that arrived inside a value. The
-    /// spelling is [`text::render_record`]'s to decide, and it is the only thing that
-    /// decides it.
-    pub(crate) fn audit_fields(&self) -> Vec<AuditField<'_>> {
-        match self {
-            AuditSubject::Request { authorization, .. } => authorization.audit_fields(),
-            AuditSubject::Response { .. } => Vec::new(),
-        }
-    }
 }
 
 impl AuditRecord {
@@ -172,8 +142,6 @@ impl AuditRecord {
     }
 }
 
-// Everything below is test code. The `#[cfg(test)]` marker lives HERE because it is the
-// region `scripts/module_size_gate.py` reads.
 /// Deliver one record, if a sink is installed.
 ///
 /// The one place that turns "a sink may or may not be installed" into an emission, so no
@@ -201,39 +169,17 @@ pub(crate) fn record_to(
 mod tests {
     use super::*;
     use crate::audit_record::text::render_record;
+    use crate::authorization::AuthorizationFacet;
     use crate::authorization::AuthorizationRefusalFacet;
     use mcp_re_policy::PolicyError;
-
-    #[test]
-    fn a_request_record_always_states_an_authorization_outcome() {
-        // R3 as a type property: there is no way to build one without saying which of the
-        // three happened, so an absent facet can only mean a record from before this slice.
-        let r = AuditSubject::request(
-            AuditEvent::request_accepted(),
-            AuthorizationFacet::NotConfigured,
-        );
-        let AuditSubject::Request { authorization, .. } = &r else {
-            panic!("a request record");
-        };
-        assert_eq!(authorization, &AuthorizationFacet::NotConfigured);
-    }
-
-    #[test]
-    fn a_response_record_has_no_authorization_coordinate_to_carry() {
-        // R5, structurally. Authorization is request-side; a response record does not
-        // represent a second decision, and cannot be made to claim one.
-        let r = AuditSubject::response(AuditEvent::response_signed());
-        assert!(matches!(r, AuditSubject::Response { .. }));
-        assert!(r.audit_fields().is_empty());
-    }
 
     #[test]
     fn the_two_coordinates_stay_separate_on_one_record() {
         // Co-location is not conflation. Core's token is in `reason`; the policy's is in the
         // authorization field; neither appears in the other.
         let r = AuditRecord {
-            subject: AuditSubject::request(
-                AuditEvent::request_rejected(&mcp_re_core::McpReError::DigestMismatch),
+            subject: AuditSubject::request_rejected(
+                Some(&mcp_re_core::McpReError::DigestMismatch),
                 AuthorizationFacet::Refused(AuthorizationRefusalFacet::ByPolicy(
                     PolicyError::AuthorizationScopeDenied,
                 )),

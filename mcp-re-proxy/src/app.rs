@@ -1313,7 +1313,6 @@ mod tests {
     #[test]
     fn a_record_enqueued_immediately_before_teardown_still_reaches_stderr() {
         use crate::audit_sink::AuditSink;
-        use mcp_re_core::audit::AuditEvent;
 
         const BATCH: u64 = 2000;
         const CHILD_MARKER: &str = "MCP_RE_AUDIT_FLUSH_TEARDOWN_CHILD";
@@ -1330,8 +1329,7 @@ mod tests {
             // an absent seq means "lost at exit" rather than "refused by the queue".
             for i in 0..BATCH {
                 crate::audit_sink::StderrAuditSink.record(&crate::audit_record::AuditRecord {
-                    subject: crate::audit_record::AuditSubject::request(
-                        AuditEvent::request_accepted(),
+                    subject: crate::audit_record::AuditSubject::request_accepted(
                         crate::authorization::AuthorizationFacet::NotConfigured,
                     ),
                     actor_id: Some("teardown-actor".to_string()),

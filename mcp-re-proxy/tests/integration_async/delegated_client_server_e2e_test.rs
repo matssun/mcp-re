@@ -769,8 +769,7 @@ fn an_unconfigured_deployments_records_say_so_rather_than_claiming_an_authorizat
         .expect("the admitted request is recorded");
     assert_eq!(
         accepted.subject,
-        mcp_re_proxy::AuditSubject::request(
-            mcp_re_core::audit::AuditEvent::request_accepted(),
+        mcp_re_proxy::AuditSubject::request_accepted(
             mcp_re_proxy::authorization::AuthorizationFacet::NotConfigured,
         ),
         "no policy is deployed, and the record says exactly that — never `Authorized`"
@@ -782,10 +781,10 @@ fn an_unconfigured_deployments_records_say_so_rather_than_claiming_an_authorizat
         .iter()
         .find(|r| r.event().event_type == "mcp-re.response.signed")
         .expect("the signed response is recorded");
-    assert!(matches!(
-        signed.subject,
-        mcp_re_proxy::AuditSubject::Response { .. }
-    ));
+    assert!(
+        signed.subject.authorization().is_none(),
+        "a response record has no authorization coordinate to carry"
+    );
 }
 
 /// A rejection records the EXACT frozen wire code, and never also claims acceptance —
@@ -827,10 +826,8 @@ fn a_replay_emits_exactly_one_rejection_carrying_the_frozen_wire_code() {
     // `NotConfigured`: nobody asked, which is neither an allow nor an examination.
     assert_eq!(
         record.subject,
-        mcp_re_proxy::AuditSubject::request(
-            mcp_re_core::audit::AuditEvent::request_rejected(
-                &mcp_re_core::McpReError::ReplayDetected
-            ),
+        mcp_re_proxy::AuditSubject::request_rejected(
+            Some(&mcp_re_core::McpReError::ReplayDetected),
             mcp_re_proxy::authorization::AuthorizationFacet::NotConfigured,
         )
     );
