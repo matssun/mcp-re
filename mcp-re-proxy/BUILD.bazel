@@ -349,6 +349,7 @@ _PROXY_LIB_SRCS = [
     # wire code, response signing key). Pure std, no feature gate — always compiled.
     "src/audit_record/mod.rs",
     "src/audit_record/scalar.rs",
+    "src/audit_record/subject.rs",
     "src/audit_record/text.rs",
     "src/audit_sink/mod.rs",
     # The writer's teardown obligation: the bound, the wait, and the two-valued outcome.

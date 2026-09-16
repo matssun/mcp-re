@@ -3526,6 +3526,7 @@ class = "V0"
 description = "What a security record may say, and in whose vocabulary: a request record always states an authorization outcome, a response record has none to carry, and the Core verdict and the authorization verdict occupy separate coordinates that cannot be read as each other."
 paths = [
   "mcp-re-proxy/src/audit_record/mod.rs",
+  "mcp-re-proxy/src/audit_record/subject.rs",
   "mcp-re-proxy/src/authorization/audit.rs",
   "mcp-re-proxy/src/authorization/audit/fields.rs",
 ]
@@ -3535,8 +3536,8 @@ evidence = ["test://proxy/audit/record_coordinates"]
 # before any policy ran must not borrow a policy token, because a reader holding one cannot
 # tell whether a policy was ever consulted.
 tested_symbols = [
-  "lib#audit_record::tests::a_request_record_always_states_an_authorization_outcome",
-  "lib#audit_record::tests::a_response_record_has_no_authorization_coordinate_to_carry",
+  "lib#audit_record::subject::tests::a_request_record_always_states_an_authorization_outcome",
+  "lib#audit_record::subject::tests::a_response_record_has_no_authorization_coordinate_to_carry",
   "lib#audit_record::tests::the_two_coordinates_stay_separate_on_one_record",
   "lib#authorization::audit::tests::an_unconfigured_deployment_is_not_rendered_as_an_authorized_one",
   "lib#authorization::audit::tests::a_policy_denial_puts_its_token_in_the_authorization_coordinate",
