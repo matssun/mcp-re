@@ -610,6 +610,13 @@ Medium or higher and whose class is `tested` with no registered `mutation://` fa
 unit that cannot state its own class adequately is MALFORMED, and malformed has always been
 fatal here — `unknown_is_dirty = true` is not optional and cannot be edited away.
 
+**The last of those clauses activates later than the rest**, because it is the only one that
+needs a derived value. `effective_severity` does not exist until 0E builds N3's derivation,
+so 0A enforces the severity-independent checks and 0E switches on the falsifier clause
+against a debt baseline generated in the same commit (§11.1). Splitting the rule across two
+phases is not a weakening of it: every clause is merge-fatal from the moment its inputs
+exist, and none is ever advisory.
+
 **ATTESTATION ADEQUACY — not merge-fatal.** The declared falsifier exists but its lane
 FAILED, or was measured at the wrong fingerprint, or has not run. This subtracts
 `ESTABLISHED` in `theorem_assurance` and prints as a blocking cause in `root_completeness`.
@@ -722,52 +729,83 @@ response to it, and §14 item 4 records why that is not this record's call.
 ## 11. Phase plan
 
 Phase 0 is registry and tooling only: **no product claim changes class in Phase 0**, and no
-theorem statement is touched. Reclassification (0D) records what is *already* true about
-each unit; it does not decide anything about the product.
+theorem statement is touched. Reclassification (0D) records what the evidence already
+supports; it does not decide anything about the product. §11.1.1 is precise about what
+"already" means, because it is not "what the unit really is" — it is what the unit's declared
+evidence establishes at the moment it is read.
 
 | phase | what it does | done when |
 |---|---|---|
-| **0A** | the **activation commit** — see below | the loader refuses a disagreeing unit; every self-test probe red on removal; the estate is re-attested at the new fingerprints |
-| **0B** | the two new lanes: `structural://` (both probe kinds, §12.1) and `measured://`, each wired as a named required check | a structural probe that *compiles* fails the lane; a measurement whose apparatus cannot move fails the lane |
-| **0C** | `premise_class` on `[[assumption]]`, plus `boundary_owner` and `discharging_event` (C1–C5); all 47 typed | zero untyped records; release view lists open review obligations; a satisfied observable event fails until its record is removed |
-| **0D** | classify all 127 units honestly against the four classes, sealed-owner challenge set first (§12) | every unit classified; the count of `tested`-without-falsifier is measured, not estimated |
-| **0E** | `direct_consequence_severity` on every theorem and unit (S1), inheritance computed (N3), non-load-bearing units reported (S5) | `review` prints a typed, severity-annotated root tree |
+| **0A** | **schema event 1 and its activation.** `evidence_class` and `direct_consequence_severity` required on `[[unit]]`, `direct_consequence_severity` required on `[[theorem]]`, both populated; the loader enforces presence, vocabulary and class↔evidence agreement; the eight declaration repairs; the census moved to `tools/verification/` | the loader refuses a disagreeing unit; every self-test probe red on removal; the estate is re-attested at the new fingerprints |
+| **0B** | the two new lanes: `structural://` (both probe kinds, §12.1) and `measured://`, each wired as a named required check. **No registry change** | a structural probe that *compiles* fails the lane; a measurement whose apparatus cannot move fails the lane |
+| **0C** | **schema event 2 and its activation.** `premise_class` on `[[assumption]]`, plus `boundary_owner` and `discharging_event` (C1–C5); all 47 typed | zero untyped records; release view lists open review obligations; a satisfied observable event fails until its record is removed |
+| **0D** | reclassify to `structural` and `measured` where that is now declarable, sealed-owner challenge set first (§12); the composite splits; every transition through the class-transition ratchet | every unit's class matches the evidence it declares; the count of `tested`-without-falsifier is measured, not estimated |
+| **0E** | `tools/verification/_assurance_graph.py`; `inherited_severity` and `effective_severity` derived (N3); N1's severity-gated obligation ACTIVATES; `config/assurance-obligation-debt.toml` baselined; non-load-bearing units reported (S5) | `review` prints a typed, severity-annotated root tree; the debt registry holds the real residue and may only shrink |
 | **1** | examine the 12 roots **consequence-first**, decomposing downward — THM-0094, THM-0095, THM-0091 first, since each is one undecomposed unit | each root has a typed decomposition; each leaf has a named class and a stated obligation |
 | **2** | discharge: formalize, structurally redesign, falsify, or measure, per leaf, as Phase 1 assigns | no Medium-or-higher root reads INCOMPLETE without a recorded, owner-approved obligation |
 
-### 11.1 Why 0A is an activation commit and not a schema commit
+### 11.1 Two schema events, two flag days, and why they do not land together
 
-A schema bump cannot be "loader only" when the loader makes the new keys required, and this
-one has two flag days that land together.
+A schema bump cannot be "loader only" when the loader makes the new keys required: a required
+field must be populated in the same commit that requires it, or the tree does not load. So
+each schema event is an **activation commit** — schema, loader, migrated registries, and
+re-attestation, together. There are two, and neither is 0E.
 
-**Flag day 1 — the bump invalidates the attestation estate.** `_manifest.load_verification`
-refuses a `schema_version` the tooling does not implement, in its own words: *"A schema change
-alters what a fingerprint means, so it invalidates every attestation and must be handled, not
-tolerated."* On top of that, `_fingerprint.assumption_digest` hashes the **whole** assumption
-entry and feeds every in-scope unit's `trusted_assumptions` component, so 0C's typing of all
-47 records re-digests all 47 and dirties every unit in their scope.
+**Flag day 1 — a bump invalidates the attestation estate, and it happens TWICE.**
+`_manifest.load_verification` refuses a `schema_version` the tooling does not implement, in
+its own words: *"A schema change alters what a fingerprint means, so it invalidates every
+attestation and must be handled, not tolerated."* 0A is the first. 0C is the second, and it is
+the more expensive one: `_fingerprint.assumption_digest` hashes the **whole** assumption
+entry and feeds every in-scope unit's `trusted_assumptions` component, so typing all 47
+records re-digests all 47 and dirties every unit in their scope. Two re-attestations is the
+honest cost of not pretending one schema change is two.
 
-**Flag day 2 — the adequacy rule turns a large backlog merge-fatal at once.** The moment 0A's
-loader and 0E's severities both exist, every unit that is `tested` with effective severity
-Medium or higher and no registered falsifier fails the merge under §9.3. That is up to 42
-root-reachable units plus up to 33 unreachable ones — **75 of 127**. The repository would be
-unmergeable.
+**Re-attestation is not a source payload inside either commit.** It is a required lane run
+against that exact commit, and if CI cannot produce fresh evidence for the new fingerprints
+before merge, the commit does not merge.
 
-So 0A carries: the schema bump, the strict loader, the migrated registries, the typed
-premises, the honest classes, the direct severities, the generated
-`config/assurance-obligation-debt.toml` baseline, the class-transition ratchet, and the eight
-declaration repairs from §2 Correction 3. **Re-attestation is not a source payload inside the
-commit** — it is a required lane run against that exact commit, and if CI cannot produce
-fresh evidence for the new fingerprints before merge, the commit does not merge.
+**Flag day 2 — the adequacy rule turns a large backlog merge-fatal, and it lands at 0E.**
+Every unit that is `tested` with effective severity Medium or higher and no registered
+falsifier fails the merge under §9.3. That is up to 42 root-reachable units plus up to 33
+unreachable ones — **75 of 127**. It cannot land before 0E because `effective_severity` does
+not exist before 0E: 0A requires and populates the *direct* label, and N3's derivation is 0E's
+deliverable. So **0A's loader enforces only the severity-independent half of registry
+adequacy** — class present and in vocabulary, class↔evidence agreement, the measured fields
+present when the class is `measured` — and N1's severity-gated clause activates at 0E,
+against `config/assurance-obligation-debt.toml` generated in the same commit at the real
+numbers rather than at §3.1's ceiling.
+
+### 11.1.1 What a unit's class means at 0A, and why 0D is not a correction
+
+A3 says the class is a declaration **checked against the evidence**. So at 0A a unit's honest
+class is the one its *currently declared evidence* supports — and a unit declaring `test://`
+and `mutation://` is `tested` at 0A whatever its proposition will turn out to be, because
+that is what establishes it in the registry at that moment.
+
+`http_profile.verifier_result_separation` is therefore `tested` at 0A and becomes
+`structural` at 0D, when 0B has made a `structural://` URI declarable and its evidence changes
+to name one. That is not the registry being corrected from a lie; it is the registry
+following the evidence, which is the only order A3 permits. **This is also why 0B must
+precede 0D and why no unit may declare `structural://` or `measured://` before its lane
+exists** — `_evidence.required_lanes` binds every declared scheme and `decide_issuance`
+refuses a claimed lane with no record, so an early declaration takes the unit out of the
+graph.
+
+Every 0D transition goes through the class-transition ratchet (§9.4) with a reclassification
+record, which is what stops "following the evidence" from becoming a route to a silent
+downgrade.
 
 **The eight repairs come first and are not debt.** A registered probe that already attacks a
 unit whose `evidence` omits it is a declaration error with the obligation already discharged.
-Baselining them as debt would make the ratchet bless a registry statement known to be false.
+They land in 0A, before anything is baselined, because baselining them as debt would make the
+ratchet bless a registry statement known to be false.
 
 **Does a debt registry repeat §1's "do not solve the count before the architecture"?** No, and
 the order is what makes the difference: the architecture decides obligation *existence* first,
 and the registry then baselines the mechanically computed residue. §1 refuses a worklist
-derived from a raw alarm. This is a baseline derived from a rule.
+derived from a raw alarm. This is a baseline derived from a rule — and it is generated at 0E,
+after 0D has made every class honest, so it baselines real obligations rather than artefacts
+of an unfinished classification.
 
 ### 11.2 The worked example the owner gave, kept as the Phase 1 template
 
