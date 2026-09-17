@@ -412,12 +412,22 @@ a measurement already written — the observation, a scope-identity control and 
 non-empty-input sensitivity control — filed under `tested` because `tested` was the only word
 available.
 
-**Neither lane is in any unit's attestation closure yet.** No unit declares `structural://`
-or `measured://` before Phase 0D: `_evidence.required_lanes` binds every declared scheme, so
-an early URI would take its unit out of the graph. The declaration follows the
-reclassification, through the class-transition ratchet, and it carries a fingerprint encoding
-bump with it — the probe entries and the lane identity become components exactly as encoding
-v5 made them for mutation.
+**The structural lane is inside an attestation closure as of Phase 0D.**
+`http_profile.verifier_result_separation` declares `structural://…/assurance_type_separation`
+and nothing else: its `test://` URI and its three `doc#` symbols went with its class, because
+a battery no declared lane selects is a declaration that reads as coverage. The doctests
+remain in the source and still run in the ordinary cargo lane; what changed is which
+mechanism the registry names as the evidence, and that one compares the error code itself.
+
+The declaration follows the reclassification rather than leading it, through the
+class-transition ratchet (`scripts/evidence_class_ratchet.py`), and it carried the
+fingerprint encoding bump 8 → 9 with it: `structural_probes`, `structural_lane_identity`,
+`measurements` and `measured_lane_identity` are components now, exactly as encoding v5 made
+the mutation registry one. The structural lane's identity is TWO files — the runner and
+`_structural.py`, which decides whether a refusal is attributable to the boundary the probe
+attacks, and therefore decides what every structural record MEANS.
+
+`measured://` is still declared by no unit; its first corpus is the next 0D slice.
 
 
 ## 10. Implementation map

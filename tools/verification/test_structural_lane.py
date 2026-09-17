@@ -355,22 +355,44 @@ def test_every_boundary_probe_still_corresponds_to_its_documented_case():
 
 
 def test_a_drifted_documented_case_is_detected():
-    probe = _probe(
+    """The item the record cites must be findable where the record says it is. Checked
+    against the SOURCE rather than against `tested_symbols`, because a unit that has
+    reclassified to `structural` no longer has a battery — a check written against that
+    field would refuse exactly the units this class exists for."""
+    base = _probe(
         kind=KINDS[0],
         doc_path="mcp-re-http-profile/src/verified_response/bound.rs",
-        doc_item="doc#not::a::declared::symbol",
+        doc_item="doc#verified_response::bound::VerifiedMcpResponse",
         insertion_path="mcp-re-http-profile/tests/probe.rs",
     )
-    del probe["insertion_parent"], probe["insertion_declaration"]
-    assert provenance_problem(probe, UNITS[FIXTURE_UNIT], REPO_ROOT) is not None
+    del base["insertion_parent"], base["insertion_declaration"]
+    assert provenance_problem(base, UNITS[FIXTURE_UNIT], REPO_ROOT) is None
+    gone = {**base, "doc_item": "doc#verified_response::bound::ATypeThatWasDeleted"}
+    assert provenance_problem(gone, UNITS[FIXTURE_UNIT], REPO_ROOT) is not None
+    missing_file = {**base, "doc_path": "mcp-re-http-profile/src/gone.rs"}
+    assert provenance_problem(missing_file, UNITS[FIXTURE_UNIT], REPO_ROOT) is not None
+    no_fence = {**base, "doc_path": "mcp-re-http-profile/src/lib.rs"}
+    assert provenance_problem(no_fence, UNITS[FIXTURE_UNIT], REPO_ROOT) is not None
 
 
-def test_no_unit_declares_the_scheme_before_phase_0D():
-    """Phase 0B builds the lane and changes no unit's class. A `structural://` URI landing
-    early would take its unit OUT of the graph, because `decide_issuance` refuses a claimed
-    lane with no record — the declaration must follow the reclassification, not lead it."""
-    declaring = [uid for uid, unit in UNITS.items() if lane.claims_structural(unit)]
-    assert not declaring, f"0D moves these through the class-transition ratchet, not 0B: {declaring}"
+def test_every_declaring_unit_has_a_probe_and_every_probe_a_declaring_unit():
+    """Phase 0D. A `structural://` URI with no probe takes its unit OUT of the graph —
+    `decide_issuance` refuses a claimed lane with no record — and a probe whose unit does
+    not declare the scheme measures something no claim rests on."""
+    declaring = {uid for uid, unit in UNITS.items() if lane.claims_structural(unit)}
+    probed = {probe["unit"] for probe in load_probes(REGISTRY)}
+    assert declaring, "0D declared the first one; an empty set means the reclassification was lost"
+    assert declaring <= probed, f"declares the scheme with no probe: {sorted(declaring - probed)}"
+
+
+def test_a_structural_unit_declares_no_battery_it_no_longer_has():
+    """The `test://` URI and `tested_symbols` go together, and both go when the class does.
+    A battery no declared lane selects is a declaration that reads as coverage."""
+    for unit_id, unit in UNITS.items():
+        if unit.get("evidence_class") != "structural":
+            continue
+        assert not unit.get("tested_symbols"), unit_id
+        assert not any(str(e).startswith("test://") for e in unit.get("evidence", [])), unit_id
 
 
 if __name__ == "__main__":

@@ -206,6 +206,12 @@ stage_static() {
     `# It also pins the root-to-premise composition against the empty join that reads as a` \
     `# clean tree.` \
     && python3 tools/verification/test_premise_class.py \
+    `# ADR-MCPRE-068 §9.4. Registry adequacy is a property of ONE record read alone, so a` \
+    `# unit that drops its prover and rewrites itself as a tested one is internally` \
+    `# consistent and says nothing about what it used to be. Only a comparison against` \
+    `# origin/main sees the CHANGE.` \
+    && python3 scripts/evidence_class_ratchet.py --selftest \
+    && python3 scripts/evidence_class_ratchet.py \
     && python3 tools/verification/test_r9_linkage.py \
     && python3 tools/verification/test_evidence_class.py \
     `# The published claim surface and the declared root set are one fact written twice.` \

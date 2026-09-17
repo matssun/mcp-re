@@ -496,6 +496,17 @@ jobs:
           # the suite asserts the count is non-zero rather than only that it runs.
           python3 tools/verification/test_premise_class.py
 
+      # ADR-MCPRE-068 §9.4 — the class-transition ratchet. A downgrade from `proved` to
+      # `tested` passes registry adequacy trivially: delete the formal URI, delete the
+      # class, and nothing notices the claim got weaker. Only a comparison against the base
+      # sees it, which is why this is a separate step with a fetched base rather than
+      # another loader rule.
+      - name: Evidence-class transition ratchet (ADR-MCPRE-068 §9.4)
+        run: |
+          git fetch --no-tags --depth=1 origin main
+          python3 scripts/evidence_class_ratchet.py --selftest
+          python3 scripts/evidence_class_ratchet.py --base FETCH_HEAD
+
       # ADR-MCPRE-059 §28 + the ratified security boundary. The registry's `root_theorems`
       # and `docs/spec/security-boundary.md` §2 are ONE fact — what MCP-RE promises —
       # written down twice, and they had diverged: twelve declared roots against nine

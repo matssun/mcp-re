@@ -60,6 +60,7 @@ Stdlib only, like the rest of this layer.
 
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
 
@@ -275,6 +276,11 @@ def provenance_problem(probe: dict, unit: dict, repo_root: Path) -> str | None:
     the same thing. Checked rather than trusted, because the drift is silent in exactly the
     direction that makes the registry look better than the tree.
 
+    NOT compared against the unit's `tested_symbols`, and the reason is this phase: once a
+    unit reclassifies to `structural` its `test://` URI and its battery are GONE, so a check
+    written against that field would refuse exactly the units the class exists for. What is
+    checked instead is that the documented case is findable where the record says it is.
+
     Not applicable to an in-crate probe, which HAS no documented case — that is the whole
     reason its kind exists.
     """
@@ -283,16 +289,17 @@ def provenance_problem(probe: dict, unit: dict, repo_root: Path) -> str | None:
     source = repo_root / str(probe["doc_path"])
     if not source.is_file():
         return f"`doc_path` {probe['doc_path']} does not exist"
-    if "```compile_fail" not in source.read_text(encoding="utf-8"):
+    text = source.read_text(encoding="utf-8")
+    if "```compile_fail" not in text:
         return (
             f"`doc_path` {probe['doc_path']} holds no ```compile_fail doctest. The probe "
             f"claims to correspond to a documented refusal that is no longer there."
         )
-    declared = [str(symbol) for symbol in unit.get("tested_symbols", [])]
-    if str(probe["doc_item"]) not in declared:
+    item = str(probe["doc_item"]).rsplit("::", 1)[-1]
+    if not re.search(rf"\b(?:struct|enum|trait|fn|type)\s+{re.escape(item)}\b", text):
         return (
-            f"`doc_item` {probe['doc_item']!r} is not one of unit {probe['unit']!r}'s "
-            f"`tested_symbols`. A documented case outside the unit's declared battery is "
-            f"not the case this probe corresponds to."
+            f"`doc_item` {probe['doc_item']!r} names {item!r}, which {probe['doc_path']} "
+            f"does not declare. The documented case a probe cites must be findable in the "
+            f"source a reader reaches for first."
         )
     return None

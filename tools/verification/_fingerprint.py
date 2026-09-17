@@ -111,7 +111,9 @@ from _ecosystems import formal_source_patterns
 from _ecosystems import unit_ecosystem
 from _ecosystems import unit_projects
 from _manifest import (
+    claims_measured_evidence,
     claims_mutation_evidence,
+    claims_structural_evidence,
     claims_test_evidence,
     test_package_for,
     expand_paths,
@@ -123,7 +125,7 @@ from _manifest import (
 # Every attestation carrying an earlier version is UNKNOWN from the moment this moves, which
 # is the intended cost: an attestation computed over a narrower set of inputs cannot answer
 # whether one of the inputs it never saw has since changed.
-ENCODING_VERSION = 8
+ENCODING_VERSION = 9
 
 #: Build inputs that decide what the verified crate IS, for every unit. A dependency swap,
 #: a lockfile bump or a toolchain channel change alters what a theorem is about without
@@ -444,6 +446,55 @@ def _mutation_lane_identity(unit: dict) -> dict[str, str]:
     return _digest_paths(list(MUTATION_LANE_INPUTS))
 
 
+def _registry_entries(filename: str, key: str, unit_id: str) -> dict[str, str]:
+    """Each record in `filename` scoped to this unit, digested WHOLE.
+
+    The generalization of `_mutation_probes`, and it exists because ADR-MCPRE-068 added two
+    more registries with the same property: ids alone would let a record be hollowed out —
+    a hostile construction softened into one that was never illegal, an expected error code
+    widened, a measurement's protocol pointed at a different corpus — with no unit deriving
+    DIRTY. The registry entry IS the claim, so the entry's content participates.
+    """
+    registry = REPO_ROOT / "verification" / "policy" / filename
+    if not registry.is_file():
+        return {}
+    with registry.open("rb") as handle:
+        doc = tomllib.load(handle)
+    return {
+        record["id"]: canonical_digest(record)
+        for record in doc.get(key, [])
+        if record.get("unit") == unit_id
+    }
+
+
+#: The lane that decides what "the compiler refused the hostile construction" means.
+STRUCTURAL_LANE_INPUTS = (
+    "tools/verification/verify-structural",
+    # The adjudicator, separately: it decides whether a refusal is ATTRIBUTABLE to the
+    # boundary the probe attacks, and a change there changes what every structural record
+    # means without touching the runner.
+    "tools/verification/_structural.py",
+)
+
+#: The lane that decides what "the apparatus can still MOVE" means.
+MEASURED_LANE_INPUTS = (
+    "tools/verification/verify-measured",
+    "tools/verification/_measured.py",
+)
+
+
+def _structural_lane_identity(unit: dict) -> dict[str, str]:
+    if not claims_structural_evidence(unit):
+        return {}
+    return _digest_paths(list(STRUCTURAL_LANE_INPUTS))
+
+
+def _measured_lane_identity(unit: dict) -> dict[str, str]:
+    if not claims_measured_evidence(unit):
+        return {}
+    return _digest_paths(list(MEASURED_LANE_INPUTS))
+
+
 @lru_cache(maxsize=None)
 def _boundary_files(patterns: tuple[str, ...]) -> frozenset[str]:
     """The files a boundary's patterns name. Cached: the globs are walked once per run."""
@@ -540,6 +591,23 @@ def fingerprint_unit(
             _mutation_probes(unit["id"]) if claims_mutation_evidence(unit) else {}
         ),
         "mutation_lane_identity": _mutation_lane_identity(unit),
+        # ADR-MCPRE-068 Phase 0D. The same closure the mutation components give the negative
+        # battery, for the two classes whose falsifiers are a refused COMPILATION and a
+        # moving APPARATUS. Empty for every unit that does not declare the scheme, which is
+        # why they could not land at 0B: a component that is `{}` everywhere would have
+        # spent a whole re-attestation on nothing.
+        "structural_probes": (
+            _registry_entries("structural-probes.toml", "probe", unit["id"])
+            if claims_structural_evidence(unit)
+            else {}
+        ),
+        "structural_lane_identity": _structural_lane_identity(unit),
+        "measurements": (
+            _registry_entries("measurements.toml", "measurement", unit["id"])
+            if claims_measured_evidence(unit)
+            else {}
+        ),
+        "measured_lane_identity": _measured_lane_identity(unit),
         "trusted_assumptions": _trusted_assumptions(unit["id"], assumptions),
         # The boundaries whose cap binds this unit's class. See `_governing_boundaries`:
         # the cap was a gate that participated in no fingerprint, so relaxing it left every

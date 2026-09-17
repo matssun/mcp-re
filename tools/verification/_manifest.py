@@ -148,6 +148,22 @@ def claims_mutation_evidence(unit: dict) -> bool:
     return any(str(entry).startswith("mutation://") for entry in unit.get("evidence", []))
 
 
+def claims_structural_evidence(unit: dict) -> bool:
+    """Whether a `structural://` URI claims this unit's compile-refusal probes.
+
+    Same argument as `claims_mutation_evidence`, for the class whose falsifier is a
+    COMPILATION the compiler must refuse: declaring the scheme is what puts the probes
+    inside the attestation closure and makes a probe suite CI could quietly shrink into
+    something the fingerprint can see.
+    """
+    return any(str(entry).startswith("structural://") for entry in unit.get("evidence", []))
+
+
+def claims_measured_evidence(unit: dict) -> bool:
+    """Whether a `measured://` URI claims this unit's measurement and its apparatus control."""
+    return any(str(entry).startswith("measured://") for entry in unit.get("evidence", []))
+
+
 def claims_test_evidence(unit: dict) -> bool:
     """Whether any `test://` URI claims this unit's battery.
 

@@ -156,7 +156,20 @@ def main() -> int:
             f"measurement(s) name unit(s) {unknown} that verification.toml does not hold. A "
             f"measurement with no owning proposition is a number with nothing to be about."
         )
-    declaring = sorted(uid for uid, unit in units.items() if claims_measured(unit))
+    # A SUBSTITUTED REGISTRY IS NOT THE ESTATE'S REGISTRY, so it is not judged against the
+    # estate's declarations. `--registry` exists for this lane's own false-green catalogue,
+    # which compiles fixture constructions against a dependency-free crate; asking whether
+    # the tree's declaring units have a probe THERE is a category error, and it answered
+    # FAIL for a run that was measuring the runner rather than the repository.
+    official = Path(args.registry).resolve() == REGISTRY.resolve()
+    if not official:
+        print(
+            f"verify-measured: reading a SUBSTITUTED registry ({args.registry}); this run "
+            f"measures the LANE and says nothing about the repository's declarations"
+        )
+    declaring = (
+        sorted(uid for uid, unit in units.items() if claims_measured(unit)) if official else []
+    )
     registered = {m["unit"] for m in measurements}
     orphaned = [uid for uid in declaring if uid not in registered]
     if orphaned:

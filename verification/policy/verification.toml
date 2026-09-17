@@ -390,18 +390,26 @@ paths = [
   "mcp-re-http-profile/src/verified_response/unbound.rs",
 ]
 exported_contracts = []
-evidence_class = "tested"
+# ADR-MCPRE-068 Phase 0D, §12.1. STRUCTURAL, not tested, and the unit is the record's own
+# worked example of the defect: this proposition is established by the TYPE SYSTEM refusing
+# a substitution, and it was recorded identically to a behavioural check because `tested`
+# was the only word the registry had.
+#
+# The evidence is `verification/policy/structural-probes.toml` S01/S02/S03/S05, each of
+# which compiles a hostile construction as an integration test — a SEPARATE crate linking
+# this library, which is exactly what a downstream consumer sees — and requires the declared
+# rustc error with its primary span on the probe's marker line.
+#
+# `tested_symbols` is GONE with the `test://` URI, and that is the point rather than a loss.
+# Its three `doc#` items were ```compile_fail bodies: real controls, but on the pinned
+# stable toolchain rustdoc checks only that they fail, never WHY, so `compile_fail,E0308`
+# and bare `compile_fail` were the same declaration. The doctests remain in the source and
+# still run in the ordinary cargo lane; what changed is which mechanism the registry names
+# as the evidence, and that one compares the error code itself. Keeping the field would
+# leave a battery no declared lane selects.
+evidence_class = "structural"
 direct_consequence_severity = "high"
-evidence = ["test://http_profile/verifier/assurance_type_separation"]
-# The symbols follow the ITEM, so the module split moved them: the response products live in
-# `verified_response::bound` now. Their reported names would have changed silently and the
-# lane would have reported "no doctest for this item" — which is the declaration doing its
-# job, not churn.
-tested_symbols = [
-  "doc#verified_request::VerifiedMcpRequest",
-  "doc#verified_response::bound::VerifiedMcpResponse",
-  "doc#verified_response::bound::VerifiedDelegatedMcpResponse",
-]
+evidence = ["structural://http_profile/verifier/assurance_type_separation"]
 
 # ---------------------------------------------------------------------------
 # The TLS listener's security state — ADR-MCPRE-061 §2, MCPRE-137, census EX-004
