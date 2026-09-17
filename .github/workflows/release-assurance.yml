@@ -16,9 +16,12 @@
 # target, gives the command the evidence to compose, runs it, and keeps what it produced.
 # It decides nothing: a verdict computed in YAML is a verdict with no owner and no tests.
 #
-# `workflow_dispatch` only. The target is a ref of THIS repository, so it is a trusted
-# commit rather than a fork head or an untrusted merge ref — the `R9-C025` boundary is not
-# crossed here and is not claimed to be closed by this lane.
+# `workflow_dispatch` only, and the target must be REACHABLE FROM `main` — a step below
+# refuses anything else. Being a ref of this repository was never the property that made a
+# target safe to execute: a collaborator can point a branch or a tag at any code, and this
+# lane runs the target's own tooling on the shared self-hosted host in main's Actions cache
+# scope. The `R9-C025` boundary is not crossed here and is not claimed to be closed by this
+# lane.
 
 name: release assurance
 
@@ -55,6 +58,37 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
+          # The reachability guard below needs main and the target in one history, and a
+          # depth-1 checkout has neither.
+          fetch-depth: 0
+
+      # Everything below RUNS THE TARGET'S OWN TOOLING: `tools/verification/release-assurance`
+      # and the five authorities it calls are Python read from the checked-out ref, executing
+      # on a persistent self-hosted host, in a job whose Actions cache scope is the DISPATCH
+      # branch's -- normally `main`, whose cache every branch cut from it restores. So the
+      # target ref decides what runs, and an arbitrary ref would decide it in main's context.
+      #
+      # This step is the boundary, and it is here rather than in the command because it is a
+      # fact about WHERE this lane may execute, not about what a release verdict composes
+      # from. It lives in the workflow file, which comes from the dispatch branch: the target
+      # ref cannot edit the guard that admits it.
+      #
+      # Reachable from `origin/main` is the admitted set. Qualifying an UNMERGED commit is
+      # refused on purpose -- do not relax this to `origin/*` or to tags, both of which any
+      # collaborator can point at arbitrary code; merge first, or change this guard in a
+      # commit that says why.
+      - name: The target must be reachable from main
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --quiet origin main
+          sha="$(git rev-parse HEAD)"
+          git merge-base --is-ancestor "$sha" FETCH_HEAD || {
+            echo "release assurance refuses $sha: it is not reachable from origin/main." >&2
+            echo "This lane executes the target's own verification tooling on the shared" >&2
+            echo "self-hosted host, in main's Actions cache scope. Merge the commit first." >&2
+            exit 1
+          }
+          echo "target $sha is reachable from origin/main ($(git rev-parse FETCH_HEAD))"
 
       # The command refuses a dirty tree and refuses a `--target` that is not the checked-out
       # commit, so this resolves the input to the immutable thing the record will name.
