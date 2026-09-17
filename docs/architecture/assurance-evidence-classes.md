@@ -6,12 +6,15 @@
 a registry and tooling change; no product claim moves under this record.
 **Revision 2** applies the owner's four grill rulings and the findings of the Codex/Judge
 grill run against revision 1. §14 lists what remains an owner call at ratification.
-**Discussion:** to be opened.
+**Discussion:** [#967](https://github.com/matssun/mcp-re/discussions/967). The record exceeds
+GitHub's 65,536-character body limit, so §13, §14 and the appendix are its first comment
+there rather than silently dropped; this file is the whole of it.
 **Predecessor:** ADR-MCPRE-059 (discussion #527, rev. 2 = the theorem registry). This record
 does **not** supersede it. It adds one missing sort to a model 059 got right in every other
 respect, and §6 below *declines* one of the changes that motivated it because 059's existing
 rule is better.
-**Subordinate:** ADR-MCPRE-069 — *Evidence that runs but nothing claims*. §8 of revision 1
+**Subordinate:** ADR-MCPRE-069 — *Evidence that runs but nothing claims*
+([discussion #968](https://github.com/matssun/mcp-re/discussions/968)). §8 of revision 1
 became its own record; see §8 here for why.
 **Assurance TCB, not a product claim.** Everything here sits where issue #739 sits: outside
 the product theorem roots, inside the layer that decides whether the word `ESTABLISHED` may
@@ -463,7 +466,7 @@ edges, and B2's reasoning governs here too.
 
 ---
 
-## 8. Gap D — evidence that runs but nothing claims (moved to ADR-MCPRE-069)
+## 8. Gap D — evidence that runs but nothing claims (moved to ADR-MCPRE-069, #968)
 
 Revision 1 carried this as a section. It is now its own record, and the reason is that it is
 not the same defect.

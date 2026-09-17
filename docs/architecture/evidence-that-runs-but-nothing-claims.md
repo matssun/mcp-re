@@ -3,7 +3,10 @@
 # ADR-MCPRE-069 — Evidence that runs but nothing claims
 
 **Status:** 📄 **PROPOSED** 2026-09-17. Not ratified, not implemented.
-**Parent:** ADR-MCPRE-068 — *Evidence classes* (`assurance-evidence-classes.md`). This record
+**Discussion:** [#968](https://github.com/matssun/mcp-re/discussions/968).
+**Parent:** ADR-MCPRE-068 — *Evidence classes*
+([discussion #967](https://github.com/matssun/mcp-re/discussions/967),
+[`assurance-evidence-classes.md`](assurance-evidence-classes.md)). This record
 is **subordinate** to it and was §8 of its revision 1. It is separated because it is a
 different defect with a different deliverable, not because 068 grew too long.
 **Predecessor:** ADR-MCPRE-059 (discussion #527, rev. 2 = the theorem registry). Nothing here
