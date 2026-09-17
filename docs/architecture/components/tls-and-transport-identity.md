@@ -171,6 +171,7 @@ Registry: [`verification/policy/theorems.toml`](../../../verification/policy/the
 | Every canonical Ed25519 public key value is the canonical RFC 8410 encoding of its own point | key representation | THM-0025 · `unit://proxy.ed25519_public_key` · probes M32, M35 | in registry |
 | Credential/key correspondence relates two interpreted keys and attributes every refusal to the failing side | delegated credential | THM-0026 · `unit://proxy.credential_key_correspondence` · probes M31, M33, M34 · ASM-0032 (leaf SPKI extraction, on the accepting path) | in registry |
 | A delegated resolver's existence proves its credential and signer corresponded | construction closure | THM-0027 · `unit://proxy.delegated_resolver_materialization` · probes M36, M37 | in registry |
+| …and its existence is only obtainable through `materialize`, so the correspondence witness cannot be supplied beside operands nobody compared | construction boundary of `delegated_tls::resolver` | THM-0027 · `unit://proxy.delegated_resolver_materialization_sole_producer` · structural probe S06 (`E0451`) | in registry |
 
 THM-0024 states that identity interpretation reads the configured field and nothing else,
 and it deliberately does NOT state that the certificate was verified. The X.509 parser

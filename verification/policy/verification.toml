@@ -1562,11 +1562,18 @@ rationale = "Correspondence compares two Ed25519PublicKeyValue values, and what 
 # product: what possessing a delegated resolver proves about how it was built. It is a
 # separate unit from the correspondence authority because it claims something that
 # authority cannot — that no other construction path exists.
+#
+# THAT SENTENCE WAS THE DEFECT, and ADR-MCPRE-068 §12.1 is what found it. "No other
+# construction path exists" was written here in prose while the unit's whole evidence was a
+# behavioural battery, and a battery cannot see a path nobody wrote a call to. One of the
+# six named tests — `tls_facade_cannot_bypass_the_materialization_gate` — attacks ONE known
+# route by hand, which is the honest form of the claim a test can make and is not the claim
+# the sentence makes. So the sentence now has its own unit and its own falsifier below.
 
 [[unit]]
 id = "proxy.delegated_resolver_materialization"
 class = "V0"
-description = "Correspondence as a structural precondition of the delegated TLS resolver: no MCP-RE path materializes one from credential and signer material that was not established to correspond."
+description = "WHAT `materialize` REFUSES: it establishes correspondence over `cert_chain` and `signer` themselves and builds the resolver from those same values without them leaving the function, so no credential and signer that were not established to correspond pass through it, and the listener's signing budget travels with the construction rather than being re-created beside it. That `materialize` is the ONLY way in is a compile-time fact about the module boundary and belongs to `proxy.delegated_resolver_materialization_sole_producer`."
 paths = [
   "mcp-re-proxy/src/delegated_tls/resolver.rs",
   "mcp-re-proxy/src/delegated_tls.rs",
@@ -1593,6 +1600,39 @@ tested_symbols = [
   "lib#delegated_tls::resolver::budget_continuity::resolvers_sharing_a_budget_share_one_bucket",
 ]
 pilot = "verus-candidate"
+
+# ---------------------------------------------------------------------------
+#
+# THE SENTENCE ABOVE, AS ITS OWN PROPOSITION. `_correspondence` is a construction witness
+# the resolver never reads: possessing the resolver is meant to BE the statement that its
+# credential and signer presented the same public key. That reading holds exactly as far as
+# the field is unreachable — open the representation and a caller supplies the witness
+# beside operands it never compared, which is the hand-pairing the authority exists to
+# remove, and every one of the six behavioural tests stays green while it happens.
+#
+# S06 attacks the boundary from the sharpest place rather than an incidental one: a sibling
+# module inside `delegated_tls`, the parent that declares `mod resolver;` and re-exports the
+# type. Rust privacy reaches descendants, not ancestors, so the module a reader would assume
+# can see inside the resolver is precisely the one that must not — and E0451 on the marker
+# line is the compiler saying so.
+
+[[unit]]
+id = "proxy.delegated_resolver_materialization_sole_producer"
+class = "V0"
+description = "`DelegatedCertResolver::materialize` is the ONLY producer of an inhabitant: all three fields, including the `_correspondence` construction witness, are bare-private to `delegated_tls::resolver`, the parent re-exports the type and not its representation, there is no second constructor, no derive or decoder fills the fields positionally, and no test-gated construction route exists — so possessing a resolver means correspondence was established over the operands it holds, rather than that every known caller went through the gate. States nothing about WHAT `materialize` refuses, which is `proxy.delegated_resolver_materialization`'s."
+paths = [
+  "mcp-re-proxy/src/delegated_tls/resolver.rs",
+  "mcp-re-proxy/src/delegated_tls.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+# The same severity as the gate it makes unavoidable. An open boundary here does not weaken
+# the correspondence check; it makes it optional, and what stands behind the check is the
+# key-export gap the delegated TLS path was built to close.
+direct_consequence_severity = "critical"
+evidence = [
+  "structural://proxy/delegated_tls/resolver_sole_producer",
+]
 
 [[edge]]
 # Producer -> consumer. Materialization consumes the correspondence fact as its construction

@@ -64,7 +64,7 @@ any of them is closed.
 | THM-0024 | Certificate identity interpretation reads the configured field and refuses rather than falling back | proxy.certificate_identity | unit://proxy.certificate_identity | live |
 | THM-0025 | Every canonical Ed25519 public key value is the canonical RFC 8410 encoding of its own point | proxy.ed25519_public_key | unit://proxy.ed25519_public_key | live |
 | THM-0026 | Credential/key correspondence relates two independently interpreted keys and attributes every refusal to the side that failed | proxy.credential_key_correspondence | unit://proxy.credential_key_correspondence | live |
-| THM-0027 | A delegated resolver's existence proves its credential and signer corresponded | proxy.delegated_resolver_materialization | unit://proxy.delegated_resolver_materialization | live |
+| THM-0027 | A delegated resolver's existence proves its credential and signer corresponded | proxy.delegated_resolver_materialization | unit://proxy.delegated_resolver_materialization, unit://proxy.delegated_resolver_materialization_sole_producer | live |
 | THM-0028 | Channel-associated certificate credential evidence originates only from an established relationship's mechanism report | proxy.channel_associated_credential | unit://proxy.channel_associated_credential | live |
 | THM-0029 | A channel-associated peer identity is interpreted from the leaf of that relationship's own credential | proxy.channel_associated_identity | unit://proxy.channel_associated_identity | live |
 | THM-0030 | Verified-credential evidence records the mechanism's own acceptance and the path it was reached on | proxy.mechanism_verified_credential | unit://proxy.mechanism_verified_credential | live |
