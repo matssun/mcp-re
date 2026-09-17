@@ -159,6 +159,12 @@ stage_static() {
     `# nightly reclaim removes. The preflight provisions them; this checks the question` \
     `# it asks is still the right one.` \
     && python3 scripts/node_matrix_state.py --selftest \
+    `# The ADR-MCPRE-068 census is a REPORT and states no verdict, so its selftest is` \
+    `# what keeps its figures measurements: each case perturbs a synthetic registry and` \
+    `# requires the number to MOVE, which a constant would fail — including the` \
+    `# DIRECT-vs-CLOSURE distinction that makes "7 of 12 roots" and "3 of 12 roots" two` \
+    `# different true statements.` \
+    && python3 scripts/evidence_class_census.py --selftest \
     && python3 scripts/serving_identity_provenance_gate.py --selftest \
     && python3 scripts/serving_identity_provenance_gate.py \
     && python3 scripts/authorization_provenance_gate.py --selftest \

@@ -429,6 +429,16 @@ jobs:
       - name: Pinned Node runtime state (the lane's prerequisite is a fact, not a memory)
         run: python3 scripts/node_matrix_state.py --selftest
 
+      # The ADR-MCPRE-068 evidence-class census. A REPORT, not a gate — it states no
+      # verdict and fails nothing — which is exactly why its selftest is required: the
+      # figures the Phase-0 handoff quotes are computed rather than transcribed, and a
+      # census that printed the same number whatever the registry said would be a
+      # sentence with a number in it. Each case perturbs a synthetic registry and
+      # requires the measurement to move, including the DIRECT-vs-CLOSURE distinction
+      # that makes "7 of 12 roots" and "3 of 12 roots" two different true statements.
+      - name: Evidence-class census selftest (a figure that cannot move is not a measurement)
+        run: python3 scripts/evidence_class_census.py --selftest
+
       # The assurance platform's own self-tests — the verdict algebra, the invalidation
       # rules, the measured-input closure, the escape-hatch detector, the theorem loader
       # and review model, the test and Verus lane adapters, and the views generator. They
