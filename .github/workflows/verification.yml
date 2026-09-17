@@ -298,6 +298,12 @@ on:
       - "mcp-re-proxy/src/config_state/trust_document.rs"
       # v0.17 / #581 row 2: the connection credential window, `proxy.client_credential_window`.
       - "mcp-re-proxy/src/config_state/client_credential_window.rs"
+      # The ADR-MCPRE-068 structural probe S04 injects a sibling module here and
+      # requires the parent not to declare it already. A change to this file can
+      # make that probe stale, or move the boundary it attacks, so it re-triggers
+      # the lane — `verification_trigger_gate.py` derives the requirement from the
+      # probe registry rather than trusting this list.
+      - "mcp-re-proxy/src/config_state/mod.rs"
       - "mcp-re-proxy/src/config_state/credential_currency_bound.rs"
       # ADR-MCPRE-067 Phase 5 moved the online-revocation SELECTION out of a flat
       # `DeploymentRequest` field, so `proxy.online_ocsp_reachability`'s closure now names
@@ -593,6 +599,12 @@ on:
       - "mcp-re-proxy/src/config_state/trust_document.rs"
       # v0.17 / #581 row 2: the connection credential window, `proxy.client_credential_window`.
       - "mcp-re-proxy/src/config_state/client_credential_window.rs"
+      # The ADR-MCPRE-068 structural probe S04 injects a sibling module here and
+      # requires the parent not to declare it already. A change to this file can
+      # make that probe stale, or move the boundary it attacks, so it re-triggers
+      # the lane — `verification_trigger_gate.py` derives the requirement from the
+      # probe registry rather than trusting this list.
+      - "mcp-re-proxy/src/config_state/mod.rs"
       - "mcp-re-proxy/src/config_state/credential_currency_bound.rs"
       # ADR-MCPRE-067 Phase 5 moved the online-revocation SELECTION out of a flat
       # `DeploymentRequest` field, so `proxy.online_ocsp_reachability`'s closure now names
@@ -776,6 +788,17 @@ jobs:
           echo "rel=$rel" >> "$GITHUB_OUTPUT"
           echo "MCP_RE_EVIDENCE_DIR=$PWD/$rel" >> "$GITHUB_ENV"
           echo "evidence directory: $PWD/$rel"
+
+      # The two ADR-MCPRE-068 Phase 0B lanes' own false-green catalogues, ahead of the
+      # lanes themselves: they are python-and-one-tiny-crate and fail in seconds, and they
+      # are what establishes that the runners can go RED. The structural suite compiles a
+      # hostile construction that BUILDS and requires FAIL; the measured suite runs a dead,
+      # a silent and an irreproducible apparatus. A lane that cannot fail measures nothing,
+      # and neither registry is large enough yet for the lane run itself to prove it can.
+      - name: Structural and measured lane self-tests
+        run: |
+          python3 tools/verification/test_structural_lane.py
+          python3 tools/verification/test_measured_lane.py
 
       # PHASE 1 — the lanes this host can execute. It states no repository verdict: it
       # cannot run the extracted-model lanes, so any aggregate here would be a claim about

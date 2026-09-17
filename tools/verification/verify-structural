@@ -1,0 +1,360 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""The `structural://` lane — ADR-MCPRE-068 §4.1, §12.1, Phase 0B.
+
+A STRUCTURAL proposition is not established by a test that passes. It is established by a
+construction the compiler REFUSES: *the representation admits no illegal inhabitant, so
+possession of the value is the proof*. This lane is what makes that falsifiable.
+
+    for each registered probe — write the hostile construction into a copy of the tree,
+    compile it, and require the declared rustc error on the declared line.
+
+Three properties make it evidence rather than a ritual, and each is one this repository has
+already been burned by:
+
+**The construction that COMPILES is the finding, not a lane malfunction.** If the illegal
+inhabitant builds, the boundary is open and the structural claim above it is false. That is
+reported as FAIL with the invariant named, so the response is to close the boundary rather
+than to soften the claim.
+
+**A refusal the probe cannot attribute is not evidence.** "Does not compile" is satisfied by
+a typo, a missing import, or a fixture that stopped building for unrelated reasons. The
+probe declares the rustc error code and the marker line its primary span must fall on.
+
+**It never edits the working tree** (`_scratch.copy_tracked_tree`), so a crashed run leaves
+the repository untouched and there is no restore step whose failure could be read as a
+result.
+
+ZERO EXECUTION IS A FAILURE, NOT A PASS — the owner's ratification of ADR-MCPRE-068:
+
+> No unit may declare either scheme before its required lane exists and fail-closes on zero
+> execution.
+
+So: a unit declaring `structural://` with no probe registered FAILS; a run whose selection
+resolves to no probe while some unit declares the scheme FAILS; an empty scratch copy FAILS.
+Only a tree where NOTHING declares the scheme and NOTHING is registered reports
+`NOT_REQUIRED`. A lane that could report PASS having attempted no hostile construction would
+make `structural://` a word that costs nothing, which is the `-- --ignored` failure in new
+clothes.
+
+Verdicts follow the platform's five: NOT_REQUIRED when nothing claims and nothing is
+registered, FAIL for an open boundary or an unattributable refusal, UNAVAILABLE when the
+tree cannot be copied or cargo cannot run, PASS otherwise.
+
+Usage:
+    tools/verification/verify-structural [--probe ID]... [--registry PATH] [--keep-tree]
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import subprocess
+import sys
+import tempfile
+import tomllib
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _evidence import EvidenceRecord, evidence_store, write_record  # noqa: E402
+from _fingerprint import fingerprint_unit  # noqa: E402
+from _manifest import (  # noqa: E402
+    REPO_ROOT,
+    ManifestError,
+    load_assumptions,
+    load_toolchains,
+    load_verification,
+)
+from _scratch import copy_tracked_tree  # noqa: E402
+from _structural import adjudicate, load_probes, provenance_problem  # noqa: E402
+
+REGISTRY = REPO_ROOT / "verification" / "policy" / "structural-probes.toml"
+
+SCHEME = "structural://"
+
+
+def claims_structural(unit: dict) -> bool:
+    """Whether a `structural://` URI puts this unit inside the lane's attestation closure.
+
+    `_evidence.required_lanes` reads every declared scheme, so a unit carrying this URI
+    cannot be attested without a structural record measured at its exact fingerprint.
+    """
+    return any(str(e).startswith(SCHEME) for e in unit.get("evidence", []))
+
+
+def package_name(tree: Path, crate_dir: str) -> str | None:
+    """The cargo package `crate_dir` declares, or None if it declares none."""
+    manifest = tree / crate_dir / "Cargo.toml"
+    if not manifest.is_file():
+        return None
+    with manifest.open("rb") as handle:
+        return tomllib.load(handle).get("package", {}).get("name")
+
+
+def install(tree: Path, probe: dict, where: str) -> None:
+    """Write the hostile construction into the COPY, and make the compiler reach it.
+
+    A file dropped into `src/` that no `mod` declaration names is not compiled at all, and
+    the lane would then read "no error" — which is the finding that means the boundary is
+    OPEN — from a file rustc never opened. So the declaration is written too, and its
+    absence from the parent is checked rather than assumed.
+    """
+    target = tree / str(probe["insertion_path"])
+    if target.exists():
+        raise ManifestError(
+            f"{where}: {probe['insertion_path']} already exists in the tree. The probe's "
+            f"construction is supposed to be UNWRITABLE here; a file at that path means "
+            f"either the probe collides with real source or a previous run leaked."
+        )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(str(probe["construction"]), encoding="utf-8")
+
+    if probe["kind"] != "in-crate-source-injection":
+        return
+    parent = tree / str(probe["insertion_parent"])
+    if not parent.is_file():
+        raise ManifestError(f"{where}: STALE — insertion parent {probe['insertion_parent']} does not exist")
+    declaration = str(probe["insertion_declaration"])
+    text = parent.read_text(encoding="utf-8")
+    if declaration in text:
+        raise ManifestError(
+            f"{where}: STALE — {probe['insertion_parent']} already declares "
+            f"{declaration!r}. The probe's module is supposed to exist only inside this "
+            f"lane's copy."
+        )
+    parent.write_text(f"{text}\n{declaration}\n", encoding="utf-8")
+
+
+def compile_probe(tree: Path, probe: dict, package: str, target_dir: Path) -> tuple[bool, list[dict]]:
+    """(cargo ran, diagnostics) for the injected tree.
+
+    `cargo check` rather than `build`: the question is whether the construction TYPES, and
+    nothing here needs to be run. `--tests` is passed for a boundary probe because its
+    construction is an integration test target, which a plain check would not compile — and
+    a target nobody compiled produces no diagnostics, which this lane would otherwise read
+    as an open boundary.
+    """
+    argv = ["cargo", "check", "-p", package, "--message-format=json"]
+    if probe["kind"] == "crate-boundary-compile-fail":
+        argv.append("--tests")
+    features = [str(f) for f in probe.get("features", [])]
+    if features:
+        argv += ["--features", ",".join(features)]
+    proc = subprocess.run(
+        argv,
+        cwd=tree,
+        capture_output=True,
+        text=True,
+        env={**_env(), "CARGO_TARGET_DIR": str(target_dir)},
+    )
+    diagnostics = []
+    for line in proc.stdout.splitlines():
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if message.get("reason") == "compiler-message":
+            diagnostics.append(message.get("message", {}))
+    if not proc.stdout.strip() and proc.returncode != 0:
+        # No JSON at all: cargo never got as far as compiling — a missing toolchain, a
+        # locked registry, an unresolvable dependency. That is UNAVAILABLE, not a verdict
+        # about the boundary, and it must not be read as "no error".
+        return False, []
+    return True, diagnostics
+
+
+def _env() -> dict:
+    import os
+
+    return dict(os.environ)
+
+
+def run_probe(tree: Path, probe: dict, target_dir: Path) -> str | None:
+    """Why this probe did not witness its invariant, or None when it did."""
+    where = f"probe {probe['id']}"
+    crate_dir = Path(str(probe["insertion_path"])).parts[0]
+    package = package_name(tree, crate_dir)
+    if package is None:
+        return f"{crate_dir}/Cargo.toml declares no package; the insertion path names no crate"
+    if package != probe["package"]:
+        return (
+            f"`package` says {probe['package']!r} but {crate_dir}/Cargo.toml declares "
+            f"{package!r}; the probe would be compiled against a different crate than the "
+            f"one it claims to attack"
+        )
+    try:
+        install(tree, probe, where)
+        ran, diagnostics = compile_probe(tree, probe, package, target_dir)
+    finally:
+        # Removed on EVERY path, including the one where `install` raised after writing the
+        # file. A leftover construction would make the next probe's "this path already
+        # exists" refusal fire about a file this lane put there — a stale-anchor report
+        # about the lane's own residue.
+        (tree / str(probe["insertion_path"])).unlink(missing_ok=True)
+    if not ran:
+        raise EnvironmentError(f"{where}: cargo produced no diagnostics at all")
+    return adjudicate(probe, diagnostics, str(probe["insertion_path"]))
+
+
+def revert(tree: Path, probe: dict, original: str | None) -> None:
+    if original is not None:
+        (tree / str(probe["insertion_parent"])).write_text(original, encoding="utf-8")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--probe", action="append", default=[], help="only these probe ids")
+    parser.add_argument("--registry", default=str(REGISTRY), help="probe registry to read")
+    parser.add_argument("--keep-tree", action="store_true", help="leave the scratch copy")
+    args = parser.parse_args()
+
+    try:
+        probes = load_probes(Path(args.registry))
+        doc = load_verification()
+        toolchains = load_toolchains()
+        assumptions = load_assumptions()
+        units = {unit["id"]: unit for unit in doc.get("unit", [])}
+    except ManifestError as exc:
+        return _fail(f"{exc}")
+
+    declaring = sorted(uid for uid, unit in units.items() if claims_structural(unit))
+    registered = {probe["unit"] for probe in probes}
+    unknown = sorted({probe["unit"] for probe in probes} - set(units))
+    if unknown:
+        return _fail(
+            f"probe(s) name unit(s) {unknown} that verification.toml does not hold. A probe "
+            f"attacking no declared proposition witnesses nothing."
+        )
+    orphaned = [uid for uid in declaring if uid not in registered]
+    if orphaned:
+        return _fail(
+            f"unit(s) {orphaned} declare {SCHEME} evidence but no probe is registered for "
+            f"them. A declared evidence class nothing measures is unmeasured evidence."
+        )
+
+    drifted = [
+        f"probe {probe['id']}: {problem}"
+        for probe in probes
+        if (problem := provenance_problem(probe, units[probe["unit"]], REPO_ROOT)) is not None
+    ]
+    if drifted:
+        return _fail("; ".join(drifted))
+
+    selected = [p for p in probes if p["id"] in set(args.probe)] if args.probe else list(probes)
+    if not selected:
+        if args.probe:
+            # An empty SELECTION and an empty REGISTRY are different facts, and only one of
+            # them is quiet. A selector that matches nothing has measured nothing, whatever
+            # the registry holds — the same defect `verify-mutations --probe M25` had, where
+            # every id is really `M25-<what-it-weakens>`.
+            return _fail(
+                f"--probe {sorted(set(args.probe))} selected NO registered probe. A "
+                f"selector that matches nothing has measured nothing."
+            )
+        if declaring:
+            return _fail(
+                f"the selection resolved to NO probe while unit(s) {declaring} declare "
+                f"{SCHEME}. A lane that measured nothing may not report a pass."
+            )
+        print("verify-structural: NOT_REQUIRED — no unit declares structural:// and no probe is registered")
+        print("VERDICT: NOT_REQUIRED")
+        return 0
+
+    scratch = Path(tempfile.mkdtemp(prefix="mcp-re-structural-"))
+    tree = scratch / "tree"
+    target_dir = scratch / "target"
+    try:
+        copied = copy_tracked_tree(tree)
+    except (subprocess.CalledProcessError, OSError) as exc:
+        print(f"UNAVAILABLE: could not copy the tree: {exc}", file=sys.stderr)
+        print("VERDICT: UNAVAILABLE")
+        return 1
+    if copied == 0:
+        print(
+            "UNAVAILABLE: the scratch copy is EMPTY, so every probe would compile nothing "
+            "and report no error — the finding that means an OPEN boundary — about a tree "
+            "that does not exist.",
+            file=sys.stderr,
+        )
+        print("VERDICT: UNAVAILABLE")
+        return 1
+
+    failures: list[str] = []
+    try:
+        for probe in selected:
+            original = None
+            if probe["kind"] == "in-crate-source-injection":
+                parent = tree / str(probe["insertion_parent"])
+                original = parent.read_text(encoding="utf-8") if parent.is_file() else None
+            try:
+                problem = run_probe(tree, probe, target_dir)
+            except ManifestError as exc:
+                print(f"  FAIL {probe['id']}: {exc}", file=sys.stderr)
+                failures.append(probe["id"])
+                continue
+            except EnvironmentError as exc:
+                print(f"UNAVAILABLE: {exc}", file=sys.stderr)
+                print("VERDICT: UNAVAILABLE")
+                return 1
+            finally:
+                revert(tree, probe, original)
+            if problem is not None:
+                print(f"  FAIL {probe['id']}: {problem}", file=sys.stderr)
+                failures.append(probe["id"])
+                continue
+            print(f"  ok   {probe['id']}  {probe['kind']}  refused by {probe['error_code']}: {probe['invariant']}")
+    finally:
+        if args.keep_tree:
+            print(f"  scratch tree kept at {scratch}")
+        else:
+            shutil.rmtree(scratch, ignore_errors=True)
+
+    # Phase 3 of the evidence pipeline, as every other lane does it: a machine record BOUND
+    # TO THE FINGERPRINT it was measured at. Written only for a complete run — a `--probe`
+    # subset measured part of the witness, and a record from it would let "one probe passed"
+    # stand in for "the boundary is closed".
+    if not args.probe:
+        for unit_id in sorted(registered):
+            unit = units.get(unit_id)
+            if unit is None or not claims_structural(unit):
+                continue
+            mine = [p["id"] for p in selected if p["unit"] == unit_id]
+            failed = [pid for pid in mine if pid in failures]
+            write_record(
+                evidence_store(),
+                EvidenceRecord(
+                    unit_id=unit_id,
+                    lane="structural",
+                    result="fail" if failed else "pass",
+                    fingerprint=fingerprint_unit(unit, doc, toolchains, assumptions)["fingerprint"],
+                    detail=(
+                        f"{len(mine)} probe(s); failed: {', '.join(failed)}"
+                        if failed
+                        else f"{len(mine)} probe(s), each refused by the declared rustc error"
+                    ),
+                ),
+            )
+
+    if failures:
+        print(
+            f"\nFAIL: {len(failures)} of {len(selected)} probe(s) did not witness a closed "
+            f"construction boundary: {', '.join(failures)}",
+            file=sys.stderr,
+        )
+        print("VERDICT: FAIL")
+        return 1
+    print(f"\nverify-structural: PASS — {len(selected)} probe(s), each construction REFUSED by the compiler")
+    print("VERDICT: PASS")
+    return 0
+
+
+def _fail(message: str) -> int:
+    print(f"FAIL: {message}", file=sys.stderr)
+    print("VERDICT: FAIL")
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

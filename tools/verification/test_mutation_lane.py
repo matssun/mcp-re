@@ -128,7 +128,7 @@ def test_the_working_tree_is_never_edited():
     import inspect
 
     body = inspect.getsource(lane.main)
-    assert "copy_tree(tree)" in body
+    assert "copy_tracked_tree(tree)" in body
     assert "lane.apply(REPO_ROOT" not in body
     assert "apply(tree, probe" in body
 
@@ -308,6 +308,23 @@ def test_the_probe_set_participates_in_the_units_fingerprint():
     ]
     assert set(other_probes).isdisjoint(components["mutation_probes"])
     assert other_probes
+
+
+def test_a_selector_that_matches_nothing_is_a_FAIL():
+    """`--probe M25` selects nothing, because every id is `M25-<what-it-weakens>`. That
+    reported NOT_REQUIRED and exited 0, so a mistyped selector was indistinguishable from a
+    tree with no probes to apply. An empty SELECTION and an empty REGISTRY are two facts."""
+    import subprocess
+
+    proc = subprocess.run(
+        [sys.executable, str(HERE / "verify-mutations"), "--probe", "M25"],
+        cwd=lane.REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode != 0, "a selector matching nothing must not exit 0"
+    assert "VERDICT: FAIL" in proc.stdout, proc.stdout
+    assert "selected NO registered probe" in proc.stderr, proc.stderr
 
 
 def test_the_documented_matrix_count_is_checked_against_the_registry():

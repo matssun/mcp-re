@@ -909,6 +909,16 @@ honest cost of not pretending one schema change is two.
 against that exact commit, and if CI cannot produce fresh evidence for the new fingerprints
 before merge, the commit does not merge.
 
+**There is a THIRD re-attestation, and it belongs to 0D rather than to a schema event.**
+Building 0B established it: a unit declaring `mutation://` fingerprints the probe ENTRIES and
+the lane binary (`_fingerprint` encoding v5), because a suite that can silently shrink closes
+no loop. The same is true of a `structural://` probe and a `measured://` measurement, so the
+first unit to declare either scheme needs those components — and a new component is an
+encoding bump, which invalidates the estate. 0B does **not** add them: no unit declares the
+schemes yet, and adding a component that is empty for all 127 units would spend a whole
+re-attestation on nothing. It lands with the declarations, in 0D, and it is a cost of 0D
+rather than a surprise inside it.
+
 **Flag day 2 — the adequacy rule turns a large backlog merge-fatal, and it lands at 0E.**
 Every unit that is `tested` with effective severity Medium or higher and no registered
 falsifier fails the merge under §9.3. That is up to 42 root-reachable units plus up to 33
@@ -1119,6 +1129,40 @@ been producing `structural` and `measured` evidence for months and filing both u
 Under 0D the unit becomes `measured`, its three apparatus symbols become its
 `measurement_scope` and `measurement_control`, and the superseded fourth is dispositioned
 under ADR-069 rather than carried as though it were part of the census.
+
+### 12.2.1 What Phase 0B shipped, and what it deliberately did not
+
+Two lanes, each a named required check on the merge path, each fail-closed on zero
+execution, and no registry change — `verification.toml` is byte-identical in class terms and
+no unit declares either scheme.
+
+| | `structural://` | `measured://` |
+|---|---|---|
+| runner | `tools/verification/verify-structural` | `tools/verification/verify-measured` |
+| registry | `verification/policy/structural-probes.toml` | `verification/policy/measurements.toml` |
+| mechanism | inject the hostile construction into a scratch copy, `cargo check --message-format=json`, require the declared rustc error code with its primary span on the marker line | execute the protocol, preserve and digest the result, then `reproducibility` (two runs must agree) or `sensitivity` (`APPARATUS-MOVED: <n>`, n >= 1) |
+| registered at 0B | **5 probes, all live**: S01/S02/S03/S05 crate-boundary over `http_profile.verifier_result_separation`, S04 in-crate over `proxy.client_credential_window` | **none**; the first corpus is 0D's §12.2 unit |
+| its own falsifier | `test_structural_lane.py` compiles a construction that BUILDS and requires the runner to report FAIL | `test_measured_lane.py` runs a dead, a silent and an irreproducible apparatus |
+
+**The boundary kind does not use rustdoc, and the reason is this record's own thesis.**
+rustdoc can annotate a ```compile_fail doctest with an expected error code, but that check
+runs only on nightly — so on the pinned stable toolchain `compile_fail,E0308` and bare
+`compile_fail` are the same declaration, and a probe resting on it would have a declared code
+nothing compares. The lane compiles the construction itself, as an integration test (a
+separate crate linking the library, which is exactly the boundary condition), and compares
+the code against diagnostics it read. The doctests remain; each boundary probe names the one
+it corresponds to, and the lane refuses a probe whose documented case has drifted.
+
+**`producer_paths` is the ratification made mechanical.** Every probe answers for all four
+routes — module-tree visibility, alternate constructors, generated/deserialization routes,
+test-only construction — including the ones that do not apply, and the loader refuses an
+unanswered one. Private fields alone are not a seal, and a witness that attacks one route
+while another stands open establishes nothing.
+
+**One defect found by building it, and fixed.** `verify-mutations --probe M25` selected no
+probe — every id there is `M25-<what-it-weakens>` — and reported `NOT_REQUIRED`, exit 0. An
+empty SELECTION and an empty REGISTRY are different facts and only the second is quiet. All
+three lanes now fail on a selector that matches nothing.
 
 ### 12.3 What Phase 0D still has to do
 

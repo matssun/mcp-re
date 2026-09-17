@@ -64,6 +64,12 @@ from _manifest import aggregate_verdict
 FORMAL_LANES: dict[str, set[str]] = {
     "test": {"V0", "V1", "V2", "V3"},
     "mutation": {"V0", "V1", "V2", "V3"},
+    # ADR-MCPRE-068's two new establishing classes. EVERY verification tier, because the
+    # evidence class and the V0/V1/V2/V3 tier are different facts: a V1 unit whose
+    # proposition is closed by the representation owes a compile-refusal probe exactly as a
+    # V0 one does. What decides whether the lane is required is the declared URI, below.
+    "structural": {"V0", "V1", "V2", "V3"},
+    "measured": {"V0", "V1", "V2", "V3"},
     "verus": {"V1", "V3"},
     "lean": {"V2", "V3"},
     "generated-model": {"V2", "V3"},
@@ -80,10 +86,18 @@ FORMAL_LANES: dict[str, set[str]] = {
 #: Which execution environment each formal lane belongs to. Total over `FORMAL_LANES` by
 #: construction — a lane in neither set would be a lane no phase runs and no control
 #: notices, which is the failure this whole module is repairing one level up.
-HOST_LANES = frozenset({"test", "mutation", "verus"})
+HOST_LANES = frozenset({"test", "mutation", "structural", "measured", "verus"})
 EXTRACTION_LANES = frozenset({"lean", "generated-model"})
 assert HOST_LANES | EXTRACTION_LANES == set(FORMAL_LANES)
 assert not (HOST_LANES & EXTRACTION_LANES)
+
+
+#: The lanes whose requirement is read off the unit's own evidence URI, one for one.
+#:
+#: Named rather than written as a set literal inside the loop, because the list grows: 068
+#: added `structural` and `measured`, and a lane missing from here would be required of
+#: every unit of its classes whether or not the manifest ever promised it.
+URI_DERIVED = frozenset({"test", "mutation", "structural", "measured"})
 
 
 @dataclass(frozen=True)
@@ -119,7 +133,7 @@ def requirements(doc: dict, toolchains: dict, assumptions: dict) -> list[Require
             # `_evidence.required_lanes` reads the URIs, and the two agreed only while every
             # V2/V3 unit happened to declare `lean://`. The manifest now requires that, so
             # both authorities read one fact.
-            if lane in {"test", "mutation"} and not _claims(unit, f"{lane}://"):
+            if lane in URI_DERIVED and not _claims(unit, f"{lane}://"):
                 continue
             if lane in {"lean", "generated-model"} and not _claims(unit, "lean://"):
                 continue

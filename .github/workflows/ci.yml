@@ -480,6 +480,15 @@ jobs:
           # reason the comment above gives: `merge_path_gate.py` reads literal paths,
           # so a suite a workflow assembles at run time is one it cannot see.
           python3 tools/verification/test_evidence_class.py
+          # ADR-MCPRE-068 Phase 0B. These two are not only self-tests of a lane's edges —
+          # they ARE the two lanes' liveness, because the ratification requires each to
+          # fail-close on zero execution and neither registry is yet large enough for a
+          # lane run to demonstrate that it can go red. The structural suite compiles a
+          # hostile construction that BUILDS and requires the runner to report FAIL; the
+          # measured suite runs a dead apparatus, a silent one and an irreproducible one.
+          # ~4s, one dependency-free crate between them.
+          python3 tools/verification/test_structural_lane.py
+          python3 tools/verification/test_measured_lane.py
 
       # ADR-MCPRE-059 §28 + the ratified security boundary. The registry's `root_theorems`
       # and `docs/spec/security-boundary.md` §2 are ONE fact — what MCP-RE promises —

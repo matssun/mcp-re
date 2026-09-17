@@ -336,6 +336,89 @@ root-issuer resolution to the **Request** slot breaks the whole delegated batter
 members), because every delegated test then fails to resolve a root. That is a coverage
 fact, not an isolation one.
 
+### 9.3 The STRUCTURAL probe, and why it is not a mutation
+
+ADR-MCPRE-068 §12.1 measured all 21 mutation probes over the sealed-owner units and found
+the same thing 21 times: each weakens a runtime expression and expects a behavioural test to
+go red. Not one alters a visibility modifier, a field's privacy, a module boundary or a
+constructor's reachability, and not one asserts anything about compilation. They are correct
+evidence for a *tested* proposition and they witness no seal.
+
+The seal's proposition is different in kind — *the representation admits no illegal
+inhabitant, so possession of the value is the proof* — and its falsifier is a **compilation
+that must be refused**:
+
+```text
+verify-structural  ──▶  copy the tracked tree
+                   ──▶  write the hostile construction into the copy
+                   ──▶  cargo check --message-format=json
+                   ──▶  require the DECLARED rustc error code, with its primary span on the
+                        probe's marker line
+
+        the construction COMPILES          = the boundary is OPEN; FAIL, and that is the
+                                             finding rather than a lane malfunction
+        a different error, or another line = the lane watched something else break; FAIL
+```
+
+**Two kinds, one mechanism.** `crate-boundary-compile-fail` injects into `<crate>/tests/`,
+which cargo compiles as a separate crate linking the library — exactly what a downstream
+consumer sees. `in-crate-source-injection` injects a sibling module under `<crate>/src/`,
+which is the only way the in-crate case can exist at all: with the representation private
+there is no file the tree could hold, because such a file would not build. The scratch copy
+is where it lives.
+
+**Deliberately not rustdoc.** The repository's ```compile_fail doctests state the boundary
+case and run on the merge path, and rustdoc can annotate one with an expected error code —
+but that annotation is checked only on nightly, so on the pinned stable toolchain
+`compile_fail,E0308` and bare `compile_fail` are the same declaration. A probe whose declared
+code nothing compares is configuration that enforces nothing. The lane compares the code
+itself, against diagnostics it read; each boundary probe names in `doc_item` the doctest it
+corresponds to, and the lane refuses a probe whose documented case has drifted away.
+
+**What a structural witness must account for** (ADR-MCPRE-068 ratification): every producer
+path relevant to the claimed invariant — module-tree visibility, alternate constructors,
+generated/deserialization routes, and test-only construction. Each probe answers for all
+four in `producer_paths`, including the routes that do not apply, because an unanswered route
+is indistinguishable from an unconsidered one. Private fields alone are not a seal.
+
+| probe | kind | invariant | refused by |
+|---|---|---|---|
+| S01 | crate boundary | a cryptographic-floor bound response is not a fully verified response | `E0308` |
+| S02 | crate boundary | a delegated UNBOUND response is not a delegated BOUND one | `E0308` |
+| S03 | crate boundary | a delegation-authorized response is not a trust-seam-authorized one | `E0609` |
+| S05 | crate boundary | a cryptographic-floor verified REQUEST is not a fully verified request | `E0308` |
+| S04 | in-crate | no code outside `config_state::client_credential_window` can assemble a `ClientCredentialWindow` | `E0451` |
+
+S04 is the one ADR-MCPRE-068 §12.1 split out of a composite unit: M113/M114/M115 falsify the
+constructor's runtime refusal of an illegal `(connection_age, cert_lifetime)` pair, which is
+a real tested proposition with a real falsifier, and nothing attacked the sole-producer fact
+until this probe. `cargo check --all-targets` passing never witnessed it — it cannot go red
+when the boundary is deleted, because nothing in the tree attempts the construction.
+
+### 9.4 The MEASURED apparatus control
+
+A measured proposition is scoped and existential, so deleting a production property does not
+make it false — it makes it a measurement of a different tree. It therefore takes no mutation
+falsifier, and owes instead the demonstration that its apparatus can still MOVE:
+`reproducibility` (the protocol run twice must agree exactly) or `sensitivity` (a perturbation
+that must report `APPARATUS-MOVED: <n>`, n >= 1). The COUNT is parsed rather than the exit
+status, because a control that selected nothing exits 0.
+
+`verification/policy/measurements.toml` is empty at Phase 0B and the lane's liveness is
+`tools/verification/test_measured_lane.py`, which runs a live, a dead, a silent and an
+irreproducible apparatus on every merge-path run. The first real corpus arrives at Phase 0D
+with `conformance.verdict_vocabulary_scope`, whose battery ADR-MCPRE-068 §12.2 identified as
+a measurement already written — the observation, a scope-identity control and a
+non-empty-input sensitivity control — filed under `tested` because `tested` was the only word
+available.
+
+**Neither lane is in any unit's attestation closure yet.** No unit declares `structural://`
+or `measured://` before Phase 0D: `_evidence.required_lanes` binds every declared scheme, so
+an early URI would take its unit out of the graph. The declaration follows the
+reclassification, through the class-transition ratchet, and it carries a fingerprint encoding
+bump with it — the probe entries and the lane identity become components exactly as encoding
+v5 made them for mutation.
+
 
 ## 10. Implementation map
 

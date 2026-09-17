@@ -194,6 +194,12 @@ stage_static() {
     `# that workflow is paths:-filtered, so the mutation lane's verdict semantics were` \
     `# established only on the pull requests that tripped its filter.` \
     && python3 tools/verification/test_mutation_lane.py \
+    `# ADR-MCPRE-068 Phase 0B. These two ARE the new lanes' liveness: the structural suite` \
+    `# compiles a hostile construction that BUILDS and requires the runner to report FAIL,` \
+    `# and the measured suite runs a dead, a silent and an irreproducible apparatus. A lane` \
+    `# whose only evidence is that it exists is the class this record was opened about.` \
+    && python3 tools/verification/test_structural_lane.py \
+    && python3 tools/verification/test_measured_lane.py \
     && python3 tools/verification/test_r9_linkage.py \
     && python3 tools/verification/test_evidence_class.py \
     `# The published claim surface and the declared root set are one fact written twice.` \

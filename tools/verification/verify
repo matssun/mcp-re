@@ -108,6 +108,12 @@ LANES = [
     # actually turn a declared control red? Formal in the `is_formal` sense — it produces
     # EVIDENCE about the code, not a precondition for trusting other evidence.
     ("mutation", "verify-mutations", True),
+    # ADR-MCPRE-068 Phase 0B. A structural claim's falsifier is a COMPILATION that must be
+    # refused, and a measured one's is an apparatus that must still MOVE; neither is a test
+    # going red, which is why they are lanes of their own rather than mutation's arguments.
+    # Both are formal in the `is_formal` sense: they produce evidence about the code.
+    ("structural", "verify-structural", True),
+    ("measured", "verify-measured", True),
     ("verus", "verify-verus", True),
     ("lean", "verify-lean", True),
 ]
@@ -127,7 +133,7 @@ LANES = [
 #: would be a lane nothing executes — and because the aggregate derives its requirements
 #: from the MANIFEST rather than from what ran, that shows up as a missing record.
 PHASES = {
-    "host": {"test", "mutation", "verus"},
+    "host": {"test", "mutation", "structural", "measured", "verus"},
     "extraction": {"generated-model", "lean"},
 }
 assert set().union(*PHASES.values()) == {

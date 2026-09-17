@@ -1,0 +1,184 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The `structural://` probe registry — ADR-MCPRE-068 §4.1, §12.1, Phase 0B.
+#
+# A STRUCTURAL proposition says the representation admits no illegal inhabitant: possession
+# of the value IS the proof. Its falsifier is a construction the compiler must REFUSE, so
+# each record here is a hostile construction, where it has to live, and the exact rustc
+# refusal that counts as evidence. `tools/verification/verify-structural` runs them inside a
+# scratch copy of the tree; nothing here is ever written into the working tree.
+#
+# `producer_paths` answers for EVERY route in `_structural.PRODUCER_PATHS`, including the
+# ones that do not apply. The ratification of ADR-MCPRE-068 is explicit that private fields
+# alone are insufficient and that a witness must account for every producer path relevant to
+# the claimed invariant — so an unanswered route is refused by the loader, because it is
+# indistinguishable from an unconsidered one.
+#
+# NOTHING HERE DECLARES A UNIT'S CLASS. Phase 0B builds the lane; Phase 0D moves the units
+# that these probes turn out to establish, through the class-transition ratchet. A unit may
+# not declare `structural://` until this lane exists and fail-closes on zero execution,
+# which is what `verify-structural` and `test_structural_lane.py` establish.
+
+schema_version = 1
+
+# --- http_profile.verifier_result_separation -------------------------------------------
+#
+# The unit's claim: "the verifier's assurance products are not substitutable: a weaker
+# product cannot be passed where a stronger one is required". Its three declared controls
+# are `doc#` items whose doctests are ```compile_fail bodies — a hostile construction the
+# TYPE SYSTEM refuses, running on the merge path, recorded in the registry as `test://`.
+# ADR-MCPRE-068 §12.1 calls it the best worked example of the defect in the repository.
+#
+# These probes compile the same constructions themselves rather than relying on rustdoc,
+# because rustdoc's expected-error-code annotation is checked only on nightly: on the pinned
+# stable toolchain `compile_fail,E0308` and bare `compile_fail` are the same declaration.
+
+[[probe]]
+id = "S01"
+unit = "http_profile.verifier_result_separation"
+kind = "crate-boundary-compile-fail"
+package = "mcp-re-http-profile"
+invariant = "a cryptographic-floor bound response cannot be passed where a fully verified response is required"
+doc_path = "mcp-re-http-profile/src/verified_response/bound.rs"
+doc_item = "doc#verified_response::bound::VerifiedMcpResponse"
+insertion_path = "mcp-re-http-profile/tests/structural_probe_s01.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0308"
+construction = """
+// ADR-MCPRE-068 structural probe S01. Injected into a scratch copy by verify-structural;
+// this file never exists in the working tree.
+use mcp_re_http_profile::{CryptographicFloorVerifiedBoundResponse, VerifiedMcpResponse};
+
+fn needs_full(_: &VerifiedMcpResponse) {}
+
+pub fn hostile(floor: &CryptographicFloorVerifiedBoundResponse) {
+    needs_full(floor); // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "the probe is an integration test, which cargo compiles as a separate crate linking the library, so it sees exactly the public surface a downstream consumer sees"
+alternate-constructors = "the substitution attacked here is a coercion, not a construction: there is no `From<CryptographicFloorVerifiedBoundResponse> for VerifiedMcpResponse` and no `Deref`, which is what makes the two products non-substitutable rather than merely differently named"
+generated-or-deserialization = "neither product derives Serialize/Deserialize; no decoder can mint one from bytes"
+test-only-construction = "a downstream crate's test code sees the same public surface as its production code, so the probe's own placement in `tests/` is the test-only route, attacked rather than exempted"
+
+[[probe]]
+id = "S02"
+unit = "http_profile.verifier_result_separation"
+kind = "crate-boundary-compile-fail"
+package = "mcp-re-http-profile"
+invariant = "a delegated UNBOUND response cannot be passed where a delegated BOUND response is required"
+doc_path = "mcp-re-http-profile/src/verified_response/bound.rs"
+doc_item = "doc#verified_response::bound::VerifiedDelegatedMcpResponse"
+insertion_path = "mcp-re-http-profile/tests/structural_probe_s02.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0308"
+construction = """
+// ADR-MCPRE-068 structural probe S02. Injected into a scratch copy by verify-structural.
+use mcp_re_http_profile::{VerifiedDelegatedMcpResponse, VerifiedDelegatedUnboundResponse};
+
+fn needs_bound(_: &VerifiedDelegatedMcpResponse) {}
+
+pub fn hostile(receipt: &VerifiedDelegatedUnboundResponse) {
+    needs_bound(receipt); // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "integration test: a separate crate against the public surface"
+alternate-constructors = "no conversion exists from the unbound receipt to the bound product; the bound proposition carries a request-evidence agreement the unbound one never established"
+generated-or-deserialization = "neither product derives Serialize/Deserialize"
+test-only-construction = "the probe itself is the downstream test-code route"
+
+[[probe]]
+id = "S03"
+unit = "http_profile.verifier_result_separation"
+kind = "crate-boundary-compile-fail"
+package = "mcp-re-http-profile"
+invariant = "a delegation-authorized response cannot be passed where a trust-seam-authorized one is required"
+doc_path = "mcp-re-http-profile/src/verified_response/bound.rs"
+doc_item = "doc#verified_response::bound::VerifiedDelegatedMcpResponse"
+insertion_path = "mcp-re-http-profile/tests/structural_probe_s03.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0609"
+construction = """
+// ADR-MCPRE-068 structural probe S03. Injected into a scratch copy by verify-structural.
+use mcp_re_http_profile::{VerifiedDelegatedMcpResponse, VerifiedMcpResponse};
+
+fn needs_seam_authorized(_: &VerifiedMcpResponse) {}
+
+pub fn hostile(delegated: &VerifiedDelegatedMcpResponse) {
+    needs_seam_authorized(&delegated.response); // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "integration test: a separate crate against the public surface"
+alternate-constructors = "there is no field, projection or conversion on the delegation-authorized product that yields the seam-authorized one — the probe names the projection a consumer would reach for and the compiler refuses it"
+generated-or-deserialization = "neither product derives Serialize/Deserialize"
+test-only-construction = "the probe itself is the downstream test-code route"
+
+# --- proxy.client_credential_window ----------------------------------------------------
+#
+# ADR-MCPRE-068 §12.1 measured this unit as COMPOSITE: its M113/M114/M115 mutation probes
+# falsify the constructor's runtime refusal of an illegal (connection_age, cert_lifetime)
+# pair — a real `tested` proposition with a real falsifier — while the SOLE-PRODUCER fact
+# they cannot touch had nothing attacking it. This probe attacks that second proposition,
+# and only it: `cargo check` passing over the tree witnesses nothing, because nothing in the
+# tree attempts the construction.
+
+[[probe]]
+id = "S04"
+unit = "proxy.client_credential_window"
+kind = "in-crate-source-injection"
+package = "mcp-re-proxy"
+invariant = "no code outside `config_state::client_credential_window` can assemble a ClientCredentialWindow, so possession means the pair passed `new`"
+insertion_path = "mcp-re-proxy/src/config_state/structural_probe_s04.rs"
+insertion_parent = "mcp-re-proxy/src/config_state/mod.rs"
+insertion_declaration = "mod structural_probe_s04;"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+construction = """
+// ADR-MCPRE-068 structural probe S04. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use std::time::Duration;
+
+use crate::config_state::client_credential_window::ClientCredentialWindow;
+
+pub fn hostile() -> ClientCredentialWindow {
+    ClientCredentialWindow {
+        cert_lifetime: Duration::from_secs(600), // STRUCTURAL-PROBE-SITE
+        connection_age: Duration::from_secs(3000),
+    }
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "both fields are bare-private to `config_state::client_credential_window`: no `pub(crate)`, no `pub(super)`, and the parent `config_state` module re-exports the TYPE only. A sibling module in the owner's own crate is exactly what this probe injects"
+alternate-constructors = "`new` is the only associated function returning Self, and it is fallible; the module's `classify_and_validate` calls it. There is no `From`, no `Default`, no builder, and the three projections return `Duration`, never `&mut` or the representation"
+generated-or-deserialization = "the derives are Debug/Clone/Copy/PartialEq/Eq. No Serialize, no Deserialize, and the deployment request is parsed into `Duration`s that `new` then adjudicates, so no decoder fills the fields positionally"
+test-only-construction = "the owner's `#[cfg(test)] mod tests` constructs only through `classify_and_validate`; no test-gated constructor and no test-gated field visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"
+
+[[probe]]
+id = "S05"
+unit = "http_profile.verifier_result_separation"
+kind = "crate-boundary-compile-fail"
+package = "mcp-re-http-profile"
+invariant = "a cryptographic-floor verified REQUEST cannot be passed where a fully verified request is required"
+doc_path = "mcp-re-http-profile/src/verified_request/mod.rs"
+doc_item = "doc#verified_request::VerifiedMcpRequest"
+insertion_path = "mcp-re-http-profile/tests/structural_probe_s05.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0308"
+construction = """
+// ADR-MCPRE-068 structural probe S05. Injected into a scratch copy by verify-structural.
+use mcp_re_http_profile::{CryptographicFloorVerifiedRequest, VerifiedMcpRequest};
+
+fn needs_full(_: &VerifiedMcpRequest) {}
+
+pub fn hostile(floor: &CryptographicFloorVerifiedRequest) {
+    needs_full(floor); // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "integration test: a separate crate against the public surface"
+alternate-constructors = "no `From<CryptographicFloorVerifiedRequest> for VerifiedMcpRequest` and no `Deref`; the floor product is a field of the full one, reachable only by naming it"
+generated-or-deserialization = "neither product derives Serialize/Deserialize"
+test-only-construction = "the probe itself is the downstream test-code route"

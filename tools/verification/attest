@@ -90,7 +90,7 @@ def main() -> int:
     # REFUSAL, which is what stops the probe suite from being deletable decoration.
     records = {
         lane: load_records(args.evidence, lane)
-        for lane in ("test", "verus", "lean", "mutation")
+        for lane in ("test", "verus", "lean", "mutation", "structural", "measured")
     }
 
     # The aggregate verdict is READ, never computed here. This command must never be able
