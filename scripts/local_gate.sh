@@ -360,8 +360,22 @@ sdk_typescript() {
     echo "npm not installed — SKIPPING the TypeScript SDK suite (CI still enforces it)."
     return 0
   fi
+  # `npm ci` when the installed tree does not match the LOCK, not merely when it is
+  # absent. `[[ -d node_modules ]] || npm ci` measures whatever the box happens to hold:
+  # a tree installed from a different lock is reused, `napi build` then regenerates with
+  # the wrong CLI, and the loader drift check reports a diff that is not in the tree —
+  # or, worse, reports in-sync because a stale generator agreed with a stale artifact.
+  # That happened here the day `@napi-rs/cli` moved 3.9.0 -> 3.9.1. CI runs a clean
+  # `npm ci` every time and is therefore right; this is what stops the local gate
+  # disagreeing with it in either direction.
+  #
+  # The stamp is the lock's own digest, so a lock change reinstalls and an unchanged one
+  # does not — the check costs a hash, and being wrong costs a false drift report.
   ( cd sdk/typescript \
-      && { [[ -d node_modules ]] || npm ci; } \
+      && npm_lock_stamp=node_modules/.mcp-re-lock-digest \
+      && want="$(shasum -a 256 package-lock.json | cut -d" " -f1)" \
+      && { [[ -f "$npm_lock_stamp" && "$(cat "$npm_lock_stamp")" == "$want" ]] \
+             || { npm ci && printf %s "$want" > "$npm_lock_stamp"; }; } \
       && npm run build \
       && npx vitest run --coverage ) || return 1
   git diff --exit-code -- sdk/typescript/native/binding.js sdk/typescript/native/binding.d.ts
