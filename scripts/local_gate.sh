@@ -150,6 +150,15 @@ stage_static() {
     && python3 scripts/self_hosted_docker_gate.py \
     && python3 scripts/merge_path_gate.py --selftest \
     && python3 scripts/merge_path_gate.py \
+    `# A gate's VERDICT and its EXIT STATUS are one fact, and the invocation is where` \
+    `# they come apart: \`gate > log; grep X log\` reports grep's 0 for a run that` \
+    `# failed at stage 1. That happened. run_gate.sh is the form that cannot, and its` \
+    `# selftest injects a failing stage followed by a successful report.` \
+    && scripts/run_gate.sh --selftest \
+    `# The TypeScript battery is measured on prepared per-version runtimes that the` \
+    `# nightly reclaim removes. The preflight provisions them; this checks the question` \
+    `# it asks is still the right one.` \
+    && python3 scripts/node_matrix_state.py --selftest \
     && python3 scripts/serving_identity_provenance_gate.py --selftest \
     && python3 scripts/serving_identity_provenance_gate.py \
     && python3 scripts/authorization_provenance_gate.py --selftest \
