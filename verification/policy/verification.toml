@@ -892,13 +892,27 @@ description = "Every admission source hands the gate only a state produced by ve
 paths = [
   "mcp-re-proxy/src/admission_source/mod.rs",
   "mcp-re-proxy/src/admission_source/verifier.rs",
+  # The classification itself. In the closure because it is where the clause quantified
+  # over every source is now decided — a change here changes what every adapter returns,
+  # and a fingerprint that did not move for it would be a fingerprint that does not cover
+  # the statement.
+  "mcp-re-proxy/src/admission_source/answer.rs",
   "mcp-re-proxy/src/admission_source/in_memory.rs",
+  # THE SHARED ARM, and it is in the closure for the reason the statement above gives: the
+  # classification clause is about EVERY source, and a source that classified differently
+  # would falsify it under a fingerprint that had not moved. The verification decision is
+  # indeed not this adapter's own — it calls the same `AdmissionRecordVerifier` — but which
+  # of its own outcomes it routes to the degraded fork IS, and that is the half a claim
+  # quantified over all sources cannot leave to the one live-infrastructure lane.
+  "mcp-re-proxy/src/redis_admission_source/mod.rs",
+  # Declared BY the file above and on the path this claim is about, so it is in the
+  # closure — `paths` is what can falsify the statement, which is a different question
+  # from what owns an authority. Pacing an operator line by refusal class is its own
+  # authority and this unit does not claim it; but the pacing call sits in the refusal arm,
+  # and a `report_once` that panicked would unwind through it and turn a definitive
+  # negative into a fault. That is the claim failing, so a change here must dirty the unit.
+  "mcp-re-proxy/src/redis_admission_source/refusal_report.rs",
 ]
-# `redis_admission_source.rs` is deliberately ABSENT. It is behind `redis_replay`, so a unit
-# naming it would be a unit whose closure the default lane compiles to nothing — and the
-# decision it makes is not its own: it calls the same `AdmissionRecordVerifier` the
-# in-memory source does, which is the point of there being one owner. What belongs to the
-# Redis adapter alone is a store round trip, measured in its own feature-bearing lane.
 exported_contracts = []
 evidence = [
   "test://proxy/admission_state/source_classification_battery",
@@ -927,7 +941,31 @@ tested_symbols = [
   # And the accepting half, so none of the above is satisfied by a source that refuses
   # everything.
   "lib#admission_source::in_memory::tests::revoking_keeps_the_generation_and_changes_the_status",
+  # THE CLASSIFICATION ITSELF, measured once at its owner rather than once per adapter.
+  # The clause is quantified over EVERY source, and the two adapters used to spell it out
+  # separately — `verify(..).ok()` in one, a `match` with an operator line in the other —
+  # so it had as many chances to be wrong as there were sources, and the shared one's
+  # spelling was reachable from no test at all: its decision sat behind a
+  # `ConnectionManager` nothing in this crate can build.
+  "lib#admission_source::answer::tests::a_current_record_from_the_configured_authority_is_state",
+  "lib#admission_source::answer::tests::every_unacceptable_answer_is_a_definitive_negative_with_its_class",
+  # The currentness budget belongs to the classification and not only to a verifier read in
+  # isolation: the same bytes are state inside the window and a negative outside it.
+  "lib#admission_source::answer::tests::the_same_bytes_are_state_inside_the_budget_and_a_negative_outside_it",
+  # A REVOCATION arrives as state rather than as a failure to obtain state. Routed to the
+  # degraded fork it would serve the caller it revokes.
+  "lib#admission_source::answer::tests::a_signed_revocation_is_state_and_not_a_failure_to_obtain_state",
 ]
+# WHAT IS STRUCTURAL HERE RATHER THAN TESTED. That no source can route an answer to the
+# degraded fork is not carried by the battery above: `AnsweredAs` has no outage inhabitant,
+# so a source holding an answer cannot produce an `AdmissionSourceError` from it. The
+# controls establish which answer lands in which arm; the type establishes that no arm is an
+# outage, and deleting every one of them would not make one constructible.
+
+# The feature the shared arm is compiled by. Declared rather than left to another lane: the
+# statement quantifies over every source, and one of them does not exist in the default
+# crate.
+test_features = ["redis_replay"]
 
 # ---------------------------------------------------------------------------
 # WP2 — typed artifact-binding verification
@@ -1432,6 +1470,13 @@ tested_symbols = [
   "lib#communication_assurance::credential_key_correspondence::tests::an_absent_credential_is_reported_on_the_credential_side",
   "lib#communication_assurance::credential_key_correspondence::tests::an_export_of_another_algorithm_refuses_on_the_signing_side_profile_rule",
   "lib#communication_assurance::credential_key_correspondence::tests::a_mismatch_carries_no_key_material",
+  # THE RELATION ITSELF, where it lives. Every control above it refuses in an ADAPTER and
+  # short-circuits before `correspond` is called, so the comparison was covered only by the
+  # DER battery below — which is real evidence, and is in a 1000-line file this unit does
+  # not own and whose decomposition is scheduled. These two keep the accepting and the
+  # mismatch paths measured in the file that carries the comparison.
+  "lib#communication_assurance::credential_key_correspondence::tests::two_sides_presenting_the_same_key_correspond_and_the_facts_carry_that_key",
+  "lib#communication_assurance::credential_key_correspondence::tests::two_legal_but_different_keys_are_a_mismatch_and_not_a_side_failure",
   # --- the same law over real certificates and a real signer seam ---
   "lib#tls::delegated_credential_key_correspondence_tests::matching_credential_and_signing_key_is_accepted",
   "lib#tls::delegated_credential_key_correspondence_tests::a_signing_key_that_is_not_the_credential_key_is_refused",
@@ -4474,6 +4519,12 @@ tested_symbols = [
   # absent entry and a malformed one are told apart rather than both reading as a miss.
   "lib#redis_continuation_store::tests::a_missing_entry_reads_as_absent_but_a_malformed_one_does_not",
   "lib#redis_continuation_store::tests::the_encoded_value_round_trips_and_a_malformed_one_is_rejected",
+  # THE POISONED MAP, which no control above can reach: a poisoned lock is not a value a
+  # caller can pass, so the only place to observe it is inside the module that owns the
+  # map. G5's poisoned-lock conjunct decides what a dead thread does to a live approval —
+  # `Unavailable` fails the answer leg CLOSED, whereas a poisoned map reading as an ABSENT
+  # entry would complete an answer leg against bytes nobody retained.
+  "lib#continuation_store::in_memory::tests::a_poisoned_correlation_map_is_unavailable_on_every_operation",
 ]
 # The feature the shared arm is compiled by. Declared rather than left to another lane:
 # the claim is about the store, and half the store does not exist in the default crate.

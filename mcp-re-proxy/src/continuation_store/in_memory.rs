@@ -137,3 +137,85 @@ impl AsyncContinuationStore for InMemoryContinuationStore {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::AsyncContinuationStore;
+    use super::ContinuationStoreError;
+    use super::InMemoryContinuationStore;
+    use super::RetainedBases;
+    use std::future::Future;
+    use std::sync::Arc;
+
+    fn block_on<F: Future>(f: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(f)
+    }
+
+    fn bases() -> RetainedBases {
+        RetainedBases {
+            previous_request_base: b"prev-base".to_vec(),
+            input_required_response_base: b"irr-base".to_vec(),
+        }
+    }
+
+    /// A poisoned correlation map is `Unavailable` on ALL THREE operations.
+    ///
+    /// # What this establishes that the sibling battery cannot
+    ///
+    /// Every other control over this tier lives in
+    /// [`crate::continuation_store`]'s own test module and drives the store through the
+    /// trait, which is the right place for the contract. None of them can reach this
+    /// path: a poisoned lock is not a value a caller can pass, so the only way to observe
+    /// [`super::poisoned`] is from inside the module that owns the map.
+    ///
+    /// The conjunct is load-bearing rather than tidy. The variant chosen here decides what
+    /// the serving path does with a dead thread: `Unavailable` means the answer leg treats
+    /// the entry as no retained continuation and fails CLOSED, and the open leg reports
+    /// that the reply cannot be honoured cross-replica. The other plausible mapping — a
+    /// poisoned map reading as an ABSENT entry — would let a panic under the lock silently
+    /// turn a live approval into "no such continuation", which is an answer leg completing
+    /// against bytes nobody retained.
+    ///
+    /// All three operations, not one: they fail in three separate `map_err(poisoned)`
+    /// sites, and a control over `peek` alone would leave two of them free to be written
+    /// differently.
+    #[test]
+    fn a_poisoned_correlation_map_is_unavailable_on_every_operation() {
+        let store = Arc::new(InMemoryContinuationStore::new());
+        block_on(store.create("k", &bases(), 300)).expect("a fresh map stores");
+
+        let poisoner = Arc::clone(&store);
+        let died = std::thread::spawn(move || {
+            let _guard = poisoner.entries.lock().expect("not yet poisoned");
+            panic!("a thread dies holding the correlation map");
+        })
+        .join();
+        assert!(died.is_err(), "the fixture must actually have panicked");
+
+        assert!(
+            matches!(
+                block_on(store.create("k2", &bases(), 300)),
+                Err(ContinuationStoreError::Unavailable { .. })
+            ),
+            "an open leg must not be told a key is free by a map nobody can trust"
+        );
+        assert!(
+            matches!(
+                block_on(store.peek("k")),
+                Err(ContinuationStoreError::Unavailable { .. })
+            ),
+            "a poisoned map must not read as an absent entry — that is an answer leg \
+             completing against bytes nobody retained"
+        );
+        assert!(
+            matches!(
+                block_on(store.consume("k")),
+                Err(ContinuationStoreError::Unavailable { .. })
+            ),
+            "and consumption must not report a removal it cannot have performed"
+        );
+    }
+}

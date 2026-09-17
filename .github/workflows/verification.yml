@@ -52,10 +52,12 @@ on:
       # no unit between them.
       - "mcp-re-proxy/src/replay_plane/**"
       # THM-0129: what the enforcement point may be handed as authoritative admission
-      # state, and that a reachable store which answered is never an outage. The Redis
-      # adapter is deliberately NOT here — it is outside the unit's closure, because the
-      # decision it makes is the verifier's and not its own.
+      # state, and that a reachable store which answered is never an outage.
       - "mcp-re-proxy/src/admission_source/**"
+      #   The shared arm of the same claim. Compiled only under `redis_replay`, so it
+      #   does not reach the default lane — and the classification clause is quantified
+      #   over every source, so a change here dirties the unit either way.
+      - "mcp-re-proxy/src/redis_admission_source/**"
       # The async replay retention account (THM-0105); `l1_fast_reject.rs` is dormant and
       # excluded from the unit, but the glob covers the directory so a fingerprint input
       # cannot land outside every trigger.
@@ -345,10 +347,12 @@ on:
       # no unit between them.
       - "mcp-re-proxy/src/replay_plane/**"
       # THM-0129: what the enforcement point may be handed as authoritative admission
-      # state, and that a reachable store which answered is never an outage. The Redis
-      # adapter is deliberately NOT here — it is outside the unit's closure, because the
-      # decision it makes is the verifier's and not its own.
+      # state, and that a reachable store which answered is never an outage.
       - "mcp-re-proxy/src/admission_source/**"
+      #   The shared arm of the same claim. Compiled only under `redis_replay`, so it
+      #   does not reach the default lane — and the classification clause is quantified
+      #   over every source, so a change here dirties the unit either way.
+      - "mcp-re-proxy/src/redis_admission_source/**"
       # The async replay retention account (THM-0105); `l1_fast_reject.rs` is dormant and
       # excluded from the unit, but the glob covers the directory so a fingerprint input
       # cannot land outside every trigger.

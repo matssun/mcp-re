@@ -48,11 +48,23 @@ use std::pin::Pin;
 
 use mcp_re_http_profile::authoritative_admission::record::CurrentAdmissionState;
 
+/// What a reachable store's answer means — the one owner of the classification, so that
+/// "a store that answered is never an outage" is a property of a type rather than a rule
+/// each source re-implements.
+mod answer;
 mod in_memory;
 mod verifier;
 
 pub use in_memory::InMemoryAdmissionSource;
 pub use verifier::AdmissionRecordVerifier;
+
+// Crate-visible, and only these two items: the shared arm of this authority lives in
+// `crate::redis_admission_source` because that module is compiled under `redis_replay`,
+// which makes it a sibling rather than a child. The classification is the rule the
+// statement quantifies over every source, so the sibling must reach it — while `answer`'s
+// module body stays private, so nothing else about it becomes crate API.
+pub(crate) use answer::classify_answer;
+pub(crate) use answer::AnsweredAs;
 
 /// A fail-closed admission-source failure: the authority could not be reached or
 /// did not answer. NOT a verdict about the workload, and never a fallback to allow.
