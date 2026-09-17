@@ -2048,7 +2048,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.client_credential_window"
 class = "V0"
-description = "How long a client credential authorizes a connection, as one owned relation: the certificate lifetime and the connection age are legal only together, construction refuses any pair where the connection could outlive the credential or the lifetime passes the one-hour ceiling, the exposure window projects the lifetime the age respects, and the posture name a deployment reports states which of the three bounds actually governs. Claims nothing about a live connection being closed at that age, which is the async serving path's."
+description = "WHICH (lifetime, age) PAIRS ARE LEGAL, and what the owner projects once one is: construction refuses any pair where the connection could outlive the credential or the lifetime passes the one-hour ceiling, the exposure window projects the lifetime the age respects, and the posture name a deployment reports states which of the three bounds actually governs. A runtime predicate, and the whole of this unit's claim. It does NOT claim that the predicate is unavoidable — that no other producer can assemble a window bypassing it — which is a compile-time fact about the module boundary and belongs to `proxy.client_credential_window_sole_producer`. Claims nothing about a live connection being closed at that age, which is the async serving path's."
 paths = [
   "mcp-re-proxy/src/config_state/client_credential_window.rs",
   "mcp-re-proxy/src/config_state/credential_currency_bound.rs",
@@ -2074,6 +2074,48 @@ tested_symbols = [
   "lib#config_state::client_credential_window::tests::the_public_constructor_validates_too",
   "lib#config_state::credential_currency_bound::tests::every_posture_names_what_actually_bounds_the_exposure",
   "lib#config_state::credential_currency_bound::tests::a_mechanism_that_does_not_exist_produces_the_same_posture",
+]
+
+
+# ---------------------------------------------------------------------------
+#
+# THE SECOND HALF OF THE SAME SEAL, and the reason ADR-MCPRE-068 §12.1 splits these units
+# instead of relabelling them.
+#
+# `proxy.client_credential_window` states that `new` REFUSES an illegal pair. That is a
+# runtime predicate, M113/M114 falsify it, and it is true. It is also not the property
+# CLAUDE.md's R-SEAL asks for. R-SEAL asks: *can the check be deleted and still leave an
+# invalid value unconstructible?* — which is a question about who else can produce an
+# inhabitant, and no behavioural test can answer it. Make the two fields `pub(crate)` and
+# every one of the eight named tests stays green, because none of them attempts the
+# construction the change would newly admit.
+#
+# So the sole-producer fact is its own proposition with its own unit, and its falsifier is
+# a compiler refusal: S04 injects a sibling module into a scratch copy of the crate that
+# assembles a `ClientCredentialWindow` from the field literals, and requires E0451 with its
+# primary span on the probe's marker line. Open the boundary and the hostile module
+# compiles, which is the lane going red.
+#
+# The claim is worded to the boundary the probe attacks and no wider: the four producer
+# paths ADR-MCPRE-068 §12.1 enumerates are answered in S04's `[probe.producer_paths]`
+# table, and a claim about the TYPE rather than about this construction boundary would
+# exceed them.
+
+[[unit]]
+id = "proxy.client_credential_window_sole_producer"
+class = "V0"
+description = "`ClientCredentialWindow::new` is the ONLY producer of an inhabitant: the representation is bare-private to `config_state::client_credential_window`, there is no second constructor, no derive or decoder fills the fields positionally, and no test-gated construction route exists — so possessing a window means that pair was adjudicated, rather than that every known caller remembered to adjudicate it. States nothing about WHICH pairs `new` accepts, which is `proxy.client_credential_window`'s."
+paths = [
+  "mcp-re-proxy/src/config_state/client_credential_window.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+# The same severity as the predicate it makes unavoidable. A sole-producer boundary that
+# opens does not weaken the check; it makes the check optional, which is the state the
+# measured X5 defect was in — both halves separately bounded and nothing relating them.
+direct_consequence_severity = "high"
+evidence = [
+  "structural://proxy/config_state/client_credential_window_sole_producer",
 ]
 
 

@@ -88,6 +88,7 @@ attestations this view cannot see.
 | unit://proxy.channel_associated_credential | source, contracts or evidence | THM-0028 | proxy.channel_associated_identity (CONTRACT_CONSUMES), proxy.mechanism_verified_credential (CONTRACT_CONSUMES) |
 | unit://proxy.channel_associated_identity | source, contracts or evidence | THM-0029 | proxy.authenticated_relationship_peer (CONTRACT_CONSUMES) |
 | unit://proxy.client_credential_window | source, contracts or evidence | THM-0102 | _no consumer_ |
+| unit://proxy.client_credential_window_sole_producer | source, contracts or evidence | THM-0102 | _no consumer_ |
 | unit://proxy.client_revocation_currency | source, contracts or evidence | THM-0131 | _no consumer_ |
 | unit://proxy.continuation_correlation_store | source, contracts or evidence | THM-0087 | _no consumer_ |
 | unit://proxy.continuation_installation | source, contracts or evidence | THM-0096 | _no consumer_ |

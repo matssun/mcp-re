@@ -5306,7 +5306,15 @@ Executable and structural, class V0.
 """
 owner = "proxy.client_credential_window"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.client_credential_window"]
+# TWO units, because the statement above says "cannot be represented" and that needs both
+# halves: `proxy.client_credential_window` establishes that `new` REFUSES the illegal pair,
+# and `proxy.client_credential_window_sole_producer` establishes that `new` is the only way
+# in — without which "cannot be represented" would mean "is not represented by any caller we
+# currently have", which is the quantifier R-SEAL exists to correct.
+supported_by = [
+  "unit://proxy.client_credential_window",
+  "unit://proxy.client_credential_window_sole_producer",
+]
 depends_on = []
 
 [[theorem]]

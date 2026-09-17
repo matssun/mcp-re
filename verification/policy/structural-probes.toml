@@ -126,7 +126,7 @@ test-only-construction = "the probe itself is the downstream test-code route"
 
 [[probe]]
 id = "S04"
-unit = "proxy.client_credential_window"
+unit = "proxy.client_credential_window_sole_producer"
 kind = "in-crate-source-injection"
 package = "mcp-re-proxy"
 invariant = "no code outside `config_state::client_credential_window` can assemble a ClientCredentialWindow, so possession means the pair passed `new`"
