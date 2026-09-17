@@ -529,6 +529,7 @@ tested_symbols = [
   "tests/integration#client_verifier_posture_test::the_only_other_verifier_is_the_declared_fault_injector",
   "tests/integration#client_verifier_posture_test::the_rules_would_catch_each_regression",
   "lib#tls_listener_state::tests::the_epoch_digests_the_anchors_this_state_owns",
+  "lib#tls_listener_state::tests::every_config_this_owner_builds_carries_this_states_epoch_bound_store",
   "lib#tls_listener_state::tests::a_rebuild_keeps_the_cache_and_the_epoch_of_the_state_it_was_built_through",
   "lib#tls_listener_state::tests::a_different_anchor_set_is_a_different_state_with_its_own_empty_cache",
   "lib#tls_listener_state::tests::no_config_this_owner_builds_can_resume_outside_the_store",

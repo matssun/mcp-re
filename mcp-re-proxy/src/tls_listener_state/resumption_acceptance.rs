@@ -20,8 +20,25 @@
 //! It is a claim about the STORE: *if the current epoch changes, sessions tagged with the
 //! old one stop resuming.* It is NOT a claim that a production listener's epoch ever
 //! changes — within a listener the anchor set is immutable, so it does not. See
-//! [`super`]'"'"'s module note for the three propositions and which of them production
+//! [`super`]'s module note for the three propositions and which of them production
 //! relies on.
+//!
+//! # And NOT a claim that the owner's build path installs that store
+//!
+//! The configs below are assembled HERE — their own verifier, their own epoch-bound store —
+//! so `TlsListenerSecurityState::bind_resumption` is not on any path they exercise. Delete
+//! it and all four stay green while a deployment gets rustls' default store.
+//!
+//! These four are not rewired to fix that, and the reason is a rule rather than effort:
+//! moving the epoch under a live store is what they do, and the owner deliberately has no
+//! epoch setter — so driving them through the builder would mean widening `resumption` for
+//! a test, which is the production interface widened by a test that this file's own
+//! MCPRE-137 note exists to have avoided.
+//!
+//! The build-path claim therefore lives where the representation already is:
+//! `super::tests::every_config_this_owner_builds_carries_this_states_epoch_bound_store`,
+//! held load-bearing by probe `T05`. The division is deliberate — this file owns the
+//! store's behaviour under a real handshake, the owner owns which store a config gets.
 
 // Everything below is test code. The `#[cfg(test)]` lives HERE rather than only on the
 // parent's `mod` declaration because that is the region marker
