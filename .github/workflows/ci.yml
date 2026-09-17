@@ -499,13 +499,20 @@ jobs:
       # ADR-MCPRE-068 §9.4 — the class-transition ratchet. A downgrade from `proved` to
       # `tested` passes registry adequacy trivially: delete the formal URI, delete the
       # class, and nothing notices the claim got weaker. Only a comparison against the base
-      # sees it, which is why this is a separate step with a fetched base rather than
-      # another loader rule.
+      # sees it, which is why it is a step of its own rather than another loader rule.
+      #
+      # NO FETCH. This job checks out at `fetch-depth: 0` precisely so a ratchet can read
+      # `origin/main`, exactly as the module-size ratchet above already does — and the first
+      # version of this step fetched anyway, with `--depth=1`. A shallow fetch into a FULL
+      # clone does not add a ref; it TRUNCATES the object graph at the fetched commit, and
+      # every later step that asks an ancestry question gets the wrong answer. It took the
+      # R9 linkage control down with it: all 56 recorded closure commits, present in the
+      # clone, suddenly unreachable from HEAD. A step that mutates the repository's history
+      # is not local to itself.
       - name: Evidence-class transition ratchet (ADR-MCPRE-068 §9.4)
         run: |
-          git fetch --no-tags --depth=1 origin main
           python3 scripts/evidence_class_ratchet.py --selftest
-          python3 scripts/evidence_class_ratchet.py --base FETCH_HEAD
+          python3 scripts/evidence_class_ratchet.py --base origin/main
 
       # ADR-MCPRE-059 §28 + the ratified security boundary. The registry's `root_theorems`
       # and `docs/spec/security-boundary.md` §2 are ONE fact — what MCP-RE promises —
