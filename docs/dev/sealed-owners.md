@@ -490,6 +490,45 @@ The crate-boundary case remains worth pinning for types re-exported to SDK or in
 consumers. It is a narrower property than the in-crate seal, and the two are separate
 witnesses for separate propositions rather than one standing in for the other.
 
+### The first owner to carry the witness: `ClientCredentialWindow`
+
+**Landed 2026-09-17, ADR-MCPRE-068 Phase 0D-3.** Being a sealed owner was one line in the
+table above and evidence for nothing. It is now two registry propositions, because the
+seal is two facts and only one of them had a falsifier:
+
+| proposition | unit | class | falsifier |
+|---|---|---|---|
+| `new` refuses a pair where the connection could outlive the credential, or the lifetime passes the ceiling | `proxy.client_credential_window` | `tested` | M113–M115 — weaken a construction-time predicate, expect a named test red |
+| `new` is the **only** producer, so the refusal cannot be routed around | `proxy.client_credential_window_sole_producer` | `structural` | S04 — inject a sibling module that assembles the value from field literals, require `E0451` on the marker line |
+
+The second is the one this section's old claim was about, and the reason it needed its own
+unit is the reason the old claim failed: **the eight tests in the first row stay green when
+the boundary opens.** That is measured, not argued. Changing `cert_lifetime` and
+`connection_age` from bare-private to `pub(crate)` and running both lanes over the opened
+tree:
+
+```text
+cargo test -p mcp-re-proxy --lib -- config_state::client_credential_window \
+                                    config_state::credential_currency_bound
+    test result: ok. 8 passed; 0 failed
+
+verify-structural --probe S04
+    FAIL S04: the hostile construction COMPILED. … is NOT closed by the representation:
+    the compiler admits the illegal inhabitant, so possession of the value is not proof
+    of the invariant.
+```
+
+Every behavioural control the owner has is green against a boundary that no longer holds,
+because none of them attempts the construction the change newly admits. Only a hostile
+construction can report it, and only from outside the tree that refuses to hold it.
+
+S04's `[probe.producer_paths]` table answers all four routes above for this owner —
+module-tree visibility, alternate constructors, generated/deserialization, test-only
+construction — so the unit's claim is worded to the boundary the probe attacks and no
+wider. It says nothing about which pairs are legal; that is the other row.
+
+The remaining unit-backed sealed owners follow the same split, one owner per change.
+
 ## Open
 
 Nothing structural. The remaining owners (`ChannelBindingState`, `DelegatedSigningFacts`,

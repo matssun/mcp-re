@@ -139,7 +139,7 @@ any of them is closed.
 | THM-0099 | The production actor resolver answers its Request-slot selector from the deployment's trust document | proxy.serving_trust_seam | unit://proxy.serving_trust_seam | live |
 | THM-0100 | A replica's exposure to a key its document no longer enrols is confined to the serving interval it prints | proxy.trust_plane_runtime | unit://proxy.trust_plane_runtime | live |
 | THM-0101 | An emitted exchange transition corresponds to the work that justifies it, except the six the assembly owns | proxy.exchange_transition_ownership | unit://proxy.exchange_lifecycle, unit://proxy.exchange_transition_ownership | live |
-| THM-0102 | A validated deployment's connection-age bound never exceeds the credential lifetime it reports as its exposure window | proxy.client_credential_window | unit://proxy.client_credential_window | live |
+| THM-0102 | A validated deployment's connection-age bound never exceeds the credential lifetime it reports as its exposure window | proxy.client_credential_window | unit://proxy.client_credential_window, unit://proxy.client_credential_window_sole_producer | live |
 | THM-0103 | The epoch-bound session store resumes a session under the epoch that tagged it, and under no other | proxy.tls_listener_state | unit://proxy.tls_listener_state | live |
 | THM-0104 | Shutdown stops admission and bounds the wait on admitted work; what the drain leaves behind it never resumes | proxy.serving_drain | unit://proxy.serving_drain | live |
 | THM-0105 | Replay retention is a bounded per-replica account, charged before the store is touched and handed back only by an answer that proves nothing was retained | proxy.async_replay_retention | unit://proxy.async_replay_retention | live |

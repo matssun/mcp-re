@@ -389,11 +389,14 @@ is indistinguishable from an unconsidered one. Private fields alone are not a se
 | S05 | crate boundary | a cryptographic-floor verified REQUEST is not a fully verified request | `E0308` |
 | S04 | in-crate | no code outside `config_state::client_credential_window` can assemble a `ClientCredentialWindow` | `E0451` |
 
-S04 is the one ADR-MCPRE-068 §12.1 split out of a composite unit: M113/M114/M115 falsify the
-constructor's runtime refusal of an illegal `(connection_age, cert_lifetime)` pair, which is
-a real tested proposition with a real falsifier, and nothing attacked the sole-producer fact
-until this probe. `cargo check --all-targets` passing never witnessed it — it cannot go red
-when the boundary is deleted, because nothing in the tree attempts the construction.
+S04 is the one ADR-MCPRE-068 §12.1 split out of a composite unit, and 0D-3 completed the
+split in the registry: M113/M114/M115 falsify the constructor's runtime refusal of an illegal
+`(connection_age, cert_lifetime)` pair, which is a real tested proposition with a real
+falsifier and stays `proxy.client_credential_window`; the sole-producer fact nothing attacked
+until this probe is now its own `structural` unit,
+`proxy.client_credential_window_sole_producer`, and S04 is its falsifier. `cargo check
+--all-targets` passing never witnessed it — it cannot go red when the boundary is deleted,
+because nothing in the tree attempts the construction.
 
 ### 9.4 The MEASURED apparatus control
 
