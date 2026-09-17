@@ -5799,18 +5799,35 @@ paths = [
   "mcp-re-test-paths/src/source_trees.rs",
 ]
 exported_contracts = []
-evidence_class = "tested"
+# ADR-MCPRE-068 Phase 0D, §12.2. MEASURED, not tested, and the repository had already built
+# the apparatus without the vocabulary to say so.
+#
+# The proposition is existential and scoped — over THIS corpus, the observed value was two —
+# where a tested one is universal. That decides the falsifier: deleting a production property
+# does not make this claim false, it makes it a measurement of a different tree, so no
+# mutation probe applies. What it owes instead is the demonstration that its number can still
+# MOVE, and three of its four declared controls were already exactly that.
+#
+# The battery is gone with the `test://` URI, because a battery no declared lane selects is a
+# declaration that reads as coverage. Where each control went:
+#
+#   exactly_two_files_decide_what_a_verdict_token_says  -> the measurement itself, now
+#                                                         emitting `MEASURED:` lines the lane
+#                                                         preserves and digests
+#   the_scanned_crate_set_is_the_workspace              -> scope identity, run BY the protocol
+#   the_measurement_moves_when_the_scanned_set_shrinks  -> the sensitivity control (new)
+#   guard_inputs_are_non_empty                          -> the walk's own positive control,
+#                                                         asserted inside the measurement
+#   no_producer_outside_core_mints_a_wire_token         -> superseded by the walk this unit
+#                                                         measures; an ADR-MCPRE-069
+#                                                         disposition, not evidence here
+evidence_class = "measured"
 direct_consequence_severity = "medium"
-evidence = ["test://conformance/audit_vocabulary/verdict_scope"]
-# The battery is the guard; the scanner is a path this unit's fingerprint must cover, because
-# a change to what counts as a brace changes what the walk reads.
-test_package = "mcp-re-conformance"
-tested_symbols = [
-  "tests/audit_vocabulary_guard_test#exactly_two_files_decide_what_a_verdict_token_says",
-  "tests/audit_vocabulary_guard_test#the_scanned_crate_set_is_the_workspace",
-  "tests/audit_vocabulary_guard_test#no_producer_outside_core_mints_a_wire_token",
-  "tests/audit_vocabulary_guard_test#guard_inputs_are_non_empty",
-]
+evidence = ["measured://conformance/audit_vocabulary/verdict_scope"]
+measurement_protocol = "The workspace walk in `audit_vocabulary_guard_test`, executed with its scope-identity control, emitting one `MEASURED:` line per observation. Registered as a runnable argv in verification/policy/measurements.toml (MSR-0001)."
+measurement_scope = "Every crate in the workspace that has a source tree, derived from the root Cargo.toml at compile time rather than from a hand-list, so a new member cannot be scanned by nobody. Production halves only: test regions are excluded by `rust_source::production_half`."
+measurement_artifact = "verdict-vocabulary-scope.txt"
+measurement_control = "Sensitivity: removing `mcp-re-core` from the scanned set must change exactly one observation, and the walk must read fewer files. The control reports `APPARATUS-MOVED: <n>`, and the lane reads the COUNT rather than the exit status — a control that selected nothing exits 0 exactly like one that perturbed everything."
 
 # v0.17 assurance-closure mandate, priority 2: `mcp-re-host`, four files and zero tests in
 # both lanes. The measurement changed what the slice is about.

@@ -45,3 +45,24 @@ primary span on the probe's marker line.
 Nothing about the product changed. The registry stopped describing a compile-time refusal as
 a passing test.
 """
+
+[[transition]]
+unit = "conformance.verdict_vocabulary_scope"
+from_evidence_class = "tested"
+to_evidence_class = "measured"
+ref = "ADR-MCPRE-068 §12.2, Phase 0D"
+note = """
+The other worked example, and the other direction of the same finding: the repository had
+been producing a MEASURED proposition for months and filing it under `tested`.
+
+The claim is existential and scoped — over every crate's source tree, exactly two files
+decide what an `mcp-re.*` verdict token says — where a tested claim is universal. Deleting a
+production property does not make it false; it makes it a measurement of a different tree.
+So it takes no mutation falsifier, and what it owes instead is the demonstration that its
+number can still MOVE.
+
+Three of its four declared controls were already that apparatus. They are now the
+measurement, its scope identity and its sensitivity control, executed by the `measured://`
+lane; the fourth, `no_producer_outside_core_mints_a_wire_token`, is superseded by the walk
+this unit measures and is an ADR-MCPRE-069 disposition rather than evidence here.
+"""

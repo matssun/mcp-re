@@ -905,7 +905,7 @@ evidence establishes at the moment it is read.
 | **0C** | **schema event 2 and its activation.** `premise_class` on `[[assumption]]`, plus `boundary_owner` and `discharging_event` (C1–C5); all 47 typed | zero untyped records; release view lists open review obligations; a satisfied observable event fails until its record is removed |
 | | *landed:* 21 external-boundary, 12 assumed, 10 review-obligation, 4 withdrawn and deliberately untyped; the loader refuses an untyped live record and a typed withdrawn one; `check-assumptions` fails on `STALE_REVIEW_OBLIGATION`; `review` prints the root→premise composition and the open obligations | |
 | **0D** | reclassify to `structural` and `measured` where that is now declarable, sealed-owner challenge set first (§12); the composite splits; every transition through the class-transition ratchet. Carries the THIRD re-attestation: the probe entries and lane identities become fingerprint components, which is an encoding bump | every unit's class matches the evidence it declares; the count of `tested`-without-falsifier is measured, not estimated |
-| | *0D-1 landed:* encoding 8 → 9 with four new components; `scripts/evidence_class_ratchet.py` + `config/evidence-class-transitions.toml`; `http_profile.verifier_result_separation` is the first `structural` unit, its battery dropped with its class | |
+| | *0D-1 landed:* encoding 8 → 9 with four new components; `scripts/evidence_class_ratchet.py` + `config/evidence-class-transitions.toml`; §12's two worked units reclassified — `http_profile.verifier_result_separation` to `structural` and `conformance.verdict_vocabulary_scope` to `measured`, each dropping the battery its class no longer names. Classes now: 118 tested, 7 proved, 1 structural, 1 measured | |
 | **0E** | `tools/verification/_assurance_graph.py`; `inherited_severity` and `effective_severity` derived (N3); N1's severity-gated obligation ACTIVATES; `config/assurance-obligation-debt.toml` baselined as a migration ratchet; `NOT-ROOT-REACHABLE` units reported (S5) | `review` prints a typed, severity-annotated root tree; the debt registry holds the real residue and may only shrink |
 | **1** | examine the 12 roots **consequence-first**, decomposing downward — THM-0094, THM-0095, THM-0091 first, since each is one undecomposed unit | each root has a typed decomposition; each leaf has a named class and a stated obligation |
 | **2** | discharge: formalize, structurally redesign, falsify, or measure, per leaf, as Phase 1 assigns | no Medium-or-higher root reads INCOMPLETE without a recorded, owner-approved obligation |
@@ -1150,6 +1150,14 @@ been producing `structural` and `measured` evidence for months and filing both u
 Under 0D the unit becomes `measured`, its three apparatus symbols become its
 `measurement_scope` and `measurement_control`, and the superseded fourth is dispositioned
 under ADR-069 rather than carried as though it were part of the census.
+
+**Landed, with one addition the estate did not have.** Three of the four were the apparatus
+and are now executed as one: the protocol runs the measurement together with its scope
+identity, and the measurement asserts its own non-empty-input control. What no control
+supplied was the sensitivity demonstration Ruling 4 actually asks for — *the number can still
+MOVE* — so `the_measurement_moves_when_the_scanned_set_shrinks` was written for it. It
+removes `mcp-re-core` from the scanned set and requires exactly one observation to change,
+which a walk that had stopped reading anything could not satisfy.
 
 ### 12.2.1 What Phase 0B shipped, and what it deliberately did not
 

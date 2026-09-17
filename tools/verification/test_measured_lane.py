@@ -300,13 +300,42 @@ def test_an_unknown_key_is_refused():
 # --- the registry, as it stands at Phase 0B --------------------------------------------
 
 
-def test_the_registry_is_empty_and_no_unit_declares_the_scheme_before_0D():
-    """0B builds the lane and changes no unit's class. A `measured://` URI landing early
-    would take its unit OUT of the graph: `decide_issuance` refuses a claimed lane with no
-    record, so the declaration must follow the reclassification."""
-    assert load_measurements(REGISTRY) == []
-    declaring = [uid for uid, unit in UNITS.items() if lane.claims_measured(unit)]
-    assert not declaring, f"0D moves these through the class-transition ratchet: {declaring}"
+def test_every_declaring_unit_has_a_measurement_and_every_measurement_a_declaring_unit():
+    """Phase 0D. A `measured://` URI with no registered measurement takes its unit OUT of the
+    graph — `decide_issuance` refuses a claimed lane with no record — and a measurement whose
+    unit does not declare the scheme produces a number no claim rests on."""
+    registered = {m["unit"] for m in load_measurements(REGISTRY)}
+    declaring = {uid for uid, unit in UNITS.items() if lane.claims_measured(unit)}
+    assert declaring, "0D declared the first one; an empty set means the reclassification was lost"
+    assert declaring <= registered, sorted(declaring - registered)
+    assert registered <= set(UNITS), sorted(registered - set(UNITS))
+
+
+def test_a_measured_unit_declares_the_four_fields_and_no_battery():
+    """Ruling 4's four elements are what a measured proposition owes INSTEAD of a mutation
+    falsifier, and the artifact the unit cites is the one its measurement writes — one fact,
+    not two spellings of it. The battery goes with the class: a `tested_symbols` list no
+    declared lane selects reads as coverage."""
+    from _evidence_class import MEASUREMENT_KEYS
+
+    measurements = {m["unit"]: m for m in load_measurements(REGISTRY)}
+    for unit_id, unit in UNITS.items():
+        if unit.get("evidence_class") != "measured":
+            continue
+        for key in MEASUREMENT_KEYS:
+            assert str(unit.get(key, "")).strip(), f"{unit_id}: {key}"
+        assert not unit.get("tested_symbols"), unit_id
+        assert not any(str(e).startswith("test://") for e in unit.get("evidence", [])), unit_id
+        assert unit["measurement_artifact"] == measurements[unit_id]["artifact"]
+
+
+def test_the_registered_measurement_runs_and_its_apparatus_moves():
+    """The estate's own record, executed. The fixtures above prove the lane can go red; this
+    proves the thing it is pointed at is alive — a lane whose only real subject is a fixture
+    is configured rather than measuring."""
+    status, output = _run_lane(REGISTRY)
+    assert status == 0 and "VERDICT: PASS" in output, output
+    assert "MSR-0001" in output, output
 
 
 if __name__ == "__main__":

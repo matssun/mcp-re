@@ -220,9 +220,13 @@ def main() -> int:
             failures.append(measurement["id"])
             continue
         digests[measurement["id"]] = digest
+        # The scope collapsed to one line: it is prose, often several lines of it, and a
+        # multi-line cell in a lane's per-record output reads as the lane having said
+        # something about each line.
+        scope = " ".join(str(measurement["scope"]).split())
         print(
             f"  ok   {measurement['id']}  {measurement['control_kind']} control  "
-            f"artifact {digest[:16]}  scope: {measurement['scope']}"
+            f"artifact {digest[:16]}  scope: {scope[:96]}"
         )
 
     if not args.measurement:
