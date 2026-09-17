@@ -329,11 +329,29 @@ not an enforcement; the thing that turns the lint on is.
 `scripts/clippy_ratchet_gate.py --activation-probe` compiles a deliberately violating file
 and fails the build if the lints stop firing.
 
-**Never read a gate's result through a pipe.** `scripts/local_gate.sh --fast | tail`
-reports `tail`'s exit status, not the gate's — a failed gate reads as a clean pass, and
-this has already happened. Run gates unpiped and read the exit status, or read the
-`LOCAL GATE: PASS` / `LOCAL GATE: FAIL` line the script prints exactly once per run. No
-such line means the run did not finish.
+**A gate's verdict and its exit status are ONE fact — use `scripts/run_gate.sh`.**
+Both are correct at the source: `local_gate.sh` prints exactly one `LOCAL GATE:` line and
+exits non-zero on failure. They come apart in the INVOCATION, and every way of reading the
+output is a way of losing the status:
+
+```sh
+scripts/local_gate.sh --fast | tail             # tail's status, always 0
+scripts/local_gate.sh --fast > log; grep X log  # grep's status, 0 when it matched
+```
+
+Both have happened here. The second is the subtler one — it keeps the output and even
+prints the verdict — and it still reports 0 for a run that failed at stage 1. So this is a
+mechanism, not a rule to remember:
+
+```sh
+scripts/run_gate.sh --log /tmp/gate.log -- scripts/local_gate.sh --fast
+```
+
+It exits with the COMMAND's status, and refuses a zero exit that states `FAIL`, states no
+verdict at all, or states more than one — a run that ended without stating a verdict did
+not finish, whatever it exited with. `scripts/run_gate.sh --selftest` injects a failing
+stage followed by a successful reporting step and proves the wrapper still exits non-zero;
+it runs in `local_gate.sh` stage 1 and as its own required CI step.
 
 The general rule that instance is one case of:
 

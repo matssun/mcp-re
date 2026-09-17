@@ -114,6 +114,43 @@ for eco in $ecosystems; do
       else
         fail "a registered unit's battery is a typescript one and there is no npx on the lane PATH. Install node (brew install node) and put it on the runner's PATH."
       fi
+      # THE RUNTIMES, not just the tool that launches them.
+      #
+      # `npx` being on PATH says nothing about the thing the lane actually measures
+      # through: one prepared environment per PINNED Node version, under
+      # `sdk/typescript/.node-v<major>`. Those are build products on a persistent box, and
+      # the nightly disk reclaim removes them — after which the lane finds no runtime,
+      # measures nothing, and the gate fails naming a directory rather than the missing
+      # prerequisite. That happened, and "remember to re-run the preparation script" is not
+      # a control.
+      #
+      # Present -> use them. Absent -> PREPARE them, here, because preparation is a
+      # different job from measurement: `prepare_node_matrix.sh` is already the canonical
+      # pinned mechanism (npm install of exact versions, integrity-checked like any other
+      # dependency), so provisioning introduces no network or trust decision the lane does
+      # not already rest on. If preparation itself fails, that is an explicit, reproducible
+      # prerequisite failure and the lane does not start.
+      #
+      # Preparation stays OUT of the lane for the reason its own header gives: a lane that
+      # builds what it measures can report a battery it has just made pass.
+      if ! missing="$(python3 scripts/node_matrix_state.py --print-missing)"; then
+        fail "cannot determine which pinned Node runtimes are prepared: $missing"
+      elif [[ -n "$missing" ]]; then
+        echo "pinned Node runtime(s) not prepared: ${missing}"
+        echo "preparing them with scripts/prepare_node_matrix.sh (the canonical pinned mechanism)"
+        if scripts/prepare_node_matrix.sh >/dev/null 2>&1; then
+          if still_missing="$(python3 scripts/node_matrix_state.py --print-missing)" \
+             && [[ -z "$still_missing" ]]; then
+            echo "pinned Node runtimes prepared"
+          else
+            fail "preparation ran but these pinned Node runtimes are still absent: ${still_missing:-<unknown>}. Run scripts/prepare_node_matrix.sh and read its output."
+          fi
+        else
+          fail "scripts/prepare_node_matrix.sh failed, so the TypeScript battery has no runtime to be measured on. Run it directly and read its output; the lane must not start without the pinned runtimes."
+        fi
+      else
+        echo "pinned Node runtimes prepared (all $(python3 scripts/node_matrix_state.py --count))"
+      fi
       ;;
     *)
       fail "a registered unit names ecosystem '${eco}', which this preflight does not know how to check. Teach it here rather than letting the lane discover it."

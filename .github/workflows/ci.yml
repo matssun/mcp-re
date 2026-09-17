@@ -407,6 +407,28 @@ jobs:
           python3 scripts/merge_path_gate.py --selftest
           python3 scripts/merge_path_gate.py
 
+      # A GATE'S VERDICT AND ITS EXIT STATUS ARE ONE FACT. Both are correct at the source
+      # — `local_gate.sh` prints exactly one `LOCAL GATE:` line and exits non-zero — and
+      # they come apart in the INVOCATION: `gate | tail` reports tail's status, and
+      # `gate > log; grep X log` reports grep's, so a run that failed at stage 1 reads as
+      # a pass. The second form is the subtler one because it keeps the output and even
+      # prints the verdict, and it is the one that happened. `run_gate.sh` is the
+      # invocation that cannot lose the status; its selftest injects a failing stage
+      # followed by a successful reporting step and proves the wrapper still exits
+      # non-zero — and separately proves the bare form does read 0, so the case measures
+      # the difference rather than restating that 1 is not 0.
+      - name: Gate exit-status wrapper (a verdict and a status are one fact)
+        run: scripts/run_gate.sh --selftest
+
+      # The TypeScript battery is measured on one prepared environment per PINNED Node
+      # version. Those are build products, the nightly reclaim removes them, and the lane
+      # then measures nothing while naming a directory rather than the prerequisite. The
+      # preflight provisions them from the lock; this checks the question it asks is the
+      # right one — an empty runtime directory left behind by a reclaim must still count
+      # as absent.
+      - name: Pinned Node runtime state (the lane's prerequisite is a fact, not a memory)
+        run: python3 scripts/node_matrix_state.py --selftest
+
       # The assurance platform's own self-tests — the verdict algebra, the invalidation
       # rules, the measured-input closure, the escape-hatch detector, the theorem loader
       # and review model, the test and Verus lane adapters, and the views generator. They
