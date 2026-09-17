@@ -241,8 +241,8 @@ mod tests {
         // the key without knowing the issuer's minting order. Chaining to the root
         // is asserted by the credential's `issuer_kid`, not by the kid string.
         assert_eq!(
-            snap.delegated_kid,
-            mcp_re_http_profile::jwk_thumbprint_ed25519(&snap.key.public_key().to_b64url()),
+            snap.delegated_kid(),
+            mcp_re_http_profile::jwk_thumbprint_ed25519(&snap.key().public_key().to_b64url()),
         );
         // The root issuer was touched exactly once (issuance), never per read.
         assert_eq!(wiring.rotor.root_invocations(), 1);
@@ -324,5 +324,70 @@ mod tests {
         // publishes nothing — the serving path would then refuse to start.
         assert!(wiring.rotor.rotate(NOW).is_err());
         assert!(wiring.signer.current(NOW).is_none());
+    }
+}
+
+/// Delegated-key snapshots for the modules that hold one, minted the way production mints
+/// them.
+///
+/// `#[cfg(test)]`, so it is not a production surface. It exists because
+/// [`ActiveDelegatedKey`](mcp_re_http_profile::ActiveDelegatedKey) has no other way in: its
+/// representation is private and its only producer derives the window from the credential,
+/// so a fixture cannot pair `credential: "cred"` with an `exp` of its choosing — which is
+/// exactly the inconsistency the seal exists to make unconstructible, and a test-only
+/// constructor would hand straight back.
+///
+/// So a fixture runs the real state machine over a software root and takes what it
+/// published. `exp` is `now + ttl` because that is what an issuance decides it is.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use mcp_re_core::SigningKey;
+    use mcp_re_http_profile::custody::DelegatedKeyWindow;
+    use mcp_re_http_profile::issue_delegation_credential;
+    use mcp_re_http_profile::ActiveDelegatedKey;
+    use mcp_re_http_profile::CustodyConfig;
+    use mcp_re_http_profile::DelegatedSigningCustody;
+
+    /// The root key every fixture credential chains to, and the `issuer_kid` naming it.
+    pub(crate) const ROOT_KID: &str = "test-root-kid";
+
+    /// The custody configuration the fixtures issue under.
+    pub(crate) fn cfg(ttl: i64, overlap: i64) -> CustodyConfig {
+        CustodyConfig {
+            issuer_kid: ROOT_KID.into(),
+            iss: "did:example:server".into(),
+            profile: "mcp-re-http-v1".into(),
+            aud: "verifier-1".into(),
+            audience_hash: "aud-scope-1".into(),
+            trust_epoch: "epoch-1".into(),
+            server_role: "server".into(),
+            server_trust_domain: "example.com".into(),
+            server_subject: "did:example:server".into(),
+            window: DelegatedKeyWindow::of(ttl, overlap).expect("0 < overlap < ttl"),
+        }
+    }
+
+    /// The credential lifetime every fixture issuance is minted with.
+    pub(crate) const FIXTURE_TTL: i64 = 3_600;
+
+    /// A snapshot a real issuance produced, whose credential expires exactly at `exp`.
+    ///
+    /// `seed` picks the delegated key, so two fixtures are two different keys — and
+    /// therefore two different `delegated_kid`s, since a delegated kid is the RFC 7638
+    /// thumbprint of the key the credential attests. A fixture can no longer name its own
+    /// kid, which is the point: it could not have named one the credential agreed with.
+    pub(crate) fn issued_expiring_at(exp: i64, seed: u8) -> ActiveDelegatedKey {
+        let root = SigningKey::from_seed_bytes(&[33u8; 32]);
+        let mut custody = DelegatedSigningCustody::new(
+            cfg(FIXTURE_TTL, FIXTURE_TTL / 6),
+            move |h, c| Some(issue_delegation_credential(&root, h, c)),
+            move || SigningKey::from_seed_bytes(&[seed; 32]),
+        );
+        custody
+            .ensure_active(exp - FIXTURE_TTL)
+            .expect("the software root issues");
+        let active = custody.active_snapshot().expect("an issuance published");
+        assert_eq!(active.exp(), exp, "the fixture window is the credential's");
+        active
     }
 }

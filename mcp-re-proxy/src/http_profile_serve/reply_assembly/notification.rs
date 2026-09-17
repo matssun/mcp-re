@@ -46,9 +46,9 @@ impl HttpProfileProxy {
         let a = window.key();
         match sign_delegated_accepted_202(
             http_req,
-            &a.credential,
-            a.key.as_ref(),
-            &a.delegated_kid,
+            a.credential(),
+            a.key(),
+            a.delegated_kid(),
             now,
             window.expires(),
         ) {

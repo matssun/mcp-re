@@ -556,7 +556,7 @@ mod delegated_tests {
         let snap = custody.active_snapshot().expect("a key is active");
         assert_eq!(
             out.verified.server_signer().keyid,
-            mcp_re_http_profile::jwk_thumbprint_ed25519(&snap.key.public_key().to_b64url()),
+            mcp_re_http_profile::jwk_thumbprint_ed25519(&snap.key().public_key().to_b64url()),
         );
     }
 
@@ -644,10 +644,10 @@ mod delegated_tests {
             signed.evidence(),
             &reason,
             409,
-            &snap.server_signer,
-            &snap.credential,
-            snap.key.as_ref(),
-            &snap.delegated_kid,
+            snap.server_signer(),
+            snap.credential(),
+            snap.key(),
+            snap.delegated_kid(),
             NOW,
             NOW + 300,
         )
@@ -683,10 +683,10 @@ mod delegated_tests {
             signed.evidence(),
             &reason,
             409,
-            &snap.server_signer,
-            &snap.credential,
-            snap.key.as_ref(),
-            &snap.delegated_kid,
+            snap.server_signer(),
+            snap.credential(),
+            snap.key(),
+            snap.delegated_kid(),
             NOW,
             NOW + 300,
         )
@@ -719,10 +719,10 @@ mod delegated_tests {
             Some(signed.request()),
             &reason,
             403,
-            &snap.server_signer,
-            &snap.credential,
-            snap.key.as_ref(),
-            &snap.delegated_kid,
+            snap.server_signer(),
+            snap.credential(),
+            snap.key(),
+            snap.delegated_kid(),
             NOW,
             NOW + 300,
         )
@@ -788,10 +788,10 @@ mod delegated_tests {
             Some(theirs.request()),
             &reason,
             403,
-            &snap.server_signer,
-            &snap.credential,
-            snap.key.as_ref(),
-            &snap.delegated_kid,
+            snap.server_signer(),
+            snap.credential(),
+            snap.key(),
+            snap.delegated_kid(),
             NOW,
             NOW + 300,
         )
@@ -815,10 +815,10 @@ mod delegated_tests {
             Some(mine.request()),
             &reason,
             403,
-            &snap.server_signer,
-            &snap.credential,
-            snap.key.as_ref(),
-            &snap.delegated_kid,
+            snap.server_signer(),
+            snap.credential(),
+            snap.key(),
+            snap.delegated_kid(),
             NOW,
             NOW + 300,
         )
@@ -847,10 +847,10 @@ mod delegated_tests {
             None,
             &reason,
             403,
-            &snap.server_signer,
-            &snap.credential,
-            snap.key.as_ref(),
-            &snap.delegated_kid,
+            snap.server_signer(),
+            snap.credential(),
+            snap.key(),
+            snap.delegated_kid(),
             NOW,
             NOW + 300,
         )
@@ -884,10 +884,10 @@ mod delegated_tests {
             signed.evidence(),
             &reason,
             503,
-            &snap.server_signer,
-            &snap.credential,
-            snap.key.as_ref(),
-            &snap.delegated_kid,
+            snap.server_signer(),
+            snap.credential(),
+            snap.key(),
+            snap.delegated_kid(),
             NOW,
             NOW + 300,
         )
@@ -919,10 +919,10 @@ mod delegated_tests {
             signed.evidence(),
             &reason,
             503,
-            &snap.server_signer,
-            &snap.credential,
-            snap.key.as_ref(),
-            &snap.delegated_kid,
+            snap.server_signer(),
+            snap.credential(),
+            snap.key(),
+            snap.delegated_kid(),
             NOW,
             NOW + 300,
         )
@@ -990,10 +990,10 @@ mod delegated_tests {
             signed.evidence(),
             &reason,
             500,
-            &snap.server_signer,
-            &snap.credential,
-            snap.key.as_ref(),
-            &snap.delegated_kid,
+            snap.server_signer(),
+            snap.credential(),
+            snap.key(),
+            snap.delegated_kid(),
             NOW,
             NOW + 300,
         )
@@ -1092,10 +1092,10 @@ mod delegated_tests {
             Some(signed.request()),
             &reason,
             200,
-            &snap.server_signer,
-            &snap.credential,
-            snap.key.as_ref(),
-            &snap.delegated_kid,
+            snap.server_signer(),
+            snap.credential(),
+            snap.key(),
+            snap.delegated_kid(),
             NOW,
             NOW + 300,
         )
@@ -1128,7 +1128,11 @@ mod delegated_tests {
         custody
             .sign_response(NOW, &mut resp, signed.request(), signed.evidence())
             .expect("server delegated-signs the success response");
-        let kid = custody.active_snapshot().unwrap().delegated_kid;
+        let kid = custody
+            .active_snapshot()
+            .unwrap()
+            .delegated_kid()
+            .to_owned();
         let revoked = StaticRevocationList::new().revoke(kid);
         let err = verify_delegated_response(
             &resp,
@@ -1246,15 +1250,15 @@ mod delegated_tests {
             signed.evidence(),
             &reason,
             409,
-            &snap.server_signer,
-            &snap.credential,
-            snap.key.as_ref(),
-            &snap.delegated_kid,
+            snap.server_signer(),
+            snap.credential(),
+            snap.key(),
+            snap.delegated_kid(),
             NOW,
             NOW + 300,
         )
         .expect("server builds bound delegated rejection");
-        let revoked = StaticRevocationList::new().revoke(snap.delegated_kid.clone());
+        let revoked = StaticRevocationList::new().revoke(snap.delegated_kid().to_owned());
         let err = verify_delegated_response(
             &resp,
             &trust_with(revoked),
@@ -1305,7 +1309,7 @@ mod delegated_tests {
         let snap = custody.active_snapshot().unwrap();
         let late = NOW + 3600;
         assert!(
-            snap.exp < late - 300,
+            snap.exp() < late - 300,
             "the credential is stale by > the bound"
         );
 
@@ -1316,10 +1320,10 @@ mod delegated_tests {
             signed.evidence(),
             &reason,
             409,
-            &snap.server_signer,
-            &snap.credential,
-            snap.key.as_ref(),
-            &snap.delegated_kid,
+            snap.server_signer(),
+            snap.credential(),
+            snap.key(),
+            snap.delegated_kid(),
             late,
             late + 300,
         )
@@ -1442,9 +1446,9 @@ mod delegated_tests {
         let snap = custody.active_snapshot().unwrap();
         let ack = mcp_re_http_profile::sign_delegated_accepted_202(
             notification.request(),
-            &snap.credential,
-            snap.key.as_ref(),
-            &snap.delegated_kid,
+            snap.credential(),
+            snap.key(),
+            snap.delegated_kid(),
             NOW,
             NOW + 300,
         )
@@ -1491,7 +1495,7 @@ mod delegated_tests {
             notification.request(),
             &trust_with(StaticRevocationList::new()),
             &policy(),
-            Some(&snap.delegated_kid),
+            Some(snap.delegated_kid()),
             NOW,
         )
         .expect_err("the pin binds to the issuer, not to the delegated kid");
@@ -1524,7 +1528,11 @@ mod delegated_tests {
 
         let mut custody = custody();
         custody.ensure_active(NOW).expect("issue key/1");
-        let kid1 = custody.active_snapshot().unwrap().delegated_kid;
+        let kid1 = custody
+            .active_snapshot()
+            .unwrap()
+            .delegated_kid()
+            .to_owned();
 
         // Advance past exp - overlap (300 - 60 = 240) so sign_response rotates to key/2.
         let rot = NOW + 250;
@@ -1536,7 +1544,11 @@ mod delegated_tests {
         custody
             .sign_response(rot, &mut resp, signed.request(), signed.evidence())
             .expect("server signs with the rotated key");
-        let kid2 = custody.active_snapshot().unwrap().delegated_kid;
+        let kid2 = custody
+            .active_snapshot()
+            .unwrap()
+            .delegated_kid()
+            .to_owned();
         assert_ne!(kid2, kid1, "rotation must mint a new delegated kid");
 
         // Old key revoked; the new (active) key is not.

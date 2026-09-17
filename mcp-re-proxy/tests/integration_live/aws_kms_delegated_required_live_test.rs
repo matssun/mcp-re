@@ -434,10 +434,10 @@ async fn run_kms_delegated_required_serving(root: KmsResponseSigner) {
     // Profile-issued kids are RFC 7638 JWK thumbprints, derived from the delegated
     // key itself rather than an issuer counter.
     let snap = signer.current(NOW).expect("a key is published");
-    let first_kid = snap.delegated_kid.clone();
+    let first_kid = snap.delegated_kid().to_owned();
     assert_eq!(
         first_kid,
-        mcp_re_http_profile::jwk_thumbprint_ed25519(&snap.key.public_key().to_b64url()),
+        mcp_re_http_profile::jwk_thumbprint_ed25519(&snap.key().public_key().to_b64url()),
     );
 
     // Serve a batch under the one delegated key; each response verifies via the
@@ -508,8 +508,8 @@ async fn run_kms_delegated_required_serving(root: KmsResponseSigner) {
     let second_kid = signer
         .current(after)
         .expect("successor published")
-        .delegated_kid
-        .clone();
+        .delegated_kid()
+        .to_owned();
     assert_ne!(
         first_kid, second_kid,
         "rotation mints a distinct delegated key"

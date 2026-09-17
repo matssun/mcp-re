@@ -453,8 +453,8 @@ fn root_issuance_failure_serves_until_delegated_key_expiry_then_fails_closed() {
     let k1 = signer
         .current(NOW)
         .expect("K1 serves")
-        .delegated_kid
-        .clone();
+        .delegated_kid()
+        .to_owned();
 
     // Successor cannot be minted (root down). K1 is KEPT (not retired) while valid — no
     // serving gap, no stale successor. (custody_cfg: ttl 300, overlap 60.)
@@ -466,7 +466,7 @@ fn root_issuance_failure_serves_until_delegated_key_expiry_then_fails_closed() {
         signer
             .current(in_overlap)
             .expect("K1 still serves")
-            .delegated_kid,
+            .delegated_kid(),
         k1,
         "still K1 — no stale successor minted, no signing gap"
     );

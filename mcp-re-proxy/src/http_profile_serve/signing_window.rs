@@ -59,7 +59,7 @@ impl SigningWindow {
     /// exchange signs under the credential that exchange took, and advertises no more
     /// validity for having been reached by a different path.
     pub(crate) fn over(key: Arc<ActiveDelegatedKey>, now: i64, ttl_secs: i64) -> Self {
-        let exp = key.exp;
+        let exp = key.exp();
         Self {
             key,
             created: now,
@@ -134,19 +134,9 @@ mod tests {
     use super::*;
     use std::time::Duration;
     fn key(exp: i64) -> Arc<ActiveDelegatedKey> {
-        Arc::new(ActiveDelegatedKey {
-            key: Arc::new(mcp_re_core::SigningKey::from_seed_bytes(&[7u8; 32])),
-            delegated_kid: "delegated-1".into(),
-            server_signer: mcp_re_http_profile::ActorIdentity {
-                role: "server".into(),
-                trust_domain: "example.com".into(),
-                subject: "did:example:server".into(),
-                keyid: "delegated-1".into(),
-            },
-            credential: "credential".into(),
-            nbf: 0,
-            exp,
-        })
+        Arc::new(crate::delegated_wiring::test_support::issued_expiring_at(
+            exp, 7,
+        ))
     }
 
     /// The configured TTL wins while it closes first — the ordinary case, in which the

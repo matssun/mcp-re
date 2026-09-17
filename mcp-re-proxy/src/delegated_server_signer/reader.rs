@@ -52,25 +52,12 @@ impl DelegatedSigningReader {
 #[cfg(test)]
 mod tests {
     use super::DelegatedServerSigner;
-    use mcp_re_core::SigningKey;
+    use crate::delegated_wiring::test_support::issued_expiring_at;
     use mcp_re_http_profile::ActiveDelegatedKey;
-    use mcp_re_http_profile::ActorIdentity;
     use std::sync::Arc;
 
     fn key(exp: i64) -> ActiveDelegatedKey {
-        ActiveDelegatedKey {
-            key: Arc::new(SigningKey::from_seed_bytes(&[9u8; 32])),
-            delegated_kid: "delegated-1".into(),
-            server_signer: ActorIdentity {
-                role: "server".into(),
-                trust_domain: "example.com".into(),
-                subject: "did:example:server".into(),
-                keyid: "delegated-1".into(),
-            },
-            credential: "cred".into(),
-            nbf: 0,
-            exp,
-        }
+        issued_expiring_at(exp, 9)
     }
 
     /// A reader answers exactly what the signer answers, and a clone of it does too — the

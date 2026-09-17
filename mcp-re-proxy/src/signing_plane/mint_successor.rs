@@ -51,7 +51,9 @@ pub(super) fn attempt_rotation(
     // `exp - overlap`), and re-enter this arm immediately: a tight retry loop
     // against the root KMS/HSM, minting a fresh keypair every pass, for the
     // whole overlap window. The backoff below must cover it.
-    let before_kid = signer.current(now_unix()).map(|a| a.delegated_kid.clone());
+    let before_kid = signer
+        .current(now_unix())
+        .map(|a| a.delegated_kid().to_owned());
     match rotor.rotate(now_unix()) {
         Ok(()) if !rotation_made_progress(signer, &before_kid, overlap) => {
             let consecutive_failures = signer.metrics().record_failure();
@@ -136,14 +138,14 @@ pub(super) fn rotation_made_progress(
         // Nothing published: not progress, but also nothing to back off protecting.
         return false;
     };
-    if active.delegated_kid != *before_kid.as_deref().unwrap_or("") {
+    if active.delegated_kid() != before_kid.as_deref().unwrap_or("") {
         return true;
     }
     // Same kid. Only a rotation that was DUE and did not happen is a failure, and a
     // window whose start cannot be computed is not evidence that nothing was due: a
     // wrapped `exp - overlap` reports progress precisely when rotation is most overdue.
     active
-        .exp
+        .exp()
         .checked_sub(overlap)
         .is_some_and(|due_from| now < due_from)
 }
@@ -158,27 +160,15 @@ mod tests {
     use super::rotation_made_progress;
 
     use crate::delegated_server_signer::DelegatedServerSigner;
-    use mcp_re_core::SigningKey;
     use mcp_re_http_profile::ActiveDelegatedKey;
-    use mcp_re_http_profile::ActorIdentity;
-    use std::sync::Arc;
 
     const OVERLAP: i64 = 60;
 
-    fn key(kid: &str, exp: i64) -> ActiveDelegatedKey {
-        ActiveDelegatedKey {
-            key: Arc::new(SigningKey::from_seed_bytes(&[7u8; 32])),
-            delegated_kid: kid.to_string(),
-            server_signer: ActorIdentity {
-                role: "server".into(),
-                trust_domain: "example.com".into(),
-                subject: "did:example:server".into(),
-                keyid: kid.to_string(),
-            },
-            credential: "cred".into(),
-            nbf: 0,
-            exp,
-        }
+    /// `seed` stands in for the old `kid` argument: a fixture cannot name a delegated kid
+    /// any more, because the kid is the thumbprint of the key the credential attests. Two
+    /// seeds are two keys and therefore two kids, which is all these controls ever needed.
+    fn key(seed: u8, exp: i64) -> ActiveDelegatedKey {
+        crate::delegated_wiring::test_support::issued_expiring_at(exp, seed)
     }
 
     /// The defect this guards: `ensure_active` reports `Ok(())` both when a successor
@@ -192,8 +182,9 @@ mod tests {
         let signer = DelegatedServerSigner::new();
         let now = crate::clock::now_unix();
         // Published key is inside its overlap window: a rotation is DUE.
-        signer.publish(key("K1", now + OVERLAP - 1));
-        let before = Some("K1".to_string());
+        let published = key(1, now + OVERLAP - 1);
+        let before = Some(published.delegated_kid().to_owned());
+        signer.publish(published);
         assert!(
             !rotation_made_progress(&signer, &before, OVERLAP),
             "a due rotation that did not change the kid means issuance failed"
@@ -204,8 +195,8 @@ mod tests {
     fn a_new_kid_is_progress() {
         let signer = DelegatedServerSigner::new();
         let now = crate::clock::now_unix();
-        signer.publish(key("K2", now + 300));
-        let before = Some("K1".to_string());
+        signer.publish(key(2, now + 300));
+        let before = Some(key(1, now + 300).delegated_kid().to_owned());
         assert!(rotation_made_progress(&signer, &before, OVERLAP));
     }
 
@@ -215,8 +206,9 @@ mod tests {
     fn unchanged_kid_outside_the_overlap_window_is_not_a_failure() {
         let signer = DelegatedServerSigner::new();
         let now = crate::clock::now_unix();
-        signer.publish(key("K1", now + 10 * OVERLAP));
-        let before = Some("K1".to_string());
+        let published = key(1, now + 10 * OVERLAP);
+        let before = Some(published.delegated_kid().to_owned());
+        signer.publish(published);
         assert!(rotation_made_progress(&signer, &before, OVERLAP));
     }
 

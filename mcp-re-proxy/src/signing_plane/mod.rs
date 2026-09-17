@@ -84,29 +84,16 @@ impl SigningPlane {
         body: impl FnOnce(crate::managed_worker::Halt) + Send + 'static,
     ) -> Self {
         let signer = Arc::new(DelegatedServerSigner::new());
-        signer.publish(mcp_re_http_profile::ActiveDelegatedKey {
-            key: Arc::new(mcp_re_core::SigningKey::from_seed_bytes(&[3u8; 32])),
-            delegated_kid: TEST_KID.to_string(),
-            server_signer: mcp_re_http_profile::ActorIdentity {
-                role: "server".into(),
-                trust_domain: "example.com".into(),
-                subject: "did:example:server".into(),
-                keyid: TEST_KID.to_string(),
-            },
-            credential: "cred".into(),
-            nbf: 0,
-            exp: crate::clock::now_unix() + 3600,
-        });
+        signer.publish(crate::delegated_wiring::test_support::issued_expiring_at(
+            crate::clock::now_unix() + 3600,
+            3,
+        ));
         let mut workers = WorkerSet::new(Arc::new(std::sync::atomic::AtomicBool::new(false)));
         let halt = workers.halt();
         workers.spawn("test delegated rotation", move || body(halt));
         SigningPlane { signer, workers }
     }
 }
-
-/// The delegated kid [`SigningPlane::for_teardown_test`] publishes.
-#[cfg(test)]
-pub(crate) const TEST_KID: &str = "delegated-1";
 
 impl Drop for SigningPlane {
     fn drop(&mut self) {
@@ -906,28 +893,12 @@ mod rotation_owner_tests {
 mod handle_lifetime_tests {
     use super::*;
     use crate::clock::now_unix;
-    use mcp_re_core::SigningKey;
     use mcp_re_http_profile::ActiveDelegatedKey;
-    use mcp_re_http_profile::ActorIdentity;
     use std::sync::atomic::AtomicBool;
     use std::time::Duration;
 
-    const KID: &str = TEST_KID;
-
     fn active_key(exp: i64) -> ActiveDelegatedKey {
-        ActiveDelegatedKey {
-            key: Arc::new(SigningKey::from_seed_bytes(&[3u8; 32])),
-            delegated_kid: KID.to_string(),
-            server_signer: ActorIdentity {
-                role: "server".into(),
-                trust_domain: "example.com".into(),
-                subject: "did:example:server".into(),
-                keyid: KID.to_string(),
-            },
-            credential: "cred".into(),
-            nbf: 0,
-            exp,
-        }
+        crate::delegated_wiring::test_support::issued_expiring_at(exp, 3)
     }
 
     /// The signing child machine's terminal transition, staged through the REAL

@@ -201,7 +201,6 @@ impl DispatchedExchange {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mcp_re_http_profile::ActiveDelegatedKey;
     use std::sync::Arc;
 
     /// The §9.6 acceptance test for the state model, stated as an assertion about the
@@ -243,19 +242,10 @@ mod tests {
     /// inner plane. There is no other way to obtain a dispatchable body.
     #[tokio::test]
     async fn the_dispatch_boundary_consumes_the_ready_state() {
-        let key = Arc::new(ActiveDelegatedKey {
-            key: Arc::new(mcp_re_core::SigningKey::from_seed_bytes(&[4u8; 32])),
-            delegated_kid: "delegated-1".into(),
-            server_signer: mcp_re_http_profile::ActorIdentity {
-                role: "server".into(),
-                trust_domain: "example.com".into(),
-                subject: "did:example:server".into(),
-                keyid: "delegated-1".into(),
-            },
-            credential: "cred".into(),
-            nbf: 0,
-            exp: 1_700_000_000,
-        });
+        let key = Arc::new(crate::delegated_wiring::test_support::issued_expiring_at(
+            1_700_000_000,
+            4,
+        ));
         let inner = |body: &[u8]| {
             assert_eq!(body, b"{}", "the bytes sent are the bytes released");
             b"{\"result\":{}}".to_vec()
