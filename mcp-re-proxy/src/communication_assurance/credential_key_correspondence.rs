@@ -131,15 +131,28 @@ mod tests {
     /// bytes verbatim, so no literal stands in for a legal credential here. `rcgen` is
     /// already this crate's minting tool in `ocsp.rs`'s unit tests.
     fn ed25519_leaf_der() -> Vec<u8> {
+        ed25519_leaf_and_its_spki().0
+    }
+
+    /// The same leaf, paired with the SPKI of the key inside it.
+    ///
+    /// Both halves come from ONE key pair, and the SPKI is serialized by `rcgen` rather
+    /// than assembled from [`CANONICAL_PREFIX`]: a hand-built SPKI would be this test's own
+    /// idea of what a signer exports, and the accepting case must not rest on a second
+    /// opinion about the encoding.
+    fn ed25519_leaf_and_its_spki() -> (Vec<u8>, Vec<u8>) {
+        use rcgen::PublicKeyData as _;
         let key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519).expect("an ed25519 key pair");
+        let spki = key.subject_public_key_info();
         let params = rcgen::CertificateParams::new(vec!["mcp-re-test".to_string()])
             .expect("leaf certificate parameters");
-        params
+        let der = params
             .self_signed(&key)
             .expect("a self-signed leaf")
             .der()
             .as_ref()
-            .to_vec()
+            .to_vec();
+        (der, spki)
     }
 
     fn canonical_spki(point: u8) -> Vec<u8> {
@@ -274,6 +287,57 @@ mod tests {
             ),
             Err(CredentialKeyCorrespondenceRefusal::Credential(_))
         ));
+    }
+
+    /// **The relation accepting**, and the first control in this file that reaches
+    /// [`super::correspond`] at all.
+    ///
+    /// Every other control here refuses in an ADAPTER — an absent credential, an
+    /// uninterpretable one, an unavailable signer, a non-Ed25519 export — and each
+    /// short-circuits before the relation is called. The comparison the slice exists to
+    /// perform is covered by the DER battery next door in `tls.rs`, which is registered
+    /// evidence for this unit; what was missing is a control where the relation LIVES, so
+    /// that the file carrying the `!=` carries the reason it is there.
+    #[test]
+    fn two_sides_presenting_the_same_key_correspond_and_the_facts_carry_that_key() {
+        let (leaf, spki) = ed25519_leaf_and_its_spki();
+        let facts = establish_credential_key_correspondence(
+            CertificateChainEvidence::from_leaf_der(&leaf),
+            SigningKeyExportEvidence::exported(&spki),
+        )
+        .expect("a certificate and a signer holding the same key correspond");
+
+        let from_credential = CertificateChainEvidence::from_leaf_der(&leaf)
+            .interpret_credential_public_key()
+            .expect("the minted leaf carries a legal Ed25519 key")
+            .key();
+        assert_eq!(
+            facts.corresponding_key(),
+            from_credential,
+            "the corresponding key must be the key that was actually presented"
+        );
+    }
+
+    /// **The relation refusing** — two legal keys that are not the same key.
+    ///
+    /// Both sides interpret successfully, so neither adapter can produce this refusal:
+    /// `Mismatch` is reachable only through the relation. Invert the comparison in
+    /// `correspond` and this is the control that goes red.
+    #[test]
+    fn two_legal_but_different_keys_are_a_mismatch_and_not_a_side_failure() {
+        let (leaf, _) = ed25519_leaf_and_its_spki();
+        let other = canonical_spki(0xAB);
+        assert_eq!(
+            establish_credential_key_correspondence(
+                CertificateChainEvidence::from_leaf_der(&leaf),
+                SigningKeyExportEvidence::exported(&other),
+            ),
+            Err(CredentialKeyCorrespondenceRefusal::Mismatch(
+                CorrespondenceMismatch
+            )),
+            "a signer that cannot produce a handshake the certificate verifies must be \
+             refused BY THE RELATION, not reported as one side failing to present a key"
+        );
     }
 
     #[test]

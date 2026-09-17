@@ -21,7 +21,9 @@ use std::sync::Mutex;
 
 use mcp_re_http_profile::authoritative_admission::record::CurrentAdmissionState;
 
+use super::classify_answer;
 use super::verifier::AdmissionRecordVerifier;
+use super::AnsweredAs;
 use super::{AdmissionFuture, AdmissionSourceError, AsyncAdmissionSource};
 
 /// A single-process in-memory admission source — single-replica runs and test harnesses.
@@ -125,13 +127,17 @@ impl InMemoryAdmissionSource {
             });
         }
         let raw = self.recovered(&self.records).get(admission_id).cloned();
-        let Some(raw) = raw else {
-            return Ok(None);
-        };
         // A record this store HAS but cannot authenticate is a definitive negative, exactly
         // as an absent one is. Never an outage: that fork serves the caller on its own
-        // assertion.
-        Ok(self.verifier.verify(admission_id, &raw, now).ok())
+        // assertion. The rule belongs to `answer`, which is why it is not restated here —
+        // one source spelling it differently from the other is the failure the shared owner
+        // removes.
+        Ok(
+            match classify_answer(&self.verifier, admission_id, raw.as_deref(), now) {
+                AnsweredAs::State(state) => Some(state),
+                AnsweredAs::NoRecord | AnsweredAs::Refused(_) => None,
+            },
+        )
     }
 }
 

@@ -57,9 +57,11 @@ use refusal_report::ReportedClasses;
 use mcp_re_http_profile::authoritative_admission::record::CurrentAdmissionState;
 
 use crate::admission_source::admission_key;
+use crate::admission_source::classify_answer;
 use crate::admission_source::AdmissionFuture;
 use crate::admission_source::AdmissionRecordVerifier;
 use crate::admission_source::AdmissionSourceError;
+use crate::admission_source::AnsweredAs;
 use crate::admission_source::AsyncAdmissionSource;
 
 /// A cross-process authoritative admission source backed by Redis.
@@ -151,20 +153,24 @@ impl RedisAdmissionSource {
             .arg(admission_key(admission_id))
             .query_async(&mut conn)
             .await;
-        // The ONLY outage. Everything below is the store having answered.
+        // The ONLY outage. Everything below is the store having answered, and what an
+        // answer means is `crate::admission_source::answer`'s — a classification with no
+        // outage inhabitant, so no arm of it can reach the degraded fork.
         let raw = raw.map_err(|e| AdmissionSourceError::Unavailable {
             details: format!("redis GET admission failed: {e}"),
         })?;
-        let Some(raw) = raw else {
-            return Ok(None);
-        };
-        match self.verifier.verify(admission_id, &raw, now) {
-            Ok(verified) => Ok(Some(verified)),
-            Err(refusal) => {
-                self.reported.report_once(refusal);
-                Ok(None)
-            }
-        }
+        Ok(
+            match classify_answer(&self.verifier, admission_id, raw.as_deref(), now) {
+                AnsweredAs::State(state) => Some(state),
+                AnsweredAs::NoRecord => None,
+                // What this adapter adds to the shared classification: saying WHICH class
+                // fired, at a pace a caller cannot set.
+                AnsweredAs::Refused(refusal) => {
+                    self.reported.report_once(refusal);
+                    None
+                }
+            },
+        )
     }
 }
 

@@ -601,6 +601,7 @@ _PROXY_LIB_SRCS = [
     # MCPRE-493 (#414 §4.3): the authoritative admission-state seam — trait + in-memory
     # impl always compiled, so the serving path's §7 currency gate builds by default.
     "src/admission_source/mod.rs",
+    "src/admission_source/answer.rs",
     "src/admission_source/verifier.rs",
     "src/admission_source/in_memory.rs",
     # MCPRE-493: the Redis-backed admission source (live per-request GET, no cached
