@@ -2,13 +2,17 @@
 
 # ADR-MCPRE-069 — Evidence that runs but nothing claims
 
-**Status:** 📄 **PROPOSED** 2026-09-17. Not ratified, not implemented.
+**Status:** ✅ **ACCEPTED** 2026-09-17, subordinate to ADR-MCPRE-068. Not yet implemented.
 **Discussion:** [#968](https://github.com/matssun/mcp-re/discussions/968).
 **Parent:** ADR-MCPRE-068 — *Evidence classes*
 ([discussion #967](https://github.com/matssun/mcp-re/discussions/967),
 [`assurance-evidence-classes.md`](assurance-evidence-classes.md)). This record
 is **subordinate** to it and was §8 of its revision 1. It is separated because it is a
 different defect with a different deliverable, not because 068 grew too long.
+**Ratification, 2026-09-17**, in the owner's words: *"Accept 069 as subordinate to 068 for
+the separate Gap-D authority, rather than folding that concern back into the evidence-class
+ADR. Maintain two-way cross-reference and no duplicated normative authority."* §7 is where
+that boundary is kept, and §8 records what the ratification settles there.
 **Predecessor:** ADR-MCPRE-059 (discussion #527, rev. 2 = the theorem registry). Nothing here
 changes 059's model; this record uses it to ask a question 059 never asks.
 **Assurance TCB — but with one exit that is not.** Three of this record's four dispositions
@@ -191,16 +195,38 @@ sequencing constraint on this record.
 **The one thing 069 owes 068** is §2.1's correction: the doctest blind spot means 068's §8
 figure describes a smaller population than the defect covers, and 068 records that.
 
+**And the boundary the ratification requires is a two-way reference with no duplicated
+normative authority.** Concretely: the evidence-class ontology, the severity model, the
+adequacy rules, the two ratchets and the debt registry are 068's and are not restated here;
+the four dispositions, the census of unclaimed controls and the `new-proposition` route are
+this record's and 068 names them rather than describing them (068 §8). Where a fact belongs
+to both — a `new-proposition` that lands as a unit carries an `evidence_class` and a
+`direct_consequence_severity` — the rule is 068's and the obligation to satisfy it is this
+record's, which is the same shape as every other unit landing after Phase 0A.
+
 ---
 
-## 8. Open questions
+## 8. Open questions, and what the ratification settles
+
+The ratification accepted this record's authority and its separation; it did not answer the
+three questions below, and it did answer one thing they were circling.
+
+**Settled — a disposition record is not assurance debt's registry.** ADR-068's ratification
+narrowed `config/assurance-obligation-debt.toml` to a migration ratchet for pre-existing
+**unmet ADR-068 assurance obligations**, and forbade duplicating `assumptions.toml`. A
+`new-proposition` sitting at step 1 is therefore recorded by this record's own census output
+and reported in the release view, as §5 says — never as a row in 068's debt registry and
+never as a premise record. It is a different fact: not *an obligation we owe and have not
+discharged*, but *a control we run whose proposition is unstated*.
+
+Still open, and none blocks the campaign:
 
 1. **Is `not-evidence` load-bearing enough to need a review record?** D3 requires a reason
    but no `review_ref`. A large `not-evidence` population is indistinguishable from a
    campaign that gave up, and nothing currently tells them apart.
 2. **Does the census belong in the same tool as 068's?** Both read the registry and walk the
    tree. One tool with two reports keeps the walk honest; two tools keep the records
-   independent. ADR-068 Phase 0A moves the census into `tools/verification/`, which is the
+   independent. ADR-068 Phase 0A moved the census into `tools/verification/`, which is the
    moment to decide.
 3. **What is the unit of a `new-proposition` disposition?** The continuation-store instance
    is five controls establishing one proposition. Nothing says a disposition may not be

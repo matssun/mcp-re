@@ -433,29 +433,62 @@ weaker proof somewhere else.
 Never work around a compile failure with `#[non_exhaustive]`, a runtime re-check, or a doc
 note. The failure is the boundary detector; those consume the signal.
 
-## Property 1 needs no separate witness here
+## Property 1 needs a witness, and this document was wrong about what supplies it
 
-*Illegal state cannot be publicly constructed* is the first completion property, and the
-obvious way to evidence it is a compile-fail test. **For these owners that would prove the
-wrong thing.**
+**Corrected 2026-09-17 under ADR-MCPRE-068 §12.1, ratified by the owner.** What follows
+first is the claim this section used to make, because the correction is only legible beside
+it.
 
-A `trybuild` case, and equally a ```compile_fail doctest, compiles a standalone file as a
-SEPARATE crate. It can only witness the crate boundary — that a downstream crate cannot
-construct the value. The consumers that mattered here are all *inside* `mcp-re-proxy`, and
-the crate boundary already held against them before any of this work: that is exactly what
-`ReplayState`'s "outside this crate" doc comment claimed, while the seal held against none
-of its actual callers.
+*Illegal state cannot be publicly constructed* is the first completion property. This
+document argued that no separate witness was needed: a `trybuild` case, and equally a
+```compile_fail doctest, compiles a standalone file as a SEPARATE crate, so it can only
+witness the crate boundary — that a downstream crate cannot construct the value. The
+consumers that mattered here are all *inside* `mcp-re-proxy`, and the crate boundary already
+held against them before any of this work: that is exactly what `ReplayState`'s "outside
+this crate" doc comment claimed, while the seal held against none of its actual callers.
+That part is right, and it is why the in-crate case needs its own mechanism.
 
-The in-crate seal is instead enforced **continuously, by every build**. With the
-representation private to the owner's module, the violating expression cannot be written
-anywhere in the crate and still compile — there is no file that could hold the negative
-case, because such a file would not build. `cargo check -p mcp-re-proxy --all-targets`
-passing IS the witness, and it is a stronger one than a single pinned case: it re-proves
-the property over the whole crate on every run rather than over one example.
+The conclusion drawn from it is not. This document went on to say that with the
+representation private, *"there is no file that could hold the negative case, because such a
+file would not build"*, and therefore that `cargo check -p mcp-re-proxy --all-targets`
+passing **is** the witness — a stronger one than a single pinned case, re-proved over the
+whole crate on every run.
 
-What a compile-fail lane would still be worth: pinning the *crate*-boundary claims for
-types re-exported to SDK or integration consumers. That is a narrower property than the one
-this campaign was about, and it is not a prerequisite for any owner above.
+**It is not a witness at all.** It proves the current tree contains no illegal construction;
+it cannot go red when the boundary is deleted. Make the owner's field `pub(crate)`, or add a
+public constructor taking the same arguments unchecked, and the build still passes every
+time — because nothing in the tree ever attempts the construction. **An absence of
+counterexamples in a corpus nobody wrote a counterexample into is not a refusal.** A control
+whose green cannot be turned red by deleting the property it claims to protect is the
+repository's recurring failure class, and this was an instance of it.
+
+The premise about the missing file is what makes the real mechanism necessary rather than
+optional: the negative case cannot live in this crate, so it lives in a **scratch copy**.
+ADR-MCPRE-068 Phase 0B builds that lane, `structural://`, with two probe kinds —
+`crate-boundary-compile-fail` over the existing `compile_fail` doctest corpus, and
+`in-crate-source-injection`, which copies the crate, injects the hostile construction at a
+declared insertion module, and requires a specific rustc error code whose primary span is on
+the probe's marker line.
+
+**What a structural witness must account for**, per the same ratification, because a seal is
+established only for the exact invariant whose construction boundary is closed, and private
+fields alone are insufficient:
+
+- **module-tree visibility** — `pub(crate)`, `pub(super)`, and any sibling module inside the
+  owner's own module tree;
+- **alternate constructors** — a second `new_*`, a `From`, a `Default`, or a builder taking
+  the same arguments unchecked;
+- **generated / deserialization routes** — a derived `Deserialize` or any generated impl that
+  fills fields positionally;
+- **test-only construction** — a `#[cfg(test)]` constructor or test-gated `pub` field is a
+  producer: it does not run in production, and it does prove the boundary is not closed.
+
+A probe attacking one of these leaves the others unwitnessed, so the invariant a unit claims
+and the boundary its probe attacks must be the same boundary.
+
+The crate-boundary case remains worth pinning for types re-exported to SDK or integration
+consumers. It is a narrower property than the in-crate seal, and the two are separate
+witnesses for separate propositions rather than one standing in for the other.
 
 ## Open
 

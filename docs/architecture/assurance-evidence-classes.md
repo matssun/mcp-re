@@ -2,10 +2,13 @@
 
 # ADR-MCPRE-068 — Evidence classes: what kind of thing supports a security claim
 
-**Status:** 📄 **PROPOSED**, revision 2, 2026-09-17. Not ratified, not implemented. Phase 0 is
-a registry and tooling change; no product claim moves under this record.
-**Revision 2** applies the owner's four grill rulings and the findings of the Codex/Judge
-grill run against revision 1. §14 lists what remains an owner call at ratification.
+**Status:** ✅ **ACCEPTED**, revision 3, ratified 2026-09-17. Phase 0 is a registry and
+tooling change; no product claim moves under this record.
+**Revision 3** applies the owner's ratification, which granted every §14 item with an exact
+resolution and broadened three of them. §1.2 holds the grant; §14 is now the ratification
+record rather than a list of open calls.
+**Revision 2** applied the owner's four grill rulings and the findings of the Codex/Judge
+grill run against revision 1.
 **Discussion:** [#967](https://github.com/matssun/mcp-re/discussions/967). The record exceeds
 GitHub's 65,536-character body limit, so §13, §14 and the appendix are its first comment
 there rather than silently dropped; this file is the whole of it.
@@ -96,6 +99,68 @@ Given on revision 1, before the grill ran, and binding on this record:
 
 Rulings 1–4 settle revision 1's §14 questions 1 (structural is distinct), 2 (external leaves
 the unit class table) and 3 (S2 is rejected). What they left open is what the grill resolved.
+
+### 1.2 The ratification (revision 3)
+
+Owner ratification, 2026-09-17, granted on revision 2 *"subject to the following exact
+resolutions"*. Every revision-2 §14 item is settled by it, and three are settled by being
+made **stricter** than this record proposed rather than by being waved through. The grant, in
+the terms it was given:
+
+> **N3 — ACCEPTED, broadened.** Every assurance proposition has
+> `direct_consequence_severity`, `inherited_severity` and
+> `effective_severity = max(direct, inherited)`. `direct_consequence_severity` is declared;
+> the other two are derived and never independently editable. **Root-only severity is
+> rejected.**
+
+> **ADR-059 §28.8 jurisdiction.** ADR-MCPRE-059 remains authoritative for ROOT COMPLETENESS
+> and for its existing report-only ordinary-development mode versus binding closure/release
+> mode. ADR-068 owns EVIDENCE ADEQUACY. A malformed class/schema/evidence declaration is an
+> ordinary gate FAIL. An honest unmet assurance obligation is INCOMPLETE, never ESTABLISHED,
+> and is tracked/ratcheted where grandfathering is required. An incomplete declared root is
+> visible in ordinary review and a binding failure in §28.8 closure/release mode. **Do not
+> rewrite §28.8 into an everyday global completeness gate.**
+
+> **Phase 0B carries both schemes.** `structural://` and `measured://` are distinct classes
+> with distinct obligations. `structural://`: a closed construction/privacy boundary, a
+> hostile illegal construction, and compilation must refuse it. `measured://`: a measurement
+> protocol, scope/environment/corpus identity, a result artifact, and a reproducibility or
+> sensitivity control. **Neither scheme may satisfy the other's obligation.** No unit may
+> declare either scheme before its required lane exists **and fail-closes on zero
+> execution**.
+
+> **Non-root-reachable units.** Do NOT manufacture roots to absorb the measured 42. Record
+> root reachability as a **graph fact**. A unit not reachable from a declared root may still
+> acquire Medium/High/Critical obligations from its direct consequence severity.
+> `NOT-ROOT-REACHABLE` therefore means only: *no currently declared system root transitively
+> depends on this proposition.* It does not mean low importance, complete assurance, or
+> permission to omit evidence. Phase 1 may discover that some reveal missing roots; change
+> the root set only for semantic reasons.
+
+> **The assurance debt registry** is accepted only as a **migration ratchet** for
+> pre-existing unmet ADR-068 assurance obligations. It is NOT an evidence class, an
+> exception, a waiver, or a substitute for a falsifier / proof / structural witness /
+> measurement. An entry remains INCOMPLETE. New or materially changed propositions may not
+> create new debt entries merely to pass a gate. The register must have a one-way closure
+> lifecycle and an exact owning proposition and effective obligation. Do not duplicate
+> `assumptions.toml`: `assumed`, `external-boundary` and `review-obligation` remain typed
+> premise records there.
+
+> **Sealed-owner witness.** The §12.1 correction is accepted. A sealed owner is structurally
+> established **only for the exact invariant for which its construction boundary is closed**.
+> Private fields alone are insufficient. The structural witness must account for **every
+> producer path relevant to the claimed invariant**, including module-tree visibility,
+> alternate constructors, generated/deserialization routes where applicable, and test-only
+> construction. The compile-refusal probe attacks that exact boundary.
+
+> **ADR-MCPRE-069** is accepted as subordinate to 068 for the separate Gap-D authority,
+> rather than folding that concern back into the evidence-class ADR. Maintain two-way
+> cross-reference and no duplicated normative authority.
+
+Each tightening is carried into this record's normative text rather than left in the
+quotation: the debt registry's scope (§9.4), the two lanes' zero-execution behaviour (§4.3,
+§11), and what a structural witness must account for (§12.1). The jurisdiction resolution is
+§9.3.
 
 ---
 
@@ -246,9 +311,14 @@ precisely why one universal "add a mutation probe" rule is wrong.
 | class | what establishes the proposition | its falsifier | mechanical obligation |
 |---|---|---|---|
 | `proved` | a prover discharges a specification over named symbols | **proof-obligation probe**: delete the production property and the prover must report an error | a `verus://`/`lean://` evidence URI, `proved_symbols`, a pinned toolchain identity, and a production carrier — the proved symbol must be on the path the product runs |
-| `structural` | the representation admits no illegal inhabitant; possession is the proof | **compile-refusal probe**: the illegal construction must fail to *compile* | a `structural://` evidence URI naming a negative-compilation probe, plus the owning module's privacy/construction boundary |
+| `structural` | the representation admits no illegal inhabitant; possession is the proof | **compile-refusal probe**: the illegal construction must fail to *compile* | a `structural://` URI naming a negative-compilation probe; a **closed** construction/privacy boundary; a **hostile illegal construction** that compilation REFUSES; and an accounting of every producer path relevant to the claimed invariant (§12.1) |
 | `tested` | a named battery exercises the property | **mutation probe**: remove the production property and a named control must fail | a `test://` URI, `tested_symbols`, and — under N1 — a `mutation://` probe naming the production property it attacks |
-| `measured` | a stated protocol observes a stated corpus or environment | **none of the above.** A measurement's own failure mode is a dead apparatus, not a false proposition | `measurement_protocol`, `measurement_scope`, `measurement_artifact`, `measurement_control` — and a `measured://` URI |
+| `measured` | a stated protocol observes a stated corpus or environment | **none of the above.** A measurement's own failure mode is a dead apparatus, not a false proposition | a `measured://` URI plus the four fields the ratification names: `measurement_protocol`, `measurement_scope` (scope/environment/corpus identity), `measurement_artifact` (the result), `measurement_control` (reproducibility **or** sensitivity) |
+
+**Neither scheme may satisfy the other's obligation** (ratification). N4 is where that is
+mechanical: a `structural://` probe discharges no `tested` obligation and a `mutation://`
+probe discharges no `structural` one, in either direction, whatever lane implementation the
+two happen to share underneath.
 
 ### 4.2 Premise classes — *why does this chain terminate without MCP-RE establishing it?*
 
@@ -301,8 +371,16 @@ recognised subset, so an unimplemented `structural://` or `measured://` does not
 false green — it resolves to a lane nothing measured, and the unit **refuses issuance**. That
 is the correct behaviour and it is also the constraint: declaring a scheme before the lane
 exists takes every unit that declares it out of the graph. Phase 0B therefore builds **both**
-lanes before either scheme may be named (§11, and §14 item 3 — this amends the owner's phase
-text).
+lanes before either scheme may be named (§11).
+
+**The ratification made that binding and added its second half: the lane must also FAIL-CLOSE
+ON ZERO EXECUTION.** A runner that selected no probe, found no fixture, or skipped its corpus
+may not report PASS, and a unit declaring the scheme with nothing registered against it is a
+lane failure rather than a vacuous success. That is this repository's oldest failure class —
+`-- --ignored` selecting zero tests and exiting 0 — and a brand-new lane is the easiest place
+to reintroduce it, because nobody has a prior expectation of how many probes it should run.
+A `structural://` URI whose lane can be green having attempted no hostile construction is a
+word that costs nothing.
 
 **`assumed`, `external-boundary` and `review-obligation` are three classes, not one, because
 they answer three different questions.** *Will this ever be discharged?* Assumed: no, and
@@ -533,7 +611,9 @@ record's additions.
 > `supported_by`. `effective_severity` and `inherited_severity` are DERIVED and are never
 > stored or independently editable.
 
-**N3 generalizes Ruling 1's text, and that is an owner call (§14 item 1).** The ruling says
+**N3 generalizes Ruling 1's text, and the ratification ACCEPTED the broadening (§14 item 1,
+in the owner's words "ACCEPTED, broadened", with root-only severity explicitly rejected).**
+The ruling says
 "every declared root that transitively depends on P". Read literally, only roots contribute,
 so a unit supporting an intermediate theorem declared `critical` inherits nothing from it
 unless a root above is also critical. That silently drops the intermediate theorem's own
@@ -630,11 +710,31 @@ by the second. The owner's "the gate decides obligation existence" is implemente
 first — because the obligation's **existence** is a static fact about class and severity,
 even though its **discharge** is dynamic.
 
-**This reshapes where §28.8 has jurisdiction, and that is an owner call (§14 item 2).** It
-does not relax §28.8's sentence; it moves a class of defects out from under it, on the
-argument that a malformed declaration was never the "honest unresolved gap" §28.8 was
-protecting. That argument may be right and it is still a decision about §28.8, taken on its
-own merits, rather than a side-effect of the adequacy rule needing somewhere to live.
+**The jurisdiction is RATIFIED, and it is a split of authority rather than a relaxation of
+§28.8 (§14 item 2).** ADR-MCPRE-059 remains authoritative for **root completeness** and for
+its existing report-only ordinary-development mode versus binding closure/release mode.
+ADR-068 owns **evidence adequacy**. The owner's mapping, which is the operative text:
+
+```text
+malformed class/schema/evidence declaration
+    -> ordinary gate FAIL
+
+honest unmet assurance obligation
+    -> INCOMPLETE
+    -> never ESTABLISHED
+    -> tracked/ratcheted where grandfathering is required
+
+incomplete declared root
+    -> visible in ordinary review
+    -> binding failure in §28.8 closure/release mode
+```
+
+**Do not rewrite §28.8 into an everyday global completeness gate.** The temptation is real
+and it is the failure mode §28.8 was written against: once `root_completeness` can see an
+adequacy verdict, making it merge-fatal everywhere looks like rigour and is actually the
+gate that punishes recording an obligation. What became merge-fatal is exactly one thing —
+a declaration that is malformed — and a declaration is malformed when it cannot be
+reconciled with the record it sits in, never because the work behind it is unfinished.
 
 **Where the severity walk lives.** Not in `_manifest.py`. Registry adequacy needs
 `effective_severity`, which needs a graph closure, and burying a graph walk in the loader
@@ -664,6 +764,32 @@ three states `unreviewed` / `reviewed-action-required` / `reviewed-exception`, a
 on both reviewed states, no return to `unreviewed`, and a registry that may only shrink. A
 new over-bar obligation fails immediately. A stale row whose obligation is now discharged
 fails until removed.
+
+**The ratification narrowed what that registry may hold, and the narrowing is the point.**
+`config/assurance-obligation-debt.toml` is accepted **only as a migration ratchet for
+pre-existing unmet ADR-068 assurance obligations** — the residue 0E measures against a tree
+that predates the rule. It is explicitly **not** an evidence class, not an exception, not a
+waiver, and not a substitute for a falsifier, a proof, a structural witness or a
+measurement. Four consequences, each mechanical:
+
+- **An entry remains INCOMPLETE.** A row never subtracts from the obligation and never adds
+  to the assurance; it records that a known obligation is open and bounds the population.
+- **A new or materially changed proposition may not create a new debt entry.** The registry
+  is closed to anything whose obligation did not exist at the baseline. A unit that gains an
+  obligation by being added, reclassified, or raised in severity discharges it or fails; the
+  migration ratchet is not a route new work may take.
+- **The lifecycle is one-way.** A row closes and never reopens, in the same sense
+  `module-size-debt.toml` never returns to `unreviewed`.
+- **Each row names its exact owning proposition and effective obligation.** Not a file, not a
+  campaign — the proposition the obligation belongs to and the obligation itself, or the
+  registry cannot say what closing the row would mean.
+
+**And it does not duplicate `assumptions.toml`.** `assumed`, `external-boundary` and
+`review-obligation` remain typed premise records there (§7). A premise says *why this chain
+terminates without MCP-RE establishing the proposition*; a debt row says *MCP-RE owes this
+establishment and has not yet produced it*. Recording one as the other is how a permanent
+premise and a temporary backlog become indistinguishable — which is the exact defect §4.2
+exists to fix, reintroduced one layer over.
 
 **No row in either registry is ever evidence.** Neither counts as an attestation, as FRESH,
 or as ESTABLISHED. Both are visible unresolved assurance debt, which is the only thing N2
@@ -713,19 +839,35 @@ It exempted the 42 unreachable units, and Ruling 1 exists precisely to stop that
 preserves severity for propositions not yet reachable from a declared root, which the Phase-0
 census has shown is currently a material set."*
 
-**Decision S5 — no fourth root verdict.** `COMPLETE` / `INCOMPLETE` / `UNDECLARED` are
-verdicts about the **declared root set**; a unit no root reaches is not a fact about that
-set, and adding `NOT-LOAD-BEARING` to that enum would make the root verdict answer a question
-it is not about. Instead `load_bearing` is a **derived** per-unit boolean in the generated
-views — never stored — reported beside each unit's `direct_consequence_severity`, so the
-honest and alarming reading is printable:
+**Decision S5 — no fourth root verdict; root reachability is a derived GRAPH FACT.**
+`COMPLETE` / `INCOMPLETE` / `UNDECLARED` are verdicts about the **declared root set**; a unit
+no root reaches is not a fact about that set, and adding a fourth member to that enum would
+make the root verdict answer a question it is not about. Instead reachability is **derived**
+per unit in the generated views — never stored — and reported beside each unit's
+`direct_consequence_severity`, so the honest and alarming reading is printable:
 
 > *N units of direct consequence severity HIGH or CRITICAL support no declared system
 > promise.*
 
-That count is evidence about the **root set's** coverage, not about the units, which is what
-revision 1's §14 question 5 was really asking. Declaring more roots may well be the right
-response to it, and §14 item 4 records why that is not this record's call.
+**The ratification named the fact and bounded what it may be read to mean**, and the name it
+gave is the one this record now uses. Revision 2 called the derived boolean `load_bearing`;
+that word carries an importance claim the ratification explicitly forbids, so the derived
+fact is `root_reachable` and the reported token is:
+
+> **`NOT-ROOT-REACHABLE`** — *no currently declared system root transitively depends on this
+> proposition.* **Nothing else.** Not low importance, not complete assurance, and not
+> permission to omit evidence.
+
+Three things follow, and S4 is the first of them stated in the ratification's own terms:
+
+- **A non-reachable unit still carries the full obligation of its class** at
+  `effective_severity = direct_consequence_severity`. Medium, High and Critical obligations
+  arise from the direct label alone; reachability changes only the *inherited* term.
+- **Do NOT manufacture roots to absorb the measured 42.** A root declared in order to make a
+  reachability report look better is a product claim invented for a tooling reason, and it
+  would put the assurance TCB in the business of writing promises.
+- **Phase 1 may discover that some of the 42 reveal a genuinely missing root**, and then the
+  root set changes — for that semantic reason and no other.
 
 ---
 
@@ -740,10 +882,10 @@ evidence establishes at the moment it is read.
 | phase | what it does | done when |
 |---|---|---|
 | **0A** | **schema event 1 and its activation.** `evidence_class` and `direct_consequence_severity` required on `[[unit]]`, `direct_consequence_severity` required on `[[theorem]]`, both populated; the loader enforces presence, vocabulary and class↔evidence agreement; the eight declaration repairs; the census moved to `tools/verification/` | the loader refuses a disagreeing unit; every self-test probe red on removal; the estate is re-attested at the new fingerprints |
-| **0B** | the two new lanes: `structural://` (both probe kinds, §12.1) and `measured://`, each wired as a named required check. **No registry change** | a structural probe that *compiles* fails the lane; a measurement whose apparatus cannot move fails the lane |
+| **0B** | the two new lanes: `structural://` (both probe kinds, §12.1) and `measured://`, each wired as a named required check and each **fail-closed on zero execution**. **No registry change** | a structural probe that *compiles* fails the lane; a measurement whose apparatus cannot move fails the lane; a lane that selected nothing reports neither PASS nor a silent skip |
 | **0C** | **schema event 2 and its activation.** `premise_class` on `[[assumption]]`, plus `boundary_owner` and `discharging_event` (C1–C5); all 47 typed | zero untyped records; release view lists open review obligations; a satisfied observable event fails until its record is removed |
 | **0D** | reclassify to `structural` and `measured` where that is now declarable, sealed-owner challenge set first (§12); the composite splits; every transition through the class-transition ratchet | every unit's class matches the evidence it declares; the count of `tested`-without-falsifier is measured, not estimated |
-| **0E** | `tools/verification/_assurance_graph.py`; `inherited_severity` and `effective_severity` derived (N3); N1's severity-gated obligation ACTIVATES; `config/assurance-obligation-debt.toml` baselined; non-load-bearing units reported (S5) | `review` prints a typed, severity-annotated root tree; the debt registry holds the real residue and may only shrink |
+| **0E** | `tools/verification/_assurance_graph.py`; `inherited_severity` and `effective_severity` derived (N3); N1's severity-gated obligation ACTIVATES; `config/assurance-obligation-debt.toml` baselined as a migration ratchet; `NOT-ROOT-REACHABLE` units reported (S5) | `review` prints a typed, severity-annotated root tree; the debt registry holds the real residue and may only shrink |
 | **1** | examine the 12 roots **consequence-first**, decomposing downward — THM-0094, THM-0095, THM-0091 first, since each is one undecomposed unit | each root has a typed decomposition; each leaf has a named class and a stated obligation |
 | **2** | discharge: formalize, structurally redesign, falsify, or measure, per leaf, as Phase 1 assigns | no Medium-or-higher root reads INCOMPLETE without a recorded, owner-approved obligation |
 
@@ -790,9 +932,10 @@ that is what establishes it in the registry at that moment.
 to name one. That is not the registry being corrected from a lie; it is the registry
 following the evidence, which is the only order A3 permits. **This is also why 0B must
 precede 0D and why no unit may declare `structural://` or `measured://` before its lane
-exists** — `_evidence.required_lanes` binds every declared scheme and `decide_issuance`
-refuses a claimed lane with no record, so an early declaration takes the unit out of the
-graph.
+exists and fail-closes on zero execution** — `_evidence.required_lanes` binds every declared
+scheme and `decide_issuance` refuses a claimed lane with no record, so an early declaration
+takes the unit out of the graph, and a lane that could be green having run nothing would put
+it back in on the strength of no measurement at all.
 
 Every 0D transition goes through the class-transition ratchet (§9.4) with a reclassification
 record, which is what stops "following the evidence" from becoming a route to a silent
@@ -918,6 +1061,28 @@ refusal**, and treating it as one is §9.2's failure class for the fourth time. 
 right about what a separate-crate case proves and wrong about what replaces it; 0B's landing
 carries the correction.
 
+**What the ratification added, and it is the substance of the accepted correction.** A
+sealed owner is structurally established **only for the exact invariant for which its
+construction boundary is closed** — not for the value, not for the type, and not for every
+property the owner's documentation attributes to it. Private fields alone are insufficient.
+The structural witness must account for **every producer path relevant to the claimed
+invariant**:
+
+| producer path | why it is on the list |
+|---|---|
+| module-tree visibility | `pub(crate)`, `pub(super)` and a sibling module inside the owner's own module tree all reach a "private" field; §12.1's whole reason for the in-crate probe kind |
+| alternate constructors | a second `new_*`, a `From`, a `Default`, or a builder taking the same arguments unchecked closes nothing, however fallible the first constructor is |
+| generated / deserialization routes | a derived `Deserialize`, a decoder, or any generated impl that fills fields positionally bypasses every checked constructor, and does so in code nobody reads |
+| test-only construction | a `#[cfg(test)]` constructor or a test-gated `pub` field is a producer; it does not run in production, and it does prove the boundary is not closed, since the compiler admits the construction |
+
+A probe that attacks one of these leaves the others unwitnessed, so the claimed invariant and
+the attacked boundary must be **the same boundary**: the probe's hostile construction is
+written against the exact producer path the invariant depends on, and the unit's structural
+claim is worded to the invariant that path actually closes. This is why §12.1's disposition
+splits the composite units rather than relabelling them — `proxy.client_credential_window`'s
+sole-producer proposition is the one a compile-refusal probe can attack, and its
+refuses-an-illegal-pair proposition is not.
+
 The expected refusal is a specific rustc **error code** plus a span on the probe's marker
 line, not merely "does not compile" — the weak form admits a typo, a missing import or a
 broken fixture as evidence, and the toolchain is pinned in
@@ -978,52 +1143,40 @@ heuristic's answer.
   assumed all twelve are Medium-or-above solely to bound the cost.
 - **It does not authorize a falsifier sweep.** N1 creates obligations that Phase 1 assigns
   per leaf. The 42 in §3.1 is a ceiling, not a backlog.
-- **It does not decide whether more roots should be declared.** §10 S5 prices the
-  non-load-bearing estate; §14 item 4 says why pricing is as far as this record goes.
+- **It does not decide whether more roots should be declared**, and the ratification
+  forbids declaring any to absorb the 42. §10 S5 prices the `NOT-ROOT-REACHABLE` estate;
+  Phase 1 changes the root set only for a semantic reason.
 - **It does not reopen ADR-059 §8's single assumption direction** (B2), or §6.3's rule that a
   theorem names no path, symbol, feature, or assumption. Both survive this record intact.
 - **It does not disposition the 626.** That is ADR-MCPRE-069.
 
 ---
 
-## 14. What remains an owner call at ratification
+## 14. The ratification record
 
-Revision 1's five open questions are answered: 1 and 2 by Ruling 3 and Ruling 2, 3 by
-Ruling 1, 4 by §7 C3–C5, 5 by §10 S5. What the grill could not settle, because each changes
-something the owner has already written, is listed here rather than assumed.
+Revision 2 listed six open owner calls. All six are **granted, with exact resolutions**
+(§1.2), and three are granted in a stricter form than this record proposed. This section is
+now the record of what was decided, so a later reader sees the disposition rather than the
+question.
 
-1. **N3 broadens Ruling 1's text from roots to all dependent propositions** (§9). The
-   argument is that the root-only reading drops an intermediate theorem's declared
-   consequence, and that Ruling 1's behaviour is a consequence of the general rule rather
-   than a case excluded by it. It is still a broadening of the ruling as written.
-2. **§9.3 reshapes where §28.8 has jurisdiction.** It does not relax the sentence, but it
-   moves malformed declarations out from under it. Whether a malformed declaration was ever
-   the "honest unresolved gap" §28.8 protects is a decision about §28.8, on its own merits.
-3. **0B carries `measured://` as well as `structural://`**, which amends the phase text as
-   issued. The engineering reason is forced — `required_lanes` binds any declared scheme, so
-   neither may be declared before its runner exists — but the sequence was given as binding.
-4. **§10 S5 accepts and prices a large non-load-bearing estate rather than declaring more
-   roots.** `theorems.toml` records that root membership is declared once, when the ratified
-   root set has resolvable identities, so growing it is not a thing this record may do. But
-   42 units supporting no declared promise is evidence about the root set, and the remedy may
-   genuinely be more roots.
-5. **New protected registry vocabulary.** Owner-given already: `evidence_class` and its four
-   values, the three premise classes, `direct_consequence_severity`, `inherited_severity`,
-   `effective_severity`, the severity vocabulary, `structural://`. Proposed here and
-   therefore the owner's: `measured://`; `measurement_protocol`, `measurement_scope`,
-   `measurement_artifact`, `measurement_control`; `premise_class`; `discharging_event` with
-   kinds `registry-fact | tree-fact | owner-event`; the cause token
-   `STALE_REVIEW_OBLIGATION`; the derived view field `load_bearing`; the
-   `structural://<unit-id>/<probe-name>` URI space and probe-kind names
-   `crate-boundary-compile-fail` / `in-crate-source-injection`; the reclassification record
-   keys `from_evidence_class` / `to_evidence_class`; and
-   `config/assurance-obligation-debt.toml` — which is a **third** debt registry beside the
-   two CLAUDE.md names, and therefore an enforcement-architecture decision rather than a
-   field name.
-6. **`docs/dev/sealed-owners.md`'s witness claim is corrected by §12.1**, in this record's
-   scope rather than in a separate one. The correction says a document the owner wrote is
-   wrong about a security argument, which is worth seeing explicitly rather than finding in a
-   diff.
+| # | revision 2's open call | ratified as |
+|---|---|---|
+| 1 | N3 broadens Ruling 1 from roots to all dependent propositions | **ACCEPTED, broadened.** Root-only severity is rejected outright; `direct` declared, `inherited` and `effective` derived and never independently editable (§9 N3) |
+| 2 | §9.3 reshapes where §28.8 has jurisdiction | **SPLIT, not relaxed.** 059 keeps root completeness and its two modes; 068 owns evidence adequacy; malformed → ordinary FAIL, honest unmet → INCOMPLETE, incomplete declared root → binding in closure/release mode. §28.8 is not to become an everyday global completeness gate (§9.3) |
+| 3 | 0B carries `measured://` as well as `structural://` | **ACCEPTED, with a second obligation.** Both lanes, distinct obligations, neither satisfying the other's — and each must **fail-close on zero execution** before any unit may declare its scheme (§4.1, §4.3, §11) |
+| 4 | §10 S5 prices a large non-load-bearing estate rather than declaring roots | **ACCEPTED, and narrowed.** Do not manufacture roots. Reachability is a derived graph fact named `NOT-ROOT-REACHABLE`, meaning only that no declared root depends on the proposition; the obligation from the direct label stands regardless. Phase 1 changes the root set only for semantic reasons (§10 S5) |
+| 5 | new protected registry vocabulary, incl. a **third** debt registry | **ACCEPTED, with the registry narrowed to a migration ratchet.** Pre-existing unmet obligations only; never an evidence class, exception, waiver or substitute; entries stay INCOMPLETE; one-way closure; exact owning proposition and effective obligation; no duplication of `assumptions.toml` (§9.4) |
+| 6 | `docs/dev/sealed-owners.md`'s witness claim is corrected by §12.1 | **ACCEPTED, and sharpened.** Structural establishment is per-invariant, private fields alone are insufficient, and the witness must account for every relevant producer path — module-tree visibility, alternate constructors, generated/deserialization routes, test-only construction — with the probe attacking that exact boundary (§12.1) |
+
+**ADR-MCPRE-069 is ratified as subordinate to this record** for the Gap-D authority, rather
+than folded back in. The two keep a two-way cross-reference and no duplicated normative
+authority: nothing in 069 restates a rule this record owns, and §8 here names 069 rather than
+describing its remedy.
+
+**What ratification does NOT move.** §13 is unchanged by it. No product claim, no theorem
+statement, no root-set membership, and no unit's class changes because this record was
+accepted; 0D still measures, and the severities populated in 0A remain a proposal the owner
+may overturn per proposition.
 
 ---
 
@@ -1065,7 +1218,7 @@ declares the severities. No work should be scheduled against it.
 - Whether a unit's honest class is `tested` at all. Every count above treats the 127 units as
   tested-by-default because that is the only class the registry can express today. §12 shows
   two that are not, found by looking at two.
-- Whether the 12 declared roots are the right 12. The 42 non-load-bearing units are evidence
+- Whether the 12 declared roots are the right 12. The 42 `NOT-ROOT-REACHABLE` units are evidence
   about the root set as much as about the units.
 - Anything about `compile_fail` doctests in the §8 figure, which counts only `#[test]` and
   `#[tokio::test]`. ADR-069 widens it.
