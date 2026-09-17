@@ -1,0 +1,338 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""ADR-MCPRE-068 §2/§3.1 census — measured, not asserted.
+
+Reads the three policy registries and reports:
+
+  * the registry shape (units, theorems, roots, assumptions, edge sorts, evidence schemes);
+  * the falsifier reach of every declared root, BOTH ways — direct support and transitive
+    closure — because the two are different propositions and quoting one as the other is
+    the exact defect ADR-068 exists to fix;
+  * the N1 obligated set under the stated assumption that every declared root is
+    Medium-or-higher, which is a COST ESTIMATE and not a worklist;
+  * the units reachable from no declared root, which carry no N1 obligation and are not
+    load-bearing for any system promise.
+
+It is a REPORT, not a gate: it states no verdict and fails nothing. The numbers it
+prints are the ones ADR-MCPRE-068's handoff quotes, and they are computed here rather
+than transcribed so that a reader can disagree with a measurement instead of with a
+sentence.
+
+Run from the repository root:
+    python3 scripts/evidence_class_census.py            # the human report
+    python3 scripts/evidence_class_census.py --json     # the same facts, machine-readable
+    python3 scripts/evidence_class_census.py --selftest
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+import tomllib
+from pathlib import Path
+
+POLICY = Path("verification/policy")
+
+
+def load() -> tuple[dict, dict, list[str], list[dict]]:
+    units = {u["id"]: u for u in tomllib.loads((POLICY / "verification.toml").read_text())["unit"]}
+    tdoc = tomllib.loads((POLICY / "theorems.toml").read_text())
+    thms = {t["id"]: t for t in tdoc["theorem"]}
+    asms = tomllib.loads((POLICY / "assumptions.toml").read_text()).get("assumption", [])
+    return units, thms, list(tdoc["root_theorems"]), asms
+
+
+def scheme(entry: str) -> str:
+    return entry.split("://", 1)[0]
+
+
+def has(units: dict, uid: str, sch: str) -> bool:
+    return any(str(e).startswith(sch) for e in units.get(uid, {}).get("evidence", []))
+
+
+def probe_coverage(units: dict) -> dict:
+    """Which units a registered probe ATTACKS, against which units CLAIM a falsifier.
+
+    Two different facts, and they disagree. A probe names its unit; a unit names its
+    evidence. A unit a probe attacks whose own evidence list declares no `mutation://`
+    has a falsifier running against it that its claim does not rest on — which is the
+    same defect as a claim resting on a falsifier that does not run, seen from the other
+    side.
+    """
+    doc = tomllib.loads((POLICY / "mutation-probes.toml").read_text())
+    probes = doc.get("probe", [])
+    attacked = {str(p["unit"]) for p in probes if p.get("unit")}
+    claiming = {uid for uid in units if has(units, uid, "mutation://")}
+    return {
+        "probes": len(probes),
+        "units_attacked": len(attacked),
+        "units_claiming": len(claiming),
+        "attacked_but_not_claiming": sorted(attacked & set(units) - claiming),
+        "claiming_but_not_attacked": sorted(claiming - attacked),
+    }
+
+
+def unregistered_controls(units: dict) -> dict:
+    """Test functions inside a declared unit path that NO unit's battery names.
+
+    The test lane selects `tested_symbols` with `--exact`, so a control outside every
+    list runs, passes, and is evidence for nothing: delete it and no unit's declared
+    evidence changes. Counted conservatively — a function is unregistered only when it
+    appears in no unit at all, never merely because the unit whose path holds it does not
+    name it.
+    """
+    registered = {t.split("::")[-1] for u in units.values() for t in u["tested_symbols"]}
+    pattern = re.compile(r"#\[(?:tokio::)?test\]\s*(?:async\s+)?fn\s+([a-z0-9_]+)")
+    total = 0
+    unregistered = 0
+    affected: set[str] = set()
+    for uid, unit in units.items():
+        for rel in unit["paths"]:
+            path = Path(rel)
+            if path.suffix != ".rs" or not path.exists():
+                continue
+            for match in pattern.finditer(path.read_text()):
+                total += 1
+                if match.group(1) not in registered:
+                    unregistered += 1
+                    affected.add(uid)
+    return {
+        "test_fns_in_unit_paths": total,
+        "unregistered": unregistered,
+        "units_affected": len(affected),
+    }
+
+
+def theorem_closure(thms: dict, root: str) -> set[str]:
+    seen: set[str] = set()
+    stack = [root]
+    while stack:
+        t = stack.pop()
+        if t in seen or t not in thms:
+            continue
+        seen.add(t)
+        stack.extend(thms[t].get("depends_on", []))
+    return seen
+
+
+def units_of(thms: dict, tids: set[str]) -> set[str]:
+    out: set[str] = set()
+    for t in tids:
+        for s in thms[t].get("supported_by", []):
+            out.add(s.split("://", 1)[1])
+    return out
+
+
+def _selftest() -> int:
+    """Poison pills: each measurement must MOVE when the fact under it moves.
+
+    A census that prints the same number whatever the registry says is a sentence with a
+    number in it. So every case below perturbs a synthetic registry and requires the
+    figure to change in the stated direction — which is also what stops the report from
+    silently becoming a constant if a key is renamed underneath it.
+    """
+    ok = True
+
+    def check(name: str, got, want) -> None:
+        nonlocal ok
+        if got != want:
+            ok = False
+            print(f"  FAIL {name}: got {got!r}, want {want!r}")
+        else:
+            print(f"  ok   {name}")
+
+    units = {
+        "u.proved": {"id": "u.proved", "class": "V1", "paths": [], "tested_symbols": [],
+                     "evidence": ["verus://u/p", "test://u/p"]},
+        "u.tested": {"id": "u.tested", "class": "V0", "paths": [], "tested_symbols": [],
+                     "evidence": ["test://u/t"]},
+        "u.falsified": {"id": "u.falsified", "class": "V0", "paths": [], "tested_symbols": [],
+                        "evidence": ["test://u/f", "mutation://u/f"]},
+    }
+    thms = {
+        "THM-A": {"id": "THM-A", "supported_by": ["unit://u.tested"], "depends_on": ["THM-B"]},
+        "THM-B": {"id": "THM-B", "supported_by": ["unit://u.falsified"], "depends_on": []},
+        "THM-C": {"id": "THM-C", "supported_by": ["unit://u.proved"], "depends_on": []},
+    }
+
+    check("a unit with a mutation URI has a falsifier", has(units, "u.falsified", "mutation://"), True)
+    check("a unit without one does not", has(units, "u.tested", "mutation://"), False)
+    check("a formal URI is not a falsifier", has(units, "u.proved", "mutation://"), False)
+
+    # DIRECT vs CLOSURE: THM-A's own support has no falsifier; its closure reaches one.
+    # Reporting either as the other is the defect this census exists to avoid.
+    direct = [s.split("://", 1)[1] for s in thms["THM-A"]["supported_by"]]
+    check("a root's DIRECT support can lack a falsifier", any(has(units, u, "mutation://") for u in direct), False)
+    closure = units_of(thms, theorem_closure(thms, "THM-A"))
+    check("while its CLOSURE reaches one", any(has(units, u, "mutation://") for u in closure), True)
+    check("the two measures are different sets", direct != sorted(closure), True)
+
+    # Reachability: a unit no root depends on carries no inherited obligation.
+    reach = units_of(thms, theorem_closure(thms, "THM-A"))
+    check("an unreached unit is outside the closure", "u.proved" in reach, False)
+
+    # The closure walk must terminate on a cycle rather than recurse forever.
+    cyclic = {
+        "THM-X": {"supported_by": [], "depends_on": ["THM-Y"]},
+        "THM-Y": {"supported_by": [], "depends_on": ["THM-X"]},
+    }
+    check("a dependency cycle terminates", theorem_closure(cyclic, "THM-X"), {"THM-X", "THM-Y"})
+
+    # And the real registry must still parse, or the report is about nothing.
+    real_units, real_thms, real_roots, real_asms = load()
+    check("the real registry loads", len(real_units) > 0 and len(real_thms) > 0, True)
+    check("roots are declared, not inferred", len(real_roots) > 0, True)
+    check("assumptions load", len(real_asms) > 0, True)
+
+    print("evidence-class census: selftest " + ("passed" if ok else "FAILED"))
+    return 0 if ok else 1
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--selftest", action="store_true")
+    args = ap.parse_args()
+
+    if args.selftest:
+        return _selftest()
+
+    units, thms, roots, asms = load()
+
+    schemes: dict[str, int] = {}
+    classes: dict[str, int] = {}
+    for u in units.values():
+        classes[u["class"]] = classes.get(u["class"], 0) + 1
+        for e in u.get("evidence", []):
+            schemes[scheme(str(e))] = schemes.get(scheme(str(e)), 0) + 1
+
+    edge_sorts: dict[str, int] = {}
+    for t in thms.values():
+        for s in t.get("supported_by", []):
+            edge_sorts[scheme(s)] = edge_sorts.get(scheme(s), 0) + 1
+
+    per_root = []
+    for r in roots:
+        direct = [s.split("://", 1)[1] for s in thms[r].get("supported_by", [])]
+        cl = theorem_closure(thms, r)
+        cu = units_of(thms, cl)
+        per_root.append(
+            {
+                "root": r,
+                "title": thms[r]["title"],
+                "direct_units": len(direct),
+                "direct_falsifier": any(has(units, u, "mutation://") for u in direct),
+                "closure_theorems": len(cl),
+                "closure_units": len(cu),
+                "closure_falsifier": any(has(units, u, "mutation://") for u in cu),
+                "closure_formal": any(
+                    has(units, u, "verus://") or has(units, u, "lean://") for u in cu
+                ),
+            }
+        )
+
+    reachable = set()
+    reachable_thms = set()
+    for r in roots:
+        cl = theorem_closure(thms, r)
+        reachable_thms |= cl
+        reachable |= units_of(thms, cl)
+
+    with_f = sorted(u for u in reachable if has(units, u, "mutation://"))
+    without_f = sorted(u for u in reachable if not has(units, u, "mutation://"))
+    formal_without_f = [u for u in without_f if has(units, u, "verus://") or has(units, u, "lean://")]
+    obligated = [u for u in without_f if u not in formal_without_f]
+    unreachable = sorted(set(units) - reachable)
+
+    report = {
+        "shape": {
+            "units": len(units),
+            "theorems": len(thms),
+            "roots": len(roots),
+            "assumptions": len(asms),
+            "supported_by_edges": sum(edge_sorts.values()),
+            "supported_by_sorts": edge_sorts,
+            "evidence_schemes": schemes,
+            "unit_classes": classes,
+            "units_without_mutation": sum(
+                1 for u in units if not has(units, u, "mutation://")
+            ),
+            "units_without_evidence": sum(1 for u in units.values() if not u.get("evidence")),
+        },
+        "roots": per_root,
+        "roots_no_direct_falsifier": [r["root"] for r in per_root if not r["direct_falsifier"]],
+        "roots_no_closure_falsifier": [r["root"] for r in per_root if not r["closure_falsifier"]],
+        "n1_estimate": {
+            "assumption": "every declared root is Medium-or-higher",
+            "reachable_units": len(reachable),
+            "reachable_theorems": len(reachable_thms),
+            "with_falsifier": len(with_f),
+            "without_falsifier": len(without_f),
+            "without_falsifier_but_formal": formal_without_f,
+            "obligated": obligated,
+            "obligated_count": len(obligated),
+        },
+        "probe_coverage": probe_coverage(units),
+        "unregistered_controls": unregistered_controls(units),
+        "not_load_bearing": {
+            "count": len(unreachable),
+            "without_falsifier": sum(
+                1 for u in unreachable if not has(units, u, "mutation://")
+            ),
+            "units": unreachable,
+        },
+    }
+
+    if args.json:
+        json.dump(report, sys.stdout, indent=2)
+        print()
+        return 0
+
+    s = report["shape"]
+    print("ADR-MCPRE-068 census")
+    print("=" * 72)
+    print(f"units {s['units']}  theorems {s['theorems']}  roots {s['roots']}  assumptions {s['assumptions']}")
+    print(f"supported_by edges {s['supported_by_edges']} sorts={s['supported_by_sorts']}")
+    print(f"evidence schemes {s['evidence_schemes']}")
+    print(f"unit classes {s['unit_classes']}")
+    print(f"units without mutation:// {s['units_without_mutation']}")
+    print()
+    print(f"{'root':<10} {'direct':>6} {'dfals':>6} {'cthms':>6} {'cunits':>6} {'cfals':>6} {'cform':>6}  title")
+    for r in per_root:
+        print(
+            f"{r['root']:<10} {r['direct_units']:>6} {str(r['direct_falsifier']):>6} "
+            f"{r['closure_theorems']:>6} {r['closure_units']:>6} {str(r['closure_falsifier']):>6} "
+            f"{str(r['closure_formal']):>6}  {r['title'][:52]}"
+        )
+    print()
+    print(f"roots with no DIRECT falsifier:  {len(report['roots_no_direct_falsifier'])}  {report['roots_no_direct_falsifier']}")
+    print(f"roots with no CLOSURE falsifier: {len(report['roots_no_closure_falsifier'])}  {report['roots_no_closure_falsifier']}")
+    print()
+    n = report["n1_estimate"]
+    print(f"N1 estimate ({n['assumption']}):")
+    print(f"  reachable units          {n['reachable_units']}")
+    print(f"  with falsifier           {n['with_falsifier']}")
+    print(f"  without falsifier        {n['without_falsifier']}")
+    print(f"  ...already formal        {len(n['without_falsifier_but_formal'])} {n['without_falsifier_but_formal']}")
+    print(f"  OBLIGATED (ceiling)      {n['obligated_count']}")
+    print()
+    pc = report["probe_coverage"]
+    print(f"probes registered: {pc['probes']}")
+    print(f"  units a probe attacks      {pc['units_attacked']}")
+    print(f"  units claiming a falsifier {pc['units_claiming']}")
+    print(f"  attacked but not claiming  {len(pc['attacked_but_not_claiming'])}  {pc['attacked_but_not_claiming']}")
+    print(f"  claiming but not attacked  {len(pc['claiming_but_not_attacked'])}")
+    print()
+    uc = report["unregistered_controls"]
+    print(f"test fns inside declared unit paths: {uc['test_fns_in_unit_paths']}")
+    print(f"  in no unit's battery: {uc['unregistered']} (across {uc['units_affected']} unit(s))")
+    print()
+    nb = report["not_load_bearing"]
+    print(f"not reachable from any root: {nb['count']} units ({nb['without_falsifier']} of them without a falsifier)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
