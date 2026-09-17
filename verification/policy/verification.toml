@@ -10,7 +10,7 @@
 # FAILURE, not a silently ignored field: a typo in a security declaration must not read
 # as an absent declaration.
 
-schema_version = 1
+schema_version = 2
 policy_revision = "adr-mcpre-059-r1"
 
 # ADR-MCPRE-059 §2. Missing input, unparsable metadata, an unrecognized edge, or a cache
@@ -64,6 +64,8 @@ exported_contracts = []
 # is "a match a reviewer reads, not a proof a prover checked" — exactly the situation where
 # a passing battery says nothing about whether the relation is load-bearing. The probes
 # weaken the relation and the mutator; the controls that notice are the claim's evidence.
+evidence_class = "tested"
+direct_consequence_severity = "medium"
 evidence = [
   "test://proxy/runtime_lifecycle/transition_relation",
   "mutation://proxy/runtime_lifecycle/transition_relation",
@@ -89,6 +91,8 @@ class = "V0"
 description = "The MCP-RE half of the keyid derivation: the RFC 7638 canonical JWK form, which embeds its operand verbatim between fixed affixes, and the base64url-no-pad encoding of the digest — neither of which introduces a collision of its own."
 paths = ["mcp-re-http-profile/src/keyid.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = [
   "test://http_profile/keyid/rfc8037_a3_known_answer",
   "test://http_profile/keyid/derivation_introduces_no_collisions",
@@ -119,6 +123,8 @@ description = "The keyid as a SELECTOR: that two distinct enrolled verification 
 # assumption about the digest, and saying so is most of its value.
 paths = ["mcp-re-http-profile/src/keyid.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = ["test://http_profile/keyid/derivation_introduces_no_collisions"]
 # The MCP-RE half is measured here too, because the composition rests on it. What is NOT
 # measurable is the other half, and nothing here pretends otherwise: no test can establish
@@ -229,6 +235,8 @@ test_package = "mcp-re-http-profile"
 # makes `attest` REFUSE a unit with no mutation PASS at its exact fingerprint. The probe
 # entries and the lane binary are themselves fingerprint inputs (encoding v5), so a
 # shrunken suite cannot satisfy a standing attestation either.
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = [
   "test://http_profile/verifier/result_propositions",
   "mutation://http_profile/verifier/result_propositions",
@@ -382,6 +390,8 @@ paths = [
   "mcp-re-http-profile/src/verified_response/unbound.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = ["test://http_profile/verifier/assurance_type_separation"]
 # The symbols follow the ITEM, so the module split moved them: the response products live in
 # `verified_response::bound` now. Their reported names would have changed silently and the
@@ -457,6 +467,8 @@ paths = [
   "mcp-re-proxy/src/tls_plane/client_revocation_posture.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = ["test://proxy/tls/client_revocation_currency"]
 # The first two are the ones that carry the claim rather than a symptom of it. A latch that
 # a later reload could clear would satisfy every "the fault is recorded" assertion and still
@@ -509,6 +521,8 @@ paths = [
   "mcp-re-proxy/src/tls_plane/crl_reload_worker/mod.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = [
   "test://proxy/tls/listener_security_state",
   "mutation://proxy/tls/listener_security_state",
@@ -608,6 +622,8 @@ paths = [
   "mcp-re-core/src/verus_proofs.rs",
 ]
 exported_contracts = ["contract://core/time/parse_rfc3339_utc"]
+evidence_class = "proved"
+direct_consequence_severity = "medium"
 evidence = [
   "test://core/time/grammar_and_truncation",
   "verus://core/time/parse_rfc3339_utc_total_and_bounded",
@@ -664,6 +680,8 @@ paths = [
 # it. `check_params` moved to `verify/floor/params.rs`; renaming the URI to follow would
 # change what those entries refer to in exchange for cosmetic agreement with a file path.
 exported_contracts = ["contract://http_profile/verify/check_params"]
+evidence_class = "proved"
+direct_consequence_severity = "high"
 evidence = [
   "test://http_profile/verify/freshness_window_vectors",
   "verus://http_profile/verify/check_params_admission_implies_fresh",
@@ -718,6 +736,8 @@ paths = [
   "mcp-re-http-profile/src/admission_policy.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = ["test://http_profile/admission/assertion_authenticity"]
 # The battery is negative on purpose. Each member removes one way an assertion could be
 # believed without being this enforcement point's to believe: another issuer's key, another
@@ -749,6 +769,8 @@ paths = [
   "mcp-re-http-profile/src/verus_std_specs.rs",
 ]
 exported_contracts = ["contract://http_profile/admission/check_admission"]
+evidence_class = "proved"
+direct_consequence_severity = "critical"
 evidence = [
   "test://http_profile/admission/currency_and_degraded_battery",
   "mutation://http_profile/admission/subject_currency",
@@ -830,6 +852,8 @@ paths = [
 # in-memory source does, which is the point of there being one owner. What belongs to the
 # Redis adapter alone is a store round trip, measured in its own feature-bearing lane.
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = [
   "test://http_profile/admission_state/provenance_and_currentness_battery",
   "mutation://http_profile/admission_state/authentication_and_freshness",
@@ -914,8 +938,11 @@ paths = [
   "mcp-re-proxy/src/redis_admission_source/refusal_report.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = [
   "test://proxy/admission_state/source_classification_battery",
+  "mutation://proxy/admission_state/source_classification_battery",
 ]
 tested_symbols = [
   # One owner makes the decision, and it is the configured authority's key it makes it
@@ -998,6 +1025,8 @@ paths = [
   "mcp-re-http-profile/src/verus_std_specs.rs",
 ]
 exported_contracts = ["contract://http_profile/artifact/verify_artifact_binding"]
+evidence_class = "proved"
+direct_consequence_severity = "high"
 evidence = [
   "test://http_profile/artifact/typed_binding_battery",
   "verus://http_profile/artifact/typed_verifier_admits_only_its_own_type",
@@ -1088,6 +1117,8 @@ paths = [
   "mcp-re-http-profile/src/pdp_decision/binding.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = [
   "test://http_profile/artifact/verification_boundary",
   "mutation://http_profile/artifact/verification_boundary",
@@ -1152,6 +1183,8 @@ paths = [
   "mcp-re-http-profile/src/verus_std_specs.rs",
 ]
 exported_contracts = ["contract://http_profile/dispatch/prepare_http_dispatch"]
+evidence_class = "proved"
+direct_consequence_severity = "critical"
 evidence = [
   "test://http_profile/dispatch/continuation_binding_battery",
   "verus://http_profile/dispatch/continuation_present_implies_verified",
@@ -1205,6 +1238,8 @@ paths = [
   "mcp-re-http-profile/src/verus_std_specs.rs",
 ]
 exported_contracts = ["contract://http_profile/block/continuation_verify"]
+evidence_class = "proved"
+direct_consequence_severity = "critical"
 evidence = [
   "test://http_profile/block/continuation_role_battery",
   "verus://http_profile/block/continuation_handles_match_in_role",
@@ -1258,6 +1293,8 @@ exported_contracts = []
 # The second class exists for the second half of the claim. "Refused by the legality
 # boundary" is not established by a battery that calls the refusal predicate directly: that
 # battery stays green with the boundary's clause deleted. M62 is what asks.
+evidence_class = "tested"
+direct_consequence_severity = "medium"
 evidence = [
   "test://proxy/online_ocsp_reachability/legality",
   "mutation://proxy/online_ocsp_reachability/legality",
@@ -1297,6 +1334,8 @@ class = "V0"
 description = "The generic peer-identity value invariant: every inhabitant is non-empty after trimming, length-bounded, and free of control characters, whatever evidence produced it."
 paths = ["mcp-re-proxy/src/communication_assurance/peer_identity_value.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
 evidence = [
   "test://proxy/peer_identity_value/invariant",
   "mutation://proxy/peer_identity_value/invariant",
@@ -1336,6 +1375,8 @@ paths = [
   "mcp-re-proxy/src/communication_assurance/certificate_chain_evidence.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = [
   "test://proxy/certificate_identity/no_fallback_interpretation",
   "mutation://proxy/certificate_identity/no_fallback_interpretation",
@@ -1418,6 +1459,8 @@ class = "V0"
 description = "The canonical RFC 8410 Ed25519 public key: what is accepted, why a refusal happened, and the encoding every provider writes."
 paths = ["mcp-re-proxy/src/communication_assurance/ed25519_public_key.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = [
   "test://proxy/ed25519_public_key/canonical_encoding",
   "mutation://proxy/ed25519_public_key/canonical_encoding",
@@ -1453,6 +1496,8 @@ exported_contracts = []
 # composition it measures is the one `validated_delegated_resolver` performs. The file is
 # measured, so those controls cannot be rewritten under the same names without moving the
 # fingerprint. It is NOT thereby a claim about the rest of `tls.rs`.
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = [
   "test://proxy/credential_key_correspondence/side_attributed_relation",
   "mutation://proxy/credential_key_correspondence/side_attributed_relation",
@@ -1520,6 +1565,8 @@ paths = [
   "mcp-re-proxy/src/tls.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = [
   "test://proxy/delegated_resolver_materialization/construction_closure",
   "mutation://proxy/delegated_resolver_materialization/construction_closure",
@@ -1565,6 +1612,8 @@ paths = [
   "mcp-re-proxy/src/communication_assurance/channel_associated_credential/rustls_adapter.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = [
   "test://proxy/channel_associated_credential/mechanism_association",
   "mutation://proxy/channel_associated_credential/mechanism_association",
@@ -1618,6 +1667,8 @@ paths = [
   "mcp-re-proxy/src/communication_assurance/channel_associated_identity.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = [
   "test://proxy/channel_associated_identity/credential_provenance",
   "mutation://proxy/channel_associated_identity/credential_provenance",
@@ -1662,6 +1713,8 @@ paths = [
   "mcp-re-proxy/src/communication_assurance/mechanism_verified_credential/rustls_adapter.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
 evidence = [
   "test://proxy/mechanism_verified_credential/establishment_path",
   "mutation://proxy/mechanism_verified_credential/establishment_path",
@@ -1713,6 +1766,8 @@ paths = [
   "mcp-re-proxy/src/communication_assurance/authenticated_relationship_peer.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = [
   "test://proxy/authenticated_relationship_peer/one_credential",
   "mutation://proxy/authenticated_relationship_peer/one_credential",
@@ -1768,6 +1823,8 @@ paths = [
   "mcp-re-proxy/src/communication_assurance/credential_currency/x509_adapter.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = [
   "test://proxy/credential_currency/five_facts",
   "mutation://proxy/credential_currency/five_facts",
@@ -1828,6 +1885,8 @@ paths = [
   "mcp-re-proxy/src/communication_assurance/current_authenticated_peer.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = [
   "test://proxy/current_authenticated_peer/one_relationship",
   "mutation://proxy/current_authenticated_peer/one_relationship",
@@ -1878,6 +1937,8 @@ paths = [
   "mcp-re-proxy/src/communication_assurance/authenticated_channel_peer.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = [
   "test://proxy/request_peer_binding/same_principal",
   "mutation://proxy/request_peer_binding/same_principal",
@@ -1925,6 +1986,8 @@ paths = [
   "mcp-re-proxy/src/config_state/trust_document.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = [
   "test://proxy/trust/revocation_state_witnesses",
   "test://proxy/trust/epoch_source_pairing",
@@ -1983,6 +2046,8 @@ paths = [
   "mcp-re-proxy/src/config_state/credential_currency_bound.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = [
   "test://proxy/tls/connection_credential_window",
   # Three conjuncts a green battery can hold while none is load-bearing: the relation
@@ -2010,6 +2075,8 @@ class = "V0"
 description = "The trust subtree's projection of its own validated state: the classified revocation posture, the document locator, the excluded response issuer, and the shared epoch mechanism it is HANDED. Its reload cadence is derived from the posture rather than stored, so no second reload value exists to disagree with the first."
 paths = ["mcp-re-proxy/src/trust_plan.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
 evidence = [
   "test://proxy/trust/reload_is_a_projection",
   "mutation://proxy/trust/reload_is_a_projection",
@@ -2030,6 +2097,8 @@ class = "V0"
 description = "The composition root's consumption of the validated request: after layer A classifies, the root passes owner projections, and every field it still reads raw is a pinned ordinary parameter whose reason is written down. Measured over ALL owners, not only trust — the inventory the controls check is the whole set of `values.<field>` reads."
 paths = ["mcp-re-proxy/src/app.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = ["test://proxy/trust/composition_reads_only_projections"]
 # The guard is a source-text inventory, so its own self-check is part of the evidence: a
 # rule that cannot detect a new raw read is a rule that passes vacuously. It runs in the
@@ -2050,6 +2119,8 @@ paths = [
   "mcp-re-http-profile/src/pdp_decision/issue.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = [
   "test://http_profile/pdp_decision/authentication_battery",
   "mutation://http_profile/pdp_decision/authentication",
@@ -2088,6 +2159,8 @@ paths = [
   "mcp-re-proxy/src/authorization/verified_action.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = [
   "test://proxy/authorization/pdp_relation_serving_battery",
   "mutation://proxy/authorization/pdp_relation",
@@ -2153,6 +2226,8 @@ paths = [
   "mcp-re-http-profile/src/scitt/prototype/tree.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = [
   "test://http_profile/scitt/offline_receipt_battery",
   "mutation://http_profile/scitt/offline_receipt",
@@ -2200,6 +2275,8 @@ paths = [
   "mcp-re-http-profile/src/chain/reconstruction.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = ["test://http_profile/chain/retained_record_completeness"]
 # `submitted_identity.rs` is deliberately NOT here: `http_profile.submitted_hop_identity`
 # owns what identifies a submission, which is a different proposition from whether a set of
@@ -2259,6 +2336,8 @@ class = "V0"
 description = "What identifies a SUBMISSION: two retained submitted hops that differ in any retained fact are two submissions. The representation is closed — a hop IS its retained request and response, entire — because a curated field list is how an identity comes to omit something, and the omission it already made was `signature-input`, the header naming what was signed."
 paths = ["mcp-re-http-profile/src/chain/submitted_identity.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = ["test://http_profile/submitted_hop_identity/closed_representation"]
 # The battery is entirely negative, and that is the shape the claim needs: an identity is
 # established by what it REFUSES to conflate. Each control alters one retained fact and
@@ -2283,6 +2362,8 @@ paths = [
   "mcp-re-http-profile/src/scitt/commitment/correspondence.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = [
   "test://http_profile/scitt/retained_correspondence_battery",
   "mutation://http_profile/scitt/retained_correspondence",
@@ -2360,6 +2441,8 @@ exported_contracts = []
 # interesting conjuncts here are negative — an illegal advance is LATCHED, a spent approval
 # never reads as unspent, a post-threshold state never reads as retry-safe — and a green
 # battery is not evidence that any of those checks is load-bearing.
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = [
   "test://proxy/exchange_lifecycle/transition_relation",
   "mutation://proxy/exchange_lifecycle/transition_relation",
@@ -2442,6 +2525,8 @@ paths = [
   "mcp-re-proxy/src/exchange_state.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = [
   "test://proxy/exchange/transition_ownership",
   # Three conjuncts a green battery can hold while none is load-bearing: the stale half of
@@ -2482,7 +2567,9 @@ paths = [
   "mcp-re-proxy/src/http_profile_serve/signing_window.rs",
 ]
 exported_contracts = []
-evidence = ["test://proxy/serving/dispatch_commitment_boundary"]
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = ["test://proxy/serving/dispatch_commitment_boundary", "mutation://proxy/serving/dispatch_commitment_boundary"]
 # What each control measures, in the order the boundary is crossed. The last one is the
 # separation this unit does NOT claim: an unconfigured deployment releases a body too, so
 # possession proves the decision was TAKEN, never that a policy permitted.
@@ -2533,6 +2620,8 @@ paths = [
   "mcp-re-proxy/src/http_profile_serve/mod.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
 evidence = ["test://proxy/audit/refusal_emission"]
 # Measured at the ONE boundary rather than reason by reason: a battery enumerating refusal
 # causes would have to learn about the next one, and the failure mode of a stale enumeration
@@ -2568,6 +2657,8 @@ paths = [
   "mcp-re-proxy/src/async_serve/mod.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
 evidence = [
   "test://proxy/refusal/site_totality",
   # Declared WITH its first probe: a `[[probe]]` on a unit claiming no mutation evidence
@@ -2602,6 +2693,8 @@ paths = [
   "mcp-re-proxy/src/refusal/cause.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
 evidence = ["test://proxy/refusal/provenance_battery"]
 # The negative controls carry this unit. `a_policy_denial_has_no_core_verdict_to_be_recorded_under`
 # and `a_core_verdict_never_attributes_a_refusal_to_a_policy` are the two directions of the
@@ -2633,6 +2726,8 @@ class = "V0"
 description = "Pass 2 of the layer-A legality boundary: the relations that join two configuration machines. Every relation reads classified owner states rather than raw request fields, and each illegal combination is refused unconditionally rather than reinterpreted into a weaker posture."
 paths = ["mcp-re-proxy/src/config_state/cross_machine.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = ["test://proxy/config_state/cross_machine_relations"]
 # The last control is the one that keeps this pass from becoming a second opinion: the
 # trust-epoch posture is NOT re-derived here, it is read from the machine that owns it.
@@ -2653,6 +2748,8 @@ paths = [
   "mcp-re-proxy/src/authorization/posture.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = ["test://proxy/authorization/posture_selection"]
 # The two directions of the selection, and the two projections that must not collapse it.
 # `Off` is not `Allow`: an unconfigured deployment claims nothing, and a record that reported
@@ -2694,6 +2791,8 @@ paths = [
   "mcp-re-client-core/src/delegated_trust/revocation.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = ["test://client/trust_manifest/lifecycle_battery"]
 # The negative controls carry this unit. A rolled-back version, a tampered signature, an
 # untrusted signer, a wrong profile and an expired deadline must each fail closed, and the
@@ -2742,7 +2841,9 @@ paths = [
   "mcp-re-client/src/serve/mod.rs",
 ]
 exported_contracts = []
-evidence = ["test://client/local_ingress/admission_policy"]
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = ["test://client/local_ingress/admission_policy", "mutation://client/local_ingress/admission_policy"]
 # The negative controls carry this unit, and the one that matters most is the conflation
 # itself: an exposed listener must STILL refuse a rebound name. A battery that only proved
 # loopback refuses one would have passed before #753 and after it alike.
@@ -2781,6 +2882,8 @@ description = "The joint the shipped client proxy owns and the low-level verifie
 # result would put the relation in the unit that cannot see it.
 paths = ["mcp-re-client-proxy/src/proxy.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = ["test://client/proxy/request_correspondence"]
 # Measured through `include_str!`, which makes the scan a COMPILE-TIME dependency on the
 # file it is about: a module that moves or is renamed stops the battery compiling rather
@@ -2804,6 +2907,8 @@ paths = [
   "mcp-re-client-core/src/delegated_evidence.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = ["test://client/response/acceptance_battery"]
 # Three separations, each with its negative control: the pin against the ROOT issuer rather
 # than the rotating delegated kid; revocation by every identifier the manifest can name; and
@@ -2837,6 +2942,8 @@ class = "V0"
 description = "What the credential must satisfy, sealed: the clock skew is clamped to the profile bound at construction, so no inhabitant carries an unbounded tolerance and both freshness windows read the same bounded number."
 paths = ["mcp-re-client-core/src/delegation_policy.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
 evidence = ["test://client/delegation_policy/skew_seal"]
 # The seal is the claim. A configured skew beyond the bound is not CONSTRUCTIBLE, rather
 # than rejected later by whichever window happens to check — which is what would let the two
@@ -2856,6 +2963,8 @@ paths = [
   "mcp-re-client-core/src/result_classification.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = ["test://client/execution_contract/disposition_battery"]
 # The one distinction the whole module exists for is the second control: silence is not a
 # did-not-run verdict, and reading it as one is how a side effect gets repeated.
@@ -2894,6 +3003,8 @@ class = "V0"
 description = "What a verified reply entitles a plain MCP client to conclude: a genuine signature says the server said this, not that the call finished. An input-required reply withholding a usable requestState is malformed rather than terminal, an unrecognized resultType is never resolved to a class, and a verified rejection receipt is an answer rather than a success."
 paths = ["mcp-re-client-proxy/src/verified_outcome.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = ["test://client/verified_outcome/what_a_verified_reply_entitles"]
 # The two refusals are the point, and the third control is what stops "fails closed" from
 # being satisfied by refusing every non-terminal leg: a well-formed continuation must still
@@ -2944,6 +3055,8 @@ paths = [
   "sdk/python/python/mcp_re_sdk/mtls.py",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = ["test://sdk_python/exchange_path/root_battery"]
 # MEASURED ON EVERY SUPPORTED INTERPRETER, not on whichever one the runner offers. The
 # battery is selected by node id and run once per version in `toolchains.lock.toml`
@@ -3060,6 +3173,8 @@ paths = [
   "sdk/typescript/src/index.ts",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = ["test://sdk_typescript/exchange_path/root_battery"]
 # The same propositions as the Python member, over an independent implementation. The two
 # lists are deliberately not a translation of each other: each names the controls its own
@@ -3179,6 +3294,8 @@ paths = [
   "mcp-re-proxy/src/delegated_wiring.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = [
   "test://proxy/signing/delegated_credential_lifecycle",
   # Declared so the probe below is not decoration. A `[[probe]]` naming a unit that does not
@@ -3285,6 +3402,8 @@ paths = ["mcp-re-http-profile/src/envelope/request.rs",
   "mcp-re-http-profile/src/envelope/response.rs",
   "mcp-re-http-profile/src/envelope/mod.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = ["test://http_profile/envelope/request_and_correlation"]
 # The vocabulary half of THM-0083. The battery is largely negative: which bodies are NOT
 # messages, which bodies this profile cannot carry unchanged, and the two ways a correlation
@@ -3314,6 +3433,8 @@ paths = [
   "mcp-re-proxy/src/http_profile_serve/mod.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = ["test://proxy/serving/outstanding_id_provenance"]
 # `outstanding_id` is a published API with legitimate callers on the client side and in the
 # response validator, so it cannot be deleted to make a second read unavailable. What is
@@ -3338,6 +3459,8 @@ paths = [
   "mcp-re-proxy/src/tls.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = ["test://proxy/serving/identity_provenance"]
 # The third member is the load-bearing one: the mechanism that forbids pairing an acceptance
 # from one relationship with an identity from another credential is the ABSENCE of a
@@ -3383,6 +3506,8 @@ paths = [
   "mcp-re-proxy/src/async_serve/request.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
 evidence = [
   "test://proxy/serving/bounded_drain",
   # Two conjuncts a green battery can hold while neither is load-bearing: the drain's wait
@@ -3420,6 +3545,8 @@ paths = [
   "mcp-re-proxy/src/signing_plane/mod.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = ["test://proxy/signing/credential_provenance"]
 # The fourth member is not decoration. Three source-text rules go vacuously true the moment
 # a matcher stops matching, and a green run over a moved composition root would then mean
@@ -3445,6 +3572,8 @@ paths = [
   "mcp-re-proxy/src/capability_materialization/key_source/mod.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = ["test://proxy/materialization/signing_role_separation"]
 # Both directions, and the two arms that are NOT collapses. A refusal control alone would
 # pass on an authority that refused everything, and a materialization control alone would
@@ -3474,6 +3603,8 @@ paths = [
   "mcp-re-proxy/src/http_profile_serve/receipt/audit_event.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = ["test://proxy/signing/response_window_and_receipt"]
 # The window controls are the seal: `expires` is private and no constructor takes one, so
 # the four cases below are the whole derivation rather than four call sites that remembered
@@ -3496,6 +3627,8 @@ class = "V0"
 description = "Whether the signing private key is readable by this process: the ADR-MCPRE-067 exposure fact, classified from the custody selection and projected as a semantic answer that names no mechanism."
 paths = ["mcp-re-proxy/src/config_state/custody.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = ["test://proxy/config_state/custody_exposure"]
 # The first two controls are the claim; the third is what makes it ADR-067-shaped. A
 # consumer asks *may the key be read here*, never *is this AWS* — so a mechanism that does
@@ -3523,6 +3656,8 @@ class = "V0"
 description = "What an emitted response signature binds: the `;req` components resolved against the request being answered, and the response evidence block's request-evidence handle over that same request."
 paths = ["mcp-re-http-profile/src/sign.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = ["test://http_profile/sign/response_binding_roundtrip"]
 # ROUND-TRIP controls, deliberately: they sign and then verify, so they measure the EMISSION
 # side rather than restating what the verifier establishes. The third and fourth are the
@@ -3558,6 +3693,8 @@ paths = [
   "mcp-re-proxy/src/http_profile_serve/request_admission.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = [
   "test://proxy/trust/serving_seam_wiring",
   # THM-0099's two seam conjuncts — the subject comes from the directory, an unbound kid
@@ -3594,6 +3731,8 @@ paths = [
   "mcp-re-http-profile/src/scitt/service.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = ["test://http_profile/scitt/service_pin"]
 # The refusals are the claim: a malformed document never becomes a pin, and an illegal one
 # is refused at deserialization rather than carried into a resolver that would then answer
@@ -3629,7 +3768,9 @@ paths = [
   "mcp-re-proxy/src/authorization/audit/fields.rs",
 ]
 exported_contracts = []
-evidence = ["test://proxy/audit/record_coordinates"]
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = ["test://proxy/audit/record_coordinates", "mutation://proxy/audit/record_coordinates"]
 # `before_policy_imports_no_vocabulary` is the ADR-MCPRE-066 poison pill: the arm reached
 # before any policy ran must not borrow a policy token, because a reader holding one cannot
 # tell whether a policy was ever consulted.
@@ -3699,6 +3840,8 @@ paths = [
   "mcp-re-proxy/src/audit_record/text.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
 evidence = ["test://proxy/audit/text_rendering"]
 # The anti-collision control is the one that carries the claim rather than a symptom of it:
 # an escape that mapped LF and the two characters `\n` to one image would pass every
@@ -3740,6 +3883,8 @@ paths = [
   "mcp-re-proxy/src/transparency/auditor/registration/capsule_anchor/wire.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
 evidence = ["test://proxy/transparency/capsule_anchor_registration_certainty"]
 # `wire.rs` carries no controls of its own — its vocabulary is exercised through the two
 # modules above, whose fixtures drive real request and response shapes. It is in `paths`
@@ -3769,6 +3914,8 @@ paths = [
   "mcp-re-proxy/src/transparency/auditor/registration/scrapi/wire.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
 evidence = ["test://proxy/transparency/scrapi_registration_certainty"]
 # The capsule-anchor leaf is deliberately NOT here. Two registration mechanisms with
 # different wire vocabularies and different fault algebras are two units: a union would
@@ -3822,8 +3969,11 @@ paths = [
   "mcp-re-proxy/src/outbound_fetch/credential_egress.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = [
   "test://proxy/outbound_destination/provenance_guard",
+  "mutation://proxy/outbound_destination/provenance_guard",
 ]
 # THE BATTERY IS MEASURED WHERE THE CLAIM LIVES. Half of what this unit owns is compiled
 # only behind the features that link an HTTP client: `binding.rs`, `credential_egress.rs`
@@ -3904,6 +4054,8 @@ paths = [
   "mcp-re-proxy/src/kms_endpoint_policy/endpoint.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = [
   "test://proxy/kms_endpoint_authority/spelling_is_interpretation",
 ]
@@ -3988,6 +4140,8 @@ paths = [
   "mcp-re-proxy/src/http_profile_serve/reply_assembly/accepted.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
 evidence = [
   "test://proxy/retention_commitment/two_stages_and_their_dispositions",
   # Declared so the probe below is not decoration: a `[[probe]]` naming a unit that does not
@@ -4093,6 +4247,8 @@ paths = [
   "mcp-re-proxy/src/replay_plane/materialized.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = [
   "test://proxy/replay_materialization/selected_tier_is_established",
 ]
@@ -4144,7 +4300,9 @@ paths = [
   "mcp-re-proxy/src/startup_posture/seam.rs",
 ]
 exported_contracts = []
-evidence = ["test://proxy/continuation_materialization/selected_capability_is_installed"]
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = ["test://proxy/continuation_materialization/selected_capability_is_installed", "mutation://proxy/continuation_materialization/selected_capability_is_installed"]
 # THE DEFAULT LANE'S HALF, and why the shared arm is a separate unit rather than a
 # `test_features` on this one. `mrtr_continuation_store` has TWO bodies selected by `cfg`,
 # and each can only have the other's defect: the `not(redis_replay)` arm can announce OFF
@@ -4210,6 +4368,8 @@ class = "V0"
 description = "The shared arm of the same seam: in a build that CARRIES the backend, a selected continuation store that cannot be established refuses startup rather than announcing OFF."
 paths = ["mcp-re-proxy/src/serving_capabilities/continuation.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = ["test://proxy/continuation_materialization/shared_arm_refuses_an_unestablishable_store"]
 # ONE control, deliberately. Everything the two arms share — OFF installs nothing, the OFF
 # line promises no fallback, the input is the owner's projection — is already measured by
@@ -4232,6 +4392,8 @@ class = "V0"
 description = "The composition root's half of the same fact: the store it attaches is the one the seam established and is attached only when the seam established one, the seam is declared exactly once, and no production path installs a node-local continuation tier."
 paths = ["mcp-re-proxy/src/app.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = ["test://proxy/continuation_installation/root_installs_what_was_established"]
 # A SOURCE INVENTORY, and the reason is a lane fact rather than a preference: no hermetic
 # configuration reaches the posture phase, so a test that starts the proxy measures nothing
@@ -4267,6 +4429,8 @@ paths = [
   "mcp-re-proxy/src/admission_enforcer/facet.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = [
   "test://proxy/admission_currency_gate/degraded_window_and_declaration",
   # Declared WITH its first probes: a `[[probe]]` on a unit claiming no mutation evidence
@@ -4320,6 +4484,8 @@ class = "V0"
 description = "What admission configuration this deployment RECOGNISES: every legal form is classified and accepted, an enforcing state carries every value it cannot verify without, and a configuration that names no authority is refused rather than served as OFF."
 paths = ["mcp-re-proxy/src/config_state/admission.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = ["test://proxy/admission_configuration_state/recognised_forms"]
 # Separate from the gate above because these are different facts: this decides what a
 # deployment may BE, the gate decides what a running one DOES. One unit over both would need
@@ -4347,6 +4513,8 @@ paths = [
   "mcp-re-proxy/src/authorization/decision_evidence.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = ["test://proxy/authorization_capability/installed_decision"]
 tested_symbols = [
   "lib#authorization::capability::tests::a_deployment_installing_nothing_says_so_without_reading_any_trust_material",
@@ -4386,6 +4554,8 @@ class = "V0"
 description = "What authorization configuration this deployment RECOGNISES: a configured profile carries its scope and its staleness bound together, a scope or bound with no authority installed is refused rather than ignored, and installing nothing is OFF rather than unrecognised."
 paths = ["mcp-re-proxy/src/config_state/authorization.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = ["test://proxy/authorization_configuration_state/recognised_forms"]
 tested_symbols = [
   "lib#config_state::authorization::tests::a_configured_profile_carries_its_scope_and_its_staleness_bound_together",
@@ -4413,6 +4583,8 @@ exported_contracts = []
 # — and a green battery is not evidence that the refusal is load-bearing. The compile-time
 # half (private fields, `of` the sole producer) no runtime weakening can move; the runtime
 # half is `of`'s two refusals, and those are exactly what a probe can delete.
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = [
   "test://http_profile/delegated_signing_custody/credential_lifecycle",
   "mutation://http_profile/delegated_signing_custody/key_window_relation",
@@ -4471,6 +4643,8 @@ exported_contracts = []
 # calls, and a green battery does not say any one of them is load-bearing — delete a length
 # prefix and every positive control still passes. The probes delete them one at a time; the
 # control that goes red is the evidence.
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = [
   "test://proxy/continuation_correlation_store/actor_scoped_correlation",
   "mutation://proxy/continuation_correlation_store/actor_scoped_correlation",
@@ -4545,6 +4719,8 @@ paths = [
   "mcp-re-proxy/src/http_profile_serve/continuation/open_leg.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = [
   "test://proxy/continuation_key/carried_product_operand",
   "mutation://proxy/continuation_key/carried_product_operand",
@@ -4587,6 +4763,8 @@ exported_contracts = []
 # path, so "the battery is green" and "the battery would notice one of them being deleted"
 # are different facts, and only the second is what a fail-closed claim needs. The probes
 # delete them; the controls that go red are the claim's evidence.
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = [
   "test://proxy/replay_admission/fail_closed_order",
   "mutation://proxy/replay_admission/fail_closed_order",
@@ -4645,7 +4823,9 @@ paths = [
   "mcp-re-proxy/src/http_profile_serve/continuation/retirement.rs",
 ]
 exported_contracts = []
-evidence = ["test://proxy/continuation_leg/no_unbound_answer"]
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = ["test://proxy/continuation_leg/no_unbound_answer", "mutation://proxy/continuation_leg/no_unbound_answer"]
 # Which capability the deployment HOLDS is `proxy.continuation_materialization`'s, and how a
 # running store separates actors is `proxy.continuation_correlation_store`'s. Everything that
 # protects a signed continuation from being answered unbound is here, at the leg — including
@@ -4687,6 +4867,8 @@ paths = [
   "mcp-re-proxy/src/deployment_request/inner_backend_display.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = ["test://proxy/deployment_request/operator_facing_redaction"]
 # `capability_materialization::key_source::pin` asserts the same property at the CONSUMER and
 # is deliberately NOT named: its source is not in this unit's `paths`, so citing it would be
@@ -4716,6 +4898,8 @@ paths = [
   "mcp-re-proxy/src/audit_sink/writer.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
 evidence = [
   "test://proxy/audit/delivery_integrity",
   # Declared WITH its first probe. A `[[probe]]` on a unit claiming no mutation evidence
@@ -4789,6 +4973,8 @@ paths = [
   "mcp-re-http-profile/src/bodyless/delegated_credential.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = ["test://http_profile/bodyless/acknowledgement_component_sets"]
 # Two DEDICATED batteries, both already in the tree and both driving the production
 # verifier over real signed messages. They are listed whole rather than filtered to the
@@ -4837,6 +5023,8 @@ class = "V0"
 description = "The ADR-MCPRE-050 replay five-tuple and its injective pre-serialization onto the core cache's three slots: equality of the composite slots holds exactly when the full five-tuple is equal, and an admitted key is fresh once."
 paths = ["mcp-re-http-profile/src/replay.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = ["test://http_profile/replay/key_injectivity"]
 # Injectivity here is a REAL claim about this code, not a primitive assumption: the separator
 # is a code point that cannot appear in a profile id, an RFC 9421 label, an escaped actor id
@@ -4877,6 +5065,8 @@ paths = [
   "mcp-re-conformance/tests/vectors/scitt/retained/manifest.json",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
 evidence = ["test://conformance/scitt/retained_corpus"]
 # The first control is the one #740 exists for. The other three are what keep it from being
 # a happy-path demonstration: a tampered byte and a truncation must stop corresponding, and
@@ -4956,6 +5146,8 @@ exported_contracts = []
 # that shape before this slice: the poller body that makes "within one poll interval" true
 # had no test at all, and the source and the cache were each tested against a fake of the
 # other. The probes name the deletions; the controls below are what turn red.
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = [
   "test://proxy/trust_plane/local_currency",
   "mutation://proxy/trust_plane/local_currency",
@@ -5049,6 +5241,8 @@ paths = [
   "mcp-re-proxy/src/trust_epoch.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = [
   "test://proxy/trust_epoch_source/one_read_one_event",
   "mutation://proxy/trust_epoch_source/one_read_one_event",
@@ -5117,6 +5311,8 @@ class = "V0"
 description = "What a byte string must be to be a trust document, and what an accepted document enrols each key AS: one structural parse (exactly the members signer/key_id/public_key and optionally slots, no member twice, no unknown member or slot name, every key decodable, every key_id enrolled once across the document) that yields a whole document or a refusal naming the first broken rule; then three projections of the parsed entries — the resolver over every written coordinate, the request-signer map over entries with slots absent or listing request, and the authorization-issuer map over entries listing that slot — each excluding the deployment's own response_kid. Claims nothing about the path, the bytes' provenance, when a change is observed, or which slot the serving seam consults first."
 paths = ["mcp-re-proxy/src/trust_document.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = [
   "test://proxy/trust_document/one_parse_slot_projections",
   # Five rules a green battery can hold while none is load-bearing: key_id uniqueness, the
@@ -5226,6 +5422,8 @@ paths = [
   "mcp-re-proxy/src/async_replay/retention_ledger.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
 evidence = [
   "test://proxy/replay/async_retention_account",
   # Three conjuncts a green battery held while none was load-bearing: which identity the
@@ -5296,6 +5494,8 @@ paths = [
   "mcp-re-proxy/src/async_redis_store.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = [
   "test://proxy/replay/redis_adapter",
   # Two conjuncts a green battery held while neither was load-bearing: that an UNREADABLE
@@ -5335,6 +5535,8 @@ paths = [
   "mcp-re-proxy/src/async_etcd_store.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = [
   "test://proxy/replay/etcd_adapter",
   # Two conjuncts a green battery held while neither was load-bearing: that a failed revoke
@@ -5400,6 +5602,8 @@ paths = [
   "mcp-re-proxy/src/kms_keysource/protocol_operands.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = [
   "test://proxy/kms/ed25519_seam",
   # Two conjuncts a green battery held while neither was load-bearing: that the 64-byte
@@ -5445,6 +5649,8 @@ paths = [
   "mcp-re-transport/src/client.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = [
   "test://client/transport/server_identity",
   # The empty-bundle refusal is a deletable line and the only conjunct here a probe can
@@ -5473,6 +5679,8 @@ paths = [
   "mcp-re-transport/src/exchange.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = [
   "test://client/transport/message_hygiene",
   # Two conjuncts a green battery held while neither was load-bearing: that a CR/LF in a
@@ -5528,6 +5736,8 @@ paths = [
   "mcp-re-policy/src/lib.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
 evidence = ["test://policy/authorization_taxonomy/frozen_tokens"]
 tested_symbols = [
   "lib#error::tests::every_variant_renders_its_exact_wire_token",
@@ -5550,6 +5760,8 @@ paths = [
   "mcp-re-client-core/src/core_projection.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
 evidence = ["test://client/binding_spec/refusal_projection"]
 tested_symbols = [
   "lib#binding_spec::refusal::tests::the_narrowing_reports_the_type_as_unsupported_in_this_form",
@@ -5579,6 +5791,8 @@ paths = [
   "mcp-re-test-paths/src/source_trees.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
 evidence = ["test://conformance/audit_vocabulary/verdict_scope"]
 # The battery is the guard; the scanner is a path this unit's fingerprint must cover, because
 # a change to what counts as a brace changes what the walk reads.
@@ -5616,6 +5830,8 @@ paths = [
   "mcp-re-host/Cargo.toml",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = ["test://host/request_freshness_inputs"]
 # Three groups. The entropy controls are about the production source; the gating controls are
 # about the fixtures NOT being on the production surface, which is a two-part boundary — the
@@ -5656,6 +5872,8 @@ paths = [
   "mcp-re-proxy/src/transparency/covered_set.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = ["test://proxy/transparency/retained_record_content"]
 # The covered-set controls are the three ways a sender can make `signature-input` LOOK like
 # it names more than it does — a signature PARAMETER, a decoy dictionary MEMBER, and a
@@ -5694,6 +5912,8 @@ class = "V0"
 description = "Turning retained evidence into a portable SCITT record: the statement is issued over a reconstruction, the reconstruction is handed back with it so an INCOMPLETE verdict cannot be discovered by decoding what was just published, and the self-check against the retained bytes runs on every record — including the ones with no verified hop, which are exactly the records an auditor investigates."
 paths = ["mcp-re-proxy/src/transparency/attestation.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = ["test://proxy/transparency/evidence_attestation"]
 # The third member is the one R9-C103/C128 exist for. The self-check used to be SKIPPED for a
 # reconstruction that broke at hop 0, on the reasoning that such a record names no call. That
@@ -5726,6 +5946,8 @@ paths = [
   "mcp-re-proxy/src/remote_signer_call/wire_limits.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
 evidence = ["test://proxy/remote_signer_call/quota_verdict_aws"]
 # The lane this arm is compiled by. Named rather than left to another lane: the module does
 # not exist in the default crate at all, so a plain `cargo test --workspace` compiles it to
@@ -5781,7 +6003,9 @@ paths = [
   "mcp-re-proxy/src/gcp_kms_keysource.rs",
 ]
 exported_contracts = []
-evidence = ["test://proxy/remote_signer/egress_bound"]
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = ["test://proxy/remote_signer/egress_bound", "mutation://proxy/remote_signer/egress_bound"]
 # The equality is the point, not a presence check: a presence check is satisfied by one
 # bounded request in a file that also makes three unbounded ones. And the last member is not
 # decoration — four rules over source text are vacuously true the moment a matcher stops
@@ -5803,6 +6027,8 @@ paths = [
   "mcp-re-proxy/src/remote_signer_call/wire_limits.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
 evidence = ["test://proxy/remote_signer_call/quota_verdict_gcp"]
 test_features = ["gcp_kms_keysource"]
 # ONE control beyond the shared ones, deliberately. Everything the two arms share is measured
@@ -5828,6 +6054,8 @@ class = "V0"
 description = "The AWS KMS Ed25519 response signer: the key spec is read at construction and a non-Ed25519 one fails closed, the advertised public key is parsed from RFC 8410 SPKI, every signature is verified locally before it is returned, and a pre-hashed signature is refused rather than emitted. Two operations only — GetPublicKey and Sign — over a minimal audited SigV4, with no aws-sdk-kms and no tokio."
 paths = ["mcp-re-proxy/src/aws_kms_keysource.rs", "mcp-re-proxy/src/aws_sigv4.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = ["test://proxy/aws_kms_adapter/construction_and_emission"]
 test_features = ["aws_kms_keysource"]
 tested_symbols = [
@@ -5858,6 +6086,8 @@ class = "V0"
 description = "The GCP Cloud KMS Ed25519 response signer: the key version's algorithm is read at construction and anything but EC_SIGN_ED25519 fails closed, the advertised public key is parsed from an RFC 8410 PEM, every signature is verified locally before it is returned, and a pre-hashed signature is refused. A destroyed key version fails closed at construction; a disabled one stops new signing without being mistaken for verifier revocation."
 paths = ["mcp-re-proxy/src/gcp_kms_keysource.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = ["test://proxy/gcp_kms_adapter/construction_and_emission"]
 test_features = ["gcp_kms_keysource"]
 tested_symbols = [
@@ -5900,6 +6130,8 @@ paths = [
   "mcp-re-proxy/src/pkcs11_keysource/token.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = ["test://proxy/pkcs11_adapter/token_custody_and_sessions"]
 test_features = ["pkcs11_keysource"]
 tested_symbols = [
@@ -5925,6 +6157,8 @@ class = "V0"
 description = "Acquiring AWS credentials by web-identity AssumeRole: an expiry that cannot be read is already-expired rather than unlimited, a stated expiry is never extended, a far-future one is truncated to the real session ceiling, concurrent callers perform one exchange between them, and a failed exchange is not repeated by every waiter."
 paths = ["mcp-re-proxy/src/aws_sts.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = ["test://proxy/aws_sts/credential_lifetime"]
 test_features = ["aws_kms_keysource"]
 tested_symbols = [
@@ -5973,6 +6207,8 @@ class = "V0"
 description = "The replay seam: an injected cache keyed by the verified (signer, audience, nonce) triple — the principal is what a retained entry is CHARGED to and is deliberately not part of the key — consulted only after the signature verifies, returning a DECISION on success and an operational ERROR on failure — never an allow. Every failure the reference cache owns is a value rather than a panic, and every implementation self-declares a durability class that defaults, fail-closed, to the single-process one."
 paths = ["mcp-re-core/src/replay.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = ["test://core/replay_seam/decision_and_outage"]
 # The key's shape is the first three: a nonce is fresh again under a different signer or a
 # different AUDIENCE, which is what makes the triple a triple rather than a nonce. There is no
@@ -6005,6 +6241,8 @@ class = "V0"
 description = "The trust-resolver seam: (signer, key_id) to a verification key, with an unknown or revoked binding refused as an actor-binding failure and an operational failure refused as an outage — two outcomes that must not be read as each other. The composite key is injective across pairs containing the delimiter."
 paths = ["mcp-re-core/src/resolver.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
 evidence = ["test://core/trust_resolver_seam/binding_and_outage"]
 # The injectivity control is the one that is not about the mapping's happy path: without it,
 # a signer whose name contains the delimiter could resolve under another signer's key id.
@@ -6024,6 +6262,8 @@ class = "V0"
 description = "The content-address grammar: a `sha256:` prefixed, base64url-no-pad SHA-256 over exact bytes, parsed back only from that exact shape — a missing prefix, a wrong length or a bad encoding is refused rather than interpreted."
 paths = ["mcp-re-core/src/hash.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = ["test://core/content_address/grammar"]
 tested_symbols = [
   "lib#hash::tests::hash_id_has_prefix_and_no_padding",
@@ -6046,6 +6286,8 @@ class = "V0"
 description = "The deployable client's trust-anchor refresh against a durable rollback floor: a failed refresh keeps the last good anchors rather than withdrawing trust, and an EXPIRED manifest with no newer document accepted publishes an EMPTY set instead — so a client fails closed loudly rather than outliving its trust quietly."
 paths = ["mcp-re-client/src/anchors/mod.rs", "mcp-re-client/src/anchors/refresher.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = ["test://client/anchor_refresh/last_good_and_expiry"]
 # The first three are the FLOOR: a published manifest raises it, a restart still refuses a
 # rolled-back one, and the ephemeral floor forgets — which is the control that keeps the
@@ -6085,6 +6327,8 @@ class = "V0"
 description = "The deployable client's serving lifetime: the anchor refresher is started unconditionally before the local listener is served and held for as long as it serves, because it is the only place anchors are withdrawn once the manifest in force has passed its own expires_at and nothing on the request path consults that expiry."
 paths = ["mcp-re-client/src/startup.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = ["test://client/serving_lifetime/refresher_started_and_held"]
 # One control, and it observes the EFFECT rather than the call: the anchors in force become
 # the empty set while `serve_until_shutdown` runs. The question is asked at the load-time
@@ -6104,6 +6348,8 @@ class = "V0"
 description = "A durable rollback floor that is monotone by construction rather than by comparison: a directory of one marker per accepted version, whose maximum only grows. An operator-declared bootstrap minimum survives deleting the whole directory, and a declared ceiling FAIL-STOPS on a fast-forwarded floor rather than clamping it."
 paths = ["mcp-re-client-proxy/src/manifest_floor.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = ["test://client/manifest_floor/monotone_by_construction"]
 # Three groups, and each is a defence in a different direction.
 #
@@ -6157,6 +6403,8 @@ paths = [
   "mcp-re-core/src/audit/half.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
 evidence = ["test://core/audit_vocabulary/frozen_reasons"]
 # The in-crate controls state the type property. The conformance guard is what makes it a
 # property of the TREE rather than of this file: it reads both sources from disk and fails on
@@ -6200,6 +6448,8 @@ paths = [
   "mcp-re-client/src/serve/close.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
 evidence = ["test://client/local_serving_pipeline/admitted_request"]
 # The panicking-worker control is the one an ordinary battery does not reach: a slot that a
 # panic leaks is a ceiling that ratchets down to zero over a process's life, which is a local
@@ -6238,6 +6488,8 @@ class = "V0"
 description = "What a client deployment may declare: an unknown field fails rather than defaulting, a binding on a header the client does not send is refused, a DPoP binding digests what the verifier digests and only on a bearer `authorization`, the clock-skew bound matches the profile's, a disabled or unbounded reload cadence is refused, route ids are unique, the org-key pin set is non-empty and the rollback floor must be named."
 paths = ["mcp-re-client/src/config/mod.rs"]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = ["test://client/deployment_config/declared_document"]
 # The binding controls are the sharp ones. A binding over a header the client never sends
 # commits the request to a digest of nothing; a DPoP binding that digests the value verbatim
@@ -6279,6 +6531,8 @@ paths = [
   "mcp-re-client-core/src/request_signing_inputs.rs",
 ]
 exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
 evidence = ["test://client/request_construction/signed_request_shape"]
 # The two local refusals are the load-bearing pair: an unbindable request refused HERE never
 # reaches a verifier, so a deployment learns at the call site rather than from a remote
@@ -6326,6 +6580,8 @@ paths = [
   "mcp-re-core/src/time/format.rs",
   "mcp-re-core/src/time/mod.rs",
 ]
+evidence_class = "proved"
+direct_consequence_severity = "medium"
 evidence = [
   "lean://core/time/civil_from_days_total",
   "test://core/time/civil_from_days_extremes",

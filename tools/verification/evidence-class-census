@@ -18,10 +18,13 @@ prints are the ones ADR-MCPRE-068's handoff quotes, and they are computed here r
 than transcribed so that a reader can disagree with a measurement instead of with a
 sentence.
 
-Run from the repository root:
-    python3 scripts/evidence_class_census.py            # the human report
-    python3 scripts/evidence_class_census.py --json     # the same facts, machine-readable
-    python3 scripts/evidence_class_census.py --selftest
+Runnable from anywhere — the policy directory is resolved from this file, not from the
+working directory, because a census that measures a different tree depending on where it
+was started is not a measurement:
+
+    tools/verification/evidence-class-census            # the human report
+    tools/verification/evidence-class-census --json     # the same facts, machine-readable
+    tools/verification/evidence-class-census --selftest
 """
 
 from __future__ import annotations
@@ -33,7 +36,10 @@ import sys
 import tomllib
 from pathlib import Path
 
-POLICY = Path("verification/policy")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _evidence_class import SEVERITIES  # noqa: E402
+from _manifest import POLICY_DIR as POLICY  # noqa: E402
 
 
 def load() -> tuple[dict, dict, list[str], list[dict]]:
@@ -42,6 +48,21 @@ def load() -> tuple[dict, dict, list[str], list[dict]]:
     thms = {t["id"]: t for t in tdoc["theorem"]}
     asms = tomllib.loads((POLICY / "assumptions.toml").read_text()).get("assumption", [])
     return units, thms, list(tdoc["root_theorems"]), asms
+
+
+def _tally(entries, key: str) -> dict:
+    """How many records carry each value of `key`, in the vocabulary's own order.
+
+    Ordered by `SEVERITIES` where the key is a severity, so the reader sees a scale rather
+    than whatever order a dict happened to build. A value outside the vocabulary sorts
+    last and is still SHOWN — the census reports what is there, and a gate elsewhere is
+    what refuses it.
+    """
+    counts: dict[str, int] = {}
+    for entry in entries:
+        counts[str(entry.get(key))] = counts.get(str(entry.get(key)), 0) + 1
+    order = {name: rank for rank, name in enumerate(SEVERITIES)}
+    return dict(sorted(counts.items(), key=lambda kv: (order.get(kv[0], len(order)), kv[0])))
 
 
 def scheme(entry: str) -> str:
@@ -256,6 +277,12 @@ def main() -> int:
             "supported_by_sorts": edge_sorts,
             "evidence_schemes": schemes,
             "unit_classes": classes,
+            # ADR-MCPRE-068 Phase 0A landed these two. They are counted here rather than
+            # asserted anywhere, so a migration that declared a vocabulary and left part of
+            # the registry behind it shows up as a shape the reader can see.
+            "evidence_classes": _tally(units.values(), "evidence_class"),
+            "direct_severity": _tally(units.values(), "direct_consequence_severity"),
+            "theorem_direct_severity": _tally(thms.values(), "direct_consequence_severity"),
             "units_without_mutation": sum(
                 1 for u in units if not has(units, u, "mutation://")
             ),
@@ -297,6 +324,9 @@ def main() -> int:
     print(f"supported_by edges {s['supported_by_edges']} sorts={s['supported_by_sorts']}")
     print(f"evidence schemes {s['evidence_schemes']}")
     print(f"unit classes {s['unit_classes']}")
+    print(f"evidence classes {s['evidence_classes']}")
+    print(f"unit direct severity {s['direct_severity']}")
+    print(f"theorem direct severity {s['theorem_direct_severity']}")
     print(f"units without mutation:// {s['units_without_mutation']}")
     print()
     print(f"{'root':<10} {'direct':>6} {'dfals':>6} {'cthms':>6} {'cunits':>6} {'cfals':>6} {'cform':>6}  title")

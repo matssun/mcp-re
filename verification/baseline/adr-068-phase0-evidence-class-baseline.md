@@ -15,11 +15,21 @@ facts, and collapsing them would make this baseline claim the ledger was already
 when the census ran.
 
 **Captured on:** 2026-09-17.
-**Reproduced by:** `python3 scripts/evidence_class_census.py` — every figure below is
+**Reproduced by:** `tools/verification/evidence-class-census` — every figure below is
 computed from `verification/policy/*.toml` at `95a9f168`, not transcribed. The tool's
 `--selftest` runs in `local_gate.sh` stage 1 and as its own required CI step, because a
 census that printed the same number whatever the registry said would be a sentence with a
 number in it.
+
+**Reproduce it at `95a9f168`, not at HEAD.** The tool moved from `scripts/` into
+`tools/verification/` in Phase 0A and its figures have since MOVED, which is the tool
+working: Phase 0A repaired the eight units a registered probe attacked whose own `evidence`
+omitted it, so `units without mutation://` fell from 79 to 71, `units claiming a falsifier`
+rose from 48 to 56, and `attacked but not claiming` fell from 8 to 0. Those eight were never
+obligations — the evidence existed and the registry did not name it — so the repair changes
+what the registry SAYS without changing what the tree DOES. A baseline is a record of one
+tree at one moment; re-running the census at HEAD measures a different one, and §3 below is
+not a live report.
 
 **Assurance TCB, not a product claim.** This baseline sits where issue #739 sits: outside
 the product theorem roots, inside the layer that decides whether the word `ESTABLISHED`

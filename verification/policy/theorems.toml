@@ -24,7 +24,7 @@
 # validation FAILURE, not a silently ignored field. A mistyped security declaration must
 # not read as an absent one.
 
-schema_version = 1
+schema_version = 2
 
 # The system security promises — ADR-MCPRE-059 §28.1, §28.8.
 #
@@ -167,6 +167,7 @@ security_consequence = """
 A request cannot be admitted on freshness evidence that has expired, that is dated ahead
 of the verifier, or that declares a lifetime longer than the policy permits.
 """
+direct_consequence_severity = "high"
 scope = """
 Establishes freshness admission only. It does not establish signature validity, issuer
 authority, admission currency, or replay uniqueness. The window is stated relative to
@@ -196,6 +197,7 @@ security_consequence = """
 A timestamp in an evidence artifact can neither crash the verifier nor denote an instant
 the rest of the system cannot represent.
 """
+direct_consequence_severity = "medium"
 scope = """
 The two halves are established differently and a reviewer must not look for one conjunct.
 The range half is the postcondition. Totality is discharged by the absence of a
@@ -227,6 +229,7 @@ security_consequence = """
 A policy enforcement point cannot act on a verdict that describes a different call than
 the one it checked.
 """
+direct_consequence_severity = "critical"
 scope = """
 Does not establish authenticity, issuer trust, audience validity, assertion freshness, or
 validity of the assertion's [nbf, exp] window; verify_admission_assertion is outside this
@@ -259,6 +262,7 @@ assertion that has not yet expired, and cannot buy one with ANOTHER WORKLOAD'S
 authoritative state either — not even a state at the same generation, still admitted, and
 in every other respect a well-formed answer.
 """
+direct_consequence_severity = "critical"
 scope = """
 Says nothing about the degraded path, and nothing about the assertion's authenticity or
 freshness (ASM-0012). Currency is generation equality against the state the enforcement
@@ -344,6 +348,7 @@ that answers with a record the deployment will not act on is a definitive non-ad
 an outage — so corrupting a `revoked` record is never a cheaper un-revoke than issuing a new
 admission, which is exactly what routing it to the bounded degraded fork would have made it.
 """
+direct_consequence_severity = "critical"
 scope = """
 V0: a test battery with a mutation self-test over the authentication and freshness
 conjuncts. NOT proved, and the batteries passing is not evidence that either check is
@@ -397,6 +402,7 @@ always a choice someone made. And no consumer can reach one BY ACCIDENT: the two
 separate variants, so a second enforcement point built on this public API has a
 compiler-visible degraded arm rather than a boolean it can read past.
 """
+direct_consequence_severity = "high"
 scope = """
 THIS CONTRACT DOES NOT ESTABLISH THE REPLICA-WIDE ELAPSED-OUTAGE P BOUND, and no reading of
 it may supply one. This is a STATELESS relation over one call and one snapshot. Elapsed time
@@ -430,6 +436,7 @@ merely because the workload itself is admissible. Without it the assertion is a 
 token: anyone whose key the enforcement point resolves could copy an admitted peer's
 assertion into their own evidence block, derive the matching binding, and pass the gate.
 """
+direct_consequence_severity = "critical"
 scope = """
 Establishes that the actor named in the assertion equals the presenter argument. It does
 not establish that the presenter argument is itself correctly resolved from the request
@@ -453,6 +460,7 @@ security_consequence = """
 A binding of one artifact type cannot be verified by the verifier for another, so a
 credential form cannot be laundered through the wrong check.
 """
+direct_consequence_severity = "high"
 scope = """
 Does not establish that the digest matches the presented credential: the comparison's
 meaning is a statement about SHA-256 and is outside this proof cone under ASM-0018.
@@ -490,6 +498,7 @@ refused, not skipped, and not reported verified by a branch built for a differen
 caller therefore cannot silently treat an unsupported artifact type as though it had been
 verified, and adding a registry type does not quietly widen what verification concludes.
 """
+direct_consequence_severity = "high"
 scope = """
 Structural over the dispatch relation, and inherits THM-0007's exclusion: it does not
 establish that any digest matched its credential (ASM-0018), nor that the supplied material
@@ -521,6 +530,7 @@ security_consequence = """
 A continuation cannot be carried through dispatch on the strength of being present in the
 request.
 """
+direct_consequence_severity = "critical"
 scope = """
 Establishes that the check ran, not what it guarantees; what a verified continuation binds
 is THM-0010, which this claim consumes. continuation_verified is an informational WITNESS
@@ -546,6 +556,7 @@ security_consequence = """
 A response-role evidence handle cannot be presented in the request role, so the three
 positions of a continuation cannot be permuted.
 """
+direct_consequence_severity = "high"
 scope = """
 Assumes only that the labeled digest IS A FUNCTION of (label, bytes) — ASM-0023. It does
 NOT establish collision-resistant separation between roles; that obligation stays at
@@ -570,6 +581,7 @@ security_consequence = """
 A runtime that never bound a listener cannot be recorded as a clean drained shutdown, so
 the two terminal states remain distinguishable in an audit record.
 """
+direct_consequence_severity = "medium"
 scope = """
 Establishes what the RECORD can say. It does not establish that any request was refused.
 RuntimeState::admits_requests is a DESCRIPTIVE value, not a control: no production path
@@ -608,6 +620,7 @@ A successfully validated MCP-RE deployment cannot advertise or rely upon online 
 enforcement on the production async serving path. An operator who asks for it is refused at
 startup rather than served by a plane that performs no responder round trip.
 """
+direct_consequence_severity = "medium"
 scope = """
 Establishes reachability and legality only. It does NOT establish the correctness of the
 retained RFC 6960 implementation in ocsp.rs, of the blocking-path OCSP checker, of responder
@@ -702,6 +715,7 @@ An attacker cannot obtain a floor-verified request by tampering with the body, b
 presenting a signature under an algorithm the deployment does not accept, by replaying
 expired parameters, or by presenting a key the seam vouches for only in the Response slot.
 """
+direct_consequence_severity = "critical"
 scope = """
 This theorem characterizes values successfully returned by `verify_request_floor`. It does
 not establish that an arbitrary externally constructed `CryptographicFloorVerifiedRequest`
@@ -739,6 +753,7 @@ as a full-profile verified request, and a declared artifact binding cannot be sk
 withholding the evidence it commits to — an unobtainable credential, and an artifact type
 with no supported typed verification branch, both fail closed rather than being ignored.
 """
+direct_consequence_severity = "critical"
 scope = """
 This theorem characterizes values successfully returned by `verify_request`. It does not
 establish that an arbitrary externally constructed `VerifiedMcpRequest` was produced by
@@ -784,6 +799,7 @@ splicing changes the signature base, so no valid signature covers it. A tampered
 breaks the covered digest. Both hold on EITHER authorization path, so a deployment moving
 from trust-store to delegated response signing does not have to re-establish them.
 """
+direct_consequence_severity = "critical"
 scope = """
 It says WHO the signature was accepted under and never WHY that signer is acceptable.
 `AcceptedResponseSigner` deliberately carries no slot resolution and no credential: trust-seam
@@ -824,6 +840,7 @@ A receipt emitted before a request could be parsed can still be attributed to a 
 it cannot smuggle in a request binding: a `;req` component makes the message malformed
 rather than admitting an unresolvable reference.
 """
+direct_consequence_severity = "high"
 scope = """
 As with THM-0021, it says WHO the signature was accepted under and never WHY. Trust-seam
 authorization is THM-0017 and delegation-chain authorization is THM-0020.
@@ -858,6 +875,7 @@ A response cannot be attributed to a server signer this deployment's trust store
 vouch for in the Response slot, and a request-signer key presented on a response is refused
 rather than silently accepted in the wrong role.
 """
+direct_consequence_severity = "critical"
 scope = """
 This theorem characterizes values successfully returned by `verify_bound_response_floor`.
 It does not establish that an arbitrary externally constructed
@@ -893,6 +911,7 @@ security_consequence = """
 A receipt emitted before a request could be parsed can still be attributed to a trusted
 server signer — and only to one the seam vouches for in the Response slot.
 """
+direct_consequence_severity = "high"
 scope = """
 This theorem characterizes values successfully returned by
 `verify_unbound_response_floor`. It does not establish that an arbitrary externally
@@ -929,6 +948,7 @@ request the `;req` binding covers are the same exchange by construction rather t
 agreement between two operands — a semantic check on top of the cryptographic `;req`
 binding, reported as its own refusal.
 """
+direct_consequence_severity = "critical"
 scope = """
 This theorem characterizes values successfully returned by `verify_bound_response`. It does
 not establish that an arbitrary externally constructed `VerifiedMcpResponse` was produced
@@ -981,6 +1001,7 @@ response signed by a different key, because the delegated kid must match on thre
 and the response cannot claim to answer a request other than the one it is being verified
 against.
 """
+direct_consequence_severity = "critical"
 scope = """
 This theorem characterizes values successfully returned by
 `verify_delegated_bound_response`. It does not establish that an arbitrary externally
@@ -1028,6 +1049,7 @@ A preflight or pre-parse rejection receipt cannot be forged by an unsigned or
 directly root-signed response: delegation stays required on the path where there is no
 request to bind to, which is the path with the least other evidence.
 """
+direct_consequence_severity = "high"
 scope = """
 This theorem characterizes values successfully returned by
 `verify_delegated_unbound_response`. It does not establish that an arbitrary externally
@@ -1068,6 +1090,7 @@ can put a log-injection or header-smuggling payload into the value a transport b
 compares or an audit record carries, and neither provenance can drift into a weaker
 definition of well-formed than the other.
 """
+direct_consequence_severity = "medium"
 scope = """
 Well-formedness only. It says nothing about who the identity denotes, whether the identity
 was authenticated, trusted, admitted, or authorized, or which evidence produced it —
@@ -1111,6 +1134,7 @@ unusable: neither a present DNS SAN under a URI-SAN policy nor a valid second UR
 behind a malformed first one is ever read. A deployment that configured URI SANs cannot be
 silently downgraded to a legacy Common Name.
 """
+direct_consequence_severity = "critical"
 scope = """
 It establishes IDENTITY EVIDENCE and nothing above it. It does not establish that the
 certificate chain is trusted, that it is unrevoked, that it is fresh, that the peer is
@@ -1165,6 +1189,7 @@ cannot become one by being re-encoded. Every provider that writes a SubjectPubli
 and every consumer that reads one is held to a single definition of the encoding, so a
 mismatch between two providers' idea of it cannot arise.
 """
+direct_consequence_severity = "critical"
 scope = """
 It is about the ENCODING, not about the key. It does not establish that the thirty-two
 bytes are a valid curve point, that anyone holds the private half, that the key is trusted,
@@ -1205,6 +1230,7 @@ carries the credential's public point in its trailing bytes. The failure is refu
 any server starts rather than surfacing as an opaque handshake failure, and an operator is
 told which half of the deployment to look at.
 """
+direct_consequence_severity = "critical"
 scope = """
 Correspondence only. It does not establish that the credential chain is trusted, valid now,
 or unrevoked; that the signer may serve; that the signer holds the private half of the key
@@ -1265,6 +1291,7 @@ corresponding to that exported public key. A signer that exports one key and lat
 with another is not excluded by it: correspondence relates two public keys at construction
 time, and nothing here constrains what the device does afterwards.
 """
+direct_consequence_severity = "critical"
 scope = """
 It is a claim about CONSTRUCTION, and only about resolvers this crate produces. It does not
 establish that the certificate is trusted, current or unrevoked, that the signer is
@@ -1351,6 +1378,7 @@ were measured to associate byte-identical evidence, so the association propositi
 same one on each; the verification facts they do not share are recovered per request by
 other authorities, which is why this product must not appear to carry them.
 """
+direct_consequence_severity = "high"
 scope = """
 It is a claim about CONSTRUCTION, and only about values this crate produces. It does not
 establish that the credential is trusted, current, unrevoked, or issued by a configured
@@ -1433,6 +1461,7 @@ It also refuses the intermediate. A chain carries certificates that signed the p
 as the peer's own; reading identity from anything but the leaf would let an issuer choose
 the identity the proxy binds to.
 """
+direct_consequence_severity = "critical"
 scope = """
 It is NOT authentication, and the type is deliberately not named as though it were. THM-0028
 establishes no trust, currency, revocation status, or anchor membership for the credential,
@@ -1507,6 +1536,7 @@ Equally, a consumer that does NOT need freshness cannot be misled into thinking 
 acceptance is defective. It rests on an earlier full handshake plus an unchanged anchor set,
 which is a different fact, not a weaker one.
 """
+direct_consequence_severity = "medium"
 scope = """
 It is NOT authentication, and nothing here may be read as trust. It does not establish that
 the credential is currently valid, unrevoked, within a configured lifetime, or issued under a
@@ -1584,6 +1614,7 @@ The establishment path survives the composition. A consumer that needs *the conf
 verifier ran during THIS establishment* can still tell, so authentication inherited across a
 resumption is not silently reported as freshly verified.
 """
+direct_consequence_severity = "critical"
 scope = """
 It does NOT establish currency. Whether the accepted credential is still within its validity
 window, still unrevoked, and within a configured lifetime ceiling is a different authority
@@ -1666,6 +1697,7 @@ another — reporting an expired credential as over-long, or an unreadable issue
 unreadable credential — was invisible to every control that could only assert *something
 refused*.
 """
+direct_consequence_severity = "high"
 scope = """
 It establishes NO identity and NO authentication: it consumes the acceptance, not the
 authenticated peer, precisely so that a deployment deriving no transport identity at all
@@ -1733,6 +1765,7 @@ to hold an authentication and a currency verdict side by side and assert the rel
 the composition this authority makes unconstructible, and whose failure mode is a request
 served under a peer whose credential was revoked on another connection.
 """
+direct_consequence_severity = "high"
 scope = """
 It does not establish admission, authorization, channel binding, or that this peer is the
 actor that signed any request. It does not say the relationship still exists, and it is a
@@ -1810,6 +1843,7 @@ Its failure mode under the old coordinate was not an open door but a closed one 
 distorted provisioning scheme: certificates had to serialize the request verifier's internal
 trust record, and every signing-key rotation invalidated the fleet's certificates.
 """
+direct_consequence_severity = "critical"
 scope = """
 It is NOT admission and NOT authorization: that a request and a channel are the same principal
 says nothing about what that principal may do.
@@ -1875,6 +1909,7 @@ replica restarted, while the deployment reported the tier that promises otherwis
 A zero cadence — a spinning reloader — is refused in every state form rather than in the
 parser alone, so a programmatically built request cannot reach it either.
 """
+direct_consequence_severity = "high"
 scope = """
 It says NOTHING about the trust document itself: not that the locator names an existing
 file, not that the file is readable, not that it parses, and not that it holds any key this
@@ -1917,6 +1952,7 @@ Two consumers defaulting the key independently agreed only because they happened
 same fallback. Nothing made them, and a deployment could have had its trust cache watching one
 key while delegated signing minted under another.
 """
+direct_consequence_severity = "high"
 scope = """
 It does not establish that the counter EXISTS at that locator, that the store is reachable,
 that the key holds a number, or that anything ever increments it. The source is a validated
@@ -1960,6 +1996,7 @@ tier that promises frequent re-reads while re-reading on someone else's schedule
 Because the plan cannot re-derive the issuer kid, a deployment cannot be told it is chaining
 to one issuer while another is excluded from the request-signer set.
 """
+direct_consequence_severity = "medium"
 scope = """
 It does not establish that any reload HAPPENS, on that cadence or at all. `reload()` reports
 what the posture decided; performing it is the trust plane's, and a plane that never re-reads
@@ -2001,6 +2038,7 @@ answer than the one layer A established — the same fact with two authorities, 
 CF-09 exists to prevent — and the disagreement would be invisible because both readings would
 look principled.
 """
+direct_consequence_severity = "high"
 scope = """
 It is narrow in three ways, and each matters.
 
@@ -2048,6 +2086,7 @@ evidence profile or another enforcement point cannot be replayed here. And the s
 bound is the VERIFIER'S: how long a decision lives is the issuer's choice, how long this
 PEP will act on one is not.
 """
+direct_consequence_severity = "critical"
 scope = """
 It establishes nothing whatsoever about the request in hand. A decision may be perfectly
 authentic and be about a different actor, a different operation or a different target;
@@ -2098,6 +2137,7 @@ one. Both operands are VERIFIED facts — the actor the request verification res
 operation the signed body named — rather than strings reconstructed from a header, a session
 field or a log.
 """
+direct_consequence_severity = "critical"
 scope = """
 It is authorization, and not admission, authentication, channel binding or transport
 identity. It does not establish that the actor coordinates on the request were correctly
@@ -2149,6 +2189,7 @@ honestly and without contacting it. Attribution is part of that: possession of a
 verifying — and it is THIS operation, over the exact signed bytes, that makes the issuer
 claim true. Algorithm confusion is refused rather than attempted.
 """
+direct_consequence_severity = "high"
 scope = """
 It establishes registration on A SERVICE whose key was resolved. It does NOT establish that
 the service is honest, that its log is append-only, that the entry is unique, or anything
@@ -2211,6 +2252,7 @@ call bytes, and that is all: it is not unlinkability, not resistance to inferenc
 digests, and not resistance to guessing a low-entropy reconstruction and confirming it
 against the commitment.
 """
+direct_consequence_severity = "high"
 scope = """
 Correspondence only. It does not establish that the retained bytes are THEMSELVES valid
 evidence, that the call described ever happened, or that the reconstruction is complete —
@@ -2282,6 +2324,7 @@ cannot silently drive the machine off the legal path — a disagreement between 
 the code is recorded, and every consequence derived afterwards is derived from a machine
 that says so.
 """
+direct_consequence_severity = "high"
 scope = """
 Establishes the relation and the latch. It does not establish that the serving path drives
 this machine, that a given stage advances it, or that any particular refusal site is inside
@@ -2310,6 +2353,7 @@ told an ordinary retry is available after a human's one-shot approval was destro
 combination that leaves the retry's fresh nonce admitted and the answer refused as
 already-answered, with the approval gone.
 """
+direct_consequence_severity = "high"
 scope = """
 A claim about the machine's derivation, not about the wire. It does not establish that the
 serving path maps a consequence onto a particular HTTP status, that a client acts on it, or
@@ -2349,6 +2393,7 @@ forecast that the plane will still admit the call when asked to run it. A satura
 fully-ejected inner plane is therefore refused where refusing is free, and the outcome type a
 committed dispatch resolves to has no case meaning nothing was transmitted.
 """
+direct_consequence_severity = "high"
 scope = """
 It establishes that the decision was TAKEN, never that a policy permitted:
 `NoPolicyConfigured` releases a body too, because a deployment with no policy is entitled to
@@ -2385,6 +2430,7 @@ foreign taxonomy cannot reach a record's reason field unnoticed, and "no policy 
 reached" cannot be recorded as "a policy denied" — the three collapses a pre-rendered token
 made unrecoverable.
 """
+direct_consequence_severity = "medium"
 scope = """
 Establishes the vocabulary and its provenance. The closed set is the two AUDIT-VOCABULARY
 authorities represented at this boundary — the Core-owned verdict vocabulary and the
@@ -2419,6 +2465,7 @@ A serving path cannot satisfy a consumer that requires a full-profile verificati
 handing it a value that only cleared the cryptographic floor, and the substitution is a
 compile error rather than a silently weaker check.
 """
+direct_consequence_severity = "high"
 scope = """
 Type separation only. It does not establish that the value a consumer holds was produced by
 the operation whose type it has for THAT consumer's exchange — possession provenance is a
@@ -2449,6 +2496,7 @@ that withdrawing it performs — the replacement's cache is empty — and a list
 assembled with anchors from one source and a session store or signing budget from another,
 the pairing that lets a session outlive the trust that admitted it.
 """
+direct_consequence_severity = "high"
 scope = """
 Establishes that the terms travel together and that the epoch is a function of the anchor
 set. It establishes NOTHING about a live listener's epoch advancing. Anchors are immutable
@@ -2490,6 +2538,7 @@ selections that no machine alone can refuse — a PKCS#11 channel key under a KM
 source, silently doing nothing while the operator believes the handshake key is
 device-resident.
 """
+direct_consequence_severity = "high"
 scope = """
 Establishes refusal by the classifier over the relations it actually decides. Two are live —
 X2a, that a delegated channel key object must name a backend the deployment already reaches,
@@ -2532,6 +2581,7 @@ security_consequence = """
 A signer cannot be brought to acceptance under a keyid that resolves to another party's key,
 which is what would let one enrolled actor's signature be attributed to another.
 """
+direct_consequence_severity = "critical"
 scope = """
 Computational selector injectivity only, and deliberately not a mathematical one. SHA-256 is
 not injective — it maps an unbounded domain onto 256 bits, so colliding keys EXIST. What is
@@ -2574,6 +2624,7 @@ A caller cannot reach the backend by having some other exchange's verification s
 no stage between verification and dispatch can substitute a value for the one the verifier
 produced.
 """
+direct_consequence_severity = "critical"
 scope = """
 Possession provenance across the serving pipeline. It does not restate what the verification
 established (THM-0015) or that the products are type-separated (THM-0047); it is the joint
@@ -2610,6 +2661,7 @@ A serving path cannot bypass a configured policy by releasing the body under the
 that claims nothing, which is the one gap the sealed body type leaves open: possession
 proves a decision was taken, and this proves it was the one the deployment selected.
 """
+direct_consequence_severity = "critical"
 scope = """
 It does not restate the seal (THM-0045), the decision relation (THM-0040) or the operation's
 own selection (THM-0056). It establishes nothing about the policy's own correctness, and
@@ -2643,6 +2695,7 @@ An admission verdict cannot rest on an assertion another party minted, on one ca
 different credential profile, on one whose validity window has passed or has not begun, or on
 one issued to a different enforcement point and replayed here.
 """
+direct_consequence_severity = "critical"
 scope = """
 Assertion authenticity only. It does not restate verdict integrity (THM-0003), anti-rollback
 (THM-0004), presenter binding (THM-0006) or the degraded-admission opt-in (THM-0005), all of
@@ -2679,6 +2732,7 @@ A client whose revocation status cannot be determined — because the CRL is sta
 its issuer, or does not cover its position in the chain — cannot complete a handshake, so a
 revoked credential cannot be admitted by the checking silently failing open.
 """
+direct_consequence_severity = "critical"
 scope = """
 A proposition about every production CONSTRUCTION SITE, not a property of a type this project
 owns: the verifier is a foreign `dyn` trait object and rustls ships both a permissive policy
@@ -2721,6 +2775,7 @@ Two distinct verification keys cannot be given the same keyid by anything this p
 wrote: not by a canonicalization that reorders or drops a member, not by an operand chosen
 to nest structure inside the JWK, and not by an encoding that merges digests.
 """
+direct_consequence_severity = "critical"
 scope = """
 Everything except the digest, and it INHERITS NOTHING about the digest either. Its unit,
 `http_profile.keyid`, carries no assumption at all: every property here is a property of code
@@ -2754,6 +2809,7 @@ A record cannot report *no policy is deployed* as *a policy permitted this*, and
 authorized posture cannot be assembled from an attribution taken from one decision and
 evidence taken from another — the pairing this type exists to be evidence of.
 """
+direct_consequence_severity = "high"
 scope = """
 A claim about the operation, not about the serving path: it does not establish that the
 posture the dispatch consumed is the one this operation returned, which is THM-0052. It
@@ -2795,6 +2851,7 @@ manifest, cannot be given anchors by a document nobody trusted signed, and canno
 resolving roots from a document whose lifetime has passed — including when the floor's own
 storage fails, where anchors are withheld rather than released against an unknown floor.
 """
+direct_consequence_severity = "critical"
 scope = """
 Establishes what the document says and for how long. It does not establish that a response
 verified under one of these anchors is an answer to this request (THM-0058, THM-0059), that
@@ -2822,6 +2879,7 @@ An application cannot be handed a response signed by a party this deployment nev
 authorized for the Response slot, by one whose authorization has been retired, or by the
 trust root directly — the mode this project does not support and therefore must not accept.
 """
+direct_consequence_severity = "critical"
 scope = """
 Signer authorization only. It does not establish that the response answers THIS request,
 which is the binding disposition (THM-0059), and it does not restate the underlying
@@ -2848,6 +2906,7 @@ A pre-parse receipt cannot be replayed as the answer to a request, and a respons
 not be bound cannot be presented to an application as this call's result by falling back to
 the weaker check.
 """
+direct_consequence_severity = "critical"
 scope = """
 The disposition, not the signer (THM-0058). The unbound receipt's binding is a BYTE binding:
 two transmissions of identical request bytes share it, so it is not an instance binding, and
@@ -2874,6 +2933,7 @@ configuration, and the credential window and the signature window cannot disagre
 tolerance they applied — the disagreement that lets a credential be accepted outside the
 window its own signature was admitted under.
 """
+direct_consequence_severity = "medium"
 scope = """
 The bound and its single reading. It does not establish that the profile's bound is itself
 appropriate, and it establishes nothing about what either window checks beyond the tolerance
@@ -2904,6 +2964,7 @@ It does NOT establish that the server's statement is TRUE. Whether a call really
 not run, and whether the evidence really was retained, are the serving-side roots' — this
 claim is only that the client does not improve on the answer it was given.
 """
+direct_consequence_severity = "high"
 scope = """
 What the receipt SAYS, and what a client may conclude from it. It does not establish that the
 server's statement is true — that is the serving path's exchange machine (THM-0044) — and it
@@ -2934,6 +2995,7 @@ failure mode that consumes the open leg's correlation entry, never fires the inp
 callback, and signs no answer leg — and a newer server's extension result type cannot end an
 exchange whose continuation semantics this client does not know.
 """
+direct_consequence_severity = "high"
 scope = """
 COMPOSITION, not classification and not trust. The three-way discriminator itself is
 `client.execution_contract`'s under THM-0061; whether the bytes are genuine and answer this
@@ -2984,6 +3046,7 @@ expiry, so a serving path that omitted the start would verify under a lapsed man
 long as the process ran — with every control over the refresher itself still passing, because
 none of them asks whether the artifact an operator runs starts one.
 """
+direct_consequence_severity = "high"
 scope = """
 WHETHER IT RUNS, not what it does. The dispositions of a refresh cycle — last-good on a
 failed read, withdrawal on expiry, the durable rollback floor — are `client.anchor_refresh`'s
@@ -3044,6 +3107,7 @@ whose window has closed, or after the signer has been retired — and there is n
 or root credential to fall back to, because no such mode exists. What a caller gets instead
 is an unsigned last-resort receipt, which it can tell from a signature.
 """
+direct_consequence_severity = "critical"
 scope = """
 The credential's existence, not its content: it does not establish that the credential
 chains to the deployment's root, that its scope is right, or that a verifier will accept it.
@@ -3071,6 +3135,7 @@ authorizing signatures — a window the verifier refuses as soon as the credenti
 which the client would learn about only by failing. And a refusal minted late in an exchange
 cannot advertise more validity for having been reached by a different path.
 """
+direct_consequence_severity = "high"
 scope = """
 The advertised window, not the signature. It does not establish that a credential existed
 (THM-0062) or what the signature covers (THM-0065). Where no valid credential exists the
@@ -3103,6 +3168,7 @@ projection names none.
 It does NOT claim that the external KMS, HSM or token itself honours non-exportability. That
 is the provider's property, it is outside this boundary, and the scope below says so.
 """
+direct_consequence_severity = "critical"
 scope = """
 CONDITIONAL on the deployment's own selection: it establishes nothing about a deployment
 that selects file custody, which is `ProcessReadable` and honestly says so. It establishes
@@ -3131,6 +3197,7 @@ A response cannot be lifted from one exchange and presented as the answer to ano
 `;req` splice cannot be repaired by reconstructing the block — the floor refuses it
 independently.
 """
+direct_consequence_severity = "critical"
 scope = """
 The bound form only: an unbound emission carries no binding by construction, and that a
 verifier can never read one as bound is THM-0022 on the verification side. It does not
@@ -3170,6 +3237,7 @@ A deployment cannot announce one revocation tier at startup and run another on t
 plane — the defect ADR-MCPS-021 recorded, in which the resolver chain was constructed, its
 guarantee printed, and then dropped.
 """
+direct_consequence_severity = "critical"
 scope = """
 Where the seam comes from and what it consults. It does not establish that the tier's own
 answer is correct, that the trust document is authentic, or that the resolved key is the
@@ -3198,6 +3266,7 @@ After layer A classifies a deployment, no post-validation consumer can reach bac
 owner for a security decision the owner already made — which is how two components come to
 disagree about what was configured, with neither of them wrong locally.
 """
+direct_consequence_severity = "high"
 scope = """
 The general claim over ALL owners; THM-0038 is its trust specialization and states in
 addition that the root passes trust as owner projections. It does not establish that the
@@ -3233,6 +3302,7 @@ legitimate second provenance and is retained: the in-process prototype log and t
 corpus have no pin to resolve from, and deleting it to make this consequence unconditional
 would remove a supported use to improve the wording of a claim.
 """
+direct_consequence_severity = "high"
 scope = """
 It establishes the PROVENANCE of a pinned service, not that a deployment pinned one.
 `verify_receipt_offline` takes the service as a `Fn(&str) -> Option<ResolvedTransparencyService>`
@@ -3275,6 +3345,7 @@ cannot mistake a request that reached no policy verdict for one a policy denied,
 be left unable to tell whether a policy was consulted — the collapse a single rendered
 `reason` string produced, and which the type system prevented while the record restored.
 """
+direct_consequence_severity = "medium"
 scope = """
 What a record MAY say, not that the vocabulary is total over the outcomes that occur — that
 is THM-0071, which composes this with site totality and delivery. It needs no vocabulary
@@ -3309,6 +3380,7 @@ The boundary is explicit and is not durability. Queue loss, drop, ordering and d
 loss are all REPRESENTED. Loss of the process itself is not: the sink is in-process, so
 records emitted and not yet drained disappear with it, and no claim here survives that.
 """
+direct_consequence_severity = "medium"
 scope = """
 Delivery integrity, not content (THM-0069) and not durability: the sink is in-process, so a
 record that was emitted may still be lost with the process. It establishes nothing about
@@ -3340,6 +3412,7 @@ It does NOT establish durable persistence. If the process itself disappears, rec
 and not yet drained go with it, and nothing here survives that — the boundary is THM-0070's
 and is carried forward unchanged.
 """
+direct_consequence_severity = "medium"
 scope = """
 Bounded three ways, and each bound was a correction rather than a caveat.
 
@@ -3396,6 +3469,7 @@ its service through a `Fn(&str) -> Option<ResolvedTransparencyService>` seam, so
 provenance backs a given call is deployment wiring — and no production wiring was invented to
 make this claim unconditional.
 """
+direct_consequence_severity = "high"
 scope = """
 It composes the two facts and adds nothing: offline verification against a resolved service
 (THM-0041) and the provenance of a pinned one (THM-0068). It carries both scopes forward
@@ -3427,6 +3501,7 @@ operator credential able to invoke one key may well be authorized to invoke the 
 the two roles are separately AUTHORIZED is a different proposition with a different owner, and
 nothing here establishes it.
 """
+direct_consequence_severity = "high"
 scope = """
 Over the MATERIALIZED identities, and that is the substance of the claim rather than an
 implementation note. A comparison of mechanism LOCATORS would establish nothing: an ARN, a key
@@ -3497,6 +3572,7 @@ different exchange, by presenting a fact the deployment did not select the autho
 handing the pipeline a security value it constructed itself, or by having some other
 exchange's establishment succeed.
 """
+direct_consequence_severity = "critical"
 scope = """
 It ends at the invocation: what the backend does once dispatched is the application's.
 Obligations a deployment did NOT select are outside it by construction — this is a claim
@@ -3580,6 +3656,7 @@ as evidence for a particular request.
 This is the PRODUCER side. What a client ultimately presents to its caller as an answer is
 THM-0076 and is a different proposition on the other side of the same exchange.
 """
+direct_consequence_severity = "critical"
 scope = """
 SECURITY-BEARING SIGNED evidence only. Unsigned transport and error responses exist — a
 last-resort receipt is emitted when no valid credential does — and they are outside this
@@ -3608,6 +3685,7 @@ from another signer, from a signer whose authorization has been retired, or one 
 only in the unbound form — and cannot be led to repeat a side effect by reading silence as
 *it did not run*.
 """
+direct_consequence_severity = "critical"
 scope = """
 The consumer side, kept apart from THM-0075 because a deployment may run either side alone
 and producer attribution and consumer acceptance are different propositions.
@@ -3654,6 +3732,7 @@ security_consequence = """
 An operator cannot obtain a weaker security posture by supplying a combination nobody
 validated, and a serving component cannot disagree with the owner about what was configured.
 """
+direct_consequence_severity = "high"
 scope = """
 SECURITY POSTURE, not liveness and not permanent runtime availability. A runtime dependency
 may later fail and cause refusal or loss of availability; that does not violate this claim.
@@ -3743,6 +3822,7 @@ recorded and its effects are authorized by a lifecycle state. A pre-exchange rep
 state, so what protects a caller there is that it asserts nothing about execution rather than
 that its assertion was derived.
 """
+direct_consequence_severity = "high"
 scope = """
 It forbids a SUCCESS-PATH effect, not any effect at all. The serving architecture emits
 signed refusal evidence and performs audit, retention, cleanup and continuation retirement on
@@ -3795,6 +3875,7 @@ Evidence produced under a different profile, a different signature role, a diffe
 a different audience can never satisfy a replay check meant for another, and the same signed
 exchange cannot be admitted twice against the same cache.
 """
+direct_consequence_severity = "critical"
 scope = """
 The KEY and the cache's decision over it. It does not establish that the cache is consulted
 on every path reaching dispatch, that a distributed backend's insert is atomic, or that the
@@ -3821,6 +3902,7 @@ communication mechanism did not accept for THIS relationship — the composition
 Slice 2 forbids, and the one no behavioural control notices, because each still measures a
 true thing about a correctly-composed value.
 """
+direct_consequence_severity = "critical"
 scope = """
 The ROUTE, and recorded as evidence rather than as unconstructibility — a measurement
 correction against the proposal packet, which had this as STRUCTURAL. Under the deletion test
@@ -3872,6 +3954,7 @@ never read, so nothing ran.
 
 A single sentence covering both would be false about one of them.
 """
+direct_consequence_severity = "medium"
 scope = """
 The SITE SET, and nothing about which cause any site chooses. THM-0043 establishes that the
 transition relation is decided everywhere and THM-0046 that a refusal carries which authority
@@ -3929,6 +4012,7 @@ the chain was constructed, its guarantee printed, and then dropped. Every signat
 still verify and every startup line would still be true; the two facts would simply be about
 different keys.
 """
+direct_consequence_severity = "high"
 scope = """
 The counterpart of THM-0066 on the signing side, and the composition half THM-0073's seal
 cannot reach. THM-0062 establishes what the credential source yields and when it yields
@@ -3962,6 +4046,7 @@ and the caller is answered under a receipt that claims nothing ran. Nor can a do
 is not an MCP message burn a nonce, spend a human approval, or write a durable retention
 marker on its own behalf, because the shape is decided before any of those happen.
 """
+direct_consequence_severity = "high"
 scope = """
 Found by the missing-edge pass rather than by inspecting the registry: R1 quantifies over the
 pre-dispatch obligations a validated deployment selects, and this is one — it gates the
@@ -4026,6 +4111,7 @@ artefact carries the digest commitment alone, so a refused exchange leaves no be
 and no DPoP proof in a store with no expiry — the exposure that a failed reservation could
 previously make permanent, because no value existed for any release path to consume.
 """
+direct_consequence_severity = "medium"
 scope = """
 It is about WHEN responsibility was accepted and crossed, never about WHAT the retained
 record contains. That is `retained_record`'s, and the completed hop still carries the full
@@ -4072,6 +4158,7 @@ Because the rule is the owner's rather than each caller's, an embedder reaching 
 constructor without meeting a parser gets the same decision as an operator on a command
 line. That is what makes it a property of the endpoint rather than of the entry point.
 """
+direct_consequence_severity = "critical"
 scope = """
 It ends at the endpoint TEXT. What it establishes is agreement between what a reader sees
 and what a URL parser resolves — NOT that the address finally connected to is one this
@@ -4134,6 +4221,7 @@ its acknowledgement be lost. Collapsing the two would let one verdict answer for
 and neither is a client retry policy — what a caller should do next is decided elsewhere,
 from these facts and not in place of them.
 """
+direct_consequence_severity = "critical"
 scope = """
 It is one-directional and is not a liveness claim: it says an unestablished replay state does
 not dispatch, never that an established one does.
@@ -4204,6 +4292,7 @@ the consequence. THM-0093 does not decide retry policy and does not assert that 
 retry will succeed; what it establishes is that the four facts reach that authority undistorted
 rather than collapsed into one another.
 """
+direct_consequence_severity = "critical"
 scope = """
 It is about what a leg may PROCEED on and how a request-time absence is ATTRIBUTED — never
 about what the deployment was built or configured with. Which capability the runtime installs
@@ -4271,6 +4360,7 @@ caller repeat a tool call that already executed. Parity fixtures pin what this S
 whether it invents an execution fact for a receipt that stated nothing is behaviour, and the
 two SDKs have diverged there before.
 """
+direct_consequence_severity = "critical"
 scope = """
 It is one MEMBER of a root family, not the family. THM-0076 is the Rust member and THM-0095
 the TypeScript one; none of the three establishes anything about the others, and a green
@@ -4355,6 +4445,7 @@ one of them would report coverage of the other that no evidence supports.
 difference. Inventing `not_executed` collapses "unknown whether it ran" into "it did not
 run" at the one place that decides whether a caller repeats a side effect.
 """
+direct_consequence_severity = "critical"
 scope = """
 It is one MEMBER of a root family. THM-0076 is the Rust member and THM-0094 the Python one,
 and none establishes anything about the others.
@@ -4431,6 +4522,7 @@ for the bind reason lost the guard silently. Two facts now have two values, and 
 be recombined into the other by a caller: `BindScope` hands out one projection, and
 `AcceptedHttpAuthority`'s only constructor takes that scope rather than the flag.
 """
+direct_consequence_severity = "critical"
 scope = """
 It is a NEW ROOT, and independence holds both ways: this sidecar runs against deployments
 with no MCP-RE proxy, and every other root holds where no sidecar exists. It is deliberately
@@ -4499,6 +4591,7 @@ constructor that still built, still reached the endpoint, and still sent the cre
 check was being remembered at five sites. A later site that formatted its own URL — or a
 responder answering `302 Location:` — reached whatever it named.
 """
+direct_consequence_severity = "critical"
 scope = """
 It is about the AUTHORITY NAMED, not the address that name resolves to. Resolved-address
 vetting is installed for a certificate-derived destination only, and deliberately not for an
@@ -4545,6 +4638,7 @@ describing a request the proxy never sent. The expectation and the sent request 
 values that happen to agree — there is only one, so there is nothing for them to disagree
 about.
 """
+direct_consequence_severity = "critical"
 scope = """
 The SHIPPED path, and that is the whole point of registering it. THM-0057 through THM-0061
 establish what the client-core verifier does with an expectation and a response; every one of
@@ -4586,6 +4680,7 @@ authority reached. The ordering matters on its own: recording after the answer l
 in which a refusal has been served and no record of it exists, which is the one case an
 auditor cannot reconstruct afterwards.
 """
+direct_consequence_severity = "medium"
 scope = """
 The EMISSION joint, and the reason it is a separate claim is that its neighbours all hold
 without it. THM-0081 establishes that every refusal site is inside the lifecycle, THM-0046
@@ -4635,6 +4730,7 @@ A deployment cannot come up believing it has cross-replica replay protection whi
 process-local protection. Replay admission cannot degrade to a weaker store on infrastructure
 trouble, because there is no reachable path that substitutes one.
 """
+direct_consequence_severity = "critical"
 scope = """
 CONFIGURATION PROJECTION ONLY. It establishes which tier the serving path holds, not what an
 acknowledged write to that tier durably establishes — that is a per-mechanism external fact
@@ -4694,6 +4790,7 @@ The consequence is about an actor reaching the store THROUGH this proxy. One tha
 the keyspace directly needs no victim's bases — it plants its own — and that is ASM-0047's,
 not this claim's.
 """
+direct_consequence_severity = "critical"
 scope = """
 RUNTIME CORRELATION AND REACHABILITY ONLY. It is about which actor can reach a live
 continuation entry and about the entry surviving a read that admits nothing — not about
@@ -4800,6 +4897,7 @@ scope — one process, no replica switch — is not the scope the plan names; so
 human-approval flows cannot silently become uncorrelated. A plan naming no store cannot
 acquire a fallback capability. The posture the runtime reports is the posture it holds.
 """
+direct_consequence_severity = "high"
 scope = """
 PLAN → RUNTIME ONLY. It establishes which capability the serving path holds for the plan it
 was handed, and what the transcript says about it, not what a request may do with one. That a
@@ -4885,6 +4983,7 @@ rather than becoming an indefinitely valid frozen verifier, so a reload that sil
 cannot turn `--trust` back into a boot-time map. An outage of the snapshot is reported, never
 softened into a served key.
 """
+direct_consequence_severity = "high"
 scope = """
 ONE replica. The materialized snapshot is an INPUT authority: nothing here says what it
 represents, that `trust_document.rs` parsed the operator's document correctly, that it
@@ -4961,6 +5060,7 @@ substitute a key or a signer under an existing `key_id`, and an operator's narro
 be lost to a typo: the document is refused, at startup or on reload, rather than read as
 wider than written.
 """
+direct_consequence_severity = "critical"
 scope = """
 ONE replica. The BYTES are the input authority: nothing here says which path was read, who
 wrote the file, or that its contents are the operator's intent — the locator belongs to
@@ -5020,6 +5120,7 @@ request slot — an authorization authority, the deployment's own issuer key —
 client credential through this seam. The premise stays a premise for the verifier, which
 accepts any resolver; what this states is that the resolver installed satisfies it.
 """
+direct_consequence_severity = "critical"
 scope = """
 ONE replica, the PRODUCTION composition only: `build_actor_resolver` over the reloading
 signer directory and the revocation-tier resolver, as THM-0066 establishes the serving
@@ -5079,6 +5180,7 @@ THM-0097's window, and a reload that silently stopped does not extend the window
 the resolver. A deployment with no cadence is told, in the same place, that removal does
 nothing until restart.
 """
+direct_consequence_severity = "medium"
 scope = """
 ONE replica, its own clock (`boundary.monotonic_clock` for the sleep and the cache deadline).
 The bytes at the path at read time are the input: nothing here says when an operator's
@@ -5135,6 +5237,7 @@ machine (THM-0081), is derived from a state at least as far along as the work ac
 The one residue where the correspondence is asserted rather than carried is enumerated and
 justified, so a reviewer knows exactly which six transitions to read by hand.
 """
+direct_consequence_severity = "high"
 scope = """
 The serving assembly under `http_profile_serve/` and the carrier in `exchange_state.rs`,
 production halves only. The six assembly-owned transitions are EXCLUDED from the
@@ -5183,6 +5286,7 @@ the value: a deployment naming `--max-client-cert-lifetime 600 --max-connection-
 connection outlived its credential by forty minutes — cannot be represented, so no
 transcript can report a window the configuration contradicts.
 """
+direct_consequence_severity = "high"
 scope = """
 The CONFIGURED relation and the two consumers that read it, nothing about the runtime that
 enforces it. The bound on a live connection's age is enforced in
@@ -5237,6 +5341,7 @@ building that would now refuse it. The `Resumed` witness is part of the claim: a
 silently never resumed would satisfy every refusal conjunct and would have withdrawn the
 performance property the mechanism exists to provide.
 """
+direct_consequence_severity = "critical"
 scope = """
 A claim about the STORE, and deliberately not about a lifecycle. Within a production listener
 the trusted client-CA set is immutable, so the authentication epoch is a CONSTRUCTION-TIME
@@ -5312,6 +5417,7 @@ progressed — never by the drain counter. A deployment wanting zero-abandoned d
 rather than in bound configures `drain_grace >= request_deadline`; that is a configuration
 relation resting on the request deadline's own enforcement, and is not claimed here.
 """
+direct_consequence_severity = "medium"
 scope = """
 WHAT IS NOT CLAIMED, in terms, because an earlier statement of this theorem claimed all three
 and was corrected by owner ruling on 2026-09-06: that a request which reached the handler runs
@@ -5403,6 +5509,7 @@ its occupancy stayed at zero and the pressure test never tripped. Over-charging 
 actor some of its own budget for at most a freshness window; under-charging costs every
 signer the tier.
 """
+direct_consequence_severity = "medium"
 scope = """
 PER REPLICA, and the claim says so rather than reading as a fleet-wide bound: the account
 bounds the retention THIS node admits, and the shared store's total is that bound times the
@@ -5488,6 +5595,7 @@ not serve a replayed request as fresh because the store it was supposed to consu
 unreachable. The gate's own battery measures that against a store that errors; this measures
 that the shipped adapter is such a store.
 """
+direct_consequence_severity = "critical"
 scope = """
 NOTHING ABOUT DURABILITY. What an acknowledged `SET NX` durably established is ASM-0040, a
 foreign premise with its documented failover caveat — `REDIS_WAIT_QUORUM` is not linearizable
@@ -5563,6 +5671,7 @@ trip is issued. That is why the timeout is here rather than in the tier, and why
 clamped at both ends — an unclamped deadline of zero is no round trip at all, and an
 unclamped large one is the black hole again.
 """
+direct_consequence_severity = "critical"
 scope = """
 NOTHING ABOUT DURABILITY OR CONSENSUS. What a successful transaction durably established is
 ASM-0041, a foreign premise. Nothing here establishes that etcd's consensus behaves as that
@@ -5640,6 +5749,7 @@ wrong key. Only the re-verification against the signer's OWN advertised key catc
 is why that check sits at the seam and not in each adapter: an adapter that forgets is exactly
 the case it exists for.
 """
+direct_consequence_severity = "critical"
 scope = """
 THE SEAM, NOT THE PROVIDERS. `gcp_kms_keysource.rs`, `aws_kms_keysource.rs` and `aws_sts.rs`
 are the adapters BENEATH this seam and belong to no unit; nothing here establishes that any
@@ -5703,6 +5813,7 @@ proxy on the other end was never authenticated.
 That is the outcome excluded here: a client that signs and sends MCP-RE requests, carrying its
 own authenticated identity, to an endpoint that merely answered on the right address.
 """
+direct_consequence_severity = "critical"
 scope = """
 WHERE THE LOAD-BEARING DEMONSTRATION LIVES, and why it is NOT a tested_symbol of this unit.
 `mcp-re-transport/tests/fault_injection_test.rs` compiles the crate with the
@@ -5770,6 +5881,7 @@ The bounds exclude the other shape: a peer that never finishes. Catching the sta
 trickle would leave the slower attack unbounded, which is why both are asserted, and why the
 aggregate deadline exists alongside the per-read timeout rather than instead of it.
 """
+direct_consequence_severity = "high"
 scope = """
 THE MESSAGE, NOT THE MEANING. Nothing here says a well-framed response is TRUE, correctly
 signed, or from the right peer — the RFC 9421 evidence is checked above this layer, and who
@@ -5826,6 +5938,7 @@ hand-written literals, both published SDKs rendered THROUGH it, and the drift gu
 list had never been told the file existed. A token renamed in Core would have left two shipped
 surfaces emitting the old spelling with nothing able to notice.
 """
+direct_consequence_severity = "medium"
 scope = """
 WHAT IS ESTABLISHED IS THE ABSENCE OF A SECOND TABLE, over the whole workspace. The control
 walks every crate's source tree, takes each file's production half, and asserts the set of
@@ -5901,6 +6014,7 @@ A fabricated timestamp is accepted where a faithful one is refused. A clock clam
 or wrapped, reports a plausible instant that a verifier's freshness window admits; the
 negative reading is rejected at the boundary, which is where a broken host should be caught.
 """
+direct_consequence_severity = "critical"
 scope = """
 THE INPUTS, NOT THE SIGNING. Nothing here is about what is signed, how the RFC 9421 signature
 base is composed, or whether a request verifies — those are the client seam's and the
@@ -5963,6 +6077,7 @@ that is a stated operational consequence of ADR-MCPRE-054 rather than an oversig
 And a record of an unrecognized shape read as a valid one would produce a chain about
 something else, with the auditor unable to tell.
 """
+direct_consequence_severity = "high"
 scope = """
 WHAT IS RETAINED, NOT WHEN. Whether the deployment had accepted the obligation, and whether it
 had crossed the execution threshold, is THM-0088's — this claim says nothing about either, and
@@ -6016,6 +6131,7 @@ bytes was absent on exactly the records an auditor investigates.
 bytes the issuer saw and no hop verified, and a reader must not be able to mistake the one for
 the other.
 """
+direct_consequence_severity = "high"
 scope = """
 OFF THE REQUEST PATH, AND THAT IS THE CLAIM'S PREMISE. A chain is not whole until its last
 hop, the audit posture is the auditor's to choose, and registering against a transparency
@@ -6075,6 +6191,7 @@ status and body into prose and the classifier parsed them back with `format!("{e
 `contains`. A rewording upstream silently stopped arming the window; an unrelated failure that
 happened to carry one of the tokens armed it.
 """
+direct_consequence_severity = "medium"
 scope = """
 THE CLASSIFICATION, NOT THE WINDOW. What the throttle does once armed — its duration, its
 effect on a handshake, its interaction with the per-core admission ceiling — is
@@ -6145,6 +6262,7 @@ And an endpoint refused at construction rather than at use is the difference bet
 deployment that will not start and one that sends a credential-bearing request to an operator-
 supplied host before noticing. R9's only Critical lived in exactly that gap.
 """
+direct_consequence_severity = "high"
 scope = """
 NOT A CUSTODY CLAIM. That the private key never leaves the KMS or the token is the provider's
 property and the trait's shape — none of these traits asks for a private key — and it is not
@@ -6212,6 +6330,7 @@ The single-flight and cool-off conjuncts are availability with a security edge: 
 exchange repeated by every waiter is a self-inflicted flood against the credential authority,
 and a cool-off a backwards clock step can extend is a local outage a time correction creates.
 """
+direct_consequence_severity = "high"
 scope = """
 THE LIFETIME, NOT THE CREDENTIAL'S POWER. Nothing here is about what the credential is
 permitted to do, which role it assumes, or whether the assumed role is least-privileged.
@@ -6281,6 +6400,7 @@ The fail-closed DEFAULT on the durability class is what keeps a new backend from
 as though it were shared. A per-node in-memory cache does not prevent cross-node replays, and
 a backend that forgot to declare would otherwise be indistinguishable from one that had.
 """
+direct_consequence_severity = "high"
 scope = """
 THE SEAM, NOT A DEPLOYMENT'S TIER. `InMemoryReplayCache` is a single-process reference and
 declares itself one; nothing here establishes that any deployed cache is shared, durable, or
@@ -6327,6 +6447,7 @@ The injectivity conjunct is the one an ordinary happy-path battery does not reac
 name containing the delimiter could, under a naive join, resolve using a different signer's
 key id — which is a key confusion at the point the whole pipeline decides who signed.
 """
+direct_consequence_severity = "medium"
 scope = """
 THE SEAM AND THE REFERENCE IMPLEMENTATION. Nothing here is about the runtime trust plane's
 tiers, its caching windows, or its revocation channel — those are THM-0097 through THM-0100's,
@@ -6368,6 +6489,7 @@ of a process's memory. Every piece of it existed before this module and the chai
 end only in tests; an attacker who can replace the manifest file could otherwise restore an
 older document across a restart, and the client would accept it.
 """
+direct_consequence_severity = "high"
 scope = """
 THE CALLER, NOT THE LOADER. Manifest validity, signature verification, the version floor's own
 rules and the four-state issuer set are `client.trust_manifest_lifecycle`'s under THM-0057.
@@ -6432,6 +6554,7 @@ untrustworthy, silently re-opening the rollback window and letting the attacker 
 versions come back by choosing how far to overshoot. A floor above its ceiling means the
 storage and the trust domain bounding it disagree, and neither may be preferred.
 """
+direct_consequence_severity = "high"
 scope = """
 NOT AVAILABILITY. A malicious fast-forward still stops the client. What is established is that
 it stops LOUDLY, at a named error an operator can act on, rather than silently withdrawing
@@ -6485,6 +6608,7 @@ And an `authorization_hash_mismatch` reason would report a semantic comparison a
 Core performed none — attributing a decision to the layer that binds rather than to the one
 that interprets.
 """
+direct_consequence_severity = "medium"
 scope = """
 THE VOCABULARY, NOT THE EMISSION. Nothing here establishes that a record is written, that it
 reaches a sink, or that a sink is durable. Which coordinate each authority writes into is
@@ -6538,6 +6662,7 @@ client acts on it.
 Two `Content-Length` headers, or a close on top of unread bytes, are how a refusal reaches the
 caller as an unexplained broken pipe instead of the refusal it was given.
 """
+direct_consequence_severity = "medium"
 scope = """
 WHAT HAPPENS TO AN ADMITTED REQUEST, NOT WHOSE REQUESTS ARE ADMITTED. The bind scope, the
 accepted authority and the head fields are `client.local_ingress_authority`'s under THM-0091.
@@ -6589,6 +6714,7 @@ not have: an unbounded reload cadence is a trust picture that never refreshes, a
 route id makes two audiences one, an empty pin set trusts every issuer, and an unnamed floor
 is rollback protection that resets on restart.
 """
+direct_consequence_severity = "high"
 scope = """
 THE DOCUMENT, NOT THE DEPLOYMENT. What the values mean at runtime — the anchors actually in
 force, the floor actually recorded, the request actually signed — belongs to
@@ -6642,6 +6768,7 @@ nothing in the profile intends to publish.
 And the caller's `params._meta` surviving is what keeps this seam from silently editing the
 content it is signing over.
 """
+direct_consequence_severity = "medium"
 scope = """
 THE SHAPE, NOT THE SIGNATURE'S CORRECTNESS. That the RFC 9421 signature base is composed
 correctly and verifies is the carrier's, under the http-profile units.
@@ -6681,6 +6808,7 @@ whose justification is a chain of bounds a reader must follow, with two i64-extr
 tests as its evidence. Two points are where a bound argument is most likely to fail and are
 still not the domain.
 """
+direct_consequence_severity = "medium"
 scope = """
 TOTALITY, NOT CORRECTNESS. Nothing here says the conversion computes the right date; it says
 it computes one. The Gregorian correspondence is the round-trip controls' and is not
@@ -6738,6 +6866,7 @@ one. A non-injective escape that merely deleted line breaks would satisfy every 
 has no newline" check while allowing two different requests to produce the same record — so
 the record would no longer identify what happened, which is the whole of what it is for.
 """
+direct_consequence_severity = "medium"
 scope = """
 V0: a test battery over the escape, its inverse and the record grammar, including a
 round trip over a corpus that contains every C0 byte, DEL, every C1 byte, the named line
@@ -6800,6 +6929,7 @@ specific misreadings are closed:
 The latch's two flags are the security content of the third: one flag would let a straggler
 reload landing after the worker died report the cadence as kept.
 """
+direct_consequence_severity = "medium"
 scope = """
 V0: a test battery over the evidence constructor, the maintenance algebra and the
 retraction, plus the plane's own retirement path.

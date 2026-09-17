@@ -164,7 +164,7 @@ stage_static() {
     `# requires the number to MOVE, which a constant would fail — including the` \
     `# DIRECT-vs-CLOSURE distinction that makes "7 of 12 roots" and "3 of 12 roots" two` \
     `# different true statements.` \
-    && python3 scripts/evidence_class_census.py --selftest \
+    && tools/verification/evidence-class-census --selftest \
     && python3 scripts/serving_identity_provenance_gate.py --selftest \
     && python3 scripts/serving_identity_provenance_gate.py \
     && python3 scripts/authorization_provenance_gate.py --selftest \
@@ -195,6 +195,7 @@ stage_static() {
     `# established only on the pull requests that tripped its filter.` \
     && python3 tools/verification/test_mutation_lane.py \
     && python3 tools/verification/test_r9_linkage.py \
+    && python3 tools/verification/test_evidence_class.py \
     `# The published claim surface and the declared root set are one fact written twice.` \
     `# They had diverged in four ways and nothing related them; this is what relates them.` \
     && python3 scripts/claim_surface_gate.py --selftest \

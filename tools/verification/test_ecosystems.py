@@ -42,6 +42,7 @@ from _ecosystems import (  # noqa: E402
 )
 from _fingerprint import fingerprint_unit  # noqa: E402
 from _manifest import (  # noqa: E402
+    SCHEMA_VERSION,
     load_assumptions,
     load_toolchains,
     load_verification,
@@ -65,6 +66,8 @@ PY_UNIT = {
     ],
     "exported_contracts": [],
     "evidence": ["test://sdk/python/probe"],
+    "evidence_class": "tested",
+    "direct_consequence_severity": "high",
     "tested_symbols": ["pytest#tests/test_correlation.py::test_probe"],
 }
 
@@ -488,7 +491,7 @@ def test_root_completeness_treats_a_non_rust_member_as_a_member():
     from _theorems import structurally_supported_theorems, validate_theorems
 
     doc = {
-        "schema_version": 1,
+        "schema_version": SCHEMA_VERSION,
         "root_theorems": ["THM-9001"],
         "theorem": [
             {
@@ -499,6 +502,7 @@ def test_root_completeness_treats_a_non_rust_member_as_a_member():
                 "scope": "p",
                 "owner": PY_UNIT["id"],
                 "review_requirement": "Owner security-specification review",
+                "direct_consequence_severity": "high",
                 "supported_by": [f"unit://{PY_UNIT['id']}"],
                 "depends_on": [],
             }

@@ -98,7 +98,7 @@ the unit class table) and 3 (S2 is rejected). What they left open is what the gr
 
 ## 2. What was measured, and two corrections to the alarm
 
-Re-measured on the current tree by `scripts/evidence_class_census.py`, directly from
+Re-measured on the current tree by `tools/verification/evidence-class-census`, directly from
 `verification/policy/*.toml`.
 
 | quantity | value |
@@ -288,7 +288,7 @@ is existential and scoped — *over THIS corpus, on THIS hardware class, the obs
 X* — and deleting a production property does not make it false, it makes it a measurement of
 a different tree. So `measured` takes no mutation falsifier. What it owes instead is an
 apparatus control: the demonstration that the measurement can still MOVE. The repository
-already ships the worked example — `scripts/evidence_class_census.py`'s own self-test
+already ships the worked example — `tools/verification/evidence-class-census`'s own self-test
 perturbs a synthetic registry and requires each number to change, and "a figure that cannot
 move is not a measurement" is this record's own commit message.
 
@@ -1028,7 +1028,7 @@ something the owner has already written, is listed here rather than assumed.
 
 Stated so the numbers can be recomputed and disagreed with, because a record that demands
 falsifiability of everything else may not assert its own figures. Every figure in §2, §3.1
-and §8 is computed by `scripts/evidence_class_census.py` from
+and §8 is computed by `tools/verification/evidence-class-census` from
 `verification/policy/{verification,theorems,assumptions,mutation-probes}.toml`, and its
 self-test perturbs a synthetic registry and requires each number to MOVE. A figure that
 cannot move is not a measurement. §12's probe adjudication is a reading of all 21 probe
@@ -1067,8 +1067,10 @@ declares the severities. No work should be scheduled against it.
 - Anything about `compile_fail` doctests in the §8 figure, which counts only `#[test]` and
   `#[tokio::test]`. ADR-069 widens it.
 
-The census now lives in `scripts/evidence_class_census.py` with its own self-test in
-`local_gate.sh` stage 1 and as its own required CI step. **Phase 0A moves it to
-`tools/verification/` as a first-class tool**, because a number in a document is a claim and
-a number a gate recomputes is a measurement — which is the same distinction this whole record
-is about.
+Phase 0A moved the census from `scripts/` into `tools/verification/evidence-class-census`,
+beside the lanes whose registries it reads, resolving the policy directory from its own
+location rather than from the working directory — a census that measures a different tree
+depending on where it was started is not a measurement. Its self-test runs in `local_gate.sh`
+stage 1 and as its own required CI step, because a number in a document is a claim and a
+number a gate recomputes is a measurement, which is the same distinction this whole record is
+about.

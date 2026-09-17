@@ -24,6 +24,9 @@ from _ecosystems import test_project_for
 from _ecosystems import valid_target
 from _ecosystems import unit_ecosystem
 from _ecosystems import unit_projects
+from _evidence_class import MEASUREMENT_KEYS
+from _evidence_class import class_problems
+from _evidence_class import severity_problem
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 POLICY_DIR = REPO_ROOT / "verification" / "policy"
@@ -33,7 +36,11 @@ ASSUMPTIONS_TOML = POLICY_DIR / "assumptions.toml"
 TRUST_BOUNDARIES_TOML = POLICY_DIR / "trust-boundaries.toml"
 TOOLCHAINS_LOCK_TOML = POLICY_DIR / "toolchains.lock.toml"
 
-SCHEMA_VERSION = 1
+#: Bumped to 2 by ADR-MCPRE-068 Phase 0A, which made `evidence_class` and
+#: `direct_consequence_severity` required on every unit. The bump is not bookkeeping: the
+#: refusal below says a schema change alters what a fingerprint MEANS, so every standing
+#: attestation is invalidated by it and must be re-earned against the new fingerprints.
+SCHEMA_VERSION = 2
 
 #: Verification classes, ADR-MCPRE-059 §9.
 CLASSES = {"V0", "V1", "V2", "V3"}
@@ -98,6 +105,13 @@ _UNIT_KEYS = {
     "test_features",
     "extracted_symbols",
     "lean_theorems",
+    # ADR-MCPRE-068 §5. `evidence_class` cannot be called `class`: that key is two lines up
+    # and holds V0/V1/V2. The two vocabularies are unrelated — one is proof STRENGTH, the
+    # other is the KIND of thing that establishes the claim — and a V0 unit can be any of
+    # the four evidence classes.
+    "evidence_class",
+    "direct_consequence_severity",
+    *MEASUREMENT_KEYS,
 }
 _EDGE_KEYS = {"kind", "from", "to", "contract", "sealed", "sealed_by", "rationale"}
 
@@ -430,6 +444,16 @@ def load_verification() -> dict:
         uwhere = f"{where} [[unit]] #{index}"
         _reject_unknown(uwhere, unit, _UNIT_KEYS)
         _require(uwhere, unit, {"id", "class", "paths"})
+        # ADR-MCPRE-068 §9.3, registry adequacy: declaring a class you do not satisfy is a
+        # lie and is fatal here, at load, before anything reads the unit. Every rule
+        # `class_problems` applies is computable from THIS record alone, which is what
+        # keeps it loader-stage; N1's falsifier obligation needs `effective_severity` from
+        # the assurance graph and activates in Phase 0E instead.
+        for problem in class_problems(uwhere, unit):
+            raise ManifestError(problem)
+        problem = severity_problem(uwhere, unit)
+        if problem is not None:
+            raise ManifestError(problem)
         if unit["class"] not in CLASSES:
             raise ManifestError(
                 f"{uwhere}: class {unit['class']!r} not one of {sorted(CLASSES)}"

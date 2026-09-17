@@ -35,7 +35,7 @@ creates propositions the registry does not currently hold.
 
 ## 2. What was measured
 
-Measured by `scripts/evidence_class_census.py` over every `#[test]` / `#[tokio::test]`
+Measured by `tools/verification/evidence-class-census` over every `#[test]` / `#[tokio::test]`
 function defined in a file some unit lists in `paths`, counting a function as unregistered
 only when it appears in **no** unit's `tested_symbols`:
 

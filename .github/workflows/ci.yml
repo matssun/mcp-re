@@ -437,7 +437,7 @@ jobs:
       # requires the measurement to move, including the DIRECT-vs-CLOSURE distinction
       # that makes "7 of 12 roots" and "3 of 12 roots" two different true statements.
       - name: Evidence-class census selftest (a figure that cannot move is not a measurement)
-        run: python3 scripts/evidence_class_census.py --selftest
+        run: tools/verification/evidence-class-census --selftest
 
       # The assurance platform's own self-tests — the verdict algebra, the invalidation
       # rules, the measured-input closure, the escape-hatch detector, the theorem loader
@@ -476,6 +476,10 @@ jobs:
           # could not see it, because "named by a workflow" was treated as coverage
           # whatever the trigger. Both halves are fixed.
           python3 tools/verification/test_mutation_lane.py
+          # ADR-MCPRE-068 Phase 0A. Listed here rather than left to a glob for the
+          # reason the comment above gives: `merge_path_gate.py` reads literal paths,
+          # so a suite a workflow assembles at run time is one it cannot see.
+          python3 tools/verification/test_evidence_class.py
 
       # ADR-MCPRE-059 §28 + the ratified security boundary. The registry's `root_theorems`
       # and `docs/spec/security-boundary.md` §2 are ONE fact — what MCP-RE promises —

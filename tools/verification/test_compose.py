@@ -51,6 +51,8 @@ def world() -> tuple[dict, dict, dict]:
                 "description": "",
                 "paths": ["tools/verification/_compose.py"],
                 "evidence": ["test://u/v0/battery"],
+                "evidence_class": "tested",
+                "direct_consequence_severity": "high",
                 "tested_symbols": ["lib#a::b"],
             },
             {
@@ -59,6 +61,9 @@ def world() -> tuple[dict, dict, dict]:
                 "description": "",
                 "paths": ["tools/verification/_compose.py"],
                 "evidence": ["lean://u/v2/theorem"],
+                "evidence_class": "proved",
+                "direct_consequence_severity": "high",
+                "lean_theorems": ["U.v2"],
             },
         ],
     }
@@ -165,6 +170,8 @@ def _v2_unit(**overrides) -> dict:
         "description": "a synthetic extracted-model unit",
         "paths": ["tools/verification/_compose.py"],
         "evidence": ["lean://synthetic/theorem"],
+        "evidence_class": "proved",
+        "direct_consequence_severity": "high",
         "extracted_symbols": ["crate::item"],
         "lean_theorems": ["Synthetic.theorem"],
     }
@@ -182,7 +189,18 @@ def test_a_V2_unit_that_declares_no_lean_evidence_is_refused_by_the_manifest():
     from _manifest import ManifestError
 
     try:
-        _validated(_v2_unit(evidence=["test://synthetic/battery"], tested_symbols=["lib#a::b"]))
+        # `evidence_class` moves with the evidence, so that THIS control still reaches the
+        # V2 rule it is about. The two are separate authorities: ADR-MCPRE-068's check asks
+        # whether the declared evidence CLASS matches the declared URIs, and the V2 rule
+        # asks whether the verification TIER matches them. A unit can satisfy one and fail
+        # the other, which is why neither subsumes the other.
+        _validated(
+            _v2_unit(
+                evidence=["test://synthetic/battery"],
+                evidence_class="tested",
+                tested_symbols=["lib#a::b"],
+            )
+        )
     except ManifestError as exc:
         assert "no `lean://` evidence entry" in str(exc), exc
     else:

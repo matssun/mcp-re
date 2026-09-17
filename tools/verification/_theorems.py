@@ -40,6 +40,7 @@ import re
 import tomllib
 
 from _manifest import POLICY_DIR, SCHEMA_VERSION, ManifestError, _reject_unknown, _require
+from _evidence_class import severity_problem
 
 THEOREMS_TOML = POLICY_DIR / "theorems.toml"
 
@@ -59,6 +60,11 @@ _THEOREM_KEYS = {
     "supported_by",
     "depends_on",
     "replaced_by",
+    # ADR-MCPRE-068 §10, S1. The CLOSED label beside the existing prose
+    # `security_consequence`, which stays: the prose says what an attacker cannot do if the
+    # claim holds, and the label says how much is lost if it does not. One is read by a
+    # person and the other by the gate, and neither can be derived from the other.
+    "direct_consequence_severity",
 }
 #: Everything but the deprecation link. A claim with no consequence or no scope is not a
 #: reviewable proposition, so none of these is optional.
@@ -88,6 +94,14 @@ _DUPLICATED_AUTHORITY = {
     "consumed_by": "derived — a reverse edge is never stored (§8.2)",
     "dependents": "derived — a reverse edge is never stored (§8.2)",
     "guarantees": "derived from supported_by — a reverse edge is never stored (§8.2)",
+    # ADR-MCPRE-068 N3 — both are DERIVED from the assurance graph and neither is ever
+    # stored. A recorded copy is a value that can disagree with the graph it was computed
+    # from, and the disagreement would be invisible: nothing re-derives a field that is
+    # simply present.
+    "severity": "the CLOSED label is `direct_consequence_severity` (§10, S1)",
+    "consequence_severity": "the CLOSED label is `direct_consequence_severity` (§10, S1)",
+    "effective_severity": "derived — max(direct, inherited), never stored (§9, N3)",
+    "inherited_severity": "derived — from the roots and theorems above it, never stored (§9, N3)",
 }
 
 _TEXT_KEYS = (
@@ -136,6 +150,9 @@ def _check_ids(doc: dict) -> list[str]:
         _reject_duplicated_authority(where, entry)
         _reject_unknown(where, entry, _THEOREM_KEYS)
         _require(where, entry, _REQUIRED_KEYS)
+        problem = severity_problem(where, entry)
+        if problem is not None:
+            raise ManifestError(problem)
         theorem_id = entry["id"]
         if not isinstance(theorem_id, str) or not _ID_RE.match(theorem_id):
             raise ManifestError(
