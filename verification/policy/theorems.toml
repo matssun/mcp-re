@@ -43,11 +43,11 @@ schema_version = 1
 # system promise, so inferring roots from graph shape would declare the registry complete
 # the moment it held leaves.
 #
-# EMPTY, deliberately, and it reports UNDECLARED rather than PASS. The root set is
-# populated by the theorem-architecture ratification (§28, ADR-MCPRE-059 rev. 3 → T6):
-# a root enters here after its statement and decomposition have been owner-ratified, never
+# Populated by the theorem-architecture ratification (§28, ADR-MCPRE-059 rev. 3 → T6): a
+# root enters here after its statement and decomposition have been owner-ratified, never
 # because a claim looked important. Adding or removing an entry is a security-sensitive
-# change under §21.1.
+# change under §21.1. An empty set reports UNDECLARED rather than PASS, so the emptiest
+# registry is never the greenest.
 root_theorems = [
   # R1 / R6 — the two halves of the request pipeline, kept apart because one constrains what
   # a successful dispatch implies and the other what a failure does. A biconditional would
@@ -2258,12 +2258,10 @@ depends_on = []
 # owner and no support closure, which is the §28.5 `GAP` terminal and is DERIVED from the
 # empty `supported_by`, never stored.
 #
-# `root_theorems` stays empty. It is declared once, when the COMPLETE ratified root set has
-# resolvable identities — R2's emission composition, R3's client composition, R4's
-# materialized-runtime composition and R5c's audit totality have no honest owner yet, and a
-# root whose blocking child cannot be registered would report COMPLETE while its argument is
-# open. Declaring three of six roots early would buy a number at the cost of the one
-# property the root set exists to have.
+# `root_theorems` is declared once, when the ratified root set has resolvable identities, so
+# that no root whose blocking child cannot be registered reports COMPLETE while its argument
+# is open. Twelve roots are declared at the top of this file; the ratified areas whose
+# composition has no honest owner yet are absent from it rather than declared early.
 # =======================================================================================
 
 [[theorem]]
