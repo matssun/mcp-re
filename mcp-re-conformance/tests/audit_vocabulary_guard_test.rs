@@ -410,13 +410,18 @@ fn no_producer_outside_core_mints_a_wire_token() {
 /// instead of going unscanned. Its scope is therefore exactly the Cargo/Bazel workspace —
 /// see [`CRATE_SOURCE_TREES`] for the two source trees outside it and why the structural
 /// producer check covers them instead.
-#[test]
-fn exactly_two_files_decide_what_a_verdict_token_says() {
-    let expected: BTreeSet<String> = SOLE_MINTING_FILES.iter().map(|s| s.to_string()).collect();
-
+/// The walk itself, as a function of the crate set it is given.
+///
+/// Extracted from the measurement so the SENSITIVITY CONTROL can run the same apparatus
+/// over a different input — ADR-MCPRE-068 Ruling 4 asks a measured proposition for the
+/// demonstration that its number can still MOVE, and a control that re-implemented the walk
+/// would be demonstrating that a second implementation moves.
+///
+/// Returns `(the files that mint a verdict token, how many files were read)`.
+fn minting_files(trees: &[(&str, &str)]) -> (BTreeSet<String>, usize) {
     let mut found: BTreeSet<String> = BTreeSet::new();
     let mut files_scanned = 0usize;
-    for (crate_dir, env_key) in CRATE_SOURCE_TREES {
+    for (crate_dir, env_key) in trees {
         // The sentinel is `<crate>/src/lib.rs`; its parent is the tree to walk.
         let sentinel = locate(env_key);
         let src_root = sentinel
@@ -438,6 +443,26 @@ fn exactly_two_files_decide_what_a_verdict_token_says() {
             }
         }
     }
+    (found, files_scanned)
+}
+
+#[test]
+fn exactly_two_files_decide_what_a_verdict_token_says() {
+    let expected: BTreeSet<String> = SOLE_MINTING_FILES.iter().map(|s| s.to_string()).collect();
+
+    let (found, files_scanned) = minting_files(CRATE_SOURCE_TREES);
+
+    // THE MEASUREMENT, emitted in the form the ADR-MCPRE-068 `measured://` lane reads.
+    //
+    // A measured proposition is existential and scoped — over THIS corpus, the observed
+    // value was X — and the lane preserves the result as an artifact and digests it. The
+    // lines are the result; everything else cargo prints is timing and progress, which two
+    // identical runs do not agree on.
+    println!("MEASURED: files_deciding_verdict_tokens={}", found.len());
+    for file in &found {
+        println!("MEASURED: minting_file={file}");
+    }
+    println!("MEASURED: crates_scanned={}", CRATE_SOURCE_TREES.len());
 
     // Positive control on the walk and the runfiles wiring: an empty or tiny scan would
     // make the equality below hold vacuously.
@@ -448,6 +473,55 @@ fn exactly_two_files_decide_what_a_verdict_token_says() {
     assert_eq!(
         found, expected,
         "the set of files deciding what an mcp-re.* VERDICT token says is not the two frozen          vocabularies. A file that appears here and is not one of them has re-created the          parallel namespace ADR-MCPRE-066 Slice 2 removed: state which verdict the failure IS          (an exhaustive `From<&_> for McpReError` or a `PolicyError`) and derive the token from          that. A file that DISAPPEARS from here has moved a frozen vocabulary, which is an ADR."
+    );
+}
+
+/// The APPARATUS CONTROL — ADR-MCPRE-068 Ruling 4, and the reason a measured proposition
+/// owes no mutation probe.
+///
+/// Deleting a production property does not make a measurement false; it makes it a
+/// measurement of a different tree. What a measurement CAN be wrong about, independently of
+/// the world, is its own apparatus: a walk that reads nothing, or one wired to a corpus it
+/// is not actually looking at, reports a number that cannot move and is not a measurement.
+///
+/// So this perturbs the input the measurement is scoped over — one crate removed from the
+/// scanned set — and reports how many observations changed. The contract the `measured://`
+/// lane reads is the COUNT, not the exit status: a control that selected nothing exits 0
+/// exactly like one that perturbed everything, and this repository has shipped that
+/// distinction being lost before.
+#[test]
+fn the_measurement_moves_when_the_scanned_set_shrinks() {
+    let (baseline, baseline_files) = minting_files(CRATE_SOURCE_TREES);
+    assert!(
+        baseline_files >= 200,
+        "the unperturbed walk read only {baseline_files} files; a control over a dead \
+         apparatus demonstrates nothing"
+    );
+
+    // `mcp-re-core` holds one of the two frozen vocabularies, so removing it from the
+    // scanned set MUST remove an observation. Chosen rather than arbitrary: a crate whose
+    // absence changed nothing would make this control pass over an apparatus that had
+    // stopped reading anything at all.
+    let shrunk: Vec<(&str, &str)> = CRATE_SOURCE_TREES
+        .iter()
+        .filter(|(crate_dir, _)| *crate_dir != "mcp-re-core")
+        .copied()
+        .collect();
+    let (perturbed, perturbed_files) = minting_files(&shrunk);
+
+    let moved = baseline.difference(&perturbed).count();
+    println!("APPARATUS-MOVED: {moved}");
+
+    assert!(
+        perturbed_files < baseline_files,
+        "removing a crate from the scanned set read the same number of files ({baseline_files}); \
+         the walk is not reading the set it is given"
+    );
+    assert_eq!(
+        moved, 1,
+        "removing mcp-re-core from the scanned set changed {moved} observation(s), expected \
+         exactly the one frozen vocabulary it holds. Either the apparatus is not scoped to \
+         the set it is handed, or the file set moved and this control needs re-adjudicating."
     );
 }
 

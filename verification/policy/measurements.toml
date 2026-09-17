@@ -22,7 +22,58 @@
 
 schema_version = 1
 
-# [[measurement]] records land here at Phase 0D, each with the unit whose proposition it
-# measures, an executable protocol, the scope that bounds it, the artifact it produces, and
-# one of the two control kinds: `reproducibility` (the protocol run twice must agree) or
-# `sensitivity` (a perturbation that must report `APPARATUS-MOVED: <n>`, n >= 1).
+# Each record names the unit whose proposition it measures, an executable protocol, the scope
+# that bounds it, the artifact it produces, and one of the two control kinds:
+# `reproducibility` (the protocol run twice must agree) or `sensitivity` (a perturbation that
+# must report `APPARATUS-MOVED: <n>`, n >= 1).
+
+[[measurement]]
+id = "MSR-0001"
+unit = "conformance.verdict_vocabulary_scope"
+protocol = [
+  "cargo",
+  "test",
+  "-p",
+  "mcp-re-conformance",
+  "--test",
+  "audit_vocabulary_guard_test",
+  "--",
+  "--exact",
+  "exactly_two_files_decide_what_a_verdict_token_says",
+  # The SCOPE IDENTITY control runs WITH the measurement rather than beside it: it derives
+  # the scanned crate set from the workspace manifest, which is what makes the number a
+  # statement about the workspace instead of about a hand-list someone last edited.
+  "the_scanned_crate_set_is_the_workspace",
+  # Without this the `MEASURED:` lines never reach the lane and the artifact is empty —
+  # which the lane refuses as an apparatus that did not run, rather than reporting a green
+  # measurement of nothing.
+  "--nocapture",
+]
+scope = """
+Every crate in the workspace with a source tree, derived from the root Cargo.toml at compile
+time; production halves only, with test regions excluded by `rust_source::production_half`.
+Measured on whatever host runs the lane, which does not bound the result: the corpus is the
+tree, not the machine.
+"""
+artifact = "verdict-vocabulary-scope.txt"
+artifact_pattern = "^MEASURED: "
+control_kind = "sensitivity"
+control = [
+  "cargo",
+  "test",
+  "-p",
+  "mcp-re-conformance",
+  "--test",
+  "audit_vocabulary_guard_test",
+  "--",
+  "--exact",
+  "the_measurement_moves_when_the_scanned_set_shrinks",
+  "--nocapture",
+]
+note = """
+ADR-MCPRE-068 §12.2. The apparatus was already written and filed under `tested`, because
+`tested` was the only word available. The sensitivity control removes `mcp-re-core` from the
+scanned set and requires exactly one observation to change — chosen rather than arbitrary,
+since that crate holds one of the two frozen vocabularies, and a crate whose absence changed
+nothing would let the control pass over a walk that had stopped reading anything at all.
+"""

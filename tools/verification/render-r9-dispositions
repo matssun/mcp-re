@@ -114,19 +114,39 @@ def uncovered_surviving_high(record: dict) -> list[str]:
     )
 
 
-def _is_ancestor(commit: str, repo: Path) -> bool:
-    """Does `commit` exist in this repository and lead to HEAD?
+#: What this clone can say about a recorded closure commit.
+#:
+#: THREE ANSWERS, NOT TWO, and the third is why this exists. The first version collapsed
+#: them: `merge-base --is-ancestor` returns 0 reachable, 1 not reachable, and ANYTHING ELSE
+#: for an error — including an object the clone does not have — and all of "not 0" was read
+#: as "this never merged". Those are a FINDING and a MEASUREMENT FAILURE, and they call for
+#: opposite actions: one says the record is lying, the other says this checkout cannot
+#: answer. Reporting the second as the first sends someone to correct a record that is
+#: correct.
+#:
+#: It is the repository's own standing rule — an absent measurement is not a negative
+#: result — applied to the one control that had quietly broken it.
+REACHABLE, UNREACHABLE, ABSENT = "reachable", "unreachable", "absent"
 
-    `merge-base --is-ancestor` answers both at once: exit 0 reachable, 1 not, and anything
-    else — including an object this clone does not have — is not an ancestor either.
-    """
+
+def _reachability(commit: str, repo: Path) -> str:
+    """Whether `commit` leads to HEAD, does not, or is not in this clone at all."""
+    present = subprocess.run(
+        ["git", "cat-file", "-e", f"{commit}^{{commit}}"],
+        cwd=repo,
+        capture_output=True,
+    )
+    if present.returncode != 0:
+        return ABSENT
     return (
-        subprocess.run(
+        REACHABLE
+        if subprocess.run(
             ["git", "merge-base", "--is-ancestor", commit, "HEAD"],
             cwd=repo,
             capture_output=True,
         ).returncode
         == 0
+        else UNREACHABLE
     )
 
 
@@ -150,10 +170,21 @@ def unmerged_closures(record: dict, repo: Path = REPO_ROOT) -> list[str]:
         if not isinstance(closure, dict) or not {"pr", "commit"} <= closure.keys():
             defects.append(f"{row['cluster']}: merged_closure is not a typed {{pr, commit}} record")
             continue
-        if not _is_ancestor(closure["commit"], repo):
+        state = _reachability(closure["commit"], repo)
+        if state == UNREACHABLE:
             defects.append(
                 f"{row['cluster']}: merged_closure names #{closure['pr']} at "
-                f"{closure['commit'][:12]}, which is not an ancestor of HEAD"
+                f"{closure['commit'][:12]}, which IS in this clone and is NOT an ancestor "
+                f"of HEAD. The record asserts a merge the tree being measured does not "
+                f"contain."
+            )
+        elif state == ABSENT:
+            defects.append(
+                f"{row['cluster']}: MEASUREMENT FAILURE — merged_closure names #"
+                f"{closure['pr']} at {closure['commit'][:12]}, an object this clone does "
+                f"not have, so nothing here can say whether it merged. That is a fact about "
+                f"the CHECKOUT, not about the record: a shallow or partial fetch cannot "
+                f"discharge an ancestry claim. Fetch the full history and re-run."
             )
     return defects
 

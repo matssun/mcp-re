@@ -11,9 +11,12 @@ So the claim is typed (`pr`, `commit`, `note`) and discharged against the local 
 graph. Each control below is a way the assertion could be false while still looking well
 formed:
 
-  * a closure commit that does not exist in this repository at all;
   * a closure commit that exists and is NOT reachable from HEAD — the open-PR shape, and
     the one a spelling check would pass;
+  * a closure commit this clone does not have at all, which is a MEASUREMENT FAILURE and
+    not that finding. The two were one case until a CI checkout came up short and reported
+    the record as false; they call for opposite actions — correct the record, or fetch the
+    history — and only one of them is about the record;
   * a `merged_closure` that is prose rather than a typed record.
 
 And the positive control, without which the other three prove nothing: a real ancestor
@@ -97,14 +100,25 @@ def test_a_real_ancestor_is_a_merged_closure():
     in_fixture(check)
 
 
-def test_a_nonexistent_closure_commit_fails():
+def test_a_commit_this_clone_DOES_NOT_HAVE_is_a_measurement_failure():
+    """A FINDING and a MEASUREMENT FAILURE, told apart.
+
+    `merge-base --is-ancestor` returns 0 reachable, 1 not reachable, and anything else for
+    an error — including an object the clone does not have. Reading all of "not 0" as "this
+    never merged" makes a shallow or partial checkout indistinguishable from a record that
+    is lying, and the two call for opposite actions: correct the record, or fetch the
+    history. Only one of them is about the record."""
+
     def check(fix: Fixture) -> None:
         absent = "0" * 40
         defects = render_r9.unmerged_closures(
             record({"pr": 2, "commit": absent, "note": "never existed"}), fix.repo
         )
         assert len(defects) == 1, defects
-        assert "not an ancestor of HEAD" in defects[0], defects
+        assert "MEASUREMENT FAILURE" in defects[0], defects
+        assert "this clone does not have" in defects[0], defects
+        # And it must NOT be reported as the finding it is not.
+        assert "does not contain" not in defects[0], defects
 
     in_fixture(check)
 
@@ -118,7 +132,10 @@ def test_a_real_commit_not_reachable_from_head_fails():
         )
         assert len(defects) == 1, defects
         assert fix.unreachable[:12] in defects[0], defects
-        assert "not an ancestor of HEAD" in defects[0], defects
+        assert "is NOT an ancestor of HEAD" in defects[0], defects
+        # The object IS here, so this is a statement about the RECORD, and must not be
+        # softened into one about the checkout.
+        assert "MEASUREMENT FAILURE" not in defects[0], defects
 
     in_fixture(check)
 
@@ -132,12 +149,34 @@ def test_prose_is_not_a_closure_record():
     in_fixture(check)
 
 
+def test_every_live_closure_commit_is_PRESENT_in_this_clone():
+    """Separated from the ancestry assertion below, so a checkout that cannot answer says
+    so instead of reporting the record as false. This is the control that would have named
+    the cause when the CI clone came up short — the old shape failed with a bare assertion
+    and no way to tell which of the two had happened."""
+    import json
+
+    live = json.loads(render_r9.RECORD.read_text(encoding="utf-8"))
+    absent = [
+        f"{row['cluster']} @ {row['merged_closure']['commit'][:12]}"
+        for row in live["dispositions"]
+        if isinstance(row.get("merged_closure"), dict)
+        and render_r9._reachability(row["merged_closure"]["commit"], render_r9.REPO_ROOT)
+        == render_r9.ABSENT
+    ]
+    assert not absent, (
+        f"this checkout does not hold {len(absent)} recorded closure commit(s): {absent}. "
+        f"That is a fact about the clone — fetch the full history — and NOT evidence that "
+        f"the record is wrong."
+    )
+
+
 def test_the_live_record_carries_only_merged_closures():
     import json
 
     live = json.loads(render_r9.RECORD.read_text(encoding="utf-8"))
-    assert render_r9.unmerged_closures(live) == []
-    assert render_r9.uncovered_surviving_high(live) == []
+    assert render_r9.unmerged_closures(live) == [], render_r9.unmerged_closures(live)
+    assert render_r9.uncovered_surviving_high(live) == [], render_r9.uncovered_surviving_high(live)
 
 
 def test_a_disposition_is_never_rewritten_by_a_later_closure():

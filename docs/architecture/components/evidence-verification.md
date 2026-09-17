@@ -404,20 +404,40 @@ falsifier, and owes instead the demonstration that its apparatus can still MOVE:
 that must report `APPARATUS-MOVED: <n>`, n >= 1). The COUNT is parsed rather than the exit
 status, because a control that selected nothing exits 0.
 
-`verification/policy/measurements.toml` is empty at Phase 0B and the lane's liveness is
-`tools/verification/test_measured_lane.py`, which runs a live, a dead, a silent and an
-irreproducible apparatus on every merge-path run. The first real corpus arrives at Phase 0D
-with `conformance.verdict_vocabulary_scope`, whose battery ADR-MCPRE-068 §12.2 identified as
-a measurement already written — the observation, a scope-identity control and a
-non-empty-input sensitivity control — filed under `tested` because `tested` was the only word
-available.
+**MSR-0001 is the first registered measurement, and it is the one §12.2 found already
+written.** `conformance.verdict_vocabulary_scope` claims that exactly two files in this
+workspace decide what an `mcp-re.*` verdict token says, measured over every crate's source
+tree. Where its four `tested` controls went:
 
-**Neither lane is in any unit's attestation closure yet.** No unit declares `structural://`
-or `measured://` before Phase 0D: `_evidence.required_lanes` binds every declared scheme, so
-an early URI would take its unit out of the graph. The declaration follows the
-reclassification, through the class-transition ratchet, and it carries a fingerprint encoding
-bump with it — the probe entries and the lane identity become components exactly as encoding
-v5 made them for mutation.
+| was | is |
+|---|---|
+| `exactly_two_files_decide_what_a_verdict_token_says` | the measurement, emitting `MEASURED:` lines the lane preserves and digests |
+| `the_scanned_crate_set_is_the_workspace` | scope identity, run BY the protocol rather than beside it |
+| `guard_inputs_are_non_empty` | the walk's own positive control, asserted inside the measurement |
+| `no_producer_outside_core_mints_a_wire_token` | superseded by the walk this unit measures — an ADR-MCPRE-069 disposition, not evidence here |
+| — | `the_measurement_moves_when_the_scanned_set_shrinks`, the sensitivity control this class owes and nothing had |
+
+The control removes `mcp-re-core` from the scanned set and requires exactly one observation
+to change. The crate is chosen rather than arbitrary: it holds one of the two frozen
+vocabularies, so a crate whose absence changed nothing would let the control pass over a walk
+that had stopped reading anything at all.
+
+**The structural lane is inside an attestation closure as of Phase 0D.**
+`http_profile.verifier_result_separation` declares `structural://…/assurance_type_separation`
+and nothing else: its `test://` URI and its three `doc#` symbols went with its class, because
+a battery no declared lane selects is a declaration that reads as coverage. The doctests
+remain in the source and still run in the ordinary cargo lane; what changed is which
+mechanism the registry names as the evidence, and that one compares the error code itself.
+
+The declaration follows the reclassification rather than leading it, through the
+class-transition ratchet (`scripts/evidence_class_ratchet.py`), and it carried the
+fingerprint encoding bump 8 → 9 with it: `structural_probes`, `structural_lane_identity`,
+`measurements` and `measured_lane_identity` are components now, exactly as encoding v5 made
+the mutation registry one. The structural lane's identity is TWO files — the runner and
+`_structural.py`, which decides whether a refusal is attributable to the boundary the probe
+attacks, and therefore decides what every structural record MEANS.
+
+`measured://` is still declared by no unit; its first corpus is the next 0D slice.
 
 
 ## 10. Implementation map

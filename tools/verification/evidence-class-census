@@ -104,7 +104,13 @@ def unregistered_controls(units: dict) -> dict:
     appears in no unit at all, never merely because the unit whose path holds it does not
     name it.
     """
-    registered = {t.split("::")[-1] for u in units.values() for t in u["tested_symbols"]}
+    # `.get`, because a unit is not obliged to have a battery: ADR-MCPRE-068 Phase 0D
+    # reclassifies a unit to `structural` and its `test://` URI and `tested_symbols` go
+    # together. A census that assumed the field would count the whole estate as
+    # unregistered the moment the first one moved.
+    registered = {
+        t.split("::")[-1] for u in units.values() for t in u.get("tested_symbols", [])
+    }
     pattern = re.compile(r"#\[(?:tokio::)?test\]\s*(?:async\s+)?fn\s+([a-z0-9_]+)")
     total = 0
     unregistered = 0

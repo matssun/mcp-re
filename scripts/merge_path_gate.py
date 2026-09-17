@@ -66,6 +66,22 @@ WORKFLOWS = REPO / ".github" / "workflows"
 #: An invocation of a repository script, in either of the two forms the gate script uses.
 INVOCATION = re.compile(r"(?:^|[\s`\"'./])((?:scripts|tools)/[A-Za-z0-9_./-]+?\.(?:py|sh))")
 
+#: A fetch that TRUNCATES the object graph rather than extending it.
+#:
+#: `git fetch --depth=N` into a full clone does not add a ref beside the history; it makes
+#: the repository SHALLOW at that commit, and every later step that asks an ancestry
+#: question gets the wrong answer. That is not a local mistake: it took the R9 linkage
+#: control down with it, reporting all 56 recorded closure commits — present in the clone —
+#: as merges the tree does not contain.
+#:
+#: Refused only in a job that checked out at `fetch-depth: 0`, because that job asked for
+#: the full history on purpose and something later reads it. A job that never had the
+#: history is free to fetch what it needs.
+SHALLOW_FETCH = re.compile(r"git fetch\b[^\n]*(--depth[= ]|--shallow-since|--shallow-exclude)")
+
+#: The checkout option that says "this job needs the whole graph".
+FULL_HISTORY = re.compile(r"fetch-depth:\s*0\b")
+
 #: A path run AS A PROGRAM: at the start of a command, or after a shell operator, or as the
 #: whole of a `run:` step — and NOT preceded by an interpreter.
 #:
@@ -227,6 +243,20 @@ def command_position_paths(text: str) -> set[str]:
     return found
 
 
+def truncating_fetches(text: str) -> list[str]:
+    """Shallow fetches inside a workflow whose checkout asked for the full history.
+
+    Text-level and job-agnostic on purpose: the two facts are a `fetch-depth: 0` and a
+    `--depth` fetch in the same file, and a parser that tried to attribute each to a job
+    would be a YAML parser this gate does not have. A workflow with several jobs, only one
+    of which is deep, is a false positive worth having — the fix is the same either way,
+    and the alternative is the check nobody can be sure ran.
+    """
+    if not FULL_HISTORY.search(text):
+        return []
+    return [line.strip() for line in text.splitlines() if SHALLOW_FETCH.search(line)]
+
+
 def not_executable(paths: set[str]) -> list[str]:
     """Those of `paths` that exist in the tree and are not executable.
 
@@ -362,6 +392,26 @@ def selftest() -> int:
     if not_executable({"scripts/a-file-that-does-not-exist.sh"}):
         print("SELFTEST FAIL: a missing path was reported as a permissions defect", file=sys.stderr)
         return 1
+    # The shallow-fetch rule, both directions. It exists because the defect it names was
+    # introduced BY a new control and broke a different one: the fix and the breakage were
+    # in the same commit, and nothing related them.
+    for text, expect, why in [
+        ("jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v7\n        with:\n          fetch-depth: 0\n      - run: git fetch --no-tags --depth=1 origin main\n",
+         True, "a --depth fetch in a deep checkout"),
+        ("jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v7\n        with:\n          fetch-depth: 0\n      - run: git fetch --no-tags origin main\n",
+         False, "a full fetch in a deep checkout"),
+        ("jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v7\n      - run: git fetch --depth=1 origin main\n",
+         False, "a shallow fetch where no step asked for the whole graph"),
+        ("jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v7\n        with:\n          fetch-depth: 0\n      - run: git fetch --shallow-since=2026-01-01 origin main\n",
+         True, "the other shallowing form"),
+    ]:
+        found = bool(truncating_fetches(text))
+        if found is not expect:
+            print(
+                f"SELFTEST FAIL: shallow-fetch rule {'missed' if expect else 'flagged'} {why}",
+                file=sys.stderr,
+            )
+            return 1
     print("merge_path_gate selftest: OK")
     return 0
 
@@ -390,9 +440,20 @@ def main() -> int:
         )
         return 1
     runnable = command_position_paths(LOCAL_GATE.read_text(encoding="utf-8"))
+    truncating: list[str] = []
     for workflow in sorted(WORKFLOWS.glob("*.yml")):
-        runnable |= command_position_paths(workflow.read_text(encoding="utf-8"))
-    found = [
+        text = workflow.read_text(encoding="utf-8")
+        runnable |= command_position_paths(text)
+        truncating += [
+            f"{workflow.name}: `{line}` SHALLOWS a clone this workflow took at "
+            f"`fetch-depth: 0`. A shallow fetch truncates the object graph rather than "
+            f"extending it, so every later step that asks an ancestry question measures a "
+            f"history that is no longer there. Drop the depth flag, or read the ref the "
+            f"deep checkout already provides."
+            for line in truncating_fetches(text)
+        ]
+    found = list(truncating)
+    found += [
         f"{path} is invoked as a program by local_gate.sh or a workflow and is NOT "
         f"executable. A control that cannot start is not enforced — this is `Permission "
         f"denied`, stage 1, on every fresh checkout. Stage the mode: "

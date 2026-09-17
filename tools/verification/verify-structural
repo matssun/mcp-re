@@ -219,7 +219,20 @@ def main() -> int:
     except ManifestError as exc:
         return _fail(f"{exc}")
 
-    declaring = sorted(uid for uid, unit in units.items() if claims_structural(unit))
+    # A SUBSTITUTED REGISTRY IS NOT THE ESTATE'S REGISTRY, so it is not judged against the
+    # estate's declarations. `--registry` exists for this lane's own false-green catalogue,
+    # which compiles fixture constructions against a dependency-free crate; asking whether
+    # the tree's declaring units have a probe THERE is a category error, and it answered
+    # FAIL for a run that was measuring the runner rather than the repository.
+    official = Path(args.registry).resolve() == REGISTRY.resolve()
+    if not official:
+        print(
+            f"verify-structural: reading a SUBSTITUTED registry ({args.registry}); this run "
+            f"measures the LANE and says nothing about the repository's declarations"
+        )
+    declaring = (
+        sorted(uid for uid, unit in units.items() if claims_structural(unit)) if official else []
+    )
     registered = {probe["unit"] for probe in probes}
     unknown = sorted({probe["unit"] for probe in probes} - set(units))
     if unknown:

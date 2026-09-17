@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The evidence-class transition log — ADR-MCPRE-068 §9.4, enforced by
+# `scripts/evidence_class_ratchet.py`.
+#
+# Registry adequacy is a property of ONE record read alone: does this unit's declared class
+# agree with its declared evidence? A unit that drops its prover and rewrites itself as a
+# tested one is internally consistent and says nothing about what it used to be. Only a
+# comparison against `origin/main` sees the CHANGE, and every change needs a line here.
+#
+# THIS IS NOT A WAIVER. The record does not excuse the destination class's mechanics — the
+# loader enforces those on every run, and a transition to a class the unit cannot satisfy
+# still fails the merge. What the record buys is that the reclassification was WRITTEN
+# DOWN: the defect is a class moving silently, not a class moving.
+#
+# THERE IS NO DIRECTION RULE. `proved > structural > tested > measured` is the wrong shape —
+# the four are incomparable establishment modes rather than strength tiers, and a
+# `structural` proposition is not a weaker `proved` one. A downgrade and an upgrade need the
+# same thing: a record.
+#
+# A record stays after its transition lands, because this file is the log of how each unit's
+# class got where it is. What is refused is a record naming a transition that is neither
+# happening now nor already on the base — a claim about nothing, which hides the next one
+# that matters.
+
+schema_version = 1
+
+[[transition]]
+unit = "http_profile.verifier_result_separation"
+from_evidence_class = "tested"
+to_evidence_class = "structural"
+ref = "ADR-MCPRE-068 §12.1, Phase 0D"
+note = """
+The record's own worked example. The unit's proposition — the verifier's assurance products
+are not substitutable — is established by the type system REFUSING a substitution, and it
+was recorded identically to a behavioural check because `tested` was the only word available.
+
+Its three declared controls were ```compile_fail doctests: real hostile constructions,
+running on the merge path, and on the pinned stable toolchain rustdoc checks only THAT they
+fail, never why. The four probes that replace them (S01, S02, S03, S05) compile the same
+constructions as integration tests — a separate crate linking this library, which is the
+boundary condition the claim is about — and require the declared rustc error code with its
+primary span on the probe's marker line.
+
+Nothing about the product changed. The registry stopped describing a compile-time refusal as
+a passing test.
+"""
+
+[[transition]]
+unit = "conformance.verdict_vocabulary_scope"
+from_evidence_class = "tested"
+to_evidence_class = "measured"
+ref = "ADR-MCPRE-068 §12.2, Phase 0D"
+note = """
+The other worked example, and the other direction of the same finding: the repository had
+been producing a MEASURED proposition for months and filing it under `tested`.
+
+The claim is existential and scoped — over every crate's source tree, exactly two files
+decide what an `mcp-re.*` verdict token says — where a tested claim is universal. Deleting a
+production property does not make it false; it makes it a measurement of a different tree.
+So it takes no mutation falsifier, and what it owes instead is the demonstration that its
+number can still MOVE.
+
+Three of its four declared controls were already that apparatus. They are now the
+measurement, its scope identity and its sensitivity control, executed by the `measured://`
+lane; the fourth, `no_producer_outside_core_mints_a_wire_token`, is superseded by the walk
+this unit measures and is an ADR-MCPRE-069 disposition rather than evidence here.
+"""
