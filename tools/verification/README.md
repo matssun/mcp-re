@@ -22,6 +22,8 @@ before any verification toolchain exists — which is exactly the state they are
 | `verify --gate` | authoritative mode: a failing lane fails the build | works |
 | `verify --manifests` | validate the policy files and stop | works |
 | `verify-tests` | runs each unit's declared test battery, by target — and once per pinned runtime where its ecosystem has one | works |
+| `verify-structural` | ADR-MCPRE-068 `structural://`: injects a hostile construction into a scratch copy and requires the compiler to REFUSE it with a declared error code | works; 5 registered probes, no unit declares the scheme before Phase 0D |
+| `verify-measured` | ADR-MCPRE-068 `measured://`: executes a measurement protocol and requires its apparatus to demonstrate it can still MOVE | works; registry empty until Phase 0D, liveness in `test_measured_lane.py` |
 | `check-assumptions` | the proof escape-hatch gate | works |
 | `fingerprint` | deterministic `ReviewFingerprint` per unit | works, partial components |
 | `evidence-graph` | declared units and typed edges | works; freshness is Phase 4 |
@@ -138,6 +140,10 @@ introduced, observed to fail, and reverted:
 | the same `assume`, registered | passes, and reports it as registered |
 | `V1` unit declared with Verus unpinned | lane escalates `SKIPPED` → `FAIL` |
 | a `tested_symbol` renamed in the source | the battery's `--exact` selection matches nothing, and zero-selected is a lane FAIL |
+| a `--probe`/`--measurement` selector that matches nothing | lane FAIL: an empty SELECTION and an empty REGISTRY are different facts |
+| a structural probe whose hostile construction COMPILES | lane FAIL, naming the invariant the representation does not close |
+| a structural probe refused by a different error, or on another line | lane FAIL: a refusal the probe cannot attribute is not evidence |
+| a measured apparatus reporting `APPARATUS-MOVED: 0`, or reporting nothing | lane FAIL, and the two are reported as different findings |
 | a `tested_symbol` with no target prefix | malformed-symbol failure, never a default target |
 | `test://` evidence with no `tested_symbols` | manifest validation failure — an unrunnable claim is not evidence |
 | `supported_by` naming no declared unit | fail-closed refusal, never an empty closure |

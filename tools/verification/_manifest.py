@@ -24,16 +24,36 @@ from _ecosystems import test_project_for
 from _ecosystems import valid_target
 from _ecosystems import unit_ecosystem
 from _ecosystems import unit_projects
+from _evidence_class import MEASUREMENT_KEYS
+from _evidence_class import class_problems
+from _evidence_class import severity_problem
+from _premise import class_problem
+from _premise import is_live
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 POLICY_DIR = REPO_ROOT / "verification" / "policy"
 
 VERIFICATION_TOML = POLICY_DIR / "verification.toml"
 ASSUMPTIONS_TOML = POLICY_DIR / "assumptions.toml"
+
+#: The premise registry's own schema. Bumped to 2 by ADR-MCPRE-068 Phase 0C, which made
+#: `premise_class` required of every live record.
+#:
+#: Enforced for the same reason `SCHEMA_VERSION` is enforced for `verification.toml`: a
+#: registry written against schema 1 loading silently under schema-2 tooling would be read
+#: as a fully typed estate with 47 untyped records in it. `_fingerprint.assumption_digest`
+#: hashes each entry whole, so the new fields re-digest every premise and dirty every unit
+#: in their scope — that invalidation is the schema change being handled rather than
+#: tolerated.
+ASSUMPTIONS_SCHEMA_VERSION = 2
 TRUST_BOUNDARIES_TOML = POLICY_DIR / "trust-boundaries.toml"
 TOOLCHAINS_LOCK_TOML = POLICY_DIR / "toolchains.lock.toml"
 
-SCHEMA_VERSION = 1
+#: Bumped to 2 by ADR-MCPRE-068 Phase 0A, which made `evidence_class` and
+#: `direct_consequence_severity` required on every unit. The bump is not bookkeeping: the
+#: refusal below says a schema change alters what a fingerprint MEANS, so every standing
+#: attestation is invalidated by it and must be re-earned against the new fingerprints.
+SCHEMA_VERSION = 2
 
 #: Verification classes, ADR-MCPRE-059 §9.
 CLASSES = {"V0", "V1", "V2", "V3"}
@@ -98,6 +118,13 @@ _UNIT_KEYS = {
     "test_features",
     "extracted_symbols",
     "lean_theorems",
+    # ADR-MCPRE-068 §5. `evidence_class` cannot be called `class`: that key is two lines up
+    # and holds V0/V1/V2. The two vocabularies are unrelated — one is proof STRENGTH, the
+    # other is the KIND of thing that establishes the claim — and a V0 unit can be any of
+    # the four evidence classes.
+    "evidence_class",
+    "direct_consequence_severity",
+    *MEASUREMENT_KEYS,
 }
 _EDGE_KEYS = {"kind", "from", "to", "contract", "sealed", "sealed_by", "rationale"}
 
@@ -281,6 +308,13 @@ _ASSUMPTION_KEYS = {
     "affected_contracts",
     "tool_specific_mechanism",
     "sites",
+    # ADR-MCPRE-068 §7, C1-C5. `premise_class` is required of every LIVE premise and
+    # refused on a withdrawn one; the other two are required by exactly one class each and
+    # refused on the others, because a field nothing reads is a declaration that looks like
+    # coverage. `_premise` owns all three rules.
+    "premise_class",
+    "boundary_owner",
+    "discharging_event",
 }
 #: `sites` is the one OPTIONAL key, and its absence is not a default — it is the
 #: fail-closed direction. An assumption with no `sites` registers no seam, so a premise
@@ -289,7 +323,15 @@ _ASSUMPTION_KEYS = {
 #: the required set: making it required would force an entry to name a seam before the
 #: decision about which seams it covers has been taken, which is how the kind-level rule
 #: it replaces came to license every future site.
-_ASSUMPTION_REQUIRED = set(_ASSUMPTION_KEYS) - {"sites"}
+#: The three ADR-MCPRE-068 fields are conditional rather than unconditional, so they are
+#: not in the unconditional required set: `_premise.class_problem` decides which of them
+#: this entry owes from the class it declares and from whether it is live at all.
+_ASSUMPTION_REQUIRED = set(_ASSUMPTION_KEYS) - {
+    "sites",
+    "premise_class",
+    "boundary_owner",
+    "discharging_event",
+}
 
 _BOUNDARY_KEYS = {
     "id",
@@ -430,6 +472,16 @@ def load_verification() -> dict:
         uwhere = f"{where} [[unit]] #{index}"
         _reject_unknown(uwhere, unit, _UNIT_KEYS)
         _require(uwhere, unit, {"id", "class", "paths"})
+        # ADR-MCPRE-068 §9.3, registry adequacy: declaring a class you do not satisfy is a
+        # lie and is fatal here, at load, before anything reads the unit. Every rule
+        # `class_problems` applies is computable from THIS record alone, which is what
+        # keeps it loader-stage; N1's falsifier obligation needs `effective_severity` from
+        # the assurance graph and activates in Phase 0E instead.
+        for problem in class_problems(uwhere, unit):
+            raise ManifestError(problem)
+        problem = severity_problem(uwhere, unit)
+        if problem is not None:
+            raise ManifestError(problem)
         if unit["class"] not in CLASSES:
             raise ManifestError(
                 f"{uwhere}: class {unit['class']!r} not one of {sorted(CLASSES)}"
@@ -582,6 +634,12 @@ def load_assumptions() -> dict:
     where = "assumptions.toml"
     _reject_unknown(where, doc, {"schema_version", "assumption"})
     _require(where, doc, {"schema_version"})
+    if doc["schema_version"] != ASSUMPTIONS_SCHEMA_VERSION:
+        raise ManifestError(
+            f"{where}: schema_version {doc['schema_version']} but this tooling implements "
+            f"{ASSUMPTIONS_SCHEMA_VERSION}. A premise registry written against an older "
+            f"schema would load with untyped records reading as typed ones."
+        )
     seen: set[str] = set()
     for index, entry in enumerate(doc.get("assumption", [])):
         awhere = f"{where} [[assumption]] #{index}"
@@ -603,6 +661,14 @@ def load_assumptions() -> dict:
                 )
         _validate_sites(awhere, entry)
         _require_boundary_edge(awhere, entry)
+        # ADR-MCPRE-068 §7. Computable from ONE record in isolation, which is what keeps it
+        # loader-stage and therefore merge-fatal: a malformed premise declaration is a lie
+        # about what is trusted, and malformed has always been fatal here. Whether an
+        # OBSERVABLE obligation has already come true is a different question — it needs
+        # the other registries and the tree — and lives in `check-assumptions`.
+        problem = class_problem(awhere, entry, is_live(entry))
+        if problem is not None:
+            raise ManifestError(problem)
     return doc
 
 

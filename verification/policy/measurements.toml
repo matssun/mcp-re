@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The `measured://` registry — ADR-MCPRE-068 §4.1, §12.2, Phase 0B.
+#
+# A MEASURED proposition is scoped and existential: over THIS corpus, in THIS environment,
+# the observed value was X. It takes no mutation falsifier — deleting a production property
+# does not make a measurement false, it makes it a measurement of a different tree — and
+# what it owes instead is an APPARATUS CONTROL: the demonstration that its number can still
+# MOVE. `tools/verification/verify-measured` executes these; `_measured.py` adjudicates them.
+#
+# EMPTY AT PHASE 0B, AND THAT IS THE PHASE ORDER RATHER THAN AN OVERSIGHT. 0B builds the
+# lane and changes no unit's class; a unit may not declare `measured://` before the lane
+# exists and fail-closes on zero execution, because `_evidence.required_lanes` binds every
+# declared scheme and `decide_issuance` refuses a claimed lane with no record. The lane's
+# liveness at 0B is `test_measured_lane.py`, which runs the runner end to end over a live,
+# a dead, a silent and an irreproducible fixture apparatus on every gate run.
+#
+# The first real corpus arrives at 0D: ADR-MCPRE-068 §12.2 measured
+# `conformance.verdict_vocabulary_scope` as a measurement already written — its battery
+# holds the observation, a scope-identity control and a non-empty-input sensitivity control
+# — filed under `tested` because `tested` was the only word available.
+
+schema_version = 1
+
+# [[measurement]] records land here at Phase 0D, each with the unit whose proposition it
+# measures, an executable protocol, the scope that bounds it, the artifact it produces, and
+# one of the two control kinds: `reproducibility` (the protocol run twice must agree) or
+# `sensitivity` (a perturbation that must report `APPARATUS-MOVED: <n>`, n >= 1).

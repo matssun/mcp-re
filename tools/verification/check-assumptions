@@ -68,8 +68,10 @@ from _manifest import (  # noqa: E402
     REPO_ROOT,
     ManifestError,
     load_assumptions,
+    load_toolchains,
     load_verification,
 )
+from _premise import has_come_true, is_live  # noqa: E402
 
 VERIFICATION_DIR = REPO_ROOT / "verification"
 
@@ -392,13 +394,55 @@ def undeclared_proof_text() -> list[tuple[Path, int, str]]:
     return found
 
 
+def stale_obligations() -> list[str]:
+    """Review obligations whose OBSERVABLE discharging event has already happened — C4.
+
+    Not a pass, and not a silent discharge. The registry would be asserting debt the tree
+    says is paid, which is the same stale-record defect `_evidence.write_bundle` records for
+    the evidence bundle: a record that outlives the state it describes makes the tree look
+    measured when it is not.
+
+    Discharge is a registry EDIT, owner-reviewed like every other security-sensitive change.
+    This gate's job is not to notice a discharge; it is to make the debt impossible to stop
+    seeing. `owner-event` obligations are never reported here, because nothing observes them
+    — they are reported as OPEN, in the release view, against every root that reaches them.
+    """
+    assumptions = load_assumptions()
+    verification = load_verification()
+    toolchains = load_toolchains()
+    found = []
+    for entry in assumptions.get("assumption", []):
+        if not is_live(entry) or entry.get("premise_class") != "review-obligation":
+            continue
+        problem = has_come_true(entry, verification, toolchains)
+        if problem is not None:
+            found.append(problem)
+    return found
+
+
 def main() -> int:
     try:
         registered = registered_by_unit()
         stray = undeclared_proof_text()
         vacuous = proved_symbol_defects()
+        stale_debt = stale_obligations()
     except ManifestError as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
+        return 1
+
+    if stale_debt:
+        print(f"check-assumptions: {len(stale_debt)} review obligation(s) the tree has moved past")
+        for problem in stale_debt:
+            print(f"  [STALE] {problem}")
+        print(
+            "\nFAIL: a review obligation's observable discharging event has already "
+            "happened.\nThe registry is asserting debt the tree says is paid. Re-read the "
+            "premise and either\ndischarge it or restate the event it is now held open by "
+            "— never delete the record\nsilently, and never let the gate discharge it for "
+            "you.",
+            file=sys.stderr,
+        )
+        print("VERDICT: FAIL")
         return 1
 
     if vacuous:

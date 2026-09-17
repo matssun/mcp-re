@@ -437,7 +437,7 @@ jobs:
       # requires the measurement to move, including the DIRECT-vs-CLOSURE distinction
       # that makes "7 of 12 roots" and "3 of 12 roots" two different true statements.
       - name: Evidence-class census selftest (a figure that cannot move is not a measurement)
-        run: python3 scripts/evidence_class_census.py --selftest
+        run: tools/verification/evidence-class-census --selftest
 
       # The assurance platform's own self-tests — the verdict algebra, the invalidation
       # rules, the measured-input closure, the escape-hatch detector, the theorem loader
@@ -476,6 +476,25 @@ jobs:
           # could not see it, because "named by a workflow" was treated as coverage
           # whatever the trigger. Both halves are fixed.
           python3 tools/verification/test_mutation_lane.py
+          # ADR-MCPRE-068 Phase 0A. Listed here rather than left to a glob for the
+          # reason the comment above gives: `merge_path_gate.py` reads literal paths,
+          # so a suite a workflow assembles at run time is one it cannot see.
+          python3 tools/verification/test_evidence_class.py
+          # ADR-MCPRE-068 Phase 0B. These two are not only self-tests of a lane's edges —
+          # they ARE the two lanes' liveness, because the ratification requires each to
+          # fail-close on zero execution and neither registry is yet large enough for a
+          # lane run to demonstrate that it can go red. The structural suite compiles a
+          # hostile construction that BUILDS and requires the runner to report FAIL; the
+          # measured suite runs a dead apparatus, a silent one and an irreproducible one.
+          # ~4s, one dependency-free crate between them.
+          python3 tools/verification/test_structural_lane.py
+          python3 tools/verification/test_measured_lane.py
+          # ADR-MCPRE-068 Phase 0C. The premise ontology, and the composition §7 found
+          # missing: which typed premises each declared root ultimately rests on. Both ends
+          # of that join carry `unit://` URIs, and comparing them verbatim reported that no
+          # root rests on any premise — an empty join reads exactly like a clean tree, so
+          # the suite asserts the count is non-zero rather than only that it runs.
+          python3 tools/verification/test_premise_class.py
 
       # ADR-MCPRE-059 §28 + the ratified security boundary. The registry's `root_theorems`
       # and `docs/spec/security-boundary.md` §2 are ONE fact — what MCP-RE promises —

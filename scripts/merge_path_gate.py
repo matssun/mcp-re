@@ -28,7 +28,16 @@ It has happened repeatedly and was never noticed by the thing that failed:
 Each was repaired one at a time, by someone noticing. This gate is what notices.
 
 WHAT IT PROVES: every script `local_gate.sh` invokes is named by at least one workflow
-under `.github/workflows/`, or is exempt for a stated reason.
+under `.github/workflows/`, or is exempt for a stated reason — AND that every control
+invoked in COMMAND POSITION is executable in the index.
+
+The second half is the same failure class read one step earlier. A control that cannot
+START is not enforced, however many workflows name it, and the failure is not subtle when
+it happens — `Permission denied`, stage 1, every run. It is subtle in the INDEX:
+`tools/verification/evidence-class-census` landed at mode 100644, and nothing noticed,
+because the gate above it matches only `.py` and `.sh` paths and every other control in
+this repository happens to have been committed with its bit set. A path invoked as
+`python3 x.py` needs no bit and is not asked for one; a path invoked as itself is.
 
 A workflow must name its controls LITERALLY. This gate reads paths, so a step that
 assembles a script name at run time — a shell loop over a list of suites, say — is a
@@ -56,6 +65,22 @@ WORKFLOWS = REPO / ".github" / "workflows"
 
 #: An invocation of a repository script, in either of the two forms the gate script uses.
 INVOCATION = re.compile(r"(?:^|[\s`\"'./])((?:scripts|tools)/[A-Za-z0-9_./-]+?\.(?:py|sh))")
+
+#: A path run AS A PROGRAM: at the start of a command, or after a shell operator, or as the
+#: whole of a `run:` step — and NOT preceded by an interpreter.
+#:
+#: Extensionless too, which is the half `INVOCATION` cannot see: the verification lanes and
+#: the census are executables named `verify-tests`, `evidence-class-census`, and a pattern
+#: anchored on `.py`/`.sh` matches none of them.
+COMMAND_POSITION = re.compile(
+    r"(?:^|&&|\|\||;|\brun:|\bthen\b)\s*\.?/?((?:scripts|tools)/[A-Za-z0-9_./-]+)",
+    re.M,
+)
+
+#: What an interpreter invocation looks like. A path handed to one of these is an ARGUMENT,
+#: and an argument needs no execute bit — demanding one would make the gate ask for a
+#: property the invocation does not use.
+INTERPRETED = re.compile(r"\b(?:python3?|bash|sh|zsh|source|uv|node)\s+\S*$")
 
 #: Scripts that are deliberately local, each with the reason. The exemption list IS part of
 #: what this gate measured, so it is printed on every run and checked for dead entries: an
@@ -186,6 +211,40 @@ def defects(
     return found
 
 
+def command_position_paths(text: str) -> set[str]:
+    """Every repository path this text runs AS A PROGRAM.
+
+    The preceding characters decide it: a path after `python3` is an argument, and one at
+    the head of a command is a program. Matched per line and re-checked against the text
+    before it, because the two forms are otherwise indistinguishable by shape alone.
+    """
+    found: set[str] = set()
+    for match in COMMAND_POSITION.finditer(text):
+        before = text[: match.start(1)].rsplit("\n", 1)[-1]
+        if INTERPRETED.search(before):
+            continue
+        found.add(match.group(1))
+    return found
+
+
+def not_executable(paths: set[str]) -> list[str]:
+    """Those of `paths` that exist in the tree and are not executable.
+
+    The FILESYSTEM bit, which is what a fresh clone and a CI checkout both get from the
+    index — so a developer who ran `chmod +x` locally and never staged the mode change sees
+    a green gate here and a red one in CI. A path that does not exist is not this gate's
+    finding: the coverage half above already refuses a control nothing can run, and
+    reporting a missing file as a permissions defect would send someone to the wrong fix.
+    """
+    import os
+
+    return sorted(
+        path
+        for path in paths
+        if (REPO / path).is_file() and not os.access(REPO / path, os.X_OK)
+    )
+
+
 def selftest() -> int:
     """A gate whose only evidence is that a clean tree passes has never been shown to fail."""
     cases = [
@@ -274,6 +333,35 @@ def selftest() -> int:
         if expect not in INVOCATION.findall(line):
             print(f"SELFTEST FAIL: the extractor missed {expect} in {line!r}", file=sys.stderr)
             return 1
+    # The command-position extractor, which is the half that found an unstageable mode.
+    # Both directions, because either mistake is silent: a pattern that matched an
+    # interpreted path would demand an execute bit nothing uses, and one that missed a
+    # program would report a control as runnable that cannot start.
+    for text, expect, why in [
+        ("    && tools/verification/evidence-class-census --selftest \\", True, "a program after &&"),
+        ("      run: tools/verification/verify-mutations", True, "a program as a run: step"),
+        ("  scripts/run_gate.sh --selftest", True, "a program at the head of a line"),
+        ("    && python3 tools/verification/test_views.py \\", False, "an argument to python3"),
+        ("    . scripts/use_pinned_toolchain.sh || exit 1", False, "a sourced shim"),
+        ("      run: bash scripts/demo-local.sh", False, "an argument to bash"),
+    ]:
+        matched = bool(command_position_paths(text))
+        if matched is not expect:
+            print(
+                f"SELFTEST FAIL: command-position extractor {'missed' if expect else 'matched'} "
+                f"{why}: {text!r}",
+                file=sys.stderr,
+            )
+            return 1
+    # And the verdict itself: a path that exists and is not executable must be reported,
+    # while a missing path must not be — that is the coverage half's finding, and naming it
+    # here would send someone to the wrong fix.
+    if not not_executable({"scripts/local_gate.sh", "README.md"}) == ["README.md"]:
+        print("SELFTEST FAIL: the executable check does not distinguish a non-executable file", file=sys.stderr)
+        return 1
+    if not_executable({"scripts/a-file-that-does-not-exist.sh"}):
+        print("SELFTEST FAIL: a missing path was reported as a permissions defect", file=sys.stderr)
+        return 1
     print("merge_path_gate selftest: OK")
     return 0
 
@@ -301,7 +389,17 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    found = defects(gated, covered, EXEMPT, filtered_only, selftests)
+    runnable = command_position_paths(LOCAL_GATE.read_text(encoding="utf-8"))
+    for workflow in sorted(WORKFLOWS.glob("*.yml")):
+        runnable |= command_position_paths(workflow.read_text(encoding="utf-8"))
+    found = [
+        f"{path} is invoked as a program by local_gate.sh or a workflow and is NOT "
+        f"executable. A control that cannot start is not enforced — this is `Permission "
+        f"denied`, stage 1, on every fresh checkout. Stage the mode: "
+        f"`git update-index --chmod=+x {path}`."
+        for path in not_executable(runnable)
+    ]
+    found += defects(gated, covered, EXEMPT, filtered_only, selftests)
     for defect in found:
         print(f"FAIL: {defect}", file=sys.stderr)
     if found:
@@ -310,7 +408,7 @@ def main() -> int:
     print(
         f"merge-path gate: OK — {len(gated)} script(s) invoked by local_gate.sh and "
         f"{len(selftests)} platform self-test(s), all named by an UNCONDITIONAL workflow "
-        f"except: {exemptions}"
+        f"except: {exemptions}; {len(runnable)} path(s) run as programs, all executable"
     )
     return 0
 

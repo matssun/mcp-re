@@ -30,7 +30,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from _manifest import ManifestError, load_verification  # noqa: E402
+from _manifest import SCHEMA_VERSION, ManifestError, load_verification  # noqa: E402
 from _theorems import (  # noqa: E402
     structurally_supported_theorems,
     load_theorems,
@@ -51,6 +51,7 @@ def theorem(**overrides) -> dict:
         "scope": "Freshness admission only; not signature validity or replay uniqueness.",
         "owner": "http_profile.freshness_window",
         "review_requirement": "Owner security-specification review",
+        "direct_consequence_severity": "high",
         "supported_by": ["unit://http_profile.freshness_window"],
         "depends_on": [],
     }
@@ -60,7 +61,7 @@ def theorem(**overrides) -> dict:
 
 def doc(*theorems, roots: list[str] | None = None) -> dict:
     return {
-        "schema_version": 1,
+        "schema_version": SCHEMA_VERSION,
         "root_theorems": list(roots or []),
         "theorem": list(theorems),
     }
@@ -232,7 +233,7 @@ def test_a_stored_reverse_edge_is_refused():
 
 def test_a_schema_version_this_tooling_does_not_implement_is_refused():
     registry = doc(theorem())
-    registry["schema_version"] = 2
+    registry["schema_version"] = SCHEMA_VERSION + 1
     try:
         validate_theorems(registry, UNITS)
     except ManifestError as exc:
@@ -287,7 +288,7 @@ def test_the_live_registry_validates_against_the_live_units():
     resolves against the units as committed."""
     units = {unit["id"] for unit in load_verification().get("unit", [])}
     registry = load_theorems(units)
-    assert registry["schema_version"] == 1
+    assert registry["schema_version"] == SCHEMA_VERSION
     # Every live theorem is either structurally supported or reported as not — no third
     # state, and neither reading is assurance on its own.
     declared = {entry["id"] for entry in registry.get("theorem", [])}
@@ -384,7 +385,7 @@ def test_root_theorems_must_be_declared():
     """Absence is not "no roots are needed". The key is required so that a registry which
     has never been asked the question cannot read as one that answered it with "none".
     """
-    registry = {"schema_version": 1, "theorem": [theorem()]}
+    registry = {"schema_version": SCHEMA_VERSION, "theorem": [theorem()]}
     message = refused_registry(registry)
     assert "root_theorems" in message, message
 

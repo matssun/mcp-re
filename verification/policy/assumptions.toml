@@ -14,7 +14,7 @@
 # gate unless it has been deliberately registered here and owner-ratified as part of the
 # trusted computing base. "I will remove it later" is not a registration.
 
-schema_version = 1
+schema_version = 2
 
 # ---------------------------------------------------------------------------
 # Reserved identifiers
@@ -45,6 +45,39 @@ schema_version = 1
 #   review_requirement       who must review a change to it
 #   affected_contracts       contract:// identifiers whose meaning depends on it
 #   tool_specific_mechanism  e.g. verus:external_body, lean:external-model
+#   premise_class            ADR-MCPRE-068 §7: WHY this chain terminates without MCP-RE
+#                            establishing the proposition — `assumed`, `external-boundary`
+#                            or `review-obligation`. Required of every LIVE premise and
+#                            REFUSED on a withdrawn one, whose empty scope means it trusts
+#                            nothing: typing a retired record would make it read as live.
+#
+# And two conditional fields, each required by exactly one class and refused on the others,
+# because a field nothing reads is a declaration that looks like coverage:
+#
+#   boundary_owner           `external-boundary` only. WHO guarantees it, across WHICH
+#                            interface, under WHICH configuration. "Redis", alone, is not
+#                            an owner statement (C2).
+#   discharging_event        `review-obligation` only. A TAGGED record, never prose (C3):
+#                              { kind = "registry-fact", predicate = …, <operands> }
+#                              { kind = "tree-fact",     predicate = …, <operands> }
+#                              { kind = "owner-event",   statement = "…" }
+#                            `review_requirement` keeps the human review rule — who must
+#                            review a change — which is a different fact from what would
+#                            discharge it, and the gate ignores prose for discharge (C5).
+#                            An OBSERVABLE event that has already come true while the record
+#                            still exists is a gate FAIL, cause STALE_REVIEW_OBLIGATION (C4):
+#                            the registry would be asserting debt the tree says is paid.
+#
+# The three classes answer three different questions, which is why they are three:
+#
+#   assumed             will it ever be discharged?  No, and that is accepted.
+#   external-boundary                                Not by us.
+#   review-obligation                                Yes, at the named event.
+#
+# Forty-seven records with one shape made the only question anybody asks unanswerable:
+# WHICH CRITICAL OR HIGH ROOT ULTIMATELY RESTS ON SOMETHING WE MERELY ASSUME? An
+# external-boundary premise under a Critical root is a supply-chain statement; an open
+# review obligation under the same root is a DEBT. They must not read alike.
 #
 # The registry is intentionally EMPTY.
 #
@@ -84,6 +117,8 @@ scope = ["unit://core.time_rfc3339", "boundary://boundary.unmodelled_own_behavio
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; any change to parse_fixed_digits or its callers."
+premise_class = "review-obligation"
+discharging_event = { kind = "tree-fact", predicate = "site-absent", site = "mcp-re-core/src/time/mod.rs#parse_fixed_digits" }
 affected_contracts = ["contract://core/time/parse_rfc3339_utc"]
 sites = [
   "mcp-re-core/src/time/mod.rs#parse_fixed_digits",
@@ -102,6 +137,10 @@ scope = ["unit://core.time_rfc3339", "boundary://boundary.rust_std"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; discharge if vstd gains a specification for it."
+premise_class = "external-boundary"
+boundary_owner = """
+The Rust standard library, across `u8::is_ascii_digit`: its documented predicate is true on exactly the ASCII digit code points 0x30..=0x39, which vstd does not currently specify.
+"""
 affected_contracts = ["contract://core/time/parse_rfc3339_utc"]
 sites = [
   "mcp-re-core/src/verus_std_specs.rs#u8::is_ascii_digit",
@@ -119,6 +158,10 @@ scope = ["unit://core.time_rfc3339", "boundary://boundary.rust_std"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; strengthen if a proof ever depends on its result."
+premise_class = "external-boundary"
+boundary_owner = """
+The Rust standard library, across `<[T]>::split_last`: its documented total projection over a slice, which terminates and returns without panicking.
+"""
 affected_contracts = ["contract://core/time/parse_rfc3339_utc"]
 sites = [
   "mcp-re-core/src/verus_std_specs.rs#<[T]>::split_last",
@@ -138,6 +181,8 @@ scope = ["unit://core.time_rfc3339", "boundary://boundary.unmodelled_own_behavio
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; replace with a proof if a theorem ever concerns Display output."
+premise_class = "review-obligation"
+discharging_event = { kind = "owner-event", statement = "A theorem begins to concern `McpReError`'s Display output. The entry is then replaced by a proof of that impl, never renewed alongside it." }
 affected_contracts = ["contract://core/time/parse_rfc3339_utc"]
 sites = [
   "mcp-re-core/src/verus_std_specs.rs#ExMcpReError",
@@ -162,6 +207,10 @@ scope = ["unit://http_profile.freshness_window", "boundary://boundary.rust_std"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; discharge if vstd gains signed saturating specifications."
+premise_class = "external-boundary"
+boundary_owner = """
+The Rust standard library, across `i64::saturating_sub`: its documented clamping at `i64::MIN` rather than wrapping, which vstd does not specify for signed saturation.
+"""
 affected_contracts = ["contract://http_profile/verify/check_params"]
 sites = [
   "mcp-re-http-profile/src/verus_std_specs.rs#i64::saturating_sub",
@@ -176,6 +225,10 @@ scope = ["unit://http_profile.freshness_window", "boundary://boundary.rust_std"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; discharge if vstd gains signed saturating specifications."
+premise_class = "external-boundary"
+boundary_owner = """
+The Rust standard library, across `i64::saturating_add`: its documented clamping at `i64::MAX` rather than wrapping, which vstd does not specify for signed saturation.
+"""
 affected_contracts = ["contract://http_profile/verify/check_params"]
 sites = [
   "mcp-re-http-profile/src/verus_std_specs.rs#i64::saturating_add",
@@ -196,6 +249,7 @@ scope = ["unit://http_profile.freshness_window", "boundary://boundary.unmodelled
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; any change that makes the getter more than a field read."
+premise_class = "assumed"
 affected_contracts = ["contract://http_profile/verify/check_params"]
 sites = [
   "mcp-re-http-profile/src/policy.rs#VerifierPolicy::max_clock_skew",
@@ -210,6 +264,7 @@ scope = ["unit://http_profile.freshness_window", "boundary://boundary.unmodelled
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; any change that makes the getter more than a field read."
+premise_class = "assumed"
 affected_contracts = ["contract://http_profile/verify/check_params"]
 sites = [
   "mcp-re-http-profile/src/policy.rs#VerifierPolicy::max_signature_validity",
@@ -228,6 +283,8 @@ scope = ["unit://http_profile.freshness_window", "boundary://boundary.unmodelled
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; MUST be discharged before any algorithm-agility theorem."
+premise_class = "review-obligation"
+discharging_event = { kind = "owner-event", statement = "An algorithm-agility theorem is proposed. This premise MUST be discharged before one may be stated, because the resolution it makes opaque is what such a theorem would be about." }
 affected_contracts = ["contract://http_profile/verify/check_params"]
 sites = [
   "mcp-re-http-profile/src/policy.rs#VerifierPolicy::accepted_algorithm",
@@ -245,6 +302,10 @@ scope = ["unit://http_profile.freshness_window", "boundary://boundary.rust_std"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 Phase 2 pilot"
 review_requirement = "Owner review; strengthen if a proof ever depends on its result."
+premise_class = "external-boundary"
+boundary_owner = """
+The Rust standard library, across `Option::<T>::as_deref`: its documented total projection, which terminates and returns.
+"""
 affected_contracts = ["contract://http_profile/verify/check_params"]
 sites = [
   "mcp-re-http-profile/src/verus_std_specs.rs#Option::<T>::as_deref",
@@ -270,6 +331,8 @@ scope = ["unit://http_profile.admission_currency", "boundary://boundary.unmodell
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review; MUST be discharged before any theorem claiming the binding commits to the assertion's admitted state."
+premise_class = "review-obligation"
+discharging_event = { kind = "owner-event", statement = "A theorem claims the binding commits to the assertion's admitted state. This premise MUST be discharged before that claim may be made." }
 affected_contracts = ["contract://http_profile/admission/check_admission"]
 sites = [
   "mcp-re-http-profile/src/admission/mod.rs#AdmissionBinding::matches_state",
@@ -297,6 +360,8 @@ scope = ["unit://http_profile.admission_currency", "boundary://boundary.unmodell
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review; a separate unit for assertion validity is the discharge, not an ensures added here."
+premise_class = "review-obligation"
+discharging_event = { kind = "owner-event", statement = "A unit for assertion validity is registered. That unit is the discharge; an `ensures` added to this opaque function is not." }
 affected_contracts = ["contract://http_profile/admission/check_admission"]
 sites = [
   "mcp-re-http-profile/src/admission/mod.rs#verify_admission_assertion",
@@ -317,6 +382,8 @@ scope = ["unit://http_profile.admission_currency", "boundary://boundary.unmodell
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review; revisit if a theorem ever needs to say something about a key."
+premise_class = "review-obligation"
+discharging_event = { kind = "owner-event", statement = "A theorem needs to say something about a `VerificationKey`. The opaque datatype is adequate only while nothing reads it." }
 affected_contracts = ["contract://http_profile/admission/check_admission"]
 sites = [
   "mcp-re-http-profile/src/verus_std_specs.rs#ExVerificationKey",
@@ -338,6 +405,10 @@ scope = ["unit://http_profile.admission_currency", "boundary://boundary.rust_std
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review; re-examine if AdmissionStatus ever gains a hand-written PartialEq or a payload-carrying variant."
+premise_class = "external-boundary"
+boundary_owner = """
+The Rust compiler, across `#[derive(PartialEq)]` on a fieldless enum: the documented expansion is structural equality over the discriminant.
+"""
 affected_contracts = ["contract://http_profile/admission/check_admission"]
 sites = [
   "mcp-re-http-profile/src/verus_std_specs.rs#<AdmissionStatus as core::cmp::PartialEq>::eq",
@@ -378,6 +449,8 @@ scope = ["unit://http_profile.artifact_typing", "boundary://boundary.unmodelled_
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review; MUST be discharged before any theorem claiming a binding commits to the presented credential."
+premise_class = "review-obligation"
+discharging_event = { kind = "owner-event", statement = "A theorem claims a binding commits to the presented credential. This premise MUST be discharged before that claim may be made." }
 affected_contracts = ["contract://http_profile/artifact/verify_artifact_binding"]
 sites = [
   "mcp-re-http-profile/src/artifact.rs#sha256_b64url",
@@ -397,6 +470,8 @@ scope = ["unit://http_profile.artifact_typing", "boundary://boundary.unmodelled_
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review; a validate() contract is its own unit, not an ensures added here."
+premise_class = "review-obligation"
+discharging_event = { kind = "owner-event", statement = "A `validate()` contract is registered as its own unit. That unit is the discharge; an `ensures` added here is not." }
 affected_contracts = ["contract://http_profile/artifact/verify_artifact_binding"]
 sites = [
   "mcp-re-http-profile/src/block/artifact_binding.rs#ArtifactBinding::validate",
@@ -411,6 +486,10 @@ scope = ["unit://http_profile.artifact_typing", "boundary://boundary.rust_std"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review; re-examine if either enum gains a hand-written PartialEq or a payload-carrying variant."
+premise_class = "external-boundary"
+boundary_owner = """
+The Rust compiler, across `#[derive(PartialEq)]` on the fieldless enums `ArtifactType` and `BindingType`: the documented expansion is structural equality over the discriminant.
+"""
 affected_contracts = ["contract://http_profile/artifact/verify_artifact_binding"]
 sites = [
   "mcp-re-http-profile/src/verus_std_specs.rs#<crate::block::ArtifactType as core::cmp::PartialEq>::eq",
@@ -459,6 +538,8 @@ scope = ["unit://http_profile.continuation_unbypassability", "boundary://boundar
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP2"
 review_requirement = "Owner review each release; discharge blocked by pinned-toolchain ceilings 2 and 9, not by choice."
+premise_class = "review-obligation"
+discharging_event = { kind = "registry-fact", predicate = "toolchain-version-differs", tool = "verus", from = "0.2026.08.09.92f466f" }
 affected_contracts = ["contract://http_profile/dispatch/prepare_http_dispatch"]
 sites = [
   "mcp-re-http-profile/src/block.rs#ActorIdentity::actor_id",
@@ -508,6 +589,8 @@ scope = ["unit://http_profile.continuation_binding", "boundary://boundary.unmode
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP3"
 review_requirement = "Owner review; discharge requires a proof about the digest construction itself, i.e. crossing boundary.crypto_primitives."
+premise_class = "review-obligation"
+discharging_event = { kind = "owner-event", statement = "A proof about the labeled-digest construction itself is admitted, which crosses boundary.crypto_primitives. Nothing short of that discharges it." }
 affected_contracts = ["contract://http_profile/block/continuation_verify"]
 sites = [
   "mcp-re-http-profile/src/block.rs#RequestEvidenceDigest::matches_labeled",
@@ -549,6 +632,7 @@ scope = [
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP3"
 review_requirement = "Owner review; discharge requires crossing boundary.crypto_primitives with a proof about the digest construction."
+premise_class = "assumed"
 affected_contracts = ["contract://http_profile/block/continuation_verify"]
 sites = [
   "mcp-re-http-profile/src/verus_std_specs.rs#labeled_digest",
@@ -578,6 +662,7 @@ scope = [
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP3"
 review_requirement = "Owner review; any change that makes the skew more than a per-policy constant."
+premise_class = "assumed"
 affected_contracts = ["contract://http_profile/verify/check_params"]
 sites = [
   "mcp-re-http-profile/src/verus_std_specs.rs#skew_of",
@@ -599,6 +684,7 @@ scope = [
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 WP3"
 review_requirement = "Owner review; any change that makes the bound more than a per-policy constant."
+premise_class = "assumed"
 affected_contracts = ["contract://http_profile/verify/check_params"]
 sites = [
   "mcp-re-http-profile/src/verus_std_specs.rs#validity_of",
@@ -636,6 +722,7 @@ scope = ["unit://http_profile.verifier_results", "boundary://boundary.crypto_pri
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-061 MCPRE-136"
 review_requirement = "Owner review; any change of signature backend or pinned version."
+premise_class = "assumed"
 affected_contracts = []
 # Not a prover directive. No tool enforces this, and naming a `verus:` mechanism it does
 # not use would misrepresent where the trust sits.
@@ -657,6 +744,7 @@ scope = ["unit://http_profile.verifier_results", "boundary://boundary.crypto_pri
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-061 MCPRE-136"
 review_requirement = "Owner review; any change to the evidence digest algorithm or its labelling."
+premise_class = "assumed"
 affected_contracts = []
 tool_specific_mechanism = "none:trusted-primitive"
 
@@ -706,6 +794,7 @@ scope = ["unit://http_profile.verifier_results", "boundary://boundary.unmodelled
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-061 MCPRE-136"
 review_requirement = "Owner review; any change to the seam's contract or to slot enforcement."
+premise_class = "assumed"
 affected_contracts = []
 tool_specific_mechanism = "none:trusted-seam"
 
@@ -738,6 +827,10 @@ scope = ["unit://proxy.certificate_identity", "boundary://boundary.x509"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-063 Slice 1"
 review_requirement = "Owner review; any change to the certificate identity adapter or its parser dependency."
+premise_class = "external-boundary"
+boundary_owner = """
+The pinned `x509_parser` crate, across its ASN.1/X.509 decoding API: it reports a leaf's URI SANs, DNS SANs and subject Common Name faithfully and in certificate order, under the default parsing configuration this adapter uses.
+"""
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
 
@@ -768,6 +861,10 @@ scope = ["unit://proxy.ed25519_public_key", "boundary://boundary.x509"]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-063 Slice 2"
 review_requirement = "Owner review; any change that lets the accepting path consult the parser."
+premise_class = "external-boundary"
+boundary_owner = """
+The pinned `x509_parser` crate, across its SubjectPublicKeyInfo decoding API: it reports a key's algorithm OID faithfully and refuses input that is not a SubjectPublicKeyInfo.
+"""
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
 
@@ -812,6 +909,10 @@ scope = ["unit://proxy.credential_key_correspondence", "boundary://boundary.x509
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-063 Slice 2"
 review_requirement = "Owner review; any change to the credential adapter's certificate parsing or its parser dependency."
+premise_class = "external-boundary"
+boundary_owner = """
+The pinned `x509_parser` crate, across its certificate decoding API: it reports the leaf certificate's SubjectPublicKeyInfo bytes faithfully.
+"""
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
 
@@ -849,6 +950,10 @@ scope = ["unit://proxy.channel_associated_credential", "boundary://boundary.tls_
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-063 Slice 4"
 review_requirement = "Owner review; any change that captures a credential anywhere other than the connection whose establishment boundary was just crossed."
+premise_class = "external-boundary"
+boundary_owner = """
+The `rustls` TLS establishment mechanism, across its connection-state API: it reports whether a session has established and which peer credential it associated with that session.
+"""
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
 
@@ -888,6 +993,10 @@ scope = ["unit://proxy.channel_associated_identity", "boundary://boundary.tls_me
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-063 Slice 5"
 review_requirement = "Owner review; any change to which element of the associated chain the identity is read from, or the admission of a second establishment mechanism."
+premise_class = "external-boundary"
+boundary_owner = """
+The `rustls` TLS establishment mechanism, across `ServerConnection::peer_certificates()`: it returns the peer chain in TLS order, element 0 being the end-entity credential.
+"""
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
 
@@ -926,6 +1035,10 @@ scope = ["unit://proxy.mechanism_verified_credential", "boundary://boundary.tls_
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-064 Slice 1"
 review_requirement = "Owner review; any change to how the establishment path is read, or to the gate that governs resumption."
+premise_class = "external-boundary"
+boundary_owner = """
+The `rustls` TLS establishment mechanism, across its handshake-kind API: it reports which establishment path a session took and admits a resumed session only where an earlier full handshake authenticated the peer.
+"""
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
 
@@ -982,6 +1095,10 @@ scope = ["unit://proxy.authenticated_relationship_peer", "boundary://boundary.tl
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-064 Slice 2"
 review_requirement = "Owner review; any change that composes an authenticated peer from an acceptance produced by a different establishment mechanism, or that makes client authentication optional."
+premise_class = "external-boundary"
+boundary_owner = """
+The `rustls` TLS establishment mechanism, across its client-authentication path: it accepts a client credential only under a handshake proof binding the peer to it, under the required-client-auth configuration this deployment sets.
+"""
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
 
@@ -1018,6 +1135,7 @@ scope = ["unit://http_profile.keyid_selector", "boundary://boundary.crypto_primi
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 §28 closure ruling"
 review_requirement = "Owner review; any change to the keyid digest algorithm, and on any published weakening of SHA-256 collision resistance."
+premise_class = "assumed"
 affected_contracts = []
 tool_specific_mechanism = "none:trusted-primitive"
 
@@ -1074,6 +1192,10 @@ scope = ["unit://proxy.credential_currency", "boundary://boundary.x509"]
 owner = "mats@sundvall.name"
 introduced_by = "Owner completeness ruling A, 2026-08-31"
 review_requirement = "Owner review; any change to the credential-currency X.509 adapter, to its parser dependency, or to the field set revocation lookup is keyed by."
+premise_class = "external-boundary"
+boundary_owner = """
+The pinned `x509_parser` crate, across its certificate decoding API: it reports validity instants, the DER encodings of issuer and subject `Name`, and the serial number faithfully — the field set revocation lookup is keyed by.
+"""
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
 
@@ -1113,6 +1235,10 @@ scope = ["unit://proxy.delegated_resolver_materialization", "boundary://boundary
 owner = "mats@sundvall.name"
 introduced_by = "Owner completeness ruling A, 2026-08-31"
 review_requirement = "Owner review; any new RawEd25519TlsSigner implementation, and any change to how the resolver obtains or installs the signer's exported key."
+premise_class = "external-boundary"
+boundary_owner = """
+Each `RawEd25519TlsSigner` implementation, local and KMS-backed alike, across the trait's own contract: the SubjectPublicKeyInfo it exports is that of the key it signs with.
+"""
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
 
@@ -1156,6 +1282,10 @@ scope = ["unit://proxy.replay_admission_gate", "boundary://boundary.shared_state
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 §28 / issue #744, D2a"
 review_requirement = "Owner review; any change to the WAIT quorum handling, to the tier's strict-production minimum, or to the replication topologies ADR-MCPS-020 admits."
+premise_class = "external-boundary"
+boundary_owner = """
+The Redis server, across the `SET NX PX` + `WAIT n t` command pair: a `WAIT` reply of at least n means n replicas acknowledged the preceding write, under the replication topologies ADR-MCPS-020 admits.
+"""
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
 
@@ -1244,6 +1374,10 @@ scope = ["unit://proxy.replay_admission_gate", "boundary://boundary.shared_state
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-059 §28 / issue #744, D2a"
 review_requirement = "Owner review; any change to the txn comparison, the lease derivation, or the cluster topology the tier is declared against."
+premise_class = "external-boundary"
+boundary_owner = """
+The etcd cluster, across `POST /v3/kv/txn`: a success under `compare { target: CREATE, create_revision: 0 }` means the key did not exist at a linearization point, under the cluster topology the tier is declared against.
+"""
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
 
@@ -1333,6 +1467,10 @@ scope = ["unit://proxy.trust_epoch_source", "boundary://boundary.shared_state_st
 owner = "mats@sundvall.name"
 introduced_by = "v0.17 trust-plane ownership slice (verification/reviews/packets/trust-plane-ownership-2026-09-05.md)"
 review_requirement = "Owner review; any change to the epoch reader, to the poll-interval bound the startup line states, or to the store topology the deployment documentation admits for the epoch key."
+premise_class = "external-boundary"
+boundary_owner = """
+The shared-state store, across its read-your-acknowledged-writes ordering for the trust-epoch key, under the store topology the deployment documentation admits for that key.
+"""
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
 
@@ -1424,6 +1562,7 @@ sites = [
 owner = "mats@sundvall.name"
 introduced_by = "v0.17 per-site escape-hatch registration (verification/reviews/packets/escape-hatch-site-registration-2026-09-07.md)"
 review_requirement = "Owner review; any `Ex…` declaration added, removed, or changed in shape."
+premise_class = "assumed"
 affected_contracts = []
 tool_specific_mechanism = "verus:external_type_specification"
 
@@ -1465,6 +1604,7 @@ sites = [
 owner = "mats@sundvall.name"
 introduced_by = "v0.17 per-site escape-hatch registration (verification/reviews/packets/escape-hatch-site-registration-2026-09-07.md)"
 review_requirement = "Owner review; any theorem that begins to read a field of one of these types, and any type added to or removed from the list."
+premise_class = "assumed"
 affected_contracts = []
 tool_specific_mechanism = "verus:external_body"
 
@@ -1514,6 +1654,10 @@ scope = [
 owner = "mats@sundvall.name"
 introduced_by = "r11 R11-346 (security funnel round 11, tracker #879)"
 review_requirement = "Owner review; any change to what the answer leg's admission is decided on, and any deployment topology that widens who may write the correlation keyspace."
+premise_class = "external-boundary"
+boundary_owner = """
+The deployment operator, across the correlation tier's network and access-control configuration: write access to the `mcp-re:cont:` keyspace is confined to the fleet's own replicas.
+"""
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
 
@@ -1546,6 +1690,10 @@ scope = [
 owner = "mats@sundvall.name"
 introduced_by = "r11 R11-518 (security funnel round 11, tracker #879)"
 review_requirement = "Owner review; any change to the commands the tier issues, and any Redis topology in which the two legs of one continuation can reach different primaries."
+premise_class = "external-boundary"
+boundary_owner = """
+The Redis server, across the `DEL` and `SET ... PX` commands: a `DEL` reply of 1 means this call removed an existing key, and a `PX` expiry keeps the key readable for exactly that window and then not at all.
+"""
 affected_contracts = []
 tool_specific_mechanism = "foreign-dependency"
 
@@ -1592,5 +1740,6 @@ scope = ["unit://proxy.tls_listener_state", "boundary://boundary.crypto_primitiv
 owner = "mats@sundvall.name"
 introduced_by = "r11 R11-586 owner ruling (security funnel round 11, tracker #879)"
 review_requirement = "Owner review; any change to the trust-epoch derivation's digest algorithm, and any deployment model in which the trust-anchor set is not operator-chosen."
+premise_class = "assumed"
 affected_contracts = []
 tool_specific_mechanism = "none:trusted-primitive"

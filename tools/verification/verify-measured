@@ -1,0 +1,257 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""The `measured://` lane — ADR-MCPRE-068 §4.1, §12.2, Phase 0B.
+
+A MEASURED proposition is scoped and existential: *over THIS corpus, in THIS environment,
+the observed value was X*. Deleting a production property does not make it false — it makes
+it a measurement of a different tree — so it takes no mutation falsifier. What it owes
+instead is the demonstration that its apparatus can still MOVE.
+
+    for each registered measurement — execute the protocol, preserve and digest its result,
+    and require its declared control to show the apparatus is alive.
+
+    reproducibility — run the protocol twice; the two results must be IDENTICAL.
+    sensitivity     — run the control; it must report `APPARATUS-MOVED: <n>` with n >= 1.
+
+**The count is parsed, not the exit status.** A control that selected nothing exits 0, and
+so does one whose perturbation set was empty. The only statement that separates a live
+apparatus from a dead one is one the control has to compute, so a missing count and a zero
+count are two distinct failures and neither is a pass.
+
+ZERO EXECUTION IS A FAILURE, NOT A PASS — the owner's ratification of ADR-MCPRE-068:
+
+> No unit may declare either scheme before its required lane exists and fail-closes on zero
+> execution.
+
+A unit declaring `measured://` with nothing registered FAILS. A selection resolving to no
+measurement while some unit declares the scheme FAILS. A protocol producing no result line
+FAILS. Only a tree where nothing declares the scheme and nothing is registered reports
+`NOT_REQUIRED`.
+
+WHAT THIS LANE MEASURES AT PHASE 0B, STATED PLAINLY: nothing in the registry, because 0B
+changes no unit's class and a unit may not declare `measured://` before this lane exists.
+Its liveness at 0B is `test_measured_lane.py`, which executes this runner end to end over
+fixture apparatus — a live one, a dead one, a silent one and an irreproducible one — on
+every gate run. The first real corpus arrives at 0D with
+`conformance.verdict_vocabulary_scope`, whose three apparatus controls ADR-MCPRE-068 §12.2
+already identified in its existing battery.
+
+Usage:
+    tools/verification/verify-measured [--measurement ID]... [--registry PATH]
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _evidence import EvidenceRecord, evidence_store, write_record  # noqa: E402
+from _fingerprint import fingerprint_unit  # noqa: E402
+from _manifest import (  # noqa: E402
+    REPO_ROOT,
+    ManifestError,
+    load_assumptions,
+    load_toolchains,
+    load_verification,
+)
+from _measured import apparatus_problem, extract, load_measurements  # noqa: E402
+
+REGISTRY = REPO_ROOT / "verification" / "policy" / "measurements.toml"
+
+SCHEME = "measured://"
+
+#: Where a result is preserved. Inside the run's evidence store, never in the working tree:
+#: an artifact committed to the repository would be a measurement of whatever tree produced
+#: it, read as a measurement of the tree that holds it.
+ARTIFACT_DIR = "measured-artifacts"
+
+
+def claims_measured(unit: dict) -> bool:
+    return any(str(e).startswith(SCHEME) for e in unit.get("evidence", []))
+
+
+def run(argv: list[str]) -> tuple[int, str]:
+    """Execute one declared command from the repository root, returning (status, output).
+
+    stdout and stderr are joined because an apparatus is free to report on either, and a
+    control whose `APPARATUS-MOVED` line went to stderr would otherwise read as a control
+    that said nothing — a failure about the lane's plumbing dressed as a finding about the
+    apparatus.
+    """
+    proc = subprocess.run(
+        [str(part) for part in argv],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    return proc.returncode, proc.stdout + proc.stderr
+
+
+def preserve(store: Path, measurement: dict, result: list[str]) -> tuple[Path, str]:
+    """Write the result artifact and return (path, digest).
+
+    The digest goes into the evidence record's detail, so two runs' records can be compared
+    without re-reading the artifacts — and so an artifact that was silently replaced stops
+    matching the record that cited it.
+    """
+    directory = store / ARTIFACT_DIR
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / str(measurement["artifact"])
+    body = "\n".join(result) + "\n"
+    path.write_text(body, encoding="utf-8")
+    return path, hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+def measure(measurement: dict, store: Path) -> tuple[str | None, str]:
+    """(problem, digest) for one measurement."""
+    status, output = run(list(measurement["protocol"]))
+    if status != 0:
+        return (
+            f"the protocol exited {status}. A measurement whose apparatus failed to run "
+            f"observed nothing; its previous number says nothing about this tree.",
+            "",
+        )
+    first = extract(str(measurement["artifact_pattern"]), output)
+
+    second = None
+    control_output = None
+    if measurement["control_kind"] == "reproducibility" and first:
+        status, repeat = run(list(measurement["protocol"]))
+        if status != 0:
+            return (f"the protocol's second run exited {status}", "")
+        second = extract(str(measurement["artifact_pattern"]), repeat)
+    elif measurement["control_kind"] == "sensitivity" and first:
+        _status, control_output = run(list(measurement["control"]))
+
+    problem = apparatus_problem(measurement, first, second, control_output)
+    if problem is not None:
+        return problem, ""
+    _path, digest = preserve(store, measurement, first)
+    return None, digest
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--measurement", action="append", default=[], help="only these ids")
+    parser.add_argument("--registry", default=str(REGISTRY), help="registry to read")
+    args = parser.parse_args()
+
+    try:
+        measurements = load_measurements(Path(args.registry))
+        doc = load_verification()
+        toolchains = load_toolchains()
+        assumptions = load_assumptions()
+        units = {unit["id"]: unit for unit in doc.get("unit", [])}
+    except ManifestError as exc:
+        return _fail(f"{exc}")
+
+    unknown = sorted({m["unit"] for m in measurements} - set(units))
+    if unknown:
+        return _fail(
+            f"measurement(s) name unit(s) {unknown} that verification.toml does not hold. A "
+            f"measurement with no owning proposition is a number with nothing to be about."
+        )
+    declaring = sorted(uid for uid, unit in units.items() if claims_measured(unit))
+    registered = {m["unit"] for m in measurements}
+    orphaned = [uid for uid in declaring if uid not in registered]
+    if orphaned:
+        return _fail(
+            f"unit(s) {orphaned} declare {SCHEME} evidence but no measurement is registered "
+            f"for them. A declared evidence class nothing measures is unmeasured evidence."
+        )
+    drift = [
+        f"unit {uid} declares measurement_artifact "
+        f"{units[uid].get('measurement_artifact')!r} but its registered measurement writes "
+        f"{artifact!r}"
+        for uid in declaring
+        for artifact in [next(m["artifact"] for m in measurements if m["unit"] == uid)]
+        if units[uid].get("measurement_artifact") != artifact
+    ]
+    if drift:
+        return _fail("; ".join(drift))
+
+    selected = (
+        [m for m in measurements if m["id"] in set(args.measurement)]
+        if args.measurement
+        else list(measurements)
+    )
+    if not selected:
+        if args.measurement:
+            # An empty selection and an empty registry are different facts, and only one of
+            # them is quiet. See `verify-structural` for the instance that named this.
+            return _fail(
+                f"--measurement {sorted(set(args.measurement))} selected NO registered "
+                f"measurement. A selector that matches nothing has measured nothing."
+            )
+        if declaring:
+            return _fail(
+                f"the selection resolved to NO measurement while unit(s) {declaring} "
+                f"declare {SCHEME}. A lane that measured nothing may not report a pass."
+            )
+        print("verify-measured: NOT_REQUIRED — no unit declares measured:// and none is registered")
+        print("VERDICT: NOT_REQUIRED")
+        return 0
+
+    store = evidence_store()
+    failures: list[str] = []
+    digests: dict[str, str] = {}
+    for measurement in selected:
+        problem, digest = measure(measurement, store)
+        if problem is not None:
+            print(f"  FAIL {measurement['id']}: {problem}", file=sys.stderr)
+            failures.append(measurement["id"])
+            continue
+        digests[measurement["id"]] = digest
+        print(
+            f"  ok   {measurement['id']}  {measurement['control_kind']} control  "
+            f"artifact {digest[:16]}  scope: {measurement['scope']}"
+        )
+
+    if not args.measurement:
+        for unit_id in sorted(registered):
+            unit = units.get(unit_id)
+            if unit is None or not claims_measured(unit):
+                continue
+            mine = [m["id"] for m in selected if m["unit"] == unit_id]
+            failed = [mid for mid in mine if mid in failures]
+            write_record(
+                store,
+                EvidenceRecord(
+                    unit_id=unit_id,
+                    lane="measured",
+                    result="fail" if failed else "pass",
+                    fingerprint=fingerprint_unit(unit, doc, toolchains, assumptions)["fingerprint"],
+                    detail=(
+                        f"{len(mine)} measurement(s); failed: {', '.join(failed)}"
+                        if failed
+                        else "; ".join(f"{mid}={digests[mid][:16]}" for mid in mine)
+                    ),
+                ),
+            )
+
+    if failures:
+        print(
+            f"\nFAIL: {len(failures)} of {len(selected)} measurement(s) did not demonstrate "
+            f"a live apparatus: {', '.join(failures)}",
+            file=sys.stderr,
+        )
+        print("VERDICT: FAIL")
+        return 1
+    print(f"\nverify-measured: PASS — {len(selected)} measurement(s), each with a moving apparatus")
+    print("VERDICT: PASS")
+    return 0
+
+
+def _fail(message: str) -> int:
+    print(f"FAIL: {message}", file=sys.stderr)
+    print("VERDICT: FAIL")
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

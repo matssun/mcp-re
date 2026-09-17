@@ -164,7 +164,7 @@ stage_static() {
     `# requires the number to MOVE, which a constant would fail — including the` \
     `# DIRECT-vs-CLOSURE distinction that makes "7 of 12 roots" and "3 of 12 roots" two` \
     `# different true statements.` \
-    && python3 scripts/evidence_class_census.py --selftest \
+    && tools/verification/evidence-class-census --selftest \
     && python3 scripts/serving_identity_provenance_gate.py --selftest \
     && python3 scripts/serving_identity_provenance_gate.py \
     && python3 scripts/authorization_provenance_gate.py --selftest \
@@ -194,7 +194,20 @@ stage_static() {
     `# that workflow is paths:-filtered, so the mutation lane's verdict semantics were` \
     `# established only on the pull requests that tripped its filter.` \
     && python3 tools/verification/test_mutation_lane.py \
+    `# ADR-MCPRE-068 Phase 0B. These two ARE the new lanes' liveness: the structural suite` \
+    `# compiles a hostile construction that BUILDS and requires the runner to report FAIL,` \
+    `# and the measured suite runs a dead, a silent and an irreproducible apparatus. A lane` \
+    `# whose only evidence is that it exists is the class this record was opened about.` \
+    && python3 tools/verification/test_structural_lane.py \
+    && python3 tools/verification/test_measured_lane.py \
+    `# ADR-MCPRE-068 Phase 0C. The premise ontology: every LIVE premise typed, every` \
+    `# withdrawn one untyped, an external boundary naming WHO guarantees WHAT across WHICH` \
+    `# interface, and a discharging event that is a tagged predicate rather than a sentence.` \
+    `# It also pins the root-to-premise composition against the empty join that reads as a` \
+    `# clean tree.` \
+    && python3 tools/verification/test_premise_class.py \
     && python3 tools/verification/test_r9_linkage.py \
+    && python3 tools/verification/test_evidence_class.py \
     `# The published claim surface and the declared root set are one fact written twice.` \
     `# They had diverged in four ways and nothing related them; this is what relates them.` \
     && python3 scripts/claim_surface_gate.py --selftest \
