@@ -1205,7 +1205,16 @@ them.
 """
 owner = "proxy.ed25519_public_key"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.ed25519_public_key"]
+# TWO units. The security consequence above says every provider and every consumer "is held
+# to a single definition of the encoding" — which is a statement about who may fill the
+# representation, not about what `interpret_rfc8410_spki` accepts.
+# `proxy.ed25519_public_key` establishes the acceptance rule and the refusal taxonomy;
+# `proxy.ed25519_public_key_sole_producer` establishes, by compiler refusal, that the bytes
+# in any inhabitant were placed by this owner, which is what "held to" means.
+supported_by = [
+  "unit://proxy.ed25519_public_key",
+  "unit://proxy.ed25519_public_key_sole_producer",
+]
 depends_on = []
 
 [[theorem]]

@@ -102,6 +102,7 @@ not an omission to hide.
 | proxy.delegated_signing_credential | V0 | THM-0062 | 0 |
 | proxy.dispatch_commitment | V0 | THM-0045, THM-0051, THM-0052, THM-0074 | 0 |
 | proxy.ed25519_public_key | V0 | THM-0025 | 1 |
+| proxy.ed25519_public_key_sole_producer | V0 | _none_ | 0 |
 | proxy.etcd_replay_adapter | V0 | THM-0107 | 0 |
 | proxy.evidence_attestation | V0 | THM-0113 | 0 |
 | proxy.exchange_lifecycle | V0 | THM-0043, THM-0044, THM-0078 | 0 |

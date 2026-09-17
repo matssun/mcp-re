@@ -1464,7 +1464,7 @@ rationale = "Certificate identity interpretation establishes its success value B
 [[unit]]
 id = "proxy.ed25519_public_key"
 class = "V0"
-description = "The canonical RFC 8410 Ed25519 public key: what is accepted, why a refusal happened, and the encoding every provider writes."
+description = "WHICH BYTES ARE A KEY and what a refusal says: `interpret_rfc8410_spki` accepts exactly the canonical RFC 8410 encoding, a readable Ed25519 key in a non-canonical encoding is refused AS SUCH rather than as an unsupported algorithm, classification never widens acceptance, and `spki_der_for_point` writes the encoding every provider reads. Does not claim that the representation can only be filled by this owner, which is a compile-time fact and belongs to `proxy.ed25519_public_key_sole_producer`."
 paths = ["mcp-re-proxy/src/communication_assurance/ed25519_public_key.rs"]
 exported_contracts = []
 evidence_class = "tested"
@@ -1488,6 +1488,42 @@ tested_symbols = [
   "lib#communication_assurance::ed25519_public_key::tests::two_keys_differing_in_one_byte_are_different_values",
 ]
 pilot = "verus-candidate"
+
+# ---------------------------------------------------------------------------
+#
+# THE SEAL HERE IS NOT A REFUSAL, and that is what makes it worth stating separately.
+#
+# For the other owners split under ADR-MCPRE-068 §12.1 the structural unit makes a REFUSAL
+# unavoidable. There is no refusal to make unavoidable here: every `[u8; 32]` is a legal
+# Ed25519 point, so `for_point` is TOTAL and cannot fail — the invariant is the canonical
+# RFC 8410 ENCODING, not a predicate over the bytes. A second total constructor is therefore
+# not a hole in the seal; its totality is `the_two_directions_are_inverse` read as a
+# constructor.
+#
+# What the boundary buys is the other half of the same fact: both ways in are the OWNER's, so
+# every inhabitant's bytes were placed by the owner under its own encoding rule. Open the
+# field and a sibling writes thirty-two bytes directly — still a legal point, and no longer a
+# value whose provenance this owner can speak for, which is what the correspondence relation
+# compares and what `spki_der_for_point` round-trips.
+#
+# So S07 attacks the FIELD rather than a rejected input, and the claim is worded to the
+# boundary rather than to a constructor count.
+
+[[unit]]
+id = "proxy.ed25519_public_key_sole_producer"
+class = "V0"
+description = "Only `communication_assurance::ed25519_public_key` can place bytes in an Ed25519PublicKeyValue's representation: `raw_point` is bare-private, the two constructors that fill it are both the owner's, no derive or decoder fills it positionally, and no test-gated construction route exists — so every inhabitant's thirty-two bytes were written under this owner's encoding rule rather than by a caller. Not a claim that one constructor exists: there are two, and `for_point` is total by the same theorem that makes the encoding invertible."
+paths = [
+  "mcp-re-proxy/src/communication_assurance/ed25519_public_key.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+# The key value is what credential/signer correspondence compares. A representation any
+# module could fill would make that comparison a comparison of bytes somebody chose.
+direct_consequence_severity = "critical"
+evidence = [
+  "structural://proxy/communication_assurance/ed25519_public_key_sole_producer",
+]
 
 [[unit]]
 id = "proxy.credential_key_correspondence"

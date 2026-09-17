@@ -208,3 +208,35 @@ module-tree-visibility = "all three fields are bare-private to `delegated_tls::r
 alternate-constructors = "`materialize` is the only associated function returning Self, and it is fallible. There is no `new`, no `From`, no `Default` and no builder; the projections are `budget()` and the rustls `ResolvesServerCert` impl, neither returning `&mut` or the representation"
 generated-or-deserialization = "the only derive is `Debug`. No Serialize, no Deserialize, and nothing decodes a resolver — the credential chain and signer arrive as rustls and key-source values that `materialize` then adjudicates"
 test-only-construction = "the correspondence-gate and budget-continuity tests construct only through `materialize`; no test-gated constructor and no test-gated field visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"
+
+[[probe]]
+id = "S07"
+unit = "proxy.ed25519_public_key_sole_producer"
+kind = "in-crate-source-injection"
+package = "mcp-re-proxy"
+invariant = "no code outside `communication_assurance::ed25519_public_key` can place bytes in an Ed25519PublicKeyValue's representation, so every inhabitant's thirty-two bytes were written by this owner under its own encoding rule"
+insertion_path = "mcp-re-proxy/src/communication_assurance/structural_probe_s07.rs"
+insertion_parent = "mcp-re-proxy/src/communication_assurance/mod.rs"
+insertion_declaration = "mod structural_probe_s07;"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+note = """
+THE INTERESTING CASE, and the one that shows why the claim is worded to the BOUNDARY and
+not to the constructor count. This owner has TWO public constructors and the second,
+`for_point`, is TOTAL — it takes a raw thirty-two-byte point and cannot fail. That is not a
+hole: the invariant is the canonical RFC 8410 encoding of an Ed25519 key, the length is the
+parameter's type, and the algorithm and encoding are the owner's, so `for_point` admits no
+inhabitant `interpret_rfc8410_spki` would reject. Its totality is the theorem
+`the_two_directions_are_inverse` read as a constructor.
+
+So a probe asserting "there is one way in" would state something false. What is true, and
+what S07 attacks, is that both ways in are the OWNER's: a sibling module cannot write the
+field itself and therefore cannot produce a value whose bytes did not pass the owner's rule.
+"""
+construction = "// ADR-MCPRE-068 structural probe S07. Injected into a scratch copy by verify-structural;\n// this file cannot exist in the working tree, because it would not build \u2014 which is the\n// proposition it witnesses.\n//\n// The hostile value is NOT an illegal key \u2014 there is no such thing for this invariant,\n// which is exactly why the probe attacks the FIELD rather than a rejected input. What it\n// witnesses is that the thirty-two bytes can only be placed in the representation by the\n// owner, so every inhabitant carries the owner's encoding rule rather than a caller's.\nuse crate::communication_assurance::Ed25519PublicKeyValue;\n\npub fn hostile() -> Ed25519PublicKeyValue {\n    Ed25519PublicKeyValue {\n        raw_point: [0u8; 32], // STRUCTURAL-PROBE-SITE\n    }\n}\n"
+
+[probe.producer_paths]
+module-tree-visibility = "`raw_point` is bare-private to `communication_assurance::ed25519_public_key`. The module is `pub mod` and the parent re-exports the type and its constants, so what any other module obtains is the name and the two constructors \u2014 never the representation"
+alternate-constructors = "there ARE two: `interpret_rfc8410_spki` (fallible, over DER) and `for_point` (total, over a raw point). Both are the owner's, and `for_point` is total BECAUSE the invariant is the encoding rather than a predicate over the bytes \u2014 every `[u8; 32]` is a legal point, so it admits nothing the fallible one would refuse. `spki_der_for_point` is a projection to bytes, not a constructor, and there is no `From`, `Default` or builder"
+generated-or-deserialization = "the derives are Debug/Clone/Copy/PartialEq/Eq. No Serialize, no Deserialize; DER arrives as `&[u8]` and is adjudicated by `interpret_rfc8410_spki`, so no decoder fills the field positionally"
+test-only-construction = "the owner's `#[cfg(test)] mod tests` constructs only through the two public constructors; no test-gated constructor and no test-gated field visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"

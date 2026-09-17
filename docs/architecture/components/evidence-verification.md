@@ -389,6 +389,7 @@ is indistinguishable from an unconsidered one. Private fields alone are not a se
 | S05 | crate boundary | a cryptographic-floor verified REQUEST is not a fully verified request | `E0308` |
 | S04 | in-crate | no code outside `config_state::client_credential_window` can assemble a `ClientCredentialWindow` | `E0451` |
 | S06 | in-crate | no code outside `delegated_tls::resolver` can assemble a `DelegatedCertResolver` | `E0451` |
+| S07 | in-crate | no code outside `communication_assurance::ed25519_public_key` can place bytes in an `Ed25519PublicKeyValue` | `E0451` |
 
 S04 is the one ADR-MCPRE-068 §12.1 split out of a composite unit, and 0D-3 completed the
 split in the registry: M113/M114/M115 falsify the constructor's runtime refusal of an illegal
@@ -406,6 +407,13 @@ see inside the resolver, and cannot. Its hostile construction supplies every fie
 `todo!()`, whose type is `!`: the literal is otherwise well typed, which leaves the privacy
 error as the only thing the compiler can report. A construction that also fails to typecheck
 would be refused by a type error and prove nothing about the boundary.
+
+S07 is the case where the seal is not a refusal, and it bounds what these probes claim. Its
+hostile construction is a **legal** key — every `[u8; 32]` is a legal Ed25519 point, so the
+owner's second constructor `for_point` is total and no illegal input exists to attack. The
+invariant is the canonical RFC 8410 encoding rather than a predicate over the bytes, so the
+probe attacks where the bytes may be PLACED. A probe asserting that one constructor exists
+would have stated something false about this owner.
 
 ### 9.4 The MEASURED apparatus control
 
