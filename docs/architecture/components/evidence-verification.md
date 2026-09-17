@@ -388,6 +388,7 @@ is indistinguishable from an unconsidered one. Private fields alone are not a se
 | S03 | crate boundary | a delegation-authorized response is not a trust-seam-authorized one | `E0609` |
 | S05 | crate boundary | a cryptographic-floor verified REQUEST is not a fully verified request | `E0308` |
 | S04 | in-crate | no code outside `config_state::client_credential_window` can assemble a `ClientCredentialWindow` | `E0451` |
+| S06 | in-crate | no code outside `delegated_tls::resolver` can assemble a `DelegatedCertResolver` | `E0451` |
 
 S04 is the one ADR-MCPRE-068 §12.1 split out of a composite unit, and 0D-3 completed the
 split in the registry: M113/M114/M115 falsify the constructor's runtime refusal of an illegal
@@ -397,6 +398,14 @@ until this probe is now its own `structural` unit,
 `proxy.client_credential_window_sole_producer`, and S04 is its falsifier. `cargo check
 --all-targets` passing never witnessed it — it cannot go red when the boundary is deleted,
 because nothing in the tree attempts the construction.
+
+S06 is the same shape over `DelegatedCertResolver`, and it attacks the **parent** module:
+Rust privacy reaches a module's descendants, not its ancestors, so `delegated_tls` — which
+declares `mod resolver;` and re-exports the type — is the module a reader would assume can
+see inside the resolver, and cannot. Its hostile construction supplies every field with
+`todo!()`, whose type is `!`: the literal is otherwise well typed, which leaves the privacy
+error as the only thing the compiler can report. A construction that also fails to typecheck
+would be refused by a type error and prove nothing about the boundary.
 
 ### 9.4 The MEASURED apparatus control
 

@@ -1314,7 +1314,18 @@ the value could not exist without them, not that it exposes them.
 """
 owner = "proxy.delegated_resolver_materialization"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.delegated_resolver_materialization"]
+# TWO units, because the scope above says the claim is "that the value could not exist
+# without them" and then discharges it by NAMING THE ROUTES: `build_delegated_resolver_config`
+# is private, its one caller goes through `materialize`, the signing key's constructor is
+# reachable only inside `crate::delegated_tls`. That is a correct enumeration of the paths
+# that exist today and it quantifies over callers, not over the type.
+# `proxy.delegated_resolver_materialization` establishes what `materialize` refuses;
+# `proxy.delegated_resolver_materialization_sole_producer` establishes, by compiler refusal,
+# that there is no other way in — which is what turns the enumeration into the statement.
+supported_by = [
+  "unit://proxy.delegated_resolver_materialization",
+  "unit://proxy.delegated_resolver_materialization_sole_producer",
+]
 depends_on = ["THM-0026"]
 
 [[theorem]]

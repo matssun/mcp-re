@@ -102,6 +102,7 @@ attestations this view cannot see.
 | unit://proxy.current_authenticated_peer | source, contracts or evidence | THM-0033 | proxy.request_peer_binding (CONTRACT_CONSUMES) |
 | unit://proxy.custody_exposure | source, contracts or evidence | THM-0064 | _no consumer_ |
 | unit://proxy.delegated_resolver_materialization | source, contracts or evidence | THM-0027 | _no consumer_ |
+| unit://proxy.delegated_resolver_materialization_sole_producer | source, contracts or evidence | THM-0027 | _no consumer_ |
 | unit://proxy.delegated_signing_credential | source, contracts or evidence | THM-0062, THM-0063 | _no consumer_ |
 | unit://proxy.dispatch_commitment | source, contracts or evidence | THM-0045, THM-0051, THM-0052, THM-0074 | _no consumer_ |
 | unit://proxy.ed25519_public_key | source, contracts or evidence | THM-0025 | proxy.credential_key_correspondence (COMPILE_DEPENDENCY) |

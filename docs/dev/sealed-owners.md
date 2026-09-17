@@ -527,6 +527,42 @@ module-tree visibility, alternate constructors, generated/deserialization, test-
 construction — so the unit's claim is worded to the boundary the probe attacks and no
 wider. It says nothing about which pairs are legal; that is the other row.
 
+### The second: `DelegatedCertResolver`
+
+**Landed 2026-09-18, ADR-MCPRE-068 Phase 0D-4.** This owner is the clearer case, because the
+sole-producer claim was already written down — in a registry comment (*"it claims something
+that authority cannot — that no other construction path exists"*) and in THM-0027's scope,
+which discharges it by naming the routes: `build_delegated_resolver_config` is private, its
+one caller goes through `materialize`, the signing key's constructor is reachable only inside
+`crate::delegated_tls`. That enumeration is correct and it quantifies over the callers that
+exist, not over the type.
+
+| proposition | unit | class | falsifier |
+|---|---|---|---|
+| `materialize` establishes correspondence over `cert_chain` and `signer` themselves and refuses otherwise, carrying the listener budget through the construction | `proxy.delegated_resolver_materialization` | `tested` | M36, M37 |
+| `materialize` is the **only** producer, so the `_correspondence` witness cannot be supplied beside operands nobody compared | `proxy.delegated_resolver_materialization_sole_producer` | `structural` | S06 — `E0451` from a sibling module inside `delegated_tls` |
+
+Measured the same way, and the same result: with all three fields opened to `pub(crate)`,
+
+```text
+cargo test -p mcp-re-proxy --lib -- delegated_tls::resolver::
+    test result: ok. 6 passed; 0 failed
+
+verify-structural --probe S06
+    FAIL S06: the hostile construction COMPILED.
+```
+
+**S06 attacks the parent, and that is the sharp place rather than an incidental one.** Rust
+privacy reaches a module's descendants, not its ancestors, so `delegated_tls` — which
+declares `mod resolver;` and re-exports the type with `pub use` — is exactly the module a
+reader would assume can see inside the resolver, and cannot.
+
+**One measurement worth keeping: the probe measures CONSTRUCTIBILITY, not field privacy.**
+Opening `certified` alone left S06 green, and correctly so — a literal naming three fields is
+still refused while any one of them is private, so the boundary was still closed against
+construction. A probe written per field would have gone red there and reported a breach that
+had not happened.
+
 The remaining unit-backed sealed owners follow the same split, one owner per change.
 
 ## Open

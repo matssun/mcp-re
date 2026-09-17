@@ -182,3 +182,29 @@ module-tree-visibility = "integration test: a separate crate against the public 
 alternate-constructors = "no `From<CryptographicFloorVerifiedRequest> for VerifiedMcpRequest` and no `Deref`; the floor product is a field of the full one, reachable only by naming it"
 generated-or-deserialization = "neither product derives Serialize/Deserialize"
 test-only-construction = "the probe itself is the downstream test-code route"
+
+[[probe]]
+id = "S06"
+unit = "proxy.delegated_resolver_materialization_sole_producer"
+kind = "in-crate-source-injection"
+package = "mcp-re-proxy"
+invariant = "no code outside `delegated_tls::resolver` can assemble a DelegatedCertResolver, so possession means `materialize` established correspondence over the very operands it moved in"
+insertion_path = "mcp-re-proxy/src/delegated_tls/structural_probe_s06.rs"
+insertion_parent = "mcp-re-proxy/src/delegated_tls.rs"
+insertion_declaration = "mod structural_probe_s06;"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+note = """
+The probe is injected as a SIBLING of `resolver` inside `delegated_tls`, and the parent
+module is the sharpest place to attack this boundary rather than an incidental one: Rust
+privacy makes a private item visible to the defining module and its DESCENDANTS, so
+`delegated_tls` — which declares `mod resolver;` and re-exports the type — is exactly the
+module a reader would assume can see inside it, and cannot.
+"""
+construction = "// ADR-MCPRE-068 structural probe S06. Injected into a scratch copy by verify-structural;\n// this file cannot exist in the working tree, because it would not build \u2014 which is the\n// proposition it witnesses.\n//\n// `todo!()` supplies each field. Its type is `!`, so it coerces to whatever the field\n// needs and the literal is otherwise well typed \u2014 which leaves the PRIVACY error as the\n// only thing the compiler can complain about. A probe whose construction also fails to\n// typecheck would be refused by a type error and prove nothing about the boundary.\nuse crate::delegated_tls::DelegatedCertResolver;\n\npub fn hostile() -> DelegatedCertResolver {\n    DelegatedCertResolver {\n        certified: todo!(), // STRUCTURAL-PROBE-SITE\n        budget: todo!(),\n        _correspondence: todo!(),\n    }\n}\n"
+
+[probe.producer_paths]
+module-tree-visibility = "all three fields are bare-private to `delegated_tls::resolver`: no `pub(crate)`, no `pub(super)`. The parent declares `mod resolver;` (private) and re-exports the TYPE only, via `pub use resolver::DelegatedCertResolver`, so the widest thing any other module obtains is the name"
+alternate-constructors = "`materialize` is the only associated function returning Self, and it is fallible. There is no `new`, no `From`, no `Default` and no builder; the projections are `budget()` and the rustls `ResolvesServerCert` impl, neither returning `&mut` or the representation"
+generated-or-deserialization = "the only derive is `Debug`. No Serialize, no Deserialize, and nothing decodes a resolver — the credential chain and signer arrive as rustls and key-source values that `materialize` then adjudicates"
+test-only-construction = "the correspondence-gate and budget-continuity tests construct only through `materialize`; no test-gated constructor and no test-gated field visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"
