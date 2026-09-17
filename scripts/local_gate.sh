@@ -200,6 +200,12 @@ stage_static() {
     `# whose only evidence is that it exists is the class this record was opened about.` \
     && python3 tools/verification/test_structural_lane.py \
     && python3 tools/verification/test_measured_lane.py \
+    `# ADR-MCPRE-068 Phase 0C. The premise ontology: every LIVE premise typed, every` \
+    `# withdrawn one untyped, an external boundary naming WHO guarantees WHAT across WHICH` \
+    `# interface, and a discharging event that is a tagged predicate rather than a sentence.` \
+    `# It also pins the root-to-premise composition against the empty join that reads as a` \
+    `# clean tree.` \
+    && python3 tools/verification/test_premise_class.py \
     && python3 tools/verification/test_r9_linkage.py \
     && python3 tools/verification/test_evidence_class.py \
     `# The published claim surface and the declared root set are one fact written twice.` \

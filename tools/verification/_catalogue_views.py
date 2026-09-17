@@ -48,6 +48,13 @@ def assumption_consumers(theorems: dict, verification: dict, assumptions: dict) 
         rows.append(
             (
                 entry["id"],
+                # ADR-MCPRE-068 §7. WHY the chain terminates here, beside WHAT is trusted
+                # and WHERE it reaches. A view that shows a premise's blast radius without
+                # its class invites the reading the typing exists to end: an
+                # external-boundary premise under a root is a supply-chain statement and an
+                # open review obligation under the same root is a DEBT, and untyped they
+                # read alike. A withdrawn record has no class and says so.
+                entry.get("premise_class") or "_withdrawn_",
                 # Not truncated. A shortened description in a table reads as the whole of
                 # what is trusted, and the one assumption whose wording matters most is the
                 # long one. Nothing in these views bounds what it shows, so there is no
@@ -66,9 +73,10 @@ def assumption_consumers(theorems: dict, verification: dict, assumptions: dict) 
         "independent results, and this view exists so it cannot read as the latter.",
     )
     body += "\n" + table(
-        rows, ("id", "what is trusted", "scoped to units", "reaches theorems")
+        rows,
+        ("id", "premise class", "what is trusted", "scoped to units", "reaches theorems"),
     )
-    shared = [row for row in rows if row[3] != "_no theorem_" and "," in row[3]]
+    shared = [row for row in rows if row[4] != "_no theorem_" and "," in row[4]]
     body += (
         f"\n{len(shared)} assumption(s) are reached by more than one theorem.\n"
         if shared

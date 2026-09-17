@@ -498,6 +498,25 @@ is.
 What is genuinely **not** answerable at all is *what kind of premise*, and that is the
 question that actually gates a release.
 
+**Phase 0C built the composition, and building it measured the estate.** `review` now prints,
+per declared root, which typed premises its closure ultimately rests on. The join is derived
+at read time from the two existing halves and stored nowhere, because §8.2 forbids storing
+the `consumed_by` direction and a second stored authority over reachability would be free to
+disagree with the live ones. The first numbers it produced:
+
+| root | assumed | external-boundary | review-obligation |
+|---|---:|---:|---:|
+| THM-0074 | 11 | 15 | 8 |
+| THM-0075 | 10 | 6 | 1 |
+| THM-0076 | 10 | 3 | 1 |
+| THM-0077 | 6 | 4 | 3 |
+| the other eight roots | 0 | 0 | 0 |
+
+**The first version of that join returned zero for all twelve**, because `supported_by` and
+`scope` both carry `unit://` URIs and one side was compared bare. An empty composition reads
+exactly like a clean tree — *no root rests on any premise* — so its control asserts the count
+is non-zero rather than only that the function runs.
+
 **Decision C1.** `[[assumption]]` gains a required **`premise_class`** field: `assumed`,
 `external-boundary`, or `review-obligation` — §4.2. The field is *not* named `class`: that
 key already carries the V0/V1/V2 vocabulary on `[[unit]]`, and one key name holding two
@@ -884,6 +903,7 @@ evidence establishes at the moment it is read.
 | **0A** | **schema event 1 and its activation.** `evidence_class` and `direct_consequence_severity` required on `[[unit]]`, `direct_consequence_severity` required on `[[theorem]]`, both populated; the loader enforces presence, vocabulary and class↔evidence agreement; the eight declaration repairs; the census moved to `tools/verification/` | the loader refuses a disagreeing unit; every self-test probe red on removal; the estate is re-attested at the new fingerprints |
 | **0B** | the two new lanes: `structural://` (both probe kinds, §12.1) and `measured://`, each wired as a named required check and each **fail-closed on zero execution**. **No registry change** | a structural probe that *compiles* fails the lane; a measurement whose apparatus cannot move fails the lane; a lane that selected nothing reports neither PASS nor a silent skip |
 | **0C** | **schema event 2 and its activation.** `premise_class` on `[[assumption]]`, plus `boundary_owner` and `discharging_event` (C1–C5); all 47 typed | zero untyped records; release view lists open review obligations; a satisfied observable event fails until its record is removed |
+| | *landed:* 21 external-boundary, 12 assumed, 10 review-obligation, 4 withdrawn and deliberately untyped; the loader refuses an untyped live record and a typed withdrawn one; `check-assumptions` fails on `STALE_REVIEW_OBLIGATION`; `review` prints the root→premise composition and the open obligations | |
 | **0D** | reclassify to `structural` and `measured` where that is now declarable, sealed-owner challenge set first (§12); the composite splits; every transition through the class-transition ratchet | every unit's class matches the evidence it declares; the count of `tested`-without-falsifier is measured, not estimated |
 | **0E** | `tools/verification/_assurance_graph.py`; `inherited_severity` and `effective_severity` derived (N3); N1's severity-gated obligation ACTIVATES; `config/assurance-obligation-debt.toml` baselined as a migration ratchet; `NOT-ROOT-REACHABLE` units reported (S5) | `review` prints a typed, severity-annotated root tree; the debt registry holds the real residue and may only shrink |
 | **1** | examine the 12 roots **consequence-first**, decomposing downward — THM-0094, THM-0095, THM-0091 first, since each is one undecomposed unit | each root has a typed decomposition; each leaf has a named class and a stated obligation |

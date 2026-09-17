@@ -489,6 +489,12 @@ jobs:
           # ~4s, one dependency-free crate between them.
           python3 tools/verification/test_structural_lane.py
           python3 tools/verification/test_measured_lane.py
+          # ADR-MCPRE-068 Phase 0C. The premise ontology, and the composition §7 found
+          # missing: which typed premises each declared root ultimately rests on. Both ends
+          # of that join carry `unit://` URIs, and comparing them verbatim reported that no
+          # root rests on any premise — an empty join reads exactly like a clean tree, so
+          # the suite asserts the count is non-zero rather than only that it runs.
+          python3 tools/verification/test_premise_class.py
 
       # ADR-MCPRE-059 §28 + the ratified security boundary. The registry's `root_theorems`
       # and `docs/spec/security-boundary.md` §2 are ONE fact — what MCP-RE promises —

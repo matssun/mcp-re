@@ -49,6 +49,11 @@ from _review import (  # noqa: E402
     root_completeness,
     theorem_assurance,
 )
+from _premise import (  # noqa: E402
+    PREMISE_CLASSES,
+    open_obligations,
+    roots_reaching_premises,
+)
 from _theorems import load_theorems  # noqa: E402
 
 
@@ -75,6 +80,45 @@ def _print_roots(roots: dict) -> None:
         print(f"\n  {root} → not established")
         for row in blocking:
             print(f"    {row['theorem']}  {row['cause']}")
+
+
+def _print_premises(theorems: dict, doc: dict, assumptions: dict) -> None:
+    """The typed-premise section — ADR-MCPRE-068 §7 N5, Phase 0C.
+
+    Two facts, printed together because separately they are the state this phase ended.
+    Which premises each declared root ultimately rests on, BY CLASS: an external-boundary
+    premise under a root is a supply-chain statement, an open review obligation under the
+    same root is a DEBT, and while all 47 records had one shape those read alike. And the
+    open obligations themselves, each with the event that would discharge it, because an
+    obligation nobody can see is one nobody discharges.
+
+    Report-only, like root completeness above it and for the same §28.8 reason: a gate that
+    punishes recording an obligation teaches people not to record it. What IS merge-fatal is
+    a malformed declaration (the loader) and an observable event that has already come true
+    (`check-assumptions`, C4).
+
+    The severity qualifier N5 asks for — *a Critical or High root whose closure reaches one
+    states that in its own row* — needs `effective_severity`, which Phase 0E derives. Until
+    then every root's row is printed rather than the Medium-and-above subset, which is the
+    wider report, not a narrower one.
+    """
+    reach = roots_reaching_premises(theorems, doc, assumptions)
+    print("\nTYPED PREMISES (ADR-MCPRE-068 §7)")
+    for root, rows in sorted(reach.items()):
+        summary = ", ".join(
+            f"{name} {len(rows[name])}" for name in PREMISE_CLASSES if rows[name]
+        )
+        print(f"  {root:<10} rests on {summary or 'no registered premise'}")
+    obligations = open_obligations(assumptions)
+    print(f"\n  {len(obligations)} open review obligation(s) — visible unresolved assurance debt")
+    for entry in obligations:
+        event = entry["discharging_event"]
+        detail = (
+            event.get("statement")
+            if event["kind"] == "owner-event"
+            else " ".join(f"{k}={v}" for k, v in sorted(event.items()) if k != "kind")
+        )
+        print(f"    {entry['id']}  [{event['kind']}] {detail}")
 
 
 def _root_ok(roots: dict, require: bool) -> bool:
@@ -203,6 +247,7 @@ def main() -> int:
     established = sum(1 for state in assurance.values() if state["established"])
     print(f"\n  {established} of {len(entries)} theorem(s) established")
     _print_roots(roots)
+    _print_premises(theorems, doc, assumptions)
     return 0 if _root_ok(roots, args.require_root_complete) else 1
 
 
