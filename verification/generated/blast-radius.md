@@ -71,9 +71,14 @@ attestations this view cannot see.
 | unit://http_profile.request_full_result | source, contracts or evidence | THM-0015 | _no consumer_ |
 | unit://http_profile.response_emission_binding | source, contracts or evidence | THM-0065, THM-0075 | _no consumer_ |
 | unit://http_profile.retained_chain_record | source, contracts or evidence | _no theorem_ | _no consumer_ |
-| unit://http_profile.scitt_receipt_offline | source, contracts or evidence | THM-0041, THM-0072 | _no consumer_ |
+| unit://http_profile.scitt_algorithm_agreement | source, contracts or evidence | THM-0041 | _no consumer_ |
+| unit://http_profile.scitt_derived_root | source, contracts or evidence | THM-0041 | _no consumer_ |
+| unit://http_profile.scitt_inclusion_fold | source, contracts or evidence | THM-0041 | _no consumer_ |
+| unit://http_profile.scitt_position_commitment | source, contracts or evidence | THM-0041 | _no consumer_ |
+| unit://http_profile.scitt_receipt_shape | source, contracts or evidence | THM-0041 | _no consumer_ |
 | unit://http_profile.scitt_retained_correspondence | source, contracts or evidence | THM-0042 | _no consumer_ |
 | unit://http_profile.scitt_service_pin | source, contracts or evidence | THM-0068, THM-0072 | _no consumer_ |
+| unit://http_profile.scitt_statement_attribution | source, contracts or evidence | THM-0041 | _no consumer_ |
 | unit://http_profile.submitted_hop_identity | source, contracts or evidence | THM-0042 | http_profile.scitt_retained_correspondence (PROOF_DEPENDENCY) |
 | unit://http_profile.unbound_response_seam_result | source, contracts or evidence | THM-0017 | _no consumer_ |
 | unit://http_profile.unbound_response_shared_facts | source, contracts or evidence | THM-0022 | _no consumer_ |

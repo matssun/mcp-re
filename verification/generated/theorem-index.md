@@ -78,7 +78,7 @@ any of them is closed.
 | THM-0038 | The composition root consumes trust as owner projections and re-reads no trust field from the request | proxy.trust_composition_root | unit://proxy.trust_composition_root | live |
 | THM-0039 | An accepted PDP decision was authenticated under a key the trust seam resolved | http_profile.pdp_decision_authentication | unit://http_profile.pdp_decision_authentication | live |
 | THM-0040 | An authorized request was permitted by a decision about that very request | proxy.pdp_decision_relation | unit://proxy.pdp_decision_relation | live |
-| THM-0041 | An offline-verified receipt proves registration, and its root was never supplied | http_profile.scitt_receipt_offline | unit://http_profile.scitt_receipt_offline | live |
+| THM-0041 | An offline-verified receipt proves registration, and its root was never supplied | http_profile.scitt_derived_root | unit://http_profile.scitt_algorithm_agreement, unit://http_profile.scitt_derived_root, unit://http_profile.scitt_inclusion_fold, unit://http_profile.scitt_position_commitment, unit://http_profile.scitt_receipt_shape, unit://http_profile.scitt_statement_attribution | live |
 | THM-0042 | Retained evidence is the evidence the statement was made about | http_profile.scitt_retained_correspondence | unit://conformance.retained_corpus, unit://http_profile.scitt_retained_correspondence, unit://http_profile.submitted_hop_identity | live |
 | THM-0043 | The exchange relation is decided everywhere and the execution threshold partitions it | proxy.exchange_lifecycle | unit://proxy.exchange_lifecycle | live |
 | THM-0044 | An exchange's retry consequence never under-reports what may have happened | proxy.exchange_lifecycle | unit://proxy.exchange_lifecycle | live |
@@ -109,7 +109,7 @@ any of them is closed.
 | THM-0069 | A security record states each authority's outcome in that authority's own coordinate | proxy.audit_record_coordinates | unit://proxy.audit_record_coordinates, unit://proxy.refusal_provenance | live |
 | THM-0070 | The record stream is honest about what reached it | proxy.audit_delivery | unit://proxy.audit_delivery | live |
 | THM-0071 | Every reachable in-exchange refusal has a typed provenance that reaches the record | proxy.audit_record_coordinates | unit://proxy.audit_record_coordinates, unit://proxy.refusal_provenance | live |
-| THM-0072 | A verified receipt proves registration on the service this deployment pinned | http_profile.scitt_receipt_offline | unit://http_profile.scitt_receipt_offline, unit://http_profile.scitt_service_pin | live |
+| THM-0072 | A verified receipt proves registration on the service this deployment pinned | http_profile.scitt_service_pin | unit://http_profile.scitt_service_pin | live |
 | THM-0073 | Serving materialization refuses a deployment whose two signing roles are one key | proxy.signing_role_separation | unit://proxy.signing_role_separation | live |
 | THM-0074 | No unearned dispatch | proxy.dispatch_commitment | unit://proxy.dispatch_commitment, unit://proxy.exchange_lifecycle | live |
 | THM-0075 | No unearned response attribution | proxy.response_signing | unit://http_profile.response_emission_binding, unit://proxy.response_signing | live |

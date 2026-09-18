@@ -202,26 +202,37 @@ mod tests {
         bytes
     }
 
+    /// Drive the PRODUCTION reader.
+    ///
+    /// It used to be a copy of `read_inclusion_proof` living here — the same destructuring,
+    /// the same `as_u64`, and the same `leaf_index >= tree_size` refusal, written out a
+    /// second time. So the control below asserted against the copy and said nothing whatever
+    /// about production: ADR-MCPRE-068 Phase 1 deleted the production guard with a mutation
+    /// probe and the test stayed GREEN.
+    ///
+    /// This builds the real `COSE_Sign1` the production path parses, with the unprotected
+    /// inclusion-proof header the reader looks for, and calls `read_inclusion_proof` itself.
     fn decode(bytes: &[u8]) -> Result<InclusionProof, HttpProfileError> {
-        let shape = || HttpProfileError::MalformedEvidence("scitt inclusion proof shape");
-        let decoded: Value = ciborium::from_reader(bytes).map_err(|_| shape())?;
-        let parts = decoded.as_array().ok_or_else(shape)?;
-        let [tree_size, leaf_index, path] = parts.as_slice() else {
-            return Err(shape());
-        };
-        let tree_size = as_u64(tree_size)?;
-        let leaf_index = as_u64(leaf_index)?;
-        if leaf_index >= tree_size {
-            return Err(HttpProfileError::MalformedEvidence(
-                "scitt inclusion proof leaf index outside tree",
-            ));
-        }
-        let _ = path;
-        Ok(InclusionProof {
-            tree_size,
-            leaf_index,
-            path: vec![],
-        })
+        let sign1 = coset::CoseSign1Builder::new()
+            .protected(
+                coset::HeaderBuilder::new()
+                    .value(HEADER_VDS, Value::Integer(VDS_RFC9162_SHA256.into()))
+                    .build(),
+            )
+            .unprotected(
+                coset::HeaderBuilder::new()
+                    .value(
+                        HEADER_VDP,
+                        Value::Map(vec![(
+                            Value::Integer(PROOF_INCLUSION.into()),
+                            Value::Array(vec![Value::Bytes(bytes.to_vec())]),
+                        )]),
+                    )
+                    .build(),
+            )
+            .payload(vec![0u8; 32])
+            .build();
+        read_inclusion_proof(&sign1)
     }
 
     /// A leaf index the signed tree head cannot contain is refused at PARSE, so no fold is
