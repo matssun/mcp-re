@@ -5,6 +5,13 @@ Two `high` roots. Both survived falsification; neither takes a claim correction.
 together because each is short, and separately from the estate-wide finding one of them
 produced (`gate-carriers-are-unowned-2026-09-18.md`).
 
+> **Relationship to `remaining-roots-audit-2026-09-18.md`.** That packet audited this root
+> earlier in the campaign, asking *are the leaves honest, and does the graph say what the claim
+> needs*. This one asks the Phase-1 question the brief puts first — *try to falsify the root
+> statement before decomposing it* — and then decomposes consequence-downward. Neither
+> supersedes the other: the audit's findings (probe coverage, unit width) stand as written, and
+> nothing here contradicts them.
+
 ---
 
 ## THM-0078 — "Refusal is terminal, and no refusal-side effect reads as success"

@@ -7,6 +7,13 @@ Decomposed with an extra obligation: one root earlier, THM-0074's decomposition 
 as the premise its antecedent quantifies over. So this root now carries a `critical` consumer,
 and its effective severity is `critical` by N3 whatever its own direct label says.
 
+> **Relationship to `remaining-roots-audit-2026-09-18.md`.** That packet audited this root
+> earlier in the campaign, asking *are the leaves honest, and does the graph say what the claim
+> needs*. This one asks the Phase-1 question the brief puts first — *try to falsify the root
+> statement before decomposing it* — and then decomposes consequence-downward. Neither
+> supersedes the other: the audit's findings (probe coverage, unit width) stand as written, and
+> nothing here contradicts them.
+
 ## 1. The consequence
 
 If THM-0077 is false, an operator obtains a weaker security posture than the one they
