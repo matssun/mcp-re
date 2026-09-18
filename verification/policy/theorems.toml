@@ -3097,7 +3097,7 @@ direct_consequence_severity = "high"
 scope = """
 COMPOSITION, not classification and not trust. The three-way discriminator itself is
 `client.execution_contract`'s under THM-0061; whether the bytes are genuine and answer this
-request is `client.response_binding_disposition`'s under THM-0076. What is established here is that
+request is `client.response_acceptance`'s under THM-0076. What is established here is that
 the shipped proxy composes those answers without adding a reading of its own — in particular
 that it does not ask the classification question a second time over the raw body, which is
 how two readers of one message come to disagree about what it says.
@@ -3114,7 +3114,7 @@ producer in the workspace — and NOT of the type. `VerifiedDelegatedResponse` a
 verified-response types carry `pub` fields deliberately, for the prover, and
 `VerifiedMcpResponse::from_block` says so in its own words: a convenience, not a seal. A caller
 outside this workspace could assemble one, and nothing here claims otherwise. Sealing that
-chain is `client.response_binding_disposition`'s question, not this claim's.
+chain is `client.response_acceptance`'s question, not this claim's.
 """
 owner = "client.verified_outcome"
 review_requirement = "Owner security-specification review"
@@ -4886,7 +4886,7 @@ direct_consequence_severity = "critical"
 scope = """
 The SHIPPED path, and that is the whole point of registering it. THM-0057 through THM-0061
 establish what the client-core verifier does with an expectation and a response; every one of
-them takes the PAIRING as given, and `client.response_binding_disposition`'s scope says so explicitly —
+them takes the PAIRING as given, and `client.response_acceptance`'s scope says so explicitly —
 pairing an expectation with the request it describes is the caller's obligation.
 
 For a raw FFI caller that is the honest boundary and it stays there: `ResponseExpectation::new`
@@ -5312,7 +5312,7 @@ direct_consequence_severity = "critical"
 scope = """
 ONE replica. The BYTES are the input authority: nothing here says which path was read, who
 wrote the file, or that its contents are the operator's intent — the locator belongs to
-`proxy.trust_document_locator`, and reading the file is the caller's. Nothing about WHEN a
+`proxy.trust_configuration_state`, and reading the file is the caller's. Nothing about WHEN a
 change to the bytes reaches the snapshot, or what is served meanwhile: that is the reload
 cadence and THM-0097.
 
@@ -6712,7 +6712,7 @@ direct_consequence_severity = "medium"
 scope = """
 THE SEAM AND THE REFERENCE IMPLEMENTATION. Nothing here is about the runtime trust plane's
 tiers, its caching windows, or its revocation channel — those are THM-0097 through THM-0100's,
-over `proxy.trust_resolution_window` and `proxy.trust_reload_cadence`.
+over `proxy.trust_plane_runtime`.
 
 NOT A CLAIM ABOUT WHICH KEYS A DEPLOYMENT TRUSTS. The resolver answers from what it was given;
 where the bindings came from and whether they were authorized is the trust document's
