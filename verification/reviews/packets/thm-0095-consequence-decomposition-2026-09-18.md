@@ -11,6 +11,11 @@ The two members are decomposed independently on purpose. THM-0095's own security
 says why: *the parity fixtures are green while the two diverge behaviourally*. A packet that
 copied the Python analysis across would be doing exactly what the fixtures do.
 
+**The statement itself is NOT changed by the commit that lands this decomposition**, for the
+reason the Python packet gives: `scripts/claim_surface_gate.py` refuses a published root
+claim whose `theorem_claim` has moved since the owner's specification review. §10 states the
+corrections as exact edits, batched with the Python member's.
+
 ---
 
 ## 1. The root consequence
@@ -286,3 +291,36 @@ Eleven NOs. The inverse question returned `signer_policy`, `bounded_read` and
 | **P2-D** | THM-0126's proposition is derived a second time in the napi binding. Remediation belongs with P2-A | medium |
 | **P2-E** | `transport_e2e.test.ts` skips in both SDKs, on two different causes. Decide whether the live lane is a registered battery or independent evidence, and make it say which | high |
 | **P2-F** | the parity oracle is an identified, unratified proposition over 40 controls in two projects (§6.1). Ratify it at the right altitude or withdraw it | medium |
+
+---
+
+## 10. The claim corrections requested, and not taken
+
+The Python member's C1–C5 apply here unchanged in kind (§2 F1–F4): narrow the correlation
+sentence to what `#exchange` reaches, add
+`depends_on = ["THM-0058", "THM-0059", "THM-0060", "THM-0061"]`, record the napi binding as
+an uncovered carrier, move the read bound from the claim to a stated non-claim, and exclude
+request-side attribution by naming the two units that hold it. None weakens the promise.
+
+Three are this member's own:
+
+**C6 — state the post-close clause** (§2 F7). *After `close()`, nothing further is signed or
+transmitted: a request still queued at the concurrency semaphore is not signed or POSTed, and
+a continuation chain stops rather than signing a fresh answer leg or prompting a human for
+one.* Twelve controls carry it and `sdk_typescript.post_close_emission` owns it. The scope's
+existing ASM-0043 paragraph already argues the guard reads this transport's own state rather
+than a runtime semantic, so the claim is supported by text the owner has already reviewed —
+what is missing is the sentence in the statement.
+
+**C7 — quantify the anchor clause honestly** (§2 F6). The statement says *a complete
+configured trust anchor — an incomplete one is refused at construction rather than
+defaulted*; all seven members are now evidenced, so the claim and its evidence agree for the
+first time. No wording change is strictly required, and the recommended one makes the
+quantifier explicit (*no member of it is defaulted*) so a future eighth member is visibly
+inside the claim.
+
+**C8 — record that `verdict_delivery` owns the empty-wire-code substitution**, which is a
+place the two SDKs diverged and which the present statement does not mention.
+
+Applying them is one edit to the entry followed by
+`tools/verification/review --fingerprint THM-0095`.
