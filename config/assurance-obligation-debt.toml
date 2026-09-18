@@ -138,8 +138,25 @@ inherited_severity = "medium"
 root_reachable = false
 status = "unreviewed"
 
+# ADR-MCPRE-068 Phase 1 split `client.response_acceptance` into the signer-authorization and
+# binding-disposition owners. The obligation it was carrying is owed by BOTH halves — the
+# unit named no `mutation://` evidence at all, so neither half inherits a falsifier — and
+# `succeeds` says so, rather than letting the split read as two new debts appearing.
 [[obligation]]
-unit = "client.response_acceptance"
+unit = "client.response_signer_authorization"
+succeeds = "client.response_acceptance"
+decomposition_ref = "verification/reviews/packets/residue-units-2026-09-18.md"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "critical"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "client.response_binding_disposition"
+succeeds = "client.response_acceptance"
+decomposition_ref = "verification/reviews/packets/residue-units-2026-09-18.md"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "critical"
 direct_consequence_severity = "critical"

@@ -27,7 +27,8 @@ not an omission to hide.
 | client.manifest_floor | V0 | THM-0121 | 0 |
 | client.proxy_request_correspondence | V0 | THM-0084 | 0 |
 | client.request_construction | V0 | THM-0125 | 0 |
-| client.response_acceptance | V0 | THM-0058, THM-0059, THM-0076 | 0 |
+| client.response_binding_disposition | V0 | THM-0059, THM-0076 | 0 |
+| client.response_signer_authorization | V0 | THM-0058 | 0 |
 | client.serving_lifetime | V0 | THM-0127 | 0 |
 | client.transport_message_hygiene | V0 | THM-0110 | 0 |
 | client.transport_server_identity | V0 | THM-0109 | 0 |

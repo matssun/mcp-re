@@ -2984,9 +2984,9 @@ which is the binding disposition (THM-0059), and it does not restate the underly
 signature and `;req` facts, which are stated over the profile verifier (THM-0016, THM-0019,
 THM-0021). It says nothing about whether the deployment was right to trust the anchor.
 """
-owner = "client.response_acceptance"
+owner = "client.response_signer_authorization"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://client.response_acceptance", "unit://client.trust_manifest_lifecycle"]
+supported_by = ["unit://client.response_signer_authorization", "unit://client.trust_manifest_lifecycle"]
 depends_on = ["THM-0016", "THM-0019", "THM-0057"]
 
 [[theorem]]
@@ -3010,9 +3010,9 @@ The disposition, not the signer (THM-0058). The unbound receipt's binding is a B
 two transmissions of identical request bytes share it, so it is not an instance binding, and
 the client discloses it to the caller as unbound rather than claiming otherwise.
 """
-owner = "client.response_acceptance"
+owner = "client.response_binding_disposition"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://client.response_acceptance"]
+supported_by = ["unit://client.response_binding_disposition"]
 depends_on = ["THM-0020", "THM-0022"]
 
 [[theorem]]
@@ -3097,7 +3097,7 @@ direct_consequence_severity = "high"
 scope = """
 COMPOSITION, not classification and not trust. The three-way discriminator itself is
 `client.execution_contract`'s under THM-0061; whether the bytes are genuine and answer this
-request is `client.response_acceptance`'s under THM-0076. What is established here is that
+request is `client.response_binding_disposition`'s under THM-0076. What is established here is that
 the shipped proxy composes those answers without adding a reading of its own — in particular
 that it does not ask the classification question a second time over the raw body, which is
 how two readers of one message come to disagree about what it says.
@@ -3114,7 +3114,7 @@ producer in the workspace — and NOT of the type. `VerifiedDelegatedResponse` a
 verified-response types carry `pub` fields deliberately, for the prover, and
 `VerifiedMcpResponse::from_block` says so in its own words: a convenience, not a seal. A caller
 outside this workspace could assemble one, and nothing here claims otherwise. Sealing that
-chain is `client.response_acceptance`'s question, not this claim's.
+chain is `client.response_binding_disposition`'s question, not this claim's.
 """
 owner = "client.verified_outcome"
 review_requirement = "Owner security-specification review"
@@ -3828,9 +3828,9 @@ Raw FFI and low-level reconstruction remain outside this system-root guarantee.
 
 It does not establish that the deployment was right to trust an anchor.
 """
-owner = "client.response_acceptance"
+owner = "client.response_binding_disposition"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://client.response_acceptance"]
+supported_by = ["unit://client.response_binding_disposition", "unit://client.response_signer_authorization"]
 depends_on = [
   "THM-0058", "THM-0059", "THM-0057", "THM-0060", "THM-0061", "THM-0084",
   # Ratified 2026-09-07, dependency closure only: the statement and the security
@@ -4809,7 +4809,7 @@ direct_consequence_severity = "critical"
 scope = """
 The SHIPPED path, and that is the whole point of registering it. THM-0057 through THM-0061
 establish what the client-core verifier does with an expectation and a response; every one of
-them takes the PAIRING as given, and `client.response_acceptance`'s scope says so explicitly —
+them takes the PAIRING as given, and `client.response_binding_disposition`'s scope says so explicitly —
 pairing an expectation with the request it describes is the caller's obligation.
 
 For a raw FFI caller that is the honest boundary and it stays there: `ResponseExpectation::new`
