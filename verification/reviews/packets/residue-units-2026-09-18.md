@@ -80,27 +80,46 @@ one leaf under one `owner` field.
 
 The unit named no `mutation://` evidence, so both halves succeed its obligation.
 
-## The two the criterion still reports as residue, and why they are not split here
+## The three the criterion still reports as residue — ONE missing lane, not three
+
+The residue is not three unrelated pieces of work. All three units carry a second authority
+whose production carrier is a **self-tested source-text gate**, and none of the three can be
+registered honestly until that has an evidence form.
+
+**`proxy.serving_trust_seam`** (THM-0066, THM-0099) — above. The composition half's controls
+are source-text rules over `app.rs` in `serving_trust_seam_test`, with
+`the_rules_would_catch_each_regression` as their self-test.
 
 **`proxy.trust_composition_root`** (THM-0038, THM-0067). THM-0067 is the general inventory
 claim — every field the root reads directly is a pinned ordinary parameter. THM-0038 is that
-claim specialized to trust, PLUS a second conjunct: "the root passes trust as owner
-projections". That conjunct has no control. The split is therefore not a re-partition of
-existing evidence but a decomposition that needs a control written first; doing it the other
-way would register an owner whose proposition nothing measures.
+claim specialized to trust PLUS a second conjunct, "the root passes trust as owner
+projections", which has no control at all. The unit's three controls are
+`composition_raw_read_test`, and they have the identical shape: two source-text rules over
+`app.rs` and `the_rule_would_catch_a_new_raw_read` as their self-test. The unit names no
+`mutation://`.
 
-**`proxy.dispatch_commitment`** (THM-0045, THM-0051, THM-0052). Three genuinely distinct
-propositions — the assembled `ReadyForDispatch` seal, the product provenance across the
-pipeline, and the posture's provenance from the configured policy. The second and third are
-carried by `scripts/serving_product_provenance_gate.py` and
-`scripts/authorization_provenance_gate.py`, self-tested source-text gates that run in CI and
-in `local_gate.sh`.
+**`proxy.dispatch_commitment`** (THM-0045, THM-0051, THM-0052). Three distinct propositions —
+the assembled `ReadyForDispatch` seal, the verification product's provenance across the
+pipeline, and the posture's provenance from the configured policy. The seal is measured by
+cargo controls and two probes. The other two are carried by
+`scripts/serving_product_provenance_gate.py` and `scripts/authorization_provenance_gate.py`,
+self-tested source-text gates that run in CI and in `local_gate.sh`.
 
-**ADR-MCPRE-069 finding, and why the split waits on it.** Neither gate is named in ANY unit's
-`paths`. They are the production carriers of two `critical` propositions, and no unit's
-fingerprint covers them: weakening a gate's rules invalidates nothing. Registering the two
-owners honestly needs an evidence form for a self-tested source-text gate — `structural://`
-is reserved for rustc compile-fail probes and `test://` resolves cargo and pytest symbols,
-neither of which a `--selftest` flag is. Classifying them `tested` against the cargo controls
-that happen to sit in the same unit would be exactly the false TESTED classification this
-phase exists to remove. The lane is the prerequisite, and it is its own slice.
+### The ADR-MCPRE-069 finding
+
+Neither provenance gate is named in ANY unit's `paths`. They are the production carriers of
+two `critical` propositions and no unit's fingerprint covers them: weakening a gate's rules
+invalidates nothing and moves no digest.
+
+### Why the lane is the prerequisite and not a detail
+
+`structural://` resolves rustc compile-fail probes. `test://` resolves cargo and pytest
+symbols. A `--selftest` flag is neither, and a gate's self-test is not a falsifier N1 can see.
+Registering these owners as `tested` against whichever cargo controls happen to sit beside
+them would be exactly the false TESTED classification this phase exists to remove, and
+`assurance_obligation_gate.py` already refused the alternative — a registry row for an
+obligation the base did not hold — when the seam split tried it.
+
+So: one evidence form for a self-tested source-text gate, and the three residue units and the
+two orphaned gates close together. It is its own slice, sequenced after the in-flight Phase-1
+PRs land.
