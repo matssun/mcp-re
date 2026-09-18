@@ -4105,7 +4105,29 @@ with the source once installed, which is `proxy.response_signing`'s.
 owner = "proxy.signing_credential_provenance"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.signing_credential_provenance"]
-depends_on = ["THM-0062", "THM-0064", "THM-0073"]
+# ADR-MCPRE-068 Phase-1 DEPENDENCY CORRECTION, under the campaign ruling of 2026-09-18, and
+# recorded in `verification/claim-corrections/THM-0075-2026-09-18.json` because it is
+# THM-0075 whose published claim the edge moves.
+#
+# THM-0116 IS THE EDGE. This claim is that the serving path signs under the credential source
+# MATERIALIZATION PRODUCED, and for a non-exporting source that sentence means something only
+# if the source itself established the key it advertises before signing anything. Without the
+# edge, "signs under the materialized source" is satisfied by holding an object that may sign
+# under a key the deployment never advertised — which is THM-0108's own stated consequence, a
+# signature relying parties are told to check against a key it was not made with.
+#
+# Phase 1 measured this as a COMPOSITION GAP, not a missing root: the remote-signing
+# correspondence propositions already exist (THM-0116, and THM-0108 beneath it) and the
+# signing family already owns the system consequence. What was missing was the edge that puts
+# them under it. `verification/reviews/packets/not-root-reachable-census-2026-09-18.md` §2
+# carries the withdrawn candidate root and why this is the correct altitude instead.
+#
+# TWO NEIGHBOURS ARE DELIBERATELY NOT EDGES HERE. THM-0117 (an acquired credential is never
+# used past its issuer's stated lifetime) is an authorization fact about the proxy's own
+# outbound leg, and a stale credential changes nothing a signature attributes. THM-0115 (the
+# quota window) is throttling. Adding either would claim support this argument does not use,
+# which is the failure the root set exists to avoid.
+depends_on = ["THM-0062", "THM-0064", "THM-0073", "THM-0116"]
 
 [[theorem]]
 id = "THM-0083"
@@ -4407,19 +4429,26 @@ For the shipped Python SDK, an application is not handed, as this call's answer,
 from another exchange or signer, or one that verified only unbound — and is not led to
 repeat a side effect by reading silence as *it did not run*.
 
-Every reply is taken from the correlation entry the request created, and a reply binding to
-nothing outstanding, arriving late, or repeating one already answered is refused rather than
-delivered. A response is accepted only under the configured trust anchor, epoch, audience and
-revocation posture, measured against a RECORDED delegated session rather than a constructed
-one. A notification is delivered only against a signed acknowledgement. An elicitation pauses
-a call rather than ending it, so a reply that is not terminal — including one whose result
-type this SDK does not recognise — is refused rather than surfacing as the call's answer.
-A verified reply that is not an answer to this request — one carrying a method, or one with
-neither result nor error — is refused rather than dispatched.
+The verdict this SDK acts on was computed by the audited core over the exact request bytes
+this exchange signed and transmitted; nothing is re-derived or re-serialized for the
+verifier, so what THM-0058 and THM-0059 establish about a verdict is established about THIS
+transmission. A response is accepted only under a trust picture that was complete at
+construction, measured against a RECORDED delegated session rather than a constructed one,
+and a request is answerable only inside the window it declared. No request is signed under a
+nonce below the 128-bit floor, so a captured answer cannot be aimed at a later call.
+
+A verdict whose outcome is not success reaches the application as a correlated error and
+never as a result. What does reach the MCP session is REBUILT from the one member the
+verified reply carried plus the session's own id, so a reply carrying a method, or one with
+neither result nor error, is refused rather than dispatched. An elicitation pauses a call
+rather than ending it: only a terminal verified reply resolves it, and an elicitation with no
+handler, a declined one, or one past the continuation budget fails the call closed. A
+notification is treated as delivered only against an acknowledgement that verified as bound
+to that transmission.
 
 What the application is told about execution is what the receipt said, and nothing else. A
-verified receipt carrying execution and retry fields is reported with exactly those fields;
-a member the receipt did not carry is not invented for it. A LOCAL failure — a transport
+verified receipt carrying execution and retry fields is reported with exactly those fields; a
+member the receipt did not carry is not invented for it. A LOCAL failure — a transport
 deadline, a cancellation, a local I/O or signing failure — is reported as a local and
 ambiguous failure under the SDK's own prefix: never as `not_executed`, never as retry-safe,
 and never as a wire code the peer did not send.
@@ -4443,33 +4472,63 @@ the TypeScript one; none of the three establishes anything about the others, and
 parity fixture is not a substitute — it compares bytes, and every divergence this family
 exists for is behavioural.
 
+THE CORRELATION CLAIM WAS NARROWED ON 2026-09-18, and the narrowing makes the promise
+better supported rather than smaller. The statement used to say that a reply "binding to
+nothing outstanding, arriving late, or repeating one already answered is refused rather than
+delivered". Measured against `_exchange`, two of those three are unreachable: the correlation
+id handed to `CorrelationStore.take()` is the one `record()` returned three statements
+earlier in the same loop iteration, and MCP-RE is one signed POST per request, so there is no
+inbox and no lookup by any value a peer controls. Those two refusals are real properties of
+`CorrelationStore` AS A VALUE, exercised at its own API, and they are stated there. What
+binds a reply to its request on the shipped path is the audited core over the bytes this
+exchange signed — which is why that is now the statement's first sentence and why
+THM-0058/THM-0059 are now premises instead of being silently relied on. The system promise is
+unchanged; what changed is that it names the mechanism that keeps it.
+
+THE PyO3 BINDING IS NOT COVERED. `sdk/python/src/lib.rs` builds the pinned root resolver, the
+delegation policy and the revocation list, calls the core, and projects the core's verdict
+into the object this claim's execution-honesty leaf reports verbatim. It is in no unit's
+paths, so it is outside every fingerprint and outside every proposition, and it holds no
+tests of its own. This claim therefore ASSUMES the projection is faithful rather than
+establishing it — recorded as a review obligation, not waved past. Until it is discharged,
+the closure below establishes what the Python layer does with a verdict, not that the verdict
+object says what the core decided.
+
 CONCURRENCY AND THROUGHPUT ARE OUTSIDE IT. The exchange bound is a resource ceiling, and a
 difference from the TypeScript member there changes nothing about authenticity, correlation
 or execution. Deadline behaviour enters only where a timeout changes the client's conclusion
 about whether the remote side may have executed.
 
-THE RESPONSE DEADLINE IS ENFORCED, AND ITS WORST CASE IS STATED RATHER THAN ROUNDED OFF.
-`read1` prevents a fill-to read from suppressing the aggregate-deadline check across
-multiple underlying reads: once the deadline has passed, no NEW underlying read is begun.
-An underlying read already in progress may straddle the deadline, and the existing per-recv
-timeout bounds that final stall. So the claimed cap is the aggregate deadline plus at most
-one per-recv timeout — at most twice `timeout` under the single value a deployment sets —
-and NOT an exact wall-clock bound. It is measured against a real `http.client.HTTPResponse`
-fed by a real socket, both while trickling and while silent, never against a fake with
-short-read semantics the production reader lacks. What this claim takes from the bound is
-not availability but honesty: the deadline fails the exchange as a LOCAL condition, and no
-execution or retry fact is manufactured for it.
+THE RESPONSE READ BOUND IS OUTSIDE IT, AND ITS WORST CASE IS STATED RATHER THAN ROUNDED OFF.
+`read1` prevents a fill-to read from suppressing the aggregate-deadline check across multiple
+underlying reads: once the deadline has passed, no NEW underlying read is begun. An
+underlying read already in progress may straddle the deadline, and the existing per-recv
+timeout bounds that final stall. So the cap is the aggregate deadline plus at most one
+per-recv timeout — at most twice `timeout` under the single value a deployment sets — and NOT
+an exact wall-clock bound. It is measured against a real `http.client.HTTPResponse` fed by a
+real socket, both while trickling and while silent, never against a fake with short-read
+semantics the production reader lacks. But the bound itself is AVAILABILITY: remove it and a
+trickling peer holds a worker, which hands the application no wrong answer. What this claim
+takes from the deadline is only honesty — the deadline fails the exchange as a LOCAL
+condition and manufactures no execution or retry fact — and that is
+`sdk_python.local_failure_provenance`'s proposition, not the bound's. The bound keeps its own
+unit at its own severity.
 
 WHAT A CALLER DOES NEXT IS OUTSIDE THIS ROOT. This claim says nothing about an application's
 own retry policy, its outer timeouts, or what it concludes from a local failure; it says only
 that the SDK does not hand it a peer verdict or an execution fact the peer never gave. Retry
 policy outside this adapter is not this adapter's proposition.
 
+REQUEST-SIDE ATTRIBUTION IS OUTSIDE IT. Which identity may sign, and under which custody
+class, is `sdk_python.signer_policy`; which authorization artefacts a request is bound to is
+`sdk_python.authorization_binding`. Remove either and the answer the application receives
+still binds to the request that was sent, which is why neither is in this closure.
+
 THE SUPPORTED RUNTIME SET IS PART OF THE CLAIM. "The shipped Python SDK" means the package
 as it runs on the interpreters it declares support for, and that is a measured set rather
 than an inference from one machine: `requires-python = ">=3.14.5,<3.15"`, and the battery
 runs on every minor in that range at the exact patch versions `toolchains.lock.toml`
-`[python].interpreters` pins. The runtime identity is inside this unit's fingerprint, so
+`[python].interpreters` pins. The runtime identity is inside each unit's fingerprint, so
 changing an interpreter drops the standing evidence instead of silently carrying it; a
 minor outside the range is outside this claim; and `scripts/python_runtime_gate.py`
 refuses a support claim wider than the measured set. It matters here specifically because
@@ -4515,21 +4574,17 @@ supported_by = [
 # THM-0126 is deliberately NOT here. It is `mcp-re-client-proxy`'s own outcome resolution,
 # and the PyO3 binding derives the same fact independently rather than consuming it — which
 # is a duplicated representation recorded as Phase-2 work, not an edge this argument uses.
-# THE PROSE AND `depends_on` ARE THE OWNER'S, AND THIS COMMIT DOES NOT TOUCH THEM.
+# CORRECTED under the ADR-MCPRE-068 Phase-1 campaign ruling of 2026-09-18, which authorizes
+# correcting a statement decomposition shows overstates or misdescribes what production
+# establishes, provided the accepted promise is not weakened, removed or materially expanded.
+# Six corrections, C1-C6, recorded old->new in
+# `verification/claim-corrections/THM-0094-2026-09-18.json` with the reason from the
+# decomposition, and argued in `packets/thm-0094-consequence-decomposition-2026-09-18.md` §10.
 #
-# ADR-MCPRE-068 Phase 1 decomposed this root: `supported_by` is now ten leaves, each one
-# proposition with one owner and one carrier. That is mechanically checkable and lands here.
-#
-# The packet proposes three CLAIM CORRECTIONS this decomposition supports and this commit
-# does not make — narrowing the correlation sentence to what `_exchange` reaches, naming the
-# core verdict as what binds a reply to its request, and recording the PyO3 binding as an
-# uncovered carrier — plus the `depends_on` edges to THM-0058/0059/0060/0061 that the
-# argument actually uses. Each moves `theorem_claim` or `theorem_dependencies`, and
-# `scripts/claim_surface_gate.py` refuses a published claim whose statement has moved since
-# the owner read it. That refusal is correct and is not worked around: the corrections are
-# batched for owner specification review with the other two members of this root family, in
-# `verification/reviews/packets/thm-0094-consequence-decomposition-2026-09-18.md` §10.
-depends_on = []
+# `depends_on` WAS EMPTY AND THAT WAS FALSE: the SDK's whole cryptographic argument is
+# `mcp_re_client_core`'s. THM-0126 is deliberately excluded — the PyO3 binding derives that
+# fact independently rather than consuming it, which is the packet's P2-D.
+depends_on = ["THM-0058", "THM-0059", "THM-0060", "THM-0061"]
 
 
 [[theorem]]
