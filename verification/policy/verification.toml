@@ -3124,59 +3124,199 @@ tested_symbols = [
   "lib#delegated_trust::manifest_validity::tests::a_hand_assembled_picture_has_no_deadline_to_miss",
 ]
 
-# ADR-MCPRE-059 §28 / issue #743. The sidecar's INNER face — the socket local MCP clients
-# speak plain HTTP to, whose other side signs under this client's identity. It is a real
-# authority that had no `[[unit]]`, and it could not be stated until #753 landed: one
-# operator input governed two independent facts, so "the deployment-selected listener and
-# HTTP-authority policy" named nothing a value held.
+# ---------------------------------------------------------------------------------------
+# ADR-MCPRE-059 §28 / issue #743, as decomposed by ADR-MCPRE-068 Phase 1. The sidecar's
+# INNER face — the socket local MCP clients speak plain HTTP to, whose only authentication
+# is reachability, and beyond which every request is signed with the agent's key.
 #
-# The composition is in the closure deliberately. `ServeContext::for_local_config` is where
-# the two values meet — the scope decides the bind, and the authority set is derived FROM
-# the scope rather than from the flag — and a claim about the shipped sidecar that did not
-# fingerprint its composition would be a claim about two types nobody wired together.
+# WHAT WAS HERE. One class-V0 unit over seven files, carrying declared system root THM-0091,
+# with no theorem premises beneath it — and ADR-MCPRE-068 §2 named it the sharpest
+# illustration of that record's thesis, because **its own theorem's statement names a
+# structural fact**: *possession of the scope IS that permission — there is no other
+# constructor.* A seal, stated in the theorem, recorded as `test://`, attacked by nothing.
+#
+# The decomposition record is
+# `verification/reviews/packets/thm-0091-consequence-decomposition-2026-09-18.md`. Three of
+# its findings decide what these units say:
+#
+#   * TWO SEALS ARE NOW STRUCTURAL AND ATTACKED. `BindScope` and `AcceptedHttpAuthority`
+#     both have private representations and one constructor each, and the second's
+#     constructor takes the FIRST rather than the operator flag — which is the whole
+#     mechanism that stops "off-host, therefore any host" from being rebuilt by a caller.
+#     S22 and S23 are the compile refusals.
+#   * THE ROOT'S CLOSURE DID NOT REACH THE PREDICATES ITS OWN STATEMENT NAMES.
+#     `is_loopback_host` and `is_json_content_type` decide two of the three caller-shape
+#     refusals, and they sat in `client.local_serving_pipeline` — a unit whose own
+#     description begins "what the local listener does with an ADMITTED request" and then
+#     lists "host and content-type guards". An admission authority inside a post-admission
+#     unit. `serve/guards.rs` and its two controls move here.
+#   * `config/local.rs` WAS IN THE PATHS AND DECLARED NO CONTROL. Its three — an unstated
+#     off-host declaration is a refusal, a misspelled security switch is a startup failure
+#     rather than a silent default, a bind that is not an address is refused by the type —
+#     are the operator-declaration half of the claim and were claimed by nothing.
+#
+# Seven units: five `tested`, two `structural`. Each owns ONE proposition.
+# ---------------------------------------------------------------------------------------
+
+# 1. What the operator may STATE about the local leg. The document half of the pair; the
+# decision half is `client.bind_scope` next door. `deny_unknown_fields` is load-bearing
+# rather than tidy: a misspelled security switch that read as "off" while the operator
+# believed it on is the whole failure.
 [[unit]]
-id = "client.local_ingress_authority"
+id = "client.local_leg_declaration"
 class = "V0"
-description = "Which local requests may reach the sidecar's signing path: where the listener is exposed, which HTTP authority names it answers to, and the caller-shape refusals that run before any byte is signed."
+description = "What a deployment may declare about the local leg, refused rather than defaulted: an unstated off-host declaration is a refusal and never a permission, a misspelled field is a startup failure rather than a silent default, a bind that is not an address is refused by the type, and the two bounds that keep one caller from holding the sidecar must be positive."
 paths = [
-  "mcp-re-client/src/config/bind_scope.rs",
   "mcp-re-client/src/config/local.rs",
   "mcp-re-client/src/config/validation.rs",
-  "mcp-re-client/src/serve/accepted_authority.rs",
-  "mcp-re-client/src/serve/head_fields.rs",
-  "mcp-re-client/src/serve/request.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://client/local_leg_declaration/stated_never_defaulted",
+  "mutation://client/local_leg_declaration/stated_never_defaulted",
+]
+# ADR-MCPRE-069 `register`: all three. `config/local.rs` was in the predecessor unit's paths
+# and no control in its battery named it.
+tested_symbols = [
+  "lib#config::local::tests::the_two_bounds_have_defaults_and_the_security_switch_does_not_default_open",
+  "lib#config::local::tests::a_misspelled_field_is_a_startup_failure_not_a_silent_default",
+  "lib#config::local::tests::a_bind_that_is_not_an_address_is_refused_by_the_type",
+]
+
+# 2. WHERE the listener is exposed, decided once. The refusal lives in the constructor rather
+# than beside it, and the composition control is what makes that a property of the SEAM the
+# socket is opened at rather than of a validator a caller may skip.
+[[unit]]
+id = "client.bind_scope"
+class = "V0"
+description = "An off-host bind exists only against an explicit operator declaration, and the declaration is about the BIND alone: a loopback bind is admitted whatever the flag says, an exposed one projects exactly one further authority and no more, and the refusal is what the seam that opens the socket performs rather than a validator a caller may skip."
+paths = [
+  "mcp-re-client/src/config/bind_scope.rs",
   "mcp-re-client/src/serve/mod.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://client/local_ingress/admission_policy", "mutation://client/local_ingress/admission_policy"]
-# The negative controls carry this unit, and the one that matters most is the conflation
-# itself: an exposed listener must STILL refuse a rebound name. A battery that only proved
-# loopback refuses one would have passed before #753 and after it alike.
+evidence = [
+  "test://client/bind_scope/where_the_listener_is_exposed",
+  "mutation://client/bind_scope/where_the_listener_is_exposed",
+]
 tested_symbols = [
-  # Where the listener is exposed — refused unless the operator declared it, and the
-  # declaration widens the authority set by exactly one address.
   "lib#config::bind_scope::tests::an_off_host_bind_needs_the_operators_declaration",
   "lib#config::bind_scope::tests::a_loopback_bind_needs_nothing_and_the_flag_does_not_change_it",
   "lib#config::bind_scope::tests::an_exposed_bind_names_one_further_authority_and_no_more",
-  # Which names reach it. The second is the control the conflation used to fail.
+  # ADR-MCPRE-069 `register`: the COMPOSITION control, and the one that distinguishes "the
+  # guard refused" from "the bind failed" without opening a socket on every interface. It
+  # lived in a file this unit's predecessor already owned and was claimed by nothing.
+  "lib#serve::tests::bind_refuses_a_non_loopback_address_unless_it_is_declared",
+]
+
+# 3. The seal the THEOREM already stated and nothing attacked. ADR-MCPRE-068 §2: "THM-0091's
+# `none` is a declaration error, not an absence" — that correction was about the mutation
+# probe. This is the other half, and it was a real absence: the statement says *possession of
+# the scope IS that permission — there is no other constructor*, and no control established
+# it until S22.
+[[unit]]
+id = "client.bind_scope_sole_producer"
+class = "V0"
+description = "No code outside `config::bind_scope` can assemble a `BindScope`, so every scope in existence came from `decide` — which means an off-host listener address cannot be held by anything that did not pass the operator's declaration, and deleting the refusal cannot bring an unpermitted one into existence some other way."
+paths = ["mcp-re-client/src/config/bind_scope.rs"]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "critical"
+evidence = ["structural://client/bind_scope/sole_producer"]
+
+# 4. WHICH NAMES may reach signing — the half `Origin` does not cover, because a page served
+# from a rebound name is SAME-origin to the browser and sends no `Origin` at all.
+[[unit]]
+id = "client.accepted_authority"
+class = "V0"
+description = "A `Host` reaches the signing path only when it names this listener: the loopback literals always, and an exposed listener additionally its own address in both spellings and at its own port — never a rebound name, a neighbouring address, or another port, on an exposed listener exactly as on a loopback one."
+paths = ["mcp-re-client/src/serve/accepted_authority.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://client/accepted_authority/which_names_reach_signing",
+  "mutation://client/accepted_authority/which_names_reach_signing",
+]
+tested_symbols = [
   "lib#serve::accepted_authority::tests::a_loopback_listener_answers_to_the_loopback_names_only",
   "lib#serve::accepted_authority::tests::an_exposed_listener_still_refuses_a_rebound_name",
   "lib#serve::accepted_authority::tests::an_exposed_listener_answers_to_its_own_address",
   "lib#serve::accepted_authority::tests::an_exposed_ipv6_listener_answers_to_its_bracketed_literal",
-  # The head guards, their order, and the duplicates they refuse rather than resolve.
+]
+
+# 5. The second seal, and the one that carries the conflation fix. `for_listener` takes a
+# `BindScope` and there is no constructor taking the operator flag, so "off-host, therefore
+# any host" is not an inference anything can make — it is a construction nothing can perform.
+[[unit]]
+id = "client.accepted_authority_sole_producer"
+class = "V0"
+description = "An `AcceptedHttpAuthority` is obtainable only from a `BindScope`: the representation is private, `for_listener` is the one constructor, and no constructor takes the operator's `allow_non_loopback` flag — so the conflation this type was created to remove cannot be rebuilt by a caller, whatever any check elsewhere does."
+paths = ["mcp-re-client/src/serve/accepted_authority.rs"]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "critical"
+evidence = ["structural://client/accepted_authority/sole_producer"]
+
+# 6. The request-shape admission decision, and the ORDER it runs in. `serve/guards.rs` is
+# here rather than in `client.local_serving_pipeline` because its two predicates DECIDE
+# admission; that unit's subject is what happens to a request already admitted.
+[[unit]]
+id = "client.caller_shape_admission"
+class = "V0"
+description = "Framing is settled before any header is believed, and the three caller-shape refusals — a present `Origin`, a `Host` that does not name this listener, a body that is not JSON — each answer with their own status and all run before a single byte is signed; a repeated `Content-Length` or `Host` is refused rather than resolved, and a chunked transfer is refused rather than parsed."
+paths = [
+  "mcp-re-client/src/serve/head_fields.rs",
+  "mcp-re-client/src/serve/guards.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://client/caller_shape/what_a_browser_cannot_do",
+  "mutation://client/caller_shape/what_a_browser_cannot_do",
+]
+tested_symbols = [
   "lib#serve::head_fields::tests::a_well_formed_local_request_passes_every_guard",
   "lib#serve::head_fields::tests::a_rebound_host_is_refused_on_an_exposed_listener_too",
   "lib#serve::head_fields::tests::an_exposed_listener_serves_its_own_authority",
   "lib#serve::head_fields::tests::framing_is_refused_before_the_caller_shape_guards",
   "lib#serve::head_fields::tests::the_three_caller_shape_guards_each_refuse_with_their_own_status",
   "lib#serve::head_fields::tests::a_duplicate_length_or_host_is_refused_rather_than_resolved",
-  # Framing, which the order argument rests on: a head that cannot be framed says nothing
-  # reliable about its headers, so it is settled before the guards read one.
+  # ADR-MCPRE-069 `reattribute`, from `client.local_serving_pipeline`: these two predicates
+  # decide ADMISSION, and that unit's subject is a request already admitted.
+  "lib#serve::guards::tests::only_loopback_literals_and_localhost_are_accepted_hosts",
+  "lib#serve::guards::tests::only_json_content_types_are_accepted",
+]
+
+# 7. The parser surface itself. Every byte of parser here is attack surface for no benefit,
+# so the proposition is about what is REFUSED rather than about what is understood.
+[[unit]]
+id = "client.local_request_surface"
+class = "V0"
+description = "The listener parses `POST` with a `Content-Length` and one exchange per connection and refuses everything else: a head is bounded and terminated at its own end, a body that arrived with the head is framed from it rather than re-read, bytes past `Content-Length` are never parsed as a second request, and a dripping caller hits the exchange deadline instead of holding a worker."
+paths = [
+  "mcp-re-client/src/serve/request.rs",
+  "mcp-re-client/src/serve/mod.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://client/local_request_surface/a_deliberately_small_parser",
+  "mutation://client/local_request_surface/a_deliberately_small_parser",
+]
+tested_symbols = [
   "lib#serve::request::tests::the_head_terminator_is_found_at_its_own_end",
   "lib#serve::request::tests::a_head_split_across_reads_still_frames_a_body_that_arrived_with_it",
   "lib#serve::request::tests::a_dripping_caller_hits_the_exchange_deadline_instead_of_holding_the_worker",
+  # ADR-MCPRE-069 `reattribute`, from `client.local_serving_pipeline`: the control's subject
+  # is what the HTTP surface refuses, which is this unit's proposition and not that one's.
+  "tests/local_leg_e2e_test#the_local_http_surface_refuses_everything_it_does_not_implement",
 ]
 
 [[unit]]
@@ -7164,11 +7304,10 @@ tested_symbols = [
 [[unit]]
 id = "client.local_serving_pipeline"
 class = "V0"
-description = "What the local listener does with an admitted request: an in-flight ceiling whose slot is returned by a refusal and by a panicking worker alike, a route named by the path rather than guessed, host and content-type guards, read/write deadlines, a verified pause rendered as a pause rather than a finished call, and a close that lets the caller see the refusal it was given."
+description = "What the local listener does with an admitted request: an in-flight ceiling whose slot is returned by a refusal and by a panicking worker alike, a route named by the path rather than guessed, read/write deadlines, a verified pause rendered as a pause rather than a finished call, and a close that lets the caller see the refusal it was given."
 paths = [
   "mcp-re-client/src/serve/admission.rs",
   "mcp-re-client/src/serve/exchange.rs",
-  "mcp-re-client/src/serve/guards.rs",
   "mcp-re-client/src/serve/deadlines.rs",
   "mcp-re-client/src/serve/render.rs",
   "mcp-re-client/src/serve/response.rs",
@@ -7188,8 +7327,6 @@ tested_symbols = [
   "lib#serve::exchange::tests::a_path_names_its_route",
   "lib#serve::exchange::tests::a_nested_or_empty_path_names_no_route",
   "lib#serve::exchange::tests::any_other_path_falls_to_the_default_route_only_when_one_is_configured",
-  "lib#serve::guards::tests::only_loopback_literals_and_localhost_are_accepted_hosts",
-  "lib#serve::guards::tests::only_json_content_types_are_accepted",
   "lib#serve::deadlines::tests::a_peer_that_never_reads_hits_the_write_deadline",
   # A pause rendered as a finished call would report a call that has not run as one that has.
   "lib#serve::render::tests::a_verified_pause_is_not_rendered_as_a_finished_call",
@@ -7199,7 +7336,6 @@ tested_symbols = [
   "tests/local_leg_e2e_test#a_plain_mcp_call_round_trips_through_the_listener_and_comes_back_verified",
   "tests/local_leg_e2e_test#a_path_that_names_no_route_is_refused_rather_than_guessed",
   "tests/local_leg_e2e_test#a_configured_default_route_serves_a_fixed_path",
-  "tests/local_leg_e2e_test#the_local_http_surface_refuses_everything_it_does_not_implement",
   "tests/local_leg_e2e_test#concurrent_local_callers_are_served_in_parallel",
   "tests/local_leg_e2e_test#shutdown_waits_for_an_accepted_exchange_instead_of_dropping_it",
   "tests/local_leg_e2e_test#a_notification_is_acknowledged_with_a_bodyless_202",

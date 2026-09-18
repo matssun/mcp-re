@@ -4660,10 +4660,32 @@ It says nothing about availability. The exchange deadline is in the closure beca
 dripping caller must not hold a worker, but a request refused for lateness is refused, not
 admitted — the claim is one-directional and is not a promise that anything is served.
 """
-owner = "client.local_ingress_authority"
+owner = "client.caller_shape_admission"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://client.local_ingress_authority"]
+# ADR-MCPRE-068 Phase 1. Seven leaves: five `tested`, two `structural`. The two structural
+# ones are what the statement always asserted and nothing measured.
+supported_by = [
+  "unit://client.local_leg_declaration",
+  "unit://client.bind_scope",
+  "unit://client.bind_scope_sole_producer",
+  "unit://client.accepted_authority",
+  "unit://client.accepted_authority_sole_producer",
+  "unit://client.caller_shape_admission",
+  "unit://client.local_request_surface",
+]
+# THE PROSE AND `depends_on` ARE THE OWNER'S, AND THIS COMMIT DOES NOT TOUCH THEM.
+#
+# ADR-MCPRE-068 Phase 1 decomposed this root: `supported_by` is now seven leaves and the
+# structural facts the statement already asserts are attacked by S22 and S23. The
+# DECOMPOSITION is mechanically checkable and lands here. The CLAIM CORRECTION the packet
+# proposes — saying in the statement that two of those facts are structural, and that the
+# predicates the statement names are in the closure — moves `theorem_claim`, and
+# `scripts/claim_surface_gate.py` refuses a published claim whose statement has moved since
+# the owner read it. That refusal is correct and is not worked around: the correction is
+# batched for owner specification review with the other two root members, in
+# `verification/reviews/packets/thm-0091-consequence-decomposition-2026-09-18.md` §2.
 depends_on = []
+
 
 [[theorem]]
 id = "THM-0090"

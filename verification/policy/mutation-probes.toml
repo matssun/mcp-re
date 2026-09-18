@@ -2630,27 +2630,160 @@ expect_red = [
 
 [[probe]]
 id = "M85-an-exposed-listener-still-refuses-a-rebound-name"
-unit = "client.local_ingress_authority"
+unit = "client.accepted_authority"
+theorem = "THM-0091"
 conjunct = "Permitting an off-host bind widens the admitted names by the listener's own address and by nothing else"
-# The conflation, restored. `allow_non_loopback` was wired straight to `allow_any_host`, so
-# an exposed listener admitted every name — and a page whose name resolves to the listener
-# obtained signed calls under the agent's identity. The weakening is that behaviour written
-# where the derived authority set used to be, and it must not pass.
 path = "mcp-re-client/src/serve/accepted_authority.rs"
-anchor = """
-        let Some(address) = self.exposed else {
+# Retargeted by ADR-MCPRE-068 Phase 1 from `client.local_ingress_authority`, which was the
+# one wide unit. The head_fields control it also named is `client.caller_shape_admission`'s
+# now, and M89 attacks that unit's own wiring — a probe may only expect a control its own
+# unit declares, or a red result says nothing about the proposition named here.
+anchor = """        let Some(address) = self.exposed else {
             return false;
         };
 """
-weakening = """
-        let Some(address) = self.exposed else {
+weakening = """        let Some(address) = self.exposed else {
             return false;
         };
         return true;
 """
 expect_red = [
   "lib#serve::accepted_authority::tests::an_exposed_listener_still_refuses_a_rebound_name",
-  "lib#serve::head_fields::tests::a_rebound_host_is_refused_on_an_exposed_listener_too",
+]
+
+# ADR-MCPRE-068 Phase 1 — THM-0091's decomposition. Six probes, one per `tested` leaf plus
+# two more where a leaf's proposition is a conjunction of independently deletable checks.
+
+[[probe]]
+id = "M86-an-unstated-off-host-declaration-is-a-refusal"
+unit = "client.bind_scope"
+theorem = "THM-0091"
+conjunct = "An off-host bind exists only against an explicit operator declaration"
+path = "mcp-re-client/src/config/bind_scope.rs"
+note = """
+The refusal lives in the CONSTRUCTOR, which is what `client.bind_scope_sole_producer` makes
+load-bearing: with this deleted there is still no other producer, so the weakening changes
+what `decide` admits and nothing else. Both controls are expected red, and the second is the
+one that says the guard is what the SEAM performs rather than a validator a caller may skip.
+"""
+anchor = """        let exposed = !address.ip().is_loopback();
+        if exposed && !allow_non_loopback {
+"""
+weakening = """        let exposed = !address.ip().is_loopback();
+        if false {
+"""
+expect_red = [
+  "lib#config::bind_scope::tests::an_off_host_bind_needs_the_operators_declaration",
+  "lib#serve::tests::bind_refuses_a_non_loopback_address_unless_it_is_declared",
+]
+
+[[probe]]
+id = "M87-a-misspelled-security-switch-is-a-startup-failure"
+unit = "client.local_leg_declaration"
+theorem = "THM-0091"
+conjunct = "A misspelled field is a startup failure rather than a silent default"
+path = "mcp-re-client/src/config/local.rs"
+note = """
+The failure this attacks is not a parse error. `allow_nonloopback: true` in a document whose
+unknown fields are ignored leaves `allow_non_loopback` at its `false` default — which is the
+SAFE value — so the operator gets a refusal they did not expect rather than an exposure. The
+symmetric case is the one that bites: any future field whose default is the permissive side,
+and the operator's belief that the document says what they wrote.
+"""
+anchor = """#[serde(deny_unknown_fields)]
+pub struct LocalConfig {
+"""
+weakening = """pub struct LocalConfig {
+"""
+expect_red = [
+  "lib#config::local::tests::a_misspelled_field_is_a_startup_failure_not_a_silent_default",
+]
+
+[[probe]]
+id = "M88-the-origin-refusal-runs-before-signing"
+unit = "client.caller_shape_admission"
+theorem = "THM-0091"
+conjunct = "A present `Origin` is refused — no MCP client sends one and a browser always does"
+path = "mcp-re-client/src/serve/head_fields.rs"
+anchor = """    if head.origin.is_some() {
+        return Err(403);
+    }
+"""
+weakening = """    if false {
+        return Err(403);
+    }
+"""
+expect_red = [
+  "lib#serve::head_fields::tests::the_three_caller_shape_guards_each_refuse_with_their_own_status",
+]
+
+[[probe]]
+id = "M89-a-repeated-content-length-is-refused-rather-than-resolved"
+unit = "client.caller_shape_admission"
+theorem = "THM-0091"
+conjunct = "A repeated `Content-Length` is refused rather than resolved"
+path = "mcp-re-client/src/serve/head_fields.rs"
+note = """
+A separate probe from M88 because it is a separate deletable check over a separate attack: a
+repeated `Content-Length` is a request-smuggling primitive, where two lengths let a reader and
+a writer disagree about where the message ends. Deleting one leaves the other standing, which
+is exactly why one probe cannot answer for both.
+"""
+anchor = """                if content_length.is_some() {
+                    return Err(400);
+                }
+"""
+weakening = """                if false {
+                    return Err(400);
+                }
+"""
+expect_red = [
+  "lib#serve::head_fields::tests::a_duplicate_length_or_host_is_refused_rather_than_resolved",
+]
+
+[[probe]]
+id = "M90-a-rebound-name-is-not-a-loopback-literal"
+unit = "client.caller_shape_admission"
+theorem = "THM-0091"
+conjunct = "Only the loopback literals name this host — a name resolving to one does not"
+path = "mcp-re-client/src/serve/guards.rs"
+note = """
+The predicate half of the `Host` refusal, and the reason `serve/guards.rs` belongs to this
+unit rather than to the post-admission one: `is_loopback_host` DECIDES admission. `localhost`
+resolves through the same resolver a rebinding attack controls, and it is admitted only
+because browsers refuse to let a page claim it as its own name — so the predicate, not the
+resolver, is what separates a genuine local caller from a rebound one.
+"""
+anchor = """    host.parse::<std::net::IpAddr>()
+        .is_ok_and(|ip| ip.is_loopback())
+"""
+weakening = """    let _ = host.parse::<std::net::IpAddr>();
+    true
+"""
+expect_red = [
+  "lib#serve::guards::tests::only_loopback_literals_and_localhost_are_accepted_hosts",
+]
+
+[[probe]]
+id = "M91-a-dripping-caller-does-not-hold-a-worker"
+unit = "client.local_request_surface"
+theorem = "THM-0091"
+conjunct = "A dripping caller hits the exchange deadline instead of holding a worker"
+path = "mcp-re-client/src/serve/request.rs"
+note = """
+The deadline is armed BEFORE every read rather than once, because a per-syscall `SO_RCVTIMEO`
+that every arriving byte re-arms bounds nothing. This weakening keeps the arming call — so
+the socket still has a timeout and the read still returns — and moves the wall clock an hour
+out, which is the difference between a per-syscall timer and one bound on the exchange.
+"""
+anchor = """        arm(stream, deadline)?;
+        match stream.read(&mut chunk) {
+"""
+weakening = """        arm(stream, Instant::now() + std::time::Duration::from_secs(3600))?;
+        match stream.read(&mut chunk) {
+"""
+expect_red = [
+  "lib#serve::request::tests::a_dripping_caller_hits_the_exchange_deadline_instead_of_holding_the_worker",
 ]
 
 [[probe]]

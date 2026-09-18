@@ -17,12 +17,18 @@ not an omission to hide.
 
 | unit | class | owns theorems | assumptions |
 |---|---|---|---|
+| client.accepted_authority | V0 | _none_ | 0 |
+| client.accepted_authority_sole_producer | V0 | _none_ | 0 |
 | client.anchor_refresh | V0 | THM-0120 | 0 |
+| client.bind_scope | V0 | _none_ | 0 |
+| client.bind_scope_sole_producer | V0 | _none_ | 0 |
 | client.binding_spec_refusal | V0 | _none_ | 0 |
+| client.caller_shape_admission | V0 | THM-0091 | 0 |
 | client.delegation_policy_seal | V0 | THM-0060 | 0 |
 | client.deployment_config | V0 | THM-0124 | 0 |
 | client.execution_contract | V0 | THM-0061 | 0 |
-| client.local_ingress_authority | V0 | THM-0091 | 0 |
+| client.local_leg_declaration | V0 | _none_ | 0 |
+| client.local_request_surface | V0 | _none_ | 0 |
 | client.local_serving_pipeline | V0 | THM-0123 | 0 |
 | client.manifest_floor | V0 | THM-0121 | 0 |
 | client.proxy_request_correspondence | V0 | THM-0084 | 0 |
