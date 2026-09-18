@@ -817,6 +817,31 @@ measurement. Four consequences, each mechanical:
   campaign — the proposition the obligation belongs to and the obligation itself, or the
   registry cannot say what closing the row would mean.
 
+**SUCCESSION — the one way the registry's row count may rise, added in Phase 1 because
+Phase 1 could not otherwise start.** Phase 1 decomposes a root's one wide proposition into
+the narrow propositions it was always the conjunction of. A wide `tested` unit that OWED a
+falsifier becomes several narrow `tested` units that owe one each, and under the rules above
+that is indistinguishable from new work: the predecessor's row goes dead, and every
+successor is an unregistered owing unit. The ratchet built to stop obligations *appearing*
+would have been stopping them from being *stated more precisely* — and a registry that makes
+a decomposition impossible has stopped bounding a population and started protecting a
+granularity.
+
+So a row may carry `succeeds` and `decomposition_ref`, and `scripts/assurance_obligation_gate.py`
+requires five things together: the predecessor is a row in the BASE registry; it is gone from
+both the registry and the measured population; every successor's effective severity is at
+most the predecessor's; every successor unit's `paths` are a SUBSET of the predecessor's at
+the base; and `decomposition_ref` names a file the tree holds. A malformed succession does
+not also buy growth — the row is excused from the shrink-only rule only if it survives every
+clause.
+
+**One authorization buys one transition**, by the mechanism `config/module-size-debt.toml`'s
+`growth_ref` uses: after merge the predecessor is no longer in the base registry, so a later
+row naming it matches nothing. And succession **discharges nothing** — successor rows are
+ordinary open obligations, INCOMPLETE like every other row, bounding the same production code
+measured more finely. What may not ride one is new production code: that is what the path
+subset clause is for.
+
 **And it does not duplicate `assumptions.toml`.** `assumed`, `external-boundary` and
 `review-obligation` remain typed premise records there (§7). A premise says *why this chain
 terminates without MCP-RE establishing the proposition*; a debt row says *MCP-RE owes this
