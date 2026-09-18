@@ -6521,7 +6521,10 @@ paths = ["mcp-re-proxy/src/config_state/admission.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://proxy/admission_configuration_state/recognised_forms"]
+evidence = [
+  "test://proxy/admission_configuration_state/recognised_forms",
+  "mutation://proxy/admission_configuration_state/recognised_forms",
+]
 # Separate from the gate above because these are different facts: this decides what a
 # deployment may BE, the gate decides what a running one DOES. One unit over both would need
 # an "and" in its description, which ADR-MCPRE-061 §8 question 1 names as a shallow boundary.
@@ -6531,6 +6534,7 @@ tested_symbols = [
   "lib#config_state::admission::tests::the_availability_posture_is_classified_from_the_two_flags",
   "lib#config_state::admission::tests::the_off_state_carries_nothing_because_it_verifies_nothing",
   "lib#config_state::admission::tests::a_refused_configuration_recognises_no_state",
+  "lib#config_state::admission::tests::a_gate_that_names_no_authority_is_refused_rather_than_read_as_off",
   "lib#config_state::admission::tests::the_degraded_sub_state_is_accepted_with_a_positive_window",
   "lib#config_state::admission::tests::an_enforcing_state_names_every_value_it_cannot_verify_without",
   "lib#config_state::admission::tests::an_authority_key_that_cannot_verify_anything_is_refused",
@@ -6628,7 +6632,10 @@ paths = ["mcp-re-proxy/src/config_state/authorization.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://proxy/authorization_configuration_state/recognised_forms"]
+evidence = [
+  "test://proxy/authorization_configuration_state/recognised_forms",
+  "mutation://proxy/authorization_configuration_state/recognised_forms",
+]
 tested_symbols = [
   "lib#config_state::authorization::tests::a_configured_profile_carries_its_scope_and_its_staleness_bound_together",
   "lib#config_state::authorization::tests::a_deployment_that_installs_nothing_is_off_rather_than_unrecognised",
@@ -8328,7 +8335,10 @@ paths = ["mcp-re-proxy/src/aws_sts.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://proxy/aws_sts/credential_lifetime"]
+evidence = [
+  "test://proxy/aws_sts/credential_lifetime",
+  "mutation://proxy/aws_sts/credential_lifetime",
+]
 test_features = ["aws_kms_keysource"]
 tested_symbols = [
   "lib#aws_sts::tests::a_well_formed_response_yields_the_credentials_and_its_expiry",

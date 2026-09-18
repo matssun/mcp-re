@@ -7350,3 +7350,103 @@ how a transparency pin stops pinning anything. This refusal is what keeps the do
 answer unambiguous, so the key parse below it is not a second carrier -- `from_b64url` accepts
 the `x` coordinate either way and says nothing about the `y` beside it.
 """
+
+[[probe]]
+id = "M265-proxy-an-unreadable-sts-expiry-is-already-expired"
+unit = "proxy.aws_sts_credentials"
+theorem = "THM-0091"
+conjunct = "an expiry that cannot be read is already-expired rather than unlimited, and a far-future one is truncated to the real session ceiling"
+path = "mcp-re-proxy/src/aws_sts.rs"
+anchor = """
+        .map(|stated| stated.min(now + MAX_SESSION_LIFETIME))
+        .unwrap_or(UNIX_EPOCH);
+"""
+weakening = """
+        .unwrap_or(now + MAX_SESSION_LIFETIME);
+"""
+expect_red = [
+  "lib#aws_sts::tests::an_unparseable_expiration_reads_as_already_expired_not_as_unlimited",
+  "lib#aws_sts::tests::a_missing_expiration_element_reads_as_already_expired",
+  "lib#aws_sts::tests::a_far_future_expiration_is_truncated_to_the_real_session_ceiling",
+]
+note = """
+THE DEFAULT ON AN UNREADABLE FIELD IS A LIFETIME. `UNIX_EPOCH` means already expired, so the
+next use refreshes -- an unreadable expiry costs a BOUNDED window rather than an indefinite
+one. The weakening substitutes the ceiling instead, which reads as a plausible value and means
+the opposite: a credential whose expiry could not be established is held for the maximum.
+
+The truncation travels with it because both are the same `Option` chain, and both are the same
+proposition from opposite ends: `AssumeRoleWithWebIdentity` cannot issue a session longer than
+the role's MaxSessionDuration, whose own ceiling is 12 hours, so a longer claim is not a
+lifetime the peer can honestly promise. Nothing downstream re-reads the expiry -- the cache
+refreshes on this number alone.
+"""
+
+[[probe]]
+id = "M266-proxy-a-profile-missing-its-scope-is-refused-not-defaulted"
+unit = "proxy.authorization_configuration_state"
+theorem = "THM-0091"
+conjunct = "a configured profile carries its scope and its staleness bound together, and one missing either is refused rather than defaulted"
+path = "mcp-re-proxy/src/config_state/authorization.rs"
+anchor = """
+    let (Some(accepted_scope), Some(age)) = (request.decision_scope, request.max_decision_age_secs)
+    else {
+"""
+weakening = """
+    let (accepted_scope, age) = (
+        request.decision_scope.unwrap_or(DecisionScope::Principal),
+        request.max_decision_age_secs.unwrap_or(600),
+    );
+    if false {
+"""
+expect_red = [
+  "lib#config_state::authorization::tests::a_profile_missing_its_scope_is_refused_rather_than_defaulted",
+]
+note = """
+THE DEFAULTS ARE THE PLAUSIBLE ONES, deliberately: `Principal` scope and a ten-minute staleness
+bound are what somebody would reach for. That is what makes the weakening worth measuring -- it
+produces a deployment that runs, decides, and reports an enforcing posture, under an actor
+scope and a staleness window the operator never chose.
+
+ADR-MCPRE-065 §8.3 is the reason neither may be defaulted: the accepted actor scope and the
+staleness bound are what the DEPLOYMENT decides, and a decision cannot supply either about
+itself. A default here would let the document being judged set the terms it is judged under,
+one remove away.
+
+The zero-bound refusal below is a sibling conjunct, not a second carrier: it refuses a value
+the operator DID name, and says nothing about one they never gave.
+"""
+
+[[probe]]
+id = "M267-proxy-a-configuration-that-names-no-authority-is-refused"
+unit = "proxy.admission_configuration_state"
+theorem = "THM-0091"
+conjunct = "a configuration that names no admission authority is refused rather than served as OFF"
+path = "mcp-re-proxy/src/config_state/admission.rs"
+anchor = """
+        return Err(MISSING_ADMISSION_AUTHORITY.to_string());
+"""
+weakening = """
+        return Ok(None);
+"""
+expect_red = [
+  "lib#config_state::admission::tests::a_gate_that_names_no_authority_is_refused_rather_than_read_as_off",
+]
+note = """
+`Ok(None)` IS `--admission off`, WHICH IS WHY THIS WEAKENING IS THE DANGEROUS ONE. An operator
+who asked for admission enforcement and named no authority gets a deployment that STARTS,
+reports the OFF posture, and admits every request -- and the OFF line is a legitimate line, so
+nothing in the transcript reads as wrong. The refusal is the only moment the two are
+distinguishable, exactly as with the continuation seam in slice 18 and the deny-list relation
+in slice 12.
+
+THE EXISTING CONTROL COULD NOT SEE IT. `a_refused_configuration_recognises_no_state` supplies
+`"not-a-key"` -- non-empty and undecodable -- so it measures the DECODE refusal one clause
+further on, and the empty-authority clause had nothing holding it. The written control names
+both spellings of nothing, an empty string and whitespace, and the empty kid beside them.
+
+Three instances of one shape now: a selected security capability that cannot be established
+must never degrade into the posture of a deployment that selected nothing. Recorded as a
+pattern rather than a mechanism -- the three refusals live in three owners and each is
+separately falsifiable, which is the correct arrangement.
+"""
