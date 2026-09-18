@@ -4540,7 +4540,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://sdk_python/authorization_binding/permitted_and_canonical"]
+evidence = [
+  "test://sdk_python/authorization_binding/permitted_and_canonical",
+  "mutation://sdk_python/authorization_binding/permitted_and_canonical",
+]
 tested_symbols = [
   # ADR-MCPRE-069 `register`: `authorization.py` was in the predecessor unit's paths and no
   # control in its battery named it.
@@ -5022,7 +5025,10 @@ paths = ["sdk/typescript/src/mtls.ts"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://sdk_typescript/bounded_read/both_bounds_and_the_channel"]
+evidence = [
+  "test://sdk_typescript/bounded_read/both_bounds_and_the_channel",
+  "mutation://sdk_typescript/bounded_read/both_bounds_and_the_channel",
+]
 tested_symbols = [
   "vitest#test/mtls.test.ts > the mTLS connect helper > bounds the TOTAL response read, not only socket inactivity",
   "vitest#test/mtls.test.ts > the mTLS connect helper > refuses an oversized response",
@@ -5065,7 +5071,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://sdk_typescript/authorization_binding/permitted_and_canonical"]
+evidence = [
+  "test://sdk_typescript/authorization_binding/permitted_and_canonical",
+  "mutation://sdk_typescript/authorization_binding/permitted_and_canonical",
+]
 tested_symbols = [
   # ADR-MCPRE-069 `register`
   "vitest#test/authorization.test.ts > opaque bytes > has the core digest the real artifact",

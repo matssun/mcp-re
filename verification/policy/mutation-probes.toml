@@ -5756,3 +5756,103 @@ now REORDERS the members, which preserves the document and changes the serializa
 is what "re-derived" means here. A probe whose mutation is a no-op measures nothing, and the
 lane reporting FAIL for it was correct both times.
 """
+
+[[probe]]
+id = "M211-python-only-permitted-binding-types"
+unit = "sdk_python.authorization_binding"
+theorem = "THM-0094"
+conjunct = "the authorization binding specs a request carries are the ones the configured policy permits"
+path = "sdk/python/python/mcp_re_sdk/authorization.py"
+anchor = """
+            if p.binding_type() not in self.permitted_types:
+"""
+weakening = """
+            if False:
+"""
+expect_red = [
+  "pytest#tests/test_transport.py::test_the_authorization_policy_is_checked_at_open_too",
+]
+note = """
+THE PERMITTED-TYPE REFUSAL IS SOLE, and the control that measures it is about the OPENING,
+not about a request: the policy is checked at `start()` alongside the signer policy, so a
+route configured to permit only a decision binding refuses a transport carrying an opaque
+one before anything is signed. Under the weakening a provider of any registered type rides
+along on every request the route makes.
+"""
+
+[[probe]]
+id = "M212-python-the-binding-serialization-is-canonical"
+unit = "sdk_python.authorization_binding"
+theorem = "THM-0094"
+conjunct = "the binding specs are serialized canonically and byte-identically to the TypeScript twin"
+path = "sdk/python/python/mcp_re_sdk/transport.py"
+anchor = """
+        ensure_ascii=False,
+"""
+weakening = """
+        ensure_ascii=True,
+"""
+expect_red = [
+  "pytest#tests/test_transport.py::test_the_canonical_bindings_json_emits_raw_utf8_like_json_stringify",
+]
+note = """
+THE DEFAULT IS THE DEFECT. `json.dumps` escapes every non-ASCII character as `\\uXXXX` and
+`JSON.stringify` emits raw UTF-8, so a tenant name or grant handle carrying one non-ASCII
+character digests to two different values in the two SDKs. SDK-1/SDK-4 require the same
+digest for the same bindings, and an audit pipeline reconciling a Python client's record
+against a TypeScript client's would read a difference in SERIALIZER as "the artifact binding
+changed". The weakening is the library default, which is what makes it worth a falsifier:
+nothing about the code LOOKS wrong once the keyword is gone.
+"""
+
+[[probe]]
+id = "M213-typescript-the-aggregate-read-is-bounded"
+unit = "sdk_typescript.bounded_read"
+theorem = "THM-0095"
+conjunct = "the response read is bounded by the aggregate wall clock rather than by socket inactivity alone"
+path = "sdk/typescript/src/mtls.ts"
+anchor = """
+              }, timeoutMs);
+"""
+weakening = """
+              }, 24 * 60 * 60 * 1000);
+"""
+expect_red = [
+  "vitest#test/mtls.test.ts > the mTLS connect helper > bounds the TOTAL response read, not only socket inactivity",
+]
+note = """
+THE WEAKENING KEEPS THE TIMER AND MOVES THE BOUND, which is the honest shape here: deleting
+the deadline would also delete the `settled()` bookkeeping and measure a different change.
+The per-socket `timeout` above is NOT a second carrier -- it is re-armed by every byte that
+arrives, so a peer trickling just under it holds the exchange and the transport semaphore
+slot it occupies open for as long as it cares to, and `maxConcurrentExchanges` such responses
+wedge the session with no error and no timeout. This is the TypeScript twin of M178, whose
+Python instance recorded the same defect from the `read1`/`read` direction.
+"""
+
+[[probe]]
+id = "M214-typescript-the-binding-serialization-is-canonical"
+unit = "sdk_typescript.authorization_binding"
+theorem = "THM-0095"
+conjunct = "the binding specs are serialized canonically and byte-identically to the Python twin"
+path = "sdk/typescript/src/authorization.ts"
+anchor = """
+    for (const key of Object.keys(spec).sort()) sorted[key] = spec[key];
+"""
+weakening = """
+    for (const key of Object.keys(spec)) sorted[key] = spec[key];
+"""
+expect_red = [
+  "vitest#test/authorization.test.ts > canonical bindingsJson is byte-identical across SDKs > emits raw UTF-8 for a non-ASCII binding field, and the same digest Python records",
+]
+note = """
+THE TWIN OF M212, weakening the other half of the same canonicalization. Python's default
+escapes non-ASCII and TypeScript's does not, so M212 attacks `ensure_ascii`; JavaScript's
+object key order is insertion order and Python's `sort_keys` is a keyword, so this one
+attacks the sort. Both weakenings preserve the DOCUMENT and change the bytes, and the digest
+SDK-1/SDK-4 reconcile across the two clients is taken over the bytes.
+
+The control names the cross-SDK digest directly, which is why one probe suffices for both
+halves of the sentence: a serialization that stops being canonical stops matching the pinned
+digest whichever way it drifts.
+"""

@@ -621,17 +621,6 @@ inherited_severity = "critical"
 root_reachable = true
 status = "unreviewed"
 
-[[obligation]]
-unit = "sdk_python.authorization_binding"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "medium"
-direct_consequence_severity = "medium"
-inherited_severity = "none"
-root_reachable = false
-status = "unreviewed"
-succeeds = "sdk_python.exchange_path"
-decomposition_ref = "verification/reviews/packets/thm-0094-consequence-decomposition-2026-09-18.md"
-
 # ---------------------------------------------------------------------------------------
 # ADR-MCPRE-068 Phase 1 — THM-0095's decomposition, registered by SUCCESSION.
 #
@@ -644,28 +633,6 @@ decomposition_ref = "verification/reviews/packets/thm-0094-consequence-decomposi
 # `mutation://` probe can attack this battery at all. That lane blocks every SDK leaf in both
 # members of this root family.
 # ---------------------------------------------------------------------------------------
-
-[[obligation]]
-unit = "sdk_typescript.authorization_binding"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "medium"
-direct_consequence_severity = "medium"
-inherited_severity = "none"
-root_reachable = false
-status = "unreviewed"
-succeeds = "sdk_typescript.exchange_path"
-decomposition_ref = "verification/reviews/packets/thm-0095-consequence-decomposition-2026-09-18.md"
-
-[[obligation]]
-unit = "sdk_typescript.bounded_read"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "medium"
-direct_consequence_severity = "medium"
-inherited_severity = "none"
-root_reachable = false
-status = "unreviewed"
-succeeds = "sdk_typescript.exchange_path"
-decomposition_ref = "verification/reviews/packets/thm-0095-consequence-decomposition-2026-09-18.md"
 
 [[obligation]]
 unit = "sdk_typescript.post_close_emission"
