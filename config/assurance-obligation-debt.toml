@@ -614,30 +614,6 @@ root_reachable = true
 status = "unreviewed"
 
 [[obligation]]
-unit = "sdk_typescript.exchange_path"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "critical"
-inherited_severity = "critical"
-root_reachable = true
-status = "unreviewed"
-
-# ---------------------------------------------------------------------------------------
-# ADR-MCPRE-068 Phase 1 — THM-0094's decomposition, registered by SUCCESSION.
-#
-# `sdk_python.exchange_path` owed one falsifier as one wide proposition over five files and
-# thirty-nine controls. The decomposition replaces it with thirteen narrow propositions over
-# the SAME production code, each owing one — no new code, no raised severity, and the
-# predecessor's row removed. The gate checks all of that against `origin/main`; the
-# authorization is spent by the merge that uses it.
-#
-# NONE of the thirteen can be discharged today, and that is a measured fact rather than a
-# plan: `tools/verification/verify-mutations` runs `cargo test` and has no Python or
-# TypeScript ecosystem, so no `mutation://` probe can attack a pytest battery at all. That
-# lane is the packet's P2-B and it blocks every SDK leaf in both members of this root family.
-# ---------------------------------------------------------------------------------------
-
-[[obligation]]
 unit = "sdk_python.authorization_binding"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "medium"

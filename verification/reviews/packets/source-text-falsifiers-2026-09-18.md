@@ -44,15 +44,15 @@ Two ordinary probes, in the registry the campaign already has, against the contr
 units already declare:
 
 ```
-ok   M149-composition-root-raw-read    THM-0067  red: tests/integration#composition_raw_read_test::
+ok   M172-composition-root-raw-read    THM-0067  red: tests/integration#composition_raw_read_test::
                                                       the_composition_root_reads_only_ordinary_validated_parameters
-ok   M150-serving-seam-frozen-capture  THM-0066  red: tests/integration#serving_trust_seam_test::
+ok   M173-serving-seam-frozen-capture  THM-0066  red: tests/integration#serving_trust_seam_test::
                                                       the_seam_resolves_through_the_tier_rather_than_a_frozen_map
 ```
 
-Both weakenings are the historical defect rather than a synthetic one. M149 reintroduces a
+Both weakenings are the historical defect rather than a synthetic one. M172 reintroduces a
 raw read of `max_clock_skew` — one of the six fields that LEFT the ordinary inventory on
-measurement and became an owner (`FreshnessWindow`). M150 declares a `HashMap` in the seam
+measurement and became an owner (`FreshnessWindow`). M173 declares a `HashMap` in the seam
 builder's body, which is the ADR-MCPS-021 defect by name: trust frozen at process start
 behind a resolver chain whose guarantee is printed and dropped.
 
@@ -84,8 +84,8 @@ lane runs the script over the weakened copy, translating its exit status into th
 `FAILED` / `ok` the adjudicator reads from a libtest line.
 
 ```
-ok   M151-serving-product-second-verification  THM-0051  red: gate#scripts/serving_product_provenance_gate.py
-ok   M152-authorization-transport-hint         THM-0052  red: gate#scripts/authorization_provenance_gate.py
+ok   M174-serving-product-second-verification  THM-0051  red: gate#scripts/serving_product_provenance_gate.py
+ok   M175-authorization-transport-hint         THM-0052  red: gate#scripts/authorization_provenance_gate.py
 ```
 
 A gate's own `--selftest` synthesizes violating text in a fixture, which says the matcher
@@ -111,7 +111,7 @@ and `test_a_gate_that_CRASHED_is_absent_rather_than_red` hold both.
 Falsified in the other direction too: a weakening that introduces text the gate does not
 refuse leaves the control green and the lane says so —
 
-> M152 … but removing the check left every expected control green. The conjunct is NOT
+> M175 … but removing the check left every expected control green. The conjunct is NOT
 > load-bearing in the declared battery — write a control, do not soften the statement.
 
 ## The ADR-MCPRE-069 disposition: REGISTER
@@ -143,12 +143,12 @@ registered here, each with its own falsifier:
 
 | gate | unit | theorem | probe |
 |---|---|---|---|
-| `serving_product_provenance_gate.py` | `proxy.dispatch_commitment` | THM-0051 | M151 |
-| `authorization_provenance_gate.py` | `proxy.dispatch_commitment` | THM-0052 | M152 |
-| `serving_identity_provenance_gate.py` | `proxy.serving_identity_provenance` | THM-0080 | M153 |
-| `refusal_provenance_gate.py` | `proxy.refusal_site_totality` | THM-0081 | M154 |
+| `serving_product_provenance_gate.py` | `proxy.dispatch_commitment` | THM-0051 | M174 |
+| `authorization_provenance_gate.py` | `proxy.dispatch_commitment` | THM-0052 | M175 |
+| `serving_identity_provenance_gate.py` | `proxy.serving_identity_provenance` | THM-0080 | M176 |
+| `refusal_provenance_gate.py` | `proxy.refusal_site_totality` | THM-0081 | M177 |
 
-M153 discharges an N1 obligation that was open at `critical` — and discharges it against the
+M176 discharges an N1 obligation that was open at `critical` — and discharges it against the
 unit's OWN carrier rather than against whichever cargo control sat nearest, which is the thing
 this phase exists to stop.
 

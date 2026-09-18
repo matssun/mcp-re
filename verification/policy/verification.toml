@@ -2765,7 +2765,7 @@ evidence = [
   "test://proxy/trust/composition_reads_only_projections",
   # THM-0067's proposition IS a fact about `app.rs`'s production text — which request
   # fields the root reads — so a text weakening is its honest falsifier, not a proxy for
-  # one. M149 reintroduces `max_clock_skew`, one of the six reads that LEFT the ordinary
+  # one. M172 reintroduces `max_clock_skew`, one of the six reads that LEFT the ordinary
   # inventory on measurement and became an owner.
   "mutation://proxy/trust/composition_reads_only_projections",
 ]
@@ -3406,7 +3406,7 @@ evidence = ["test://proxy/serving/dispatch_commitment_boundary", "mutation://pro
 # gates run in `ci.yml` and in `local_gate.sh`, and until this entry NO unit named either
 # one — so softening a rule moved no digest and invalidated no attestation. They are not in
 # `paths`: a `.py` entry collapses a cargo unit's ecosystem. They enter the fingerprint as
-# their own component, and M151/M152 are the falsifiers that make them load-bearing.
+# their own component, and M174/M175 are the falsifiers that make them load-bearing.
 gate_controls = [
   "scripts/serving_product_provenance_gate.py",
   "scripts/authorization_provenance_gate.py",
@@ -3511,7 +3511,7 @@ evidence = [
 # in this crate can reach — and says why a type cannot do it: `ServedHttpResponse` is a wire
 # frame with public fields that the async fleet, the blocking harness and external embedders
 # all construct, so "deleting the battery leaves an out-of-lifecycle exit compiling". Until
-# now no unit's closure covered the gate. M154 is the falsifier.
+# now no unit's closure covered the gate. M177 is the falsifier.
 gate_controls = ["scripts/refusal_provenance_gate.py"]
 # Six members, and the last is not decoration. Four rules over source text are vacuously
 # true the moment a matcher stops matching, so the battery that would report a clean pass
@@ -5251,7 +5251,7 @@ evidence = [
   "test://proxy/serving/identity_provenance",
   # ADR-MCPRE-069 disposition REGISTER. THM-0080 names this gate, in its own text, as what
   # establishes it, and until now no unit's closure covered it: the rules could be softened
-  # under a standing PASS. M153 is the falsifier.
+  # under a standing PASS. M176 is the falsifier.
   "mutation://proxy/serving/identity_provenance",
 ]
 gate_controls = ["scripts/serving_identity_provenance_gate.py"]
