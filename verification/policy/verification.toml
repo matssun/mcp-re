@@ -4854,7 +4854,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.admission_configuration_state"
 class = "V0"
-description = "What admission configuration this deployment RECOGNISES: every legal form is classified and accepted, an enforcing state carries every value it cannot verify without, and a configuration that names no authority is refused rather than served as OFF."
+description = "WHAT ADMISSION CONFIGURATION THIS DEPLOYMENT RECOGNISES: every legal form is classified and accepted, an enforcing state carries every value it cannot verify without, and a configuration that names no authority is refused rather than served as OFF. That the enforcing view a consumer reads was projected from one classified state, rather than assembled by the reader, is a compile-time fact and belongs to `proxy.admission_configuration_state_sole_producer`."
 paths = ["mcp-re-proxy/src/config_state/admission.rs"]
 exported_contracts = []
 evidence_class = "tested"
@@ -4874,6 +4874,40 @@ tested_symbols = [
   "lib#config_state::admission::tests::an_authority_key_that_cannot_verify_anything_is_refused",
 ]
 
+
+# ---------------------------------------------------------------------------
+#
+# THE STATE AND ITS PROJECTION, and the projection is the sharper half — the same lesson the
+# continuation pair teaches, with six fields at stake rather than one.
+#
+# `EnforcedAdmission` is the borrow view a consumer reads when admission is enforced: the
+# posture, the authority kid, the authority key itself, the record store, the availability
+# rule and the currentness rule. Each could individually be a legal value. What makes them
+# mean anything is that they were projected TOGETHER from one classified state — which is
+# exactly what this unit's tested half asserts when it says an enforcing state "carries every
+# value it cannot verify without". A caller able to write the struct could hand a consumer an
+# authority key from one deployment beside a posture from another, with the state they
+# supposedly project untouched, and every test would stay green.
+#
+# S20 seals the state, S21 the view, and neither implies the other: the view is a value in
+# its own right, handed onward. Its existence is itself the enforcement fact, because
+# `enforced()` returns `None` where admission is not enforced.
+
+[[unit]]
+id = "proxy.admission_configuration_state_sole_producer"
+class = "V0"
+description = "Both values on the admission path are the classifier's: `AdmissionState`'s `kind` is bare-private with a private enum type, and all six fields of `EnforcedAdmission` are bare-private and written only by `AdmissionState::enforced()`. So the six facts a consumer reads about an enforcing deployment were projected together from ONE classified state rather than paired by the reader, and the view's existence is itself the enforcement fact. States nothing about which forms are RECOGNISED, which is `proxy.admission_configuration_state`'s."
+paths = [
+  "mcp-re-proxy/src/config_state/admission.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+# A forged view is a consumer verifying admission records against an authority the
+# deployment never named, while the state it projects says otherwise.
+direct_consequence_severity = "high"
+evidence = [
+  "structural://proxy/config_state/admission_sole_producer",
+]
 [[unit]]
 id = "proxy.authorization_capability"
 class = "V0"

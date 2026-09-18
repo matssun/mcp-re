@@ -605,3 +605,62 @@ module-tree-visibility = "`store` is bare-private to `config_state::continuation
 alternate-constructors = "the plan is produced only by `ContinuationControlState::continuation_plan`, which reads the classified kind. There is no `new`, `From`, `Default` or builder, and `shared_store()`/`needs_control_runtime()` return a borrow and an answer, never the field"
 generated-or-deserialization = "the derives are Debug/Clone/PartialEq/Eq. No Serialize, no Deserialize \u2014 and this matters for an `Option<String>`, because a derived decoder would fill it positionally and a missing field would silently become `None`, which is exactly the assertion this probe refuses"
 test-only-construction = "the owner's `#[cfg(test)] mod tests` obtains plans through `continuation_plan`; no test-gated constructor and no test-gated field visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"
+
+[[probe]]
+id = "S20"
+unit = "proxy.admission_configuration_state_sole_producer"
+kind = "in-crate-source-injection"
+package = "mcp-re-proxy"
+invariant = "no code outside `config_state::admission` can assemble an AdmissionState, so every admission posture came from the classifier that read the deployment's own selection"
+insertion_path = "mcp-re-proxy/src/config_state/structural_probe_s20.rs"
+insertion_parent = "mcp-re-proxy/src/config_state/mod.rs"
+insertion_declaration = "mod structural_probe_s20;"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+note = """
+THE STATE, and the owner gives the same reason its neighbours do: "private to this module:
+this state's consumers live in this crate, so `pub` variants would be constructible by all
+of them." `todo!()` supplies the field because `AdmissionKindState` is private too, so
+naming a variant would earn E0603 about the TYPE rather than E0451 about the field this unit
+claims.
+"""
+construction = "// ADR-MCPRE-068 structural probe S20. Injected into a scratch copy by verify-structural;\n// this file cannot exist in the working tree, because it would not build \u2014 which is the\n// proposition it witnesses.\nuse crate::config_state::AdmissionState;\n\npub fn hostile() -> AdmissionState {\n    AdmissionState {\n        kind: todo!(), // STRUCTURAL-PROBE-SITE\n    }\n}\n"
+
+[probe.producer_paths]
+module-tree-visibility = "`kind` is bare-private to `config_state::admission`, and its type `AdmissionKindState` is a private enum in the same module. The parent re-exports the state, its posture and availability vocabularies, never the representation"
+alternate-constructors = "the classifier in this module is the only producer. `enforced()` and `is_enforced()` read the private enum and return a borrow view or an answer, never the kind. There is no `new`, `From`, `Default` or builder taking one"
+generated-or-deserialization = "the derives are Debug/Clone/PartialEq/Eq. No Serialize, no Deserialize \u2014 admission is classified from a deployment request, never decoded"
+test-only-construction = "the owner's `#[cfg(test)] mod tests` constructs only through the classifier; no test-gated constructor and no test-gated field or enum visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"
+
+[[probe]]
+id = "S21"
+unit = "proxy.admission_configuration_state_sole_producer"
+kind = "in-crate-source-injection"
+package = "mcp-re-proxy"
+invariant = "no code outside `config_state::admission` can assemble an EnforcedAdmission, so the six facts a consumer reads about an enforcing deployment were projected together from ONE classified state rather than paired by the reader"
+insertion_path = "mcp-re-proxy/src/config_state/structural_probe_s21.rs"
+insertion_parent = "mcp-re-proxy/src/config_state/mod.rs"
+insertion_declaration = "mod structural_probe_s21;"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+note = """
+THE PROJECTION, AND IT IS THE SHARPER HALF — the same lesson S19 taught one owner earlier,
+with more at stake because there are six fields rather than one.
+
+`EnforcedAdmission` is the borrow view consumers read when admission is enforced: the
+posture, the authority kid, the authority key itself, the record store, the availability
+rule and the currentness rule. Each could individually be a legal value. What makes them
+mean anything is that they were projected TOGETHER from one classified state — so a caller
+able to write the struct could hand a consumer an authority key from one deployment beside a
+posture from another, with the state they supposedly project untouched.
+
+Sealing the state (S20) does not seal this: the view is a value in its own right, and a
+probe against the state alone would leave the route unwitnessed.
+"""
+construction = "// ADR-MCPRE-068 structural probe S21. Injected into a scratch copy by verify-structural;\n// this file cannot exist in the working tree, because it would not build \u2014 which is the\n// proposition it witnesses.\nuse crate::config_state::EnforcedAdmission;\n\npub fn hostile() -> EnforcedAdmission<'static> {\n    EnforcedAdmission {\n        posture: todo!(), // STRUCTURAL-PROBE-SITE\n        authority_kid: todo!(),\n        authority: todo!(),\n        record_store: todo!(),\n        availability: todo!(),\n        currentness: todo!(),\n    }\n}\n"
+
+[probe.producer_paths]
+module-tree-visibility = "all six fields are bare-private to `config_state::admission`. The parent re-exports the type so consumers can name the view, never its representation"
+alternate-constructors = "the view is produced only by `AdmissionState::enforced()`, which reads the classified kind and returns `Option<EnforcedAdmission<'_>>` \u2014 `None` where admission is not enforced, so the view's very existence is the enforcement fact. There is no `new`, `From`, `Default` or builder"
+generated-or-deserialization = "no derives that construct, and nothing decodes the view \u2014 it borrows out of a classified state, so it cannot outlive the state it projects, and no decoder could produce one that does"
+test-only-construction = "the owner's `#[cfg(test)] mod tests` obtains views through `enforced()`; no test-gated constructor and no test-gated field visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"
