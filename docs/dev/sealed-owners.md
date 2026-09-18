@@ -783,6 +783,41 @@ verify-structural --probe S15 --probe S16
 Both supporting theorems gain the unit, since each rests on the classifier's decision being
 the only way into a posture.
 
+### The ninth: `CustodyState`, where the owner names the consequence itself
+
+**Landed 2026-09-18, ADR-MCPRE-068 Phase 0D-11.** This owner's comment above its private
+`CustodyKind` is the clearest statement of the whole campaign's thesis found in the tree:
+
+> every consumer lives in this crate, so `pub` variants would let any of them assemble a
+> custody state whose material no validator saw — a PKCS#11 token with an arbitrary PIN file,
+> or a KMS key in a region the deployment never named.
+
+That is an argument about **who may construct**, and its conclusion is the exposure fact the
+theorem rests on: `exposure()` reads the kind and answers whether the signing private key is
+readable by this process. A forged kind is a deployment reporting a non-exporting posture
+while holding a seed file — and nothing in the battery can range over it.
+
+| proposition | unit | class | falsifier |
+|---|---|---|---|
+| which selection resolves to which of the five states, and what `exposure()` answers | `proxy.custody_exposure` | `tested` | *(none registered — a pre-existing N1 gap, unchanged by this split)* |
+| no consumer can assert a posture the classifier did not reach | `proxy.custody_exposure_sole_producer` | `structural` | S17 — `E0451` |
+
+```text
+cargo test -p mcp-re-proxy --lib -- config_state::custody
+    test result: ok. 13 passed; 0 failed       # with kind opened to pub(crate)
+
+verify-structural --probe S17
+    FAIL S17: the hostile construction COMPILED.
+```
+
+Two layers of privacy again, as with S15: the field is bare-private *and* `CustodyKind` is a
+private enum. S17 attacks the field — the boundary this unit claims — and supplies `todo!()`
+rather than naming a variant, because naming one would be refused by `E0603` for the type.
+
+**Worth stating plainly:** the `tested` half of this owner carries no `mutation://` evidence,
+and this split does not change that. It is a pre-existing falsifier gap the census already
+counts, and Phase 0E's N1 activation is where it becomes an obligation rather than a note.
+
 The remaining unit-backed sealed owners follow the same split, one owner per change.
 
 ## Open

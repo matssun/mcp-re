@@ -3246,7 +3246,15 @@ not establish that response signing and channel signing use different keys.
 """
 owner = "proxy.custody_exposure"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.custody_exposure"]
+# TWO units. `proxy.custody_exposure` establishes what the classifier decides and what the
+# projection says. `proxy.custody_exposure_sole_producer` establishes that no consumer can
+# assert a custody posture the classifier did not reach — the owner's own reason for keeping
+# `CustodyKind` private, and the thing that makes the exposure fact a fact about the
+# deployment rather than about the last module to build a state.
+supported_by = [
+  "unit://proxy.custody_exposure",
+  "unit://proxy.custody_exposure_sole_producer",
+]
 depends_on = []
 
 [[theorem]]

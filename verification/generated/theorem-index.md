@@ -101,7 +101,7 @@ any of them is closed.
 | THM-0061 | A receipt that says nothing is not a receipt that says nothing ran | client.execution_contract | unit://client.execution_contract | live |
 | THM-0062 | A response-signing credential exists only while a valid delegated key does | proxy.delegated_signing_credential | unit://proxy.delegated_signing_credential | live |
 | THM-0063 | A signed response never advertises validity its credential does not authorize | proxy.response_signing | unit://proxy.delegated_signing_credential, unit://proxy.response_signing | live |
-| THM-0064 | A non-exporting custody selection keeps the private key off this process | proxy.custody_exposure | unit://proxy.custody_exposure | live |
+| THM-0064 | A non-exporting custody selection keeps the private key off this process | proxy.custody_exposure | unit://proxy.custody_exposure, unit://proxy.custody_exposure_sole_producer | live |
 | THM-0065 | An emitted bound response signature binds the request it answers | http_profile.response_emission_binding | unit://http_profile.response_emission_binding, unit://http_profile.verifier_results | live |
 | THM-0066 | The serving PEP resolves actors through the deployment's materialized trust authority | proxy.serving_trust_seam | unit://proxy.serving_trust_seam, unit://proxy.trust_plan | live |
 | THM-0067 | The composition root re-reads no owner's security semantics from the request | proxy.trust_composition_root | unit://proxy.trust_composition_root | live |

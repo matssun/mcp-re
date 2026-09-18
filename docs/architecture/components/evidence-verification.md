@@ -399,6 +399,7 @@ is indistinguishable from an unconsidered one. Private fields alone are not a se
 | S14 | in-crate | no code outside `trust_plan` can assemble a `TrustPlan` field by field | `E0451` |
 | S15 | in-crate | no code outside `config_state::trust_revocation` can assemble a `TrustRevocationState` | `E0451` |
 | S16 | in-crate | no code outside `config_state::trust_document` can put a path in a `TrustDocumentSource` | `E0451` |
+| S17 | in-crate | no code outside `config_state::custody` can assemble a `CustodyState` | `E0451` |
 
 S04 is the one ADR-MCPRE-068 §12.1 split out of a composite unit, and 0D-3 completed the
 split in the registry: M113/M114/M115 falsify the constructor's runtime refusal of an illegal

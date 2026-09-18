@@ -514,3 +514,37 @@ module-tree-visibility = "`path` is bare-private to `config_state::trust_documen
 alternate-constructors = "`new` is the only associated function returning Self and it is fallible, refusing an empty or whitespace-only locator. There is no `From<String>`, `FromStr`, `Default` or builder, and `path()` returns `&str`, never `&mut String`"
 generated-or-deserialization = "the derives are Debug/Clone/PartialEq/Eq. No Serialize, no Deserialize \u2014 which matters here for the same reason as for any one-field newtype over a String: a derived decoder would fill it positionally and admit exactly the empty locator `new` refuses"
 test-only-construction = "the owner's `#[cfg(test)] mod tests` constructs only through `new` and the resolver beside it; no test-gated constructor and no test-gated field visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"
+
+[[probe]]
+id = "S17"
+unit = "proxy.custody_exposure_sole_producer"
+kind = "in-crate-source-injection"
+package = "mcp-re-proxy"
+invariant = "no code outside `config_state::custody` can assemble a CustodyState, so every custody posture came from the classifier that read a validated selection \u2014 and no consumer can assert a non-exporting posture for material no validator saw"
+insertion_path = "mcp-re-proxy/src/config_state/structural_probe_s17.rs"
+insertion_parent = "mcp-re-proxy/src/config_state/mod.rs"
+insertion_declaration = "mod structural_probe_s17;"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+note = """
+THE OWNER NAMES THE CONSEQUENCE ITSELF, which is why this probe's invariant can be worded
+so concretely. `CustodyKind` is private, and the comment above it says why: "every consumer
+lives in this crate, so `pub` variants would let any of them assemble a custody state whose
+material no validator saw — a PKCS#11 token with an arbitrary PIN file, or a KMS key in a
+region the deployment never named."
+
+That is an argument about who may construct, and its conclusion is the exposure fact this
+unit's theorem rests on: `exposure()` reads the kind and answers whether the signing private
+key is readable by this process. A forged kind is a deployment reporting a non-exporting
+posture while holding a seed file.
+
+Note what this probe does NOT do: it does not establish that the classifier maps each
+selection to the right kind. That is the battery's, and it is the other half of the split.
+"""
+construction = "// ADR-MCPRE-068 structural probe S17. Injected into a scratch copy by verify-structural;\n// this file cannot exist in the working tree, because it would not build \u2014 which is the\n// proposition it witnesses.\n//\n// `todo!()` rather than a named variant: `CustodyKind` is a PRIVATE enum, so naming one\n// would be refused by E0603 for the TYPE's privacy and the lane would report a refusal\n// about a boundary this unit does not claim. The FIELD's privacy is the claim.\nuse crate::config_state::CustodyState;\n\npub fn hostile() -> CustodyState {\n    CustodyState {\n        kind: todo!(), // STRUCTURAL-PROBE-SITE\n    }\n}\n"
+
+[probe.producer_paths]
+module-tree-visibility = "`kind` is bare-private to `config_state::custody`, and its type `CustodyKind` is a private enum in the same module \u2014 two layers, and the probe attacks the field, which is the one this unit claims. The parent re-exports `CustodyState` only"
+alternate-constructors = "the classifier in this module is the only producer. The four projections \u2014 `material`, `locators_are_filesystem_paths`, `disk_secret_paths`, `exposure` \u2014 read the private enum and return named semantic answers or borrows, never the representation; `material` returns a `CustodyMaterial<'_>` view rather than the kind. There is no `new`, `From`, `Default` or builder taking a kind"
+generated-or-deserialization = "the derives are Debug/Clone/PartialEq/Eq. No Serialize, no Deserialize \u2014 custody is classified from a deployment request, never decoded, so no decoder fills the field positionally"
+test-only-construction = "the owner's `#[cfg(test)] mod tests` constructs only through the classifier; no test-gated constructor and no test-gated field or enum visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"

@@ -3931,7 +3931,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.custody_exposure"
 class = "V0"
-description = "Whether the signing private key is readable by this process: the ADR-MCPRE-067 exposure fact, classified from the custody selection and projected as a semantic answer that names no mechanism."
+description = "WHAT THE CLASSIFIER DECIDES AND WHAT THE PROJECTION SAYS: which of the five custody states a deployment selection resolves to, and the ADR-MCPRE-067 exposure fact read off it — a semantic answer that names no mechanism. That no consumer can assert a custody posture the classifier did not reach is a compile-time fact and belongs to `proxy.custody_exposure_sole_producer`."
 paths = ["mcp-re-proxy/src/config_state/custody.rs"]
 exported_contracts = []
 evidence_class = "tested"
@@ -3957,6 +3957,38 @@ tested_symbols = [
   "lib#config_state::custody::tests::the_aws_credential_mode_is_a_posture_and_not_a_flag_beside_an_endpoint",
 ]
 
+
+# ---------------------------------------------------------------------------
+#
+# THE OWNER NAMES THE CONSEQUENCE ITSELF, above its private `CustodyKind`: "every consumer
+# lives in this crate, so `pub` variants would let any of them assemble a custody state whose
+# material no validator saw — a PKCS#11 token with an arbitrary PIN file, or a KMS key in a
+# region the deployment never named."
+#
+# That is an argument about who may CONSTRUCT, and its conclusion is the exposure fact this
+# unit's theorem rests on: `exposure()` reads the kind and answers whether the signing private
+# key is readable by this process. A forged kind is a deployment reporting a non-exporting
+# posture while holding a seed file, and nothing in the battery can range over it.
+#
+# Two layers of privacy again, as with S15: the field is bare-private and `CustodyKind` is a
+# private enum. S17 attacks the FIELD — the boundary this unit claims — and supplies `todo!()`
+# rather than naming a variant, because naming one would be refused by E0603 for the type.
+
+[[unit]]
+id = "proxy.custody_exposure_sole_producer"
+class = "V0"
+description = "Only `config_state::custody` can assemble a CustodyState: `kind` is bare-private, its enum type is private too, the classifier in that module is the only producer, nothing decodes a custody state, and no test-gated construction route exists — so every posture came from a validated selection, and no consumer can assert a non-exporting posture for material no validator saw. States nothing about WHICH selection resolves to which state, which is `proxy.custody_exposure`'s."
+paths = [
+  "mcp-re-proxy/src/config_state/custody.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+# The exposure fact is read off this representation. A forged posture is a deployment
+# reporting that the signing key is unreadable by this process while it holds a seed file.
+direct_consequence_severity = "critical"
+evidence = [
+  "structural://proxy/config_state/custody_exposure_sole_producer",
+]
 [[unit]]
 id = "http_profile.response_emission_binding"
 class = "V0"
