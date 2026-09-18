@@ -4278,7 +4278,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://sdk_python/continuation_drive/a_pause_is_not_a_result"]
+evidence = [
+  "test://sdk_python/continuation_drive/a_pause_is_not_a_result",
+  "mutation://sdk_python/continuation_drive/a_pause_is_not_a_result",
+]
 tested_symbols = [
   "pytest#tests/test_transport_replay.py::test_the_adapter_drives_the_answer_leg_to_a_terminal_result",
   "pytest#tests/test_transport_replay.py::test_an_unanswerable_elicitation_is_refused_not_delivered_as_a_result",
@@ -4692,7 +4695,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://sdk_typescript/continuation_drive/a_pause_is_not_a_result"]
+evidence = [
+  "test://sdk_typescript/continuation_drive/a_pause_is_not_a_result",
+  "mutation://sdk_typescript/continuation_drive/a_pause_is_not_a_result",
+]
 tested_symbols = [
   # ADR-MCPRE-069 `register`
   "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > drives the answer leg to a terminal result",

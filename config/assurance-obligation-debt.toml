@@ -633,17 +633,6 @@ succeeds = "sdk_python.exchange_path"
 decomposition_ref = "verification/reviews/packets/thm-0094-consequence-decomposition-2026-09-18.md"
 
 [[obligation]]
-unit = "sdk_python.continuation_drive"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "critical"
-inherited_severity = "critical"
-root_reachable = true
-status = "unreviewed"
-succeeds = "sdk_python.exchange_path"
-decomposition_ref = "verification/reviews/packets/thm-0094-consequence-decomposition-2026-09-18.md"
-
-[[obligation]]
 unit = "sdk_python.exchange_binding"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "critical"
@@ -685,17 +674,6 @@ effective_severity = "medium"
 direct_consequence_severity = "medium"
 inherited_severity = "none"
 root_reachable = false
-status = "unreviewed"
-succeeds = "sdk_typescript.exchange_path"
-decomposition_ref = "verification/reviews/packets/thm-0095-consequence-decomposition-2026-09-18.md"
-
-[[obligation]]
-unit = "sdk_typescript.continuation_drive"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "critical"
-inherited_severity = "critical"
-root_reachable = true
 status = "unreviewed"
 succeeds = "sdk_typescript.exchange_path"
 decomposition_ref = "verification/reviews/packets/thm-0095-consequence-decomposition-2026-09-18.md"

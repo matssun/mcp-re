@@ -5594,3 +5594,87 @@ expect_red = [
 note = """
 The TypeScript instance of M202, and the SDK whose battery names the refusal directly.
 """
+
+[[probe]]
+id = "M205-python-the-continuation-ceiling-is-enforced"
+unit = "sdk_python.continuation_drive"
+theorem = "THM-0094"
+conjunct = "an elicitation past the continuation budget fails the call closed rather than resolving it"
+path = "sdk/python/python/mcp_re_sdk/transport.py"
+anchor = """
+            if round_index > config.max_continuation_rounds:
+"""
+weakening = """
+            if False:
+"""
+expect_red = [
+  "pytest#tests/test_transport_replay.py::test_the_continuation_round_ceiling_is_enforced_before_the_caller_is_asked",
+]
+note = """
+THE BUDGET IS WHAT MAKES A PAUSE TERMINATE. Without it a server that keeps eliciting keeps
+the call alive indefinitely, each round costing a signing operation and a correlated entry
+that stays outstanding -- and each round is an opportunity to prompt the caller again. The
+check stands BEFORE the handler runs, deliberately: a call that has used up its budget must
+not prompt for an answer it cannot send, so the weakening is measured against the control
+that names that ordering.
+"""
+
+[[probe]]
+id = "M206-python-an-unanswerable-elicitation-is-refused"
+unit = "sdk_python.continuation_drive"
+theorem = "THM-0094"
+conjunct = "an elicitation with no handler fails the call closed rather than resolving it"
+path = "sdk/python/python/mcp_re_sdk/transport.py"
+anchor = """
+            if config.answer_input_required is None:
+"""
+weakening = """
+            if False:
+"""
+expect_red = [
+  "pytest#tests/test_transport_replay.py::test_an_unanswerable_elicitation_is_refused_not_delivered_as_a_result",
+]
+note = """
+A PAUSE IS NOT A RESULT, which is the unit's whole claim. With no handler installed there is
+no answer leg to sign, so the only honest outcome is a closed failure; falling through would
+hand the application the elicitation body as though the call had completed -- an
+`InputRequiredResult` read as a terminal answer.
+"""
+
+[[probe]]
+id = "M207-typescript-the-continuation-ceiling-is-enforced"
+unit = "sdk_typescript.continuation_drive"
+theorem = "THM-0095"
+conjunct = "an elicitation past the continuation ceiling fails the call closed rather than resolving it"
+path = "sdk/typescript/src/transport.ts"
+anchor = """
+        if (round > (config.maxContinuationRounds ?? 4)) {
+"""
+weakening = """
+        if (false) {
+"""
+expect_red = [
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > enforces the continuation ceiling before asking the caller",
+]
+note = """
+The TypeScript instance of M205.
+"""
+
+[[probe]]
+id = "M208-typescript-an-unanswerable-elicitation-is-refused"
+unit = "sdk_typescript.continuation_drive"
+theorem = "THM-0095"
+conjunct = "an elicitation with no handler fails the call closed rather than resolving it"
+path = "sdk/typescript/src/transport.ts"
+anchor = """
+        if (!config.answerInputRequired) {
+"""
+weakening = """
+        if (false) {
+"""
+expect_red = [
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > refuses an unanswerable elicitation rather than delivering it as a result",
+]
+note = """
+The TypeScript instance of M206.
+"""
