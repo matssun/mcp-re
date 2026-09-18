@@ -759,3 +759,88 @@ alternate-constructors = "`for_listener(&BindScope)` is the only associated func
 generated-or-deserialization = "the derives are Debug/Clone/Copy/PartialEq/Eq. No Serialize, no Deserialize — the authority set is derived from a scope at startup, never decoded from a document"
 test-only-construction = "the owner's `#[cfg(test)] mod tests` builds every authority through `for_listener` over a real `BindScope::decide`; no test-gated constructor and no test-gated field visibility exists"
 
+
+
+# --- ADR-MCPRE-068 Phase 1 — THM-0012's "apply is the only mutator" ---------------------
+#
+# TWO PROBES FOR TWO PRODUCER ROUTES, and they earn different refusals. A caller who can
+# CONSTRUCT a lifecycle at a chosen state never applied the events that led there; a caller
+# who can WRITE the field on one already in hand breaks the same conclusion from the other
+# side. `E0451` reports the first and `E0616` the second, and a probe that accepted either
+# code for either construction would be reporting a refusal it did not attribute.
+
+[[probe]]
+id = "S24"
+unit = "proxy.runtime_lifecycle_sole_mutator"
+kind = "in-crate-source-injection"
+package = "mcp-re-proxy"
+invariant = "no code outside `runtime_state` can construct a RuntimeLifecycle at a chosen state, so `new` is the only origin and every state in existence is the endpoint of applied events"
+insertion_path = "mcp-re-proxy/src/structural_probe_s24.rs"
+insertion_parent = "mcp-re-proxy/src/lib.rs"
+insertion_declaration = "mod structural_probe_s24;"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+note = """
+THE HOSTILE VALUE IS A TERMINAL STATE NOBODY REACHED. `RuntimeState::Stopped` is exactly what
+THM-0012's conclusion is about — *a recorded terminal Stopped implies every event of the path
+was applied, in order* — so a construction that starts there is the counterexample the claim
+excludes. `todo!()` is not used: `RuntimeState` is `pub(crate)` and nameable from here, so the
+variant is written out and the FIELD's privacy is what refuses.
+"""
+construction = """
+// ADR-MCPRE-068 structural probe S24. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::runtime_state::RuntimeLifecycle;
+use crate::runtime_state::RuntimeState;
+
+pub(crate) fn hostile() -> RuntimeLifecycle {
+    RuntimeLifecycle {
+        state: RuntimeState::Stopped, // STRUCTURAL-PROBE-SITE
+    }
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "`state` is bare-private to `runtime_state`, and the module is `pub(crate)` — so every consumer in this crate can NAME the type and none can fill the field. The probe sits at the crate root, the widest position a consumer occupies"
+alternate-constructors = "`new()` is the only associated function returning `Self`, and it is total and takes nothing: there is no `From`, `Default`, builder, or constructor taking a state. `state(&self)` returns a `RuntimeState` by copy and `apply(&mut self, event)` is the only `&mut self` method"
+generated-or-deserialization = "the derive is `Debug` alone. No Serialize, no Deserialize, no `Clone` — a lifecycle cannot be decoded from a document or duplicated into a second authority"
+test-only-construction = "the owner's `#[cfg(test)] mod tests` builds every lifecycle through `new()` and advances it with `apply`; no test-gated constructor and no test-gated field visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"
+
+[[probe]]
+id = "S25"
+unit = "proxy.runtime_lifecycle_sole_mutator"
+kind = "in-crate-source-injection"
+package = "mcp-re-proxy"
+invariant = "no code outside `runtime_state` can write the state of a RuntimeLifecycle it holds, so `apply` is the only mutator and an illegal event cannot be routed around"
+insertion_path = "mcp-re-proxy/src/structural_probe_s25.rs"
+insertion_parent = "mcp-re-proxy/src/lib.rs"
+insertion_declaration = "mod structural_probe_s25;"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0616"
+note = """
+THE OTHER HALF, and the one the theorem names in so many words. S24 attacks where a lifecycle
+comes FROM; this attacks what a holder may do to one. The distinction is not academic: a
+holder that could assign the field would make `apply`'s refusal of an illegal event a
+formality — the caller routes around it and the record still reads as a legal path.
+
+`E0616` rather than `E0451`, because a field ASSIGNMENT on an existing value is a different
+refusal from a struct literal, and accepting either code for either construction would report
+a refusal the probe did not attribute.
+"""
+construction = """
+// ADR-MCPRE-068 structural probe S25. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::runtime_state::RuntimeLifecycle;
+use crate::runtime_state::RuntimeState;
+
+pub(crate) fn hostile(lifecycle: &mut RuntimeLifecycle) {
+    lifecycle.state = RuntimeState::Stopped; // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "the same bare-private field as S24, attacked through assignment rather than construction. Both routes are closed by the one privacy, and both are probed because either alone would leave the other unwitnessed"
+alternate-constructors = "not a construction route: this probe attacks mutation. `apply` is the only `&mut self` method, and it returns the new state rather than handing out a place to write — there is no `state_mut`, no `set_state`, and no `DerefMut`"
+generated-or-deserialization = "no derive or macro generates a setter; the only derive is `Debug`"
+test-only-construction = "the owner's tests mutate only through `apply`. A `#[cfg(test)] pub(crate) fn set_state` would be a mutator even though it never runs in production, because the compiler would admit the assignment"
+
