@@ -134,6 +134,22 @@ INVOCATION = re.compile(r"(?:^|[\s`\"'./])((?:scripts|tools)/[A-Za-z0-9_./-]+)")
 JOB_KEY = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$")
 JOB_NAME = re.compile(r"^    name:\s*(.+?)\s*$", re.M)
 
+#: A whole-line YAML comment.
+#:
+#: COUNT INVOCATIONS, NOT MENTIONS — and this gate was counting mentions. These workflows
+#: are heavily commented, and the comments name scripts constantly, because explaining why a
+#: step exists means naming what it runs. A comment in `ci.yml` reading "`tools/verification/verify
+#: --manifests` fails on the same fact" made the CARGO job look like it invoked the umbrella,
+#: which made every lane resolve to that job. The lane was still satisfied by a real job too,
+#: so no wrong verdict shipped — but the attribution was false, and an attribution that can
+#: be false by writing prose is one a job could acquire without running anything.
+#:
+#: The residual limit, stated rather than left to be discovered: a TRAILING comment on a
+#: command line is still scanned, because distinguishing one from a `#` inside a quoted shell
+#: argument needs a YAML parser this layer does not have. Whole-line comments are the shape
+#: the workflows actually use for prose, and the shape that produced the defect.
+COMMENT_LINE = re.compile(r"^\s*#")
+
 
 class Undecidable(Exception):
     """The gate cannot answer. Never the same thing as NOT_READY, and never merged on."""
@@ -176,7 +192,11 @@ def workflow_jobs() -> list[tuple[str, str, set[str]]]:
             body = "\n".join(lines[start:end])
             named = JOB_NAME.search(body)
             name = named.group(1).strip("\"'") if named else key
-            jobs.append((path.name, name, set(INVOCATION.findall(body))))
+            # Prose that NAMES a script is not a job that RUNS it. See `COMMENT_LINE`.
+            runnable = "\n".join(
+                line for line in lines[start:end] if not COMMENT_LINE.match(line)
+            )
+            jobs.append((path.name, name, set(INVOCATION.findall(runnable))))
     return jobs
 
 
@@ -505,6 +525,38 @@ def selftest() -> int:
         bad += 1
     except Undecidable:
         pass
+
+    # COUNT INVOCATIONS, NOT MENTIONS. A comment that NAMES the umbrella must not make its
+    # job look like it RUNS the umbrella. This is not hypothetical: a comment in `ci.yml`
+    # explaining that `tools/verification/verify --manifests` enforces N1 made the cargo job
+    # resolve as an umbrella job, and every lane was attributed to it. Both directions,
+    # because a control that only refuses prose could refuse the real invocation too.
+    import tempfile as _tempfile
+
+    prose = (
+        "jobs:\n"
+        "  someJob:\n"
+        "    name: a job that only TALKS about the umbrella\n"
+        "    steps:\n"
+        "      # tools/verification/verify --manifests is what enforces this\n"
+        "      - run: echo hello\n"
+    )
+    real = prose.replace("      - run: echo hello", "      - run: tools/verification/verify --gate")
+    for label, body, expect_umbrella in (("a comment does not invoke", prose, False),
+                                         ("a run: line does invoke", real, True)):
+        with _tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "probe.yml"
+            path.write_text(body, encoding="utf-8")
+            global WORKFLOWS
+            saved, WORKFLOWS = WORKFLOWS, Path(tmp)
+            try:
+                found = {name for _wf, name, invoked in workflow_jobs() if UMBRELLA in invoked}
+            finally:
+                WORKFLOWS = saved
+        got = bool(found)
+        if got != expect_umbrella:
+            print(f"  FAIL {label}: umbrella jobs resolved to {found}")
+            bad += 1
 
     # The umbrella satisfies a lane whose own script no workflow names literally.
     resolved = checks_for_lanes({"test", "mutation"}, lane_scripts())
