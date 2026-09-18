@@ -99,6 +99,7 @@ not an omission to hide.
 | proxy.cross_machine_legality | V0 | THM-0049 | 0 |
 | proxy.current_authenticated_peer | V0 | THM-0033 | 0 |
 | proxy.custody_exposure | V0 | THM-0064 | 0 |
+| proxy.custody_exposure_sole_producer | V0 | _none_ | 0 |
 | proxy.delegated_resolver_materialization | V0 | THM-0027 | 1 |
 | proxy.delegated_resolver_materialization_sole_producer | V0 | _none_ | 0 |
 | proxy.delegated_signing_credential | V0 | THM-0062 | 0 |
