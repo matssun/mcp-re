@@ -136,14 +136,48 @@ proposition; whether this sentence states another is its own question.
 for the co-provenance fact; the phrase matched here is a **second** seal in the same unit's
 description, which is its own question rather than a duplicate hit.
 
-`http_profile.submitted_hop_identity` is the sharpest of the five, because its description
-states both the seal and the reason for it:
+### `http_profile.submitted_hop_identity` — a THIRD seal shape, and the lane cannot express it
+
+Its description states both the seal and the reason for it:
 
 > The representation is **closed** — a hop IS its retained request and response, entire —
 > because a curated field list is how an identity comes to omit something, and the omission
-> it already made is the defect this closes.
+> it already made was `signature-input`, the header naming what was signed.
 
-An identity type whose closure is the whole claim, recorded as a battery.
+Read the module and the seal turns out not to be a construction boundary at all. It is a
+**completeness** boundary, and the module says exactly how it is held:
+
+> The fold **DESTRUCTURES** each message exhaustively. Adding a field to `HttpRequest` or
+> `HttpResponse` is a **compile error** here until the fold accounts for it — the language
+> carries the obligation instead of a reviewer remembering it.
+
+`submitted_commitment` opens with `let HttpRequest { method, target_uri, headers, body } =
+request;` and the same for the response, so a field added to either type fails to compile at
+this site (`E0027`). That is a genuine compile-refused security property — and it is a third
+shape, after the two Phase 0D met:
+
+| shape | the hostile thing | where it lives |
+|---|---|---|
+| **sole producer** | an illegal *value* | a construction at the owner's boundary (S06, S17, S22 …) |
+| **co-provenance** | two legal values *combined* | a call whose signature admits only one provenance (S14, THM-0029/31/33) |
+| **exhaustive fold** | a future *field*, silently omitted | a change to the type being folded, refused at the folding site |
+
+**The Phase 0B lane cannot express the third.** Both probe kinds —
+`in-crate-source-injection` and `crate-boundary-compile-fail` — write a NEW file carrying the
+hostile construction and a marker, and require the declared error on the marker line. Here
+the hostile change is an edit to an EXISTING type in another file, and the expected error
+lands at an unmarked line in production source. There is no `insertion_path` that expresses
+it.
+
+That is a lane finding rather than a unit finding, and it is why this case is recorded rather
+than discharged: forcing it into the existing model would mean writing a probe that attacks a
+different proposition, which is the exact error Ruling 3 names.
+
+**P2-S4** — extend the structural lane with a probe kind whose hostile change is a
+MODIFICATION of a declared source region rather than an injected file, and whose expected
+refusal may land outside it. `http_profile.submitted_hop_identity` is the worked example, and
+the omission its own doc records — `signature-input`, the header naming what was signed —
+is the measured reason the property is worth a witness.
 
 ---
 
