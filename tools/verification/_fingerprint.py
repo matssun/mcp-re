@@ -622,6 +622,17 @@ def fingerprint_unit(
         "threat_model_revision": doc.get("threat_model_revision"),
         "review_policy_revision": doc["policy_revision"],
     }
+    # ADR-MCPRE-068 Phase 1. The rules of a gate control are the production carrier of the
+    # proposition it defends, so softening one is a reduction in evidence exactly as
+    # deleting a runtime check is. The scripts cannot go in `paths` — a `.py` path in a
+    # cargo unit collapses `unit_ecosystem` to None and takes the test lane's target
+    # resolution with it — so they are digested as their own component instead.
+    #
+    # ADDED ONLY WHEN THE UNIT DECLARES ONE. A key present-but-empty on every other unit
+    # would move all 156 fingerprints and invalidate every standing attestation, to record
+    # the absence of a thing none of them has.
+    if unit.get("gate_controls"):
+        components["gate_controls"] = _digest_paths(sorted(unit["gate_controls"]))
     return {
         "unit_id": unit["id"],
         "fingerprint": canonical_digest(components),

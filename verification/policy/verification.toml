@@ -2406,7 +2406,14 @@ paths = ["mcp-re-proxy/src/app.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://proxy/trust/composition_reads_only_projections"]
+evidence = [
+  "test://proxy/trust/composition_reads_only_projections",
+  # THM-0067's proposition IS a fact about `app.rs`'s production text — which request
+  # fields the root reads — so a text weakening is its honest falsifier, not a proxy for
+  # one. M149 reintroduces `max_clock_skew`, one of the six reads that LEFT the ordinary
+  # inventory on measurement and became an owner.
+  "mutation://proxy/trust/composition_reads_only_projections",
+]
 # The guard is a source-text inventory, so its own self-check is part of the evidence: a
 # rule that cannot detect a new raw read is a rule that passes vacuously. It runs in the
 # `integration` target and nowhere else — a lane identity, not a detail.
@@ -2877,6 +2884,17 @@ exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
 evidence = ["test://proxy/serving/dispatch_commitment_boundary", "mutation://proxy/serving/dispatch_commitment_boundary"]
+# ADR-MCPRE-069 disposition: REGISTER. These two gates are the production carriers of
+# THM-0051 (the verification product's provenance across the pipeline) and THM-0052 (the
+# posture's provenance from the configured policy). Both propositions are `critical`, both
+# gates run in `ci.yml` and in `local_gate.sh`, and until this entry NO unit named either
+# one — so softening a rule moved no digest and invalidated no attestation. They are not in
+# `paths`: a `.py` entry collapses a cargo unit's ecosystem. They enter the fingerprint as
+# their own component, and M151/M152 are the falsifiers that make them load-bearing.
+gate_controls = [
+  "scripts/serving_product_provenance_gate.py",
+  "scripts/authorization_provenance_gate.py",
+]
 # What each control measures, in the order the boundary is crossed. The last one is the
 # separation this unit does NOT claim: an unconfigured deployment releases a body too, so
 # possession proves the decision was TAKEN, never that a policy permitted.

@@ -4521,3 +4521,120 @@ weakening = """
 expect_red = [
   "tests/integration#remote_signer_bound_test::every_remote_signer_dispatch_is_bounded_by_the_shared_timeout",
 ]
+
+# ADR-MCPRE-068 Phase 1 — the two source-text propositions that ARE about the source text.
+#
+# `verification/reviews/packets/residue-units-2026-09-18.md` concluded that a source-text
+# control cannot be falsified by a source-text mutation probe. That argument is sound where
+# the control is a source-text PROXY for a behavioural proposition: the probe then edits the
+# very text the rule reads, and redness measures the matcher rather than the behaviour.
+#
+# It does not apply to these two, because here the proposition IS the source-text fact.
+# THM-0067 claims a property OF `app.rs`'s production text (which request fields the root
+# reads); the seam's composition half claims a property OF `app.rs`'s production text (that
+# the builder is called once, on the materialized operands, and holds no frozen map). For a
+# claim about the text, a text weakening is the honest falsifier and redness is exactly the
+# fact wanted.
+#
+# What these probes do NOT establish is that the pattern is a faithful proxy for the
+# behavioural property behind it. That is a separate premise, registered as such — never
+# smuggled in as a second thing a green probe is taken to have shown.
+
+[[probe]]
+id = "M149-composition-root-raw-read"
+unit = "proxy.trust_composition_root"
+theorem = "THM-0067"
+conjunct = "every DeploymentRequest field the composition root reads directly is a pinned ordinary validated parameter"
+path = "mcp-re-proxy/src/app.rs"
+anchor = """
+    let values = config.config();
+"""
+weakening = """
+    let values = config.config();
+    let _unowned_decision: i64 = values.max_clock_skew;
+"""
+expect_red = [
+  "tests/integration#composition_raw_read_test::the_composition_root_reads_only_ordinary_validated_parameters",
+]
+note = """
+`max_clock_skew` is the sharpest available weakening rather than an arbitrary field: it is one
+of the six that LEFT the ordinary inventory on measurement and became an owner
+(`FreshnessWindow`). So the probe reintroduces a real historical defect in its minimal
+compiling form, not a synthetic one.
+"""
+
+[[probe]]
+id = "M150-serving-seam-frozen-capture"
+unit = "proxy.serving_trust_seam"
+theorem = "THM-0066"
+conjunct = "the seam the composition root built consults the revocation tier per request rather than a map captured at build time"
+path = "mcp-re-proxy/src/app.rs"
+anchor = """
+    Box::new(move |kid: &str, slot: SignerSlot| match slot {
+"""
+weakening = """
+    let _frozen: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    Box::new(move |kid: &str, slot: SignerSlot| match slot {
+"""
+expect_red = [
+  "tests/integration#serving_trust_seam_test::the_seam_resolves_through_the_tier_rather_than_a_frozen_map",
+]
+note = """
+The ADR-MCPS-021 defect by name: trust frozen at process start behind a resolver chain whose
+guarantee is printed and dropped. The weakening is that defect's minimal compiling form —
+a map declared in the builder's body — which is what the rule refuses.
+"""
+
+# ADR-MCPRE-068 Phase 1 — the two propositions whose control is a GATE, not a test symbol.
+#
+# `expect_red` names `gate#<script>`: the lane runs the script over the weakened copy and
+# reads a non-zero exit as red, in the same vocabulary as a libtest line. See
+# `verification/reviews/packets/source-text-falsifiers-2026-09-18.md` for why this is the
+# same probe shape and not a new evidence class — the gate's own `--selftest` synthesizes
+# violating text in a fixture, which says the matcher works; this applies the regression to
+# the REAL production tree, which is what says the rule is load-bearing over it.
+
+[[probe]]
+id = "M151-serving-product-second-verification"
+unit = "proxy.dispatch_commitment"
+theorem = "THM-0051"
+conjunct = "the serving assembly verifies exactly once, so `the product the pipeline holds` is not a question about source order"
+path = "mcp-re-proxy/src/http_profile_serve/mod.rs"
+anchor = """
+        let verified = match self.verify_stage(&http_req, now, &mut progress) {
+"""
+weakening = """
+        let _second = self.verify_stage(&http_req, now, &mut progress);
+        let verified = match self.verify_stage(&http_req, now, &mut progress) {
+"""
+expect_red = [
+  "gate#scripts/serving_product_provenance_gate.py",
+]
+note = """
+A SECOND verification product in scope is the defect the gate's rule 1 exists to refuse: two
+products, and which one the pipeline holds becomes a fact about the order of two statements
+rather than about the type. The weakening compiles, so the cargo battery still runs and the
+lane can tell a red control from a tree that did not build.
+"""
+
+[[probe]]
+id = "M152-authorization-transport-hint"
+unit = "proxy.dispatch_commitment"
+theorem = "THM-0052"
+conjunct = "the authorization authority names no MCP transport header and never asks whether a transport contract is enforced (Law A-1)"
+path = "mcp-re-proxy/src/authorization/request.rs"
+anchor = """
+use mcp_re_http_profile::RequestEvidence;
+"""
+weakening = """
+const _TRANSPORT_HINT: &str = "Mcp-Method";
+use mcp_re_http_profile::RequestEvidence;
+"""
+expect_red = [
+  "gate#scripts/authorization_provenance_gate.py",
+]
+note = """
+Law A-1 by name. The token is introduced in CODE rather than in a comment deliberately: the
+gate reads `code_only` text, so a hint in prose would leave it green, and a probe that went
+red on a comment would be measuring the wrong thing.
+"""

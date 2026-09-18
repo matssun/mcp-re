@@ -606,15 +606,6 @@ root_reachable = true
 status = "unreviewed"
 
 [[obligation]]
-unit = "proxy.trust_composition_root"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "high"
-direct_consequence_severity = "high"
-inherited_severity = "high"
-root_reachable = true
-status = "unreviewed"
-
-[[obligation]]
 unit = "sdk_typescript.exchange_path"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "critical"
