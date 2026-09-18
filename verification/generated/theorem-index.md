@@ -72,8 +72,8 @@ any of them is closed.
 | THM-0032 | Per-request credential currency is decided from the credential the mechanism accepted, and reports which of its five facts refused | proxy.credential_currency | unit://proxy.credential_currency | live |
 | THM-0033 | A current authenticated peer's currency is evaluated against the credential that same peer authenticated with | proxy.current_authenticated_peer | unit://proxy.current_authenticated_peer | live |
 | THM-0034 | A request is bound to its relationship by relating the authenticated peer to the resolved actor's SUBJECT, never to the composite actor id | proxy.request_peer_binding | unit://proxy.request_peer_binding | live |
-| THM-0035 | A successfully classified trust-revocation state carries the witnesses its own state form requires | proxy.trust_configuration_state | unit://proxy.trust_configuration_state | live |
-| THM-0036 | A networked trust-epoch source is handed over as a paired locator and key, or not at all | proxy.trust_configuration_state | unit://proxy.trust_configuration_state | live |
+| THM-0035 | A successfully classified trust-revocation state carries the witnesses its own state form requires | proxy.trust_configuration_state | unit://proxy.trust_configuration_state, unit://proxy.trust_configuration_state_sole_producer | live |
+| THM-0036 | A networked trust-epoch source is handed over as a paired locator and key, or not at all | proxy.trust_configuration_state | unit://proxy.trust_configuration_state, unit://proxy.trust_configuration_state_sole_producer | live |
 | THM-0037 | A trust plan's reload cadence is a projection of the revocation posture, never a second value | proxy.trust_plan | unit://proxy.trust_plan, unit://proxy.trust_plan_co_provenance | live |
 | THM-0038 | The composition root consumes trust as owner projections and re-reads no trust field from the request | proxy.trust_composition_root | unit://proxy.trust_composition_root | live |
 | THM-0039 | An accepted PDP decision was authenticated under a key the trust seam resolved | http_profile.pdp_decision_authentication | unit://http_profile.pdp_decision_authentication | live |

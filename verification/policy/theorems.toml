@@ -1971,7 +1971,14 @@ mechanism's concern (THM-0036) and is separately unproved end to end.
 """
 owner = "proxy.trust_configuration_state"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.trust_configuration_state"]
+# TWO units. `proxy.trust_configuration_state` establishes what the classifier and the
+# locator DECIDE. `proxy.trust_configuration_state_sole_producer` establishes that neither
+# decision can be bypassed — that no posture exists whose declared witnesses nobody decided,
+# and no locator exists that `new` did not accept.
+supported_by = [
+  "unit://proxy.trust_configuration_state",
+  "unit://proxy.trust_configuration_state_sole_producer",
+]
 depends_on = []
 
 [[theorem]]
@@ -2013,7 +2020,14 @@ replica within any bound.
 """
 owner = "proxy.trust_configuration_state"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.trust_configuration_state"]
+# TWO units. `proxy.trust_configuration_state` establishes what the classifier and the
+# locator DECIDE. `proxy.trust_configuration_state_sole_producer` establishes that neither
+# decision can be bypassed — that no posture exists whose declared witnesses nobody decided,
+# and no locator exists that `new` did not accept.
+supported_by = [
+  "unit://proxy.trust_configuration_state",
+  "unit://proxy.trust_configuration_state_sole_producer",
+]
 depends_on = ["THM-0035"]
 
 [[theorem]]

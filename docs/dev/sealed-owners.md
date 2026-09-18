@@ -746,6 +746,43 @@ writing the next one:
 | provenance closed | the value's bytes or pairing are the owner's | S07, S09–S11, S12/S13 |
 | co-provenance | separately legal parts cannot be combined by a caller | S14 |
 
+### The eighth: the trust-configuration pair, and a probe that must not measure the wrong privacy
+
+**Landed 2026-09-18, ADR-MCPRE-068 Phase 0D-10.** Two owners, one proposition — which trust
+configuration a deployment is *in*.
+
+| probe | owner | what a forgery would buy |
+|---|---|---|
+| S15 | `TrustRevocationState` | a posture whose declared witnesses nobody decided |
+| S16 | `TrustDocumentSource` | an empty locator reaching the code that opens it |
+
+**S16's hostile value is the exact inhabitant `new` excludes** — `(!path.trim().is_empty()).then_some(…)`
+— so the construction is not merely unauthorized, it is the one value the owner's whole check
+exists to reject, and that check is a deletable statement unless this boundary holds. The
+owner's doc comment states the property: *"construction itself validates, so a
+`TrustDocumentSource` means the same thing whichever crate built it."* That sentence is about
+every crate, which is a claim over the type; the battery ranges over `new`.
+
+**S15 is the case where two layers of privacy meet, and only one is the claim.**
+`TrustRevocationState`'s `kind` is bare-private *and* its type `RevocationKind` is a private
+enum, so a sibling can reach neither the field nor a variant to put in it. The probe supplies
+`todo!()` rather than naming a variant, deliberately: writing `RevocationKind::BoundedCache { … }`
+would be refused by `E0603` for the **type's** privacy, and the lane would then report a
+refusal about a boundary this unit does not claim. The field's privacy is the claim, so the
+field's privacy is what the probe attacks; the enum's privacy is recorded as a second producer
+path rather than conflated with it.
+
+```text
+cargo test -p mcp-re-proxy --lib -- config_state::trust_revocation config_state::trust_document
+    test result: ok. 15 passed; 0 failed       # with both fields opened to pub(crate)
+
+verify-structural --probe S15 --probe S16
+    FAIL: 2 of 2 probe(s) did not witness a closed construction boundary
+```
+
+Both supporting theorems gain the unit, since each rests on the classifier's decision being
+the only way into a posture.
+
 The remaining unit-backed sealed owners follow the same split, one owner per change.
 
 ## Open
