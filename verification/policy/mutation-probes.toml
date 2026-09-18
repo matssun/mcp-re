@@ -6092,3 +6092,118 @@ issuer's trust picture" from "this WAS the issuer's trust picture" is the versio
 seen. Under the weakening an attacker who can serve an old manifest re-opens the overlap
 window it published, and a root retired in the meantime answers again.
 """
+
+[[probe]]
+id = "M224-client-a-preflight-receipt-must-commit-to-these-bytes"
+unit = "client.response_binding_disposition"
+theorem = "THM-0091"
+conjunct = "a preflight receipt is accepted as being about this call only when it commits to the digest of the bytes this client sent"
+path = "mcp-re-client-core/src/response.rs"
+anchor = """
+    if value != mcp_re_http_profile::content_digest_sha256(&request.body) {
+"""
+weakening = """
+    if false {
+"""
+expect_red = [
+  "lib#response::delegated_tests::a_preflight_receipt_for_another_request_is_not_an_answer_to_this_one",
+]
+note = """
+THE SIGNATURE CANNOT CARRY THIS, which is the whole reason the check exists. A preflight
+receipt is signed over RESPONSE components only -- no `@method`, no `;req` binding -- because
+the request never earned a trustworthy hash. So the delegated signature verifying proves the
+issuer said it and says NOTHING about which request it answers. One such receipt would
+otherwise answer every request from every client of that issuer for the credential's whole
+validity window.
+
+The digest-algorithm check above is a sibling conjunct rather than a second carrier: it
+refuses a receipt whose commitment is in an algorithm this client cannot compare, and admits
+every receipt that commits correctly-shaped to somebody ELSE's bytes.
+"""
+
+[[probe]]
+id = "M225-client-a-success-must-be-request-bound"
+unit = "client.response_binding_disposition"
+theorem = "THM-0091"
+conjunct = "a response verified without a request binding is reported as unbound and is never classified as a success"
+path = "mcp-re-client-core/src/response.rs"
+anchor = """
+    if (200..300).contains(&response.status) {
+"""
+weakening = """
+    if false {
+"""
+expect_red = [
+  "lib#response::delegated_tests::unbound_signature_is_not_accepted_as_success",
+]
+note = """
+THE STATUS RANGE IS THE FORK, and weakening it sends a 2xx down the rejection-receipt path,
+where an unbound verification is a legitimate outcome. That is exactly the shape the unit
+forbids -- "there is no path on which a failed bound verification is retried as an unbound
+one" -- and it is why the fork and not the verifier is the anchor: both verifiers are
+correct, and the defect is reaching the wrong one.
+"""
+
+[[probe]]
+id = "M226-client-an-unusable-continuation-state-is-malformed"
+unit = "client.verified_outcome"
+theorem = "THM-0091"
+conjunct = "an input-required reply withholding a usable requestState is malformed rather than terminal"
+path = "mcp-re-client-proxy/src/verified_outcome.rs"
+anchor = """
+            let kind = match continuation_state_of(result)? {
+"""
+weakening = """
+            let kind = match continuation_state_of(result).unwrap_or(None) {
+"""
+expect_red = [
+  "lib#verified_outcome::tests::a_verified_input_required_reply_with_no_usable_state_fails_closed",
+  "lib#verified_outcome::tests::a_verified_unrecognized_result_type_never_becomes_terminal",
+]
+note = """
+THE `?` IS THE CARRIER. `continuation_state_of` answers three ways -- terminal, non-terminal
+with a usable state, or MALFORMED -- and the weakening does not delete a check: it discards
+the third answer, folding "this reply is not classifiable" into "this reply is terminal". So
+a reply that announces itself non-terminal and carries no usable `requestState` resolves as a
+SUCCESS an answer leg could never be honoured for, and an unrecognized `resultType` -- which
+MCP 2026-07-28 closed the set against -- becomes terminal too.
+
+That both controls go red from one anchor is the shape slice 4 named: one carrier, several
+conjuncts. The signature verification above is not a second carrier of either; a genuine
+signature says the server said this, not that the call finished, which is the unit's own
+opening sentence.
+"""
+
+[[probe]]
+id = "M227-client-the-route-pin-is-enforced-against-the-root-issuer"
+unit = "client.response_signer_authorization"
+theorem = "THM-0091"
+conjunct = "where the route pins an issuer, a credential chaining to any other trusted anchor fails closed"
+path = "mcp-re-client-core/src/response.rs"
+anchor = """
+    if issuer_kid == pinned {
+        Ok(())
+    } else {
+        Err(HttpProfileError::ResponseBindingMismatch)
+    }
+"""
+weakening = """
+    let _ = (issuer_kid, pinned);
+    Ok(())
+"""
+expect_red = [
+  "lib#response::delegated_tests::delegated_success_enforces_the_pin_against_the_root_issuer",
+  "lib#response::delegated_tests::delegated_rejection_enforces_the_pin_against_the_root_issuer",
+  "lib#response::delegated_tests::a_pinned_route_refuses_a_202_from_another_root",
+]
+note = """
+THE TRUST PICTURE IS NOT A SECOND CARRIER, and that is precisely what the pin is for. A
+credential chaining to ANOTHER root the current manifest resolves is fully trusted -- the
+signature verifies, the chain resolves, revocation says nothing -- so every gate around this
+one passes. The pin is the only statement that says this ROUTE answers to that issuer and no
+other, and it is compared against the root issuer rather than the rotating delegated kid,
+which is what makes it survive a delegation rotation.
+
+The three controls it takes red are the three shapes the pin has to hold over: a success, a
+bound rejection receipt, and a bodyless 202.
+"""

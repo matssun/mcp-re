@@ -3929,7 +3929,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://client/response/signer_authorization"]
+evidence = [
+  "test://client/response/signer_authorization",
+  "mutation://client/response/signer_authorization",
+]
 # Two separations, each with its negative control: the pin against the ROOT issuer rather
 # than the rotating delegated kid, and revocation by every identifier the manifest can name.
 # The rotation control is the pair to the revocation ones: a new delegated key under the
@@ -3973,7 +3976,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://client/response/binding_disposition"]
+evidence = [
+  "test://client/response/binding_disposition",
+  "mutation://client/response/binding_disposition",
+]
 # The controls are the negatives: unbound-is-not-success, and a preflight receipt about
 # another request's bytes — or about no request at all — is not an answer to this one. The
 # positive `delegated_preflight_rejection_is_verified_unbound` is what makes them a
@@ -4058,7 +4064,10 @@ paths = ["mcp-re-client-proxy/src/verified_outcome.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://client/verified_outcome/what_a_verified_reply_entitles"]
+evidence = [
+  "test://client/verified_outcome/what_a_verified_reply_entitles",
+  "mutation://client/verified_outcome/what_a_verified_reply_entitles",
+]
 # The two refusals are the point, and the third control is what stops "fails closed" from
 # being satisfied by refusing every non-terminal leg: a well-formed continuation must still
 # surface its state. The rejection control keeps a provable denial an ANSWER rather than a
