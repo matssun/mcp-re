@@ -37,7 +37,8 @@ attestations this view cannot see.
 | unit://client.manifest_floor | source, contracts or evidence | THM-0121 | _no consumer_ |
 | unit://client.proxy_request_correspondence | source, contracts or evidence | THM-0084 | _no consumer_ |
 | unit://client.request_construction | source, contracts or evidence | THM-0125 | _no consumer_ |
-| unit://client.response_acceptance | source, contracts or evidence | THM-0058, THM-0059, THM-0076 | _no consumer_ |
+| unit://client.response_binding_disposition | source, contracts or evidence | THM-0059, THM-0076 | _no consumer_ |
+| unit://client.response_signer_authorization | source, contracts or evidence | THM-0058, THM-0076 | _no consumer_ |
 | unit://client.serving_lifetime | source, contracts or evidence | THM-0127 | _no consumer_ |
 | unit://client.transport_message_hygiene | source, contracts or evidence | THM-0110 | _no consumer_ |
 | unit://client.transport_server_identity | source, contracts or evidence | THM-0109 | _no consumer_ |

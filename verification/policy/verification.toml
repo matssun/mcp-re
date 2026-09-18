@@ -3840,7 +3840,7 @@ id = "client.proxy_request_correspondence"
 class = "V0"
 description = "The joint the shipped client proxy owns and the low-level verifier cannot: the SignedRequest handed to the transport and the ResponseExpectation handed to response verification come from ONE owner, so the response is verified against the request this proxy sent."
 # The composition authority alone — `proxy.rs` — and NOT the client-core verifier it calls.
-# `client.response_acceptance` establishes what the verifier does with a pairing and takes
+# `client.response_binding_disposition` establishes what the verifier does with a pairing and takes
 # the pairing as given; widening it to cover the pairing merely because it consumes the
 # result would put the relation in the unit that cannot see it.
 paths = ["mcp-re-client-proxy/src/proxy.rs"]
@@ -3861,9 +3861,9 @@ tested_symbols = [
 ]
 
 [[unit]]
-id = "client.response_acceptance"
+id = "client.response_signer_authorization"
 class = "V0"
-description = "What a client may present to an application as the answer to its own request: which signer is authorized in the Response slot, whether a pinned issuer holds, and the bound/unbound disposition — an unbound receipt is never a success and never an answer to another request."
+description = "WHICH SIGNER a client may accept a response from: the credential chains to a root issuer the current trust picture resolves for the Response slot; where the route pins an issuer, a credential chaining to any other trusted anchor fails closed and the pin is enforced against the ROOT issuer rather than the rotating delegated kid; a credential whose issuer kid, delegated kid or jti the trust authority revokes is refused, on a success and on a rejection receipt alike; and a trust picture past its validity resolves no roots at all. Whether what that signer signed ANSWERS THIS REQUEST is `client.response_binding_disposition`'s."
 paths = [
   "mcp-re-client-core/src/response.rs",
   "mcp-re-client-core/src/response_expectation.rs",
@@ -3872,15 +3872,15 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://client/response/acceptance_battery"]
-# Three separations, each with its negative control: the pin against the ROOT issuer rather
-# than the rotating delegated kid; revocation by every identifier the manifest can name; and
-# unbound-is-not-success, including a preflight receipt about another request's bytes.
+evidence = ["test://client/response/signer_authorization"]
+# Two separations, each with its negative control: the pin against the ROOT issuer rather
+# than the rotating delegated kid, and revocation by every identifier the manifest can name.
+# The rotation control is the pair to the revocation ones: a new delegated key under the
+# same root still verifies once the old one is revoked, so "revoked" is a fact about an
+# identifier and not about the root.
 tested_symbols = [
   "lib#response::delegated_tests::delegated_success_is_verified_and_classified",
   "lib#response::delegated_tests::delegated_bound_rejection_is_verified_and_classified",
-  "lib#response::delegated_tests::delegated_preflight_rejection_is_verified_unbound",
-  "lib#response::delegated_tests::unbound_signature_is_not_accepted_as_success",
   "lib#response::delegated_tests::unsigned_response_is_rejected",
   "lib#response::delegated_tests::direct_root_success_is_rejected_no_credential",
   "lib#response::delegated_tests::delegated_success_enforces_the_pin_against_the_root_issuer",
@@ -3893,10 +3893,43 @@ tested_symbols = [
   "lib#response::delegated_tests::non_revoked_credential_verifies_with_nonempty_list",
   "lib#response::delegated_tests::rotation_to_new_delegated_key_succeeds_when_old_revoked",
   "lib#response::delegated_tests::an_expired_trust_picture_stops_resolving_its_roots",
+  "lib#response_expectation::tests::a_pin_is_absent_until_it_is_set",
+]
+
+# ADR-MCPRE-068 Phase 1. `client.response_acceptance` was the semantic authority for THM-0058
+# (which signer is authorized in the Response slot) and THM-0059 (an unbound receipt is never
+# a success and never another request's answer). Its own description carried both with an
+# "and", and they fail independently in opposite directions: a client can accept a perfectly
+# bound answer signed by a revoked key, or a perfectly authorized signature over an answer to
+# somebody else's request. Neither proposition implies the other, and neither is a weakening
+# of the other, so one unit could not be the single authority for both.
+#
+# The battery partitioned along the same line with nothing moved.
+[[unit]]
+id = "client.response_binding_disposition"
+class = "V0"
+description = "WHETHER WHAT WAS SIGNED ANSWERS THIS REQUEST: a response verified without a request binding is reported as unbound and is never classified as a success; there is no path on which a failed bound verification is retried as an unbound one; and a preflight receipt is accepted as being about this call only when it commits to the digest of the bytes this client sent — one about another request, or about no request, answers nothing. Which signer was authorized to sign it at all is `client.response_signer_authorization`'s."
+paths = [
+  "mcp-re-client-core/src/response.rs",
+  "mcp-re-client-core/src/response_expectation.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = ["test://client/response/binding_disposition"]
+# The controls are the negatives: unbound-is-not-success, and a preflight receipt about
+# another request's bytes — or about no request at all — is not an answer to this one. The
+# positive `delegated_preflight_rejection_is_verified_unbound` is what makes them a
+# separation rather than a blanket refusal: unbound is a REPORTED disposition, not an error.
+#
+# NOT `delegated_evidence.rs`: the credential's own structure decides who may sign, not what
+# the signature is about.
+tested_symbols = [
+  "lib#response::delegated_tests::delegated_preflight_rejection_is_verified_unbound",
+  "lib#response::delegated_tests::unbound_signature_is_not_accepted_as_success",
   "lib#response::delegated_tests::a_preflight_receipt_for_another_request_is_not_an_answer_to_this_one",
   "lib#response::delegated_tests::a_preflight_receipt_about_no_request_answers_nothing",
   "lib#response_expectation::tests::the_projection_reports_the_request_the_expectation_was_built_from",
-  "lib#response_expectation::tests::a_pin_is_absent_until_it_is_set",
 ]
 
 [[unit]]
@@ -3947,7 +3980,7 @@ tested_symbols = [
 ]
 
 # What a VERIFIED outcome MEANS to a plain MCP client. Its own unit rather than part of
-# `client.response_acceptance` or of `client.execution_contract`, because the three answer
+# `client.response_binding_disposition` or of `client.execution_contract`, because the three answer
 # different questions: acceptance decides whether these bytes are genuine and answer THIS
 # request, the execution contract decides what a receipt's words mean, and this decides what
 # a genuine answer entitles a caller to conclude about whether the exchange is FINISHED.
@@ -7944,7 +7977,7 @@ tested_symbols = [
   "lib#config::tests::a_non_loopback_bind_is_refused_unless_declared",
 ]
 
-# The request-construction half of the client seam. `client.response_acceptance` owns what a
+# The request-construction half of the client seam. `client.response_binding_disposition` owns what a
 # client will accept back; nothing owned what it puts on the wire, and both SDKs and the
 # client proxy build every signed request through this file.
 [[unit]]
