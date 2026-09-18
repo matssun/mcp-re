@@ -204,6 +204,54 @@ def print_assurance_graph(theorems: dict, doc: dict) -> None:
             f"    {len(new_debt)} of them are NOT in the migration registry, which is closed "
             f"to new work: {new_debt}"
         )
+    _owner_granularity(theorems)
+
+
+def _owner_granularity(theorems: dict) -> None:
+    """ADR-MCPRE-068 Phase 1's completion criterion, measured: ONE SEMANTIC OWNER PER LEAF.
+
+    `owner` is "the review unit that is the semantic authority for it", so a unit that is the
+    owner of two live claims is answering for two propositions. That is the criterion stated
+    as something a tool can count, and it is STRICTER than the test Phase 1 started with —
+    which was "the unit's own description names several propositions". The description test
+    found five units; this one finds `http_profile.admission_currency`, whose description
+    names one proposition and which is the semantic authority for four claims.
+
+    TWO POPULATIONS, and only one is a defect.
+
+    A ROOT's owner is necessarily also a leaf's owner where the root rests on a unit that
+    carries a claim of its own, because `owner` is one field and a root's authority spans its
+    leaves. That is a consequence of the schema rather than an undifferentiated unit, and it
+    is reported separately so it cannot inflate the number that matters.
+    """
+    import collections
+
+    roots = set(theorems.get("root_theorems", []))
+    owned: dict[str, list[str]] = collections.defaultdict(list)
+    for entry in theorems.get("theorem", []):
+        if entry.get("replaced_by"):
+            continue
+        owned[entry["owner"]].append(entry["id"])
+
+    schema, residue = [], []
+    for unit_id, claims in owned.items():
+        if len(claims) < 2:
+            continue
+        non_root = [c for c in claims if c not in roots]
+        (schema if len(non_root) <= 1 < len(claims) else residue).append((unit_id, non_root))
+
+    print(
+        f"\n  ONE SEMANTIC OWNER PER LEAF (ADR-MCPRE-068 Phase 1): {len(residue)} unit(s) "
+        f"are the semantic authority for several non-root claims."
+    )
+    for unit_id, claims in sorted(residue, key=lambda row: -len(row[1])):
+        print(f"    {len(claims)}  {unit_id:44} {claims}")
+    if schema:
+        print(
+            f"  {len(schema)} further unit(s) own a root AND one leaf claim — a consequence "
+            f"of `owner` being one field, not an undifferentiated unit: "
+            f"{sorted(unit for unit, _ in schema)}"
+        )
 
 
 def _root_ok(roots: dict, require: bool) -> bool:
