@@ -5261,9 +5261,9 @@ part of this claim, which is about the keys that are served.
 Executable and structural, class V0: a battery over production behaviour with each conjunct
 mutation-probed, not a machine-checked proof.
 """
-owner = "proxy.trust_plane_runtime"
+owner = "proxy.trust_resolution_window"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.trust_plane_runtime"]
+supported_by = ["unit://proxy.trust_resolution_window"]
 depends_on = []
 
 [[theorem]]
@@ -5331,7 +5331,7 @@ class V0.
 """
 owner = "proxy.trust_document_interpretation"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.trust_document_interpretation", "unit://proxy.trust_plane_runtime"]
+supported_by = ["unit://proxy.trust_document_interpretation", "unit://proxy.trust_resolution_window"]
 depends_on = []
 
 [[theorem]]
@@ -5442,9 +5442,9 @@ duration is not modelled — a read that takes longer than `R` delays the next c
 much. Nothing cross-replica: the fleet's exposure is each replica's, and the replicas' `w`
 differ. Executable and structural, class V0.
 """
-owner = "proxy.trust_plane_runtime"
+owner = "proxy.trust_reload_cadence"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.trust_plane_runtime"]
+supported_by = ["unit://proxy.trust_reload_cadence"]
 depends_on = ["THM-0097"]
 
 [[theorem]]
@@ -6712,7 +6712,7 @@ direct_consequence_severity = "medium"
 scope = """
 THE SEAM AND THE REFERENCE IMPLEMENTATION. Nothing here is about the runtime trust plane's
 tiers, its caching windows, or its revocation channel — those are THM-0097 through THM-0100's,
-over `proxy.trust_plane_runtime`.
+over `proxy.trust_resolution_window` and `proxy.trust_reload_cadence`.
 
 NOT A CLAIM ABOUT WHICH KEYS A DEPLOYMENT TRUSTS. The resolver answers from what it was given;
 where the bindings came from and whether they were authorized is the trust document's
