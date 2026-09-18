@@ -1408,7 +1408,7 @@ evidence = [
 [[unit]]
 id = "proxy.certificate_identity"
 class = "V0"
-description = "Certificate identity interpretation: under an explicit selection policy, the configured field of the presented leaf denotes this peer-identity evidence with this provenance, or interpretation refuses."
+description = "WHAT THE INTERPRETER DECIDES: under an explicit selection policy, the configured field of the presented leaf denotes this peer-identity evidence with this provenance, or interpretation refuses — no fallback to another field, and every refusal names why. That the value/source PAIRING can be performed only inside the communication-assurance authority is a compile-time property of two boundaries and belongs to `proxy.certificate_identity_authority_boundary`."
 paths = [
   "mcp-re-proxy/src/communication_assurance/certificate_identity_interpreter.rs",
   "mcp-re-proxy/src/communication_assurance/certificate_identity_fields.rs",
@@ -1474,6 +1474,47 @@ tested_symbols = [
   "tests/integration#certificate_identity_no_fallback_test::a_peer_that_presented_no_certificate_is_not_a_peer_whose_field_is_missing",
 ]
 pilot = "verus-candidate"
+
+# ---------------------------------------------------------------------------
+#
+# THE BOUNDARY THE OWNER CHOSE, AND IT IS NOT ONE FILE — which is why this unit is named for
+# the AUTHORITY rather than for a sole producer.
+#
+# `CertificatePeerIdentityEvidence::new` is `pub(super)`, and the owner argues for that
+# deliberately: "the seal is stated at the boundary it actually holds at: `pub(super)` means
+# no code outside the authority can pair a value with a source, which is the property that
+# matters. Narrowing it further — so that literally one file could call the constructor —
+# would need a token or typestate device, and inventing one to tighten a boundary that is
+# already the authority's own is ceremony, not a theorem."
+#
+# That reasoning is accepted, and the consequence is that the CLAIM must be worded to the set
+# of modules the visibility admits rather than to a file. The rule is the standing one: name
+# the exact set the constructor's visibility admits, and word the claim to that set. Here the
+# set is `communication_assurance` and its descendants, the semantic content is provenance
+# INSIDE that authority, and so the probes are injected at the CRATE ROOT — a sibling of the
+# authority. A probe inside the authority would compile, and compiling would be correct.
+#
+# Two producer paths, two probes, because a `pub(super)` constructor closes nothing if the
+# representation is reachable: S12 attacks `new`, S13 attacks the struct literal. The fields
+# are in fact narrower than the constructor — bare-private to the defining module — so S13's
+# route is refused even inside the authority.
+
+[[unit]]
+id = "proxy.certificate_identity_authority_boundary"
+class = "V0"
+description = "An identity value is paired with the certificate field it came from only inside the communication-assurance authority: `CertificatePeerIdentityEvidence::new` is `pub(super)`, so the modules that may call it are exactly `communication_assurance` and its descendants, and the two fields are bare-private to the defining module, so the pairing cannot be written directly even there. A neighbouring authority therefore cannot manufacture certificate provenance for a value it obtained some other way. Deliberately NOT a sole-producer claim — the owner chose the authority boundary and gave its reasons — and it says nothing about what the interpreter decides, which is `proxy.certificate_identity`'s."
+paths = [
+  "mcp-re-proxy/src/communication_assurance/certificate_peer_identity_evidence.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+# Provenance is the whole semantic content of this value: it says WHICH certificate field an
+# identity was read from. A neighbouring module able to assert that is a module able to
+# attribute an identity to evidence that never carried it.
+direct_consequence_severity = "critical"
+evidence = [
+  "structural://proxy/communication_assurance/certificate_identity_authority_boundary",
+]
 
 [[edge]]
 # Producer -> consumer. The interpretation returns a value the invariant unit owns; the

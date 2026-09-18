@@ -665,6 +665,49 @@ verify-structural --probe S09 --probe S10 --probe S11
 Twenty-two tests, including the eleven cross-machine ones in `tls.rs`, green against three
 boundaries that no longer hold.
 
+### The sixth: `CertificatePeerIdentityEvidence`, where the boundary is not one file
+
+**Landed 2026-09-18, ADR-MCPRE-068 Phase 0D-8.** Every split so far produced a unit named
+`…_sole_producer`. This one does not, and the reason is the owner's own argument:
+
+> the seal is stated at the boundary it actually holds at: `pub(super)` means no code outside
+> the authority can pair a value with a source, which is the property that matters. Narrowing
+> it further — so that literally one file could call the constructor — would need a token or
+> typestate device, and inventing one to tighten a boundary that is already the authority's
+> own is ceremony, not a theorem.
+
+That reasoning is accepted here, and the consequence is that **the claim is worded to the set
+of modules the visibility admits**, not to a file. The standing rule is to name that set and
+check what the claim needs: here the set is `communication_assurance` and its descendants,
+the semantic content is provenance *inside* that authority, and the two match. So the unit is
+`proxy.certificate_identity_authority_boundary`, and the probes are injected at the **crate
+root** — a sibling of the authority. A probe injected inside the authority would compile, and
+compiling would be correct.
+
+**Two producer paths, two probes,** because a `pub(super)` constructor closes nothing if the
+representation is reachable:
+
+| probe | route | refusal |
+|---|---|---|
+| S12 | `CertificatePeerIdentityEvidence::new` from outside the authority | `E0624` |
+| S13 | the struct literal — the fields are *narrower* than the constructor, bare-private to the defining module, so this is refused even inside the authority | `E0451` |
+
+```text
+cargo test -p mcp-re-proxy --lib -- communication_assurance::certificate
+    test result: ok. 26 passed; 0 failed       # with new made pub and both fields made pub
+
+verify-structural --probe S12 --probe S13
+    FAIL: 2 of 2 probe(s) did not witness a closed construction boundary
+```
+
+**The lane also caught an error in the probe I wrote**, and that is worth recording. S13's
+first draft named a `CertificateIdentitySource` variant that does not exist, and the lane
+reported `expected E0451 … saw ['E0599']` — *a refusal the probe cannot attribute is not
+evidence about the invariant* — rather than counting a compile failure as a closed boundary.
+S12 had the same typo and passed, because rustc resolves call visibility before the enum
+path; so the distinction between "refused by the boundary" and "refused by something" is not
+academic, and the weak form of this check would have accepted a typo as a seal.
+
 The remaining unit-backed sealed owners follow the same split, one owner per change.
 
 ## Open

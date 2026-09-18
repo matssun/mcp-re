@@ -81,6 +81,7 @@ not an omission to hide.
 | proxy.aws_sts_credentials | V0 | THM-0117 | 0 |
 | proxy.capsule_anchor_registration_leaf | V0 | _none_ | 0 |
 | proxy.certificate_identity | V0 | THM-0024 | 1 |
+| proxy.certificate_identity_authority_boundary | V0 | _none_ | 0 |
 | proxy.channel_associated_credential | V0 | THM-0028 | 1 |
 | proxy.channel_associated_identity | V0 | THM-0029 | 1 |
 | proxy.client_credential_window | V0 | THM-0102 | 0 |

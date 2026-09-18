@@ -350,3 +350,79 @@ module-tree-visibility = "`key` is bare-private to `communication_assurance::sig
 alternate-constructors = "`interpret_signing_key`, on `SigningKeyExportEvidence`, is the only code that builds this value, and it is fallible. `SigningKeyExportEvidence::exported` and `::unavailable` are total constructors of the INPUT wrapper over borrowed bytes, not of this value \u2014 they say what the signer offered, and the profile rule is applied afterwards. There is no `new`, `From`, `Default` or builder here, and `key()` is the only projection"
 generated-or-deserialization = "the derives are Debug/Clone/Copy/PartialEq/Eq. No Serialize, no Deserialize, and nothing decodes any of the three values \u2014 DER and exported SPKI bytes arrive as `&[u8]` and are adjudicated by the adapters, so no decoder fills a field positionally"
 test-only-construction = "the owner's `#[cfg(test)] mod tests` constructs only through `SigningKeyExportEvidence::interpret_signing_key`; no test-gated constructor and no test-gated field visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"
+
+[[probe]]
+id = "S12"
+unit = "proxy.certificate_identity_authority_boundary"
+kind = "in-crate-source-injection"
+package = "mcp-re-proxy"
+invariant = "no code outside `communication_assurance` can call CertificatePeerIdentityEvidence::new, so an identity value is paired with the certificate field it came from only inside the authority that read it"
+insertion_path = "mcp-re-proxy/src/structural_probe_s12.rs"
+insertion_parent = "mcp-re-proxy/src/lib.rs"
+insertion_declaration = "mod structural_probe_s12;"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0624"
+note = """
+THE BOUNDARY THE OWNER ACTUALLY CHOSE, AND IT IS NOT ONE FILE. `new` is `pub(super)`, and
+the owner argues for that in its own module documentation: "the seal is stated at the
+boundary it actually holds at: `pub(super)` means no code outside the authority can pair a
+value with a source, which is the property that matters. Narrowing it further — so that
+literally one file could call the constructor — would need a token or typestate device, and
+inventing one to tighten a boundary that is already the authority's own is ceremony, not a
+theorem."
+
+That reasoning is accepted here, so the unit's claim is the AUTHORITY boundary rather than a
+sole-producer one, and the probe is injected OUTSIDE `communication_assurance` — at the crate
+root, a sibling of the authority — because that is where the claim says the refusal happens.
+A probe injected inside the authority would compile, and compiling would be CORRECT: the
+claim does not say otherwise.
+
+S12 attacks the CONSTRUCTOR route. Its value and source are both perfectly legal — what is
+illegal is that this module is the one pairing them.
+"""
+construction = "// ADR-MCPRE-068 structural probe S12. Injected into a scratch copy by verify-structural;\n// this file cannot exist in the working tree, because it would not build \u2014 which is the\n// proposition it witnesses.\n//\n// Injected at the CRATE ROOT, outside `communication_assurance`. That is the boundary\n// this unit claims, and a probe inside the authority would compile by design.\nuse crate::communication_assurance::CertificatePeerIdentityEvidence;\nuse crate::communication_assurance::CertificateIdentitySource;\nuse crate::communication_assurance::PeerIdentityValue;\n\npub fn hostile() -> CertificatePeerIdentityEvidence {\n    let value = PeerIdentityValue::interpret(\"peer.example\").expect(\"well formed\");\n    CertificatePeerIdentityEvidence::new(value, CertificateIdentitySource::DnsSan) // STRUCTURAL-PROBE-SITE\n}\n"
+
+[probe.producer_paths]
+module-tree-visibility = "`new` is `pub(super)` on a type declared in `communication_assurance::certificate_peer_identity_evidence`, so the set of modules that may call it is exactly `communication_assurance` and its descendants \u2014 the authority. This probe is a sibling of the authority at the crate root, which is outside that set, and the claim is worded to that set rather than to one file"
+alternate-constructors = "`new` is the only associated function returning Self. There is no `From`, `Default` or builder, and `value()`/`source()` return a `&PeerIdentityValue` and a `Copy` source \u2014 never `&mut` or the representation"
+generated-or-deserialization = "the derives are Debug/Clone/PartialEq/Eq. No Serialize, no Deserialize; the value arrives as an interpreted `PeerIdentityValue` and the source from the policy the interpreter was given, so nothing fills the pair positionally"
+test-only-construction = "no test-gated constructor and no test-gated visibility widening exists. The authority's own tests call `new` because they ARE inside the boundary the claim names, which is what the claim permits and not a hole in it"
+
+[[probe]]
+id = "S13"
+unit = "proxy.certificate_identity_authority_boundary"
+kind = "in-crate-source-injection"
+package = "mcp-re-proxy"
+invariant = "no code outside `communication_assurance::certificate_peer_identity_evidence` can write the value/source pair directly, so the constructor's `pub(super)` boundary cannot be walked around with a struct literal"
+insertion_path = "mcp-re-proxy/src/structural_probe_s13.rs"
+insertion_parent = "mcp-re-proxy/src/lib.rs"
+insertion_declaration = "mod structural_probe_s13;"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+note = """
+THE BOUNDARY THE OWNER ACTUALLY CHOSE, AND IT IS NOT ONE FILE. `new` is `pub(super)`, and
+the owner argues for that in its own module documentation: "the seal is stated at the
+boundary it actually holds at: `pub(super)` means no code outside the authority can pair a
+value with a source, which is the property that matters. Narrowing it further — so that
+literally one file could call the constructor — would need a token or typestate device, and
+inventing one to tighten a boundary that is already the authority's own is ceremony, not a
+theorem."
+
+That reasoning is accepted here, so the unit's claim is the AUTHORITY boundary rather than a
+sole-producer one, and the probe is injected OUTSIDE `communication_assurance` — at the crate
+root, a sibling of the authority — because that is where the claim says the refusal happens.
+A probe injected inside the authority would compile, and compiling would be CORRECT: the
+claim does not say otherwise.
+
+S13 attacks the REPRESENTATION route, and it is a separate producer path from S12: a
+`pub(super)` constructor closes nothing if the fields are reachable. Here they are narrower
+than the constructor — bare-private to the defining module — so this route is refused even
+INSIDE the authority.
+"""
+construction = "// ADR-MCPRE-068 structural probe S13. Injected into a scratch copy by verify-structural;\n// this file cannot exist in the working tree, because it would not build \u2014 which is the\n// proposition it witnesses.\n//\n// Injected at the CRATE ROOT, outside `communication_assurance`. That is the boundary\n// this unit claims, and a probe inside the authority would compile by design.\nuse crate::communication_assurance::CertificatePeerIdentityEvidence;\nuse crate::communication_assurance::CertificateIdentitySource;\nuse crate::communication_assurance::PeerIdentityValue;\n\npub fn hostile() -> CertificatePeerIdentityEvidence {\n    CertificatePeerIdentityEvidence {\n        value: PeerIdentityValue::interpret(\"peer.example\").expect(\"well formed\"), // STRUCTURAL-PROBE-SITE\n        source: CertificateIdentitySource::DnsSan,\n    }\n}\n"
+
+[probe.producer_paths]
+module-tree-visibility = "both fields are BARE-PRIVATE to `communication_assurance::certificate_peer_identity_evidence` \u2014 narrower than `new`. So the literal route is refused even inside the authority, and this probe witnesses it from outside, where the pairing claim is stated. The two routes are separate producer paths and are attacked separately: S12 the constructor, S13 the representation"
+alternate-constructors = "`new` is the only associated function returning Self. There is no `From`, `Default` or builder, and `value()`/`source()` return a `&PeerIdentityValue` and a `Copy` source \u2014 never `&mut` or the representation"
+generated-or-deserialization = "the derives are Debug/Clone/PartialEq/Eq. No Serialize, no Deserialize; the value arrives as an interpreted `PeerIdentityValue` and the source from the policy the interpreter was given, so nothing fills the pair positionally"
+test-only-construction = "no test-gated constructor and no test-gated visibility widening exists. The authority's own tests call `new` because they ARE inside the boundary the claim names, which is what the claim permits and not a hole in it"
