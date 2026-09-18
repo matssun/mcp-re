@@ -718,7 +718,22 @@ the verifier-result claims has a named premise instead of an implied one. It sto
 acceptable if the algorithm is broken, or if the crate is replaced by an implementation
 whose acceptance criterion is not the scheme's.
 """
-scope = ["unit://http_profile.verifier_results", "boundary://boundary.crypto_primitives"]
+# SCOPE NARROWED by the ADR-MCPRE-068 Phase-1 split. It used to be trusted by one unit that
+# covered every verifier operation; it is trusted by the eight propositions that directly
+# assert a signature verified. `request_full_result` and `bound_response_full_result` are NOT
+# among them — each rests on a signature through its premise, not by asserting one itself, and
+# a premise reached through a theorem edge is not a premise this unit trusts.
+scope = [
+  "unit://http_profile.request_floor_result",
+  "unit://http_profile.bound_response_shared_facts",
+  "unit://http_profile.unbound_response_shared_facts",
+  "unit://http_profile.bound_response_seam_result",
+  "unit://http_profile.unbound_response_seam_result",
+  "unit://http_profile.delegated_bound_result",
+  "unit://http_profile.delegated_unbound_result",
+  "unit://http_profile.delegated_credential_chain",
+  "boundary://boundary.crypto_primitives",
+]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-061 MCPRE-136"
 review_requirement = "Owner review; any change of signature backend or pinned version."
@@ -740,7 +755,18 @@ labelling is built on, for the claims the prover does not reach. It stops being 
 if SHA-256 is broken for second preimages, or if a profile revision digests attacker-chosen
 structure without a domain separator.
 """
-scope = ["unit://http_profile.verifier_results", "boundary://boundary.crypto_primitives"]
+# SCOPE NARROWED by the ADR-MCPRE-068 Phase-1 split, to the six propositions that compare a
+# digest and conclude byte agreement: the three content-digest ones, the artifact bindings, and
+# the two that compare a `request_evidence` HANDLE against the request under verification.
+scope = [
+  "unit://http_profile.request_floor_result",
+  "unit://http_profile.bound_response_shared_facts",
+  "unit://http_profile.unbound_response_shared_facts",
+  "unit://http_profile.request_full_result",
+  "unit://http_profile.bound_response_full_result",
+  "unit://http_profile.delegated_bound_result",
+  "boundary://boundary.crypto_primitives",
+]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-061 MCPRE-136"
 review_requirement = "Owner review; any change to the evidence digest algorithm or its labelling."
@@ -790,7 +816,17 @@ the theorem. And it does not reach the other selectors — the delegated claims 
 seam for a credential's root issuer kid, where the signing key is authorized by the
 credential chain rather than by a seam answer, and THM-0099 says nothing about those.
 """
-scope = ["unit://http_profile.verifier_results", "boundary://boundary.unmodelled_own_behaviour"]
+# SCOPE NARROWED by the ADR-MCPRE-068 Phase-1 split, to the four propositions that RESOLVE
+# through the seam: the request slot, the two response slots, and the credential chain's root
+# issuer. The five that do not query it no longer trust it, which is the point of scoping a
+# premise at all.
+scope = [
+  "unit://http_profile.request_floor_result",
+  "unit://http_profile.bound_response_seam_result",
+  "unit://http_profile.unbound_response_seam_result",
+  "unit://http_profile.delegated_credential_chain",
+  "boundary://boundary.unmodelled_own_behaviour",
+]
 owner = "mats@sundvall.name"
 introduced_by = "ADR-MCPRE-061 MCPRE-136"
 review_requirement = "Owner review; any change to the seam's contract or to slot enforcement."
@@ -1422,7 +1458,7 @@ tool_specific_mechanism = "foreign-dependency"
 # advertises over.
 # ---------------------------------------------------------------------------
 #
-# Registered narrowly and for one reason. `proxy.trust_plane_runtime`'s claim (THM-0097) is
+# Registered narrowly and for one reason. `proxy.trust_resolution_window`'s claim (THM-0097) is
 # ONE replica wide and needs no premise: what a replica does with an event it was handed is
 # local, which is why the reader that produces the event is a separate unit,
 # `proxy.trust_epoch_source`, and this premise is scoped to THAT one. But the code PRINTS a fleet statement — "the trust cache flushes within one poll
@@ -1736,7 +1772,15 @@ It stops being acceptable if the epoch derivation moves to a digest without SHA-
 standing, or if anchor sets ever stop being operator-chosen — an anchor set an adversary
 could steer would need ASM-0037's strength, not this.
 """
-scope = ["unit://proxy.tls_listener_state", "boundary://boundary.crypto_primitives"]
+# SCOPE NARROWED by the ADR-MCPRE-068 Phase-1 split. The premise is about the trust-epoch
+# DERIVATION producing distinct digests for distinct anchor sets, which is exactly the
+# epoch-bound store's proposition — `proxy.listener_state_assembly` reads the epoch the store
+# publishes and does not derive one, and `proxy.client_certificate_posture` never touches it.
+scope = [
+  "unit://proxy.epoch_bound_session_store",
+  "unit://proxy.listener_state_assembly",
+  "boundary://boundary.crypto_primitives",
+]
 owner = "mats@sundvall.name"
 introduced_by = "r11 R11-586 owner ruling (security funnel round 11, tracker #879)"
 review_requirement = "Owner review; any change to the trust-epoch derivation's digest algorithm, and any deployment model in which the trust-anchor set is not operator-chosen."
