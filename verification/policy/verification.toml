@@ -4013,7 +4013,10 @@ paths = ["mcp-re-client-core/src/delegation_policy.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://client/delegation_policy/skew_seal"]
+evidence = [
+  "test://client/delegation_policy/skew_seal",
+  "mutation://client/delegation_policy/skew_seal",
+]
 # The seal is the claim. A configured skew beyond the bound is not CONSTRUCTIBLE, rather
 # than rejected later by whichever window happens to check — which is what would let the two
 # windows disagree about the tolerance they applied.
@@ -8411,7 +8414,10 @@ paths = ["mcp-re-client/src/anchors/mod.rs", "mcp-re-client/src/anchors/refreshe
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://client/anchor_refresh/last_good_and_expiry"]
+evidence = [
+  "test://client/anchor_refresh/last_good_and_expiry",
+  "mutation://client/anchor_refresh/last_good_and_expiry",
+]
 # The first three are the FLOOR: a published manifest raises it, a restart still refuses a
 # rolled-back one, and the ephemeral floor forgets — which is the control that keeps the
 # second from passing for a reason that has nothing to do with durability.
@@ -8473,7 +8479,10 @@ paths = ["mcp-re-client-proxy/src/manifest_floor.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://client/manifest_floor/monotone_by_construction"]
+evidence = [
+  "test://client/manifest_floor/monotone_by_construction",
+  "mutation://client/manifest_floor/monotone_by_construction",
+]
 # Three groups, and each is a defence in a different direction.
 #
 # DOWNWARD, which is what a floor is for: a recorded version survives a reopen, the maximum

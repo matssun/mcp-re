@@ -6644,3 +6644,96 @@ a request that does not exist -- which is what makes these two conjuncts rather 
 An audit reconciling a response against the request it answers reads the HANDLE, not the
 signature base, so a wrong handle is a record that cannot be checked against anything.
 """
+
+[[probe]]
+id = "M242-client-the-skew-is-clamped-at-construction"
+unit = "client.delegation_policy_seal"
+theorem = "THM-0091"
+conjunct = "the clock skew is clamped to the profile bound at construction, so no inhabitant carries an unbounded tolerance"
+path = "mcp-re-client-core/src/delegation_policy.rs"
+anchor = """
+            clock_skew: max_clock_skew
+                .clamp(0, mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND),
+"""
+weakening = """
+            clock_skew: max_clock_skew,
+"""
+expect_red = [
+  "lib#delegation_policy::policy_seal_tests::a_configured_skew_beyond_the_profile_bound_is_not_constructible",
+  "lib#delegation_policy::policy_seal_tests::a_negative_skew_narrows_to_zero_rather_than_skewing_the_window_backwards",
+]
+note = """
+THE SIGNATURE GATE IS NOT A SECOND CARRIER, and the historical defect is exactly that
+mistake. `VerifierPolicy::new` refuses a skew outside the profile bound, so the RFC 9421
+freshness window was always bounded -- and `DelegationExpectations` carries this number
+STRAIGHT THROUGH to `DelegationVerifyParams.max_clock_skew`, which widens the credential's
+`nbf`/`exp` with no cap of its own. A policy of 604800 therefore accepted a delegated
+credential a week past its `exp` while the signature gate silently clamped the same number,
+so one message was judged under two different notions of "close enough".
+
+THE SEAL IS THE PROPOSITION, not the clamp. The clamp used to live in a `bounded_clock_skew`
+helper every reader had to remember to call, and a reader that took the field directly got the
+unbounded number. Moving it into the only producer is what makes the bound a property of every
+INHABITANT rather than of the call sites somebody checked.
+"""
+
+[[probe]]
+id = "M243-client-an-expired-manifest-withdraws-rather-than-serves"
+unit = "client.anchor_refresh"
+theorem = "THM-0091"
+conjunct = "an EXPIRED manifest with no newer document accepted publishes an EMPTY anchor set rather than keeping the last good one"
+path = "mcp-re-client/src/anchors/refresher.rs"
+anchor = """
+            if now >= *manifest_expires_at {
+"""
+weakening = """
+            if false {
+"""
+expect_red = [
+  "lib#anchors::tests::an_expired_manifest_withdraws_the_anchors_rather_than_serving_on_them",
+]
+note = """
+THE TWO FAILURES LOOK IDENTICAL FROM THE REFRESH'S SIDE, which is why this branch exists. A
+refresh that fails because the publisher is briefly unreachable and one that fails while the
+loaded document has ALREADY EXPIRED both arrive here as `Err`. Keeping the last good anchors
+is right for the first and is precisely "serving on the stale trust picture the expiry check
+refuses" for the second.
+
+Under the weakening a client outlives its own trust picture QUIETLY: every request keeps
+verifying against anchors the issuer has retired, and nothing in the transcript distinguishes
+that from a healthy client. Publishing the empty set makes it fail closed LOUDLY -- every
+response fails as an untrusted issuer, the refresh keeps retrying, and the operator gets a
+signal.
+
+The manifest loader's own expiry refusal is not a second carrier: it refuses to LOAD an
+expired document, and this branch is about the document already in force when no replacement
+can be loaded at all.
+"""
+
+[[probe]]
+id = "M244-client-a-concurrent-raise-makes-the-accepted-version-unrecordable"
+unit = "client.manifest_floor"
+theorem = "THM-0091"
+conjunct = "a floor raised past the accepted version between the load's read and the record is reported rather than treated as success"
+path = "mcp-re-client-proxy/src/manifest_floor.rs"
+anchor = """
+        if durable > version {
+"""
+weakening = """
+        if false {
+"""
+expect_red = [
+  "lib#manifest_floor::tests::a_concurrent_raise_makes_the_accepted_version_unrecordable",
+]
+note = """
+THE ROLLBACK REACHED THROUGH A RACE INSTEAD OF A REPLAY. The manifest's own floor check
+happened at LOAD time and passed; another writer raised the floor between that read and this
+call, so the document that was accepted is one the floor has since refused. Reporting success
+here hands the caller anchors from exactly that document.
+
+The monotone directory is not a second carrier of this conjunct. Its maximum only grows, so
+the FLOOR is never walked back -- and that is a different proposition from the one this branch
+holds, which is that a caller is never handed anchors the current floor would refuse. The
+caller reads the error as "these anchors are not usable" and keeps what it had, which is the
+only safe answer when the two reads disagree.
+"""
