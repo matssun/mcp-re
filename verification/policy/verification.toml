@@ -2761,7 +2761,14 @@ paths = ["mcp-re-proxy/src/app.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://proxy/trust/composition_reads_only_projections"]
+evidence = [
+  "test://proxy/trust/composition_reads_only_projections",
+  # THM-0067's proposition IS a fact about `app.rs`'s production text — which request
+  # fields the root reads — so a text weakening is its honest falsifier, not a proxy for
+  # one. M172 reintroduces `max_clock_skew`, one of the six reads that LEFT the ordinary
+  # inventory on measurement and became an owner.
+  "mutation://proxy/trust/composition_reads_only_projections",
+]
 # The guard is a source-text inventory, so its own self-check is part of the evidence: a
 # rule that cannot detect a new raw read is a rule that passes vacuously. It runs in the
 # `integration` target and nowhere else — a lane identity, not a detail.
@@ -3393,6 +3400,17 @@ exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
 evidence = ["test://proxy/serving/dispatch_commitment_boundary", "mutation://proxy/serving/dispatch_commitment_boundary"]
+# ADR-MCPRE-069 disposition: REGISTER. These two gates are the production carriers of
+# THM-0051 (the verification product's provenance across the pipeline) and THM-0052 (the
+# posture's provenance from the configured policy). Both propositions are `critical`, both
+# gates run in `ci.yml` and in `local_gate.sh`, and until this entry NO unit named either
+# one — so softening a rule moved no digest and invalidated no attestation. They are not in
+# `paths`: a `.py` entry collapses a cargo unit's ecosystem. They enter the fingerprint as
+# their own component, and M174/M175 are the falsifiers that make them load-bearing.
+gate_controls = [
+  "scripts/serving_product_provenance_gate.py",
+  "scripts/authorization_provenance_gate.py",
+]
 # What each control measures, in the order the boundary is crossed. The last one is the
 # separation this unit does NOT claim: an unconfigured deployment releases a body too, so
 # possession proves the decision was TAKEN, never that a policy permitted.
@@ -3488,6 +3506,13 @@ evidence = [
   # writes no record, so `attest` issues the unit from the ordinary battery regardless.
   "mutation://proxy/refusal/pre_dispatch_retention",
 ]
+# ADR-MCPRE-069 disposition REGISTER. THM-0081's own scope names this gate's clause 12c as
+# what holds the served mint to one call site ACROSS THE WORKSPACE — a width no cargo control
+# in this crate can reach — and says why a type cannot do it: `ServedHttpResponse` is a wire
+# frame with public fields that the async fleet, the blocking harness and external embedders
+# all construct, so "deleting the battery leaves an out-of-lifecycle exit compiling". Until
+# now no unit's closure covered the gate. M177 is the falsifier.
+gate_controls = ["scripts/refusal_provenance_gate.py"]
 # Six members, and the last is not decoration. Four rules over source text are vacuously
 # true the moment a matcher stops matching, so the battery that would report a clean pass
 # over a moved subtree is the battery that must also demonstrate it still detects each
@@ -5222,7 +5247,14 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://proxy/serving/identity_provenance"]
+evidence = [
+  "test://proxy/serving/identity_provenance",
+  # ADR-MCPRE-069 disposition REGISTER. THM-0080 names this gate, in its own text, as what
+  # establishes it, and until now no unit's closure covered it: the rules could be softened
+  # under a standing PASS. M176 is the falsifier.
+  "mutation://proxy/serving/identity_provenance",
+]
+gate_controls = ["scripts/serving_identity_provenance_gate.py"]
 # The third member is the load-bearing one: the mechanism that forbids pairing an acceptance
 # from one relationship with an identity from another credential is the ABSENCE of a
 # parameter, which is a property of a signature — and a signature is what an edit widens

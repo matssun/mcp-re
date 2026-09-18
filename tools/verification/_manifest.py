@@ -11,6 +11,7 @@ verification toolchain exists.
 
 from __future__ import annotations
 
+import os
 import sys
 import tomllib
 from collections.abc import Iterable
@@ -124,6 +125,13 @@ _UNIT_KEYS = {
     # the four evidence classes.
     "evidence_class",
     "direct_consequence_severity",
+    # ADR-MCPRE-068 Phase 1. A control that is a SCRIPT rather than a test symbol: a gate
+    # that reads production source and refuses a violating pattern. It is declared here and
+    # not in `tested_symbols` because the two are resolved by different runners — a cargo or
+    # pytest selector names a symbol inside a compiled battery, and this names an executable
+    # the lane invokes over the tree. Flattening them would make every symbol resolver have
+    # to recognise a path that is not a symbol.
+    "gate_controls",
     *MEASUREMENT_KEYS,
 }
 _EDGE_KEYS = {"kind", "from", "to", "contract", "sealed", "sealed_by", "rationale"}
@@ -203,6 +211,51 @@ def _module_candidates(package: str, symbol_path: str) -> list[str]:
         out.append(f"{package}/src/{stem}.rs")
         out.append(f"{package}/src/{stem}/mod.rs")
     return out
+
+
+def _validate_gate_controls(uwhere: str, unit: dict) -> None:
+    """Every declared gate control exists in the tree and can be started.
+
+    A gate control is a CONTROL: a probe's `expect_red` may name it, and the lane runs it to
+    see whether a weakening turns it red. So it must exist and be runnable, or the lane
+    would report a measurement failure as a finding about the code.
+
+    The claim's closure must ALSO cover it, and that is not bookkeeping. A gate's rules are
+    the production carrier of the proposition — weakening a rule weakens the claim exactly
+    as deleting a runtime check does. A control outside the closure could be softened under
+    a standing PASS, which is the ADR-MCPRE-069 defect these two gates were found in.
+
+    That coverage is NOT `paths` membership, and trying it first is how the reason got
+    written down: a `.py` entry in a cargo unit's paths collapses `unit_ecosystem` to None,
+    and the test lane then reports every `tested_symbols` member as naming no runnable
+    target. The unit's source closure is single-ecosystem by construction. So the scripts
+    are digested as their own fingerprint component (`_fingerprint._unit_components`), and
+    what this function owes is the part a digest cannot state: that the control EXISTS and
+    can START.
+
+    "Can start" is READABLE, not executable, and the difference is measured rather than
+    assumed: both registered gates are invoked as `python3 <path>` — by `ci.yml`, by
+    `local_gate.sh` and by this lane — so the execute bit decides nothing about whether they
+    run. `authorization_provenance_gate.py` is mode 100644 today and runs in CI on every
+    push. Demanding the bit here would be a requirement no invoker has, failing a control
+    that starts perfectly well; the execute bit is `merge_path_gate.py`'s question, about
+    scripts that ARE invoked by path.
+    """
+    declared = [str(entry) for entry in unit.get("gate_controls", [])]
+    if not declared:
+        return
+    for control in declared:
+        script = REPO_ROOT / control
+        if not script.is_file():
+            raise ManifestError(
+                f"{uwhere}: gate_control {control!r} is not a file in the tree. A control "
+                f"the lane cannot run is not evidence, however it is described."
+            )
+        if not os.access(script, os.R_OK):
+            raise ManifestError(
+                f"{uwhere}: gate_control {control!r} cannot be read, so the lane cannot "
+                f"start it and would report its own inability as a verdict about the code."
+            )
 
 
 def _validate_test_features(uwhere: str, unit: dict) -> None:
@@ -600,6 +653,7 @@ def load_verification() -> dict:
                 f"{uwhere}: declares `tested_symbols` but no test:// evidence entry "
                 f"claims them, so nothing consumes what the lane would measure."
             )
+        _validate_gate_controls(uwhere, unit)
         _validate_test_features(uwhere, unit)
         _validate_test_package(uwhere, unit)
         _validate_in_crate_selectors(uwhere, unit)

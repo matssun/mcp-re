@@ -596,15 +596,6 @@ root_reachable = false
 status = "unreviewed"
 
 [[obligation]]
-unit = "proxy.serving_identity_provenance"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "critical"
-inherited_severity = "critical"
-root_reachable = true
-status = "unreviewed"
-
-[[obligation]]
 unit = "proxy.signing_credential_provenance"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "critical"
@@ -619,15 +610,6 @@ obligation = "a registered mutation:// falsifier attacking this proposition's pr
 effective_severity = "critical"
 direct_consequence_severity = "high"
 inherited_severity = "critical"
-root_reachable = true
-status = "unreviewed"
-
-[[obligation]]
-unit = "proxy.trust_composition_root"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "high"
-direct_consequence_severity = "high"
-inherited_severity = "high"
 root_reachable = true
 status = "unreviewed"
 

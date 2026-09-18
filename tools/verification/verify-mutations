@@ -122,7 +122,7 @@ def claims_mutation_evidence(unit: dict) -> bool:
 
 def declared_battery(
     units: dict, probe: dict, where: str
-) -> tuple[str, dict[str, list[str]], list[str]]:
+) -> tuple[str, dict[str, list[str]], list[str], list[str]]:
     """The unit's package and its declared members, grouped by cargo target.
 
     Read from `verification.toml` rather than restated here: the probe names controls, and
@@ -143,8 +143,14 @@ def declared_battery(
     unit = units.get(probe["unit"])
     if unit is None:
         raise ManifestError(f"{where}: unit {probe['unit']!r} is not in verification.toml")
+    # A probe whose every expectation is a GATE names no compiled control, so it needs no
+    # cargo package — and demanding one would refuse the probe on a Python or TypeScript unit
+    # whose carrier is a source-text gate over the whole workspace. That is the shape of
+    # THM-0094's and THM-0095's carriers, so the refusal would fall exactly on the two SDK
+    # system roots this lane was extended to reach.
+    gate_only = all(str(n).startswith("gate#") for n in probe["expect_red"])
     package = test_package_for(unit)
-    if package is None:
+    if package is None and not gate_only:
         raise ManifestError(f"{where}: unit {probe['unit']!r} has no runnable test package")
     grouped: dict[str, list[str]] = {}
     declared: set[str] = set()
@@ -155,12 +161,18 @@ def declared_battery(
             # Doctests are compile-fail controls; a runtime weakening cannot move them.
             continue
         grouped.setdefault(target, []).append(path)
+    # ADR-MCPRE-068 Phase 1. A gate control is declared in its own field and resolved by a
+    # different runner, so it joins the battery here rather than being a `tested_symbols`
+    # member a symbol resolver would have to recognise as a path.
+    gates = [str(g) for g in unit.get("gate_controls", [])]
+    declared.update(f"gate#{g}" for g in gates)
     unknown = [name for name in probe["expect_red"] if name not in declared]
     if unknown:
         raise ManifestError(
             f"{where}: expect_red names {unknown}, which unit {probe['unit']!r} does not "
-            f"declare as tested_symbols. A control outside the battery is not evidence. "
-            f"Members are named verbatim, as `tests/<target>#<symbol>` or `lib#<symbol>`."
+            f"declare as tested_symbols or gate_controls. A control outside the battery is "
+            f"not evidence. Members are named verbatim, as `tests/<target>#<symbol>`, "
+            f"`lib#<symbol>` or `gate#<script path>`."
         )
     doctests = [name for name in probe["expect_red"] if name.startswith("doc#")]
     if doctests:
@@ -170,7 +182,12 @@ def declared_battery(
             f"expecting it could never be satisfied honestly."
         )
     features = sorted(str(f) for f in unit.get("test_features", []))
-    return package, grouped, features
+    if gate_only:
+        # Run only what the probe NAMES. The adjudicator reads nothing but `expect_red`, so a
+        # cargo battery here would be measured and discarded — and on a unit whose symbols are
+        # `pytest#` or `vitest#` it cannot be run at all, because `target_argv` speaks cargo.
+        grouped = {}
+    return package, grouped, features, gates
 
 
 def adjudicate(probe: dict, observed: dict[str, str]) -> tuple[list[str], list[str]]:
@@ -244,6 +261,47 @@ def run_battery(
                 # one target's failure answer for another's.
                 results[f"{target}#{name.strip()}"] = outcome.strip()
     return True, results
+
+
+def run_gates(tree: Path, gates: list[str]) -> dict[str, str]:
+    """Each declared gate control's result, run over the WEAKENED copy.
+
+    Reported in the same vocabulary as a libtest line — `FAILED` or `ok` — because the
+    adjudicator asks one question of every control and must not learn where it came from.
+
+    Run unconditionally, and NOT behind the cargo compile check. A source-text gate reads
+    the tree; it neither needs nor waits for a build, and a weakening that happens to break
+    compilation must not silently take the gate's verdict with it. A gate that cannot start
+    at all is left ABSENT rather than recorded green, which the adjudicator already treats
+    as a measurement failure — the one thing a control must never do is report a verdict it
+    did not reach.
+    """
+    results: dict[str, str] = {}
+    for control in gates:
+        if not (tree / control).is_file():
+            # NOT red. A probe whose weakening deleted or renamed the gate would otherwise
+            # be satisfied by the control's disappearance — the sharpest false positive this
+            # kind of control makes possible, and the mirror of the false green the
+            # adjudicator was already built to refuse.
+            continue
+        try:
+            proc = subprocess.run(
+                [sys.executable, control],
+                cwd=tree,
+                capture_output=True,
+                text=True,
+                env=_env(),
+            )
+        except OSError:
+            continue
+        if "Traceback (most recent call last)" in proc.stderr:
+            # The gate CRASHED rather than refusing. A non-zero exit means "this tree
+            # violates the rule" only when the gate reached a verdict; a weakening that
+            # breaks the gate's own parse produces the same status and proves nothing about
+            # the production check. Left absent, which reads as a measurement failure.
+            continue
+        results[f"gate#{control}"] = "FAILED" if proc.returncode != 0 else "ok"
+    return results
 
 
 def _env() -> dict:
@@ -406,14 +464,20 @@ def main() -> int:
         for index, probe in enumerate(probes):
             where = f"probe {probe['id']}"
             try:
-                package, grouped, features = declared_battery(units, probe, where)
+                package, grouped, features, gates = declared_battery(units, probe, where)
                 original = apply(tree, probe, where)
             except ManifestError as exc:
                 print(f"  FAIL {probe['id']}: {exc}", file=sys.stderr)
                 failures.append(probe["id"])
                 continue
             try:
-                ran, results = run_battery(tree, package, grouped, target_dir, features)
+                if grouped:
+                    ran, results = run_battery(tree, package, grouped, target_dir, features)
+                else:
+                    # Nothing to compile, so nothing can fail to compile. `ran` is about the
+                    # CARGO battery; a gate reads the tree and reports for itself.
+                    ran, results = True, {}
+                results.update(run_gates(tree, gates))
             finally:
                 (tree / probe["path"]).write_text(original)
             if not ran:
