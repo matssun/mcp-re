@@ -1563,7 +1563,7 @@ evidence = [
 [[unit]]
 id = "proxy.credential_key_correspondence"
 class = "V0"
-description = "Credential/key correspondence: two independently interpreted public keys, of the required profile, are the same key — with the refusal attributed to the side that failed."
+description = "WHAT `establish_credential_key_correspondence` DECIDES AND HOW IT ATTRIBUTES A REFUSAL: each side is interpreted by its own mechanism adapter under the one profile rule, the relation accepts only when the two keys are equal, an absent credential is not an unreadable one, a signer that exported nothing is not a signer that exported rubbish, two legal but different keys are a mismatch rather than a side failure, and a mismatch carries no key material. That a caller cannot FABRICATE either operand or the resulting fact value is a compile-time property of three module boundaries, and belongs to `proxy.credential_key_correspondence_sole_producer`."
 paths = [
   "mcp-re-proxy/src/communication_assurance/credential_key_correspondence.rs",
   "mcp-re-proxy/src/communication_assurance/credential_public_key_evidence.rs",
@@ -1616,6 +1616,47 @@ tested_symbols = [
   "lib#tls::delegated_credential_key_correspondence_tests::the_accepting_case_yields_the_one_key_both_sides_presented",
 ]
 pilot = "verus-candidate"
+
+# ---------------------------------------------------------------------------
+#
+# THREE BOUNDARIES, ONE PROPOSITION — and the claim is worded as that conjunction rather than
+# as a property of one type, because a probe attacking one of the three would leave the other
+# two unwitnessed (ADR-MCPRE-068 §12.1).
+#
+# What correspondence is FOR is the relation between two PARTIES, not between two values.
+# `CredentialPublicKeyEvidence` and `CryptographicSigningKeyEvidence` hold the same field —
+# one `Ed25519PublicKeyValue` — and exist as two types precisely so that, in the owner's own
+# words, "a caller cannot pair one party's key with another party's provenance". That
+# separation is worth exactly what the two construction boundaries are worth, and until now
+# nothing attacked either. So:
+#
+#   S10  a credential key nobody read out of a credential
+#   S11  a signer key no signer exported
+#   S09  the FACT value itself — which is also `DelegatedCertResolver`'s `_correspondence`
+#        witness (S06). A forgeable fact would leave S06's boundary closed around a token
+#        that proves nothing.
+#
+# The owner already gives the argument in prose. `correspond` is private because "a published
+# relation would let a caller pair two keys it fabricated"; the three probes are what refuse
+# the fabrication rather than deprecate it.
+
+[[unit]]
+id = "proxy.credential_key_correspondence_sole_producer"
+class = "V0"
+description = "Neither operand of the correspondence relation nor its result can be assembled outside its owning module: `CredentialPublicKeyEvidence` comes only from `interpret_credential_public_key` over a credential's leaf SPKI, `CryptographicSigningKeyEvidence` only from `interpret_signing_key` over what a signer exported, and `CredentialKeyCorrespondenceFacts` only from the private relation `correspond`. So possessing the facts means two INDEPENDENTLY OBTAINED keys were found equal — the provenance separation the two identically shaped evidence types exist for — rather than that some caller presented the same value twice. States nothing about what the relation decides or how it attributes a refusal, which is `proxy.credential_key_correspondence`'s."
+paths = [
+  "mcp-re-proxy/src/communication_assurance/credential_key_correspondence.rs",
+  "mcp-re-proxy/src/communication_assurance/credential_public_key_evidence.rs",
+  "mcp-re-proxy/src/communication_assurance/signing_key_evidence.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+# The fact this seals is the one the delegated TLS resolver holds as its construction
+# witness, and behind that is the key-export gap the delegated path was built to close.
+direct_consequence_severity = "critical"
+evidence = [
+  "structural://proxy/communication_assurance/credential_key_correspondence_sole_producer",
+]
 
 [[edge]]
 # Producer -> consumer. Both sides of the relation are established BY interpreting a key

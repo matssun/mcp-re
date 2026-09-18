@@ -94,6 +94,7 @@ not an omission to hide.
 | proxy.continuation_materialization_shared | V0 | _none_ | 0 |
 | proxy.credential_currency | V0 | THM-0032 | 1 |
 | proxy.credential_key_correspondence | V0 | THM-0026 | 1 |
+| proxy.credential_key_correspondence_sole_producer | V0 | _none_ | 0 |
 | proxy.cross_machine_legality | V0 | THM-0049 | 0 |
 | proxy.current_authenticated_peer | V0 | THM-0033 | 0 |
 | proxy.custody_exposure | V0 | THM-0064 | 0 |

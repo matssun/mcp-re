@@ -631,6 +631,40 @@ verify-structural --probe S08
 S08's hostile value is illegal on all three of the owner's rules at once. `interpret` refuses
 it; the probe asks whether refusing it is avoidable.
 
+### The fifth: credential/key correspondence, where one proposition needs three boundaries
+
+**Landed 2026-09-18, ADR-MCPRE-068 Phase 0D-7.** The first four splits sealed one value each.
+This owner's claim spans three, and the claim is worded as that conjunction rather than as a
+property of one type — because a probe attacking one would leave the other two unwitnessed.
+
+What correspondence is *for* is a relation between two **parties**, not between two values.
+`CredentialPublicKeyEvidence` and `CryptographicSigningKeyEvidence` hold the same field — one
+`Ed25519PublicKeyValue` — and exist as two types precisely so that, in the owner's own words,
+*"a caller cannot pair one party's key with another party's provenance"*. That separation is
+worth exactly what the two construction boundaries are worth.
+
+| probe | what a forgery would buy | |
+|---|---|---|
+| S10 | a credential key nobody read out of a credential | `E0451` |
+| S11 | a signer key no signer exported | `E0451` |
+| S09 | the fact value itself — which is also `DelegatedCertResolver`'s `_correspondence` witness (S06). A forgeable fact leaves S06's boundary closed around a token that proves nothing | `E0451` |
+
+The owner already gives the argument in prose: `correspond` is private because *"a published
+relation would let a caller pair two keys it fabricated"*. The three probes are what refuse
+the fabrication rather than deprecate it.
+
+```text
+cargo test -p mcp-re-proxy --lib -- …credential_key_correspondence:: …credential_public_key_evidence:: \
+                                    …signing_key_evidence:: tls::delegated_credential_key_correspondence_tests::
+    test result: ok. 22 passed; 0 failed       # with all three fields opened to pub(crate)
+
+verify-structural --probe S09 --probe S10 --probe S11
+    FAIL: 3 of 3 probe(s) did not witness a closed construction boundary
+```
+
+Twenty-two tests, including the eleven cross-machine ones in `tls.rs`, green against three
+boundaries that no longer hold.
+
 The remaining unit-backed sealed owners follow the same split, one owner per change.
 
 ## Open

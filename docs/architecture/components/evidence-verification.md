@@ -391,6 +391,9 @@ is indistinguishable from an unconsidered one. Private fields alone are not a se
 | S06 | in-crate | no code outside `delegated_tls::resolver` can assemble a `DelegatedCertResolver` | `E0451` |
 | S07 | in-crate | no code outside `communication_assurance::ed25519_public_key` can place bytes in an `Ed25519PublicKeyValue` | `E0451` |
 | S08 | in-crate | no code outside `communication_assurance::peer_identity_value` can put a string in a `PeerIdentityValue` | `E0451` |
+| S09 | in-crate | no code outside `communication_assurance::credential_key_correspondence` can assemble `CredentialKeyCorrespondenceFacts` | `E0451` |
+| S10 | in-crate | no code outside `communication_assurance::credential_public_key_evidence` can assemble `CredentialPublicKeyEvidence` | `E0451` |
+| S11 | in-crate | no code outside `communication_assurance::signing_key_evidence` can assemble `CryptographicSigningKeyEvidence` | `E0451` |
 
 S04 is the one ADR-MCPRE-068 §12.1 split out of a composite unit, and 0D-3 completed the
 split in the registry: M113/M114/M115 falsify the constructor's runtime refusal of an illegal
@@ -415,6 +418,13 @@ owner's second constructor `for_point` is total and no illegal input exists to a
 invariant is the canonical RFC 8410 encoding rather than a predicate over the bytes, so the
 probe attacks where the bytes may be PLACED. A probe asserting that one constructor exists
 would have stated something false about this owner.
+
+S09–S11 are one proposition over three boundaries, and show why the claim is worded as a
+conjunction: correspondence is a relation between two PARTIES, so forging either operand
+(S10, S11) defeats it exactly as forging the result (S09) does, and a probe attacking one
+would leave the other two unwitnessed. S09's value is also the `_correspondence` witness
+`DelegatedCertResolver` holds, so a forgeable fact would leave S06's boundary closed around a
+token that proves nothing.
 
 ### 9.4 The MEASURED apparatus control
 
