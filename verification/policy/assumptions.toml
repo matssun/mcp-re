@@ -1336,7 +1336,7 @@ tool_specific_mechanism = "foreign-dependency"
 
 [[assumption]]
 id = "ASM-0042"
-description = "WITHDRAWN — discharged by unit://sdk_python.exchange_path."
+description = "WITHDRAWN — discharged by unit://sdk_python.bounded_read."
 justification = """
 Was: the Python member's aggregate read bound was evaluated between `response.read(want)`
 calls while `http.client` fills to `amt`, so a peer trickling under the per-recv socket
@@ -1419,7 +1419,7 @@ tool_specific_mechanism = "foreign-dependency"
 
 [[assumption]]
 id = "ASM-0043"
-description = "WITHDRAWN — discharged by unit://sdk_typescript.exchange_path."
+description = "WITHDRAWN — discharged by unit://sdk_typescript.post_close_emission."
 justification = """
 Was: the TypeScript member's post-queue guard read `AbortSignal.aborted`, so the property
 that a request still waiting for a concurrency slot is not signed and sent after `close()`
