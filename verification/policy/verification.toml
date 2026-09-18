@@ -6293,20 +6293,39 @@ tested_symbols = [
   "tests/scitt_retained_corpus_test#the_manifest_describes_the_committed_artifacts",
 ]
 
-# v0.17 trust-plane ownership slice. The runtime trust plane — ADR-MCPS-021's three
-# revocation tiers, the `--trust` reload, and the MCPS-84 trust-epoch source — implemented
-# security-bearing behaviour that no unit owned, while the status prose called its
-# cross-replica half "proved". The census record is
-# `verification/reviews/packets/trust-plane-ownership-2026-09-05.md`; this entry is the
-# owner it found the tree could honestly register, and it is deliberately ONE REPLICA wide.
+# v0.17 trust-plane ownership slice, re-partitioned by ADR-MCPRE-068 Phase 1. The runtime
+# trust plane — ADR-MCPS-021's three revocation tiers, the `--trust` reload, and the MCPS-84
+# trust-epoch source — implemented security-bearing behaviour that no unit owned, while the
+# status prose called its cross-replica half "proved". The census record is
+# `verification/reviews/packets/trust-plane-ownership-2026-09-05.md`, and the units below are
+# the owner it found the tree could honestly register, deliberately ONE REPLICA wide.
+#
+# It registered them as ONE unit, `proxy.trust_plane_runtime`, and that unit was the semantic
+# authority for TWO claims: THM-0097, what the resolver may ANSWER under the snapshot it has,
+# and THM-0100, how often that snapshot is RE-READ. They are not the same authority and the
+# theorem layer already says so — THM-0100 `depends_on` THM-0097 and its scope says "nothing
+# about the read itself beyond its success or failure", which is a boundary between two
+# owners written as a disclaimer. The eleven probes partitioned along the same line without
+# being touched: M92–M95, M98, M99, M135 and M148 turn a resolution control red, M107–M109 a
+# cadence control.
+#
+# `mod.rs` and `reload/mod.rs` are members of BOTH, and that is the honest reading rather than
+# an unsplit residue: each file holds one function of each authority. `reload/mod.rs` runs the
+# cadence loop (THM-0100) and carries the keep-last-good budget whose exhaustion closes the
+# resolver (THM-0097); `mod.rs` holds the plane and its terminal `Drop` transition (THM-0097)
+# and `fleet_trust_bound`, the arithmetic the operator is told (THM-0100). Splitting the FILES
+# to make the closures disjoint would move code to satisfy a partition, which is the thing
+# CLAUDE.md's threshold rule forbids; the fingerprints moving together is the true statement
+# that one file serves two owners.
+
 [[unit]]
-id = "proxy.trust_plane_runtime"
+id = "proxy.trust_resolution_window"
 class = "V0"
-description = "What ONE replica's request-trust resolver may answer under its local trust state, taking the materialized snapshot as an input authority: a cached positive binding answers for at most T and never past the deadline it was first cached under; an invalidation event delivered to the plane — a per-key eviction or a coarse flush — strips the cached binding's authority before the next lookup, so the next answer is the local snapshot's; a snapshot that has stopped being maintained, and a snapshot that cannot answer past T, refuse with Unavailable rather than serving; and no step — flush, eviction, outage, reload — can widen what is served. How an event is PRODUCED from the shared counter is `proxy.trust_epoch_source`'s; what the snapshot represents, and how the trust document reaches this replica, are nobody's claim here."
+description = "What ONE replica's request-trust resolver may answer under the trust state it HAS, taking the materialized snapshot as an input authority: a cached positive binding answers for at most T and never past the deadline it was first cached under; an invalidation event delivered to the plane — a per-key eviction or a coarse flush — strips the cached binding's authority before the next lookup, so the next answer is the local snapshot's; a snapshot that has stopped being maintained, and a snapshot that cannot answer past T, refuse with Unavailable rather than serving; and no step — flush, eviction, outage, reload — can widen what is served. How OFTEN the snapshot is re-read is `proxy.trust_reload_cadence`'s; how an event is PRODUCED from the shared counter is `proxy.trust_epoch_source`'s; what the snapshot represents, and how the trust document reaches this replica, are nobody's claim here."
 paths = [
   # The plane: what it owns, what it hands out, and the terminal transition its `Drop`
-  # makes. `fleet_trust_bound` lives here too — the operator-facing bound is part of what
-  # this unit measures, because a bound the code prints is a claim the code makes.
+  # makes. NOT `fleet_trust_bound`, which is in the same file and belongs to the cadence
+  # unit — see the note above on why the file is a member of both rather than split.
   "mcp-re-proxy/src/trust_plane/mod.rs",
   # Tier 1 and the bounded window every caching tier runs under, including the
   # tighten-only rule: an invalidated entry's deadline is a ceiling on whatever replaces it.
@@ -6322,15 +6341,18 @@ paths = [
   "mcp-re-proxy/src/trust_plane/revocation_resolver.rs",
   # The three-state freshness latch and the resolver that refuses on it.
   "mcp-re-proxy/src/trust_plane/freshness.rs",
-  # The reload cycle, the bounded keep-last-good budget, and the halt exit.
+  # For the BOUNDED KEEP-LAST-GOOD BUDGET only: the fifth consecutive bad read closes the
+  # resolver, which is this unit's "a snapshot that has stopped being maintained refuses".
+  # The cycle's timing and its swap are the cadence unit's.
   "mcp-re-proxy/src/trust_plane/reload/mod.rs",
   # The other way the reload stops: the body panics, and no later read may report the store
   # current again. A distinct fact from the budget next door, which the next read recovers.
   "mcp-re-proxy/src/trust_plane/reload/supervision.rs",
-  # One read of `--trust`, two products that cannot disagree.
+  # One read of `--trust`, two products that cannot disagree — and the read bound, which is
+  # this unit's because a truncated document is a SOFTENED snapshot: refusing the read makes
+  # the failure visible to the budget above instead of serving a document the operator did
+  # not write. No theorem claims the bound in terms; recorded in the Phase-1 packet.
   "mcp-re-proxy/src/trust_plane/snapshot.rs",
-  # The delivered window R + T, stated as arithmetic. Claim surface, and measured as one.
-  "mcp-re-proxy/src/trust_plane/delivered_window.rs",
   # NOT `trust_epoch.rs`: the epoch→event source is `proxy.trust_epoch_source`, split out
   # on 2026-09-05 when THM-0097 was registered. Assumption reach is derived scope → unit →
   # theorem, so a unit holding the reader would carry ASM-0044 into a theorem that is true
@@ -6352,13 +6374,13 @@ paths = [
   # with its own baseline and its own regression rule, and it already has an owner.
   # NOT `startup_plan.rs` (`TrustEpochPlan`) or `app.rs` (`build_actor_resolver`): the
   # configuration projection and the composition seam belong to the units that own them.
+  # NOT `delivered_window.rs`: arithmetic over R and T, which is the cadence unit's claim.
 ]
 exported_contracts = []
-# TWO evidence classes. Every conjunct in the description is a check that could be deleted
-# with the battery still green unless a control notices, and several of them had exactly
-# that shape before this slice: the poller body that makes "within one poll interval" true
-# had no test at all, and the source and the cache were each tested against a fake of the
-# other. The probes name the deletions; the controls below are what turn red.
+# Every conjunct in the description is a check that could be deleted with the battery still
+# green unless a control notices, and several of them had exactly that shape before this
+# slice: the source and the cache were each tested against a fake of the other. The probes
+# name the deletions; the controls below are what turn red.
 evidence_class = "tested"
 direct_consequence_severity = "critical"
 evidence = [
@@ -6369,13 +6391,13 @@ evidence = [
 #
 # Every member is an in-process control over ONE replica, driving the plane through the
 # `InvalidationChannel` seam with the in-memory reference channel — the theorem is about the
-# reaction, and the reaction is the same whichever channel delivers the event. The lane that drives a real Redis
-# — `tests/integration_ext/redis_trust_epoch_e2e_test.rs` — is deliberately NOT a member:
-# it self-skips by returning `ok` when no store is provisioned, so a `test://` member naming
-# it would read as PASS having measured nothing (the standing hazard, ADR-MCPRE-061 §2
-# class 8). It runs in `live-infra-e2e.yml` nightly under `MCP_RE_REQUIRE_LIVE_INFRA=1`,
-# which is where it is binding, and it is cited in the census packet as live evidence of
-# the reader — not as this unit's battery.
+# reaction, and the reaction is the same whichever channel delivers the event. The lane that
+# drives a real Redis — `tests/integration_ext/redis_trust_epoch_e2e_test.rs` — is
+# deliberately NOT a member: it self-skips by returning `ok` when no store is provisioned, so
+# a `test://` member naming it would read as PASS having measured nothing (the standing
+# hazard, ADR-MCPRE-061 §2 class 8). It runs in `live-infra-e2e.yml` nightly under
+# `MCP_RE_REQUIRE_LIVE_INFRA=1`, which is where it is binding, and it is cited in the census
+# packet as live evidence of the reader — not as this unit's battery.
 #
 # The GKE Proof 2 (`docs/security/gke-multi-replica-validation.sh`) is not evidence for
 # this unit at all: it exercises the SIGNING-side epoch label (a credential minted under the
@@ -6423,24 +6445,61 @@ tested_symbols = [
   "lib#trust_plane::freshness_transition_tests::a_reload_completing_inside_the_drop_join_window_cannot_revive_the_resolver",
   "lib#trust_plane::handle_lifetime_tests::a_resolver_that_outlives_the_plane_fails_closed",
   "lib#trust_plane::handle_lifetime_tests::a_plane_materialized_without_a_reload_cadence_still_fails_closed_after_drop",
-  # --- the reload: the swap, the budget, the halt ---
+  # --- the two ways the reload STOPS, both of which close this resolver ---
   "lib#trust_plane::reload::reload_loop_tests::a_halted_reloader_marks_the_trust_store_stale",
-  # The OTHER way the reload stops, and the one nothing measured: the body panics. Asserted
-  # on `StaleFailsClosed::resolve` — what a request meets — because the flag and the surface
+  "lib#trust_plane::reload::reload_loop_tests::the_failure_budget_fails_closed_on_exactly_the_fifth_consecutive_bad_read",
+  # The OTHER way, and the one nothing measured: the body panics. Asserted on
+  # `StaleFailsClosed::resolve` — what a request meets — because the flag and the surface
   # agreeing is one claim, and only the surface is the deployment's answer. Deleting the
   # whole supervisor used to leave every test in the workspace green (R11-726).
   "lib#trust_plane::reload::supervision::tests::a_panicking_trust_reload_thread_makes_the_resolver_refuse",
-  "lib#trust_plane::reload::reload_loop_tests::a_reload_cycle_replaces_the_map_the_resolver_answers_from",
+]
+# No `test_features`: nothing in this closure is feature-gated. The reader's controls are
+# `proxy.trust_epoch_source`'s, which names `redis_replay`.
+
+[[unit]]
+id = "proxy.trust_reload_cadence"
+class = "V0"
+description = "How often ONE replica re-reads `--trust`, and what it tells the operator the resulting exposure is: the reload worker performs one halt-aware sleep of exactly the declared cadence R and then one read, for as long as it runs; a successful cycle swaps the resolver's snapshot and the signer directory atomically and together, before the next request resolves; and the serving interval the replica prints at startup is R composed with the tier's cache lifetime T — the poll interval where the push tier has a source, the fallback where it has none, and unbounded where the store is never re-read at all. What the resolver may answer under the snapshot it has is `proxy.trust_resolution_window`'s; what an accepted document MEANS is `proxy.trust_document_interpretation`'s."
+paths = [
+  # For `fleet_trust_bound` only: the startup line is a claim the code makes, so the
+  # arithmetic that produces it is measured, not trusted. The plane and its `Drop` in the
+  # same file are the resolution unit's.
+  "mcp-re-proxy/src/trust_plane/mod.rs",
+  # For the CYCLE only: one halt-aware sleep of exactly R, one read, one swap. The
+  # keep-last-good budget in the same file is the resolution unit's, because exhausting it
+  # closes the resolver rather than changing when the next read happens.
+  "mcp-re-proxy/src/trust_plane/reload/mod.rs",
+  # R + T stated as arithmetic, including the unbounded case. Claim surface, measured as one.
+  "mcp-re-proxy/src/trust_plane/delivered_window.rs",
+  # NOT `snapshot.rs`: what one read produces, and its bound, is the resolution unit's. This
+  # unit claims nothing about the read beyond whether it succeeded — THM-0100's scope says
+  # so in terms, and that sentence is this boundary.
+]
+exported_contracts = []
+evidence_class = "tested"
+# HIGH, not THM-0100's own MEDIUM. The theorem's direct consequence is that the operator can
+# READ the worst case off a printed line; this unit's failure is larger than that, because a
+# cycle that sleeps the wrong interval or swaps only one of the two products makes the
+# exposure itself longer than any line states. The theorem is the weaker of the two
+# statements the unit could carry, which is the direction that is safe.
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/trust_plane/reload_cadence",
+  "mutation://proxy/trust_plane/reload_cadence",
+]
+tested_symbols = [
+  # --- the cycle: the sleep, and the swap both products see ---
   "lib#trust_plane::reload::reload_loop_tests::the_reload_loop_reads_on_its_cadence_until_halted",
-  "lib#trust_plane::reload::reload_loop_tests::the_failure_budget_fails_closed_on_exactly_the_fifth_consecutive_bad_read",
+  "lib#trust_plane::reload::reload_loop_tests::a_reload_cycle_replaces_the_map_the_resolver_answers_from",
   # --- the bound the operator is told ---
   "lib#trust_plane::reload::reload_loop_tests::a_caching_tier_states_the_cache_lifetime_on_top_of_the_store_cadence",
   "lib#trust_plane::delivered_window::tests::a_store_that_is_never_re_read_delivers_an_unbounded_window",
   "lib#trust_plane::store_cadence_tests::the_push_tier_bound_states_the_poll_interval_not_the_next_request",
   "lib#trust_plane::store_cadence_tests::a_push_tier_without_a_source_reports_the_fallback_only",
 ]
-# No `test_features`: nothing in this closure is feature-gated. The reader's controls are
-# `proxy.trust_epoch_source`'s, which names `redis_replay`.
+# No `test_features`: nothing in this closure is feature-gated.
+
 
 [[unit]]
 id = "proxy.trust_epoch_source"
@@ -6468,7 +6527,7 @@ evidence = [
 # not any other connection ever sees the write.
 #
 # The e2e in `tests/integration_ext/redis_trust_epoch_e2e_test.rs` is NOT a member, for
-# the reason recorded on `proxy.trust_plane_runtime`: it self-skips green without a store.
+# the reason recorded on `proxy.trust_resolution_window`: it self-skips green without a store.
 tested_symbols = [
   "lib#trust_epoch::tests::first_poll_establishes_baseline_without_flush",
   "lib#trust_epoch::tests::epoch_advance_emits_a_single_flush_all",
@@ -6495,7 +6554,7 @@ tested_symbols = [
   # THE COMPOSITION, in process: this source under the production cache type through the
   # production adapter. Advance → the next answer is the store's; outage → nothing flushes
   # and the deadline governs. Listed here because the source is what these drive; the
-  # cache's half of each is a member of `proxy.trust_plane_runtime` in its own right.
+  # cache's half of each is a member of `proxy.trust_resolution_window` in its own right.
   "lib#trust_epoch::tests::an_observed_advance_makes_the_next_lookup_the_stores_answer",
   "lib#trust_epoch::tests::a_source_outage_flushes_nothing_and_the_deadline_still_governs",
   # The reader's one local rule about a foreign read's meaning. Exists only under
@@ -6512,7 +6571,7 @@ test_features = ["redis_replay"]
 # ---------------------------------------------------------------------------
 #
 # Recorded in the trust-plane census of 2026-09-05 as the parser with no owner, and kept out
-# of `proxy.trust_plane_runtime` because parsing is a separate authority under the
+# of `proxy.trust_resolution_window` because parsing is a separate authority under the
 # security-code rule. It is TWO stages with one owner each: a structural parse that accepts
 # a whole document or nothing, and three slot projections that read the parsed document and
 # never the bytes. THM-0097 takes the snapshot as an input authority; this unit is where
@@ -6603,7 +6662,7 @@ would let a future curation of the digest pass as a property of the comparison.
 #   * `l1_fast_reject.rs` — DORMANT. `app.rs` installs the L2 directly on every backend,
 #     nothing outside `async_replay_test` constructs an L1, and no configuration surface
 #     selects one. Excluded from `paths` on the precedent by which
-#     `trust_plane/window_policy.rs` is excluded from `proxy.trust_plane_runtime`.
+#     `trust_plane/window_policy.rs` is excluded from `proxy.trust_resolution_window`.
 #   * `tests/async_replay_test.rs` — the named CI release gate "§4 cross-core /
 #     cross-replica replay race". NOT cited: all five of its controls construct an
 #     `L1FastRejectStore`, so however green it is, it measures a two-tier architecture no
@@ -6938,7 +6997,7 @@ tested_symbols = [
 # `revocation.rs` is NOT in this unit's paths. `LiveTrustResolver::with_revocation_source` is
 # `#[allow(dead_code)]` and documents itself as NOT WIRED: no production path installs a
 # `RevocationSource`. Excluded on the precedent that kept `trust_plane/window_policy.rs` out of
-# `proxy.trust_plane_runtime` and `async_replay/l1_fast_reject.rs` out of
+# `proxy.trust_resolution_window` and `async_replay/l1_fast_reject.rs` out of
 # `proxy.async_replay_retention` — a unit must not carry evidence about code no deployment runs.
 [[unit]]
 id = "policy.authorization_taxonomy"

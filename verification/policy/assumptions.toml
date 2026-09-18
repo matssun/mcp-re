@@ -1458,7 +1458,7 @@ tool_specific_mechanism = "foreign-dependency"
 # advertises over.
 # ---------------------------------------------------------------------------
 #
-# Registered narrowly and for one reason. `proxy.trust_plane_runtime`'s claim (THM-0097) is
+# Registered narrowly and for one reason. `proxy.trust_resolution_window`'s claim (THM-0097) is
 # ONE replica wide and needs no premise: what a replica does with an event it was handed is
 # local, which is why the reader that produces the event is a separate unit,
 # `proxy.trust_epoch_source`, and this premise is scoped to THAT one. But the code PRINTS a fleet statement — "the trust cache flushes within one poll

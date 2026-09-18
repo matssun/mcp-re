@@ -2954,14 +2954,14 @@ expect_red = [
 ]
 
 # ---------------------------------------------------------------------------
-# proxy.trust_plane_runtime (M92–M95, M98, M99 — THM-0097) and proxy.trust_epoch_source
+# proxy.trust_resolution_window (M92–M95, M98, M99 — THM-0097) and proxy.trust_epoch_source
 # (M96, M97 — no theorem) — v0.17 trust-plane ownership slice. The eight weakenings are the
 # deletions the census found the battery would otherwise not notice.
 # ---------------------------------------------------------------------------
 
 [[probe]]
 id = "M92-trust-flush-is-applied-before-the-lookup"
-unit = "proxy.trust_plane_runtime"
+unit = "proxy.trust_resolution_window"
 theorem = "THM-0097"
 conjunct = "a change of the shared epoch this replica observes strips every cached binding's authority before the next lookup"
 path = "mcp-re-proxy/src/trust_plane/push_trust.rs"
@@ -2978,7 +2978,7 @@ expect_red = [
 
 [[probe]]
 id = "M93-an-invalidated-entry-does-not-answer"
-unit = "proxy.trust_plane_runtime"
+unit = "proxy.trust_resolution_window"
 theorem = "THM-0097"
 conjunct = "strips every cached binding's authority — an invalidated entry answers nothing on its own"
 path = "mcp-re-proxy/src/trust_plane/trust_cache.rs"
@@ -2997,7 +2997,7 @@ expect_red = [
 
 [[probe]]
 id = "M94-a-flush-cannot-extend-a-deadline"
-unit = "proxy.trust_plane_runtime"
+unit = "proxy.trust_resolution_window"
 theorem = "THM-0097"
 conjunct = "a cached positive binding never answers past the deadline it was first cached under"
 path = "mcp-re-proxy/src/trust_plane/trust_cache.rs"
@@ -3017,7 +3017,7 @@ expect_red = [
 
 [[probe]]
 id = "M95-the-window-closes"
-unit = "proxy.trust_plane_runtime"
+unit = "proxy.trust_resolution_window"
 theorem = "THM-0097"
 conjunct = "a cached positive binding answers for at most T"
 path = "mcp-re-proxy/src/trust_plane/trust_cache.rs"
@@ -3070,7 +3070,7 @@ expect_red = [
 
 [[probe]]
 id = "M98-a-stale-store-refuses"
-unit = "proxy.trust_plane_runtime"
+unit = "proxy.trust_resolution_window"
 theorem = "THM-0097"
 conjunct = "a store that has stopped being maintained refuses with Unavailable rather than serving"
 path = "mcp-re-proxy/src/trust_plane/freshness.rs"
@@ -3089,7 +3089,7 @@ expect_red = [
 
 [[probe]]
 id = "M99-keep-last-good-is-bounded"
-unit = "proxy.trust_plane_runtime"
+unit = "proxy.trust_resolution_window"
 theorem = "THM-0097"
 conjunct = "a store that has stopped being maintained — the reload's keep-last-good tolerance is bounded by exactly the budget"
 path = "mcp-re-proxy/src/trust_plane/reload/mod.rs"
@@ -3230,7 +3230,7 @@ expect_red = [
 
 [[probe]]
 id = "M107-the-reload-sleeps-exactly-its-cadence"
-unit = "proxy.trust_plane_runtime"
+unit = "proxy.trust_reload_cadence"
 theorem = "THM-0100"
 conjunct = "the reload worker reads again no later than R after the previous cycle — each cycle is one halt-aware sleep of exactly R"
 path = "mcp-re-proxy/src/trust_plane/reload/mod.rs"
@@ -3246,7 +3246,7 @@ expect_red = [
 
 [[probe]]
 id = "M108-a-successful-cycle-swaps-the-snapshot"
-unit = "proxy.trust_plane_runtime"
+unit = "proxy.trust_reload_cadence"
 theorem = "THM-0100"
 conjunct = "a successful cycle swaps the snapshot the resolver and the signer directory answer from"
 path = "mcp-re-proxy/src/trust_plane/reload/mod.rs"
@@ -3264,7 +3264,7 @@ expect_red = [
 
 [[probe]]
 id = "M109-the-printed-window-is-R-plus-T"
-unit = "proxy.trust_plane_runtime"
+unit = "proxy.trust_reload_cadence"
 theorem = "THM-0100"
 conjunct = "the delivered revocation window the transcript prints is exactly R + T for the caching tiers"
 path = "mcp-re-proxy/src/trust_plane/delivered_window.rs"
@@ -3765,7 +3765,7 @@ expect_red = [
 
 [[probe]]
 id = "M135-a-dead-trust-reloader-must-stop-the-resolver"
-unit = "proxy.trust_plane_runtime"
+unit = "proxy.trust_resolution_window"
 theorem = "THM-0097"
 conjunct = "a snapshot that has stopped being maintained refuses with Unavailable rather than serving"
 path = "mcp-re-proxy/src/trust_plane/reload/supervision.rs"
@@ -4093,7 +4093,7 @@ expect_red = [
 
 [[probe]]
 id = "M148-an-oversized-trust-document-is-refused-not-truncated"
-unit = "proxy.trust_plane_runtime"
+unit = "proxy.trust_resolution_window"
 conjunct = "a --trust document past the read bound is refused whole, never handed to the parser cut in half"
 # The weakening keeps the bound on the READ and drops the refusal, so an oversized document
 # reaches the parser truncated. That is the failure mode the extra byte exists to prevent:

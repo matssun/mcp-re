@@ -171,7 +171,8 @@ not an omission to hide.
 | proxy.trust_epoch_source | V0 | _none_ | 1 |
 | proxy.trust_plan | V0 | THM-0037 | 0 |
 | proxy.trust_plan_co_provenance | V0 | _none_ | 0 |
-| proxy.trust_plane_runtime | V0 | THM-0097, THM-0100 | 0 |
+| proxy.trust_reload_cadence | V0 | THM-0100 | 0 |
+| proxy.trust_resolution_window | V0 | THM-0097 | 0 |
 | proxy.trust_revocation_classification | V0 | THM-0035 | 0 |
 | sdk_python.authorization_binding | V0 | _none_ | 0 |
 | sdk_python.bounded_read | V0 | _none_ | 0 |
