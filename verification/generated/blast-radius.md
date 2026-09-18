@@ -170,7 +170,20 @@ attestations this view cannot see.
 | unit://sdk_python.signer_policy | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://sdk_python.trust_anchor_completeness | source, contracts or evidence | THM-0094 | _no consumer_ |
 | unit://sdk_python.verdict_delivery | source, contracts or evidence | THM-0094 | _no consumer_ |
-| unit://sdk_typescript.exchange_path | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.authorization_binding | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://sdk_typescript.bounded_read | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://sdk_typescript.continuation_drive | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.correlation_lifecycle | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.exchange_binding | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.execution_report | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.local_failure_provenance | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.nonce_floor | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.notification_delivery | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.post_close_emission | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.reply_envelope | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.signer_policy | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://sdk_typescript.trust_anchor_completeness | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.verdict_delivery | source, contracts or evidence | THM-0095 | _no consumer_ |
 
 ## Theorems
 
@@ -232,10 +245,10 @@ attestations this view cannot see.
 | THM-0055 | statement, consequence, scope or review requirement | specification review | THM-0050 |
 | THM-0056 | statement, consequence, scope or review requirement | specification review | THM-0052 |
 | THM-0057 | statement, consequence, scope or review requirement | specification review | THM-0058, THM-0076, THM-0120 |
-| THM-0058 | statement, consequence, scope or review requirement | specification review | THM-0076 |
-| THM-0059 | statement, consequence, scope or review requirement | specification review | THM-0076 |
-| THM-0060 | statement, consequence, scope or review requirement | specification review | THM-0076 |
-| THM-0061 | statement, consequence, scope or review requirement | specification review | THM-0076, THM-0126 |
+| THM-0058 | statement, consequence, scope or review requirement | specification review | THM-0076, THM-0095 |
+| THM-0059 | statement, consequence, scope or review requirement | specification review | THM-0076, THM-0095 |
+| THM-0060 | statement, consequence, scope or review requirement | specification review | THM-0076, THM-0095 |
+| THM-0061 | statement, consequence, scope or review requirement | specification review | THM-0076, THM-0095, THM-0126 |
 | THM-0062 | statement, consequence, scope or review requirement | specification review | THM-0063, THM-0075, THM-0082 |
 | THM-0063 | statement, consequence, scope or review requirement | specification review | THM-0075, THM-0078 |
 | THM-0064 | statement, consequence, scope or review requirement | specification review | THM-0077, THM-0082 |
