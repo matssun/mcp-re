@@ -240,3 +240,30 @@ module-tree-visibility = "`raw_point` is bare-private to `communication_assuranc
 alternate-constructors = "there ARE two: `interpret_rfc8410_spki` (fallible, over DER) and `for_point` (total, over a raw point). Both are the owner's, and `for_point` is total BECAUSE the invariant is the encoding rather than a predicate over the bytes \u2014 every `[u8; 32]` is a legal point, so it admits nothing the fallible one would refuse. `spki_der_for_point` is a projection to bytes, not a constructor, and there is no `From`, `Default` or builder"
 generated-or-deserialization = "the derives are Debug/Clone/Copy/PartialEq/Eq. No Serialize, no Deserialize; DER arrives as `&[u8]` and is adjudicated by `interpret_rfc8410_spki`, so no decoder fills the field positionally"
 test-only-construction = "the owner's `#[cfg(test)] mod tests` constructs only through the two public constructors; no test-gated constructor and no test-gated field visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"
+
+[[probe]]
+id = "S08"
+unit = "proxy.peer_identity_value_sole_producer"
+kind = "in-crate-source-injection"
+package = "mcp-re-proxy"
+invariant = "no code outside `communication_assurance::peer_identity_value` can put a string in a PeerIdentityValue, so EVERY INHABITANT is a string `interpret` accepted \u2014 which is what lets the invariant be stated over the type rather than over one function"
+insertion_path = "mcp-re-proxy/src/communication_assurance/structural_probe_s08.rs"
+insertion_parent = "mcp-re-proxy/src/communication_assurance/mod.rs"
+insertion_declaration = "mod structural_probe_s08;"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+note = """
+THE UNIT'S OWN DESCRIPTION IS WHAT THIS PROBE IS FOR. It said "EVERY INHABITANT is non-empty
+after trimming, length-bounded, and free of control characters", and the struct's doc comment
+said "there is no public constructor other than `interpret`, which is fallible — every
+inhabitant therefore satisfies the invariant". Both quantify over the TYPE. The five tests
+quantify over `interpret`: they establish what it refuses, which is a different statement and
+the only one a battery can make.
+"""
+construction = "// ADR-MCPRE-068 structural probe S08. Injected into a scratch copy by verify-structural;\n// this file cannot exist in the working tree, because it would not build \u2014 which is the\n// proposition it witnesses.\n//\n// The value is illegal on ALL THREE of the owner's rules at once \u2014 empty after trimming,\n// and carrying a control character. `interpret` refuses it; the question this probe asks\n// is whether refusing it is avoidable.\nuse crate::communication_assurance::PeerIdentityValue;\n\npub fn hostile() -> PeerIdentityValue {\n    PeerIdentityValue {\n        value: \"\\u{0}\".to_string(), // STRUCTURAL-PROBE-SITE\n    }\n}\n"
+
+[probe.producer_paths]
+module-tree-visibility = "`value` is bare-private to `communication_assurance::peer_identity_value`. The module is `pub mod` and the parent re-exports the type and its refusal enum, so another module obtains the name and `interpret` \u2014 never the `String` inside"
+alternate-constructors = "`interpret` is the only associated function returning Self, and it is fallible. There is no `From<String>`, no `FromStr`, no `Default` and no builder; `as_str` is the only projection and returns `&str`, never `&mut String` or the field"
+generated-or-deserialization = "the derives are Debug/Clone/PartialEq/Eq. No Serialize, no Deserialize \u2014 which matters more here than for a fixed-width value, because a derived `Deserialize` over a one-field newtype would fill the String positionally and admit exactly the inhabitants `interpret` refuses"
+test-only-construction = "the owner's `#[cfg(test)] mod tests` constructs only through `interpret`; no test-gated constructor and no test-gated field visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"

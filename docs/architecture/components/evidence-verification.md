@@ -390,6 +390,7 @@ is indistinguishable from an unconsidered one. Private fields alone are not a se
 | S04 | in-crate | no code outside `config_state::client_credential_window` can assemble a `ClientCredentialWindow` | `E0451` |
 | S06 | in-crate | no code outside `delegated_tls::resolver` can assemble a `DelegatedCertResolver` | `E0451` |
 | S07 | in-crate | no code outside `communication_assurance::ed25519_public_key` can place bytes in an `Ed25519PublicKeyValue` | `E0451` |
+| S08 | in-crate | no code outside `communication_assurance::peer_identity_value` can put a string in a `PeerIdentityValue` | `E0451` |
 
 S04 is the one ADR-MCPRE-068 §12.1 split out of a composite unit, and 0D-3 completed the
 split in the registry: M113/M114/M115 falsify the constructor's runtime refusal of an illegal
