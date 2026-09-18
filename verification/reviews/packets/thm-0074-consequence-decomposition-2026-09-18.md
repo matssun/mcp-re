@@ -148,8 +148,10 @@ http_profile.request_envelope        IN REGISTRY eff=critical
 proxy.trust_composition_root         IN REGISTRY eff=high
 ```
 
-`proxy.trust_composition_root`'s row is discharged by M149 on the source-text falsifier
-branch, which is a separate slice. The other five remain open and are NOT discharged here —
+`proxy.trust_composition_root`'s row is discharged by M172 on the source-text falsifier
+slice, now merged. (The probe was numbered M149 when this packet was first written; main
+had independently taken M149-M152 and M154, so the slice renumbered to M172-M177 before
+merge.) The other five remain open and are NOT discharged here —
 Phase 1 decomposes, it does not discharge.
 
 Two owners are `proved` rather than `tested`, and the classification was checked against the
@@ -172,11 +174,34 @@ critical. Measured by re-running the gate to a fixpoint rather than predicted:
 Three rows, all DERIVATION CORRECTIONS in the gate's own sense: same proposition, same
 production carrier, same obligation, and `direct_consequence_severity` untouched on all
 three — which is the field that would have to move for this to be a reclassification. The
-registry did not grow and nothing returned to `unreviewed`; 75 open obligations before and
-after, the population unchanged and three of them now correctly sized.
+registry did not grow and nothing returned to `unreviewed`, and the population was
+unchanged by this edit with three of its rows now correctly sized. The absolute count
+this packet first recorded (75) was a branch-local measurement and is not repeated
+here: the merged Phase-1 tree is the only authority for it, and the closure report
+derives it there.
 
 This is the cost of the correction, and it is the right direction: the graph was
 UNDERSTATING what depends on these three.
+
+## 5c. The successor transition, measured after the prose corrections landed
+
+The correction record for this edit was first written against `sha256:917caf8e`, the
+fingerprint THM-0074 carried when the decomposition was performed. That value did not
+survive: the held prose corrections moved two of THM-0074's own premises, so the tree that
+receives this edit is a different tree. Both endpoints were re-read rather than carried
+forward.
+
+| | |
+|---|---|
+| `theorem_claim`, both sides | `sha256:9f4cc66a` — unchanged, as a dependency correction requires |
+| from (main, after the prose corrections) | `sha256:fcf05933` |
+| to (this edit applied) | `sha256:7f350985` |
+| dependency closure | 48 theorems → **66** |
+
+The closure figure is the one worth reading. Naming THM-0077 does not add one premise; it
+admits THM-0077's own transitive closure, and eighteen theorems that THM-0074's antecedent
+had always quantified over become visible to the derivation. That is the size of what was
+unstated.
 
 ## 6. Premises, boundaries and review obligations
 

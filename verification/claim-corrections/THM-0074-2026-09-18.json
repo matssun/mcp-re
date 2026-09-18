@@ -12,8 +12,8 @@
       "reason": "The antecedent's phrase 'selected by the validated deployment' names no determinate set without THM-0077. Measured absent from the closure; adding it is what makes attack C of the registered consequence a violation rather than a definition."
     }
   ],
-  "dependency_correction": "THM-0077 added as a premise. The statement, the security consequence and the scope are all unchanged; the claim already rested on this premise and now says so.",
-  "from_fingerprint": "sha256:917caf8e4383ee2036fbadd334ebf392434ac528e61344ae263bbe92f4d4c9a5",
+  "dependency_correction": "THM-0077 added as a premise. The statement, the security consequence and the scope are all unchanged -- `theorem_claim` is sha256:9f4cc66a on both sides of this transition -- and the claim already rested on this premise and now says so.\n\nMEASURED SUCCESSOR, NOT A PREDICTED ONE. This record was first written against sha256:917caf8e, the fingerprint THM-0074 carried before the held prose corrections landed. Those corrections moved two of THM-0074's premises, so BOTH endpoints moved: main leaves THM-0074 at sha256:fcf05933, and the edit recorded here carries it to sha256:7f350985. Both values were read from the tree after the merge, not derived from the earlier pair.\n\nTHE CLOSURE GREW BY EIGHTEEN, NOT BY ONE. Naming THM-0077 admits its own transitive premises: the dependency closure goes from 48 theorems to 66. That is the size of what was previously unstated -- the posture-selection family the packet measured absent -- and it is the reason this is a dependency correction rather than a bookkeeping edit.",
+  "from_fingerprint": "sha256:fcf05933f39854f6d5d13188c9c45dc2a82996ec8e1b86c7ab5e3ee1e2112786",
   "packet": "verification/reviews/packets/thm-0074-consequence-decomposition-2026-09-18.md",
   "product_behavior_unchanged": true,
   "reason": "Consequence-first decomposition measured that THM-0074's antecedent quantifies over the obligations 'selected by the validated deployment', and that nothing in its 48-theorem closure established that the set the serving runtime holds IS the operator's validated selection. The whole posture-selection family (THM-0077, THM-0067, THM-0038, THM-0013, THM-0048, THM-0049, THM-0054, THM-0073, THM-0102) was absent from the closure. Without that premise a silently reinterpreted posture leaves the implication TRUE and its registered consequence FALSE -- a caller reaching the backend by presenting a fact the deployment did not select the authority for, which is attack C of the five the consequence names. The root's own scope does not cover it: 'not a claim that the set is right' disclaims ADEQUACY (did the operator select enough), where the missing premise is IDENTITY (is the set served the set validated), and an adequate selection can still be silently weakened at materialization. No cycle: THM-0077's 22-theorem closure does not contain THM-0074.",
@@ -22,5 +22,5 @@
   "severity_after": "critical",
   "severity_before": "critical",
   "subject": "THM-0074",
-  "to_fingerprint": "sha256:b71701f2eaab56c3c7c415a88a6744c15094fc1528c857efebabc459581417d7"
+  "to_fingerprint": "sha256:7f350985cb9bc68fe7a981365740fa318fb863dba18cb3c8d015fb459bf59d03"
 }
