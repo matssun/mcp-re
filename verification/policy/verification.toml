@@ -4459,95 +4459,557 @@ tested_symbols = [
   "pytest#tests/test_transport.py::test_a_request_with_no_bindings_records_no_digest",
 ]
 
+# The composition proposition, and the reason the core's binding theorem is usable here
+# at all: the core is only correct about the request it is GIVEN. A re-serialized body would
+# verify cleanly against bytes the peer never saw.
 [[unit]]
-id = "sdk_typescript.exchange_path"
+id = "sdk_typescript.exchange_binding"
 class = "V0"
-description = "The shipped TypeScript SDK's exchange path: every reply is correlated to the request that earned it, an unverifiable one never reaches the application as a result, and what the SDK says about execution is what the receipt said."
+description = "The verdict the TypeScript SDK acts on was computed over the exact request bytes this exchange signed and transmitted: the value returned by `signRequest` is the one POSTed and the one passed to the verifier, and nothing is re-derived, re-serialized or reconstructed for it."
+paths = ["sdk/typescript/src/transport.ts"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = ["test://sdk_typescript/exchange_binding/the_verifier_sees_this_transmission"]
+tested_symbols = [
+  "vitest#test/transport.test.ts > McpReHttpTransport signing inputs > signs the request body the caller's message described",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport signing inputs > signs a request with no params",
+  "vitest#test/transport.test.ts > the forced verdicts are the core's own shape > declares no member the binding does not",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport signing inputs > passes authorization bindings to the core, which digests the real bytes",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > verifies the recording and hands the app plain MCP",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > fails closed when one byte is appended to the recorded body",
+]
+
+# THE WHOLE RECORDED-SESSION BATTERY WAS UNREGISTERED. `transport_replay.test.ts` refuses
+# one RECORDED delegated session six ways — untrusted root, stale epoch, wrong audience,
+# revoked key, appended byte, and the rejection receipt — and not one of its fifteen controls
+# was in any unit's battery, while the Python twin's equivalents were the substance of its
+# evidence. A battery of constructed positives would not distinguish an adapter that verifies
+# from one that returns what it was handed.
+[[unit]]
+id = "sdk_typescript.verdict_delivery"
+class = "V0"
+description = "A verdict whose outcome is not `success` reaches the application as a correlated JSON-RPC error and never as a result; an EMPTY wire code is substituted rather than passed through as an error the application cannot act on; and the receipt's request-binding fact travels beside the frozen token rather than inside it."
+paths = ["sdk/typescript/src/transport.ts"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = ["test://sdk_typescript/verdict_delivery/a_refusal_is_never_a_result"]
+tested_symbols = [
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > refuses the same recorded response under an untrusted root anchor",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > refuses a response outside the accepted trust epoch",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > refuses a response for a different audience",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > refuses a revoked delegated key",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > delivers a verified rejection receipt as an error, not a result",
+  "vitest#test/transport.test.ts > McpReHttpTransport rejection receipt binding > reports a preflight-unbound receipt as NOT request-bound",
+  "vitest#test/transport.test.ts > McpReHttpTransport rejection receipt binding > reports a request-bound receipt as request-bound",
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > still delivers an ordinary verified reply",
+]
+
+# The leaf the whole root FAMILY exists for, and the control that names the difference is
+# `invents no disposition for a receipt that stated none`. Inventing `not_executed` collapses
+# "unknown whether it ran" into "it did not run" at the one place that decides whether a
+# caller repeats a side effect. A byte-level parity fixture cannot reach it.
+[[unit]]
+id = "sdk_typescript.execution_report"
+class = "V0"
+description = "The application is told exactly the execution and retry members the verified receipt carried, and a member the receipt did not carry is not invented for it."
+paths = ["sdk/typescript/src/transport.ts"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = ["test://sdk_typescript/execution_report/only_what_the_receipt_said"]
+tested_symbols = [
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > reports the execution and retry contract a post-dispatch rejection carried",
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > invents no disposition for a receipt that stated none",
+]
+
+# Separate from `execution_report` deliberately, and the separation is the authority
+# boundary: that leaf is about what a PEER verdict may be reported as, this one about what a
+# LOCAL condition may be reported as. One failure invents a peer fact; the other borrows the
+# peer's vocabulary.
+[[unit]]
+id = "sdk_typescript.local_failure_provenance"
+class = "V0"
+description = "A condition this SDK originated — a transport abort, a local signing failure, a network error, a defect — is reported under the SDK's own prefix, never as a frozen `mcp-re.*` token the peer did not send and never as an execution or retry verdict."
+paths = ["sdk/typescript/src/transport.ts"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = ["test://sdk_typescript/local_failure/no_borrowed_vocabulary"]
+tested_symbols = [
+  "vitest#test/transport.test.ts > McpReHttpTransport peer wire codes > delivers a core failure as its frozen token, not as a local SDK error",
+  "vitest#test/transport.test.ts > McpReHttpTransport peer wire codes > still labels a genuine local failure as one",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > delivers a wire failure as a JSON-RPC error carrying the frozen code",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > delivers a local signer failure WITHOUT claiming a wire code",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > delivers the core's own fail-closed Error rather than letting the caller hang",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > delivers a network error under the local prefix, not as something the peer said",
+  "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > keeps a failed exchange from taking down the session's other requests",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > re-throws a non-Error, which is a defect rather than a protocol outcome",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport notification handling > reports the ack failure as the frozen token, not the binding's prefixed spelling",
+]
+
+# REBUILDING rather than editing is the proposition: the union schema accepts a request arm,
+# so a verified body carrying a `method` would otherwise be dispatched by `Client` as a
+# server-initiated request.
+[[unit]]
+id = "sdk_typescript.reply_envelope"
+class = "V0"
+description = "What reaches the MCP client is rebuilt from the one member the verified reply carried plus the caller's own id; a verified reply that is not a JSON-RPC response — one carrying a `method`, one that is not a response at all — is refused rather than dispatched."
+paths = ["sdk/typescript/src/transport.ts"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = ["test://sdk_typescript/reply_envelope/rebuilt_never_edited"]
+tested_symbols = [
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > refuses a verified reply carrying a top-level method instead of dispatching it",
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > refuses a verified reply that is not a JSON-RPC response at all",
+]
+
+# The CLASSIFICATION of a reply as terminal — and the refusal of a `resultType` outside the
+# set MCP 2026-07-28 defines — belongs to the core (THM-0061). What this unit owns is what the
+# adapter DOES with that classification. Every control here was unregistered.
+[[unit]]
+id = "sdk_typescript.continuation_drive"
+class = "V0"
+description = "Only a terminal verified reply resolves the call: a non-terminal one pauses it and its answer leg signs over the verified handles of the leg before it, and an elicitation with no handler, a declined one, or one past the continuation ceiling fails the call closed rather than resolving it."
 paths = [
   "sdk/typescript/src/transport.ts",
   "sdk/typescript/src/correlation.ts",
-  "sdk/typescript/src/authorization.ts",
-  "sdk/typescript/src/custody.ts",
-  "sdk/typescript/src/mtls.ts",
-  "sdk/typescript/src/index.ts",
 ]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://sdk_typescript/exchange_path/root_battery"]
-# The same propositions as the Python member, over an independent implementation. The two
-# lists are deliberately not a translation of each other: each names the controls its own
-# suite actually has, and a proposition one suite covers and the other does not is a gap
-# this registration makes visible rather than papers over.
+evidence = ["test://sdk_typescript/continuation_drive/a_pause_is_not_a_result"]
 tested_symbols = [
-  # Correlation.
-  "vitest#test/transport.test.ts > McpReHttpTransport concurrency > correlates every concurrent reply to its own request",
-  "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > does not leave a failed exchange's correlation entry outstanding",
-  "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > keeps a failed exchange from taking down the session's other requests",
-  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > clears abandoned correlation state on close",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > drives the answer leg to a terminal result",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > refuses an unanswerable elicitation rather than delivering it as a result",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > refuses a declined elicitation",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > enforces the continuation ceiling before asking the caller",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/malformed_elicitation.test.ts > a non-terminal reply that withholds its request state > is refused rather than reported as terminal",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/malformed_elicitation.test.ts > a non-terminal reply that withholds its request state > is otherwise genuine evidence",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/unrecognized_result_type.test.ts > a reply carrying an unrecognized resultType > is refused rather than read as terminal",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/unrecognized_result_type.test.ts > a reply carrying an unrecognized resultType > is otherwise genuine evidence",
+]
+
+# THE CORRECTED CLAIM, and it is the same correction the Python member took. The id passed to
+# `take()` is the one `record()` returned in the same loop iteration, and MCP-RE is one signed
+# POST per request, so there is no inbox and no lookup by any value a peer controls. What the
+# shipped path enforces is the window and the bound; the store's own refusals are stated as the
+# store's.
+[[unit]]
+id = "sdk_typescript.correlation_lifecycle"
+class = "V0"
+description = "A request is answerable only inside the window it declared — a response arriving past it is refused rather than delivered — and no remotely triggerable outcome leaves a correlation entry outstanding. `CorrelationStore`'s unbound and duplicate refusals are properties of the store at its own API; the shipped exchange path reaches neither, because the id it consumes is the one it just recorded."
+paths = [
+  "sdk/typescript/src/correlation.ts",
+  "sdk/typescript/src/transport.ts",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = ["test://sdk_typescript/correlation_lifecycle/the_window_and_the_bound"]
+tested_symbols = [
   "vitest#test/correlation.test.ts > fails closed > rejects a response binding to nothing outstanding",
   "vitest#test/correlation.test.ts > fails closed > rejects a late response",
   "vitest#test/correlation.test.ts > fails closed > treats a duplicate response as a replay, not a mismatch",
-  # Signer and trust acceptance.
-  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > checks the signer against the route policy in start(), before anything is signed",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > fails closed > retires the entry when a response is late",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > fails closed > rejects recording the same request twice",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > fails closed > treats the deadline itself as in-window",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > record and take > uses the request evidence handle as the correlation id",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > record and take > consumes the outstanding request",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > record and take > peek does not consume",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > record and take > carries the audit fields the ADR enumerates",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > record and take > lists the outstanding requests",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > reaping > drops only the dead",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > reaping > a reaped request cannot later be answered",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > reaping > reaping an empty store is a no-op",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > the store is bounded > drops consumed ids once they can no longer answer anything",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > the store is bounded > keeps ids that can still be answered",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > the store is bounded > does not grow across a long session of failed exchanges",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > the store is bounded > abandon is idempotent and never throws",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > an input-required result associates without consuming > leaves the open leg outstanding",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > an input-required result associates without consuming > hands back handles that feed straight into the answer leg",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > an input-required result associates without consuming > still lets the terminal answer take the open leg",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > an input-required result associates without consuming > rejects an unbound elicitation",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > an input-required result associates without consuming > rejects a late elicitation",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > an input-required result associates without consuming > treats an elicitation for an answered request as a replay",
+  "vitest#test/transport.test.ts > McpReHttpTransport concurrency > correlates every concurrent reply to its own request",
+  "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > does not leave a failed exchange's correlation entry outstanding",
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > clears abandoned correlation state on close",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > does not accumulate an abort listener per request",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport signing inputs > honours an injected clock and ttl",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > leaves no correlation entry outstanding after a completed chain",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > leaves no correlation entry outstanding after an unanswered elicitation",
+]
+
+# IN THE ROOT'S CHAIN, and the reason is not freshness hygiene: a guessable nonce makes a
+# captured response replayable against a NEW request, and the application is then handed an
+# answer that is not to its own request. The predecessor unit declared NO control for it,
+# exactly as on the Python side.
+[[unit]]
+id = "sdk_typescript.nonce_floor"
+class = "V0"
+description = "No request and no notification is signed under a nonce below the 128-bit floor — a sub-floor or non-string factory result fails closed at sign time, under the SDK's own prefix rather than an invented wire token — and the freshness triple is generated per leg rather than taken from the caller."
+paths = ["sdk/typescript/src/transport.ts"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = ["test://sdk_typescript/nonce_floor/nothing_is_signed_under_a_weak_nonce"]
+tested_symbols = [
+  # ADR-MCPRE-069 `register`
+  "vitest#test/nonce_floor.test.ts > sign-time nonce floor > the default generator clears the floor",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/nonce_floor.test.ts > sign-time nonce floor > the default generator is accepted",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/nonce_floor.test.ts > sign-time nonce floor > a sub-floor override is refused at sign time: ",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/nonce_floor.test.ts > sign-time nonce floor > a sub-floor override is refused at sign time: 1",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/nonce_floor.test.ts > sign-time nonce floor > a sub-floor override is refused at sign time: counter-1",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/nonce_floor.test.ts > sign-time nonce floor > a sub-floor override is refused at sign time: nonce-parity-0001",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/nonce_floor.test.ts > sign-time nonce floor > a non-string override is refused without a TypeError",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/nonce_floor.test.ts > sign-time nonce floor > a factory at exactly the floor is accepted",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport notification handling > refuses a sub-floor nonce override before a notification is signed",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport signing inputs > generates its own freshness, so a caller cannot repeat a nonce",
+]
+
+# In the chain because telling an application its notification reached the enforcement
+# boundary when nothing acknowledged it is the same failure shape as reporting an execution
+# fact the peer never stated.
+[[unit]]
+id = "sdk_typescript.notification_delivery"
+class = "V0"
+description = "A notification is treated as delivered only against an acknowledgement that verified as bound to THAT transmission; `send()` throws rather than returning when one does not verify. A client->server response, which MCP-RE profiles no carrier for, is refused rather than signed as a fabricated notification."
+paths = ["sdk/typescript/src/transport.ts"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = ["test://sdk_typescript/notification_delivery/acknowledged_or_undelivered"]
+tested_symbols = [
+  "vitest#test/transport.test.ts > McpReHttpTransport notification handling > fails closed on an unsigned acknowledgement",
+  "vitest#test/transport.test.ts > McpReHttpTransport notification handling > fails closed on a bodied 200 in place of an acknowledgement",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport notification handling > transmits a notification as a signed POST",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport notification handling > refuses a client-side RESPONSE rather than carrying it as a notification",
+]
+
+# THE PREDECESSOR NAMED FOUR OF THE SEVEN ANCHOR MEMBERS. `issuerTrustDomain`,
+# `issuerSubject` and `verifierAudiences` each have a control and none was declared, so the
+# claim "an incomplete one is refused at construction rather than defaulted" was evidenced for
+# four of the seven things that could be incomplete.
+[[unit]]
+id = "sdk_typescript.trust_anchor_completeness"
+class = "V0"
+description = "The trust picture the whole acceptance chain is evaluated against is complete or the transport is refused at construction — no member of the anchor is defaulted — and the revocation denylist's SHAPE is checked, so a bare string cannot spread into a per-character list and a non-string entry cannot sit in one."
+paths = ["sdk/typescript/src/transport.ts"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = ["test://sdk_typescript/trust_anchor/complete_or_refused"]
+tested_symbols = [
   "vitest#test/transport.test.ts > McpReHttpTransport delegated-verification anchor > refuses a config with an empty issuerKeyId",
   "vitest#test/transport.test.ts > McpReHttpTransport delegated-verification anchor > refuses a config with an empty issuerPubkeyB64Url",
   "vitest#test/transport.test.ts > McpReHttpTransport delegated-verification anchor > refuses a config with an empty expectedAudienceHash",
   "vitest#test/transport.test.ts > McpReHttpTransport delegated-verification anchor > refuses a config with an empty acceptedEpochs",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport delegated-verification anchor > refuses a config with an empty issuerTrustDomain",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport delegated-verification anchor > refuses a config with an empty issuerSubject",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport delegated-verification anchor > refuses a config with an empty verifierAudiences",
   "vitest#test/transport.test.ts > McpReHttpTransport revocation denylist shape > refuses a bare string, which would spread into a per-character denylist",
-  # An acknowledgement is evidence or it is nothing.
-  "vitest#test/transport.test.ts > McpReHttpTransport notification handling > fails closed on an unsigned acknowledgement",
-  "vitest#test/transport.test.ts > McpReHttpTransport notification handling > fails closed on a bodied 200 in place of an acknowledgement",
-  # A verified reply that is not an answer to this request is refused rather than dispatched.
-  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > refuses a verified reply carrying a top-level method instead of dispatching it",
-  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > refuses a verified reply that is not a JSON-RPC response at all",
-  # Bound vs unbound evidence, and execution status.
-  "vitest#test/transport.test.ts > McpReHttpTransport rejection receipt binding > reports a preflight-unbound receipt as NOT request-bound",
-  "vitest#test/transport.test.ts > McpReHttpTransport rejection receipt binding > reports a request-bound receipt as request-bound",
-  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > reports the execution and retry contract a post-dispatch rejection carried",
-  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > invents no disposition for a receipt that stated none",
-  "vitest#test/transport.test.ts > McpReHttpTransport peer wire codes > delivers a core failure as its frozen token, not as a local SDK error",
-  "vitest#test/transport.test.ts > McpReHttpTransport peer wire codes > still labels a genuine local failure as one",
-  # The positive controls.
-  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > accepts a signer that satisfies the policy",
-  "vitest#test/transport.test.ts > McpReHttpTransport signing inputs > signs the request body the caller's message described",
-  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > still delivers an ordinary verified reply",
-  # THE ANTI-VACUITY CONTROL FOR THE FORCED VERDICTS. Several controls above override the
-  # native binding's verdict, which is the right seam — the property is what the TRANSPORT
-  # does with a verdict, and against a recorded receipt nothing distinguishes reading
-  # `bound` from hard-coding it. What separately written object literals cannot do is track
-  # the core's shape: a renamed member would leave every one of them green while the
-  # transport read `undefined` in production. The members are declared once and checked
-  # against `native/binding.d.ts`, which napi GENERATES from the Rust type, so a rename in
-  # the core takes this red (#747, the sibling of the Python root's stub-shape control).
-  "vitest#test/transport.test.ts > the forced verdicts are the core's own shape > declares no member the binding does not",
-  # THE TWO CONTROLS THAT LET ASM-0043 BE DISCHARGED, and they are registered here because
-  # the premise they replace was in this unit's closure. The first is the guard itself: a
-  # request still queued at the concurrency semaphore when `close()` lands must not be
-  # signed and POSTed — the property that used to rest on `AbortSignal.aborted` being
-  # observable without yielding, and now rests on this transport's own `#state`. The second
-  # is why the premise's other half is not needed: a teardown states NOTHING about
-  # execution, and asserting nothing requires no premise about what the server received.
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport revocation denylist shape > refuses an entry that is not a non-empty string",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport revocation denylist shape > accepts a well-formed denylist, and the empty TTL-only posture",
+]
+
+# A PROPOSITION THE PYTHON MEMBER DOES NOT NEED, and that asymmetry is a fact about the two
+# runtimes rather than an omission. Python's task group really cancels; here `Promise.race`
+# decides which result the CALLER sees and does not stop the losing arm, so without an explicit
+# per-leg guard a continuation chain would go on signing and POSTing fresh answer legs after
+# `onclose` has fired — handing the server a valid, fresh, correctly signed request the caller
+# believes it cancelled. The guard reads this transport's OWN state, assigned synchronously by
+# `close()`, rather than `AbortSignal.aborted`, which is what discharges ASM-0043 instead of
+# renewing it.
+[[unit]]
+id = "sdk_typescript.post_close_emission"
+class = "V0"
+description = "After `close()`, nothing further is signed or transmitted: a request still queued at the concurrency semaphore is not signed or POSTed, a continuation chain stops rather than signing a fresh answer leg or prompting a human for one, and an aborted exchange surfaces as a local outcome asserting nothing about execution. The transport is single-use, and work before start or after close is refused rather than carried."
+paths = ["sdk/typescript/src/transport.ts"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = ["test://sdk_typescript/post_close_emission/nothing_is_signed_after_close"]
+tested_symbols = [
   "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > does not sign or POST a request still queued at the semaphore when close() lands",
   "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > says nothing about execution when close() aborts an in-flight exchange",
-  # THE AGGREGATE RESPONSE DEADLINE, and it was measured by NOTHING this unit declared. The
-  # controls existed in `test/mtls.test.ts` and were never registered, while `src/mtls.ts`
-  # sits inside this unit's `paths` — so the property was in the fingerprint's source
-  # closure with no declared control over it, which is exactly the gap the Python root had
-  # (#746 §5, #747). Registered now, and the evidence is production-shaped by construction:
-  # a real TLS server that drips one byte every 50ms against a 600ms bound, read through
-  # Node's own `https` client, so only an aggregate deadline can end it. Unlike the Python
-  # reader this one arms an absolute timer when the response starts, so a peer that stops
-  # sending entirely is bounded by the same deadline rather than by a second mechanism.
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > aborts an in-flight exchange and never delivers after onclose",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > refuses work before start and after close",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > refuses a second start()",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > fires onclose when closed, and is single-use afterwards",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > walks NEW -> OPEN -> CLOSED",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > closes idempotently",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > closes cleanly with no onclose installed",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport notification handling > aborts an in-flight notification on close rather than waiting out the poster",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > stops the continuation chain when close() lands mid-call",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > does not prompt a human for an answer leg a closed transport will never send",
+]
+
+# OUTSIDE THM-0095's CLOSURE. Remove it and the SDK signs under an identity the route did not
+# expect — the answer the application receives still binds to the request that was sent. It is
+# request-side attribution. `custody.ts` was in the predecessor unit's paths and eighteen of
+# its controls were declared by nothing.
+[[unit]]
+id = "sdk_typescript.signer_policy"
+class = "V0"
+description = "The transport does not open unless the signer satisfies the route's policy — the expected signer identity, and non-exporting custody where the hardening profile demands it — checked before anything is signed; a device that cannot sign fails closed rather than emitting unsigned evidence; and key material is never rendered."
+paths = [
+  "sdk/typescript/src/custody.ts",
+  "sdk/typescript/src/transport.ts",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = ["test://sdk_typescript/signer_policy/checked_before_anything_is_signed"]
+tested_symbols = [
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > checks the signer against the route policy in start(), before anything is signed",
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > accepts a signer that satisfies the policy",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport notification handling > opens under a hardened policy with a non-exporting signer",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > custody classes > labels a software signer and a non-exporting signer distinctly",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > custody classes > rejects a seed that is not exactly 32 bytes",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > custody classes > rejects a non-callable sign callback",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > custody classes > never renders key material",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > non-exporting custody is byte-identical to software custody > produces the same evidence, body, and headers via a SigningDevice",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > non-exporting custody is byte-identical to software custody > holds only the callback — the device is the sole holder of the key",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > a device that cannot sign fails closed > raises SignerUnavailable for a throwing device",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > a device that cannot sign fails closed > keeps the underlying cause",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > a device that cannot sign fails closed > is not a wire error, but is still one of ours",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > a device that cannot sign fails closed > raises SignerUnavailable for a 0-byte signature",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > a device that cannot sign fails closed > raises SignerUnavailable for a 63-byte signature",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > a device that cannot sign fails closed > raises SignerUnavailable for a 65-byte signature",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > a device that cannot sign fails closed > raises SignerUnavailable for a non-Buffer return",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > a device that cannot sign fails closed > never emits unsigned evidence when the device misbehaves",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > a device that cannot sign fails closed > does not blame the device for a core failure",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > SignerPolicy fails closed > hardening rejects software custody with mcp-re.actor_binding_failed",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > SignerPolicy fails closed > hardening accepts non-exporting custody",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > SignerPolicy fails closed > rejects a signer whose id is not the route's expected signer",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > SignerPolicy fails closed > the permissive profile accepts software custody",
+]
+
+# OUTSIDE THM-0095's CLOSURE. The aggregate bound is the reason a deadline is not excluded
+# wholesale — the inactivity bound alone bounds nothing, because every byte re-arms it — but
+# the bound itself is AVAILABILITY: remove it and a trickling peer holds a slot, which hands
+# the application no wrong answer. What the root takes from the deadline is only that the abort
+# surfaces as a LOCAL outcome carrying no execution assertion, and that is
+# `sdk_typescript.local_failure_provenance`'s proposition.
+[[unit]]
+id = "sdk_typescript.bounded_read"
+class = "V0"
+description = "The response read is bounded by the aggregate wall clock rather than by socket inactivity alone and by a byte ceiling, and the verifying channel it runs over is constructed against the configured CA with the hostname proved and no transport-owned or splitting header admitted; exceeding either bound, or a channel that cannot be constructed, fails the exchange."
+paths = ["sdk/typescript/src/mtls.ts"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = ["test://sdk_typescript/bounded_read/both_bounds_and_the_channel"]
+tested_symbols = [
   "vitest#test/mtls.test.ts > the mTLS connect helper > bounds the TOTAL response read, not only socket inactivity",
-  # The byte ceiling, independent of the clock, and the positive mirror: a bound that
-  # refuses ordinary responses is not a bound. The last one is the "no bound" knob's
-  # validation — a timeout that cannot be honoured is refused at construction.
   "vitest#test/mtls.test.ts > the mTLS connect helper > refuses an oversized response",
   "vitest#test/mtls.test.ts > the mTLS connect helper > round-trips a signed request over a verified channel",
   "vitest#test/mtls.test.ts > the mTLS connect helper > refuses a non-positive exchange timeout",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/mtls.test.ts > the mTLS connect helper > refuses a certificate from an untrusted root",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/mtls.test.ts > the mTLS connect helper > refuses a certificate for a different name",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/mtls.test.ts > the mTLS connect helper > does not fold a repeated response header",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/mtls.test.ts > the mTLS connect helper > refuses a transport-owned header",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/mtls.test.ts > the mTLS connect helper > refuses a header value that would split the request",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/mtls.test.ts > the mTLS connect helper > opens a session transport over the channel",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/mtls.test.ts > the mTLS connect helper > refuses a plaintext target",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/mtls.test.ts > the mTLS connect helper > refuses a non-positive response ceiling",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/mtls.test.ts > the mTLS connect helper > refuses empty TLS material rather than falling back to Node's public roots",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/mtls.test.ts > the mTLS connect helper > refuses a connect port outside the TCP range",
 ]
 
+# OUTSIDE THM-0095's CLOSURE: which artefacts a request is bound to is a request-side fact.
+# `authorization.ts` was in the predecessor unit's paths and every one of its thirty-one
+# controls was declared by nothing — including the two that establish a caller cannot pass a
+# precomputed digest, which is the seal the whole bind-not-interpret rule rests on.
+[[unit]]
+id = "sdk_typescript.authorization_binding"
+class = "V0"
+description = "The authorization binding specs a request carries are the ones the configured policy permits, serialized canonically and byte-identically to the Python twin; the core digests the real artifact material and a caller is given no way to supply a precomputed digest or to mint half a binding pair; and the digest retained per outstanding request identifies which artefacts the request was bound to without ever being re-interpreted."
+paths = [
+  "sdk/typescript/src/authorization.ts",
+  "sdk/typescript/src/transport.ts",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = ["test://sdk_typescript/authorization_binding/permitted_and_canonical"]
+tested_symbols = [
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > opaque bytes > has the core digest the real artifact",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > opaque bytes > carries metadata only, never the artifact",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > opaque bytes > changes the digest when the artifact bytes change",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > opaque bytes > digests deterministically",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > opaque bytes > gives a caller no way to pass a precomputed digest",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > opaque bytes > fails closed on empty material",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > opaque bytes > fails closed on an unregistered artifact type",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > authz-system reference > binds the real bytes and names the system",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > authz-system reference > leaks no secret material",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > authz-system reference > produces the same digest as the opaque form for the same bytes",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > authz-system reference > fails closed when authorizationSystemId is missing",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > authz-system reference > fails closed when referenceSchemeId is missing",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > authz-system reference > fails closed when referenceValue is missing",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > DPoP stays built-in > is present and first with no provider",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > DPoP stays built-in > has provider bindings append after it",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > DPoP stays built-in > signs the no-bindings path unchanged",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > DPoP stays built-in > binds several providers in order",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > policy fails closed > passes a permitted type",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > policy fails closed > fails closed on an unpermitted type",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > policy fails closed > fails closed when a required binding is absent",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > policy fails closed > allows an optional binding to be absent",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > canonical bindingsJson is byte-identical across SDKs > emits raw UTF-8 for a non-ASCII binding field, and the same digest Python records",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > authorization decision (ADR-MCPRE-065 Slice 3) > carries the document and has the core mint its binding",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > authorization decision (ADR-MCPRE-065 Slice 3) > carries the document exactly once",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > authorization decision (ADR-MCPRE-065 Slice 3) > gives a caller no parameter for the digest",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > authorization decision (ADR-MCPRE-065 Slice 3) > lets a request act under at most one decision",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > authorization decision (ADR-MCPRE-065 Slice 3) > fails closed on an empty decision",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > authorization decision (ADR-MCPRE-065 Slice 3) > produces the same carrier from a string and from bytes",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > the generic provider cannot mint half a pair > is refused by the wrapper",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > the generic provider cannot mint half a pair > is refused independently by the native seam",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > the generic provider cannot mint half a pair > leaves the reference form untouched",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > checks the authorization policy in start() too",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport signing inputs > records the authorization-binding digest on the correlation entry",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport signing inputs > records no binding digest for a request that carries no bindings",
+]
 [[unit]]
 id = "proxy.delegated_signing_credential"
 class = "V0"

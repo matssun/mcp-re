@@ -198,7 +198,20 @@ attestations this view cannot see.
 | unit://sdk_python.signer_policy | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://sdk_python.trust_anchor_completeness | source, contracts or evidence | THM-0094 | _no consumer_ |
 | unit://sdk_python.verdict_delivery | source, contracts or evidence | THM-0094 | _no consumer_ |
-| unit://sdk_typescript.exchange_path | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.authorization_binding | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://sdk_typescript.bounded_read | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://sdk_typescript.continuation_drive | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.correlation_lifecycle | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.exchange_binding | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.execution_report | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.local_failure_provenance | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.nonce_floor | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.notification_delivery | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.post_close_emission | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.reply_envelope | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.signer_policy | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://sdk_typescript.trust_anchor_completeness | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.verdict_delivery | source, contracts or evidence | THM-0095 | _no consumer_ |
 
 ## Theorems
 
