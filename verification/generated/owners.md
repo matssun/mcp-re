@@ -165,13 +165,14 @@ not an omission to hide.
 | proxy.signing_credential_provenance | V0 | THM-0082 | 0 |
 | proxy.signing_role_separation | V0 | THM-0073 | 0 |
 | proxy.trust_composition_root | V0 | THM-0038, THM-0067, THM-0077 | 0 |
-| proxy.trust_configuration_state | V0 | THM-0035, THM-0036 | 0 |
 | proxy.trust_configuration_state_sole_producer | V0 | _none_ | 0 |
 | proxy.trust_document_interpretation | V0 | THM-0098 | 0 |
+| proxy.trust_document_locator | V0 | THM-0036 | 0 |
 | proxy.trust_epoch_source | V0 | _none_ | 1 |
 | proxy.trust_plan | V0 | THM-0037 | 0 |
 | proxy.trust_plan_co_provenance | V0 | _none_ | 0 |
 | proxy.trust_plane_runtime | V0 | THM-0097, THM-0100 | 0 |
+| proxy.trust_revocation_classification | V0 | THM-0035 | 0 |
 | sdk_python.authorization_binding | V0 | _none_ | 0 |
 | sdk_python.bounded_read | V0 | _none_ | 0 |
 | sdk_python.continuation_drive | V0 | _none_ | 0 |
