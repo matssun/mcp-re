@@ -6207,3 +6207,96 @@ which is what makes it survive a delegation rotation.
 The three controls it takes red are the three shapes the pin has to hold over: a success, a
 bound rejection receipt, and a bodyless 202.
 """
+
+[[probe]]
+id = "M228-http-profile-the-signer-slot-join-is-injective"
+unit = "http_profile.replay_key"
+theorem = "THM-0091"
+conjunct = "equality of the composite replay slots holds exactly when the full five-tuple is equal"
+path = "mcp-re-http-profile/src/replay.rs"
+anchor = """
+        format!(
+            "{}{SEP}{}{SEP}{}",
+            self.profile_id, self.signature_label, self.actor_id
+        )
+"""
+weakening = """
+        format!(
+            "{}{}{}",
+            self.profile_id, self.signature_label, self.actor_id
+        )
+"""
+expect_red = [
+  "lib#replay::tests::composite_slots_are_injective",
+]
+note = """
+DELETING THE SEPARATOR IS THE WHOLE DEFECT, and it is invisible: the slot is still a string,
+still deterministic, still key-bound, and the cache still works. What stops working is
+injectivity -- two DIFFERENT five-tuples join to one key, so the second is refused as a replay
+of the first. The control is adversarial by construction: each row is a five-tuple whose
+components concatenate to the same text without the separator and to different text with it.
+
+Replay admission is where this lands. A false collision means a legitimate request from one
+actor is refused because an unrelated one already occupied the key, and the refusal reads as
+`mcp-re.replay_detected` -- an accusation about the wrong party.
+"""
+
+[[probe]]
+id = "M229-http-profile-the-canonical-jwk-embeds-its-operand-verbatim"
+unit = "http_profile.keyid"
+theorem = "THM-0091"
+conjunct = "the RFC 7638 canonical JWK form embeds its operand verbatim between fixed affixes, introducing no collision of its own"
+path = "mcp-re-http-profile/src/keyid.rs"
+anchor = """
+    format!(r#"{{"crv":"{JWK_CRV_ED25519}","kty":"{JWK_KTY_OKP}","x":"{public_key_b64url}"}}"#)
+"""
+weakening = """
+    format!(r#"{{"crv":"{JWK_CRV_ED25519}","kty":"{JWK_KTY_OKP}","x":"{}"}}"#, public_key_b64url.trim_end_matches('A'))
+"""
+expect_red = [
+  "lib#keyid::tests::the_canonical_form_embeds_its_operand_verbatim_between_fixed_affixes",
+  "lib#keyid::tests::distinct_operands_never_share_a_canonical_form",
+]
+note = """
+THE WEAKENING IS A COLLISION, NOT A TYPO. Trimming a trailing character maps two distinct
+enrolled keys onto one canonical form and therefore onto one keyid -- which is exactly the
+property `http_profile.keyid_selector` composes with SHA-256's collision resistance to get a
+usable selector. Splitting those two units is what keeps the primitive assumption off this
+claim, and this probe attacks only the half that is ours: the derivation.
+
+THE RFC 8037 A.3 KNOWN ANSWER STAYED GREEN, and that is a measured fact about known-answer
+controls rather than a defect in this one. A.3's test vector simply does not end in the
+character this weakening trims, so the vector's derivation is unchanged. A known answer
+proves the derivation right for ONE operand; only the corpus controls quantify over operands,
+and only they can see a weakening that collides some other pair. Both kinds belong in the
+battery for different reasons.
+"""
+
+[[probe]]
+id = "M230-http-profile-two-enrolled-keys-cannot-share-a-keyid"
+unit = "http_profile.keyid_selector"
+theorem = "THM-0091"
+conjunct = "two distinct enrolled verification keys cannot be brought to the same keyid"
+path = "mcp-re-http-profile/src/keyid.rs"
+anchor = """
+    format!(r#"{{"crv":"{JWK_CRV_ED25519}","kty":"{JWK_KTY_OKP}","x":"{public_key_b64url}"}}"#)
+"""
+weakening = """
+    format!(r#"{{"crv":"{JWK_CRV_ED25519}","kty":"{JWK_KTY_OKP}","x":"{}"}}"#, public_key_b64url.trim_end_matches('A'))
+"""
+expect_red = [
+  "lib#keyid::tests::distinct_operands_never_share_a_canonical_form",
+]
+note = """
+THE SAME STATEMENT, A DIFFERENT PROPOSITION -- which is why this probe shares M229's anchor
+and is not a duplicate of it. `http_profile.keyid` claims the derivation is what the RFC says;
+`http_profile.keyid_selector` claims the keyid SELECTS a key, and it is a separate unit
+precisely so the primitive's collision resistance stays off the derivation claim. One
+production statement carries both, and the campaign's rule is that granularity follows
+PROPOSITIONS rather than sites.
+
+What the selector proposition adds is the composition: this half must introduce no collision
+of its own, and SHA-256 must introduce none either. Only the first half is ours, and it is the
+half this weakening breaks -- two distinct enrolled keys reach one canonical form and therefore
+one keyid, so a signature from either verifies under a lookup for the other.
+"""

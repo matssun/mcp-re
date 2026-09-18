@@ -122,6 +122,7 @@ direct_consequence_severity = "high"
 evidence = [
   "test://http_profile/keyid/rfc8037_a3_known_answer",
   "test://http_profile/keyid/derivation_introduces_no_collisions",
+  "mutation://http_profile/keyid/rfc8037_a3_known_answer",
 ]
 # NO primitive assumption, and that is the point of the split. Everything this unit
 # measures is a property of code MCP-RE wrote: the form is a fixed prefix, the operand
@@ -151,7 +152,10 @@ paths = ["mcp-re-http-profile/src/keyid.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://http_profile/keyid/derivation_introduces_no_collisions"]
+evidence = [
+  "test://http_profile/keyid/derivation_introduces_no_collisions",
+  "mutation://http_profile/keyid/derivation_introduces_no_collisions",
+]
 # The MCP-RE half is measured here too, because the composition rests on it. What is NOT
 # measurable is the other half, and nothing here pretends otherwise: no test can establish
 # collision resistance, which is why ASM-0037 exists and why it is scoped to this unit and
@@ -7034,7 +7038,10 @@ paths = ["mcp-re-http-profile/src/replay.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://http_profile/replay/key_injectivity"]
+evidence = [
+  "test://http_profile/replay/key_injectivity",
+  "mutation://http_profile/replay/key_injectivity",
+]
 # Injectivity here is a REAL claim about this code, not a primitive assumption: the separator
 # is a code point that cannot appear in a profile id, an RFC 9421 label, an escaped actor id
 # or a base64url audience hash, so the join cannot be forged. `every_component_discriminates`

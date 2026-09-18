@@ -294,8 +294,13 @@ def test_the_probe_set_is_measured_so_the_suite_cannot_silently_shrink():
 
 def test_a_unit_without_mutation_evidence_measures_no_mutation_components():
     """Empty, and measured as empty: a unit with no probe suite must not be dirtied by
-    another unit's probes, and the component must not become a sentinel."""
-    c = components("http_profile.keyid")
+    another unit's probes, and the component must not become a sentinel.
+
+    The subject is a STRUCTURAL unit on purpose. N1 owes a `mutation://` falsifier to
+    `tested` propositions, so any `tested` unit is a fixture with an expiry date — this
+    control was written over `http_profile.keyid` and went red the day that unit's probes
+    were registered, asserting nothing about the emptiness it exists to measure."""
+    c = components("proxy.runtime_lifecycle_sole_mutator")
     assert c["mutation_probes"] == {}
     assert c["mutation_lane_identity"] == {}
 

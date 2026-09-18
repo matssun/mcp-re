@@ -228,33 +228,6 @@ root_reachable = false
 status = "unreviewed"
 
 [[obligation]]
-unit = "http_profile.keyid"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "high"
-inherited_severity = "critical"
-root_reachable = true
-status = "unreviewed"
-
-[[obligation]]
-unit = "http_profile.keyid_selector"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "critical"
-inherited_severity = "critical"
-root_reachable = true
-status = "unreviewed"
-
-[[obligation]]
-unit = "http_profile.replay_key"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "critical"
-inherited_severity = "critical"
-root_reachable = true
-status = "unreviewed"
-
-[[obligation]]
 unit = "http_profile.request_envelope"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "critical"
