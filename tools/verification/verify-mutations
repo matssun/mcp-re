@@ -314,8 +314,32 @@ _SCRATCH_NEEDS = {
     TYPESCRIPT: ("node_modules", "native/*.node"),
 }
 
+#: The script that builds each ecosystem's matrix. NAMED, not derived from `eco.name`:
+#: TypeScript's is `prepare_node_matrix.sh`, because what it installs is Node runtimes, and
+#: a refusal telling a reader to run `prepare_typescript_matrix.sh` sends them to a file
+#: that does not exist -- which is worse than saying nothing, since it reads as authoritative.
+_MATRIX_SCRIPT = {
+    PYTHON: "scripts/prepare_python_matrix.sh",
+    TYPESCRIPT: "scripts/prepare_node_matrix.sh",
+}
 
-def prepare_scratch(eco, tree: Path, package: str, probe_path: str) -> str | None:
+
+#: `prepare_scratch` returns one of these beside its message, because the two refusals it
+#: can make are different facts and must not share a signal.
+#:
+#:   UNPREPARED  the environment this probe needs was never built here. An ENVIRONMENT
+#:               fact, like the lean lane outside the extraction image: a missing
+#:               measurement, not a failed one.
+#:   STALE       the probe would weaken a source the carried artefact was compiled from,
+#:               so the battery would run old native code against a new declaration. A
+#:               PROBE DEFECT, and never skippable.
+UNPREPARED = "unprepared"
+STALE = "stale"
+
+
+def prepare_scratch(
+    eco, tree: Path, package: str, probe_path: str
+) -> tuple[str, str] | None:
     """Make the weakened project runnable, or say why it cannot be.
 
     WHAT IS CARRIED ACROSS IS ONLY WHAT THE WEAKENING DOES NOT CHANGE. The probe edits a
@@ -335,7 +359,7 @@ def prepare_scratch(eco, tree: Path, package: str, probe_path: str) -> str | Non
     if not needs:
         return None
     if eco is PYTHON and probe_path.endswith(".rs"):
-        return (
+        return STALE, (
             f"probe path {probe_path!r} is Rust compiled into the prepared "
             f"`_core.abi3.so`. The scratch tree carries that binary rather than rebuilding "
             f"it, so a weakening of its sources cannot be measured here: the battery would "
@@ -349,10 +373,10 @@ def prepare_scratch(eco, tree: Path, package: str, probe_path: str) -> str | Non
             source = REPO_ROOT / package / relative
             sources = [source] if source.exists() else []
         if not sources:
-            return (
+            return UNPREPARED, (
                 f"{eco.name} battery needs {package}/{relative}, which this workspace does "
-                f"not have. Prepared by `scripts/prepare_{eco.name}_matrix.sh`; a lane that "
-                f"ran without it would report the resulting import failure as a red battery"
+                f"not have. Prepared by `{_MATRIX_SCRIPT[eco]}`; a lane that ran without it "
+                f"would report the resulting import failure as a red battery"
             )
         for source in sources:
             target = tree / package / source.relative_to(REPO_ROOT / package)
@@ -607,6 +631,16 @@ def main() -> int:
     parser.add_argument(
         "--keep-tree", action="store_true", help="leave the scratch copy for inspection"
     )
+    parser.add_argument(
+        "--skip-unprepared",
+        action="store_true",
+        help=(
+            "report a probe whose SDK matrix this environment never built as UNAVAILABLE "
+            "rather than FAILED, and name it in the verdict. For a lane that deliberately "
+            "prepares no matrix; never for the umbrella run, where an absent matrix is a "
+            "defect in the environment the run is supposed to have"
+        ),
+    )
     args = parser.parse_args()
 
     try:
@@ -675,6 +709,7 @@ def main() -> int:
         return 1
 
     failures: list[str] = []
+    unavailable: list[str] = []
     probed_units = sorted({probe["unit"] for probe in probes})
     try:
         for index, probe in enumerate(probes):
@@ -690,12 +725,25 @@ def main() -> int:
                 continue
             try:
                 runtime, refusal = probe_runtime(eco, toolchains)
-                if refusal is None and grouped:
-                    refusal = prepare_scratch(eco, tree, package, probe["path"])
                 if refusal is not None:
                     print(f"  FAIL {probe['id']}: {refusal}", file=sys.stderr)
                     failures.append(probe["id"])
                     continue
+                if grouped:
+                    prepared = prepare_scratch(eco, tree, package, probe["path"])
+                    if prepared is not None:
+                        cause, detail = prepared
+                        if cause == UNPREPARED and args.skip_unprepared:
+                            # NAMED, never silent. The caller has said this environment
+                            # builds no SDK matrix; the probe is then unmeasured here and
+                            # the run says so in the verdict line, so "green" cannot be
+                            # read as "every probe was applied".
+                            print(f"  UNAVAILABLE {probe['id']}: {detail}")
+                            unavailable.append(probe["id"])
+                            continue
+                        print(f"  FAIL {probe['id']}: {detail}", file=sys.stderr)
+                        failures.append(probe["id"])
+                        continue
                 if grouped:
                     ran, results = run_battery(
                         tree, package, grouped, target_dir, features, eco, runtime
@@ -786,6 +834,30 @@ def main() -> int:
         )
         print("VERDICT: FAIL")
         return 1
+    measured = len(probes) - len(unavailable)
+    if unavailable and measured == 0:
+        # A LANE THAT MEASURED NOTHING MAY NOT REPORT A PASS. This is the ratified rule the
+        # whole ADR-MCPRE-068 lane set is held to, and `--skip-unprepared` reintroduced the
+        # exact shape it forbids: every probe skipped, nothing weakened, nothing observed,
+        # and a green verdict. Found by hiding `node_modules` and running the flag.
+        print(
+            f"\nverify-mutations: UNAVAILABLE — all {len(unavailable)} selected probe(s) "
+            f"need an SDK matrix this environment never built "
+            f"({', '.join(unavailable)}). Nothing was weakened, so nothing was measured."
+        )
+        print("VERDICT: UNAVAILABLE")
+        return 1
+    if unavailable:
+        # THE VERDICT LINE CARRIES THE SHORTFALL, so a reader cannot take this run for a
+        # complete one. Same rule the lean lane is reported under: an absent environment is
+        # a missing measurement, stated, rather than a quiet pass over it.
+        print(
+            f"\nverify-mutations: PASS — {measured} probe(s), each turning a declared "
+            f"control red; {len(unavailable)} UNAVAILABLE in this environment "
+            f"({', '.join(unavailable)}). The umbrella run measures those."
+        )
+        print("VERDICT: PASS")
+        return 0
     print(f"\nverify-mutations: PASS — {len(probes)} probe(s), each turning a declared control red")
     print("VERDICT: PASS")
     return 0

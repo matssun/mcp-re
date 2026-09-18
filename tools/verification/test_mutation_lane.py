@@ -583,6 +583,61 @@ def test_a_non_cargo_battery_runs_inside_its_own_project():
     assert "cwd = tree\n" in body or "cwd = tree" in body
 
 
+def test_an_absent_matrix_and_a_stale_artefact_are_different_refusals():
+    """`prepare_scratch` returns a typed cause, and only one of them is skippable.
+
+    An absent SDK matrix is an ENVIRONMENT fact -- the lean lane is reported the same way
+    outside the extraction image. A probe that would weaken a source the carried binary was
+    compiled from is a PROBE DEFECT: the battery would run old native code against a new
+    declaration, and no flag may wave that through. Sharing one signal would make
+    `--skip-unprepared` silently skip the defect too.
+    """
+    assert lane.UNPREPARED != lane.STALE
+    body = inspect.getsource(lane.main)
+    assert "cause == lane.UNPREPARED" in body or "cause == UNPREPARED" in body
+    # The skip is conditioned on BOTH the cause and the flag, never on the flag alone.
+    assert "args.skip_unprepared" in body
+    guard = body[body.index("args.skip_unprepared") - 120 : body.index("args.skip_unprepared")]
+    assert "UNPREPARED" in guard
+
+
+def test_an_unavailable_probe_is_named_in_the_verdict_line():
+    """A skipped probe that did not appear in the verdict would let this job's green be
+    read as "every registered probe was applied", which is the false green the whole lane
+    exists to refuse -- one level up."""
+    body = inspect.getsource(lane.main)
+    assert "UNAVAILABLE in this environment" in body
+    assert "unavailable.append" in body
+
+
+def test_the_fast_job_declares_what_it_skips():
+    """The workflow step was called "Apply every registered probe". With the flag that
+    sentence is false, and a step name is what a reader takes the job to have measured."""
+    workflow = (lane.REPO_ROOT / ".github/workflows/mutation-probe.yml").read_text()
+    assert "--skip-unprepared" in workflow
+    assert "Apply every registered probe" not in workflow
+
+
+def test_skipping_every_probe_is_not_a_pass():
+    """`--skip-unprepared` reintroduced the exact shape this lane set is ratified against:
+    every probe skipped, nothing weakened, nothing observed, and a green verdict. Measured
+    by hiding `node_modules` and running the flag -- it printed `PASS -- 0 probe(s)`."""
+    body = inspect.getsource(lane.main)
+    assert "measured == 0" in body
+    assert "VERDICT: UNAVAILABLE" in body
+    # And the pass branch is reached only after that check.
+    assert body.index("measured == 0") < body.index("verify-mutations: PASS")
+
+
+def test_the_refusal_names_a_script_that_exists():
+    """The message derived the filename from the ecosystem name, so TypeScript's refusal
+    told a reader to run `prepare_typescript_matrix.sh`. There is no such file -- the Node
+    matrix is built by `prepare_node_matrix.sh` -- and a confident pointer to a file that
+    does not exist is worse than none."""
+    for eco, script in lane._MATRIX_SCRIPT.items():
+        assert (lane.REPO_ROOT / script).is_file(), (eco.name, script)
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):
