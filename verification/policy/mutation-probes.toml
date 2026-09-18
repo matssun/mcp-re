@@ -7078,3 +7078,88 @@ second value equal by construction today is the first step away from it, and the
 verifier cannot see the joint at all -- which is why this unit exists beside
 `client.response_binding_disposition` rather than inside it.
 """
+
+[[probe]]
+id = "M256-core-a-content-address-is-parsed-only-from-its-exact-shape"
+unit = "core.content_address"
+theorem = "THM-0091"
+conjunct = "a content address is parsed back only from its exact shape — a missing prefix is refused rather than interpreted"
+path = "mcp-re-core/src/hash.rs"
+anchor = """
+    let body = s
+        .strip_prefix(SHA256_PREFIX)
+        .ok_or(McpReError::SerializationFailed)?;
+"""
+weakening = """
+    let body = s.strip_prefix(SHA256_PREFIX).unwrap_or(s);
+"""
+expect_red = [
+  "lib#hash::tests::parse_rejects_missing_prefix",
+]
+note = """
+THE PREFIX IS THE ALGORITHM, which is what makes accepting a bare digest a security change
+rather than a leniency. `sha256:` names WHICH hash produced the 32 bytes; without it a caller
+holding 32 bytes from anywhere -- a different algorithm, a truncated digest, a value it
+computed itself -- gets an accepted content address. The length check below is not a second
+carrier: every 32-byte input passes it, whatever produced them.
+
+The round-trip control stays green under the weakening, correctly: this widens what parses and
+narrows nothing, so the shapes that worked still work. Only the refusal control can see it.
+"""
+
+[[probe]]
+id = "M257-client-evidence-that-can-never-verify-is-refused-locally"
+unit = "client.request_construction"
+theorem = "THM-0091"
+conjunct = "a request with no artifact binding or a structurally invalid one is refused LOCALLY rather than sent"
+path = "mcp-re-client-core/src/request.rs"
+anchor = """
+    block.validate(PROFILE_TAG)?;
+"""
+weakening = """
+    let _ = block.validate(PROFILE_TAG);
+"""
+expect_red = [
+  "lib#request::evidence_precondition_tests::signing_with_no_artifact_binding_is_refused_locally",
+  "lib#request::evidence_precondition_tests::signing_with_a_structurally_invalid_binding_is_refused_locally",
+]
+note = """
+THE SERVER ALSO REFUSES IT, AND THAT IS WHY THE PROPOSITION IS ABOUT WHERE. An empty or
+structurally invalid `artifact_bindings` is rejected as `malformed_evidence` at the boundary,
+so under the weakening nothing unsafe reaches an executor -- what changes is that the client
+composes it, SIGNS it, spends a round trip, and then reports a local misconfiguration as a
+server-side evidence fault. The operator reads a wire error about the peer for a value in
+their own configuration.
+
+`validate` is reused rather than re-spelled here precisely so the two ends cannot drift, which
+also means this is not defence in depth: one rule, checked at two points in one exchange, and
+the client's is the only one that can name the cause.
+"""
+
+[[probe]]
+id = "M258-http-profile-a-content-type-on-a-bodyless-message-is-refused"
+unit = "http_profile.bodyless_acknowledgement"
+theorem = "THM-0091"
+conjunct = "the named component sets are enforced as sets — a content-type on a bodyless message is a profile violation, not a harmless extra"
+path = "mcp-re-http-profile/src/bodyless/mod.rs"
+anchor = """
+    if single_header(headers, "content-type")?.is_some() {
+"""
+weakening = """
+    if false {
+"""
+expect_red = [
+  "tests/bodyless_202_test#content_type_on_a_bodyless_202_is_rejected",
+]
+note = """
+NAMED SETS, NOT NOTICED ABSENCES, and this refusal is the half that makes the distinction
+observable. If a verifier merely NOTICED that a body was absent and dropped the content
+requirements, then "no content-type because there is no content" and "content-type stripped in
+flight" would be the same observation -- and an attacker who removes a header would be
+indistinguishable from a peer that never sent one.
+
+Under the weakening a bodyless message carrying a content-type verifies, so the message's own
+header set no longer has to match the set the signature was computed over. The
+content-injection control is a sibling conjunct rather than a second carrier: it catches a
+body arriving where none was signed, and says nothing about a header arriving alone.
+"""

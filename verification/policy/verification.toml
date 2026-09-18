@@ -7032,7 +7032,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://http_profile/bodyless/acknowledgement_component_sets"]
+evidence = [
+  "test://http_profile/bodyless/acknowledgement_component_sets",
+  "mutation://http_profile/bodyless/acknowledgement_component_sets",
+]
 # Two DEDICATED batteries, both already in the tree and both driving the production
 # verifier over real signed messages. They are listed whole rather than filtered to the
 # controls that look most on-point: the unit's claim is about the SETS, and a control that
@@ -8418,7 +8421,10 @@ paths = ["mcp-re-core/src/hash.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://core/content_address/grammar"]
+evidence = [
+  "test://core/content_address/grammar",
+  "mutation://core/content_address/grammar",
+]
 tested_symbols = [
   "lib#hash::tests::hash_id_has_prefix_and_no_padding",
   "lib#hash::tests::hash_id_known_answer_for_empty_object_bytes",
@@ -8692,7 +8698,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://client/request_construction/signed_request_shape"]
+evidence = [
+  "test://client/request_construction/signed_request_shape",
+  "mutation://client/request_construction/signed_request_shape",
+]
 # The two local refusals are the load-bearing pair: an unbindable request refused HERE never
 # reaches a verifier, so a deployment learns at the call site rather than from a remote
 # rejection it cannot attribute. The notification controls are about a different failure —
