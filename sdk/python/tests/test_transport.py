@@ -963,6 +963,32 @@ async def test_an_unbound_rejection_receipt_is_reported_as_not_request_bound(mon
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("absent", [None, ""])
+async def test_a_wire_code_the_receipt_did_not_carry_is_substituted(monkeypatch, absent):
+    """`wire_code` is documented as a frozen `mcp-re.*` token a caller BRANCHES on.
+
+    A rejection that carries no peer reason — a signature that did not verify has no
+    trustworthy peer statement to report — leaves the member absent, and passing it
+    through would deliver an error whose `message` is empty. That is still an error and
+    still never a result, so the sibling conjunct holds; it is an error no caller can act
+    on, matching no documented token. The substituted value names what actually happened.
+    """
+    import mcp_re_sdk.transport as t
+
+    silent = _stub_verdict(outcome="rejection", wire_code=absent, bound=False)
+    monkeypatch.setattr(t._core, "verify_response", lambda *a, **k: silent)
+
+    async def rejecting(method, target_uri, headers, body):
+        return HttpReply(status=409, headers=[], body=b"{}")
+
+    out = await _send(_config(), rejecting, _request())
+
+    assert out[0].message.error.message == "mcp-re.response_sig_invalid", (
+        f"a {absent!r} wire code reached the application unsubstituted"
+    )
+
+
+@pytest.mark.anyio
 async def test_a_post_dispatch_rejection_reports_its_execution_and_retry_contract(monkeypatch):
     """ADR-MCPRE-058 §10 (SL-10): the disposition must reach the application.
 
