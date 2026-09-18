@@ -130,7 +130,9 @@ not an omission to hide.
 | proxy.ed25519_public_key_sole_producer | V0 | _none_ | 0 |
 | proxy.etcd_replay_adapter | V0 | THM-0107 | 0 |
 | proxy.evidence_attestation | V0 | THM-0113 | 0 |
-| proxy.exchange_lifecycle | V0 | THM-0043, THM-0044, THM-0078 | 0 |
+| proxy.exchange_publication | V0 | _none_ | 0 |
+| proxy.exchange_relation | V0 | THM-0043, THM-0078 | 0 |
+| proxy.exchange_retry_consequence | V0 | THM-0044 | 0 |
 | proxy.exchange_transition_ownership | V0 | THM-0101 | 0 |
 | proxy.gcp_kms_adapter | V0 | _none_ | 0 |
 | proxy.kms_ed25519_seam | V0 | THM-0108 | 0 |

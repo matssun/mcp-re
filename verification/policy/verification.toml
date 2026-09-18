@@ -3223,51 +3223,45 @@ tested_symbols = [
 # twelve with no "and" in the sentence.
 # ---------------------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------------------
+# ADR-MCPRE-068 Phase 1 — the exchange machine's three propositions, as three owners.
+#
+# Third on the campaign ruling's scheduler: effective `critical` by inheritance, and the
+# highest dependent fan-out left — FIVE theorems named this unit, two of them declared roots
+# (THM-0074 and THM-0078).
+#
+# WHAT WAS HERE. One unit over three files and 43 controls, whose own description named three
+# propositions: "which (state, event) pairs are legal, that the backend projection cannot
+# disagree with the exchange state, and that an exchange's retry consequence never moves
+# backward". They map exactly onto THM-0043, THM-0044 and THM-0101, which is the same shape
+# the verifier had — the theorem layer separated them and the unit layer did not.
+#
+# ITS SIX PROBES NAMED NO THEOREM AT ALL. `[[probe]].theorem` is optional, and this unit is
+# one of the places `theorem-falsifier-coverage-2026-09-18.md` counts: six falsifiers, each
+# attacking a conjunct of one of three claims, and nothing in the registry saying which. The
+# split adjudicates all six — which is P2-T1's work arriving one unit at a time, and the
+# reason that obligation asks for the LINK rather than for more probes.
+# ---------------------------------------------------------------------------------------
+
+# THE RELATION AND THE LATCH, and nothing about the caller. Its own scope already says so:
+# it does not establish that the serving path DRIVES this machine, that a given stage advances
+# it, or that any refusal site is inside the lifecycle — those are propositions about the
+# composition, and they are `proxy.exchange_publication`'s and
+# `proxy.exchange_transition_ownership`'s.
 [[unit]]
-id = "proxy.exchange_lifecycle"
+id = "proxy.exchange_relation"
 class = "V0"
-description = "The per-exchange lifecycle relation and the invariants over the five live machines: which (state, event) pairs are legal, that the backend projection cannot disagree with the exchange state, and that an exchange's retry consequence never moves backward — including on the path where the model and the code driving it disagree."
-# THREE SOURCE HALVES OF ONE PROPOSITION, added when the cross-machine invariants stopped
-# describing an invalid success and started refusing one:
-#
-#   no success publication occurs unless the exchange lifecycle can vouch for the
-#   prospective success terminal.
-#
-#   exchange_state.rs   owns whether the prospective lifecycle state is one the machine
-#                       can vouch for
-#   accepted.rs         owns where that decision occurs relative to retained/audited
-#                       bodied success
-#   notification.rs     owns where that decision occurs relative to minting the 202
-#
-# The two serving-path files are here for WHERE the decision sits, not for what else they
-# do: `accepted.rs` is also `proxy.retention_commitment`'s, for the different fact that a
-# terminal discharges the execution crossing. Deliberately NOT the whole `reply_assembly`
-# subtree, and deliberately not a new unit — the proposition is one and it is this one's.
-#
-# `notification.rs` is already incidentally a fingerprint input to
-# `proxy.exchange_transition_ownership`, which owns event/transition CORRESPONDENCE. That is
-# a different question from success-publication ADMISSIBILITY, and incidental overlap is not
-# evidence for this claim: before this edit, moving the 202's mint above its decision would
-# have moved a fingerprint while falsifying a proposition no unit stated.
+description = "The per-exchange relation itself: every (state, event) pair is explicitly legal or explicitly rejected, no event moves a terminal state, the pipeline order is a directed path whose only branches are the notification arm and the open-leg/terminal split, no state at or past the execution threshold reaches a pre-dispatch terminal, and an advance the relation does not admit latches an anomaly in every build rather than being ignored or panicking."
 paths = [
   "mcp-re-proxy/src/exchange_state.rs",
-  "mcp-re-proxy/src/http_profile_serve/reply_assembly/accepted.rs",
-  "mcp-re-proxy/src/http_profile_serve/reply_assembly/notification.rs",
 ]
 exported_contracts = []
-# TWO evidence classes, for the same reason `proxy.runtime_lifecycle` carries two. The
-# interesting conjuncts here are negative — an illegal advance is LATCHED, a spent approval
-# never reads as unspent, a post-threshold state never reads as retry-safe — and a green
-# battery is not evidence that any of those checks is load-bearing.
 evidence_class = "tested"
 direct_consequence_severity = "high"
 evidence = [
-  "test://proxy/exchange_lifecycle/transition_relation",
-  "mutation://proxy/exchange_lifecycle/transition_relation",
+  "test://proxy/exchange_relation/decided_everywhere_and_latched",
+  "mutation://proxy/exchange_relation/decided_everywhere_and_latched",
 ]
-# The battery libtest reports under `exchange_state::tests`. Ordered as the three
-# measurements the ratification names: legal reachability to dispatch, refusal coverage,
-# and work/event correspondence.
 tested_symbols = [
   "lib#exchange_state::tests::the_pipeline_path_is_legal_end_to_end",
   "lib#exchange_state::tests::the_open_leg_path_is_legal_end_to_end_and_ends_somewhere_else",
@@ -3282,6 +3276,35 @@ tested_symbols = [
   "lib#exchange_state::tests::a_reply_that_opens_a_leg_is_never_served_as_a_completed_exchange",
   "lib#exchange_state::tests::an_incurred_open_leg_obligation_cannot_be_downgraded",
   "lib#exchange_state::tests::an_ordinary_backend_reply_reaches_the_success_terminals_cleanly",
+  "lib#exchange_state::tests::the_whole_legal_ladder_latches_no_anomaly",
+  "lib#exchange_state::tests::an_illegal_advance_is_refused_and_latched_in_every_build",
+  "lib#exchange_state::tests::a_violated_invariant_is_latched_on_the_advance_that_causes_it",
+  "lib#exchange_state::tests::the_latch_keeps_the_first_anomaly",
+  "lib#exchange_state::tests::an_illegal_transition_names_both_halves",
+]
+
+# THE DERIVATION, NOT THE WIRE — its scope's own words. The backend projection belongs here
+# rather than with the relation because THM-0044's statement is what asserts it: *the backend
+# projection is derived from the exchange state rather than asserted beside it, so the two
+# cannot disagree*. M82 attacks exactly that derivation.
+#
+# `all_three_consequence_classes_are_reachable` is the anti-vacuity control: a `retry_semantics`
+# that answered NotRetrySafe unconditionally would satisfy every monotonicity control here.
+[[unit]]
+id = "proxy.exchange_retry_consequence"
+class = "V0"
+description = "What an exchange may be reported as: `retry_semantics` is monotone along every legal path, reports NotRetrySafe whenever an anomaly is latched or the backend was dispatched and RequiresNewElicitation whenever a continuation approval was consumed and the backend was not, `Consumed` latches so no later observation reports a spent approval as unspent, and the backend projection is DERIVED from the exchange state rather than asserted beside it, so the two cannot disagree."
+paths = [
+  "mcp-re-proxy/src/exchange_state.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/exchange_retry/never_moves_backward",
+  "mutation://proxy/exchange_retry/never_moves_backward",
+]
+tested_symbols = [
   "lib#exchange_state::tests::the_backend_projection_never_disagrees_with_the_exchange_state",
   "lib#exchange_state::tests::no_state_in_the_response_region_can_report_a_retry_safe_posture",
   "lib#exchange_state::tests::past_the_threshold_no_continuation_state_makes_a_retry_safe",
@@ -3293,18 +3316,33 @@ tested_symbols = [
   "lib#exchange_state::tests::a_dispatch_that_became_indeterminate_cannot_be_downgraded_to_a_clean_reply",
   "lib#exchange_state::tests::the_consequence_of_an_exchange_never_moves_backward",
   "lib#exchange_state::tests::all_three_consequence_classes_are_reachable",
-  "lib#exchange_state::tests::the_whole_legal_ladder_latches_no_anomaly",
-  "lib#exchange_state::tests::an_illegal_advance_is_refused_and_latched_in_every_build",
   "lib#exchange_state::tests::an_illegal_advance_never_reports_the_exchange_as_retry_safe",
-  "lib#exchange_state::tests::a_violated_invariant_is_latched_on_the_advance_that_causes_it",
-  "lib#exchange_state::tests::the_latch_keeps_the_first_anomaly",
   "lib#exchange_state::tests::an_illegal_advance_still_never_moves_consequence_backward",
-  "lib#exchange_state::tests::an_illegal_transition_names_both_halves",
-  # PUBLISHING a success, which is a different proposition from the tuple being incoherent.
-  # The invariants above were enforced in the serving path by `debug_assert!`, so the
-  # shipped binary detected the violation, latched it, and served the success anyway. These
-  # are the controls over the refusal that replaced it — including the case the cross-machine
-  # predicate cannot see, a latched illegal transition whose resulting tuple is coherent.
+]
+
+# THE COMPOSITION HALF, and the one the other two units' scopes point at. THM-0101 names it
+# alongside `proxy.exchange_transition_ownership`: the machine decides whether a success may be
+# published, and the assembly obeys that decision before it mints anything.
+#
+# `a_coherent_success_is_published_and_reaches_its_terminal` is the anti-vacuity control — a
+# publication gate that refused everything would satisfy the other nine.
+[[unit]]
+id = "proxy.exchange_publication"
+class = "V0"
+description = "What the machine will let the assembly publish: a success it cannot vouch for is refused rather than emitted — an open leg with no durable record, a reply that opens a leg presented as a completed exchange, synthesized transport-failure bytes, an exchange already carrying an anomaly — a refused publication leaves the exchange where it legally was and is REMEMBERED rather than re-derived, and the notification terminal is decided before its 202 is minted."
+paths = [
+  "mcp-re-proxy/src/exchange_state.rs",
+  "mcp-re-proxy/src/http_profile_serve/reply_assembly/accepted.rs",
+  "mcp-re-proxy/src/http_profile_serve/reply_assembly/notification.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/exchange_publication/vouched_or_refused",
+  "mutation://proxy/exchange_publication/vouched_or_refused",
+]
+tested_symbols = [
   "lib#exchange_state::tests::an_open_leg_with_no_durable_record_is_not_published",
   "lib#exchange_state::tests::a_reply_that_opens_a_leg_is_not_published_as_a_terminal_completion",
   "lib#exchange_state::tests::synthesized_transport_failure_bytes_are_not_published_as_a_success",
@@ -3315,24 +3353,9 @@ tested_symbols = [
   "lib#exchange_state::tests::a_coherent_success_is_published_and_reaches_its_terminal",
   "lib#exchange_state::tests::the_notification_terminal_is_refused_on_the_same_terms",
   "lib#exchange_state::tests::a_tail_that_reaches_no_success_terminal_is_refused_rather_than_passed",
-  # The two serving-path halves: WHERE the decision sits. Each asserts the refusing FORM,
-  # not merely the order — a decision taken and discarded (`let _ = ...`) latches the anomaly
-  # and publishes anyway, which an order check alone reads as clean.
   "lib#http_profile_serve::reply_assembly::accepted::tests::the_publication_decision_precedes_retention_and_the_response_signed_record",
   "lib#http_profile_serve::reply_assembly::notification::tests::the_terminal_is_decided_before_the_202_is_minted",
 ]
-
-# ---------------------------------------------------------------------------
-# The work/event correspondence — MCPRE-147 / #583, 2026-09-06
-# ---------------------------------------------------------------------------
-#
-# `Established<T>` + `establish()` hold structurally that a stage-owned transition is emitted
-# only when the stage's product is consumed. The source controls that keep that structure
-# honest existed (`exchange_transition_ownership_test`) and were registered nowhere; this
-# unit is their owner. Its paths overlap `proxy.refusal_site_totality` and
-# `proxy.exchange_lifecycle` on purpose: the property is about the seam between the
-# assembly and the machine, and a fingerprint that saw only one side would miss half the
-# regressions.
 
 [[unit]]
 id = "proxy.exchange_transition_ownership"

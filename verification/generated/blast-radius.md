@@ -134,7 +134,9 @@ attestations this view cannot see.
 | unit://proxy.ed25519_public_key_sole_producer | source, contracts or evidence | THM-0025 | _no consumer_ |
 | unit://proxy.etcd_replay_adapter | source, contracts or evidence | THM-0107 | _no consumer_ |
 | unit://proxy.evidence_attestation | source, contracts or evidence | THM-0113 | _no consumer_ |
-| unit://proxy.exchange_lifecycle | source, contracts or evidence | THM-0043, THM-0044, THM-0074, THM-0078, THM-0101 | _no consumer_ |
+| unit://proxy.exchange_publication | source, contracts or evidence | THM-0101 | _no consumer_ |
+| unit://proxy.exchange_relation | source, contracts or evidence | THM-0043, THM-0074, THM-0078 | _no consumer_ |
+| unit://proxy.exchange_retry_consequence | source, contracts or evidence | THM-0044 | _no consumer_ |
 | unit://proxy.exchange_transition_ownership | source, contracts or evidence | THM-0101 | _no consumer_ |
 | unit://proxy.gcp_kms_adapter | source, contracts or evidence | THM-0116, THM-0117 | _no consumer_ |
 | unit://proxy.kms_ed25519_seam | source, contracts or evidence | THM-0108 | _no consumer_ |

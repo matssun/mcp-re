@@ -2425,9 +2425,9 @@ this machine, that a given stage advances it, or that any particular refusal sit
 the lifecycle — those are propositions about the caller and are registered against the
 serving composition, not here. It establishes nothing about what any stage verified.
 """
-owner = "proxy.exchange_lifecycle"
+owner = "proxy.exchange_relation"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.exchange_lifecycle"]
+supported_by = ["unit://proxy.exchange_relation"]
 depends_on = []
 
 [[theorem]]
@@ -2454,9 +2454,9 @@ serving path maps a consequence onto a particular HTTP status, that a client act
 that any effect was in fact performed. It establishes nothing about the truth of the
 observations fed to it — only that no observation can move the consequence backward.
 """
-owner = "proxy.exchange_lifecycle"
+owner = "proxy.exchange_retry_consequence"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.exchange_lifecycle"]
+supported_by = ["unit://proxy.exchange_retry_consequence"]
 depends_on = ["THM-0043"]
 
 [[theorem]]
@@ -3698,7 +3698,10 @@ is not discharged by anything the request carries.
 """
 owner = "proxy.dispatch_commitment"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.dispatch_commitment", "unit://proxy.exchange_lifecycle"]
+supported_by = [
+  "unit://proxy.dispatch_commitment",
+  "unit://proxy.exchange_relation",
+]
 depends_on = [
   "THM-0015",
   "THM-0051",
@@ -3946,9 +3949,12 @@ a single sentence would be false about one of them: there is no lifecycle state 
 reached before an exchange began, and pretending otherwise is exactly the kind of borrowed
 authority this tree exists to remove. THM-0081 measures which replies are in the second set.
 """
-owner = "proxy.exchange_lifecycle"
+owner = "proxy.exchange_relation"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.exchange_lifecycle", "unit://proxy.refusal_provenance"]
+supported_by = [
+  "unit://proxy.exchange_relation",
+  "unit://proxy.refusal_provenance",
+]
 depends_on = [
   "THM-0043",
   "THM-0044",
@@ -5487,7 +5493,10 @@ reintroduced `advance` compiling. Class V0.
 """
 owner = "proxy.exchange_transition_ownership"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.exchange_transition_ownership", "unit://proxy.exchange_lifecycle"]
+supported_by = [
+  "unit://proxy.exchange_transition_ownership",
+  "unit://proxy.exchange_publication",
+]
 depends_on = ["THM-0043"]
 
 [[theorem]]
