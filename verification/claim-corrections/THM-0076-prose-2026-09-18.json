@@ -1,0 +1,40 @@
+{
+  "authority": "adr-068-phase1",
+  "changed_components": [
+    "theorem_dependencies"
+  ],
+  "corrections": [
+    {
+      "field": "scope",
+      "id": "C1",
+      "new": "whether the bytes are genuine and answer this request is `client.response_signer_authorization`'s and `client.response_binding_disposition`'s under THM-0076",
+      "old": "whether the bytes are genuine and answer this request is `client.response_acceptance`'s under THM-0076",
+      "reason": "THM-0126. The clause names BOTH propositions the split separated: `genuine` is the signer half, `answers this request` the binding half."
+    },
+    {
+      "field": "scope",
+      "id": "C2",
+      "new": "Sealing that chain is `client.response_signer_authorization`'s question, not this claim's.",
+      "old": "Sealing that chain is `client.response_acceptance`'s question, not this claim's.",
+      "reason": "THM-0126, second occurrence \u2014 absent from the held table and found by sweeping the unit set. Sealing a credential chain is the SIGNER half."
+    },
+    {
+      "field": "scope",
+      "id": "C3",
+      "new": "`client.response_binding_disposition`'s scope says so explicitly \u2014",
+      "old": "`client.response_acceptance`'s scope says so explicitly \u2014",
+      "reason": "THM-0084. The scope that takes the request/expectation PAIRING as given is the binding half."
+    }
+  ],
+  "dependency_correction": "No edge added or removed. The closure's premise claim digests moved because premise scope prose was corrected.",
+  "from_fingerprint": "sha256:e0b19a03b8812fc204bc29d49268ae71cb1fe492d20fb34485ace86eec5173d3",
+  "packet": "verification/reviews/packets/held-prose-corrections-2026-09-18.md",
+  "product_behavior_unchanged": true,
+  "reason": "Premise scope prose corrected where #996's `client.response_acceptance` split left it naming a unit that no longer exists. THM-0126 named it twice and THM-0084 once; both are in this root's closure, so its theorem_dependencies digest moved with theirs. The root's own statement, security_consequence and scope are untouched.",
+  "root_consequence_unchanged": true,
+  "ruling": "ADR-MCPRE-068 Phase-1 campaign ruling, 2026-09-18, item 5: claim precision corrections that preserve the ratified promise, and moving evidence to its correct owner, are explicitly NOT owner escalations. The owner did not individually review this fingerprint; the authority recorded here is that ruling. No root statement, security_consequence or scope is edited by this correction \u2014 the movement is entirely in theorem_dependencies, inherited from premises whose scope prose named units that no longer exist.",
+  "severity_after": "critical",
+  "severity_before": "critical",
+  "subject": "THM-0076",
+  "to_fingerprint": "sha256:07db1d02104dd01377cb4a257f9cff2e83ef1d76ba6efe674d8772cb2e893c4c"
+}
