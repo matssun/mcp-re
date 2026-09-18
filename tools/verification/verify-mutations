@@ -47,6 +47,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from _ecosystems import (  # noqa: E402
+    CARGO,
+    PYTHON,
+    TYPESCRIPT,
+    ReportUnreadable,
+    parse_results,
+    test_argv,
+    unit_ecosystem,
+    vitest_report_path,
+)
 from _evidence import EvidenceRecord, evidence_store, write_record  # noqa: E402
 from _fingerprint import fingerprint_unit  # noqa: E402
 from _manifest import (  # noqa: E402
@@ -122,7 +132,7 @@ def claims_mutation_evidence(unit: dict) -> bool:
 
 def declared_battery(
     units: dict, probe: dict, where: str
-) -> tuple[str, dict[str, list[str]], list[str], list[str]]:
+) -> tuple[str, dict[str, list[str]], list[str], list[str], object]:
     """The unit's package and its declared members, grouped by cargo target.
 
     Read from `verification.toml` rather than restated here: the probe names controls, and
@@ -149,6 +159,14 @@ def declared_battery(
     # THM-0094's and THM-0095's carriers, so the refusal would fall exactly on the two SDK
     # system roots this lane was extended to reach.
     gate_only = all(str(n).startswith("gate#") for n in probe["expect_red"])
+    # ADR-MCPRE-068 Phase 2. The ECOSYSTEM travels with the battery, because what the
+    # battery is does not vary but how it is RUN does. `test_package_for` already answers
+    # for every ecosystem -- it returns `sdk/python` for a `sdk_python.*` unit, not None --
+    # so resolution was never what stopped this lane reaching the two SDK system roots.
+    # `run_battery` was: it spoke cargo and nothing else, so a probe over a `pytest#` or
+    # `vitest#` control could not be executed at all, and the only probes those units could
+    # carry were the gate-only ones Phase 1 added.
+    eco = unit_ecosystem(unit)
     package = test_package_for(unit)
     if package is None and not gate_only:
         raise ManifestError(f"{where}: unit {probe['unit']!r} has no runnable test package")
@@ -187,7 +205,7 @@ def declared_battery(
         # cargo battery here would be measured and discarded — and on a unit whose symbols are
         # `pytest#` or `vitest#` it cannot be run at all, because `target_argv` speaks cargo.
         grouped = {}
-    return package, grouped, features, gates
+    return package, grouped, features, gates, eco
 
 
 def adjudicate(probe: dict, observed: dict[str, str]) -> tuple[list[str], list[str]]:
@@ -214,52 +232,250 @@ def target_argv(target: str) -> list[str]:
     return ["--test", target[6:]]
 
 
+#: What each ecosystem's runner says when the WEAKENED TREE DOES NOT BUILD, as opposed to
+#: when its controls fail.
+#:
+#: This distinction is the whole correctness of the lane. A weakening routinely breaks the
+#: build -- a deleted binding, a now-unused import, a type that no longer matches -- and a
+#: tree that does not build has not tested anything. If that state were read as "every
+#: control FAILED", a probe would be satisfied by BREAKING THE TREE rather than by
+#: weakening the property, and the redness would measure the compiler instead of the claim.
+#:
+#: The same defect was found and fixed for gate controls in Phase 1: a gate that had been
+#: DELETED by the weakening read as red, so a probe could be satisfied by removing its own
+#: control. Absent is not red. This is that rule for the three test runners.
+_DID_NOT_BUILD = {
+    CARGO: ("error[E", "error: could not compile"),
+    # pytest reports an import or collection failure before any test runs. Both spellings
+    # appear: `ERROR collecting` for a module that raised on import, and `INTERNALERROR`
+    # when the failure is in the plugin/conftest layer.
+    PYTHON: ("ERROR collecting", "INTERNALERROR", "ModuleNotFoundError", "ImportError while"),
+    # vitest fails at transform time before the suite exists. `Failed to load` covers a
+    # missing module; the transform errors carry the file that would not parse.
+    TYPESCRIPT: ("Failed to load", "Transform failed", "Could not resolve", "error TS"),
+}
+
+
+def _did_not_build(eco, text: str) -> bool:
+    return any(marker in text for marker in _DID_NOT_BUILD.get(eco, ()))
+
+
+def probe_runtime(eco, toolchains: dict) -> tuple[str | None, str | None]:
+    """The ONE pinned interpreter this lane measures a probe on, and why if it cannot.
+
+    `verify-tests` measures a unit's battery once per pinned runtime because the unit
+    CLAIMS something about that whole set. A probe asks a different question -- can this
+    control go red at all -- and one interpreter answers it. Running the matrix here would
+    multiply every probe by the pinned runtimes to re-establish what the test lane already
+    establishes.
+
+    WHICH ONE IS NOT ARBITRARY AND NOT SILENT: it is the lowest pinned version, because a
+    control that goes red on the oldest supported interpreter is the weakest claim of the
+    set, and it is printed with the probe's result so the record says which environment
+    decided it. An unresolved pin is refused here exactly as the test lane refuses it --
+    unknown identity is dirty, not a default.
+    """
+    entry = toolchains.get(eco.name)
+    if not isinstance(entry, dict):
+        return None, None
+    if entry.get("state") != "resolved":
+        return None, (
+            f"the [{eco.name}] runtime pin is unresolved, so the identity of the runtime "
+            f"that would decide this probe is unknown"
+        )
+    runtimes = [str(v) for v in entry.get("interpreters", [])]
+    if not runtimes:
+        return None, (
+            f"the [{eco.name}] runtime pin is resolved and names no interpreter, so this "
+            f"probe would be measured on nothing"
+        )
+    # NUMERIC, not lexicographic. `sorted(["9.0.0", "20.1.0"])` puts 20 first, so a string
+    # sort would name the HIGHEST version as the lowest the moment a single-digit major is
+    # pinned. Today's pins hide that -- every Node major here is two digits -- which is
+    # exactly the kind of latent wrong answer that surfaces years later on a version bump.
+    def _version_key(value: str) -> tuple:
+        return tuple(int(part) if part.isdigit() else -1 for part in value.split("."))
+
+    return min(runtimes, key=_version_key), None
+
+
+#: Untracked build artefacts an SDK battery needs in order to run at all, per ecosystem.
+#:
+#: The scratch tree is a copy of the TRACKED files, which is right for cargo -- it builds
+#: from source -- and not sufficient for the two SDKs. `sdk/python`'s package imports a
+#: compiled `_core.abi3.so` that `.gitignore` excludes, and `sdk/typescript` cannot run
+#: vitest without `node_modules`. Neither is copied, so a battery in the scratch tree fails
+#: to import before a single control runs.
+#: Both SDKs are Rust extensions with a thin language-native wrapper, so both need their
+#: compiled artefact as well as their dependency tree. The TypeScript binding's filename
+#: carries the host triple, so it is discovered rather than spelled.
+_SCRATCH_NEEDS = {
+    PYTHON: ("python/mcp_re_sdk/_core.abi3.so",),
+    TYPESCRIPT: ("node_modules", "native/*.node"),
+}
+
+
+def prepare_scratch(eco, tree: Path, package: str, probe_path: str) -> str | None:
+    """Make the weakened project runnable, or say why it cannot be.
+
+    WHAT IS CARRIED ACROSS IS ONLY WHAT THE WEAKENING DOES NOT CHANGE. The probe edits a
+    tracked source file; these artefacts are built from OTHER sources, so carrying the
+    existing ones states nothing false about the weakened tree. `node_modules` is linked
+    rather than copied because it is third-party and large; the `.so` is copied because a
+    link into the working tree would let a future lane write through it.
+
+    AND A PROBE THAT WOULD INVALIDATE A CARRIED ARTEFACT IS REFUSED. If the weakening
+    touches a source the `.so` was COMPILED FROM, the carried binary is stale by
+    construction: the battery would run the old native code against the new declaration and
+    report a green that describes neither tree. That is the one case this helper cannot
+    bridge, so it refuses instead of measuring -- the same rule as a gate that could not
+    start, which is reported ABSENT rather than red.
+    """
+    needs = _SCRATCH_NEEDS.get(eco)
+    if not needs:
+        return None
+    if eco is PYTHON and probe_path.endswith(".rs"):
+        return (
+            f"probe path {probe_path!r} is Rust compiled into the prepared "
+            f"`_core.abi3.so`. The scratch tree carries that binary rather than rebuilding "
+            f"it, so a weakening of its sources cannot be measured here: the battery would "
+            f"run the OLD native code against the NEW declaration"
+        )
+    for relative in needs:
+        if "*" in relative:
+            parent, _, pattern = relative.rpartition("/")
+            sources = sorted((REPO_ROOT / package / parent).glob(pattern))
+        else:
+            source = REPO_ROOT / package / relative
+            sources = [source] if source.exists() else []
+        if not sources:
+            return (
+                f"{eco.name} battery needs {package}/{relative}, which this workspace does "
+                f"not have. Prepared by `scripts/prepare_{eco.name}_matrix.sh`; a lane that "
+                f"ran without it would report the resulting import failure as a red battery"
+            )
+        for source in sources:
+            target = tree / package / source.relative_to(REPO_ROOT / package)
+            if target.exists():
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if source.is_dir():
+                target.symlink_to(source)
+            else:
+                shutil.copy2(source, target)
+    return None
+
+
 def run_battery(
     tree: Path,
     package: str,
     grouped: dict[str, list[str]],
     target_dir: Path,
     features: list[str],
+    eco=CARGO,
+    runtime: str | None = None,
 ):
     """Every declared member's reported result, across the unit's targets.
 
-    Returns (ran, results). `ran` is False when a target failed to COMPILE — under a
-    weakening that is expected often enough (a deleted binding, an unused import) and must
-    not be read as "the controls failed": a tree that does not build has not tested
-    anything.
+    Returns (ran, results). `ran` is False when the weakened tree failed to BUILD -- see
+    `_DID_NOT_BUILD`, which is what keeps a broken tree from reading as a satisfied probe.
+
+    THE COMMAND AND THE REPORT SYNTAX ARE THE ECOSYSTEM'S; the rule applied to the result
+    is this lane's. `verify-tests` already resolves both through `_ecosystems`, so a probe
+    over a Python or TypeScript unit runs the SAME selection, parsed by the SAME reader, as
+    the test lane that registered those controls in the first place. Anything else would
+    let a control be green in one lane and unrunnable in the other while both reported
+    about the same declared symbol.
+
+    ONE RUNTIME, and the caller records which. `verify-tests` runs a unit's battery once
+    per pinned runtime because the unit CLAIMS something about that whole set. A probe asks
+    a different question -- can this control go red at all -- and one interpreter answers
+    it. Running the matrix here would multiply every probe by the pinned runtimes to
+    re-establish something the test lane already establishes.
     """
     results: dict[str, str] = {}
-    feature_argv = ["--features", ",".join(features)] if features else []
     for target in sorted(grouped):
-        proc = subprocess.run(
-            [
+        if eco is CARGO:
+            argv = [
                 "cargo",
                 "test",
                 "-p",
                 package,
-                *feature_argv,
+                *(["--features", ",".join(features)] if features else []),
                 *target_argv(target),
                 "--",
                 "--exact",
                 *grouped[target],
-            ],
-            cwd=tree,
-            capture_output=True,
-            text=True,
-            env={**_env(), "CARGO_TARGET_DIR": str(target_dir)},
+            ]
+            cwd = tree
+            env = {**_env(), "CARGO_TARGET_DIR": str(target_dir)}
+        else:
+            argv = test_argv(eco, package, target, grouped[target], features, runtime)
+            # THE RUNTIME IS THE REAL PREPARED ONE; only the SOURCE is weakened. Both SDK
+            # adapters name their runner by a path relative to the project -- a prepared
+            # venv's interpreter, a pinned Node's vitest entry point -- and the scratch tree
+            # holds neither, because both are untracked. Resolving argv[0] against the
+            # WORKSPACE project is what makes the run possible at all, and it is also the
+            # honest arrangement: the pinned interpreter is the thing the claim is about, so
+            # substituting a copy of it would change what was measured. What the weakening
+            # has to reach is the source, and that is handled below.
+            runner = REPO_ROOT / package / argv[0]
+            if runner.exists():
+                argv = [str(runner), *argv[1:]]
+            # Cargo is driven from the workspace root with `-p`; a pytest or vitest
+            # selection is relative to its own project, which is where its configuration
+            # lives. Same rule as `verify-tests.run_selection`, against the SCRATCH tree.
+            cwd = tree / package
+            env = _env()
+            if eco is PYTHON:
+                # THE WEAKENED SOURCE MUST WIN OVER THE INSTALLED WHEEL, and without this
+                # the probe measures nothing. `prepare_python_matrix.sh` installs the SDK as
+                # a BUILT WHEEL -- site-packages holds a real copy of `mcp_re_sdk/`, not a
+                # link to the tree -- so `python -m pytest` in that environment imports the
+                # wheel's `mtls.py` whatever the scratch tree says. Every control would pass
+                # under every weakening, and the lane would report each probe as a control
+                # that refused to go red: not a false green, but permanently unmeasurable.
+                # Putting the scratch package root first makes the import resolve to the
+                # file the probe edited, and the carried `_core.abi3.so` keeps the native
+                # submodule importable from there.
+                env = {**env, "PYTHONPATH": str(tree / package / "python")}
+        proc = subprocess.run(
+            argv, cwd=cwd, capture_output=True, text=True, env=env
         )
-        if "error[E" in proc.stderr or "error: could not compile" in proc.stderr:
+        combined = proc.stdout + proc.stderr
+        if _did_not_build(eco, combined):
             return False, results
-        for line in proc.stdout.splitlines():
-            if not line.startswith("test "):
-                continue
-            body = line[5:]
-            name, _, outcome = body.partition(" ... ")
-            if outcome:
-                # Keyed by TARGET plus symbol. libtest reports the symbol alone, and two
-                # targets may hold a test of the same name — flattening them here would let
-                # one target's failure answer for another's.
-                results[f"{target}#{name.strip()}"] = outcome.strip()
+        if eco is TYPESCRIPT:
+            # THE RESULTS ARE IN THE FILE THE RUNNER WAS TOLD TO WRITE, not in stdout.
+            # vitest 5's json reporter writes `--outputFile` and logs only the path, so a
+            # lane reading stdout sees a sentence about where the report went and parses
+            # zero controls from it. `verify-tests` learned this from a CI failure and
+            # states the location rather than scanning for it; reading anywhere else here
+            # would make the two lanes disagree about the same declared symbols.
+            report = vitest_report_path(runtime, target)
+            combined = report.read_text() if report.exists() else combined
+        if eco is CARGO:
+            for line in proc.stdout.splitlines():
+                if not line.startswith("test "):
+                    continue
+                body = line[5:]
+                name, _, outcome = body.partition(" ... ")
+                if outcome:
+                    # Keyed by TARGET plus symbol. libtest reports the symbol alone, and two
+                    # targets may hold a test of the same name — flattening them here would
+                    # let one target's failure answer for another's.
+                    results[f"{target}#{name.strip()}"] = outcome.strip()
+            continue
+        try:
+            observed = parse_results(eco, combined)
+        except ReportUnreadable:
+            # The runner collected cases and this lane understood none of them. That is the
+            # lane failing to read a report, NOT a battery that went red, and reporting it
+            # as red would satisfy the probe with the lane's own blindness. Treated exactly
+            # as a tree that did not build: nothing was measured.
+            return False, results
+        for name, status in observed.items():
+            results[f"{target}#{name}"] = status
     return True, results
 
 
@@ -464,18 +680,29 @@ def main() -> int:
         for index, probe in enumerate(probes):
             where = f"probe {probe['id']}"
             try:
-                package, grouped, features, gates = declared_battery(units, probe, where)
+                package, grouped, features, gates, eco = declared_battery(
+                    units, probe, where
+                )
                 original = apply(tree, probe, where)
             except ManifestError as exc:
                 print(f"  FAIL {probe['id']}: {exc}", file=sys.stderr)
                 failures.append(probe["id"])
                 continue
             try:
+                runtime, refusal = probe_runtime(eco, toolchains)
+                if refusal is None and grouped:
+                    refusal = prepare_scratch(eco, tree, package, probe["path"])
+                if refusal is not None:
+                    print(f"  FAIL {probe['id']}: {refusal}", file=sys.stderr)
+                    failures.append(probe["id"])
+                    continue
                 if grouped:
-                    ran, results = run_battery(tree, package, grouped, target_dir, features)
+                    ran, results = run_battery(
+                        tree, package, grouped, target_dir, features, eco, runtime
+                    )
                 else:
-                    # Nothing to compile, so nothing can fail to compile. `ran` is about the
-                    # CARGO battery; a gate reads the tree and reports for itself.
+                    # Nothing to build, so nothing can fail to build. `ran` is about the
+                    # test battery; a gate reads the tree and reports for itself.
                     ran, results = True, {}
                 results.update(run_gates(tree, gates))
             finally:

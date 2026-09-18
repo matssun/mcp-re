@@ -4934,3 +4934,67 @@ inside a string would demonstrate that the matcher sees text rather than that th
 an out-of-lifecycle exit. This adds the third production file that can answer from source
 position, which is exactly THM-0081's "no third, unclassified refusal path".
 """
+
+# --- ADR-MCPRE-068 Phase 2 — the first two probes the SDK lane can run -------------------
+#
+# The mutation lane spoke cargo and nothing else, so the only probes THM-0094's and
+# THM-0095's leaves could carry were the gate-only ones Phase 1 added. These two are the
+# lane's liveness: a registered mechanism with no probe using it is a configuration, and
+# this repository has shipped one of those before. One per runner, each attacking the
+# production property its unit's proposition is about rather than a convenient line.
+
+[[probe]]
+id = "M178-python-aggregate-read-fills"
+unit = "sdk_python.bounded_read"
+theorem = "THM-0094"
+conjunct = "the aggregate deadline this SDK advertises is the deadline it enforces, because no NEW underlying read begins once it has passed"
+path = "sdk/python/python/mcp_re_sdk/mtls.py"
+anchor = """
+        chunk = response.read1(want)
+"""
+weakening = """
+        chunk = response.read(want)
+"""
+expect_red = [
+  "pytest#tests/test_mtls.py::test_the_aggregate_read_deadline_holds_against_a_real_trickling_peer",
+]
+note = """
+THE WEAKENING IS THE HISTORICAL DEFECT, not an invented one. `read1` returns what ONE
+underlying read produced, so the deadline is consulted BETWEEN underlying reads; `read`
+fills to `n`, so a peer trickling under the per-recv socket timeout keeps one call
+outstanding and the aggregate deadline is never reached. That is exactly what R9-C010
+recorded and what ASM-0042 registered as a foreign-runtime premise before the bound was
+made local. This probe is what makes the discharge falsifiable rather than remembered:
+if `read1` stops being load-bearing, the control goes green under the weakening and the
+lane says so.
+"""
+
+[[probe]]
+id = "M179-typescript-sign-time-nonce-floor"
+unit = "sdk_typescript.nonce_floor"
+theorem = "THM-0095"
+conjunct = "no request and no notification is signed under a nonce below the 128-bit floor, and a sub-floor or non-string factory result fails closed at sign time"
+path = "sdk/typescript/src/transport.ts"
+anchor = """
+  if (typeof nonce !== "string" || nonce.length < MIN_NONCE_CHARS) {
+"""
+weakening = """
+  if (false) {
+"""
+expect_red = [
+  "vitest#test/nonce_floor.test.ts > sign-time nonce floor > a sub-floor override is refused at sign time: 1",
+  "vitest#test/nonce_floor.test.ts > sign-time nonce floor > a non-string override is refused without a TypeError",
+]
+note = """
+THE SITE IS SOLE, which is what makes this the lane's TypeScript liveness probe. The floor
+is checked in exactly one place -- `checkedNonce`, on the path every signed request and
+notification takes -- so disabling the predicate is the whole weakening rather than one of
+two redundant refusals.
+
+The first candidate for this slot was NOT sole, and the measurement is recorded in
+`verification/reviews/packets/sdk-falsifier-lane-2026-09-18.md`: the post-close emission
+property is held by `#refuseIfClosed()` AND by `#exchange`'s per-leg abort check, so
+removing either alone leaves the declared control green. That is a finding about defence in
+depth, not a probe to force, and the one-anchor schema cannot express the weakening that
+would falsify it.
+"""

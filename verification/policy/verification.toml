@@ -4459,7 +4459,10 @@ paths = ["sdk/python/python/mcp_re_sdk/mtls.py"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://sdk_python/bounded_read/both_bounds_against_a_real_peer"]
+evidence = [
+  "test://sdk_python/bounded_read/both_bounds_against_a_real_peer",
+  "mutation://sdk_python/bounded_read/both_bounds_against_a_real_peer",
+]
 tested_symbols = [
   "pytest#tests/test_mtls.py::test_the_aggregate_read_deadline_holds_against_a_real_trickling_peer",
   "pytest#tests/test_mtls.py::test_the_full_mtls_path_bounds_a_trickling_peer",
@@ -4754,7 +4757,10 @@ paths = ["sdk/typescript/src/transport.ts"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://sdk_typescript/nonce_floor/nothing_is_signed_under_a_weak_nonce"]
+evidence = [
+  "test://sdk_typescript/nonce_floor/nothing_is_signed_under_a_weak_nonce",
+  "mutation://sdk_typescript/nonce_floor/nothing_is_signed_under_a_weak_nonce",
+]
 tested_symbols = [
   # ADR-MCPRE-069 `register`
   "vitest#test/nonce_floor.test.ts > sign-time nonce floor > the default generator clears the floor",
