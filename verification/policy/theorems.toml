@@ -727,10 +727,10 @@ and dispatch claims. It says the seam ANSWERED for the Request slot, not that th
 deployment was right to trust that actor (ASM-0029). It rests on a test battery, not on a
 postcondition over this operation.
 """
-owner = "http_profile.verifier_results"
+owner = "http_profile.request_floor_result"
 review_requirement = "Owner security-specification review"
 supported_by = [
-  "unit://http_profile.verifier_results",
+  "unit://http_profile.request_floor_result",
   "unit://http_profile.freshness_window",
 ]
 depends_on = ["THM-0001"]
@@ -771,12 +771,10 @@ document its digest committed to. It establishes nothing about what that documen
 AUTHORIZES: authority trust, the actor and action relations, validity and an explicit
 Allow are the authorization owner's propositions (ADR-MCPRE-065), not this one's.
 """
-owner = "http_profile.verifier_results"
+owner = "http_profile.request_full_result"
 review_requirement = "Owner security-specification review"
 supported_by = [
-  "unit://http_profile.verifier_results",
-  # The artifact conjunct's evidence closure is the DISPATCH, not one typed verifier:
-  # THM-0007's proved postcondition reaches this claim through THM-0008's `depends_on`.
+  "unit://http_profile.request_full_result",
   "unit://http_profile.artifact_verification_boundary",
 ]
 depends_on = ["THM-0014", "THM-0007", "THM-0008"]
@@ -815,10 +813,10 @@ It characterizes values successfully returned by those three operations. It does
 establish that an arbitrary externally constructed `BoundResponseSignatureFacts` was
 produced by one of them.
 """
-owner = "http_profile.verifier_results"
+owner = "http_profile.bound_response_shared_facts"
 review_requirement = "Owner security-specification review"
 supported_by = [
-  "unit://http_profile.verifier_results",
+  "unit://http_profile.bound_response_shared_facts",
   "unit://http_profile.freshness_window",
 ]
 depends_on = ["THM-0001"]
@@ -853,10 +851,10 @@ entirely. It reads no response evidence block.
 It characterizes values successfully returned by those two operations, not arbitrary
 externally constructed `UnboundResponseSignatureFacts`.
 """
-owner = "http_profile.verifier_results"
+owner = "http_profile.unbound_response_shared_facts"
 review_requirement = "Owner security-specification review"
 supported_by = [
-  "unit://http_profile.verifier_results",
+  "unit://http_profile.unbound_response_shared_facts",
   "unit://http_profile.freshness_window",
 ]
 depends_on = ["THM-0001"]
@@ -890,10 +888,10 @@ It makes NO delegation claim, and the delegated products do not carry this propo
 that path the seam is queried for the credential's ROOT ISSUER and the signing key appears
 in no trust map at all.
 """
-owner = "http_profile.verifier_results"
+owner = "http_profile.bound_response_seam_result"
 review_requirement = "Owner security-specification review"
 supported_by = [
-  "unit://http_profile.verifier_results",
+  "unit://http_profile.bound_response_seam_result",
   "unit://http_profile.freshness_window",
 ]
 depends_on = ["THM-0021"]
@@ -921,10 +919,10 @@ It inherits every exclusion of THM-0022 — no request relationship of any kind 
 ASM-0029 boundary of THM-0016. It makes no delegation claim: a delegated receipt is
 authorized by a credential and never reaches this type.
 """
-owner = "http_profile.verifier_results"
+owner = "http_profile.unbound_response_seam_result"
 review_requirement = "Owner security-specification review"
 supported_by = [
-  "unit://http_profile.verifier_results",
+  "unit://http_profile.unbound_response_seam_result",
   "unit://http_profile.freshness_window",
 ]
 depends_on = ["THM-0022"]
@@ -976,9 +974,11 @@ It makes no delegation claim. The signer was resolved through the trust seam, an
 credential chain authorized one is THM-0019 — a different proposition over a different
 product, not a strengthening of this one.
 """
-owner = "http_profile.verifier_results"
+owner = "http_profile.bound_response_full_result"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://http_profile.verifier_results"]
+supported_by = [
+  "unit://http_profile.bound_response_full_result",
+]
 depends_on = ["THM-0016"]
 
 [[theorem]]
@@ -1027,9 +1027,16 @@ There is ONE request input, in exactly the sense THM-0018 states: the `;req` bin
 handle comparison are both about the request supplied, because the handle is derived from it
 rather than accepted beside it.
 """
-owner = "http_profile.verifier_results"
+owner = "http_profile.delegated_bound_result"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://http_profile.verifier_results"]
+# The chain unit is a SECOND leaf here, not a convenience: this claim says the credential
+# "verified as a chain to a root issuer key the trust seam resolved", and that sentence is
+# `http_profile.delegated_credential_chain`'s proposition. What this unit owns is the
+# BINDING between that credential and this response.
+supported_by = [
+  "unit://http_profile.delegated_bound_result",
+  "unit://http_profile.delegated_credential_chain",
+]
 depends_on = ["THM-0021"]
 
 [[theorem]]
@@ -1064,9 +1071,16 @@ present, is diagnostic and outside this claim.
 not establish THM-0016: the seam answered for the credential's root issuer, not for the
 signing key. As in THM-0019 the expectations are supplied rather than proved current.
 """
-owner = "http_profile.verifier_results"
+owner = "http_profile.delegated_unbound_result"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://http_profile.verifier_results"]
+# The chain unit is a SECOND leaf here, not a convenience: this claim says the credential
+# "verified as a chain to a root issuer key the trust seam resolved", and that sentence is
+# `http_profile.delegated_credential_chain`'s proposition. What this unit owns is the
+# BINDING between that credential and this response.
+supported_by = [
+  "unit://http_profile.delegated_unbound_result",
+  "unit://http_profile.delegated_credential_chain",
+]
 depends_on = ["THM-0022"]
 
 # ---------------------------------------------------------------------------
@@ -3282,7 +3296,7 @@ nothing about responses this proxy does not sign.
 """
 owner = "http_profile.response_emission_binding"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://http_profile.response_emission_binding", "unit://http_profile.verifier_results"]
+supported_by = ["unit://http_profile.response_emission_binding"]
 depends_on = ["THM-0021", "THM-0022"]
 
 # =======================================================================================

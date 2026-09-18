@@ -28,7 +28,7 @@
 # IT IS, HOWEVER, REQUIRED EVIDENCE
 # ---------------------------------
 #
-# `http_profile.verifier_results` declares `mutation://http_profile/verifier/result_propositions`
+# Each of the verifier's ten propositions declares its own `mutation://` URI
 # beside its `test://` URI, so `attest` REFUSES it without a mutation PASS measured at its
 # exact ReviewFingerprint. Each probe entry below is itself a fingerprint input (encoding
 # v5), which is what stops the suite from being shrunk under a standing attestation:
@@ -77,7 +77,7 @@ schema_version = 1
 
 [[probe]]
 id = "M01-request-signature"
-unit = "http_profile.verifier_results"
+unit = "http_profile.request_floor_result"
 theorem = "THM-0014"
 conjunct = "the RFC 9421 signature verifies over the reconstructed base"
 path = "mcp-re-http-profile/src/verify/floor/request.rs"
@@ -108,7 +108,7 @@ expect_red = [
 
 [[probe]]
 id = "M02-request-content-digest"
-unit = "http_profile.verifier_results"
+unit = "http_profile.request_floor_result"
 theorem = "THM-0014"
 conjunct = "the covered Content-Digest agreed with the body"
 path = "mcp-re-http-profile/src/verify/floor/request.rs"
@@ -127,7 +127,7 @@ expect_red = [
 
 [[probe]]
 id = "M03-request-slot-resolution"
-unit = "http_profile.verifier_results"
+unit = "http_profile.request_floor_result"
 theorem = "THM-0014"
 conjunct = "the presented keyid resolved through the trust seam for the Request slot"
 path = "mcp-re-http-profile/src/verify/floor/request.rs"
@@ -145,7 +145,7 @@ expect_red = [
 
 [[probe]]
 id = "M27-algorithm-allowlist"
-unit = "http_profile.verifier_results"
+unit = "http_profile.request_floor_result"
 theorem = "THM-0014"
 conjunct = "the algorithm was one the verifier's policy accepts"
 path = "mcp-re-http-profile/src/verify/floor/params.rs"
@@ -169,7 +169,7 @@ expect_red = [
 
 [[probe]]
 id = "M04-request-block-profile-tag"
-unit = "http_profile.verifier_results"
+unit = "http_profile.request_full_result"
 theorem = "THM-0015"
 conjunct = "the request evidence block parsed and validated under the profile tag"
 path = "mcp-re-http-profile/src/verify/full/request.rs"
@@ -185,7 +185,7 @@ expect_red = [
 
 [[probe]]
 id = "M05-audience-tuple-equality"
-unit = "http_profile.verifier_results"
+unit = "http_profile.request_full_result"
 theorem = "THM-0015"
 conjunct = "the block's audience tuple equalled the verifier's own"
 path = "mcp-re-http-profile/src/verify/full/request.rs"
@@ -201,7 +201,7 @@ expect_red = [
 
 [[probe]]
 id = "M06-target-uri-consistency"
-unit = "http_profile.verifier_results"
+unit = "http_profile.request_full_result"
 theorem = "THM-0015"
 conjunct = "that tuple's target_uri agreed with the request's @target-uri"
 path = "mcp-re-http-profile/src/verify/full/request.rs"
@@ -217,7 +217,7 @@ expect_red = [
 
 [[probe]]
 id = "M25-bound-response-content-digest"
-unit = "http_profile.verifier_results"
+unit = "http_profile.bound_response_shared_facts"
 theorem = "THM-0021"
 conjunct = "the covered Content-Digest agreed with the body"
 path = "mcp-re-http-profile/src/verify/floor/response.rs"
@@ -255,7 +255,7 @@ expect_red = [
 
 [[probe]]
 id = "M07-bound-response-signature"
-unit = "http_profile.verifier_results"
+unit = "http_profile.bound_response_shared_facts"
 theorem = "THM-0021"
 conjunct = "the signature verified over a base whose ;req resolved against the supplied request"
 path = "mcp-re-http-profile/src/verify/floor/response.rs"
@@ -287,7 +287,7 @@ expect_red = [
 
 [[probe]]
 id = "M26-bound-response-slot-resolution"
-unit = "http_profile.verifier_results"
+unit = "http_profile.bound_response_seam_result"
 theorem = "THM-0016"
 conjunct = "the presented keyid resolved through the trust seam for the Response slot"
 path = "mcp-re-http-profile/src/verify/floor/response.rs"
@@ -307,9 +307,48 @@ expect_red = [
   "tests/proof_path_test#response_signed_by_request_only_actor_fails_actor_binding",
 ]
 
+# ADR-MCPRE-068 Phase 1 — THM-0017's FIRST falsifier, and the reason the split was worth
+# doing on its own.
+#
+# THM-0017 is `high`, it is in THM-0075's closure, and until the ten-way split of
+# `http_profile.verifier_results` NOTHING attacked it: the wide unit carried thirty probes,
+# every one of them named a different theorem, and N1 — which accounts per UNIT — read the
+# proposition as falsified on the strength of its neighbours. The split made the gap
+# merge-fatal instead of invisible, which is what a falsifier boundary is for.
+#
+# It is M26's twin on the UNBOUND arm, and the twinning is the argument: the same slot
+# resolution, the same weakening, one function lower in the same file. That the bound arm had
+# a probe and the unbound arm did not was never a decision — it is what a shared unit makes
+# impossible to notice.
+
+[[probe]]
+id = "M71-unbound-response-slot-resolution"
+unit = "http_profile.unbound_response_seam_result"
+theorem = "THM-0017"
+conjunct = "the presented keyid resolved through the trust seam for the Response slot, on the unbound arm too"
+path = "mcp-re-http-profile/src/verify/floor/response.rs"
+anchor = """    let resolved_server_actor =
+        resolve_actor_for_slot(resolve_actor, &key_id, SignerSlot::Response)?;
+    let base = signature_base(
+        &parsed.components,
+        &parsed.params,
+        &SourceMessage::ResponseOnly(response),
+    )?;
+"""
+weakening = """    let resolved_server_actor = resolve_actor_for_slot(resolve_actor, &key_id, SignerSlot::Response)
+        .or_else(|_| resolve_actor_for_slot(resolve_actor, &key_id, SignerSlot::Request))?;
+    let base = signature_base(
+        &parsed.components,
+        &parsed.params,
+        &SourceMessage::ResponseOnly(response),
+    )?;
+"""
+expect_red = [
+  "tests/proof_path_test#an_unbound_receipt_signed_by_a_request_only_actor_fails_actor_binding",
+]
 [[probe]]
 id = "M12-unbound-content-digest"
-unit = "http_profile.verifier_results"
+unit = "http_profile.unbound_response_shared_facts"
 theorem = "THM-0022"
 conjunct = "the covered Content-Digest agreed with the body"
 path = "mcp-re-http-profile/src/verify/floor/response.rs"
@@ -357,7 +396,7 @@ expect_red = [
 
 [[probe]]
 id = "M10-unbound-req-refusal"
-unit = "http_profile.verifier_results"
+unit = "http_profile.unbound_response_shared_facts"
 theorem = "THM-0022"
 conjunct = "a ;req component is refused as malformed"
 path = "mcp-re-http-profile/src/verify/floor/response.rs"
@@ -386,7 +425,7 @@ expect_red = [
 
 [[probe]]
 id = "M11-unbound-signature"
-unit = "http_profile.verifier_results"
+unit = "http_profile.unbound_response_shared_facts"
 theorem = "THM-0022"
 conjunct = "the signature verified over a base covering only response components"
 path = "mcp-re-http-profile/src/verify/floor/response.rs"
@@ -418,7 +457,7 @@ expect_red = [
 
 [[probe]]
 id = "M08-full-response-signer-correspondence"
-unit = "http_profile.verifier_results"
+unit = "http_profile.bound_response_full_result"
 theorem = "THM-0018"
 conjunct = "the block's server_signer carries the keyid the signature was accepted under"
 path = "mcp-re-http-profile/src/verify/full/response.rs"
@@ -438,7 +477,7 @@ expect_red = [
 
 [[probe]]
 id = "M09-full-response-request-evidence"
-unit = "http_profile.verifier_results"
+unit = "http_profile.bound_response_full_result"
 theorem = "THM-0018"
 conjunct = "the block's request_evidence handle equals the handle the caller supplied"
 path = "mcp-re-http-profile/src/verify/full/response.rs"
@@ -464,7 +503,7 @@ expect_red = [
 
 [[probe]]
 id = "M13-chain-to-root-issuer-slot-seam"
-unit = "http_profile.verifier_results"
+unit = "http_profile.delegated_credential_chain"
 theorem = "THM-0019"
 conjunct = "the credential's root issuer key is resolved through the trust seam FOR THE RESPONSE SLOT"
 path = "mcp-re-http-profile/src/verify/full/delegated/credential_chain.rs"
@@ -474,18 +513,14 @@ anchor = """
 weakening = """
         |issuer_kid| match resolve_actor_for_slot(resolve_actor, issuer_kid, SignerSlot::Request) {
 """
+# TRIMMED by the ADR-MCPRE-068 Phase-1 split. This probe attacks `credential_chain.rs`, which
+# both delegated paths share, so its old expectation named eleven controls across three of the
+# ten propositions the wide unit carried. A probe may only expect a control its OWN unit
+# declares — a red result elsewhere says nothing about the proposition named here.
 expect_red = [
-  "tests/delegation_e2e_test#a_block_naming_a_keyid_the_credential_did_not_confirm_is_key_mismatch",
-  "tests/delegation_e2e_test#a_delegated_preflight_receipt_verifies_without_request_binding",
-  "tests/delegation_e2e_test#a_delegated_response_advertising_another_requests_evidence_is_refused",
-  "tests/delegation_e2e_test#an_unbound_receipt_naming_a_keyid_the_credential_did_not_confirm_is_key_mismatch",
-  "tests/delegation_e2e_test#an_unbound_receipt_signed_by_a_key_other_than_cnf_is_key_mismatch",
-  "tests/delegation_e2e_test#an_unbound_receipt_whose_wire_keyid_is_not_the_delegated_kid_is_key_mismatch",
-  "tests/delegation_e2e_test#response_keyid_not_delegated_kid_is_key_mismatch",
-  "tests/delegation_e2e_test#response_signed_by_key_other_than_cnf_is_key_mismatch",
-  "tests/delegation_e2e_test#revoked_delegated_key_rejected_end_to_end",
-  "tests/delegation_e2e_test#stale_epoch_rejected_end_to_end",
   "tests/delegation_e2e_test#valid_delegated_response_verifies_under_cnf_key",
+  "tests/delegation_e2e_test#stale_epoch_rejected_end_to_end",
+  "tests/delegation_e2e_test#revoked_delegated_key_rejected_end_to_end",
 ]
 note = """
 Deliberately coarse. `chain_to_root` is shared by both delegated paths, so
@@ -497,7 +532,7 @@ probes below it.
 
 [[probe]]
 id = "M14-delegated-bound-keyid-vs-cred"
-unit = "http_profile.verifier_results"
+unit = "http_profile.delegated_bound_result"
 theorem = "THM-0019"
 conjunct = "the wire keyid is the delegated kid the credential confirms"
 path = "mcp-re-http-profile/src/verify/full/delegated/bound.rs"
@@ -527,7 +562,7 @@ expect_red = [
 
 [[probe]]
 id = "M15-delegated-bound-block-signer-vs-cred"
-unit = "http_profile.verifier_results"
+unit = "http_profile.delegated_bound_result"
 theorem = "THM-0019"
 conjunct = "the block's declared keyid is the delegated kid the credential confirms"
 path = "mcp-re-http-profile/src/verify/full/delegated/bound.rs"
@@ -557,7 +592,7 @@ expect_red = [
 
 [[probe]]
 id = "M16-delegated-bound-cnf-signature"
-unit = "http_profile.verifier_results"
+unit = "http_profile.delegated_bound_result"
 theorem = "THM-0019"
 conjunct = "the response signature verified under cnf.jwk"
 path = "mcp-re-http-profile/src/verify/full/delegated/bound.rs"
@@ -590,7 +625,7 @@ expect_red = [
 
 [[probe]]
 id = "M17-delegated-bound-request-evidence"
-unit = "http_profile.verifier_results"
+unit = "http_profile.delegated_bound_result"
 theorem = "THM-0019"
 conjunct = "the block's request_evidence handle equals the handle of the request under verification"
 path = "mcp-re-http-profile/src/verify/full/delegated/bound.rs"
@@ -612,7 +647,7 @@ expect_red = [
 
 [[probe]]
 id = "M20-delegated-unbound-content-digest"
-unit = "http_profile.verifier_results"
+unit = "http_profile.unbound_response_shared_facts"
 theorem = "THM-0022"
 conjunct = "the covered Content-Digest agreed with the body"
 path = "mcp-re-http-profile/src/verify/full/delegated/unbound.rs"
@@ -632,7 +667,7 @@ expect_red = [
 
 [[probe]]
 id = "M18-delegated-unbound-req-refusal"
-unit = "http_profile.verifier_results"
+unit = "http_profile.unbound_response_shared_facts"
 theorem = "THM-0022"
 conjunct = "a ;req component is refused as malformed"
 path = "mcp-re-http-profile/src/verify/full/delegated/unbound.rs"
@@ -661,7 +696,7 @@ expect_red = [
 
 [[probe]]
 id = "M21-delegated-unbound-credential-required"
-unit = "http_profile.verifier_results"
+unit = "http_profile.delegated_unbound_result"
 theorem = "THM-0020"
 conjunct = "the response carried an inline delegation credential"
 path = "mcp-re-http-profile/src/verify/full/delegated/unbound.rs"
@@ -684,7 +719,7 @@ expect_red = [
 
 [[probe]]
 id = "M19-delegated-unbound-cnf-signature"
-unit = "http_profile.verifier_results"
+unit = "http_profile.delegated_unbound_result"
 theorem = "THM-0020"
 conjunct = "the response signature verified under cnf.jwk"
 path = "mcp-re-http-profile/src/verify/full/delegated/unbound.rs"
@@ -717,7 +752,7 @@ expect_red = [
 
 [[probe]]
 id = "M23-delegated-unbound-block-signer-vs-cred"
-unit = "http_profile.verifier_results"
+unit = "http_profile.delegated_unbound_result"
 theorem = "THM-0020"
 conjunct = "the block's declared keyid is the delegated kid the credential confirms"
 path = "mcp-re-http-profile/src/verify/full/delegated/unbound.rs"
@@ -747,7 +782,7 @@ expect_red = [
 
 [[probe]]
 id = "M24-delegated-unbound-keyid-vs-cred"
-unit = "http_profile.verifier_results"
+unit = "http_profile.delegated_unbound_result"
 theorem = "THM-0020"
 conjunct = "the wire keyid is the delegated kid the credential confirms"
 path = "mcp-re-http-profile/src/verify/full/delegated/unbound.rs"
@@ -1779,7 +1814,7 @@ expect_red = [
 
 [[probe]]
 id = "M57-the-carried-decision-is-the-bound-document"
-unit = "http_profile.verifier_results"
+unit = "http_profile.request_full_result"
 theorem = "THM-0015"
 conjunct = "verified ... against the decision document the block itself carried"
 # The conjunct the ADR-MCPRE-065 Slice 2 files contribute to a successful `verify_request`.
@@ -2015,7 +2050,7 @@ expect_red = [
 
 [[probe]]
 id = "M68-the-block-handle-is-compared-against-this-requests-own"
-unit = "http_profile.verifier_results"
+unit = "http_profile.bound_response_full_result"
 theorem = "THM-0018"
 conjunct = "the block's request_evidence handle is the handle of the request the ;req components were resolved against"
 # The comparison itself. Deleting it leaves the `;req` floor, which binds the response to
@@ -2037,7 +2072,7 @@ expect_red = [
 
 [[probe]]
 id = "M69-the-derived-handle-is-of-the-request-under-verification"
-unit = "http_profile.verifier_results"
+unit = "http_profile.bound_response_full_result"
 theorem = "THM-0018"
 conjunct = "the handle is derived from the request supplied, not from the response's own claim"
 # The derivation is what makes the relation structural rather than a caller convention.
@@ -2061,7 +2096,7 @@ expect_red = [
 
 [[probe]]
 id = "M70-the-delegated-path-derives-its-handle-too"
-unit = "http_profile.verifier_results"
+unit = "http_profile.delegated_bound_result"
 theorem = "THM-0019"
 conjunct = "the delegated path compares against the handle of the request it was given"
 # The same defect, on the other bound-response path. The two are separate functions and a
