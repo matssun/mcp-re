@@ -85,6 +85,32 @@ tested_symbols = [
 ]
 pilot = "verus-candidate"
 
+# ADR-MCPRE-068 Phase 1 — THM-0012's second half, and the one its statement already asserts.
+#
+# The claim reads "Every state has a unique predecessor under the transition relation and
+# APPLY IS THE ONLY MUTATOR, leaving the state unchanged on an illegal event. So a recorded
+# terminal Stopped implies every event of the path … was applied, in order." The second
+# clause is the whole bridge from the relation to the conclusion: a relation with a unique
+# predecessor says nothing about a recorded state if anything else could have written it.
+#
+# It is a claim about what no other code can do to the value, and no control established it.
+# The battery next door exercises the mutators that EXIST, which is what a battery can do;
+# a seal quantifies over the ones that do not. Two probes, because there are two producer
+# routes and they earn different refusals: constructing a lifecycle at a chosen state
+# (E0451, the field is private) and writing the field on one already in hand (E0616).
+#
+# This unit is why THM-0012 needed no claim correction: the statement was already right, and
+# what was missing was the evidence for a sentence it had asserted since it was ratified.
+[[unit]]
+id = "proxy.runtime_lifecycle_sole_mutator"
+class = "V0"
+description = "No code outside `runtime_state` can construct a `RuntimeLifecycle` at a chosen state or write the state of one it holds, so `new` is the only origin and `apply` is the only mutator — which is what makes a recorded state the endpoint of a path of applied events rather than a value something assigned."
+paths = ["mcp-re-proxy/src/runtime_state.rs"]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "medium"
+evidence = ["structural://proxy/runtime_lifecycle/sole_mutator"]
+
 [[unit]]
 id = "http_profile.keyid"
 class = "V0"
@@ -136,146 +162,88 @@ tested_symbols = [
   "lib#keyid::tests::the_keyid_encoding_is_injective_over_the_digest_width",
 ]
 
+# ---------------------------------------------------------------------------------------
+# ADR-MCPRE-068 Phase 1 — the verifier's ten propositions, as ten owners.
+#
+# WHAT WAS HERE. `http_profile.verifier_results`: ONE class-V0 unit over 56 source files and
+# 73 controls, named in the `supported_by` of TEN theorems — nine of them titled after one of
+# the nine public operations `Verifier` exposes. The theorem layer did the decomposition. The
+# unit layer never followed, and the unit's own description stated the count: "the seven
+# public verifier operations and the products they return".
+#
+# Measured in `verification/reviews/packets/verifier-results-decomposition-2026-09-18.md`:
+#
+#   * THM-0017 and THM-0065 were attacked by NOTHING while N1 read them as satisfied, because
+#     N1 accounts per UNIT and ten claims shared one. That is ADR-MCPRE-068's own defect one
+#     layer up, where the adjacency is between THEOREMS rather than between checks.
+#   * an edit to any of the 56 files invalidated the standing evidence for all ten claims,
+#     including ones that do not read it;
+#   * 38 of 73 controls were named by no probe, and 18 of those were a coherent
+#     credential-chain battery — a different authority, with no unit.
+#
+# THE EVIDENCE ALREADY KNEW THE ANSWER. Every probe carries a `theorem` field and they group
+# 4/4/1/4/6/4/2/5 across eight of the ten, so this split is a RE-PARTITION of labelled
+# evidence rather than the production of new evidence. 73 controls, 30 probes, no control in
+# two units, none dropped.
+#
+# THE SHARED FLOOR MACHINERY IS IN EVERY UNIT'S PATHS, deliberately. `sigbase.rs`,
+# `digest.rs`, the RFC 9421 component and signature-parameter readers and the core crypto are
+# read by every operation, so they belong in every fingerprint that depends on them. What the
+# split buys is the OTHER direction: an edit to `delegated/unbound.rs` now dirties the two
+# unbound propositions and nothing else, where before it dirtied all ten.
+#
+# THM-0065 LOSES ITS EDGE TO THIS UNIT ENTIRELY. Its subject is EMISSION — a response this
+# proxy signs in the bound form binds the request it answers — and it already owns
+# `http_profile.response_emission_binding` and already depends on THM-0021 and THM-0022 for
+# the verification half. The edge claimed support the argument reaches through its premises.
+# ---------------------------------------------------------------------------------------
+
+# The floor, and the operation every other request proposition is stated on top of.
 [[unit]]
-id = "http_profile.verifier_results"
+id = "http_profile.request_floor_result"
 class = "V0"
-description = "The seven public verifier operations and the products they return, including the facts two authorization paths share: what a SUCCESSFUL return of each establishes."
+description = "What a successful `Verifier::verify_request_floor` return ESTABLISHES about the request supplied: the covered `Content-Digest` agreed with the body, the RFC 9421 signature verified over the reconstructed base under a policy-accepted algorithm, the parameters were admitted as current, and the presented keyid resolved through the trust seam for the Request slot."
 paths = [
   "mcp-re-http-profile/src/verifier.rs",
+  "mcp-re-http-profile/src/verify/mod.rs",
+  "mcp-re-http-profile/src/sigbase.rs",
+  "mcp-re-http-profile/src/digest.rs",
+  "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/message.rs",
+  "mcp-re-http-profile/src/evidence.rs",
+  "mcp-re-http-profile/src/ids.rs",
+  "mcp-re-http-profile/src/error.rs",
+  "mcp-re-http-profile/src/policy.rs",
+  "mcp-re-http-profile/src/verify/floor/mod.rs",
   "mcp-re-http-profile/src/verify/floor/components.rs",
   "mcp-re-http-profile/src/verify/floor/covered_components.rs",
-  "mcp-re-http-profile/src/verify/floor/mod.rs",
-  "mcp-re-http-profile/src/verify/floor/params.rs",
-  "mcp-re-http-profile/src/verify/floor/request.rs",
-  "mcp-re-http-profile/src/verify/floor/response.rs",
   "mcp-re-http-profile/src/verify/floor/sf_dictionary.rs",
   "mcp-re-http-profile/src/verify/floor/signature.rs",
   "mcp-re-http-profile/src/verify/floor/signature_input.rs",
   "mcp-re-http-profile/src/verify/floor/signature_parameters.rs",
   "mcp-re-http-profile/src/verify/floor/transport_headers.rs",
-  "mcp-re-http-profile/src/verify/floor/trust_slot.rs",
-  "mcp-re-http-profile/src/verify/bound_request.rs",
-  "mcp-re-http-profile/src/verify/full/delegated/bound.rs",
-  "mcp-re-http-profile/src/verify/full/delegated/credential_chain.rs",
-  "mcp-re-http-profile/src/verify/full/delegated/expectations.rs",
-  "mcp-re-http-profile/src/verify/full/delegated/mod.rs",
-  "mcp-re-http-profile/src/verify/full/delegated/unbound.rs",
-  "mcp-re-http-profile/src/verify/full/mod.rs",
-  "mcp-re-http-profile/src/verify/full/request.rs",
-  "mcp-re-http-profile/src/verify/full/response.rs",
-  "mcp-re-http-profile/src/verify/mod.rs",
-  "mcp-re-http-profile/src/verified_request/mod.rs",
-  "mcp-re-http-profile/src/verified_request/floor.rs",
-  "mcp-re-http-profile/src/verified_response/mod.rs",
-  "mcp-re-http-profile/src/verified_response/facts.rs",
-  "mcp-re-http-profile/src/verified_response/bound.rs",
-  "mcp-re-http-profile/src/verified_response/unbound.rs",
-  "mcp-re-http-profile/src/sigbase.rs",
-  "mcp-re-http-profile/src/digest.rs",
-  "mcp-re-http-profile/src/policy.rs",
-  # MCPRE-175 gave the credential its own subtree: the claim types, the §3 steps that
-  # decide whether one may be believed, and the root custody seam that mints one. The
-  # closure follows all three — a unit that named only `mod.rs` would fingerprint the
-  # types while the verification steps it depends on moved outside its provenance.
-  "mcp-re-http-profile/src/delegation/mod.rs",
-  "mcp-re-http-profile/src/delegation/parse.rs",
-  "mcp-re-http-profile/src/delegation/verify.rs",
-  "mcp-re-http-profile/src/delegation/issue.rs",
-  "mcp-re-http-profile/src/block.rs",
-  # The whole body-refusal rule, not the structural half of it. `reject_unrepresentable_json`
-  # lives in `representable.rs` and delegates every NUMBER token to `carried_number.rs`,
-  # which delegates the value comparison to `decimal_token.rs` — so a closure naming only
-  # the first two would let the rule that decides which values are refused change under a
-  # fingerprint that did not move.
   "mcp-re-http-profile/src/body/mod.rs",
   "mcp-re-http-profile/src/body/representable.rs",
   "mcp-re-http-profile/src/body/carried_number.rs",
   "mcp-re-http-profile/src/body/decimal_token.rs",
-  "mcp-re-http-profile/src/message.rs",
-  "mcp-re-http-profile/src/ids.rs",
-  "mcp-re-http-profile/src/evidence.rs",
-  "mcp-re-http-profile/src/error.rs",
-  "mcp-re-http-profile/src/artifact.rs",
-  # ADR-MCPRE-065 Slice 2 put a SECOND typed artifact verifier on the successful
-  # `verify_request` path: `enforce_full_profile_bindings` calls
-  # `pdp_decision::verify_pdp_decision_binding` before the OAuth dispatcher and continues
-  # past it. A closure claiming to be the complete security-relevant implementation of the
-  # seven verifier operations has to contain it — the OTHER half of that provenance, the
-  # dispatch RELATION itself, is `http_profile.artifact_verification_boundary`.
-  #
-  # `claims.rs`, `issue.rs` and `verify.rs` are deliberately absent: they are the
-  # authorization semantics of a decision document, which no verifier operation here
-  # reaches. Neighbouring code is not closure.
-  "mcp-re-http-profile/src/pdp_decision/mod.rs",
-  "mcp-re-http-profile/src/pdp_decision/binding.rs",
-  "mcp-re-http-profile/src/mcp_transport/mod.rs",
-  "mcp-re-http-profile/src/mcp_transport/agreement.rs",
-  "mcp-re-http-profile/src/sign.rs",
-  # Both halves of the rejection authority: how a body is framed and signed, and the
-  # execution/retry contract it projects. The retry contract moved into its own module in
-  # #741; leaving it out would drop the projection this closure verifies from the closure.
-  "mcp-re-http-profile/src/rejection/mod.rs",
-  "mcp-re-http-profile/src/rejection/retry_contract.rs",
   "mcp-re-core/src/crypto.rs",
   "mcp-re-core/src/error.rs",
   "mcp-re-core/src/encoding.rs",
+  "mcp-re-http-profile/src/verify/floor/params.rs",
+  "mcp-re-http-profile/src/verify/floor/request.rs",
+  "mcp-re-http-profile/src/verify/floor/trust_slot.rs",
+  "mcp-re-http-profile/src/verified_request/mod.rs",
+  "mcp-re-http-profile/src/verified_request/floor.rs",
 ]
 exported_contracts = []
-# The closure spans two Cargo packages, so the battery's package is named rather than
-# derived — and the loader refuses any name that is not one of the packages above.
 test_package = "mcp-re-http-profile"
-# TWO evidence classes, because a V0 claim needs two different questions answered.
-#
-#   test://      did every declared control pass?
-#   mutation://  would any of them NOTICE the check its theorem names being deleted?
-#
-# The second is not implied by the first, and the registry it names
-# (`verification/policy/mutation-probes.toml`) would be deletable decoration if it were
-# not declared here: `_evidence.required_lanes` reads every scheme, so this URI is what
-# makes `attest` REFUSE a unit with no mutation PASS at its exact fingerprint. The probe
-# entries and the lane binary are themselves fingerprint inputs (encoding v5), so a
-# shrunken suite cannot satisfy a standing attestation either.
 evidence_class = "tested"
 direct_consequence_severity = "critical"
 evidence = [
-  "test://http_profile/verifier/result_propositions",
-  "mutation://http_profile/verifier/result_propositions",
+  "test://http_profile/request_floor/what_a_successful_return_establishes",
+  "mutation://http_profile/request_floor/what_a_successful_return_establishes",
 ]
-# The battery is a NEGATIVE battery with positives attached, not the other way round.
-#
-# These are V0 claims, so a conjunct nobody can break is a conjunct the evidence does not
-# establish, however many tests pass. Every member below was mutation-probed: the
-# production check the theorem names was deleted or defanged, the battery re-run, and the
-# named control observed to go red.
-#
-# The probes are REGISTERED, not remembered: `verification/policy/mutation-probes.toml`
-# names each weakening and the control(s) it must turn red, and
-# `tools/verification/verify-mutations` re-applies them to a COPY of the tree on every run
-# that touches this unit. A probe whose anchor no longer matches exactly once is STALE and
-# fails the lane — a demand to re-adjudicate the probe against the new implementation,
-# never to restore the old code. The matrix a reviewer reads is
-# `docs/architecture/components/evidence-verification.md` §9.1, and the lane checks its
-# stated count against the registry so the two cannot drift.
-#
-# The probe found three conjuncts that nothing here reached, and each got a control rather
-# than a softened statement:
-#
-#   * the audience-tuple/`@target-uri` CONSISTENCY conjunct — `audience_mismatch_fails`
-#     moves `audience_id`, so it fails on the equality conjunct and survives deleting the
-#     other one;
-#   * the response `server_signer` correspondence check, on both the seam-authorized and
-#     the delegated path — the existing response negatives move the request evidence or the
-#     `;req` base instead;
-#   * the delegated wire-keyid comparison on the UNBOUND path.
-#
-# Five targets carry the battery. `rejection/` holds the only in-crate exercise of the
-# seam-authorized unbound floor through `verify_signed_rejection`; `delegation.rs`'s module
-# tests are the credential-layer negatives the two delegated claims rest on and are listed
-# here because those claims assert what they check; the delegated-unbound members were
-# written for this claim, because that operation previously had evidence only in a proxy
-# integration test — a different unit, so nothing resolvable.
 tested_symbols = [
-  # --- request floor (THM-0014) ---
   "tests/proof_path_test#request_roundtrip_verifies_and_yields_split_form_evidence",
   "tests/proof_path_test#body_tamper_fails_closed",
   "tests/proof_path_test#wrong_content_digest_fails_closed",
@@ -287,7 +255,57 @@ tested_symbols = [
   "tests/proof_path_test#request_signed_by_response_only_actor_fails_actor_binding",
   "tests/proof_path_test#resolver_returning_wrong_slot_is_rejected",
   "tests/algorithm_confusion_test#an_ed25519_signature_declaring_ml_dsa_is_rejected",
-  # --- full request (THM-0015) ---
+]
+
+# THM-0015's owner.
+[[unit]]
+id = "http_profile.request_full_result"
+class = "V0"
+description = "What a successful `Verifier::verify_request` return ESTABLISHES beyond the floor: the request evidence block parsed and validated under the profile tag, its audience tuple equalled the verifier's own and agreed with the `@target-uri`, and every artifact binding the block declared was verified through the supported typed verification for its own type."
+paths = [
+  "mcp-re-http-profile/src/verifier.rs",
+  "mcp-re-http-profile/src/verify/mod.rs",
+  "mcp-re-http-profile/src/sigbase.rs",
+  "mcp-re-http-profile/src/digest.rs",
+  "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/message.rs",
+  "mcp-re-http-profile/src/evidence.rs",
+  "mcp-re-http-profile/src/ids.rs",
+  "mcp-re-http-profile/src/error.rs",
+  "mcp-re-http-profile/src/policy.rs",
+  "mcp-re-http-profile/src/verify/floor/mod.rs",
+  "mcp-re-http-profile/src/verify/floor/components.rs",
+  "mcp-re-http-profile/src/verify/floor/covered_components.rs",
+  "mcp-re-http-profile/src/verify/floor/sf_dictionary.rs",
+  "mcp-re-http-profile/src/verify/floor/signature.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_input.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_parameters.rs",
+  "mcp-re-http-profile/src/verify/floor/transport_headers.rs",
+  "mcp-re-http-profile/src/body/mod.rs",
+  "mcp-re-http-profile/src/body/representable.rs",
+  "mcp-re-http-profile/src/body/carried_number.rs",
+  "mcp-re-http-profile/src/body/decimal_token.rs",
+  "mcp-re-core/src/crypto.rs",
+  "mcp-re-core/src/error.rs",
+  "mcp-re-core/src/encoding.rs",
+  "mcp-re-http-profile/src/verify/full/mod.rs",
+  "mcp-re-http-profile/src/verify/full/request.rs",
+  "mcp-re-http-profile/src/artifact.rs",
+  "mcp-re-http-profile/src/pdp_decision/mod.rs",
+  "mcp-re-http-profile/src/pdp_decision/binding.rs",
+  "mcp-re-http-profile/src/verified_request/mod.rs",
+  "mcp-re-http-profile/src/mcp_transport/mod.rs",
+  "mcp-re-http-profile/src/mcp_transport/agreement.rs",
+]
+exported_contracts = []
+test_package = "mcp-re-http-profile"
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://http_profile/request_full/audience_and_artifact_binding",
+  "mutation://http_profile/request_full/audience_and_artifact_binding",
+]
+tested_symbols = [
   "tests/full_profile_test#full_request_roundtrip_exposes_audience_and_block",
   "tests/full_profile_test#missing_request_block_fails_in_full_profile",
   "tests/full_profile_test#wrong_profile_in_block_fails",
@@ -295,53 +313,445 @@ tested_symbols = [
   "tests/full_profile_test#a_target_uri_disagreeing_with_the_audience_tuple_fails",
   "tests/full_profile_test#artifact_binding_mismatch_fails",
   "tests/full_profile_test#unverifiable_binding_without_material_fails_closed",
-  # The pdp-decision conjunct of THM-0015: what a SUCCESSFUL `verify_request` establishes
-  # about a carried authorization decision, and the two ways that branch refuses. A source
-  # file inside the closure whose conjunct nothing tested would be provenance without
-  # evidence.
   "tests/full_profile_test#a_carried_pdp_decision_verifies_through_its_own_typed_branch",
   "tests/full_profile_test#a_carried_decision_that_is_not_the_bound_document_is_refused",
   "tests/full_profile_test#a_pdp_decision_binding_with_no_carried_decision_is_refused",
   "lib#pdp_decision::binding::tests::a_different_document_does_not",
-  # --- bound response floor (THM-0016) ---
+]
+
+# Stated once for three operations, because it IS one proposition: the three differ in what
+# they establish ON TOP of it, not in these facts. THM-0016, THM-0018 and THM-0019 all rest on
+# this one, which is why it is a unit rather than a repeated sentence.
+[[unit]]
+id = "http_profile.bound_response_shared_facts"
+class = "V0"
+description = "The facts EVERY bound-response operation establishes, whichever of the three returned Ok: the covered `Content-Digest` agreed with the body, the parameters were admitted as current under a policy-accepted algorithm, and the signature verified over a base whose `;req` components resolved against the request being answered."
+paths = [
+  "mcp-re-http-profile/src/verifier.rs",
+  "mcp-re-http-profile/src/verify/mod.rs",
+  "mcp-re-http-profile/src/sigbase.rs",
+  "mcp-re-http-profile/src/digest.rs",
+  "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/message.rs",
+  "mcp-re-http-profile/src/evidence.rs",
+  "mcp-re-http-profile/src/ids.rs",
+  "mcp-re-http-profile/src/error.rs",
+  "mcp-re-http-profile/src/policy.rs",
+  "mcp-re-http-profile/src/verify/floor/mod.rs",
+  "mcp-re-http-profile/src/verify/floor/components.rs",
+  "mcp-re-http-profile/src/verify/floor/covered_components.rs",
+  "mcp-re-http-profile/src/verify/floor/sf_dictionary.rs",
+  "mcp-re-http-profile/src/verify/floor/signature.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_input.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_parameters.rs",
+  "mcp-re-http-profile/src/verify/floor/transport_headers.rs",
+  "mcp-re-http-profile/src/body/mod.rs",
+  "mcp-re-http-profile/src/body/representable.rs",
+  "mcp-re-http-profile/src/body/carried_number.rs",
+  "mcp-re-http-profile/src/body/decimal_token.rs",
+  "mcp-re-core/src/crypto.rs",
+  "mcp-re-core/src/error.rs",
+  "mcp-re-core/src/encoding.rs",
+  "mcp-re-http-profile/src/verify/floor/response.rs",
+  "mcp-re-http-profile/src/verify/bound_request.rs",
+  "mcp-re-http-profile/src/verified_response/mod.rs",
+  "mcp-re-http-profile/src/verified_response/facts.rs",
+  "mcp-re-http-profile/src/verified_response/bound.rs",
+  "mcp-re-http-profile/src/rejection/mod.rs",
+  "mcp-re-http-profile/src/rejection/retry_contract.rs",
+]
+exported_contracts = []
+test_package = "mcp-re-http-profile"
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://http_profile/bound_response/shared_facts",
+  "mutation://http_profile/bound_response/shared_facts",
+]
+tested_symbols = [
   "tests/proof_path_test#response_roundtrip_bound_to_request_verifies",
   "tests/proof_path_test#response_splice_fails_closed",
-  "tests/proof_path_test#response_signed_by_request_only_actor_fails_actor_binding",
   "lib#rejection::tests::tampered_message_does_not_change_the_trusted_wire_code",
   "lib#rejection::tests::spliced_rejection_onto_a_different_request_fails",
-  # --- unbound response floor (THM-0017) ---
+  "tests/delegation_e2e_test#body_tamper_is_caught_by_content_digest",
+]
+
+# THM-0016's owner.
+[[unit]]
+id = "http_profile.bound_response_seam_result"
+class = "V0"
+description = "What a successful `Verifier::verify_bound_response_floor` return ESTABLISHES beyond the shared bound facts: the presented keyid resolved through the trust seam for the Response slot, and the actor the seam returned IS the accepted signer — the signature verified under the key the seam supplied."
+paths = [
+  "mcp-re-http-profile/src/verifier.rs",
+  "mcp-re-http-profile/src/verify/mod.rs",
+  "mcp-re-http-profile/src/sigbase.rs",
+  "mcp-re-http-profile/src/digest.rs",
+  "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/message.rs",
+  "mcp-re-http-profile/src/evidence.rs",
+  "mcp-re-http-profile/src/ids.rs",
+  "mcp-re-http-profile/src/error.rs",
+  "mcp-re-http-profile/src/policy.rs",
+  "mcp-re-http-profile/src/verify/floor/mod.rs",
+  "mcp-re-http-profile/src/verify/floor/components.rs",
+  "mcp-re-http-profile/src/verify/floor/covered_components.rs",
+  "mcp-re-http-profile/src/verify/floor/sf_dictionary.rs",
+  "mcp-re-http-profile/src/verify/floor/signature.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_input.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_parameters.rs",
+  "mcp-re-http-profile/src/verify/floor/transport_headers.rs",
+  "mcp-re-http-profile/src/body/mod.rs",
+  "mcp-re-http-profile/src/body/representable.rs",
+  "mcp-re-http-profile/src/body/carried_number.rs",
+  "mcp-re-http-profile/src/body/decimal_token.rs",
+  "mcp-re-core/src/crypto.rs",
+  "mcp-re-core/src/error.rs",
+  "mcp-re-core/src/encoding.rs",
+  "mcp-re-http-profile/src/verify/floor/response.rs",
+  "mcp-re-http-profile/src/verify/floor/trust_slot.rs",
+  "mcp-re-http-profile/src/verified_response/bound.rs",
+]
+exported_contracts = []
+test_package = "mcp-re-http-profile"
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://http_profile/bound_response/trust_seam_authorization",
+  "mutation://http_profile/bound_response/trust_seam_authorization",
+]
+tested_symbols = [
+  "tests/proof_path_test#response_signed_by_request_only_actor_fails_actor_binding",
+]
+
+# THM-0022's owner.
+[[unit]]
+id = "http_profile.unbound_response_shared_facts"
+class = "V0"
+description = "The facts EVERY unbound-response operation establishes: the covered `Content-Digest` agreed with the body, the parameters were admitted as current under a policy-accepted algorithm, and the signature verified over a base covering ONLY response components — a `;req` component on this path is refused rather than resolved against nothing."
+paths = [
+  "mcp-re-http-profile/src/verifier.rs",
+  "mcp-re-http-profile/src/verify/mod.rs",
+  "mcp-re-http-profile/src/sigbase.rs",
+  "mcp-re-http-profile/src/digest.rs",
+  "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/message.rs",
+  "mcp-re-http-profile/src/evidence.rs",
+  "mcp-re-http-profile/src/ids.rs",
+  "mcp-re-http-profile/src/error.rs",
+  "mcp-re-http-profile/src/policy.rs",
+  "mcp-re-http-profile/src/verify/floor/mod.rs",
+  "mcp-re-http-profile/src/verify/floor/components.rs",
+  "mcp-re-http-profile/src/verify/floor/covered_components.rs",
+  "mcp-re-http-profile/src/verify/floor/sf_dictionary.rs",
+  "mcp-re-http-profile/src/verify/floor/signature.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_input.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_parameters.rs",
+  "mcp-re-http-profile/src/verify/floor/transport_headers.rs",
+  "mcp-re-http-profile/src/body/mod.rs",
+  "mcp-re-http-profile/src/body/representable.rs",
+  "mcp-re-http-profile/src/body/carried_number.rs",
+  "mcp-re-http-profile/src/body/decimal_token.rs",
+  "mcp-re-core/src/crypto.rs",
+  "mcp-re-core/src/error.rs",
+  "mcp-re-core/src/encoding.rs",
+  "mcp-re-http-profile/src/verify/floor/response.rs",
+  "mcp-re-http-profile/src/verified_response/mod.rs",
+  "mcp-re-http-profile/src/verified_response/facts.rs",
+  "mcp-re-http-profile/src/verified_response/unbound.rs",
+  "mcp-re-http-profile/src/rejection/mod.rs",
+  "mcp-re-http-profile/src/verify/full/delegated/unbound.rs",
+]
+exported_contracts = []
+test_package = "mcp-re-http-profile"
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://http_profile/unbound_response/shared_facts",
+  "mutation://http_profile/unbound_response/shared_facts",
+]
+tested_symbols = [
   "tests/proof_path_test#unbound_response_floor_verifies_a_receipt_with_no_request",
   "tests/proof_path_test#a_req_component_is_refused_on_the_unbound_floor",
   "tests/proof_path_test#the_unbound_floor_signature_check_is_load_bearing",
   "tests/proof_path_test#the_unbound_floor_content_digest_check_is_load_bearing",
   "lib#rejection::tests::unbound_rejection_verifies_without_request_context",
-  # --- full bound response (THM-0018) ---
+  "tests/delegation_e2e_test#a_req_component_is_refused_on_the_delegated_unbound_path",
+  "tests/delegation_e2e_test#an_unbound_receipt_body_tamper_is_caught_by_content_digest",
+]
+
+# THE ONE LEAF THIS SPLIT LEAVES OWING, and making it visible is half the point of the
+# split. THM-0017 was `supported_by` a unit carrying thirty probes and NONE of them named it, so
+# N1 read the proposition as falsified. It is `high`, it is in THM-0075's closure, and nothing
+# attacks it. `verifier-results-decomposition-2026-09-18.md` P2-V1 is its obligation; the row
+# enters the N1 backlog by SUCCESSION rather than as new debt.
+[[unit]]
+id = "http_profile.unbound_response_seam_result"
+class = "V0"
+description = "What a successful `Verifier::verify_unbound_response_floor` return ESTABLISHES beyond the shared unbound facts: the presented keyid resolved through the trust seam for the Response slot, and the actor the seam returned IS the accepted signer."
+paths = [
+  "mcp-re-http-profile/src/verifier.rs",
+  "mcp-re-http-profile/src/verify/mod.rs",
+  "mcp-re-http-profile/src/sigbase.rs",
+  "mcp-re-http-profile/src/digest.rs",
+  "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/message.rs",
+  "mcp-re-http-profile/src/evidence.rs",
+  "mcp-re-http-profile/src/ids.rs",
+  "mcp-re-http-profile/src/error.rs",
+  "mcp-re-http-profile/src/policy.rs",
+  "mcp-re-http-profile/src/verify/floor/mod.rs",
+  "mcp-re-http-profile/src/verify/floor/components.rs",
+  "mcp-re-http-profile/src/verify/floor/covered_components.rs",
+  "mcp-re-http-profile/src/verify/floor/sf_dictionary.rs",
+  "mcp-re-http-profile/src/verify/floor/signature.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_input.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_parameters.rs",
+  "mcp-re-http-profile/src/verify/floor/transport_headers.rs",
+  "mcp-re-http-profile/src/body/mod.rs",
+  "mcp-re-http-profile/src/body/representable.rs",
+  "mcp-re-http-profile/src/body/carried_number.rs",
+  "mcp-re-http-profile/src/body/decimal_token.rs",
+  "mcp-re-core/src/crypto.rs",
+  "mcp-re-core/src/error.rs",
+  "mcp-re-core/src/encoding.rs",
+  "mcp-re-http-profile/src/verify/floor/response.rs",
+  "mcp-re-http-profile/src/verify/floor/trust_slot.rs",
+  "mcp-re-http-profile/src/verified_response/unbound.rs",
+]
+exported_contracts = []
+test_package = "mcp-re-http-profile"
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://http_profile/unbound_response/trust_seam_authorization",
+  "mutation://http_profile/unbound_response/trust_seam_authorization",
+]
+tested_symbols = [
+  # THE SLOT CONJUNCT'S OWN CONTROL, written by the split that made its absence visible: the
+  # bound arm has had one since the beginning and this arm was probed by nothing.
+  "tests/proof_path_test#an_unbound_receipt_signed_by_a_request_only_actor_fails_actor_binding",
+  "tests/delegation_e2e_test#an_unbound_receipt_whose_root_is_unknown_to_the_seam_is_untrusted",
+]
+
+# THM-0018's owner.
+[[unit]]
+id = "http_profile.bound_response_full_result"
+class = "V0"
+description = "What a successful `Verifier::verify_bound_response` return ESTABLISHES beyond the trust-seam-authorized floor: the response evidence block parsed and validated under the profile tag, the `server_signer` identity it declared carries the keyid the signature was accepted under, and the `request_evidence` handle it carried is the handle of the request under verification."
+paths = [
+  "mcp-re-http-profile/src/verifier.rs",
+  "mcp-re-http-profile/src/verify/mod.rs",
+  "mcp-re-http-profile/src/sigbase.rs",
+  "mcp-re-http-profile/src/digest.rs",
+  "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/message.rs",
+  "mcp-re-http-profile/src/evidence.rs",
+  "mcp-re-http-profile/src/ids.rs",
+  "mcp-re-http-profile/src/error.rs",
+  "mcp-re-http-profile/src/policy.rs",
+  "mcp-re-http-profile/src/verify/floor/mod.rs",
+  "mcp-re-http-profile/src/verify/floor/components.rs",
+  "mcp-re-http-profile/src/verify/floor/covered_components.rs",
+  "mcp-re-http-profile/src/verify/floor/sf_dictionary.rs",
+  "mcp-re-http-profile/src/verify/floor/signature.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_input.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_parameters.rs",
+  "mcp-re-http-profile/src/verify/floor/transport_headers.rs",
+  "mcp-re-http-profile/src/body/mod.rs",
+  "mcp-re-http-profile/src/body/representable.rs",
+  "mcp-re-http-profile/src/body/carried_number.rs",
+  "mcp-re-http-profile/src/body/decimal_token.rs",
+  "mcp-re-core/src/crypto.rs",
+  "mcp-re-core/src/error.rs",
+  "mcp-re-core/src/encoding.rs",
+  "mcp-re-http-profile/src/verify/full/mod.rs",
+  "mcp-re-http-profile/src/verify/full/response.rs",
+  "mcp-re-http-profile/src/verified_response/bound.rs",
+  "mcp-re-http-profile/src/verify/bound_request.rs",
+]
+exported_contracts = []
+test_package = "mcp-re-http-profile"
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://http_profile/bound_response/block_agreement",
+  "mutation://http_profile/bound_response/block_agreement",
+]
+tested_symbols = [
   "tests/full_profile_test#full_response_roundtrip_binds_request_evidence",
   "tests/full_profile_test#a_block_declaring_a_signer_it_did_not_sign_as_fails",
   "tests/full_profile_test#response_request_evidence_mismatch_emits_request_binding_mismatch",
   "tests/full_profile_test#cryptographic_req_splice_still_fails_at_the_floor",
   "tests/full_profile_test#a_valid_exchange_cannot_be_verified_as_the_answer_to_a_different_request",
   "tests/full_profile_test#two_requests_differing_only_in_a_signed_parameter_have_different_handles",
-  # --- delegated bound response (THM-0019) ---
-  "tests/delegation_e2e_test#valid_delegated_response_verifies_under_cnf_key",
-  "tests/delegation_e2e_test#direct_root_signed_response_is_rejected_credential_missing",
+]
+
+# THM-0019's owner.
+[[unit]]
+id = "http_profile.delegated_bound_result"
+class = "V0"
+description = "What a successful `Verifier::verify_delegated_bound_response` return ESTABLISHES beyond the shared bound facts: the block carried an inline delegation credential, the wire keyid and the block's declared signer are the credential's own delegated kid, the signature verified under the key the credential confirms, and the `request_evidence` handle is the handle of the request under verification."
+paths = [
+  "mcp-re-http-profile/src/verifier.rs",
+  "mcp-re-http-profile/src/verify/mod.rs",
+  "mcp-re-http-profile/src/sigbase.rs",
+  "mcp-re-http-profile/src/digest.rs",
+  "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/message.rs",
+  "mcp-re-http-profile/src/evidence.rs",
+  "mcp-re-http-profile/src/ids.rs",
+  "mcp-re-http-profile/src/error.rs",
+  "mcp-re-http-profile/src/policy.rs",
+  "mcp-re-http-profile/src/verify/floor/mod.rs",
+  "mcp-re-http-profile/src/verify/floor/components.rs",
+  "mcp-re-http-profile/src/verify/floor/covered_components.rs",
+  "mcp-re-http-profile/src/verify/floor/sf_dictionary.rs",
+  "mcp-re-http-profile/src/verify/floor/signature.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_input.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_parameters.rs",
+  "mcp-re-http-profile/src/verify/floor/transport_headers.rs",
+  "mcp-re-http-profile/src/body/mod.rs",
+  "mcp-re-http-profile/src/body/representable.rs",
+  "mcp-re-http-profile/src/body/carried_number.rs",
+  "mcp-re-http-profile/src/body/decimal_token.rs",
+  "mcp-re-core/src/crypto.rs",
+  "mcp-re-core/src/error.rs",
+  "mcp-re-core/src/encoding.rs",
+  "mcp-re-http-profile/src/verify/full/mod.rs",
+  "mcp-re-http-profile/src/verify/full/delegated/mod.rs",
+  "mcp-re-http-profile/src/verify/full/delegated/bound.rs",
+  "mcp-re-http-profile/src/verify/full/delegated/expectations.rs",
+  "mcp-re-http-profile/src/verified_response/bound.rs",
+]
+exported_contracts = []
+test_package = "mcp-re-http-profile"
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://http_profile/delegated_bound/credential_binding",
+  "mutation://http_profile/delegated_bound/credential_binding",
+]
+tested_symbols = [
   "tests/delegation_e2e_test#response_keyid_not_delegated_kid_is_key_mismatch",
-  "tests/delegation_e2e_test#response_signed_by_key_other_than_cnf_is_key_mismatch",
   "tests/delegation_e2e_test#a_block_naming_a_keyid_the_credential_did_not_confirm_is_key_mismatch",
+  "tests/delegation_e2e_test#response_signed_by_key_other_than_cnf_is_key_mismatch",
   "tests/delegation_e2e_test#a_delegated_response_advertising_another_requests_evidence_is_refused",
-  "tests/delegation_e2e_test#body_tamper_is_caught_by_content_digest",
-  "tests/delegation_e2e_test#stale_epoch_rejected_end_to_end",
-  "tests/delegation_e2e_test#revoked_delegated_key_rejected_end_to_end",
-  # --- delegated unbound response (THM-0020) ---
   "tests/delegation_e2e_test#a_delegated_preflight_receipt_verifies_without_request_binding",
+]
+
+# THM-0020's owner.
+[[unit]]
+id = "http_profile.delegated_unbound_result"
+class = "V0"
+description = "What a successful `Verifier::verify_delegated_unbound_response` return ESTABLISHES beyond the shared unbound facts: an inline delegation credential was REQUIRED and present, the wire keyid and the block's declared signer are the credential's own delegated kid, and the signature verified under the key the credential confirms — and never a request binding."
+paths = [
+  "mcp-re-http-profile/src/verifier.rs",
+  "mcp-re-http-profile/src/verify/mod.rs",
+  "mcp-re-http-profile/src/sigbase.rs",
+  "mcp-re-http-profile/src/digest.rs",
+  "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/message.rs",
+  "mcp-re-http-profile/src/evidence.rs",
+  "mcp-re-http-profile/src/ids.rs",
+  "mcp-re-http-profile/src/error.rs",
+  "mcp-re-http-profile/src/policy.rs",
+  "mcp-re-http-profile/src/verify/floor/mod.rs",
+  "mcp-re-http-profile/src/verify/floor/components.rs",
+  "mcp-re-http-profile/src/verify/floor/covered_components.rs",
+  "mcp-re-http-profile/src/verify/floor/sf_dictionary.rs",
+  "mcp-re-http-profile/src/verify/floor/signature.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_input.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_parameters.rs",
+  "mcp-re-http-profile/src/verify/floor/transport_headers.rs",
+  "mcp-re-http-profile/src/body/mod.rs",
+  "mcp-re-http-profile/src/body/representable.rs",
+  "mcp-re-http-profile/src/body/carried_number.rs",
+  "mcp-re-http-profile/src/body/decimal_token.rs",
+  "mcp-re-core/src/crypto.rs",
+  "mcp-re-core/src/error.rs",
+  "mcp-re-core/src/encoding.rs",
+  "mcp-re-http-profile/src/verify/full/mod.rs",
+  "mcp-re-http-profile/src/verify/full/delegated/mod.rs",
+  "mcp-re-http-profile/src/verify/full/delegated/unbound.rs",
+  "mcp-re-http-profile/src/verify/full/delegated/expectations.rs",
+  "mcp-re-http-profile/src/verified_response/unbound.rs",
+]
+exported_contracts = []
+test_package = "mcp-re-http-profile"
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://http_profile/delegated_unbound/credential_binding",
+  "mutation://http_profile/delegated_unbound/credential_binding",
+]
+tested_symbols = [
   "tests/delegation_e2e_test#an_unbound_receipt_without_a_credential_is_refused",
   "tests/delegation_e2e_test#an_unbound_receipt_signed_by_a_key_other_than_cnf_is_key_mismatch",
   "tests/delegation_e2e_test#an_unbound_receipt_naming_a_keyid_the_credential_did_not_confirm_is_key_mismatch",
   "tests/delegation_e2e_test#an_unbound_receipt_whose_wire_keyid_is_not_the_delegated_kid_is_key_mismatch",
-  "tests/delegation_e2e_test#an_unbound_receipt_whose_root_is_unknown_to_the_seam_is_untrusted",
-  "tests/delegation_e2e_test#a_req_component_is_refused_on_the_delegated_unbound_path",
-  "tests/delegation_e2e_test#an_unbound_receipt_body_tamper_is_caught_by_content_digest",
-  # --- the credential layer both delegated claims assert (THM-0019, THM-0020) ---
+]
+
+# A PROPOSITION NO THEOREM STATES, and the split is what made that visible. Eighteen controls
+# over `delegation/verify.rs` — validity, algorithm, type, root signature, issuer trust, expiry
+# and skew, audience, profile, key use, trust epoch, rollout window, three revocation
+# identifiers, `cnf` binding and segment count — sat inside a unit whose subject was `what a
+# successful verifier operation establishes`, carried as support for whichever of ten theorems a
+# reader happened to be following.
+#
+# It is an ADR-MCPRE-069 `new-proposition` at the UNIT layer: the evidence is registered and the
+# claim is not. §5 of that record makes STATING the claim a product step, so this unit exists
+# and no theorem is invented for it here — `verifier-results-decomposition-2026-09-18.md` P2-V2
+# is the obligation.
+[[unit]]
+id = "http_profile.delegated_credential_chain"
+class = "V0"
+description = "What an inline delegation credential must be before any response proposition may rest on it: three segments under the profile's own algorithm, type and key use; a root signature that verifies under an issuer key the trust seam resolved for the Response slot; inside its own nbf/exp window under a clamped skew; scoped to this verifier's audience; at an accepted trust epoch; and named on no revocation list by delegated kid, issuer kid or jti."
+paths = [
+  "mcp-re-http-profile/src/verifier.rs",
+  "mcp-re-http-profile/src/verify/mod.rs",
+  "mcp-re-http-profile/src/sigbase.rs",
+  "mcp-re-http-profile/src/digest.rs",
+  "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/message.rs",
+  "mcp-re-http-profile/src/evidence.rs",
+  "mcp-re-http-profile/src/ids.rs",
+  "mcp-re-http-profile/src/error.rs",
+  "mcp-re-http-profile/src/policy.rs",
+  "mcp-re-http-profile/src/verify/floor/mod.rs",
+  "mcp-re-http-profile/src/verify/floor/components.rs",
+  "mcp-re-http-profile/src/verify/floor/covered_components.rs",
+  "mcp-re-http-profile/src/verify/floor/sf_dictionary.rs",
+  "mcp-re-http-profile/src/verify/floor/signature.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_input.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_parameters.rs",
+  "mcp-re-http-profile/src/verify/floor/transport_headers.rs",
+  "mcp-re-http-profile/src/body/mod.rs",
+  "mcp-re-http-profile/src/body/representable.rs",
+  "mcp-re-http-profile/src/body/carried_number.rs",
+  "mcp-re-http-profile/src/body/decimal_token.rs",
+  "mcp-re-core/src/crypto.rs",
+  "mcp-re-core/src/error.rs",
+  "mcp-re-core/src/encoding.rs",
+  "mcp-re-http-profile/src/delegation/mod.rs",
+  "mcp-re-http-profile/src/delegation/parse.rs",
+  "mcp-re-http-profile/src/delegation/verify.rs",
+  "mcp-re-http-profile/src/delegation/issue.rs",
+  "mcp-re-http-profile/src/verify/full/delegated/mod.rs",
+  "mcp-re-http-profile/src/verify/full/delegated/credential_chain.rs",
+]
+exported_contracts = []
+test_package = "mcp-re-http-profile"
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://http_profile/delegated_credential/chain_admission",
+  "mutation://http_profile/delegated_credential/chain_admission",
+]
+tested_symbols = [
+  "tests/delegation_e2e_test#valid_delegated_response_verifies_under_cnf_key",
+  "tests/delegation_e2e_test#direct_root_signed_response_is_rejected_credential_missing",
+  "tests/delegation_e2e_test#stale_epoch_rejected_end_to_end",
+  "tests/delegation_e2e_test#revoked_delegated_key_rejected_end_to_end",
   "lib#delegation::tests::valid_credential_accepts_and_yields_delegated_key",
   "lib#delegation::tests::wrong_alg_is_credential_invalid",
   "lib#delegation::tests::wrong_typ_is_credential_invalid",
@@ -361,21 +771,6 @@ tested_symbols = [
   "lib#delegation::tests::cnf_kid_not_delegated_kid_is_credential_invalid",
   "lib#delegation::tests::not_three_segments_is_credential_invalid",
 ]
-
-# The structural half: the products are not interchangeable, and that is checked by the
-# compiler rather than asserted in prose. The controls were landed and PROBED in #570/#571
-# — each was rewritten so it SHOULD compile and the test then failed — so this unit records
-# them where they are, rather than growing a second copy.
-#
-# A FOURTH control was added when the delegated products stopped nesting the seam-authorized
-# ones: there is now no field, projection or conversion from a `VerifiedDelegatedMcpResponse`
-# to a `VerifiedMcpResponse`, so a consumer whose reasoning needs a trust-store entry for the
-# SIGNING key cannot be handed a credential-authorized value. It sits on the same item as
-# the bound/unbound control, which the lane matches as a battery, and it was probed the same
-# way: rewritten so it should compile, and the doctest then failed.
-#
-# Their lane is `cargo test --doc`. Bazel runs no doctests, and this manifest does not
-# pretend otherwise.
 
 [[unit]]
 id = "http_profile.verifier_result_separation"
@@ -439,7 +834,7 @@ evidence = ["structural://http_profile/verifier/assurance_type_separation"]
 # supplied independently", and the probe below is what distinguishes those.
 #
 # Class V0: there is no `ensures` here. The battery is what the claim rests on, so it
-# carries `mutation://` for the same reason `http_profile.verifier_results` does.
+# carries `mutation://` for the same reason the verifier's ten propositions do.
 #
 # NOT claimed by this unit, and the distinction is the whole point of the census: the STORE
 # refuses a session whose epoch no longer matches (`tls_listener_state::auth_epoch`, and the
@@ -496,50 +891,69 @@ tested_symbols = [
   "lib#tls_plane::client_revocation_posture::revocation_posture_tests::every_loaded_crl_reports_its_own_digest_and_window",
 ]
 
-[[unit]]
-id = "proxy.tls_listener_state"
-class = "V0"
-description = "Every MCP-RE construction path obtains a listener's anchors, epoch-bound session store and signing budget through one TlsListenerSecurityState; those terms cannot be supplied to it independently."
-# The COMPLETE implementation closure of the proposition, not the files whose names read
-# like it. The first version named the owner and the epoch module only — and `T03` mutates
-# `tls.rs`, so an edit there could weaken the resumption binding while this unit's
-# fingerprint stood still. Same false-freshness class as the one #596 closed.
+# ---------------------------------------------------------------------------------------
+# ADR-MCPRE-068 Phase 1 — the listener's three propositions, as three owners.
 #
-# The claim is about a PRODUCTION LISTENER's lifetime, so the closure reaches the wiring
-# that gives a listener one: `tls_plane.rs` seeds the state and rebuilds through it,
-# `delegated_tls.rs` carries the signing-budget semantics the fourth conjunct is about, and
-# `tls.rs` holds the credential validation and error vocabulary the builds go through. A
-# narrower unit proving only the owner-local relationship would be defensible, but then the
-# description would have to stop saying "production listener" and `TlsPlane` would need a
-# composition obligation of its own.
+# `proxy.tls_listener_state`: one unit over 11 files and 31 controls, named by THM-0048,
+# THM-0054 and THM-0103. Eight probes, and every one of them attacked the assembly or the
+# epoch store — so THM-0054, which is `critical`, was attacked by nothing while N1 read it as
+# satisfied. Fourth on the campaign ruling's scheduler.
+# ---------------------------------------------------------------------------------------
+
+# THE ASSEMBLY, and the five `T0*` probes are all its: each attacks a way a term could be
+# supplied to a listener independently of the state that owns it.
+[[unit]]
+id = "proxy.listener_state_assembly"
+class = "V0"
+description = "Every MCP-RE construction path obtains a listener's trust anchors, epoch-bound session store, signing budget and client-certificate verifier through one `TlsListenerSecurityState`; the terms cannot be supplied to it independently, and a rebuild through the same state keeps the cache and the epoch it was built with."
 paths = [
   "mcp-re-proxy/src/tls_listener_state/mod.rs",
-  "mcp-re-proxy/src/tls_listener_state/auth_epoch.rs",
   "mcp-re-proxy/src/tls_listener_state/assembly.rs",
-  "mcp-re-proxy/src/tls_listener_state/client_verifier.rs",
-  "mcp-re-proxy/src/tls_listener_state/resumption_binding.rs",
-  "mcp-re-proxy/src/tls_listener_state/resumption_acceptance.rs",
   "mcp-re-proxy/src/tls.rs",
   "mcp-re-proxy/src/delegated_tls.rs",
-  # MCPRE-175: the client-revocation posture and its reload worker left `tls_plane.rs`
-  # for their own owners. Both are inside this unit's closure — the fourth conjunct is
-  # about what the production listener is built with, and a CRL reload rebuilds it.
   "mcp-re-proxy/src/tls_plane/mod.rs",
-  "mcp-re-proxy/src/tls_plane/client_revocation_posture.rs",
-  "mcp-re-proxy/src/tls_plane/crl_reload_worker/mod.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
 evidence = [
-  "test://proxy/tls/listener_security_state",
-  "mutation://proxy/tls/listener_security_state",
-  # A DIFFERENT proposition from the two above, named separately so neither can stand for
-  # the other. The state battery measures the anchor epoch, resumption and the signing
-  # budget, and says nothing about revocation admission. This one is THM-0054: the
-  # handshake half — a revoked client, a stale CRL, and a client whose status the configured
-  # CRLs cannot determine — with the construction-site half beside it.
-  "test://proxy/tls/client_revocation_admission",
+  "test://proxy/listener_state/one_state_or_none",
+  "mutation://proxy/listener_state/one_state_or_none",
+]
+tested_symbols = [
+  "lib#tls_listener_state::tests::the_epoch_digests_the_anchors_this_state_owns",
+  "lib#tls_listener_state::tests::every_config_this_owner_builds_carries_this_states_epoch_bound_store",
+  "lib#tls_listener_state::tests::a_rebuild_keeps_the_cache_and_the_epoch_of_the_state_it_was_built_through",
+  "lib#tls_listener_state::tests::a_different_anchor_set_is_a_different_state_with_its_own_empty_cache",
+  "lib#tls_listener_state::tests::no_config_this_owner_builds_can_resume_outside_the_store",
+  "lib#tls_listener_state::tests::a_delegated_rebuild_reuses_the_listeners_signing_budget",
+]
+
+# THM-0054 IS `critical` AND HAD NO FALSIFIER. It shared a unit with THM-0048 and THM-0103,
+# whose eight probes attack the listener state and the epoch store; not one named it. That is
+# one of the 22 in `theorem-falsifier-coverage-2026-09-18.md`, and the split is what made it
+# merge-fatal rather than invisible. M76 calls the one method the builder's own doc says is
+# unreachable.
+#
+# `the_rules_would_catch_each_regression` is the source-text inventory's own self-test, and it
+# is the reason the four `no_production_code…` controls are evidence rather than a grep: a rule
+# that matched nothing would satisfy them all.
+[[unit]]
+id = "proxy.client_certificate_posture"
+class = "V0"
+description = "Every client-certificate verifier a production MCP-RE listener uses denies unknown revocation status, enforces revocation over the full chain and enforces CRL expiration, with no configuration or argument that can relax any of the three — and the only other verifier in the tree is the declared fault injector."
+paths = [
+  "mcp-re-proxy/src/tls_listener_state/client_verifier.rs",
+  "mcp-re-proxy/src/tls_plane/client_revocation_posture.rs",
+  "mcp-re-proxy/src/tls_plane/crl_reload_worker/mod.rs",
+  "mcp-re-proxy/src/tls.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/client_certificate_posture/deny_unknown_no_opt_out",
+  "mutation://proxy/client_certificate_posture/deny_unknown_no_opt_out",
 ]
 tested_symbols = [
   "tests/integration#tls_test::revoked_client_cert_handshake_is_rejected",
@@ -551,12 +965,27 @@ tested_symbols = [
   "tests/integration#client_verifier_posture_test::the_builder_enforces_expiration_and_admits_no_posture_argument",
   "tests/integration#client_verifier_posture_test::the_only_other_verifier_is_the_declared_fault_injector",
   "tests/integration#client_verifier_posture_test::the_rules_would_catch_each_regression",
-  "lib#tls_listener_state::tests::the_epoch_digests_the_anchors_this_state_owns",
-  "lib#tls_listener_state::tests::every_config_this_owner_builds_carries_this_states_epoch_bound_store",
-  "lib#tls_listener_state::tests::a_rebuild_keeps_the_cache_and_the_epoch_of_the_state_it_was_built_through",
-  "lib#tls_listener_state::tests::a_different_anchor_set_is_a_different_state_with_its_own_empty_cache",
-  "lib#tls_listener_state::tests::no_config_this_owner_builds_can_resume_outside_the_store",
-  "lib#tls_listener_state::tests::a_delegated_rebuild_reuses_the_listeners_signing_budget",
+]
+
+# M118 is the anti-vacuity probe and is worth naming as one: a store that refused every
+# resumption would satisfy M116 and M117 and break every honest handshake.
+[[unit]]
+id = "proxy.epoch_bound_session_store"
+class = "V0"
+description = "The epoch-bound TLS session store resumes a session under the epoch that tagged it and under no other: every value written carries the epoch in force at the write, prefixed at that epoch's own width; every read splits at that same width; a superseded session is refused and EVICTED rather than left to be re-rejected; and the epoch is a function of the anchor SET, not of its order or multiplicity."
+paths = [
+  "mcp-re-proxy/src/tls_listener_state/auth_epoch.rs",
+  "mcp-re-proxy/src/tls_listener_state/resumption_binding.rs",
+  "mcp-re-proxy/src/tls_listener_state/resumption_acceptance.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/epoch_bound_store/resumes_under_its_own_epoch",
+  "mutation://proxy/epoch_bound_store/resumes_under_its_own_epoch",
+]
+tested_symbols = [
   "lib#tls_listener_state::resumption_acceptance::handshakes::a_second_connection_resumes_while_the_trust_epoch_holds",
   "lib#tls_listener_state::resumption_acceptance::handshakes::withdrawing_a_trusted_ca_stops_resumption_and_forces_a_full_handshake",
   "lib#tls_listener_state::resumption_acceptance::handshakes::republishing_the_epoch_of_an_unchanged_ca_set_does_not_stop_resumption",
@@ -565,52 +994,15 @@ tested_symbols = [
   "lib#tls_listener_state::auth_epoch::tests::a_session_stored_under_a_withdrawn_anchor_does_not_resume",
   "lib#tls_listener_state::auth_epoch::tests::a_stale_session_is_evicted_by_get_not_left_to_be_re_rejected",
   "lib#tls_listener_state::auth_epoch::tests::a_rebuild_that_republishes_the_same_trust_keeps_the_cache",
-  # A STORE capability, and THM-0103's subject. It was named
-  # `a_rebuild_with_withdrawn_trust_advances_the_epoch_and_stops_resumption` and read as
-  # evidence for a listener-level epoch advance that no build path performs:
-  # `bind_resumption` hands `republish` the epoch the store already holds, so the change
-  # branch never fires outside a call made by hand. THM-0048 now states cache
-  # NON-CONTINUITY across a listener replacement and claims no live advance; this unit
-  # supports both theorems, so the name is what keeps the two propositions apart.
   "lib#tls_listener_state::auth_epoch::tests::republishing_a_different_epoch_supersedes_the_stores_sessions",
   "lib#tls_listener_state::auth_epoch::tests::withdrawing_an_anchor_changes_the_epoch",
   "lib#tls_listener_state::auth_epoch::tests::the_anchor_set_alone_determines_the_epoch",
-  # Registered by the #581 slice: five controls existed in the module and were named by no
-  # unit, so the store contract THM-0103 states rested on evidence the fingerprint did not
-  # carry. The epoch is a function of the anchor SET — order and duplication are not inputs —
-  # and the publication reports a change exactly when there is one.
   "lib#tls_listener_state::auth_epoch::tests::the_epoch_is_a_property_of_the_anchor_set_not_its_order",
   "lib#tls_listener_state::auth_epoch::tests::a_duplicated_anchor_does_not_change_the_epoch",
   "lib#tls_listener_state::auth_epoch::tests::the_epoch_domain_names_the_current_definition",
   "lib#tls_listener_state::auth_epoch::tests::storing_an_identical_epoch_reports_no_change",
   "lib#tls_listener_state::auth_epoch::tests::storing_a_different_epoch_reports_the_previous_one",
 ]
-
-# ---------------------------------------------------------------------------
-# Contract-consumption edges
-# ---------------------------------------------------------------------------
-#
-# `sealed = true` is an assurance obligation, not an optimization switch (§6, §"Contract
-# sealing"). Before an edge may be sealed, a review must establish that the consumer's
-# security reasoning about the dependency is FULLY represented by the named exported
-# contract. If that sentence is not defensible, the edge is unsealed.
-#
-# The engine must never infer sealing after the fact. An edge is sealed by an explicit,
-# reviewed commit to this file, before the change whose propagation it stops.
-#
-# No edges are declared yet: no unit exports a contract yet.
-
-# ---------------------------------------------------------------------------
-# Phase 2 pilot — promoted
-# ---------------------------------------------------------------------------
-#
-# The first unit carrying formal evidence. Its boundary decision is recorded in
-# baseline/phase2-pilot-boundary-decision.md; the measured outcome, including the two
-# places the tool made us change an idiom, is in the "Phase 2 result" section there.
-#
-# `features` names the Cargo feature that carries the specification text. It is off in
-# every production build, so the proof constrains code that ships without the prover in
-# its dependency graph.
 
 [[unit]]
 id = "core.time_rfc3339"
@@ -2008,8 +2400,13 @@ rationale = "The chain evaluated is projected from the acceptance, so the verdic
 [[edge]]
 # The revocation index this unit consults is the one the CRL loader builds; a weakened
 # index changes every verdict here without any control in this unit going red.
+#
+# RETARGETED by the ADR-MCPRE-068 Phase-1 split. The rationale names the per-request
+# REVOCATION verdict, which is `proxy.client_certificate_posture`'s proposition — not the
+# listener assembly's and not the epoch store's. Pointing it at the old wide unit made the
+# prerequisite the whole listener.
 kind = "COMPILE_DEPENDENCY"
-from = "proxy.tls_listener_state"
+from = "proxy.client_certificate_posture"
 to = "proxy.credential_currency"
 rationale = "The per-request revocation verdict IS the client-revocation index's, consulted at request time. A loader that admitted a CRL without a nextUpdate, or keyed the index by the wrong coordinate, would change what this unit concludes while its controls — which vary the CERTIFICATE and the CRL contents, not the loader — stayed green."
 
@@ -2123,8 +2520,12 @@ rationale = "The channel operand is the authenticated peer, with whatever curren
 [[edge]]
 # The request operand is projected from what the verifier resolved. A verifier that resolved
 # an actor it should not have would put the wrong subject under a true-looking binding.
+# RETARGETED by the ADR-MCPRE-068 Phase-1 split. The rationale below names the REQUEST
+# verifier's seam resolution, which is `http_profile.request_floor_result`'s proposition —
+# "the presented keyid was resolved through the trust seam for the Request slot". Pointing it
+# at the wide unit made the prerequisite the whole verifier; it is one operation's product.
 kind = "COMPILE_DEPENDENCY"
-from = "http_profile.verifier_results"
+from = "http_profile.request_floor_result"
 to = "proxy.request_peer_binding"
 rationale = "The subject bound here IS the one the RFC 9421 verifier resolved through the trust seam. A verifier that admitted an untrusted key for a subject would make this relation true of a principal that never signed, and these controls — which hold verification fixed and vary the identities — would stay green."
 
@@ -2178,84 +2579,64 @@ pilot = "verus-candidate"
 # structurally — by sealed construction, by a paired projection, and by the absence of a
 # field — and by test batteries. Nothing above them may say otherwise.
 
+# ---------------------------------------------------------------------------------------
+# ADR-MCPRE-068 Phase 1 — the classifier and the locator are two authorities.
+#
+# `proxy.trust_configuration_state` was the semantic authority for THM-0035 and THM-0036, and
+# its own description named both: "which revocation posture a deployment requests, which
+# witnesses each state requires" AND "which locators name a trust document at all". Its three
+# probes already partitioned — M63 and M64 to THM-0035, M65 to THM-0036 — so the split is a
+# re-partition of labelled evidence.
+#
+# `proxy.trust_configuration_state_sole_producer` (Phase 0D-10, S15/S16) is UNCHANGED and
+# still supports both: the seal is over the state value, which both propositions are about.
+# ---------------------------------------------------------------------------------------
+
+# THM-0035's owner.
 [[unit]]
-id = "proxy.trust_configuration_state"
+id = "proxy.trust_revocation_classification"
 class = "V0"
-description = "WHAT THE CLASSIFIER AND THE LOCATOR DECIDE: which revocation posture a deployment requests, which witnesses each state requires, and which locators name a trust document at all. Claims nothing about the document's existence, readability, contents, or the keys it holds — those are materialization's, not layer A's — and nothing about whether either decision can be bypassed, which is a compile-time fact and belongs to `proxy.trust_configuration_state_sole_producer`."
+description = "Which revocation posture a deployment requests and which witnesses each state form requires: every legal state form is classified and accepted, a bounded cache needs no cadence, each state holds its cadence to the window it claims, and a zero cadence — a spinning reloader — is refused in every state and from a programmatic config as well as a document."
+paths = ["mcp-re-proxy/src/config_state/trust_revocation.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/trust_revocation/classified_with_its_witnesses",
+  "mutation://proxy/trust_revocation/classified_with_its_witnesses",
+]
+tested_symbols = [
+  "lib#config_state::trust_revocation::tests::every_legal_state_form_is_classified_and_accepted",
+  "lib#config_state::trust_revocation::tests::bounded_cache_does_not_require_a_cadence",
+  "lib#config_state::trust_revocation::tests::each_state_holds_the_cadence_to_the_window_it_claims",
+  "lib#config_state::trust_revocation::tests::a_zero_cadence_is_a_spinning_reloader_in_every_state",
+  "lib#config_state::trust_revocation::tests::a_programmatic_config_cannot_spin_the_trust_reloader",
+]
+
+# THM-0036's owner. A PAIRED locator and key, or not at all — the epoch source is what splits
+# the push posture in two, and a locator that names nothing resolves no source.
+[[unit]]
+id = "proxy.trust_document_locator"
+class = "V0"
+description = "Which locators name a trust document at all, and on what terms: a networked epoch source is handed over as a paired locator and key or not at all, a URL-shaped posture requires its URL to be one, a locator that names nothing resolves no source, and the stored path is the operator's string verbatim rather than a normalization of it."
 paths = [
-  "mcp-re-proxy/src/config_state/trust_revocation.rs",
   "mcp-re-proxy/src/config_state/trust_document.rs",
+  "mcp-re-proxy/src/config_state/trust_revocation.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
-direct_consequence_severity = "high"
+direct_consequence_severity = "critical"
 evidence = [
-  "test://proxy/trust/revocation_state_witnesses",
-  "test://proxy/trust/epoch_source_pairing",
-  # A cadence ceiling, a zero-cadence refusal and a two-way push split are all conjuncts a
-  # green battery can hold while none of them is load-bearing. M63-M65 ask.
-  "mutation://proxy/trust/revocation_state_witnesses",
+  "test://proxy/trust_document/paired_or_not_at_all",
+  "mutation://proxy/trust_document/paired_or_not_at_all",
 ]
-# Both directions of each witness rule: the states that REQUIRE a cadence carry one and are
-# refused without it, and the one state whose cadence is OPTIONAL keeps both postures — so
-# a green lane cannot mean the witness rule was over-applied.
-#
-# THREE witnesses left this unit rather than this list, and each left because its
-# proposition became stronger than a test of this classifier could state:
-#
-#   * the epoch KEY beside no epoch store (CF-04) — ADR-MCPRE-067 Phase 4 moved the
-#     coordinate inside `TrustEpochSource`, so a key with no store cannot be constructed;
-#   * an epoch SOURCE under a tier that consumes none (X8) — Phase 6 gave only the pushing
-#     posture a field for one;
-#   * `live|push` given no re-read cadence — Phase 6 made the cadence a member of the two
-#     tiers that need one.
-#
-# None is restated here. Their evidence lives with the types that made them unbuildable, in
-# `deployment_request::request_signer_currency` and
-# `deployment_request::storage::trust_epoch_storage`, and with the CLI adapter that still
-# sees the argv forms — all outside this unit's paths, which is why this list shrank rather
-# than being repointed.
 tested_symbols = [
-  "lib#config_state::trust_revocation::tests::bounded_cache_does_not_require_a_cadence",
-  "lib#config_state::trust_revocation::tests::each_state_holds_the_cadence_to_the_window_it_claims",
-  "lib#config_state::trust_revocation::tests::every_legal_state_form_is_classified_and_accepted",
-  "lib#config_state::trust_revocation::tests::a_zero_cadence_is_a_spinning_reloader_in_every_state",
-  "lib#config_state::trust_revocation::tests::a_programmatic_config_cannot_spin_the_trust_reloader",
   "lib#config_state::trust_revocation::tests::the_epoch_source_is_what_splits_push_in_two",
   "lib#config_state::trust_revocation::tests::push_networked_requires_its_url_to_be_a_url",
   "lib#config_state::trust_document::tests::a_locator_that_names_nothing_resolves_no_source",
   "lib#config_state::trust_document::tests::the_stored_path_is_the_operators_string_verbatim",
   "lib#config_state::trust_document::tests::the_public_constructor_validates_too",
 ]
-
-# ---------------------------------------------------------------------------
-# The connection credential window — MCPRE-145 / #581 row 2, 2026-09-06
-# ---------------------------------------------------------------------------
-#
-# `ClientCredentialWindow` is sealed for the relation *a connection may not outlive the
-# credential that authenticated it*, and belonged to no unit, so the relation it owns was
-# evidence for nothing. The currency-bound projection travels with it: the two files answer
-# one question — what actually bounds a compromised credential's usefulness — and separating
-# them would leave the posture name in one fingerprint and the durations it names in another.
-
-
-# ---------------------------------------------------------------------------
-#
-# ONE PROPOSITION, TWO OWNERS — the same two files the tested unit covers, because they are
-# the same decision seen twice: which trust configuration a deployment is IN.
-#
-# `TrustRevocationState` carries a bare-private `kind` whose TYPE is also private, so a
-# sibling can reach neither the field nor a variant to put in it. S15 attacks the field's
-# privacy (the boundary this unit claims) and supplies `todo!()` rather than naming a variant,
-# because naming one would be refused by E0603 for the type's privacy and the lane would then
-# be measuring the wrong boundary. The enum's privacy is recorded as a second producer path
-# rather than conflated with the first.
-#
-# `TrustDocumentSource` is the ordinary refusal shape, and S16's hostile value is the EXACT
-# inhabitant `new` excludes — the empty locator. The owner's doc comment states what the
-# boundary is for: "construction itself validates, so a `TrustDocumentSource` means the same
-# thing whichever crate built it". That sentence is about every crate, which is a claim over
-# the type; the battery ranges over `new`.
 
 [[unit]]
 id = "proxy.trust_configuration_state_sole_producer"
@@ -2406,7 +2787,14 @@ paths = ["mcp-re-proxy/src/app.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://proxy/trust/composition_reads_only_projections"]
+evidence = [
+  "test://proxy/trust/composition_reads_only_projections",
+  # THM-0067's proposition IS a fact about `app.rs`'s production text — which request
+  # fields the root reads — so a text weakening is its honest falsifier, not a proxy for
+  # one. M172 reintroduces `max_clock_skew`, one of the six reads that LEFT the ordinary
+  # inventory on measurement and became an owner.
+  "mutation://proxy/trust/composition_reads_only_projections",
+]
 # The guard is a source-text inventory, so its own self-check is part of the evidence: a
 # rule that cannot detect a new raw read is a rule that passes vacuously. It runs in the
 # `integration` target and nowhere else — a lane identity, not a detail.
@@ -2503,32 +2891,100 @@ tested_symbols = [
   "lib#authorization::pdp::authority::tests::the_name_and_the_key_are_one_value",
 ]
 
+# ---------------------------------------------------------------------------------------
+# ADR-MCPRE-068 Phase 1 — RFC 9943/9942 offline receipt verification, as six owners.
+#
+# WHAT WAS HERE. `http_profile.scitt_receipt_offline`: one unit over 14 files and 24 controls,
+# whose own description named SIX propositions — "the statement's own signature and its CWT
+# attribution, the receipt's shape, the RFC 9162 inclusion fold, the transparency service's
+# signature over the root that fold DERIVED, the position commitment where the pinned profile
+# binds one, and algorithm agreement on both signatures". ADR-MCPRE-061 question 2 answered in
+# the unit's own text, and the answer is six.
+#
+# Second on the campaign ruling's scheduler after the verifier: highest semantic fan-out among
+# what remained, at `high`, inside THM-0072's closure.
+#
+# IT CARRIED TWO PROBES FOR SIX PROPOSITIONS. The split made the other four merge-fatal rather
+# than invisible — the same thing the verifier split did for THM-0017 — and M72 through M75
+# are those falsifiers, each attacking the check its own proposition names.
+#
+# THM-0072 is `supported_by` all six. No intermediate theorem is invented: each unit's
+# description states its proposition, and a `THM-` is for a claim that is a reusable premise
+# across a theorem boundary or needs owner specification review, which none of these is.
+# ---------------------------------------------------------------------------------------
+
+# M79 attacks this one. Its conjunct — the statement's own Sig_structure verified under a key
+# resolved for its issuer kid — was already labelled with the theorem; the split gives it an
+# owner whose battery is the two controls that establish it and no others.
 [[unit]]
-id = "http_profile.scitt_receipt_offline"
+id = "http_profile.scitt_statement_attribution"
 class = "V0"
-description = "RFC 9943 / RFC 9942 offline receipt verification: the statement's own signature and its CWT attribution, the receipt's shape, the RFC 9162 inclusion fold, the transparency service's signature over the root that fold DERIVED, the position commitment where the pinned profile binds one, and algorithm agreement on both signatures. No network."
+description = "A Signed Statement is attributed by its own COSE signature and its CWT claims, not by what it says about itself: the `Sig_structure` verified under a key resolved for the issuer the statement names, and a critical header this profile does not understand is refused rather than ignored."
 paths = [
-  "mcp-re-http-profile/src/scitt/offline.rs",
-  "mcp-re-http-profile/src/scitt/merkle.rs",
-  "mcp-re-http-profile/src/scitt/receipt/mod.rs",
-  "mcp-re-http-profile/src/scitt/receipt/parse.rs",
+  "mcp-re-http-profile/src/scitt/mod.rs",
+  "mcp-re-http-profile/src/scitt/wire.rs",
   "mcp-re-http-profile/src/scitt/statement/mod.rs",
-  # MCPRE-180 moved `from_cose` — the statement's shape-and-attribution check, which is half
-  # of what this unit's first conjunct is about — into its own child. A path list that did not
-  # follow it would leave the unit measuring a file the code had left, and the fingerprint
-  # would stay FRESH across an edit to the very check being attested.
   "mcp-re-http-profile/src/scitt/statement/parse.rs",
   "mcp-re-http-profile/src/scitt/statement/issuance.rs",
   "mcp-re-http-profile/src/scitt/cose_key/mod.rs",
   "mcp-re-http-profile/src/scitt/cose_key/verify.rs",
-  "mcp-re-http-profile/src/scitt/service.rs",
-  "mcp-re-http-profile/src/scitt/wire.rs",
+  "mcp-re-http-profile/src/scitt/offline.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://http_profile/scitt/statement_attribution",
+  "mutation://http_profile/scitt/statement_attribution",
+]
+tested_symbols = [
+  "lib#scitt::offline::tests::a_tampered_statement_fails_the_receipt",
+  "lib#scitt::statement::tests::a_critical_header_on_a_signed_statement_is_refused",
+]
+
+# M73 is this unit's, and BEFORE ANY FOLD is the load-bearing half of its conjunct: a leaf
+# index at or past the tree size cannot name a position, and folding one anyway walks the
+# combine sequence off the end of the tree.
+[[unit]]
+id = "http_profile.scitt_receipt_shape"
+class = "V0"
+description = "What a receipt IS before anything is folded: the RFC 9942 header labels and their nesting, both the attached and the detached form, a payload that is a tree hash, an unknown critical header refused, and a leaf index that names a position the tree has."
+paths = [
   "mcp-re-http-profile/src/scitt/mod.rs",
-  # The prototype transparency service and its tree builder. Not a running service, and its
-  # own header says so — but its builder is ONE OF THE TWO independent RFC 6962
-  # implementations this unit's controls cross-check against `merkle`'s fold, so a change to
-  # it changes what "two implementations agree" measures. A retained public API under #657
-  # ruling 4 and #841's classification, in no unit until now.
+  "mcp-re-http-profile/src/scitt/wire.rs",
+  "mcp-re-http-profile/src/scitt/receipt/mod.rs",
+  "mcp-re-http-profile/src/scitt/receipt/parse.rs",
+  "mcp-re-http-profile/src/scitt/merkle.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://http_profile/scitt/receipt_shape",
+  "mutation://http_profile/scitt/receipt_shape",
+]
+tested_symbols = [
+  "lib#scitt::receipt::tests::a_receipt_carries_the_rfc9942_header_labels_and_nesting",
+  "lib#scitt::receipt::tests::the_rfc9942_figure_6_shape_parses_in_both_attached_and_detached_form",
+  "lib#scitt::receipt::parse::tests::a_payload_that_is_not_a_tree_hash_is_neither_receipt_form",
+  "lib#scitt::receipt::tests::an_unknown_critical_header_is_refused",
+  "lib#scitt::receipt::parse::tests::a_leaf_index_outside_the_tree_is_refused_before_any_fold",
+]
+
+# PURE RFC 9162 TREE MATHEMATICS, and the one proposition here a prover could take. M72
+# attacks the residue check that makes a short path refuse rather than return an intermediate
+# node as a root — which is what restating a receipt at another position means.
+#
+# The right-edge control is the anti-vacuity one: a fold that refused every restatement would
+# satisfy the others and break every honest receipt on a log's right edge.
+[[unit]]
+id = "http_profile.scitt_inclusion_fold"
+class = "V0"
+description = "The RFC 9162 inclusion fold itself: the tree hash is the RFC 9162 split rather than a duplicated last node, every leaf of a log verifies under its own path, a path of the wrong length does not reach the root, an empty path is valid only for a single-leaf tree, and a forged path fails."
+paths = [
+  "mcp-re-http-profile/src/scitt/mod.rs",
+  "mcp-re-http-profile/src/scitt/wire.rs",
+  "mcp-re-http-profile/src/scitt/merkle.rs",
   "mcp-re-http-profile/src/scitt/prototype/mod.rs",
   "mcp-re-http-profile/src/scitt/prototype/tree.rs",
 ]
@@ -2536,39 +2992,109 @@ exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
 evidence = [
-  "test://http_profile/scitt/offline_receipt_battery",
-  "mutation://http_profile/scitt/offline_receipt",
+  "test://http_profile/scitt/inclusion_fold",
+  "mutation://http_profile/scitt/inclusion_fold",
 ]
-# The fold's own arithmetic is separately controlled, because "the inclusion algorithm was
-# run" and "the inclusion algorithm is RFC 9162's" are two claims and only the second makes
-# a restated position fail. `prototype` is NOT in the closure: it builds a tree where these
-# verify a path, and keeping them apart is what makes it an independent cross-check rather
-# than the same code agreeing with itself.
 tested_symbols = [
-  "lib#scitt::offline::tests::one_calls_evidence_registers_and_the_receipt_verifies_offline",
-  "lib#scitt::offline::tests::inclusion_holds_across_many_registered_statements",
-  "lib#scitt::offline::tests::an_incomplete_chain_record_is_distinguishable_in_the_receipt",
-  "lib#scitt::offline::tests::a_tampered_statement_fails_the_receipt",
-  "lib#scitt::offline::tests::a_forged_inclusion_path_fails",
-  "lib#scitt::offline::tests::an_unbound_receipt_still_refuses_a_forged_path_on_the_derived_root_alone",
-  "lib#scitt::offline::tests::an_untrusted_issuer_or_ts_is_rejected",
-  "lib#scitt::offline::tests::a_receipt_restated_at_another_position_is_refused_only_when_the_position_is_bound",
-  "lib#scitt::offline::tests::a_bound_service_refuses_a_receipt_that_carries_no_position_commitment",
   "lib#scitt::merkle::tests::the_tree_hash_is_the_rfc_9162_split_not_a_duplicated_last_node",
   "lib#scitt::merkle::tests::every_leaf_of_a_three_leaf_log_verifies",
   "lib#scitt::merkle::tests::restating_the_log_position_at_a_different_path_length_does_not_verify",
   "lib#scitt::merkle::tests::a_right_edge_restatement_is_indistinguishable_and_still_verifies",
   "lib#scitt::merkle::tests::an_empty_inclusion_path_is_only_valid_for_a_single_leaf_tree",
-  "lib#scitt::receipt::parse::tests::a_leaf_index_outside_the_tree_is_refused_before_any_fold",
+  "lib#scitt::offline::tests::a_forged_inclusion_path_fails",
+]
+
+# M78 attacks this one — the fold's output compared against the root the receipt commits to.
+# DERIVED rather than supplied is the whole proposition: the root is computed from the statement
+# under verification and never read from the caller, on either payload form.
+[[unit]]
+id = "http_profile.scitt_derived_root"
+class = "V0"
+description = "What a verified receipt establishes about registration: the root the fold DERIVED from the presented statement is the root the transparency service signed, under a key resolved for the service the deployment pinned — so a receipt cannot be made to verify by handing in a convenient root, and an untrusted issuer or service resolves nothing."
+paths = [
+  "mcp-re-http-profile/src/scitt/mod.rs",
+  "mcp-re-http-profile/src/scitt/wire.rs",
+  "mcp-re-http-profile/src/scitt/offline.rs",
+  "mcp-re-http-profile/src/scitt/service.rs",
+  "mcp-re-http-profile/src/scitt/cose_key/mod.rs",
+  "mcp-re-http-profile/src/scitt/cose_key/verify.rs",
+  "mcp-re-http-profile/src/scitt/merkle.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://http_profile/scitt/derived_root",
+  "mutation://http_profile/scitt/derived_root",
+]
+tested_symbols = [
+  "lib#scitt::offline::tests::one_calls_evidence_registers_and_the_receipt_verifies_offline",
+  "lib#scitt::offline::tests::inclusion_holds_across_many_registered_statements",
+  "lib#scitt::offline::tests::an_incomplete_chain_record_is_distinguishable_in_the_receipt",
+  "lib#scitt::offline::tests::an_untrusted_issuer_or_ts_is_rejected",
+  # DETACHED is where "derived, never supplied" is unambiguous: there is no root in the
+  # receipt to compare against, so the fold's output IS what the service signature is checked
+  # over. M78 attacks exactly that comparison.
+  "lib#scitt::offline::tests::an_unbound_receipt_still_refuses_a_forged_path_on_the_derived_root_alone",
+]
+
+# STRIPPING THE PARAMETER IS THE ATTACK, and the production comment says so: accepting a
+# receipt that carries no commitment because it carried none "would let an attacker strip the
+# parameter and make pinning the stronger profile worth nothing". M74 is that weakening.
+#
+# Separate from `scitt_derived_root` although both live in `offline.rs`, because they fail
+# independently: a receipt can verify against a correctly derived root while its position is
+# unchecked, which is exactly the pre-v2 contract the first control contrasts.
+[[unit]]
+id = "http_profile.scitt_position_commitment"
+class = "V0"
+description = "Where the pinned profile binds a position, the receipt's position commitment is checked against the one recomputed from the service kid, the verifiable-data-structure identifier, the tree size, the leaf index and the derived root — and a receipt carrying no commitment at all is refused rather than accepted on the fold alone."
+paths = [
+  "mcp-re-http-profile/src/scitt/mod.rs",
+  "mcp-re-http-profile/src/scitt/wire.rs",
+  "mcp-re-http-profile/src/scitt/offline.rs",
+  "mcp-re-http-profile/src/scitt/wire.rs",
+  "mcp-re-http-profile/src/scitt/receipt/mod.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://http_profile/scitt/position_commitment",
+  "mutation://http_profile/scitt/position_commitment",
+]
+tested_symbols = [
+  "lib#scitt::offline::tests::a_receipt_restated_at_another_position_is_refused_only_when_the_position_is_bound",
+  "lib#scitt::offline::tests::a_bound_service_refuses_a_receipt_that_carries_no_position_commitment",
+]
+
+# THE PAIR IS THE CHECK, and the module's own doc says `(protected alg, resolved key)` is
+# exhaustive, which is the point. M75 weakens the mismatch arm to accept, which makes the
+# protected header advisory — a signer declaring one algorithm and being verified under
+# another. The foreign-service control is the anti-vacuity mirror: a check that refused every
+# ES256 receipt would satisfy the other three.
+[[unit]]
+id = "http_profile.scitt_algorithm_agreement"
+class = "V0"
+description = "The protected `alg` and the resolved verification key must agree, exhaustively: an unsupported algorithm is refused rather than guessed at, a disagreement between the header and the key is refused rather than resolved in the key's favour, and an ES256 signature must be the RFC 9053 fixed-width pair rather than the DER SEQUENCE most tooling emits."
+paths = [
+  "mcp-re-http-profile/src/scitt/mod.rs",
+  "mcp-re-http-profile/src/scitt/wire.rs",
+  "mcp-re-http-profile/src/scitt/cose_key/mod.rs",
+  "mcp-re-http-profile/src/scitt/cose_key/verify.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://http_profile/scitt/algorithm_agreement",
+  "mutation://http_profile/scitt/algorithm_agreement",
+]
+tested_symbols = [
   "lib#scitt::cose_key::tests::an_unsupported_algorithm_is_refused",
   "lib#scitt::cose_key::tests::an_algorithm_that_disagrees_with_the_resolved_key_is_refused",
   "lib#scitt::cose_key::tests::a_der_encoded_es256_signature_is_refused",
   "lib#scitt::cose_key::tests::an_es256_receipt_from_a_foreign_service_verifies",
-  "lib#scitt::statement::tests::a_critical_header_on_a_signed_statement_is_refused",
-  "lib#scitt::receipt::tests::a_receipt_carries_the_rfc9942_header_labels_and_nesting",
-  "lib#scitt::receipt::tests::the_rfc9942_figure_6_shape_parses_in_both_attached_and_detached_form",
-  "lib#scitt::receipt::parse::tests::a_payload_that_is_not_a_tree_hash_is_neither_receipt_form",
-  "lib#scitt::receipt::tests::an_unknown_critical_header_is_refused",
 ]
 
 [[unit]]
@@ -2712,51 +3238,45 @@ tested_symbols = [
 # twelve with no "and" in the sentence.
 # ---------------------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------------------
+# ADR-MCPRE-068 Phase 1 — the exchange machine's three propositions, as three owners.
+#
+# Third on the campaign ruling's scheduler: effective `critical` by inheritance, and the
+# highest dependent fan-out left — FIVE theorems named this unit, two of them declared roots
+# (THM-0074 and THM-0078).
+#
+# WHAT WAS HERE. One unit over three files and 43 controls, whose own description named three
+# propositions: "which (state, event) pairs are legal, that the backend projection cannot
+# disagree with the exchange state, and that an exchange's retry consequence never moves
+# backward". They map exactly onto THM-0043, THM-0044 and THM-0101, which is the same shape
+# the verifier had — the theorem layer separated them and the unit layer did not.
+#
+# ITS SIX PROBES NAMED NO THEOREM AT ALL. `[[probe]].theorem` is optional, and this unit is
+# one of the places `theorem-falsifier-coverage-2026-09-18.md` counts: six falsifiers, each
+# attacking a conjunct of one of three claims, and nothing in the registry saying which. The
+# split adjudicates all six — which is P2-T1's work arriving one unit at a time, and the
+# reason that obligation asks for the LINK rather than for more probes.
+# ---------------------------------------------------------------------------------------
+
+# THE RELATION AND THE LATCH, and nothing about the caller. Its own scope already says so:
+# it does not establish that the serving path DRIVES this machine, that a given stage advances
+# it, or that any refusal site is inside the lifecycle — those are propositions about the
+# composition, and they are `proxy.exchange_publication`'s and
+# `proxy.exchange_transition_ownership`'s.
 [[unit]]
-id = "proxy.exchange_lifecycle"
+id = "proxy.exchange_relation"
 class = "V0"
-description = "The per-exchange lifecycle relation and the invariants over the five live machines: which (state, event) pairs are legal, that the backend projection cannot disagree with the exchange state, and that an exchange's retry consequence never moves backward — including on the path where the model and the code driving it disagree."
-# THREE SOURCE HALVES OF ONE PROPOSITION, added when the cross-machine invariants stopped
-# describing an invalid success and started refusing one:
-#
-#   no success publication occurs unless the exchange lifecycle can vouch for the
-#   prospective success terminal.
-#
-#   exchange_state.rs   owns whether the prospective lifecycle state is one the machine
-#                       can vouch for
-#   accepted.rs         owns where that decision occurs relative to retained/audited
-#                       bodied success
-#   notification.rs     owns where that decision occurs relative to minting the 202
-#
-# The two serving-path files are here for WHERE the decision sits, not for what else they
-# do: `accepted.rs` is also `proxy.retention_commitment`'s, for the different fact that a
-# terminal discharges the execution crossing. Deliberately NOT the whole `reply_assembly`
-# subtree, and deliberately not a new unit — the proposition is one and it is this one's.
-#
-# `notification.rs` is already incidentally a fingerprint input to
-# `proxy.exchange_transition_ownership`, which owns event/transition CORRESPONDENCE. That is
-# a different question from success-publication ADMISSIBILITY, and incidental overlap is not
-# evidence for this claim: before this edit, moving the 202's mint above its decision would
-# have moved a fingerprint while falsifying a proposition no unit stated.
+description = "The per-exchange relation itself: every (state, event) pair is explicitly legal or explicitly rejected, no event moves a terminal state, the pipeline order is a directed path whose only branches are the notification arm and the open-leg/terminal split, no state at or past the execution threshold reaches a pre-dispatch terminal, and an advance the relation does not admit latches an anomaly in every build rather than being ignored or panicking."
 paths = [
   "mcp-re-proxy/src/exchange_state.rs",
-  "mcp-re-proxy/src/http_profile_serve/reply_assembly/accepted.rs",
-  "mcp-re-proxy/src/http_profile_serve/reply_assembly/notification.rs",
 ]
 exported_contracts = []
-# TWO evidence classes, for the same reason `proxy.runtime_lifecycle` carries two. The
-# interesting conjuncts here are negative — an illegal advance is LATCHED, a spent approval
-# never reads as unspent, a post-threshold state never reads as retry-safe — and a green
-# battery is not evidence that any of those checks is load-bearing.
 evidence_class = "tested"
 direct_consequence_severity = "high"
 evidence = [
-  "test://proxy/exchange_lifecycle/transition_relation",
-  "mutation://proxy/exchange_lifecycle/transition_relation",
+  "test://proxy/exchange_relation/decided_everywhere_and_latched",
+  "mutation://proxy/exchange_relation/decided_everywhere_and_latched",
 ]
-# The battery libtest reports under `exchange_state::tests`. Ordered as the three
-# measurements the ratification names: legal reachability to dispatch, refusal coverage,
-# and work/event correspondence.
 tested_symbols = [
   "lib#exchange_state::tests::the_pipeline_path_is_legal_end_to_end",
   "lib#exchange_state::tests::the_open_leg_path_is_legal_end_to_end_and_ends_somewhere_else",
@@ -2771,6 +3291,35 @@ tested_symbols = [
   "lib#exchange_state::tests::a_reply_that_opens_a_leg_is_never_served_as_a_completed_exchange",
   "lib#exchange_state::tests::an_incurred_open_leg_obligation_cannot_be_downgraded",
   "lib#exchange_state::tests::an_ordinary_backend_reply_reaches_the_success_terminals_cleanly",
+  "lib#exchange_state::tests::the_whole_legal_ladder_latches_no_anomaly",
+  "lib#exchange_state::tests::an_illegal_advance_is_refused_and_latched_in_every_build",
+  "lib#exchange_state::tests::a_violated_invariant_is_latched_on_the_advance_that_causes_it",
+  "lib#exchange_state::tests::the_latch_keeps_the_first_anomaly",
+  "lib#exchange_state::tests::an_illegal_transition_names_both_halves",
+]
+
+# THE DERIVATION, NOT THE WIRE — its scope's own words. The backend projection belongs here
+# rather than with the relation because THM-0044's statement is what asserts it: *the backend
+# projection is derived from the exchange state rather than asserted beside it, so the two
+# cannot disagree*. M82 attacks exactly that derivation.
+#
+# `all_three_consequence_classes_are_reachable` is the anti-vacuity control: a `retry_semantics`
+# that answered NotRetrySafe unconditionally would satisfy every monotonicity control here.
+[[unit]]
+id = "proxy.exchange_retry_consequence"
+class = "V0"
+description = "What an exchange may be reported as: `retry_semantics` is monotone along every legal path, reports NotRetrySafe whenever an anomaly is latched or the backend was dispatched and RequiresNewElicitation whenever a continuation approval was consumed and the backend was not, `Consumed` latches so no later observation reports a spent approval as unspent, and the backend projection is DERIVED from the exchange state rather than asserted beside it, so the two cannot disagree."
+paths = [
+  "mcp-re-proxy/src/exchange_state.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/exchange_retry/never_moves_backward",
+  "mutation://proxy/exchange_retry/never_moves_backward",
+]
+tested_symbols = [
   "lib#exchange_state::tests::the_backend_projection_never_disagrees_with_the_exchange_state",
   "lib#exchange_state::tests::no_state_in_the_response_region_can_report_a_retry_safe_posture",
   "lib#exchange_state::tests::past_the_threshold_no_continuation_state_makes_a_retry_safe",
@@ -2782,18 +3331,33 @@ tested_symbols = [
   "lib#exchange_state::tests::a_dispatch_that_became_indeterminate_cannot_be_downgraded_to_a_clean_reply",
   "lib#exchange_state::tests::the_consequence_of_an_exchange_never_moves_backward",
   "lib#exchange_state::tests::all_three_consequence_classes_are_reachable",
-  "lib#exchange_state::tests::the_whole_legal_ladder_latches_no_anomaly",
-  "lib#exchange_state::tests::an_illegal_advance_is_refused_and_latched_in_every_build",
   "lib#exchange_state::tests::an_illegal_advance_never_reports_the_exchange_as_retry_safe",
-  "lib#exchange_state::tests::a_violated_invariant_is_latched_on_the_advance_that_causes_it",
-  "lib#exchange_state::tests::the_latch_keeps_the_first_anomaly",
   "lib#exchange_state::tests::an_illegal_advance_still_never_moves_consequence_backward",
-  "lib#exchange_state::tests::an_illegal_transition_names_both_halves",
-  # PUBLISHING a success, which is a different proposition from the tuple being incoherent.
-  # The invariants above were enforced in the serving path by `debug_assert!`, so the
-  # shipped binary detected the violation, latched it, and served the success anyway. These
-  # are the controls over the refusal that replaced it — including the case the cross-machine
-  # predicate cannot see, a latched illegal transition whose resulting tuple is coherent.
+]
+
+# THE COMPOSITION HALF, and the one the other two units' scopes point at. THM-0101 names it
+# alongside `proxy.exchange_transition_ownership`: the machine decides whether a success may be
+# published, and the assembly obeys that decision before it mints anything.
+#
+# `a_coherent_success_is_published_and_reaches_its_terminal` is the anti-vacuity control — a
+# publication gate that refused everything would satisfy the other nine.
+[[unit]]
+id = "proxy.exchange_publication"
+class = "V0"
+description = "What the machine will let the assembly publish: a success it cannot vouch for is refused rather than emitted — an open leg with no durable record, a reply that opens a leg presented as a completed exchange, synthesized transport-failure bytes, an exchange already carrying an anomaly — a refused publication leaves the exchange where it legally was and is REMEMBERED rather than re-derived, and the notification terminal is decided before its 202 is minted."
+paths = [
+  "mcp-re-proxy/src/exchange_state.rs",
+  "mcp-re-proxy/src/http_profile_serve/reply_assembly/accepted.rs",
+  "mcp-re-proxy/src/http_profile_serve/reply_assembly/notification.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/exchange_publication/vouched_or_refused",
+  "mutation://proxy/exchange_publication/vouched_or_refused",
+]
+tested_symbols = [
   "lib#exchange_state::tests::an_open_leg_with_no_durable_record_is_not_published",
   "lib#exchange_state::tests::a_reply_that_opens_a_leg_is_not_published_as_a_terminal_completion",
   "lib#exchange_state::tests::synthesized_transport_failure_bytes_are_not_published_as_a_success",
@@ -2804,24 +3368,9 @@ tested_symbols = [
   "lib#exchange_state::tests::a_coherent_success_is_published_and_reaches_its_terminal",
   "lib#exchange_state::tests::the_notification_terminal_is_refused_on_the_same_terms",
   "lib#exchange_state::tests::a_tail_that_reaches_no_success_terminal_is_refused_rather_than_passed",
-  # The two serving-path halves: WHERE the decision sits. Each asserts the refusing FORM,
-  # not merely the order — a decision taken and discarded (`let _ = ...`) latches the anomaly
-  # and publishes anyway, which an order check alone reads as clean.
   "lib#http_profile_serve::reply_assembly::accepted::tests::the_publication_decision_precedes_retention_and_the_response_signed_record",
   "lib#http_profile_serve::reply_assembly::notification::tests::the_terminal_is_decided_before_the_202_is_minted",
 ]
-
-# ---------------------------------------------------------------------------
-# The work/event correspondence — MCPRE-147 / #583, 2026-09-06
-# ---------------------------------------------------------------------------
-#
-# `Established<T>` + `establish()` hold structurally that a stage-owned transition is emitted
-# only when the stage's product is consumed. The source controls that keep that structure
-# honest existed (`exchange_transition_ownership_test`) and were registered nowhere; this
-# unit is their owner. Its paths overlap `proxy.refusal_site_totality` and
-# `proxy.exchange_lifecycle` on purpose: the property is about the seam between the
-# assembly and the machine, and a fingerprint that saw only one side would miss half the
-# regressions.
 
 [[unit]]
 id = "proxy.exchange_transition_ownership"
@@ -2877,6 +3426,17 @@ exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
 evidence = ["test://proxy/serving/dispatch_commitment_boundary", "mutation://proxy/serving/dispatch_commitment_boundary"]
+# ADR-MCPRE-069 disposition: REGISTER. These two gates are the production carriers of
+# THM-0051 (the verification product's provenance across the pipeline) and THM-0052 (the
+# posture's provenance from the configured policy). Both propositions are `critical`, both
+# gates run in `ci.yml` and in `local_gate.sh`, and until this entry NO unit named either
+# one — so softening a rule moved no digest and invalidated no attestation. They are not in
+# `paths`: a `.py` entry collapses a cargo unit's ecosystem. They enter the fingerprint as
+# their own component, and M174/M175 are the falsifiers that make them load-bearing.
+gate_controls = [
+  "scripts/serving_product_provenance_gate.py",
+  "scripts/authorization_provenance_gate.py",
+]
 # What each control measures, in the order the boundary is crossed. The last one is the
 # separation this unit does NOT claim: an unconfigured deployment releases a body too, so
 # possession proves the decision was TAKEN, never that a policy permitted.
@@ -2972,6 +3532,13 @@ evidence = [
   # writes no record, so `attest` issues the unit from the ordinary battery regardless.
   "mutation://proxy/refusal/pre_dispatch_retention",
 ]
+# ADR-MCPRE-069 disposition REGISTER. THM-0081's own scope names this gate's clause 12c as
+# what holds the served mint to one call site ACROSS THE WORKSPACE — a width no cargo control
+# in this crate can reach — and says why a type cannot do it: `ServedHttpResponse` is a wire
+# frame with public fields that the async fleet, the blocking harness and external embedders
+# all construct, so "deleting the battery leaves an out-of-lifecycle exit compiling". Until
+# now no unit's closure covered the gate. M177 is the falsifier.
+gate_controls = ["scripts/refusal_provenance_gate.py"]
 # Six members, and the last is not decoration. Four rules over source text are vacuously
 # true the moment a matcher stops matching, so the battery that would report a clean pass
 # over a moved subtree is the battery that must also demonstrate it still detects each
@@ -3324,7 +3891,7 @@ id = "client.proxy_request_correspondence"
 class = "V0"
 description = "The joint the shipped client proxy owns and the low-level verifier cannot: the SignedRequest handed to the transport and the ResponseExpectation handed to response verification come from ONE owner, so the response is verified against the request this proxy sent."
 # The composition authority alone — `proxy.rs` — and NOT the client-core verifier it calls.
-# `client.response_acceptance` establishes what the verifier does with a pairing and takes
+# `client.response_binding_disposition` establishes what the verifier does with a pairing and takes
 # the pairing as given; widening it to cover the pairing merely because it consumes the
 # result would put the relation in the unit that cannot see it.
 paths = ["mcp-re-client-proxy/src/proxy.rs"]
@@ -3345,9 +3912,9 @@ tested_symbols = [
 ]
 
 [[unit]]
-id = "client.response_acceptance"
+id = "client.response_signer_authorization"
 class = "V0"
-description = "What a client may present to an application as the answer to its own request: which signer is authorized in the Response slot, whether a pinned issuer holds, and the bound/unbound disposition — an unbound receipt is never a success and never an answer to another request."
+description = "WHICH SIGNER a client may accept a response from: the credential chains to a root issuer the current trust picture resolves for the Response slot; where the route pins an issuer, a credential chaining to any other trusted anchor fails closed and the pin is enforced against the ROOT issuer rather than the rotating delegated kid; a credential whose issuer kid, delegated kid or jti the trust authority revokes is refused, on a success and on a rejection receipt alike; and a trust picture past its validity resolves no roots at all. Whether what that signer signed ANSWERS THIS REQUEST is `client.response_binding_disposition`'s."
 paths = [
   "mcp-re-client-core/src/response.rs",
   "mcp-re-client-core/src/response_expectation.rs",
@@ -3356,15 +3923,15 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://client/response/acceptance_battery"]
-# Three separations, each with its negative control: the pin against the ROOT issuer rather
-# than the rotating delegated kid; revocation by every identifier the manifest can name; and
-# unbound-is-not-success, including a preflight receipt about another request's bytes.
+evidence = ["test://client/response/signer_authorization"]
+# Two separations, each with its negative control: the pin against the ROOT issuer rather
+# than the rotating delegated kid, and revocation by every identifier the manifest can name.
+# The rotation control is the pair to the revocation ones: a new delegated key under the
+# same root still verifies once the old one is revoked, so "revoked" is a fact about an
+# identifier and not about the root.
 tested_symbols = [
   "lib#response::delegated_tests::delegated_success_is_verified_and_classified",
   "lib#response::delegated_tests::delegated_bound_rejection_is_verified_and_classified",
-  "lib#response::delegated_tests::delegated_preflight_rejection_is_verified_unbound",
-  "lib#response::delegated_tests::unbound_signature_is_not_accepted_as_success",
   "lib#response::delegated_tests::unsigned_response_is_rejected",
   "lib#response::delegated_tests::direct_root_success_is_rejected_no_credential",
   "lib#response::delegated_tests::delegated_success_enforces_the_pin_against_the_root_issuer",
@@ -3377,10 +3944,43 @@ tested_symbols = [
   "lib#response::delegated_tests::non_revoked_credential_verifies_with_nonempty_list",
   "lib#response::delegated_tests::rotation_to_new_delegated_key_succeeds_when_old_revoked",
   "lib#response::delegated_tests::an_expired_trust_picture_stops_resolving_its_roots",
+  "lib#response_expectation::tests::a_pin_is_absent_until_it_is_set",
+]
+
+# ADR-MCPRE-068 Phase 1. `client.response_acceptance` was the semantic authority for THM-0058
+# (which signer is authorized in the Response slot) and THM-0059 (an unbound receipt is never
+# a success and never another request's answer). Its own description carried both with an
+# "and", and they fail independently in opposite directions: a client can accept a perfectly
+# bound answer signed by a revoked key, or a perfectly authorized signature over an answer to
+# somebody else's request. Neither proposition implies the other, and neither is a weakening
+# of the other, so one unit could not be the single authority for both.
+#
+# The battery partitioned along the same line with nothing moved.
+[[unit]]
+id = "client.response_binding_disposition"
+class = "V0"
+description = "WHETHER WHAT WAS SIGNED ANSWERS THIS REQUEST: a response verified without a request binding is reported as unbound and is never classified as a success; there is no path on which a failed bound verification is retried as an unbound one; and a preflight receipt is accepted as being about this call only when it commits to the digest of the bytes this client sent — one about another request, or about no request, answers nothing. Which signer was authorized to sign it at all is `client.response_signer_authorization`'s."
+paths = [
+  "mcp-re-client-core/src/response.rs",
+  "mcp-re-client-core/src/response_expectation.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = ["test://client/response/binding_disposition"]
+# The controls are the negatives: unbound-is-not-success, and a preflight receipt about
+# another request's bytes — or about no request at all — is not an answer to this one. The
+# positive `delegated_preflight_rejection_is_verified_unbound` is what makes them a
+# separation rather than a blanket refusal: unbound is a REPORTED disposition, not an error.
+#
+# NOT `delegated_evidence.rs`: the credential's own structure decides who may sign, not what
+# the signature is about.
+tested_symbols = [
+  "lib#response::delegated_tests::delegated_preflight_rejection_is_verified_unbound",
+  "lib#response::delegated_tests::unbound_signature_is_not_accepted_as_success",
   "lib#response::delegated_tests::a_preflight_receipt_for_another_request_is_not_an_answer_to_this_one",
   "lib#response::delegated_tests::a_preflight_receipt_about_no_request_answers_nothing",
   "lib#response_expectation::tests::the_projection_reports_the_request_the_expectation_was_built_from",
-  "lib#response_expectation::tests::a_pin_is_absent_until_it_is_set",
 ]
 
 [[unit]]
@@ -3431,7 +4031,7 @@ tested_symbols = [
 ]
 
 # What a VERIFIED outcome MEANS to a plain MCP client. Its own unit rather than part of
-# `client.response_acceptance` or of `client.execution_contract`, because the three answer
+# `client.response_binding_disposition` or of `client.execution_contract`, because the three answer
 # different questions: acceptance decides whether these bytes are genuine and answer THIS
 # request, the execution contract decides what a receipt's words mean, and this decides what
 # a genuine answer entitles a caller to conclude about whether the exchange is FINISHED.
@@ -3910,95 +4510,557 @@ tested_symbols = [
   "pytest#tests/test_transport.py::test_a_request_with_no_bindings_records_no_digest",
 ]
 
+# The composition proposition, and the reason the core's binding theorem is usable here
+# at all: the core is only correct about the request it is GIVEN. A re-serialized body would
+# verify cleanly against bytes the peer never saw.
 [[unit]]
-id = "sdk_typescript.exchange_path"
+id = "sdk_typescript.exchange_binding"
 class = "V0"
-description = "The shipped TypeScript SDK's exchange path: every reply is correlated to the request that earned it, an unverifiable one never reaches the application as a result, and what the SDK says about execution is what the receipt said."
+description = "The verdict the TypeScript SDK acts on was computed over the exact request bytes this exchange signed and transmitted: the value returned by `signRequest` is the one POSTed and the one passed to the verifier, and nothing is re-derived, re-serialized or reconstructed for it."
+paths = ["sdk/typescript/src/transport.ts"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = ["test://sdk_typescript/exchange_binding/the_verifier_sees_this_transmission"]
+tested_symbols = [
+  "vitest#test/transport.test.ts > McpReHttpTransport signing inputs > signs the request body the caller's message described",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport signing inputs > signs a request with no params",
+  "vitest#test/transport.test.ts > the forced verdicts are the core's own shape > declares no member the binding does not",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport signing inputs > passes authorization bindings to the core, which digests the real bytes",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > verifies the recording and hands the app plain MCP",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > fails closed when one byte is appended to the recorded body",
+]
+
+# THE WHOLE RECORDED-SESSION BATTERY WAS UNREGISTERED. `transport_replay.test.ts` refuses
+# one RECORDED delegated session six ways — untrusted root, stale epoch, wrong audience,
+# revoked key, appended byte, and the rejection receipt — and not one of its fifteen controls
+# was in any unit's battery, while the Python twin's equivalents were the substance of its
+# evidence. A battery of constructed positives would not distinguish an adapter that verifies
+# from one that returns what it was handed.
+[[unit]]
+id = "sdk_typescript.verdict_delivery"
+class = "V0"
+description = "A verdict whose outcome is not `success` reaches the application as a correlated JSON-RPC error and never as a result; an EMPTY wire code is substituted rather than passed through as an error the application cannot act on; and the receipt's request-binding fact travels beside the frozen token rather than inside it."
+paths = ["sdk/typescript/src/transport.ts"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = ["test://sdk_typescript/verdict_delivery/a_refusal_is_never_a_result"]
+tested_symbols = [
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > refuses the same recorded response under an untrusted root anchor",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > refuses a response outside the accepted trust epoch",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > refuses a response for a different audience",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > refuses a revoked delegated key",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > delivers a verified rejection receipt as an error, not a result",
+  "vitest#test/transport.test.ts > McpReHttpTransport rejection receipt binding > reports a preflight-unbound receipt as NOT request-bound",
+  "vitest#test/transport.test.ts > McpReHttpTransport rejection receipt binding > reports a request-bound receipt as request-bound",
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > still delivers an ordinary verified reply",
+]
+
+# The leaf the whole root FAMILY exists for, and the control that names the difference is
+# `invents no disposition for a receipt that stated none`. Inventing `not_executed` collapses
+# "unknown whether it ran" into "it did not run" at the one place that decides whether a
+# caller repeats a side effect. A byte-level parity fixture cannot reach it.
+[[unit]]
+id = "sdk_typescript.execution_report"
+class = "V0"
+description = "The application is told exactly the execution and retry members the verified receipt carried, and a member the receipt did not carry is not invented for it."
+paths = ["sdk/typescript/src/transport.ts"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = ["test://sdk_typescript/execution_report/only_what_the_receipt_said"]
+tested_symbols = [
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > reports the execution and retry contract a post-dispatch rejection carried",
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > invents no disposition for a receipt that stated none",
+]
+
+# Separate from `execution_report` deliberately, and the separation is the authority
+# boundary: that leaf is about what a PEER verdict may be reported as, this one about what a
+# LOCAL condition may be reported as. One failure invents a peer fact; the other borrows the
+# peer's vocabulary.
+[[unit]]
+id = "sdk_typescript.local_failure_provenance"
+class = "V0"
+description = "A condition this SDK originated — a transport abort, a local signing failure, a network error, a defect — is reported under the SDK's own prefix, never as a frozen `mcp-re.*` token the peer did not send and never as an execution or retry verdict."
+paths = ["sdk/typescript/src/transport.ts"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = ["test://sdk_typescript/local_failure/no_borrowed_vocabulary"]
+tested_symbols = [
+  "vitest#test/transport.test.ts > McpReHttpTransport peer wire codes > delivers a core failure as its frozen token, not as a local SDK error",
+  "vitest#test/transport.test.ts > McpReHttpTransport peer wire codes > still labels a genuine local failure as one",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > delivers a wire failure as a JSON-RPC error carrying the frozen code",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > delivers a local signer failure WITHOUT claiming a wire code",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > delivers the core's own fail-closed Error rather than letting the caller hang",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > delivers a network error under the local prefix, not as something the peer said",
+  "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > keeps a failed exchange from taking down the session's other requests",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > re-throws a non-Error, which is a defect rather than a protocol outcome",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport notification handling > reports the ack failure as the frozen token, not the binding's prefixed spelling",
+]
+
+# REBUILDING rather than editing is the proposition: the union schema accepts a request arm,
+# so a verified body carrying a `method` would otherwise be dispatched by `Client` as a
+# server-initiated request.
+[[unit]]
+id = "sdk_typescript.reply_envelope"
+class = "V0"
+description = "What reaches the MCP client is rebuilt from the one member the verified reply carried plus the caller's own id; a verified reply that is not a JSON-RPC response — one carrying a `method`, one that is not a response at all — is refused rather than dispatched."
+paths = ["sdk/typescript/src/transport.ts"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = ["test://sdk_typescript/reply_envelope/rebuilt_never_edited"]
+tested_symbols = [
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > refuses a verified reply carrying a top-level method instead of dispatching it",
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > refuses a verified reply that is not a JSON-RPC response at all",
+]
+
+# The CLASSIFICATION of a reply as terminal — and the refusal of a `resultType` outside the
+# set MCP 2026-07-28 defines — belongs to the core (THM-0061). What this unit owns is what the
+# adapter DOES with that classification. Every control here was unregistered.
+[[unit]]
+id = "sdk_typescript.continuation_drive"
+class = "V0"
+description = "Only a terminal verified reply resolves the call: a non-terminal one pauses it and its answer leg signs over the verified handles of the leg before it, and an elicitation with no handler, a declined one, or one past the continuation ceiling fails the call closed rather than resolving it."
 paths = [
   "sdk/typescript/src/transport.ts",
   "sdk/typescript/src/correlation.ts",
-  "sdk/typescript/src/authorization.ts",
-  "sdk/typescript/src/custody.ts",
-  "sdk/typescript/src/mtls.ts",
-  "sdk/typescript/src/index.ts",
 ]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://sdk_typescript/exchange_path/root_battery"]
-# The same propositions as the Python member, over an independent implementation. The two
-# lists are deliberately not a translation of each other: each names the controls its own
-# suite actually has, and a proposition one suite covers and the other does not is a gap
-# this registration makes visible rather than papers over.
+evidence = ["test://sdk_typescript/continuation_drive/a_pause_is_not_a_result"]
 tested_symbols = [
-  # Correlation.
-  "vitest#test/transport.test.ts > McpReHttpTransport concurrency > correlates every concurrent reply to its own request",
-  "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > does not leave a failed exchange's correlation entry outstanding",
-  "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > keeps a failed exchange from taking down the session's other requests",
-  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > clears abandoned correlation state on close",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > drives the answer leg to a terminal result",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > refuses an unanswerable elicitation rather than delivering it as a result",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > refuses a declined elicitation",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > enforces the continuation ceiling before asking the caller",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/malformed_elicitation.test.ts > a non-terminal reply that withholds its request state > is refused rather than reported as terminal",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/malformed_elicitation.test.ts > a non-terminal reply that withholds its request state > is otherwise genuine evidence",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/unrecognized_result_type.test.ts > a reply carrying an unrecognized resultType > is refused rather than read as terminal",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/unrecognized_result_type.test.ts > a reply carrying an unrecognized resultType > is otherwise genuine evidence",
+]
+
+# THE CORRECTED CLAIM, and it is the same correction the Python member took. The id passed to
+# `take()` is the one `record()` returned in the same loop iteration, and MCP-RE is one signed
+# POST per request, so there is no inbox and no lookup by any value a peer controls. What the
+# shipped path enforces is the window and the bound; the store's own refusals are stated as the
+# store's.
+[[unit]]
+id = "sdk_typescript.correlation_lifecycle"
+class = "V0"
+description = "A request is answerable only inside the window it declared — a response arriving past it is refused rather than delivered — and no remotely triggerable outcome leaves a correlation entry outstanding. `CorrelationStore`'s unbound and duplicate refusals are properties of the store at its own API; the shipped exchange path reaches neither, because the id it consumes is the one it just recorded."
+paths = [
+  "sdk/typescript/src/correlation.ts",
+  "sdk/typescript/src/transport.ts",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = ["test://sdk_typescript/correlation_lifecycle/the_window_and_the_bound"]
+tested_symbols = [
   "vitest#test/correlation.test.ts > fails closed > rejects a response binding to nothing outstanding",
   "vitest#test/correlation.test.ts > fails closed > rejects a late response",
   "vitest#test/correlation.test.ts > fails closed > treats a duplicate response as a replay, not a mismatch",
-  # Signer and trust acceptance.
-  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > checks the signer against the route policy in start(), before anything is signed",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > fails closed > retires the entry when a response is late",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > fails closed > rejects recording the same request twice",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > fails closed > treats the deadline itself as in-window",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > record and take > uses the request evidence handle as the correlation id",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > record and take > consumes the outstanding request",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > record and take > peek does not consume",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > record and take > carries the audit fields the ADR enumerates",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > record and take > lists the outstanding requests",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > reaping > drops only the dead",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > reaping > a reaped request cannot later be answered",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > reaping > reaping an empty store is a no-op",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > the store is bounded > drops consumed ids once they can no longer answer anything",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > the store is bounded > keeps ids that can still be answered",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > the store is bounded > does not grow across a long session of failed exchanges",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > the store is bounded > abandon is idempotent and never throws",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > an input-required result associates without consuming > leaves the open leg outstanding",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > an input-required result associates without consuming > hands back handles that feed straight into the answer leg",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > an input-required result associates without consuming > still lets the terminal answer take the open leg",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > an input-required result associates without consuming > rejects an unbound elicitation",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > an input-required result associates without consuming > rejects a late elicitation",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/correlation.test.ts > an input-required result associates without consuming > treats an elicitation for an answered request as a replay",
+  "vitest#test/transport.test.ts > McpReHttpTransport concurrency > correlates every concurrent reply to its own request",
+  "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > does not leave a failed exchange's correlation entry outstanding",
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > clears abandoned correlation state on close",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > does not accumulate an abort listener per request",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport signing inputs > honours an injected clock and ttl",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > leaves no correlation entry outstanding after a completed chain",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > leaves no correlation entry outstanding after an unanswered elicitation",
+]
+
+# IN THE ROOT'S CHAIN, and the reason is not freshness hygiene: a guessable nonce makes a
+# captured response replayable against a NEW request, and the application is then handed an
+# answer that is not to its own request. The predecessor unit declared NO control for it,
+# exactly as on the Python side.
+[[unit]]
+id = "sdk_typescript.nonce_floor"
+class = "V0"
+description = "No request and no notification is signed under a nonce below the 128-bit floor — a sub-floor or non-string factory result fails closed at sign time, under the SDK's own prefix rather than an invented wire token — and the freshness triple is generated per leg rather than taken from the caller."
+paths = ["sdk/typescript/src/transport.ts"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = ["test://sdk_typescript/nonce_floor/nothing_is_signed_under_a_weak_nonce"]
+tested_symbols = [
+  # ADR-MCPRE-069 `register`
+  "vitest#test/nonce_floor.test.ts > sign-time nonce floor > the default generator clears the floor",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/nonce_floor.test.ts > sign-time nonce floor > the default generator is accepted",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/nonce_floor.test.ts > sign-time nonce floor > a sub-floor override is refused at sign time: ",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/nonce_floor.test.ts > sign-time nonce floor > a sub-floor override is refused at sign time: 1",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/nonce_floor.test.ts > sign-time nonce floor > a sub-floor override is refused at sign time: counter-1",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/nonce_floor.test.ts > sign-time nonce floor > a sub-floor override is refused at sign time: nonce-parity-0001",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/nonce_floor.test.ts > sign-time nonce floor > a non-string override is refused without a TypeError",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/nonce_floor.test.ts > sign-time nonce floor > a factory at exactly the floor is accepted",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport notification handling > refuses a sub-floor nonce override before a notification is signed",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport signing inputs > generates its own freshness, so a caller cannot repeat a nonce",
+]
+
+# In the chain because telling an application its notification reached the enforcement
+# boundary when nothing acknowledged it is the same failure shape as reporting an execution
+# fact the peer never stated.
+[[unit]]
+id = "sdk_typescript.notification_delivery"
+class = "V0"
+description = "A notification is treated as delivered only against an acknowledgement that verified as bound to THAT transmission; `send()` throws rather than returning when one does not verify. A client->server response, which MCP-RE profiles no carrier for, is refused rather than signed as a fabricated notification."
+paths = ["sdk/typescript/src/transport.ts"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = ["test://sdk_typescript/notification_delivery/acknowledged_or_undelivered"]
+tested_symbols = [
+  "vitest#test/transport.test.ts > McpReHttpTransport notification handling > fails closed on an unsigned acknowledgement",
+  "vitest#test/transport.test.ts > McpReHttpTransport notification handling > fails closed on a bodied 200 in place of an acknowledgement",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport notification handling > transmits a notification as a signed POST",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport notification handling > refuses a client-side RESPONSE rather than carrying it as a notification",
+]
+
+# THE PREDECESSOR NAMED FOUR OF THE SEVEN ANCHOR MEMBERS. `issuerTrustDomain`,
+# `issuerSubject` and `verifierAudiences` each have a control and none was declared, so the
+# claim "an incomplete one is refused at construction rather than defaulted" was evidenced for
+# four of the seven things that could be incomplete.
+[[unit]]
+id = "sdk_typescript.trust_anchor_completeness"
+class = "V0"
+description = "The trust picture the whole acceptance chain is evaluated against is complete or the transport is refused at construction — no member of the anchor is defaulted — and the revocation denylist's SHAPE is checked, so a bare string cannot spread into a per-character list and a non-string entry cannot sit in one."
+paths = ["sdk/typescript/src/transport.ts"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = ["test://sdk_typescript/trust_anchor/complete_or_refused"]
+tested_symbols = [
   "vitest#test/transport.test.ts > McpReHttpTransport delegated-verification anchor > refuses a config with an empty issuerKeyId",
   "vitest#test/transport.test.ts > McpReHttpTransport delegated-verification anchor > refuses a config with an empty issuerPubkeyB64Url",
   "vitest#test/transport.test.ts > McpReHttpTransport delegated-verification anchor > refuses a config with an empty expectedAudienceHash",
   "vitest#test/transport.test.ts > McpReHttpTransport delegated-verification anchor > refuses a config with an empty acceptedEpochs",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport delegated-verification anchor > refuses a config with an empty issuerTrustDomain",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport delegated-verification anchor > refuses a config with an empty issuerSubject",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport delegated-verification anchor > refuses a config with an empty verifierAudiences",
   "vitest#test/transport.test.ts > McpReHttpTransport revocation denylist shape > refuses a bare string, which would spread into a per-character denylist",
-  # An acknowledgement is evidence or it is nothing.
-  "vitest#test/transport.test.ts > McpReHttpTransport notification handling > fails closed on an unsigned acknowledgement",
-  "vitest#test/transport.test.ts > McpReHttpTransport notification handling > fails closed on a bodied 200 in place of an acknowledgement",
-  # A verified reply that is not an answer to this request is refused rather than dispatched.
-  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > refuses a verified reply carrying a top-level method instead of dispatching it",
-  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > refuses a verified reply that is not a JSON-RPC response at all",
-  # Bound vs unbound evidence, and execution status.
-  "vitest#test/transport.test.ts > McpReHttpTransport rejection receipt binding > reports a preflight-unbound receipt as NOT request-bound",
-  "vitest#test/transport.test.ts > McpReHttpTransport rejection receipt binding > reports a request-bound receipt as request-bound",
-  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > reports the execution and retry contract a post-dispatch rejection carried",
-  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > invents no disposition for a receipt that stated none",
-  "vitest#test/transport.test.ts > McpReHttpTransport peer wire codes > delivers a core failure as its frozen token, not as a local SDK error",
-  "vitest#test/transport.test.ts > McpReHttpTransport peer wire codes > still labels a genuine local failure as one",
-  # The positive controls.
-  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > accepts a signer that satisfies the policy",
-  "vitest#test/transport.test.ts > McpReHttpTransport signing inputs > signs the request body the caller's message described",
-  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > still delivers an ordinary verified reply",
-  # THE ANTI-VACUITY CONTROL FOR THE FORCED VERDICTS. Several controls above override the
-  # native binding's verdict, which is the right seam — the property is what the TRANSPORT
-  # does with a verdict, and against a recorded receipt nothing distinguishes reading
-  # `bound` from hard-coding it. What separately written object literals cannot do is track
-  # the core's shape: a renamed member would leave every one of them green while the
-  # transport read `undefined` in production. The members are declared once and checked
-  # against `native/binding.d.ts`, which napi GENERATES from the Rust type, so a rename in
-  # the core takes this red (#747, the sibling of the Python root's stub-shape control).
-  "vitest#test/transport.test.ts > the forced verdicts are the core's own shape > declares no member the binding does not",
-  # THE TWO CONTROLS THAT LET ASM-0043 BE DISCHARGED, and they are registered here because
-  # the premise they replace was in this unit's closure. The first is the guard itself: a
-  # request still queued at the concurrency semaphore when `close()` lands must not be
-  # signed and POSTed — the property that used to rest on `AbortSignal.aborted` being
-  # observable without yielding, and now rests on this transport's own `#state`. The second
-  # is why the premise's other half is not needed: a teardown states NOTHING about
-  # execution, and asserting nothing requires no premise about what the server received.
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport revocation denylist shape > refuses an entry that is not a non-empty string",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport revocation denylist shape > accepts a well-formed denylist, and the empty TTL-only posture",
+]
+
+# A PROPOSITION THE PYTHON MEMBER DOES NOT NEED, and that asymmetry is a fact about the two
+# runtimes rather than an omission. Python's task group really cancels; here `Promise.race`
+# decides which result the CALLER sees and does not stop the losing arm, so without an explicit
+# per-leg guard a continuation chain would go on signing and POSTing fresh answer legs after
+# `onclose` has fired — handing the server a valid, fresh, correctly signed request the caller
+# believes it cancelled. The guard reads this transport's OWN state, assigned synchronously by
+# `close()`, rather than `AbortSignal.aborted`, which is what discharges ASM-0043 instead of
+# renewing it.
+[[unit]]
+id = "sdk_typescript.post_close_emission"
+class = "V0"
+description = "After `close()`, nothing further is signed or transmitted: a request still queued at the concurrency semaphore is not signed or POSTed, a continuation chain stops rather than signing a fresh answer leg or prompting a human for one, and an aborted exchange surfaces as a local outcome asserting nothing about execution. The transport is single-use, and work before start or after close is refused rather than carried."
+paths = ["sdk/typescript/src/transport.ts"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = ["test://sdk_typescript/post_close_emission/nothing_is_signed_after_close"]
+tested_symbols = [
   "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > does not sign or POST a request still queued at the semaphore when close() lands",
   "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > says nothing about execution when close() aborts an in-flight exchange",
-  # THE AGGREGATE RESPONSE DEADLINE, and it was measured by NOTHING this unit declared. The
-  # controls existed in `test/mtls.test.ts` and were never registered, while `src/mtls.ts`
-  # sits inside this unit's `paths` — so the property was in the fingerprint's source
-  # closure with no declared control over it, which is exactly the gap the Python root had
-  # (#746 §5, #747). Registered now, and the evidence is production-shaped by construction:
-  # a real TLS server that drips one byte every 50ms against a 600ms bound, read through
-  # Node's own `https` client, so only an aggregate deadline can end it. Unlike the Python
-  # reader this one arms an absolute timer when the response starts, so a peer that stops
-  # sending entirely is bounded by the same deadline rather than by a second mechanism.
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > aborts an in-flight exchange and never delivers after onclose",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > refuses work before start and after close",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > refuses a second start()",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > fires onclose when closed, and is single-use afterwards",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > walks NEW -> OPEN -> CLOSED",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > closes idempotently",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > closes cleanly with no onclose installed",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport notification handling > aborts an in-flight notification on close rather than waiting out the poster",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > stops the continuation chain when close() lands mid-call",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > does not prompt a human for an answer leg a closed transport will never send",
+]
+
+# OUTSIDE THM-0095's CLOSURE. Remove it and the SDK signs under an identity the route did not
+# expect — the answer the application receives still binds to the request that was sent. It is
+# request-side attribution. `custody.ts` was in the predecessor unit's paths and eighteen of
+# its controls were declared by nothing.
+[[unit]]
+id = "sdk_typescript.signer_policy"
+class = "V0"
+description = "The transport does not open unless the signer satisfies the route's policy — the expected signer identity, and non-exporting custody where the hardening profile demands it — checked before anything is signed; a device that cannot sign fails closed rather than emitting unsigned evidence; and key material is never rendered."
+paths = [
+  "sdk/typescript/src/custody.ts",
+  "sdk/typescript/src/transport.ts",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = ["test://sdk_typescript/signer_policy/checked_before_anything_is_signed"]
+tested_symbols = [
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > checks the signer against the route policy in start(), before anything is signed",
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > accepts a signer that satisfies the policy",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport notification handling > opens under a hardened policy with a non-exporting signer",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > custody classes > labels a software signer and a non-exporting signer distinctly",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > custody classes > rejects a seed that is not exactly 32 bytes",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > custody classes > rejects a non-callable sign callback",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > custody classes > never renders key material",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > non-exporting custody is byte-identical to software custody > produces the same evidence, body, and headers via a SigningDevice",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > non-exporting custody is byte-identical to software custody > holds only the callback — the device is the sole holder of the key",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > a device that cannot sign fails closed > raises SignerUnavailable for a throwing device",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > a device that cannot sign fails closed > keeps the underlying cause",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > a device that cannot sign fails closed > is not a wire error, but is still one of ours",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > a device that cannot sign fails closed > raises SignerUnavailable for a 0-byte signature",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > a device that cannot sign fails closed > raises SignerUnavailable for a 63-byte signature",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > a device that cannot sign fails closed > raises SignerUnavailable for a 65-byte signature",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > a device that cannot sign fails closed > raises SignerUnavailable for a non-Buffer return",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > a device that cannot sign fails closed > never emits unsigned evidence when the device misbehaves",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > a device that cannot sign fails closed > does not blame the device for a core failure",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > SignerPolicy fails closed > hardening rejects software custody with mcp-re.actor_binding_failed",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > SignerPolicy fails closed > hardening accepts non-exporting custody",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > SignerPolicy fails closed > rejects a signer whose id is not the route's expected signer",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/custody.test.ts > SignerPolicy fails closed > the permissive profile accepts software custody",
+]
+
+# OUTSIDE THM-0095's CLOSURE. The aggregate bound is the reason a deadline is not excluded
+# wholesale — the inactivity bound alone bounds nothing, because every byte re-arms it — but
+# the bound itself is AVAILABILITY: remove it and a trickling peer holds a slot, which hands
+# the application no wrong answer. What the root takes from the deadline is only that the abort
+# surfaces as a LOCAL outcome carrying no execution assertion, and that is
+# `sdk_typescript.local_failure_provenance`'s proposition.
+[[unit]]
+id = "sdk_typescript.bounded_read"
+class = "V0"
+description = "The response read is bounded by the aggregate wall clock rather than by socket inactivity alone and by a byte ceiling, and the verifying channel it runs over is constructed against the configured CA with the hostname proved and no transport-owned or splitting header admitted; exceeding either bound, or a channel that cannot be constructed, fails the exchange."
+paths = ["sdk/typescript/src/mtls.ts"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = ["test://sdk_typescript/bounded_read/both_bounds_and_the_channel"]
+tested_symbols = [
   "vitest#test/mtls.test.ts > the mTLS connect helper > bounds the TOTAL response read, not only socket inactivity",
-  # The byte ceiling, independent of the clock, and the positive mirror: a bound that
-  # refuses ordinary responses is not a bound. The last one is the "no bound" knob's
-  # validation — a timeout that cannot be honoured is refused at construction.
   "vitest#test/mtls.test.ts > the mTLS connect helper > refuses an oversized response",
   "vitest#test/mtls.test.ts > the mTLS connect helper > round-trips a signed request over a verified channel",
   "vitest#test/mtls.test.ts > the mTLS connect helper > refuses a non-positive exchange timeout",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/mtls.test.ts > the mTLS connect helper > refuses a certificate from an untrusted root",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/mtls.test.ts > the mTLS connect helper > refuses a certificate for a different name",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/mtls.test.ts > the mTLS connect helper > does not fold a repeated response header",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/mtls.test.ts > the mTLS connect helper > refuses a transport-owned header",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/mtls.test.ts > the mTLS connect helper > refuses a header value that would split the request",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/mtls.test.ts > the mTLS connect helper > opens a session transport over the channel",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/mtls.test.ts > the mTLS connect helper > refuses a plaintext target",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/mtls.test.ts > the mTLS connect helper > refuses a non-positive response ceiling",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/mtls.test.ts > the mTLS connect helper > refuses empty TLS material rather than falling back to Node's public roots",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/mtls.test.ts > the mTLS connect helper > refuses a connect port outside the TCP range",
 ]
 
+# OUTSIDE THM-0095's CLOSURE: which artefacts a request is bound to is a request-side fact.
+# `authorization.ts` was in the predecessor unit's paths and every one of its thirty-one
+# controls was declared by nothing — including the two that establish a caller cannot pass a
+# precomputed digest, which is the seal the whole bind-not-interpret rule rests on.
+[[unit]]
+id = "sdk_typescript.authorization_binding"
+class = "V0"
+description = "The authorization binding specs a request carries are the ones the configured policy permits, serialized canonically and byte-identically to the Python twin; the core digests the real artifact material and a caller is given no way to supply a precomputed digest or to mint half a binding pair; and the digest retained per outstanding request identifies which artefacts the request was bound to without ever being re-interpreted."
+paths = [
+  "sdk/typescript/src/authorization.ts",
+  "sdk/typescript/src/transport.ts",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = ["test://sdk_typescript/authorization_binding/permitted_and_canonical"]
+tested_symbols = [
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > opaque bytes > has the core digest the real artifact",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > opaque bytes > carries metadata only, never the artifact",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > opaque bytes > changes the digest when the artifact bytes change",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > opaque bytes > digests deterministically",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > opaque bytes > gives a caller no way to pass a precomputed digest",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > opaque bytes > fails closed on empty material",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > opaque bytes > fails closed on an unregistered artifact type",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > authz-system reference > binds the real bytes and names the system",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > authz-system reference > leaks no secret material",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > authz-system reference > produces the same digest as the opaque form for the same bytes",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > authz-system reference > fails closed when authorizationSystemId is missing",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > authz-system reference > fails closed when referenceSchemeId is missing",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > authz-system reference > fails closed when referenceValue is missing",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > DPoP stays built-in > is present and first with no provider",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > DPoP stays built-in > has provider bindings append after it",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > DPoP stays built-in > signs the no-bindings path unchanged",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > DPoP stays built-in > binds several providers in order",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > policy fails closed > passes a permitted type",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > policy fails closed > fails closed on an unpermitted type",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > policy fails closed > fails closed when a required binding is absent",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > policy fails closed > allows an optional binding to be absent",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > canonical bindingsJson is byte-identical across SDKs > emits raw UTF-8 for a non-ASCII binding field, and the same digest Python records",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > authorization decision (ADR-MCPRE-065 Slice 3) > carries the document and has the core mint its binding",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > authorization decision (ADR-MCPRE-065 Slice 3) > carries the document exactly once",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > authorization decision (ADR-MCPRE-065 Slice 3) > gives a caller no parameter for the digest",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > authorization decision (ADR-MCPRE-065 Slice 3) > lets a request act under at most one decision",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > authorization decision (ADR-MCPRE-065 Slice 3) > fails closed on an empty decision",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > authorization decision (ADR-MCPRE-065 Slice 3) > produces the same carrier from a string and from bytes",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > the generic provider cannot mint half a pair > is refused by the wrapper",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > the generic provider cannot mint half a pair > is refused independently by the native seam",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/authorization.test.ts > the generic provider cannot mint half a pair > leaves the reference form untouched",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > checks the authorization policy in start() too",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport signing inputs > records the authorization-binding digest on the correlation entry",
+  # ADR-MCPRE-069 `register`
+  "vitest#test/transport.test.ts > McpReHttpTransport signing inputs > records no binding digest for a request that carries no bindings",
+]
 [[unit]]
 id = "proxy.delegated_signing_credential"
 class = "V0"
@@ -4211,7 +5273,14 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://proxy/serving/identity_provenance"]
+evidence = [
+  "test://proxy/serving/identity_provenance",
+  # ADR-MCPRE-069 disposition REGISTER. THM-0080 names this gate, in its own text, as what
+  # establishes it, and until now no unit's closure covered it: the rules could be softened
+  # under a standing PASS. M176 is the falsifier.
+  "mutation://proxy/serving/identity_provenance",
+]
+gate_controls = ["scripts/serving_identity_provenance_gate.py"]
 # The third member is the load-bearing one: the mechanism that forbids pairing an acceptance
 # from one relationship with an identity from another credential is the ABSENCE of a
 # parameter, which is a property of a signature — and a signature is what an edit widens
@@ -4535,83 +5604,70 @@ tested_symbols = [
 # record's DELIVERY fail differently and are measured by different controls.
 # ---------------------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------------------
+# ADR-MCPRE-068 Phase 1 — a record's coordinates and its vocabulary are two authorities.
+#
+# `proxy.audit_record_coordinates` carried THM-0069's whole statement AND THM-0071's half of
+# it. One decides WHERE a verdict is written; the other decides in WHOSE WORDS. Last on the
+# campaign ruling's scheduler.
+# ---------------------------------------------------------------------------------------
+
+# THE COORDINATES, which is THM-0069's whole statement. Both existing probes attack
+# `subject.rs` and both are its.
 [[unit]]
-id = "proxy.audit_record_coordinates"
+id = "proxy.audit_authority_coordinates"
 class = "V0"
-description = "What a security record may say, and in whose vocabulary: a request record always states an authorization outcome, a response record has none to carry, and the Core verdict and the authorization verdict occupy separate coordinates that cannot be read as each other."
+description = "A security record states each authority's outcome in that authority's own coordinate: every request record states an authorization outcome — not configured, authorized, or refused — a response record carries none because there is nothing after the dispatch for a policy to have decided, and the Core verdict and the authorization verdict occupy separate coordinates that cannot be read as each other."
 paths = [
   "mcp-re-proxy/src/audit_record/mod.rs",
   "mcp-re-proxy/src/audit_record/subject.rs",
-  # R11-106. The exchange-side CARRIER of the two verdicts this unit composes. It is here
-  # rather than in the serving unit because what the record may SAY about each authority is
-  # this unit's claim, and the carrier is what guarantees the two never move together.
   "mcp-re-proxy/src/http_profile_serve/authority_verdicts.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = [
+  "test://proxy/audit_coordinates/each_authority_its_own",
+  "mutation://proxy/audit_coordinates/each_authority_its_own",
+]
+tested_symbols = [
+  "lib#audit_record::subject::tests::a_request_record_contributes_the_authorization_authoritys_own_fields",
+  "lib#audit_record::subject::tests::a_response_record_contributes_nothing_to_say",
+  "lib#audit_record::subject::tests::every_constructor_lands_on_the_arm_core_says_it_is_about",
+  "lib#audit_record::subject::tests::a_verdict_core_did_not_reach_carries_no_core_reason",
+  "lib#audit_record::subject::tests::the_admission_and_authorization_coordinates_are_both_present_and_distinct",
+  "lib#http_profile_serve::authority_verdicts::tests::the_two_verdicts_start_absent_and_are_set_independently",
+  "lib#audit_record::tests::the_two_coordinates_stay_separate_on_one_record",
+]
+
+# THM-0071's HALF of the old unit — *recorded as the audit-vocabulary authority the refusal
+# carries*. It is a different authority from the coordinates next door: one decides WHERE a
+# verdict is written, this one decides in WHOSE WORDS. THREE OUTCOMES ARE NOT TWO: `not
+# configured` and `authorized` are different facts about a deployment, and a record that renders
+# the first as the second reports a decision nobody made. M77 is that weakening.
+[[unit]]
+id = "proxy.audit_vocabulary_import"
+class = "V0"
+description = "The authorization vocabulary is imported at the point the policy authority speaks and not before: a deployment that configured no policy renders as `not configured` rather than as an authorization, a policy denial puts its own token in the authorization coordinate, the two refusal arms stay distinguishable in the record, and a client-named target is classified as text rather than as a token this crate closes."
+paths = [
   "mcp-re-proxy/src/authorization/audit.rs",
   "mcp-re-proxy/src/authorization/audit/fields.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://proxy/audit/record_coordinates", "mutation://proxy/audit/record_coordinates"]
-# `before_policy_imports_no_vocabulary` is the ADR-MCPRE-066 poison pill: the arm reached
-# before any policy ran must not borrow a policy token, because a reader holding one cannot
-# tell whether a policy was ever consulted.
+evidence = [
+  "test://proxy/audit_vocabulary/imported_where_the_authority_speaks",
+  "mutation://proxy/audit_vocabulary/imported_where_the_authority_speaks",
+]
 tested_symbols = [
-  # r11 R11-164. The two controls these replace asserted the value they had just constructed:
-  # R3's structural half is the absence of an `Option` in the enum, which is a compile-time
-  # fact no runtime control can fail to observe, and the citation spent a test-evidence slot
-  # on it. What CAN regress is the DELEGATION — an arm that rebuilds, filters or renames what
-  # the authority produced — so that is what is measured, against the facet's own projection
-  # rather than a literal.
-  "lib#audit_record::subject::tests::a_request_record_contributes_the_authorization_authoritys_own_fields",
-  "lib#audit_record::subject::tests::a_response_record_contributes_nothing_to_say",
-  # R11-161. WHICH HALF a record is about was represented twice — by the arm and by the
-  # event's own `event_type` — and the two could disagree, because every constructor took
-  # any event. No public constructor takes one now, and the representation is private, so a
-  # mismatched inhabitant is UNNAMEABLE rather than refused. The first control is what makes
-  # that checkable: each constructor's arm must equal what CORE says the event's half is, so
-  # one rewired to the wrong Core call fails the battery instead of compiling. The second
-  # keeps the two rejection shapes apart — a verdict Core reached carries its token, one it
-  # did not reach carries none, and folding them would put a policy's refusal into Core's
-  # `reason`.
-  "lib#audit_record::subject::tests::every_constructor_lands_on_the_arm_core_says_it_is_about",
-  "lib#audit_record::subject::tests::a_verdict_core_did_not_reach_carries_no_core_reason",
-  # R11-106 / ADR-MCPRE-066 Addendum 1. THREE authorities now, still composed and never
-  # merged: one token meaning "both are content" would lose the distinction in a way no
-  # reader could detect. The control also reads a Degraded serve back off the record, which
-  # is the whole of what R11-106 asked for.
-  "lib#audit_record::subject::tests::the_admission_and_authorization_coordinates_are_both_present_and_distinct",
-  # The carrier, which the module-size ratchet found: two verdict fields on the serving root
-  # became a type when the admission one joined, and the property is that they do NOT move
-  # together — an exchange can refuse after admission and before authorization, and a single
-  # "verdicts reached" flag could not say so.
-  "lib#http_profile_serve::authority_verdicts::tests::the_two_verdicts_start_absent_and_are_set_independently",
-  "lib#audit_record::tests::the_two_coordinates_stay_separate_on_one_record",
   "lib#authorization::audit::tests::an_unconfigured_deployment_is_not_rendered_as_an_authorized_one",
   "lib#authorization::audit::tests::a_policy_denial_puts_its_token_in_the_authorization_coordinate",
   "lib#authorization::audit::tests::the_two_refusal_arms_are_distinguishable_in_the_record",
   "lib#authorization::audit::tests::before_policy_imports_no_vocabulary",
   "lib#authorization::audit::fields::tests::the_unconfigured_line_cannot_be_read_as_an_authorization",
-  # Which values this authority calls a closed token and which it calls open text is a
-  # COORDINATE decision — who may say what, in whose vocabulary — so its control lives here
-  # rather than with the module that spells them. `target_field` is the one place a `Token`
-  # arm and a `Text` arm sit in one match, so it is the one place the decision can go wrong.
   "lib#authorization::audit::fields::tests::a_client_named_target_is_classified_as_text",
 ]
-
-# r11 W2-A. A THIRD unit beside the coordinate and delivery ones, because this is a third
-# question. `proxy.audit_record_coordinates` claims what a record MAY SAY and in whose
-# vocabulary; `proxy.audit_delivery` claims that the stream is honest about what reached it.
-# Neither states that the TEXT preserves what was said, and attaching that here would put a
-# claim inside a unit whose evidence closure does not establish it.
-#
-# It is not folded into the delivery unit for a second reason: that unit's paths are the
-# sink, and putting the encoding property there would make the unit boundary assert the very
-# ownership this slice exists to refuse — that the transport owns the format.
-#
-# Two files, one proposition. `scalar.rs` is the injective escape and its inverse, statable
-# with nothing in scope but a string; `text.rs` is the record grammar built over it. The
-# claim is the composition, so the closure is both.
 
 [[unit]]
 id = "proxy.audit_text_rendering"
@@ -5428,7 +6484,7 @@ paths = [
   "mcp-re-http-profile/src/custody/active_key.rs",
 ]
 exported_contracts = []
-# TWO classes, for the reason `http_profile.verifier_results` carries two. The seal added by
+# TWO classes, for the reason each of the verifier's propositions carries two. The seal added by
 # R11-307/R11-036 is a NEGATIVE conjunct — an illegal `(ttl, overlap)` pair has no inhabitant
 # — and a green battery is not evidence that the refusal is load-bearing. The compile-time
 # half (private fields, `of` the sole producer) no runtime weakening can move; the runtime
@@ -5930,20 +6986,39 @@ tested_symbols = [
   "tests/scitt_retained_corpus_test#the_manifest_describes_the_committed_artifacts",
 ]
 
-# v0.17 trust-plane ownership slice. The runtime trust plane — ADR-MCPS-021's three
-# revocation tiers, the `--trust` reload, and the MCPS-84 trust-epoch source — implemented
-# security-bearing behaviour that no unit owned, while the status prose called its
-# cross-replica half "proved". The census record is
-# `verification/reviews/packets/trust-plane-ownership-2026-09-05.md`; this entry is the
-# owner it found the tree could honestly register, and it is deliberately ONE REPLICA wide.
+# v0.17 trust-plane ownership slice, re-partitioned by ADR-MCPRE-068 Phase 1. The runtime
+# trust plane — ADR-MCPS-021's three revocation tiers, the `--trust` reload, and the MCPS-84
+# trust-epoch source — implemented security-bearing behaviour that no unit owned, while the
+# status prose called its cross-replica half "proved". The census record is
+# `verification/reviews/packets/trust-plane-ownership-2026-09-05.md`, and the units below are
+# the owner it found the tree could honestly register, deliberately ONE REPLICA wide.
+#
+# It registered them as ONE unit, `proxy.trust_plane_runtime`, and that unit was the semantic
+# authority for TWO claims: THM-0097, what the resolver may ANSWER under the snapshot it has,
+# and THM-0100, how often that snapshot is RE-READ. They are not the same authority and the
+# theorem layer already says so — THM-0100 `depends_on` THM-0097 and its scope says "nothing
+# about the read itself beyond its success or failure", which is a boundary between two
+# owners written as a disclaimer. The eleven probes partitioned along the same line without
+# being touched: M92–M95, M98, M99, M135 and M148 turn a resolution control red, M107–M109 a
+# cadence control.
+#
+# `mod.rs` and `reload/mod.rs` are members of BOTH, and that is the honest reading rather than
+# an unsplit residue: each file holds one function of each authority. `reload/mod.rs` runs the
+# cadence loop (THM-0100) and carries the keep-last-good budget whose exhaustion closes the
+# resolver (THM-0097); `mod.rs` holds the plane and its terminal `Drop` transition (THM-0097)
+# and `fleet_trust_bound`, the arithmetic the operator is told (THM-0100). Splitting the FILES
+# to make the closures disjoint would move code to satisfy a partition, which is the thing
+# CLAUDE.md's threshold rule forbids; the fingerprints moving together is the true statement
+# that one file serves two owners.
+
 [[unit]]
-id = "proxy.trust_plane_runtime"
+id = "proxy.trust_resolution_window"
 class = "V0"
-description = "What ONE replica's request-trust resolver may answer under its local trust state, taking the materialized snapshot as an input authority: a cached positive binding answers for at most T and never past the deadline it was first cached under; an invalidation event delivered to the plane — a per-key eviction or a coarse flush — strips the cached binding's authority before the next lookup, so the next answer is the local snapshot's; a snapshot that has stopped being maintained, and a snapshot that cannot answer past T, refuse with Unavailable rather than serving; and no step — flush, eviction, outage, reload — can widen what is served. How an event is PRODUCED from the shared counter is `proxy.trust_epoch_source`'s; what the snapshot represents, and how the trust document reaches this replica, are nobody's claim here."
+description = "What ONE replica's request-trust resolver may answer under the trust state it HAS, taking the materialized snapshot as an input authority: a cached positive binding answers for at most T and never past the deadline it was first cached under; an invalidation event delivered to the plane — a per-key eviction or a coarse flush — strips the cached binding's authority before the next lookup, so the next answer is the local snapshot's; a snapshot that has stopped being maintained, and a snapshot that cannot answer past T, refuse with Unavailable rather than serving; and no step — flush, eviction, outage, reload — can widen what is served. How OFTEN the snapshot is re-read is `proxy.trust_reload_cadence`'s; how an event is PRODUCED from the shared counter is `proxy.trust_epoch_source`'s; what the snapshot represents, and how the trust document reaches this replica, are nobody's claim here."
 paths = [
   # The plane: what it owns, what it hands out, and the terminal transition its `Drop`
-  # makes. `fleet_trust_bound` lives here too — the operator-facing bound is part of what
-  # this unit measures, because a bound the code prints is a claim the code makes.
+  # makes. NOT `fleet_trust_bound`, which is in the same file and belongs to the cadence
+  # unit — see the note above on why the file is a member of both rather than split.
   "mcp-re-proxy/src/trust_plane/mod.rs",
   # Tier 1 and the bounded window every caching tier runs under, including the
   # tighten-only rule: an invalidated entry's deadline is a ceiling on whatever replaces it.
@@ -5959,15 +7034,18 @@ paths = [
   "mcp-re-proxy/src/trust_plane/revocation_resolver.rs",
   # The three-state freshness latch and the resolver that refuses on it.
   "mcp-re-proxy/src/trust_plane/freshness.rs",
-  # The reload cycle, the bounded keep-last-good budget, and the halt exit.
+  # For the BOUNDED KEEP-LAST-GOOD BUDGET only: the fifth consecutive bad read closes the
+  # resolver, which is this unit's "a snapshot that has stopped being maintained refuses".
+  # The cycle's timing and its swap are the cadence unit's.
   "mcp-re-proxy/src/trust_plane/reload/mod.rs",
   # The other way the reload stops: the body panics, and no later read may report the store
   # current again. A distinct fact from the budget next door, which the next read recovers.
   "mcp-re-proxy/src/trust_plane/reload/supervision.rs",
-  # One read of `--trust`, two products that cannot disagree.
+  # One read of `--trust`, two products that cannot disagree — and the read bound, which is
+  # this unit's because a truncated document is a SOFTENED snapshot: refusing the read makes
+  # the failure visible to the budget above instead of serving a document the operator did
+  # not write. No theorem claims the bound in terms; recorded in the Phase-1 packet.
   "mcp-re-proxy/src/trust_plane/snapshot.rs",
-  # The delivered window R + T, stated as arithmetic. Claim surface, and measured as one.
-  "mcp-re-proxy/src/trust_plane/delivered_window.rs",
   # NOT `trust_epoch.rs`: the epoch→event source is `proxy.trust_epoch_source`, split out
   # on 2026-09-05 when THM-0097 was registered. Assumption reach is derived scope → unit →
   # theorem, so a unit holding the reader would carry ASM-0044 into a theorem that is true
@@ -5989,13 +7067,13 @@ paths = [
   # with its own baseline and its own regression rule, and it already has an owner.
   # NOT `startup_plan.rs` (`TrustEpochPlan`) or `app.rs` (`build_actor_resolver`): the
   # configuration projection and the composition seam belong to the units that own them.
+  # NOT `delivered_window.rs`: arithmetic over R and T, which is the cadence unit's claim.
 ]
 exported_contracts = []
-# TWO evidence classes. Every conjunct in the description is a check that could be deleted
-# with the battery still green unless a control notices, and several of them had exactly
-# that shape before this slice: the poller body that makes "within one poll interval" true
-# had no test at all, and the source and the cache were each tested against a fake of the
-# other. The probes name the deletions; the controls below are what turn red.
+# Every conjunct in the description is a check that could be deleted with the battery still
+# green unless a control notices, and several of them had exactly that shape before this
+# slice: the source and the cache were each tested against a fake of the other. The probes
+# name the deletions; the controls below are what turn red.
 evidence_class = "tested"
 direct_consequence_severity = "critical"
 evidence = [
@@ -6006,13 +7084,13 @@ evidence = [
 #
 # Every member is an in-process control over ONE replica, driving the plane through the
 # `InvalidationChannel` seam with the in-memory reference channel — the theorem is about the
-# reaction, and the reaction is the same whichever channel delivers the event. The lane that drives a real Redis
-# — `tests/integration_ext/redis_trust_epoch_e2e_test.rs` — is deliberately NOT a member:
-# it self-skips by returning `ok` when no store is provisioned, so a `test://` member naming
-# it would read as PASS having measured nothing (the standing hazard, ADR-MCPRE-061 §2
-# class 8). It runs in `live-infra-e2e.yml` nightly under `MCP_RE_REQUIRE_LIVE_INFRA=1`,
-# which is where it is binding, and it is cited in the census packet as live evidence of
-# the reader — not as this unit's battery.
+# reaction, and the reaction is the same whichever channel delivers the event. The lane that
+# drives a real Redis — `tests/integration_ext/redis_trust_epoch_e2e_test.rs` — is
+# deliberately NOT a member: it self-skips by returning `ok` when no store is provisioned, so
+# a `test://` member naming it would read as PASS having measured nothing (the standing
+# hazard, ADR-MCPRE-061 §2 class 8). It runs in `live-infra-e2e.yml` nightly under
+# `MCP_RE_REQUIRE_LIVE_INFRA=1`, which is where it is binding, and it is cited in the census
+# packet as live evidence of the reader — not as this unit's battery.
 #
 # The GKE Proof 2 (`docs/security/gke-multi-replica-validation.sh`) is not evidence for
 # this unit at all: it exercises the SIGNING-side epoch label (a credential minted under the
@@ -6060,24 +7138,61 @@ tested_symbols = [
   "lib#trust_plane::freshness_transition_tests::a_reload_completing_inside_the_drop_join_window_cannot_revive_the_resolver",
   "lib#trust_plane::handle_lifetime_tests::a_resolver_that_outlives_the_plane_fails_closed",
   "lib#trust_plane::handle_lifetime_tests::a_plane_materialized_without_a_reload_cadence_still_fails_closed_after_drop",
-  # --- the reload: the swap, the budget, the halt ---
+  # --- the two ways the reload STOPS, both of which close this resolver ---
   "lib#trust_plane::reload::reload_loop_tests::a_halted_reloader_marks_the_trust_store_stale",
-  # The OTHER way the reload stops, and the one nothing measured: the body panics. Asserted
-  # on `StaleFailsClosed::resolve` — what a request meets — because the flag and the surface
+  "lib#trust_plane::reload::reload_loop_tests::the_failure_budget_fails_closed_on_exactly_the_fifth_consecutive_bad_read",
+  # The OTHER way, and the one nothing measured: the body panics. Asserted on
+  # `StaleFailsClosed::resolve` — what a request meets — because the flag and the surface
   # agreeing is one claim, and only the surface is the deployment's answer. Deleting the
   # whole supervisor used to leave every test in the workspace green (R11-726).
   "lib#trust_plane::reload::supervision::tests::a_panicking_trust_reload_thread_makes_the_resolver_refuse",
-  "lib#trust_plane::reload::reload_loop_tests::a_reload_cycle_replaces_the_map_the_resolver_answers_from",
+]
+# No `test_features`: nothing in this closure is feature-gated. The reader's controls are
+# `proxy.trust_epoch_source`'s, which names `redis_replay`.
+
+[[unit]]
+id = "proxy.trust_reload_cadence"
+class = "V0"
+description = "How often ONE replica re-reads `--trust`, and what it tells the operator the resulting exposure is: the reload worker performs one halt-aware sleep of exactly the declared cadence R and then one read, for as long as it runs; a successful cycle swaps the resolver's snapshot and the signer directory atomically and together, before the next request resolves; and the serving interval the replica prints at startup is R composed with the tier's cache lifetime T — the poll interval where the push tier has a source, the fallback where it has none, and unbounded where the store is never re-read at all. What the resolver may answer under the snapshot it has is `proxy.trust_resolution_window`'s; what an accepted document MEANS is `proxy.trust_document_interpretation`'s."
+paths = [
+  # For `fleet_trust_bound` only: the startup line is a claim the code makes, so the
+  # arithmetic that produces it is measured, not trusted. The plane and its `Drop` in the
+  # same file are the resolution unit's.
+  "mcp-re-proxy/src/trust_plane/mod.rs",
+  # For the CYCLE only: one halt-aware sleep of exactly R, one read, one swap. The
+  # keep-last-good budget in the same file is the resolution unit's, because exhausting it
+  # closes the resolver rather than changing when the next read happens.
+  "mcp-re-proxy/src/trust_plane/reload/mod.rs",
+  # R + T stated as arithmetic, including the unbounded case. Claim surface, measured as one.
+  "mcp-re-proxy/src/trust_plane/delivered_window.rs",
+  # NOT `snapshot.rs`: what one read produces, and its bound, is the resolution unit's. This
+  # unit claims nothing about the read beyond whether it succeeded — THM-0100's scope says
+  # so in terms, and that sentence is this boundary.
+]
+exported_contracts = []
+evidence_class = "tested"
+# HIGH, not THM-0100's own MEDIUM. The theorem's direct consequence is that the operator can
+# READ the worst case off a printed line; this unit's failure is larger than that, because a
+# cycle that sleeps the wrong interval or swaps only one of the two products makes the
+# exposure itself longer than any line states. The theorem is the weaker of the two
+# statements the unit could carry, which is the direction that is safe.
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/trust_plane/reload_cadence",
+  "mutation://proxy/trust_plane/reload_cadence",
+]
+tested_symbols = [
+  # --- the cycle: the sleep, and the swap both products see ---
   "lib#trust_plane::reload::reload_loop_tests::the_reload_loop_reads_on_its_cadence_until_halted",
-  "lib#trust_plane::reload::reload_loop_tests::the_failure_budget_fails_closed_on_exactly_the_fifth_consecutive_bad_read",
+  "lib#trust_plane::reload::reload_loop_tests::a_reload_cycle_replaces_the_map_the_resolver_answers_from",
   # --- the bound the operator is told ---
   "lib#trust_plane::reload::reload_loop_tests::a_caching_tier_states_the_cache_lifetime_on_top_of_the_store_cadence",
   "lib#trust_plane::delivered_window::tests::a_store_that_is_never_re_read_delivers_an_unbounded_window",
   "lib#trust_plane::store_cadence_tests::the_push_tier_bound_states_the_poll_interval_not_the_next_request",
   "lib#trust_plane::store_cadence_tests::a_push_tier_without_a_source_reports_the_fallback_only",
 ]
-# No `test_features`: nothing in this closure is feature-gated. The reader's controls are
-# `proxy.trust_epoch_source`'s, which names `redis_replay`.
+# No `test_features`: nothing in this closure is feature-gated.
+
 
 [[unit]]
 id = "proxy.trust_epoch_source"
@@ -6105,7 +7220,7 @@ evidence = [
 # not any other connection ever sees the write.
 #
 # The e2e in `tests/integration_ext/redis_trust_epoch_e2e_test.rs` is NOT a member, for
-# the reason recorded on `proxy.trust_plane_runtime`: it self-skips green without a store.
+# the reason recorded on `proxy.trust_resolution_window`: it self-skips green without a store.
 tested_symbols = [
   "lib#trust_epoch::tests::first_poll_establishes_baseline_without_flush",
   "lib#trust_epoch::tests::epoch_advance_emits_a_single_flush_all",
@@ -6132,7 +7247,7 @@ tested_symbols = [
   # THE COMPOSITION, in process: this source under the production cache type through the
   # production adapter. Advance → the next answer is the store's; outage → nothing flushes
   # and the deadline governs. Listed here because the source is what these drive; the
-  # cache's half of each is a member of `proxy.trust_plane_runtime` in its own right.
+  # cache's half of each is a member of `proxy.trust_resolution_window` in its own right.
   "lib#trust_epoch::tests::an_observed_advance_makes_the_next_lookup_the_stores_answer",
   "lib#trust_epoch::tests::a_source_outage_flushes_nothing_and_the_deadline_still_governs",
   # The reader's one local rule about a foreign read's meaning. Exists only under
@@ -6149,7 +7264,7 @@ test_features = ["redis_replay"]
 # ---------------------------------------------------------------------------
 #
 # Recorded in the trust-plane census of 2026-09-05 as the parser with no owner, and kept out
-# of `proxy.trust_plane_runtime` because parsing is a separate authority under the
+# of `proxy.trust_resolution_window` because parsing is a separate authority under the
 # security-code rule. It is TWO stages with one owner each: a structural parse that accepts
 # a whole document or nothing, and three slot projections that read the parsed document and
 # never the bytes. THM-0097 takes the snapshot as an input authority; this unit is where
@@ -6240,7 +7355,7 @@ would let a future curation of the digest pass as a property of the comparison.
 #   * `l1_fast_reject.rs` — DORMANT. `app.rs` installs the L2 directly on every backend,
 #     nothing outside `async_replay_test` constructs an L1, and no configuration surface
 #     selects one. Excluded from `paths` on the precedent by which
-#     `trust_plane/window_policy.rs` is excluded from `proxy.trust_plane_runtime`.
+#     `trust_plane/window_policy.rs` is excluded from `proxy.trust_resolution_window`.
 #   * `tests/async_replay_test.rs` — the named CI release gate "§4 cross-core /
 #     cross-replica replay race". NOT cited: all five of its controls construct an
 #     `L1FastRejectStore`, so however green it is, it measures a two-tier architecture no
@@ -6575,7 +7690,7 @@ tested_symbols = [
 # `revocation.rs` is NOT in this unit's paths. `LiveTrustResolver::with_revocation_source` is
 # `#[allow(dead_code)]` and documents itself as NOT WIRED: no production path installs a
 # `RevocationSource`. Excluded on the precedent that kept `trust_plane/window_policy.rs` out of
-# `proxy.trust_plane_runtime` and `async_replay/l1_fast_reject.rs` out of
+# `proxy.trust_resolution_window` and `async_replay/l1_fast_reject.rs` out of
 # `proxy.async_replay_retention` — a unit must not carry evidence about code no deployment runs.
 [[unit]]
 id = "policy.authorization_taxonomy"
@@ -7382,7 +8497,7 @@ tested_symbols = [
   "lib#config::tests::a_non_loopback_bind_is_refused_unless_declared",
 ]
 
-# The request-construction half of the client seam. `client.response_acceptance` owns what a
+# The request-construction half of the client seam. `client.response_binding_disposition` owns what a
 # client will accept back; nothing owned what it puts on the wire, and both SDKs and the
 # client proxy build every signed request through this file.
 [[unit]]

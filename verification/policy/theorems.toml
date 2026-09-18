@@ -598,7 +598,17 @@ checked.
 """
 owner = "proxy.runtime_lifecycle"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.runtime_lifecycle"]
+# ADR-MCPRE-068 Phase 1. The statement's second clause — "apply is the only mutator" — is a
+# claim about what no other code can do to the value, and until 2026-09-18 nothing
+# established it: the battery exercises the mutators that exist, and a seal quantifies over
+# the ones that do not. `proxy.runtime_lifecycle_sole_mutator` carries it, with two compile
+# refusals for the two producer routes. NO CLAIM CORRECTION WAS NEEDED here — unlike the two
+# SDK roots, this statement was already right, and what was missing was evidence for a
+# sentence it had asserted since ratification.
+supported_by = [
+  "unit://proxy.runtime_lifecycle",
+  "unit://proxy.runtime_lifecycle_sole_mutator",
+]
 depends_on = []
 
 [[theorem]]
@@ -727,10 +737,10 @@ and dispatch claims. It says the seam ANSWERED for the Request slot, not that th
 deployment was right to trust that actor (ASM-0029). It rests on a test battery, not on a
 postcondition over this operation.
 """
-owner = "http_profile.verifier_results"
+owner = "http_profile.request_floor_result"
 review_requirement = "Owner security-specification review"
 supported_by = [
-  "unit://http_profile.verifier_results",
+  "unit://http_profile.request_floor_result",
   "unit://http_profile.freshness_window",
 ]
 depends_on = ["THM-0001"]
@@ -771,12 +781,10 @@ document its digest committed to. It establishes nothing about what that documen
 AUTHORIZES: authority trust, the actor and action relations, validity and an explicit
 Allow are the authorization owner's propositions (ADR-MCPRE-065), not this one's.
 """
-owner = "http_profile.verifier_results"
+owner = "http_profile.request_full_result"
 review_requirement = "Owner security-specification review"
 supported_by = [
-  "unit://http_profile.verifier_results",
-  # The artifact conjunct's evidence closure is the DISPATCH, not one typed verifier:
-  # THM-0007's proved postcondition reaches this claim through THM-0008's `depends_on`.
+  "unit://http_profile.request_full_result",
   "unit://http_profile.artifact_verification_boundary",
 ]
 depends_on = ["THM-0014", "THM-0007", "THM-0008"]
@@ -815,10 +823,10 @@ It characterizes values successfully returned by those three operations. It does
 establish that an arbitrary externally constructed `BoundResponseSignatureFacts` was
 produced by one of them.
 """
-owner = "http_profile.verifier_results"
+owner = "http_profile.bound_response_shared_facts"
 review_requirement = "Owner security-specification review"
 supported_by = [
-  "unit://http_profile.verifier_results",
+  "unit://http_profile.bound_response_shared_facts",
   "unit://http_profile.freshness_window",
 ]
 depends_on = ["THM-0001"]
@@ -853,10 +861,10 @@ entirely. It reads no response evidence block.
 It characterizes values successfully returned by those two operations, not arbitrary
 externally constructed `UnboundResponseSignatureFacts`.
 """
-owner = "http_profile.verifier_results"
+owner = "http_profile.unbound_response_shared_facts"
 review_requirement = "Owner security-specification review"
 supported_by = [
-  "unit://http_profile.verifier_results",
+  "unit://http_profile.unbound_response_shared_facts",
   "unit://http_profile.freshness_window",
 ]
 depends_on = ["THM-0001"]
@@ -890,10 +898,10 @@ It makes NO delegation claim, and the delegated products do not carry this propo
 that path the seam is queried for the credential's ROOT ISSUER and the signing key appears
 in no trust map at all.
 """
-owner = "http_profile.verifier_results"
+owner = "http_profile.bound_response_seam_result"
 review_requirement = "Owner security-specification review"
 supported_by = [
-  "unit://http_profile.verifier_results",
+  "unit://http_profile.bound_response_seam_result",
   "unit://http_profile.freshness_window",
 ]
 depends_on = ["THM-0021"]
@@ -921,10 +929,10 @@ It inherits every exclusion of THM-0022 — no request relationship of any kind 
 ASM-0029 boundary of THM-0016. It makes no delegation claim: a delegated receipt is
 authorized by a credential and never reaches this type.
 """
-owner = "http_profile.verifier_results"
+owner = "http_profile.unbound_response_seam_result"
 review_requirement = "Owner security-specification review"
 supported_by = [
-  "unit://http_profile.verifier_results",
+  "unit://http_profile.unbound_response_seam_result",
   "unit://http_profile.freshness_window",
 ]
 depends_on = ["THM-0022"]
@@ -976,9 +984,11 @@ It makes no delegation claim. The signer was resolved through the trust seam, an
 credential chain authorized one is THM-0019 — a different proposition over a different
 product, not a strengthening of this one.
 """
-owner = "http_profile.verifier_results"
+owner = "http_profile.bound_response_full_result"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://http_profile.verifier_results"]
+supported_by = [
+  "unit://http_profile.bound_response_full_result",
+]
 depends_on = ["THM-0016"]
 
 [[theorem]]
@@ -1027,9 +1037,16 @@ There is ONE request input, in exactly the sense THM-0018 states: the `;req` bin
 handle comparison are both about the request supplied, because the handle is derived from it
 rather than accepted beside it.
 """
-owner = "http_profile.verifier_results"
+owner = "http_profile.delegated_bound_result"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://http_profile.verifier_results"]
+# The chain unit is a SECOND leaf here, not a convenience: this claim says the credential
+# "verified as a chain to a root issuer key the trust seam resolved", and that sentence is
+# `http_profile.delegated_credential_chain`'s proposition. What this unit owns is the
+# BINDING between that credential and this response.
+supported_by = [
+  "unit://http_profile.delegated_bound_result",
+  "unit://http_profile.delegated_credential_chain",
+]
 depends_on = ["THM-0021"]
 
 [[theorem]]
@@ -1064,9 +1081,16 @@ present, is diagnostic and outside this claim.
 not establish THM-0016: the seam answered for the credential's root issuer, not for the
 signing key. As in THM-0019 the expectations are supplied rather than proved current.
 """
-owner = "http_profile.verifier_results"
+owner = "http_profile.delegated_unbound_result"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://http_profile.verifier_results"]
+# The chain unit is a SECOND leaf here, not a convenience: this claim says the credential
+# "verified as a chain to a root issuer key the trust seam resolved", and that sentence is
+# `http_profile.delegated_credential_chain`'s proposition. What this unit owns is the
+# BINDING between that credential and this response.
+supported_by = [
+  "unit://http_profile.delegated_unbound_result",
+  "unit://http_profile.delegated_credential_chain",
+]
 depends_on = ["THM-0022"]
 
 # ---------------------------------------------------------------------------
@@ -1969,14 +1993,14 @@ It is not a claim about revocation REACHING a peer. A cadence bounds how stale t
 document may be; it says nothing about propagation to other replicas, which is the epoch
 mechanism's concern (THM-0036) and is separately unproved end to end.
 """
-owner = "proxy.trust_configuration_state"
+owner = "proxy.trust_revocation_classification"
 review_requirement = "Owner security-specification review"
-# TWO units. `proxy.trust_configuration_state` establishes what the classifier and the
+# TWO units. The classifier/locator unit establishes what the classifier and the
 # locator DECIDE. `proxy.trust_configuration_state_sole_producer` establishes that neither
 # decision can be bypassed — that no posture exists whose declared witnesses nobody decided,
 # and no locator exists that `new` did not accept.
 supported_by = [
-  "unit://proxy.trust_configuration_state",
+  "unit://proxy.trust_revocation_classification",
   "unit://proxy.trust_configuration_state_sole_producer",
 ]
 depends_on = []
@@ -2018,14 +2042,14 @@ build without the `redis_replay` feature is refused at planning by
 It says nothing about propagation LATENCY, nor that an operator's increment reaches every
 replica within any bound.
 """
-owner = "proxy.trust_configuration_state"
+owner = "proxy.trust_document_locator"
 review_requirement = "Owner security-specification review"
-# TWO units. `proxy.trust_configuration_state` establishes what the classifier and the
+# TWO units. The classifier/locator unit establishes what the classifier and the
 # locator DECIDE. `proxy.trust_configuration_state_sole_producer` establishes that neither
 # decision can be bypassed — that no posture exists whose declared witnesses nobody decided,
 # and no locator exists that `new` did not accept.
 supported_by = [
-  "unit://proxy.trust_configuration_state",
+  "unit://proxy.trust_document_locator",
   "unit://proxy.trust_configuration_state_sole_producer",
 ]
 depends_on = ["THM-0035"]
@@ -2279,9 +2303,21 @@ depends on it.
 production configuration. A theorem about code this claim covers does not make a deployment
 posture supported.
 """
-owner = "http_profile.scitt_receipt_offline"
+owner = "http_profile.scitt_derived_root"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://http_profile.scitt_receipt_offline"]
+# ADR-MCPRE-068 Phase 1. THE SIX LEAVES BELONG HERE, not one altitude up. This claim IS the
+# conjunction of what a successful `verify_receipt_offline` establishes, and
+# `http_profile.scitt_receipt_offline` named all six in its own description while owning
+# them as one. THM-0072 reaches them through its dependency on this claim and adds the one
+# thing it does not say: that the resolver was PROJECTED FROM a pinned service document.
+supported_by = [
+  "unit://http_profile.scitt_statement_attribution",
+  "unit://http_profile.scitt_receipt_shape",
+  "unit://http_profile.scitt_inclusion_fold",
+  "unit://http_profile.scitt_derived_root",
+  "unit://http_profile.scitt_position_commitment",
+  "unit://http_profile.scitt_algorithm_agreement",
+]
 depends_on = []
 
 [[theorem]]
@@ -2399,9 +2435,9 @@ this machine, that a given stage advances it, or that any particular refusal sit
 the lifecycle — those are propositions about the caller and are registered against the
 serving composition, not here. It establishes nothing about what any stage verified.
 """
-owner = "proxy.exchange_lifecycle"
+owner = "proxy.exchange_relation"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.exchange_lifecycle"]
+supported_by = ["unit://proxy.exchange_relation"]
 depends_on = []
 
 [[theorem]]
@@ -2428,9 +2464,9 @@ serving path maps a consequence onto a particular HTTP status, that a client act
 that any effect was in fact performed. It establishes nothing about the truth of the
 observations fed to it — only that no observation can move the consequence backward.
 """
-owner = "proxy.exchange_lifecycle"
+owner = "proxy.exchange_retry_consequence"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.exchange_lifecycle"]
+supported_by = ["unit://proxy.exchange_retry_consequence"]
 depends_on = ["THM-0043"]
 
 [[theorem]]
@@ -2580,9 +2616,11 @@ that is a property of one construction site over a foreign trait object, not of 
 owner holds, and it is registered separately as an open proposition. It says nothing about
 the handshake's own correctness.
 """
-owner = "proxy.tls_listener_state"
+owner = "proxy.listener_state_assembly"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.tls_listener_state"]
+supported_by = [
+  "unit://proxy.listener_state_assembly",
+]
 # The non-continuity clause USES the store's contract: that a session tagged with a
 # superseded epoch is not returned. This claim is about the owner's terms travelling
 # together and about the epoch being a function of the anchor set; THM-0103 is about what
@@ -2824,9 +2862,11 @@ It does not establish that the CRLs a deployment loads are current or complete, 
 establishes nothing about the per-request revocation check, which is a separate authority
 holding the same invariant.
 """
-owner = "proxy.tls_listener_state"
+owner = "proxy.client_certificate_posture"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.tls_listener_state"]
+supported_by = [
+  "unit://proxy.client_certificate_posture",
+]
 depends_on = ["THM-0048"]
 
 [[theorem]]
@@ -2954,9 +2994,9 @@ which is the binding disposition (THM-0059), and it does not restate the underly
 signature and `;req` facts, which are stated over the profile verifier (THM-0016, THM-0019,
 THM-0021). It says nothing about whether the deployment was right to trust the anchor.
 """
-owner = "client.response_acceptance"
+owner = "client.response_signer_authorization"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://client.response_acceptance", "unit://client.trust_manifest_lifecycle"]
+supported_by = ["unit://client.response_signer_authorization", "unit://client.trust_manifest_lifecycle"]
 depends_on = ["THM-0016", "THM-0019", "THM-0057"]
 
 [[theorem]]
@@ -2980,9 +3020,9 @@ The disposition, not the signer (THM-0058). The unbound receipt's binding is a B
 two transmissions of identical request bytes share it, so it is not an instance binding, and
 the client discloses it to the caller as unbound rather than claiming otherwise.
 """
-owner = "client.response_acceptance"
+owner = "client.response_binding_disposition"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://client.response_acceptance"]
+supported_by = ["unit://client.response_binding_disposition"]
 depends_on = ["THM-0020", "THM-0022"]
 
 [[theorem]]
@@ -3067,7 +3107,8 @@ direct_consequence_severity = "high"
 scope = """
 COMPOSITION, not classification and not trust. The three-way discriminator itself is
 `client.execution_contract`'s under THM-0061; whether the bytes are genuine and answer this
-request is `client.response_acceptance`'s under THM-0076. What is established here is that
+request is `client.response_signer_authorization`'s and
+`client.response_binding_disposition`'s under THM-0076. What is established here is that
 the shipped proxy composes those answers without adding a reading of its own — in particular
 that it does not ask the classification question a second time over the raw body, which is
 how two readers of one message come to disagree about what it says.
@@ -3084,7 +3125,7 @@ producer in the workspace — and NOT of the type. `VerifiedDelegatedResponse` a
 verified-response types carry `pub` fields deliberately, for the prover, and
 `VerifiedMcpResponse::from_block` says so in its own words: a convenience, not a seal. A caller
 outside this workspace could assemble one, and nothing here claims otherwise. Sealing that
-chain is `client.response_acceptance`'s question, not this claim's.
+chain is `client.response_signer_authorization`'s question, not this claim's.
 """
 owner = "client.verified_outcome"
 review_requirement = "Owner security-specification review"
@@ -3122,7 +3163,7 @@ under THM-0120. What is established here is that the deployable's serving path p
 
 NOT A FRESHNESS BOUND. How stale anchors may become between cycles is the configured cadence's
 and no number is asserted here; the configuration boundary bounds `trust.reload_secs`, and
-that bound is `client.config_lattice`'s.
+that bound is `client.local_leg_declaration`'s.
 
 NOT AN AVAILABILITY CLAIM. It says nothing about the refresher continuing to make progress
 under a wedged filesystem.
@@ -3282,7 +3323,7 @@ nothing about responses this proxy does not sign.
 """
 owner = "http_profile.response_emission_binding"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://http_profile.response_emission_binding", "unit://http_profile.verifier_results"]
+supported_by = ["unit://http_profile.response_emission_binding"]
 depends_on = ["THM-0021", "THM-0022"]
 
 # =======================================================================================
@@ -3430,9 +3471,12 @@ two authorities are separately typed and `PolicyError -> &'static str -> Core re
 as a route. It does not establish that the record was delivered (THM-0070), and it establishes
 nothing about the truth of either authority's verdict.
 """
-owner = "proxy.audit_record_coordinates"
+owner = "proxy.audit_authority_coordinates"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.audit_record_coordinates", "unit://proxy.refusal_provenance"]
+supported_by = [
+  "unit://proxy.audit_authority_coordinates",
+  "unit://proxy.refusal_provenance",
+]
 depends_on = ["THM-0046"]
 
 [[theorem]]
@@ -3519,9 +3563,12 @@ establish that the right cause is chosen at any given site, nor that the frozen 
 are individually well-named; both are the owning units' controls and neither is a totality
 property.
 """
-owner = "proxy.audit_record_coordinates"
+owner = "proxy.audit_vocabulary_import"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.audit_record_coordinates", "unit://proxy.refusal_provenance"]
+supported_by = [
+  "unit://proxy.audit_vocabulary_import",
+  "unit://proxy.refusal_provenance",
+]
 depends_on = ["THM-0069", "THM-0046", "THM-0081", "THM-0070", "THM-0085"]
 
 [[theorem]]
@@ -3553,9 +3600,18 @@ unchanged — nothing about the service being honest, its log append-only, or an
 and nothing about whether the retained evidence is what the statement describes, which is
 THM-0042 and is a separate promise because no authority owns the conjunction.
 """
-owner = "http_profile.scitt_receipt_offline"
+owner = "http_profile.scitt_service_pin"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://http_profile.scitt_receipt_offline", "unit://http_profile.scitt_service_pin"]
+# ADR-MCPRE-068 Phase 1. `http_profile.scitt_receipt_offline` named SIX propositions in its
+# own description and owned them all; each is a leaf now. `scitt_service_pin` is unchanged
+# and is what makes this claim about the service the DEPLOYMENT pinned rather than about
+# whichever key was supplied to the call — the root's whole distinguishing sentence.
+# ADR-MCPRE-068 Phase 1. Reduced to the one unit that carries what this claim adds over
+# THM-0041: the resolver was PROJECTED FROM a `ScittServiceTrustPin`, so the key, the leaf
+# profile and the position profile all came from one reviewed document rather than from
+# whichever key was supplied to the call. The six propositions THM-0041 rests on are
+# reached through the dependency, not restated here.
+supported_by = ["unit://http_profile.scitt_service_pin"]
 depends_on = ["THM-0041", "THM-0068"]
 
 [[theorem]]
@@ -3663,7 +3719,10 @@ is not discharged by anything the request carries.
 """
 owner = "proxy.dispatch_commitment"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.dispatch_commitment", "unit://proxy.exchange_lifecycle"]
+supported_by = [
+  "unit://proxy.dispatch_commitment",
+  "unit://proxy.exchange_relation",
+]
 depends_on = [
   "THM-0015",
   "THM-0051",
@@ -3712,6 +3771,16 @@ depends_on = [
   # disposition, and the dispatch commitment itself, read a machine at least as far along
   # as the work actually got. The six assembly-owned transitions are excluded by name.
   "THM-0101",
+  # ADR-MCPRE-068 Phase 1. The antecedent quantifies over the obligations "selected by the
+  # validated deployment", and nothing in the 48-theorem closure said that the set the
+  # serving runtime holds IS the operator's validated selection rather than a posture
+  # silently reinterpreted during materialization. Without it "selected" names no
+  # determinate set and the implication can hold vacuously about a set nobody chose.
+  #
+  # NOT the disclaimer in this root's own scope. "Not a claim that the set is right" refuses
+  # ADEQUACY — whether the operator chose enough. This is IDENTITY — whether the set being
+  # served is the one validated. The scope disclaims the first and is silent on the second.
+  "THM-0077",
 ]
 
 [[theorem]]
@@ -3780,9 +3849,9 @@ Raw FFI and low-level reconstruction remain outside this system-root guarantee.
 
 It does not establish that the deployment was right to trust an anchor.
 """
-owner = "client.response_acceptance"
+owner = "client.response_binding_disposition"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://client.response_acceptance"]
+supported_by = ["unit://client.response_binding_disposition", "unit://client.response_signer_authorization"]
 depends_on = [
   "THM-0058", "THM-0059", "THM-0057", "THM-0060", "THM-0061", "THM-0084",
   # Ratified 2026-09-07, dependency closure only: the statement and the security
@@ -3911,9 +3980,12 @@ a single sentence would be false about one of them: there is no lifecycle state 
 reached before an exchange began, and pretending otherwise is exactly the kind of borrowed
 authority this tree exists to remove. THM-0081 measures which replies are in the second set.
 """
-owner = "proxy.exchange_lifecycle"
+owner = "proxy.exchange_relation"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.exchange_lifecycle", "unit://proxy.refusal_provenance"]
+supported_by = [
+  "unit://proxy.exchange_relation",
+  "unit://proxy.refusal_provenance",
+]
 depends_on = [
   "THM-0043",
   "THM-0044",
@@ -4651,9 +4723,21 @@ of silently carrying it; a line outside the set is outside this claim; and
 `scripts/node_runtime_gate.py` refuses a support claim wider than the measured set — or, as
 this package once had, no support claim at all.
 """
-owner = "sdk_typescript.exchange_path"
+owner = "sdk_typescript.exchange_binding"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://sdk_typescript.exchange_path"]
+supported_by = [
+  "unit://sdk_typescript.exchange_binding",
+  "unit://sdk_typescript.verdict_delivery",
+  "unit://sdk_typescript.execution_report",
+  "unit://sdk_typescript.local_failure_provenance",
+  "unit://sdk_typescript.reply_envelope",
+  "unit://sdk_typescript.continuation_drive",
+  "unit://sdk_typescript.correlation_lifecycle",
+  "unit://sdk_typescript.nonce_floor",
+  "unit://sdk_typescript.notification_delivery",
+  "unit://sdk_typescript.trust_anchor_completeness",
+  "unit://sdk_typescript.post_close_emission",
+]
 depends_on = []
 
 [[theorem]]
@@ -4852,7 +4936,7 @@ direct_consequence_severity = "critical"
 scope = """
 The SHIPPED path, and that is the whole point of registering it. THM-0057 through THM-0061
 establish what the client-core verifier does with an expectation and a response; every one of
-them takes the PAIRING as given, and `client.response_acceptance`'s scope says so explicitly —
+them takes the PAIRING as given, and `client.response_binding_disposition`'s scope says so explicitly —
 pairing an expectation with the request it describes is the caller's obligation.
 
 For a raw FFI caller that is the honest boundary and it stays there: `ResponseExpectation::new`
@@ -5227,9 +5311,9 @@ part of this claim, which is about the keys that are served.
 Executable and structural, class V0: a battery over production behaviour with each conjunct
 mutation-probed, not a machine-checked proof.
 """
-owner = "proxy.trust_plane_runtime"
+owner = "proxy.trust_resolution_window"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.trust_plane_runtime"]
+supported_by = ["unit://proxy.trust_resolution_window"]
 depends_on = []
 
 [[theorem]]
@@ -5278,7 +5362,7 @@ direct_consequence_severity = "critical"
 scope = """
 ONE replica. The BYTES are the input authority: nothing here says which path was read, who
 wrote the file, or that its contents are the operator's intent — the locator belongs to
-`proxy.trust_configuration_state`, and reading the file is the caller's. Nothing about WHEN a
+`proxy.trust_document_locator`, and reading the file is the caller's. Nothing about WHEN a
 change to the bytes reaches the snapshot, or what is served meanwhile: that is the reload
 cadence and THM-0097.
 
@@ -5297,7 +5381,7 @@ class V0.
 """
 owner = "proxy.trust_document_interpretation"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.trust_document_interpretation", "unit://proxy.trust_plane_runtime"]
+supported_by = ["unit://proxy.trust_document_interpretation", "unit://proxy.trust_resolution_window"]
 depends_on = []
 
 [[theorem]]
@@ -5408,9 +5492,9 @@ duration is not modelled — a read that takes longer than `R` delays the next c
 much. Nothing cross-replica: the fleet's exposure is each replica's, and the replicas' `w`
 differ. Executable and structural, class V0.
 """
-owner = "proxy.trust_plane_runtime"
+owner = "proxy.trust_reload_cadence"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.trust_plane_runtime"]
+supported_by = ["unit://proxy.trust_reload_cadence"]
 depends_on = ["THM-0097"]
 
 [[theorem]]
@@ -5469,7 +5553,10 @@ reintroduced `advance` compiling. Class V0.
 """
 owner = "proxy.exchange_transition_ownership"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.exchange_transition_ownership", "unit://proxy.exchange_lifecycle"]
+supported_by = [
+  "unit://proxy.exchange_transition_ownership",
+  "unit://proxy.exchange_publication",
+]
 depends_on = ["THM-0043"]
 
 [[theorem]]
@@ -5585,9 +5672,11 @@ in-memory cache's own eviction policy under pressure is rustls's. Executable, cl
 controls over the store's contract plus real-handshake acceptance inside the owner's module
 tree.
 """
-owner = "proxy.tls_listener_state"
+owner = "proxy.epoch_bound_session_store"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.tls_listener_state"]
+supported_by = [
+  "unit://proxy.epoch_bound_session_store",
+]
 depends_on = []
 
 [[theorem]]
@@ -6673,7 +6762,7 @@ direct_consequence_severity = "medium"
 scope = """
 THE SEAM AND THE REFERENCE IMPLEMENTATION. Nothing here is about the runtime trust plane's
 tiers, its caching windows, or its revocation channel — those are THM-0097 through THM-0100's,
-over `proxy.trust_plane_runtime`.
+over `proxy.trust_resolution_window` and `proxy.trust_reload_cadence`.
 
 NOT A CLAIM ABOUT WHICH KEYS A DEPLOYMENT TRUSTS. The resolver answers from what it was given;
 where the bindings came from and whether they were authorized is the trust document's
@@ -6887,7 +6976,8 @@ caller as an unexplained broken pipe instead of the refusal it was given.
 direct_consequence_severity = "medium"
 scope = """
 WHAT HAPPENS TO AN ADMITTED REQUEST, NOT WHOSE REQUESTS ARE ADMITTED. The bind scope, the
-accepted authority and the head fields are `client.local_ingress_authority`'s under THM-0091.
+accepted authority and the head fields are `client.bind_scope`'s,
+`client.accepted_authority`'s and `client.caller_shape_admission`'s under THM-0091.
 
 NOT THE REMOTE LEG. What is sent, how it is signed, and whether the answer verifies are
 `client.proxy_request_correspondence`'s and the transport units'.
@@ -7096,7 +7186,7 @@ separators and bidi controls, and each of them in leading, medial and trailing p
 
 The CLASSIFICATION is not established here, and cannot be by this unit: whether a given
 value is a closed token or open text is its owner's decision, measured by
-`proxy.audit_record_coordinates`. What this unit establishes is that the decision is
+`proxy.audit_vocabulary_import`. What this unit establishes is that the decision is
 honoured — a `Text` is escaped, a `Token` is not — and the type system carries the other
 half, because `AuditValue::Token` takes `&'static str` and a string read out of a request
 body is not `'static`.

@@ -37,7 +37,8 @@ attestations this view cannot see.
 | unit://client.manifest_floor | source, contracts or evidence | THM-0121 | _no consumer_ |
 | unit://client.proxy_request_correspondence | source, contracts or evidence | THM-0084 | _no consumer_ |
 | unit://client.request_construction | source, contracts or evidence | THM-0125 | _no consumer_ |
-| unit://client.response_acceptance | source, contracts or evidence | THM-0058, THM-0059, THM-0076 | _no consumer_ |
+| unit://client.response_binding_disposition | source, contracts or evidence | THM-0059, THM-0076 | _no consumer_ |
+| unit://client.response_signer_authorization | source, contracts or evidence | THM-0058, THM-0076 | _no consumer_ |
 | unit://client.serving_lifetime | source, contracts or evidence | THM-0127 | _no consumer_ |
 | unit://client.transport_message_hygiene | source, contracts or evidence | THM-0110 | _no consumer_ |
 | unit://client.transport_server_identity | source, contracts or evidence | THM-0109 | _no consumer_ |
@@ -58,32 +59,47 @@ attestations this view cannot see.
 | unit://http_profile.artifact_typing | source, contracts or evidence | THM-0007 | _no consumer_ |
 | unit://http_profile.artifact_verification_boundary | source, contracts or evidence | THM-0008, THM-0015 | _no consumer_ |
 | unit://http_profile.bodyless_acknowledgement | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://http_profile.bound_response_full_result | source, contracts or evidence | THM-0018 | _no consumer_ |
+| unit://http_profile.bound_response_seam_result | source, contracts or evidence | THM-0016 | _no consumer_ |
+| unit://http_profile.bound_response_shared_facts | source, contracts or evidence | THM-0021 | _no consumer_ |
 | unit://http_profile.continuation_binding | source, contracts or evidence | THM-0010 | http_profile.continuation_unbypassability (PROOF_DEPENDENCY) |
 | unit://http_profile.continuation_unbypassability | source, contracts or evidence | THM-0009 | _no consumer_ |
+| unit://http_profile.delegated_bound_result | source, contracts or evidence | THM-0019 | _no consumer_ |
+| unit://http_profile.delegated_credential_chain | source, contracts or evidence | THM-0019, THM-0020 | _no consumer_ |
 | unit://http_profile.delegated_signing_custody | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://http_profile.delegated_unbound_result | source, contracts or evidence | THM-0020 | _no consumer_ |
 | unit://http_profile.freshness_window | source, contracts or evidence | THM-0001, THM-0014, THM-0016, THM-0017, THM-0021, THM-0022 | _no consumer_ |
 | unit://http_profile.keyid | source, contracts or evidence | THM-0055 | _no consumer_ |
 | unit://http_profile.keyid_selector | source, contracts or evidence | THM-0050 | _no consumer_ |
 | unit://http_profile.pdp_decision_authentication | source, contracts or evidence | THM-0039 | _no consumer_ |
 | unit://http_profile.replay_key | source, contracts or evidence | THM-0079 | _no consumer_ |
 | unit://http_profile.request_envelope | source, contracts or evidence | THM-0083 | _no consumer_ |
+| unit://http_profile.request_floor_result | source, contracts or evidence | THM-0014 | proxy.request_peer_binding (COMPILE_DEPENDENCY) |
+| unit://http_profile.request_full_result | source, contracts or evidence | THM-0015 | _no consumer_ |
 | unit://http_profile.response_emission_binding | source, contracts or evidence | THM-0065, THM-0075 | _no consumer_ |
 | unit://http_profile.retained_chain_record | source, contracts or evidence | _no theorem_ | _no consumer_ |
-| unit://http_profile.scitt_receipt_offline | source, contracts or evidence | THM-0041, THM-0072 | _no consumer_ |
+| unit://http_profile.scitt_algorithm_agreement | source, contracts or evidence | THM-0041 | _no consumer_ |
+| unit://http_profile.scitt_derived_root | source, contracts or evidence | THM-0041 | _no consumer_ |
+| unit://http_profile.scitt_inclusion_fold | source, contracts or evidence | THM-0041 | _no consumer_ |
+| unit://http_profile.scitt_position_commitment | source, contracts or evidence | THM-0041 | _no consumer_ |
+| unit://http_profile.scitt_receipt_shape | source, contracts or evidence | THM-0041 | _no consumer_ |
 | unit://http_profile.scitt_retained_correspondence | source, contracts or evidence | THM-0042 | _no consumer_ |
 | unit://http_profile.scitt_service_pin | source, contracts or evidence | THM-0068, THM-0072 | _no consumer_ |
+| unit://http_profile.scitt_statement_attribution | source, contracts or evidence | THM-0041 | _no consumer_ |
 | unit://http_profile.submitted_hop_identity | source, contracts or evidence | THM-0042 | http_profile.scitt_retained_correspondence (PROOF_DEPENDENCY) |
+| unit://http_profile.unbound_response_seam_result | source, contracts or evidence | THM-0017 | _no consumer_ |
+| unit://http_profile.unbound_response_shared_facts | source, contracts or evidence | THM-0022 | _no consumer_ |
 | unit://http_profile.verifier_result_separation | source, contracts or evidence | THM-0047, THM-0051 | _no consumer_ |
-| unit://http_profile.verifier_results | source, contracts or evidence | THM-0014, THM-0015, THM-0016, THM-0017, THM-0018, THM-0019, THM-0020, THM-0021, THM-0022, THM-0065 | proxy.request_peer_binding (COMPILE_DEPENDENCY) |
 | unit://policy.authorization_taxonomy | source, contracts or evidence | THM-0111 | _no consumer_ |
 | unit://proxy.admission_configuration_state | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.admission_configuration_state_sole_producer | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.admission_currency_gate | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.admission_state_source | source, contracts or evidence | THM-0129 | _no consumer_ |
 | unit://proxy.async_replay_retention | source, contracts or evidence | THM-0105 | _no consumer_ |
+| unit://proxy.audit_authority_coordinates | source, contracts or evidence | THM-0069 | _no consumer_ |
 | unit://proxy.audit_delivery | source, contracts or evidence | THM-0070 | _no consumer_ |
-| unit://proxy.audit_record_coordinates | source, contracts or evidence | THM-0069, THM-0071 | _no consumer_ |
 | unit://proxy.audit_text_rendering | source, contracts or evidence | THM-0130 | _no consumer_ |
+| unit://proxy.audit_vocabulary_import | source, contracts or evidence | THM-0071 | _no consumer_ |
 | unit://proxy.authenticated_relationship_peer | source, contracts or evidence | THM-0031 | proxy.current_authenticated_peer (CONTRACT_CONSUMES) |
 | unit://proxy.authorization_capability | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.authorization_configuration_state | source, contracts or evidence | _no theorem_ | _no consumer_ |
@@ -95,6 +111,7 @@ attestations this view cannot see.
 | unit://proxy.certificate_identity_authority_boundary | source, contracts or evidence | THM-0024 | _no consumer_ |
 | unit://proxy.channel_associated_credential | source, contracts or evidence | THM-0028 | proxy.channel_associated_identity (CONTRACT_CONSUMES), proxy.mechanism_verified_credential (CONTRACT_CONSUMES) |
 | unit://proxy.channel_associated_identity | source, contracts or evidence | THM-0029 | proxy.authenticated_relationship_peer (CONTRACT_CONSUMES) |
+| unit://proxy.client_certificate_posture | source, contracts or evidence | THM-0054 | proxy.credential_currency (COMPILE_DEPENDENCY) |
 | unit://proxy.client_credential_window | source, contracts or evidence | THM-0102 | _no consumer_ |
 | unit://proxy.client_credential_window_sole_producer | source, contracts or evidence | THM-0102 | _no consumer_ |
 | unit://proxy.client_revocation_currency | source, contracts or evidence | THM-0131 | _no consumer_ |
@@ -118,13 +135,17 @@ attestations this view cannot see.
 | unit://proxy.dispatch_commitment | source, contracts or evidence | THM-0045, THM-0051, THM-0052, THM-0074 | _no consumer_ |
 | unit://proxy.ed25519_public_key | source, contracts or evidence | THM-0025 | proxy.credential_key_correspondence (COMPILE_DEPENDENCY) |
 | unit://proxy.ed25519_public_key_sole_producer | source, contracts or evidence | THM-0025 | _no consumer_ |
+| unit://proxy.epoch_bound_session_store | source, contracts or evidence | THM-0103 | _no consumer_ |
 | unit://proxy.etcd_replay_adapter | source, contracts or evidence | THM-0107 | _no consumer_ |
 | unit://proxy.evidence_attestation | source, contracts or evidence | THM-0113 | _no consumer_ |
-| unit://proxy.exchange_lifecycle | source, contracts or evidence | THM-0043, THM-0044, THM-0074, THM-0078, THM-0101 | _no consumer_ |
+| unit://proxy.exchange_publication | source, contracts or evidence | THM-0101 | _no consumer_ |
+| unit://proxy.exchange_relation | source, contracts or evidence | THM-0043, THM-0074, THM-0078 | _no consumer_ |
+| unit://proxy.exchange_retry_consequence | source, contracts or evidence | THM-0044 | _no consumer_ |
 | unit://proxy.exchange_transition_ownership | source, contracts or evidence | THM-0101 | _no consumer_ |
 | unit://proxy.gcp_kms_adapter | source, contracts or evidence | THM-0116, THM-0117 | _no consumer_ |
 | unit://proxy.kms_ed25519_seam | source, contracts or evidence | THM-0108 | _no consumer_ |
 | unit://proxy.kms_endpoint_authority | source, contracts or evidence | THM-0089 | _no consumer_ |
+| unit://proxy.listener_state_assembly | source, contracts or evidence | THM-0048 | _no consumer_ |
 | unit://proxy.mechanism_verified_credential | source, contracts or evidence | THM-0030 | proxy.authenticated_relationship_peer (CONTRACT_CONSUMES), proxy.credential_currency (CONTRACT_CONSUMES) |
 | unit://proxy.online_ocsp_reachability | source, contracts or evidence | THM-0013 | _no consumer_ |
 | unit://proxy.operator_facing_redaction | source, contracts or evidence | _no theorem_ | _no consumer_ |
@@ -148,21 +169,23 @@ attestations this view cannot see.
 | unit://proxy.retained_record_content | source, contracts or evidence | THM-0112 | _no consumer_ |
 | unit://proxy.retention_commitment | source, contracts or evidence | THM-0088 | _no consumer_ |
 | unit://proxy.runtime_lifecycle | source, contracts or evidence | THM-0012 | _no consumer_ |
+| unit://proxy.runtime_lifecycle_sole_mutator | source, contracts or evidence | THM-0012 | _no consumer_ |
 | unit://proxy.scrapi_registration_leaf | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.serving_drain | source, contracts or evidence | THM-0104 | _no consumer_ |
 | unit://proxy.serving_identity_provenance | source, contracts or evidence | THM-0080 | _no consumer_ |
 | unit://proxy.serving_trust_seam | source, contracts or evidence | THM-0066, THM-0099 | _no consumer_ |
 | unit://proxy.signing_credential_provenance | source, contracts or evidence | THM-0082 | _no consumer_ |
 | unit://proxy.signing_role_separation | source, contracts or evidence | THM-0073 | _no consumer_ |
-| unit://proxy.tls_listener_state | source, contracts or evidence | THM-0048, THM-0054, THM-0103 | proxy.credential_currency (COMPILE_DEPENDENCY) |
 | unit://proxy.trust_composition_root | source, contracts or evidence | THM-0038, THM-0067, THM-0077 | _no consumer_ |
-| unit://proxy.trust_configuration_state | source, contracts or evidence | THM-0035, THM-0036 | _no consumer_ |
 | unit://proxy.trust_configuration_state_sole_producer | source, contracts or evidence | THM-0035, THM-0036 | _no consumer_ |
 | unit://proxy.trust_document_interpretation | source, contracts or evidence | THM-0098 | _no consumer_ |
+| unit://proxy.trust_document_locator | source, contracts or evidence | THM-0036 | _no consumer_ |
 | unit://proxy.trust_epoch_source | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.trust_plan | source, contracts or evidence | THM-0037, THM-0066 | _no consumer_ |
 | unit://proxy.trust_plan_co_provenance | source, contracts or evidence | THM-0037 | _no consumer_ |
-| unit://proxy.trust_plane_runtime | source, contracts or evidence | THM-0097, THM-0098, THM-0100 | _no consumer_ |
+| unit://proxy.trust_reload_cadence | source, contracts or evidence | THM-0100 | _no consumer_ |
+| unit://proxy.trust_resolution_window | source, contracts or evidence | THM-0097, THM-0098 | _no consumer_ |
+| unit://proxy.trust_revocation_classification | source, contracts or evidence | THM-0035 | _no consumer_ |
 | unit://sdk_python.authorization_binding | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://sdk_python.bounded_read | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://sdk_python.continuation_drive | source, contracts or evidence | THM-0094 | _no consumer_ |
@@ -176,7 +199,20 @@ attestations this view cannot see.
 | unit://sdk_python.signer_policy | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://sdk_python.trust_anchor_completeness | source, contracts or evidence | THM-0094 | _no consumer_ |
 | unit://sdk_python.verdict_delivery | source, contracts or evidence | THM-0094 | _no consumer_ |
-| unit://sdk_typescript.exchange_path | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.authorization_binding | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://sdk_typescript.bounded_read | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://sdk_typescript.continuation_drive | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.correlation_lifecycle | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.exchange_binding | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.execution_report | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.local_failure_provenance | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.nonce_floor | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.notification_delivery | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.post_close_emission | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.reply_envelope | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.signer_policy | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://sdk_typescript.trust_anchor_completeness | source, contracts or evidence | THM-0095 | _no consumer_ |
+| unit://sdk_typescript.verdict_delivery | source, contracts or evidence | THM-0095 | _no consumer_ |
 
 ## Theorems
 
@@ -257,7 +293,7 @@ attestations this view cannot see.
 | THM-0074 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0075 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0076 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
-| THM-0077 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
+| THM-0077 | statement, consequence, scope or review requirement | specification review | THM-0074 |
 | THM-0078 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0079 | statement, consequence, scope or review requirement | specification review | THM-0074 |
 | THM-0080 | statement, consequence, scope or review requirement | specification review | THM-0074 |
@@ -341,9 +377,9 @@ attestations this view cannot see.
 | ASM-0024 | description, justification, scope or mechanism | http_profile.admission_currency, http_profile.artifact_typing, http_profile.continuation_binding, http_profile.continuation_unbypassability, http_profile.freshness_window | assumption review |
 | ASM-0025 | description, justification, scope or mechanism | http_profile.admission_currency, http_profile.artifact_typing, http_profile.continuation_binding, http_profile.continuation_unbypassability, http_profile.freshness_window | assumption review |
 | ASM-0026 | description, justification, scope or mechanism | http_profile.admission_currency, http_profile.artifact_typing, http_profile.continuation_binding, http_profile.continuation_unbypassability, http_profile.freshness_window | assumption review |
-| ASM-0027 | description, justification, scope or mechanism | http_profile.verifier_results | assumption review |
-| ASM-0028 | description, justification, scope or mechanism | http_profile.verifier_results | assumption review |
-| ASM-0029 | description, justification, scope or mechanism | http_profile.verifier_results | assumption review |
+| ASM-0027 | description, justification, scope or mechanism | http_profile.bound_response_seam_result, http_profile.bound_response_shared_facts, http_profile.delegated_bound_result, http_profile.delegated_credential_chain, http_profile.delegated_unbound_result, http_profile.request_floor_result, http_profile.unbound_response_seam_result, http_profile.unbound_response_shared_facts | assumption review |
+| ASM-0028 | description, justification, scope or mechanism | http_profile.bound_response_full_result, http_profile.bound_response_shared_facts, http_profile.delegated_bound_result, http_profile.request_floor_result, http_profile.request_full_result, http_profile.unbound_response_shared_facts | assumption review |
+| ASM-0029 | description, justification, scope or mechanism | http_profile.bound_response_seam_result, http_profile.delegated_credential_chain, http_profile.request_floor_result, http_profile.unbound_response_seam_result | assumption review |
 | ASM-0030 | description, justification, scope or mechanism | proxy.certificate_identity | assumption review |
 | ASM-0031 | description, justification, scope or mechanism | proxy.ed25519_public_key | assumption review |
 | ASM-0032 | description, justification, scope or mechanism | proxy.credential_key_correspondence | assumption review |
@@ -363,4 +399,4 @@ attestations this view cannot see.
 | ASM-0046 | description, justification, scope or mechanism | http_profile.admission_currency, http_profile.artifact_typing, http_profile.continuation_binding, http_profile.continuation_unbypassability, http_profile.freshness_window | assumption review |
 | ASM-0047 | description, justification, scope or mechanism | proxy.continuation_correlation_store | assumption review |
 | ASM-0048 | description, justification, scope or mechanism | proxy.continuation_correlation_store | assumption review |
-| ASM-0049 | description, justification, scope or mechanism | proxy.tls_listener_state | assumption review |
+| ASM-0049 | description, justification, scope or mechanism | proxy.epoch_bound_session_store, proxy.listener_state_assembly | assumption review |

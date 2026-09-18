@@ -1,0 +1,33 @@
+{
+  "authority": "adr-068-phase1",
+  "changed_components": [
+    "theorem_dependencies"
+  ],
+  "corrections": [
+    {
+      "field": "scope",
+      "id": "C1",
+      "new": "the locator belongs to `proxy.trust_document_locator`, and reading the file is the caller's",
+      "old": "the locator belongs to `proxy.trust_configuration_state`, and reading the file is the caller's",
+      "reason": "THM-0098. #996 split the unit into a revocation classifier and a document locator; the sentence is about the LOCATOR half."
+    },
+    {
+      "field": "scope",
+      "id": "C2",
+      "new": "those are THM-0097 through THM-0100's, over `proxy.trust_resolution_window` and `proxy.trust_reload_cadence`.",
+      "old": "those are THM-0097 through THM-0100's, over `proxy.trust_plane_runtime`.",
+      "reason": "THM-0119. THM-0097..THM-0100 now span both halves of the split, so the sentence names both rather than one."
+    }
+  ],
+  "dependency_correction": "No edge added or removed. The closure's premise claim digests moved because premise scope prose was corrected.",
+  "from_fingerprint": "sha256:917caf8e4383ee2036fbadd334ebf392434ac528e61344ae263bbe92f4d4c9a5",
+  "packet": "verification/reviews/packets/held-prose-corrections-2026-09-18.md",
+  "product_behavior_unchanged": true,
+  "reason": "Premise scope prose corrected where a unit split left it naming a unit that no longer exists. THM-0098 named `proxy.trust_configuration_state` (split by #996 into the revocation classifier and the document locator) and THM-0119 named `proxy.trust_plane_runtime` (split into the resolution window and the reload cadence). Both are in this root's closure, so its theorem_dependencies digest moved with theirs. The root's own statement, security_consequence and scope are untouched and its depends_on is unchanged by this branch.",
+  "root_consequence_unchanged": true,
+  "ruling": "ADR-MCPRE-068 Phase-1 campaign ruling, 2026-09-18, item 5: claim precision corrections that preserve the ratified promise, and moving evidence to its correct owner, are explicitly NOT owner escalations. The owner did not individually review this fingerprint; the authority recorded here is that ruling. No root statement, security_consequence or scope is edited by this correction \u2014 the movement is entirely in theorem_dependencies, inherited from premises whose scope prose named units that no longer exist.",
+  "severity_after": "critical",
+  "severity_before": "critical",
+  "subject": "THM-0074",
+  "to_fingerprint": "sha256:fcf05933f39854f6d5d13188c9c45dc2a82996ec8e1b86c7ab5e3ee1e2112786"
+}
