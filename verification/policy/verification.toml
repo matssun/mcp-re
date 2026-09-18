@@ -85,6 +85,32 @@ tested_symbols = [
 ]
 pilot = "verus-candidate"
 
+# ADR-MCPRE-068 Phase 1 — THM-0012's second half, and the one its statement already asserts.
+#
+# The claim reads "Every state has a unique predecessor under the transition relation and
+# APPLY IS THE ONLY MUTATOR, leaving the state unchanged on an illegal event. So a recorded
+# terminal Stopped implies every event of the path … was applied, in order." The second
+# clause is the whole bridge from the relation to the conclusion: a relation with a unique
+# predecessor says nothing about a recorded state if anything else could have written it.
+#
+# It is a claim about what no other code can do to the value, and no control established it.
+# The battery next door exercises the mutators that EXIST, which is what a battery can do;
+# a seal quantifies over the ones that do not. Two probes, because there are two producer
+# routes and they earn different refusals: constructing a lifecycle at a chosen state
+# (E0451, the field is private) and writing the field on one already in hand (E0616).
+#
+# This unit is why THM-0012 needed no claim correction: the statement was already right, and
+# what was missing was the evidence for a sentence it had asserted since it was ratified.
+[[unit]]
+id = "proxy.runtime_lifecycle_sole_mutator"
+class = "V0"
+description = "No code outside `runtime_state` can construct a `RuntimeLifecycle` at a chosen state or write the state of one it holds, so `new` is the only origin and `apply` is the only mutator — which is what makes a recorded state the endpoint of a path of applied events rather than a value something assigned."
+paths = ["mcp-re-proxy/src/runtime_state.rs"]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "medium"
+evidence = ["structural://proxy/runtime_lifecycle/sole_mutator"]
+
 [[unit]]
 id = "http_profile.keyid"
 class = "V0"

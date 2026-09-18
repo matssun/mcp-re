@@ -165,6 +165,7 @@ not an omission to hide.
 | proxy.retained_record_content | V0 | THM-0112 | 0 |
 | proxy.retention_commitment | V0 | THM-0088 | 0 |
 | proxy.runtime_lifecycle | V0 | THM-0012 | 0 |
+| proxy.runtime_lifecycle_sole_mutator | V0 | _none_ | 0 |
 | proxy.scrapi_registration_leaf | V0 | _none_ | 0 |
 | proxy.serving_drain | V0 | THM-0104 | 0 |
 | proxy.serving_identity_provenance | V0 | THM-0080 | 0 |

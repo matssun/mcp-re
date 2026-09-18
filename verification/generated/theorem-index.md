@@ -49,7 +49,7 @@ any of them is closed.
 | THM-0008 | No untyped artifact binding leaves the verifier as verified | http_profile.artifact_verification_boundary | unit://http_profile.artifact_verification_boundary | live |
 | THM-0009 | A presented continuation cannot bypass verification | http_profile.continuation_unbypassability | unit://http_profile.continuation_unbypassability | live |
 | THM-0010 | Continuation handles match their presented inputs in role | http_profile.continuation_binding | unit://http_profile.continuation_binding | live |
-| THM-0012 | The lifecycle record cannot claim a shutdown that did not happen | proxy.runtime_lifecycle | unit://proxy.runtime_lifecycle | live |
+| THM-0012 | The lifecycle record cannot claim a shutdown that did not happen | proxy.runtime_lifecycle | unit://proxy.runtime_lifecycle, unit://proxy.runtime_lifecycle_sole_mutator | live |
 | THM-0013 | No validated deployment enables online OCSP client-certificate revocation | proxy.online_ocsp_reachability | unit://proxy.online_ocsp_reachability | live |
 | THM-0014 | A successful request-floor verification establishes the cryptographic floor | http_profile.request_floor_result | unit://http_profile.freshness_window, unit://http_profile.request_floor_result | live |
 | THM-0015 | A successful full-profile request verification establishes audience and artifact binding | http_profile.request_full_result | unit://http_profile.artifact_verification_boundary, unit://http_profile.request_full_result | live |

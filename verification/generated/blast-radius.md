@@ -169,6 +169,7 @@ attestations this view cannot see.
 | unit://proxy.retained_record_content | source, contracts or evidence | THM-0112 | _no consumer_ |
 | unit://proxy.retention_commitment | source, contracts or evidence | THM-0088 | _no consumer_ |
 | unit://proxy.runtime_lifecycle | source, contracts or evidence | THM-0012 | _no consumer_ |
+| unit://proxy.runtime_lifecycle_sole_mutator | source, contracts or evidence | THM-0012 | _no consumer_ |
 | unit://proxy.scrapi_registration_leaf | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.serving_drain | source, contracts or evidence | THM-0104 | _no consumer_ |
 | unit://proxy.serving_identity_provenance | source, contracts or evidence | THM-0080 | _no consumer_ |
