@@ -548,3 +548,60 @@ module-tree-visibility = "`kind` is bare-private to `config_state::custody`, and
 alternate-constructors = "the classifier in this module is the only producer. The four projections \u2014 `material`, `locators_are_filesystem_paths`, `disk_secret_paths`, `exposure` \u2014 read the private enum and return named semantic answers or borrows, never the representation; `material` returns a `CustodyMaterial<'_>` view rather than the kind. There is no `new`, `From`, `Default` or builder taking a kind"
 generated-or-deserialization = "the derives are Debug/Clone/PartialEq/Eq. No Serialize, no Deserialize \u2014 custody is classified from a deployment request, never decoded, so no decoder fills the field positionally"
 test-only-construction = "the owner's `#[cfg(test)] mod tests` constructs only through the classifier; no test-gated constructor and no test-gated field or enum visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"
+
+[[probe]]
+id = "S18"
+unit = "proxy.continuation_materialization_sole_producer"
+kind = "in-crate-source-injection"
+package = "mcp-re-proxy"
+invariant = "no code outside `config_state::continuation_control` can assemble a ContinuationControlState, so every continuation posture came from the classifier that read the deployment's own selection"
+insertion_path = "mcp-re-proxy/src/config_state/structural_probe_s18.rs"
+insertion_parent = "mcp-re-proxy/src/config_state/mod.rs"
+insertion_declaration = "mod structural_probe_s18;"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+note = """
+THE STATE. The owner's comment says the boundary's purpose plainly — "private to this
+module: every consumer of this state lives in this crate, so a `pub` variant would be
+constructible by all of them" — and `todo!()` supplies the field because `ContinuationKind`
+is itself private, so naming a variant would earn E0603 about the TYPE rather than E0451
+about the field this unit claims.
+"""
+construction = "// ADR-MCPRE-068 structural probe S18. Injected into a scratch copy by verify-structural;\n// this file cannot exist in the working tree, because it would not build \u2014 which is the\n// proposition it witnesses.\nuse crate::config_state::ContinuationControlState;\n\npub fn hostile() -> ContinuationControlState {\n    ContinuationControlState {\n        kind: todo!(), // STRUCTURAL-PROBE-SITE\n    }\n}\n"
+
+[probe.producer_paths]
+module-tree-visibility = "`kind` is bare-private to `config_state::continuation_control`, and its type `ContinuationKind` is a private enum in the same module. The parent re-exports the state and its plan, never the representation"
+alternate-constructors = "the classifier in this module is the only producer. `continuation_plan` and `is_shared` read the private enum and return a named projection or an answer, never the kind. There is no `new`, `From`, `Default` or builder taking one"
+generated-or-deserialization = "the derives are Debug/Clone/PartialEq/Eq. No Serialize, no Deserialize \u2014 the posture is classified from a deployment request, never decoded"
+test-only-construction = "the owner's `#[cfg(test)] mod tests` constructs only through the classifier; no test-gated constructor and no test-gated field or enum visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"
+
+[[probe]]
+id = "S19"
+unit = "proxy.continuation_materialization_sole_producer"
+kind = "in-crate-source-injection"
+package = "mcp-re-proxy"
+invariant = "no code outside `config_state::continuation_control` can assemble a ContinuationControlPlan, so a plan that resolves flows on the opening replica is one the classifier decided rather than one a caller asserted"
+insertion_path = "mcp-re-proxy/src/config_state/structural_probe_s19.rs"
+insertion_parent = "mcp-re-proxy/src/config_state/mod.rs"
+insertion_declaration = "mod structural_probe_s19;"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+note = """
+THE PLAN, AND IT IS A SEPARATE PRODUCER PATH FROM THE STATE. `ContinuationControlPlan` is
+what consumers read to decide whether a shared store must be established, and its `None`
+means "flows resolve on the replica that opened them". A caller able to write that field
+could assert single-replica resolution for a deployment that selected a shared store —
+without touching the state the plan is supposed to be a projection of.
+
+So sealing the state (S18) does not seal the plan: the plan is a value in its own right,
+handed onward, and a probe against the state would leave this route unwitnessed. The
+hostile value here is `None`, which is legal for SOME deployment and wrong for this one —
+the same shape as the co-provenance case, one step down.
+"""
+construction = "// ADR-MCPRE-068 structural probe S19. Injected into a scratch copy by verify-structural;\n// this file cannot exist in the working tree, because it would not build \u2014 which is the\n// proposition it witnesses.\nuse crate::config_state::continuation_control::ContinuationControlPlan;\n\npub fn hostile() -> ContinuationControlPlan {\n    ContinuationControlPlan {\n        store: None, // STRUCTURAL-PROBE-SITE\n    }\n}\n"
+
+[probe.producer_paths]
+module-tree-visibility = "`store` is bare-private to `config_state::continuation_control`. The parent re-exports the plan type only"
+alternate-constructors = "the plan is produced only by `ContinuationControlState::continuation_plan`, which reads the classified kind. There is no `new`, `From`, `Default` or builder, and `shared_store()`/`needs_control_runtime()` return a borrow and an answer, never the field"
+generated-or-deserialization = "the derives are Debug/Clone/PartialEq/Eq. No Serialize, no Deserialize \u2014 and this matters for an `Option<String>`, because a derived decoder would fill it positionally and a missing field would silently become `None`, which is exactly the assertion this probe refuses"
+test-only-construction = "the owner's `#[cfg(test)] mod tests` obtains plans through `continuation_plan`; no test-gated constructor and no test-gated field visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"

@@ -4631,7 +4631,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.continuation_materialization"
 class = "V0"
-description = "What the continuation-control plan yields: an unselected capability is OFF and produces no artifact, a selected one is established exactly as selected, and a selected one that cannot be established — including in a build without the backend — refuses startup rather than announcing OFF."
+description = "WHAT THE CONTINUATION-CONTROL PLAN YIELDS: an unselected capability is OFF and produces no artifact, a selected one is established exactly as selected, and a selected one that cannot be established — including in a build without the backend — refuses startup rather than announcing OFF. That the plan being read is one the classifier produced, rather than one a consumer asserted, is a compile-time fact and belongs to `proxy.continuation_materialization_sole_producer`."
 paths = [
   "mcp-re-proxy/src/serving_capabilities/continuation.rs",
   "mcp-re-proxy/src/config_state/continuation_control.rs",
@@ -4701,6 +4701,40 @@ tested_symbols = [
 # `test_features` on the one above, because the two arms are mutually exclusive at compile
 # time: whichever lane runs, the other unit's control does not exist. `test_features` here
 # selects the lane this arm lives in, which is what makes its battery measurable at all.
+
+# ---------------------------------------------------------------------------
+#
+# TWO VALUES ON ONE PATH, AND SEALING THE FIRST DOES NOT SEAL THE SECOND — which is the
+# reason this unit carries two probes rather than one.
+#
+# `ContinuationControlState` is the classified posture (S18). `ContinuationControlPlan` is
+# what consumers actually read to decide whether a shared store must be established, and it
+# is a value in its own right, handed onward. Its `store: None` means "flows resolve on the
+# replica that opened them" — legal for SOME deployment and wrong for one that selected a
+# shared store. A caller able to write that field could assert single-replica resolution
+# without touching the state the plan is supposed to project, so a probe against the state
+# alone would leave the route unwitnessed.
+#
+# Both types wrap a private representation and the owner says why: "private to this module:
+# every consumer of this state lives in this crate, so a `pub` variant would be constructible
+# by all of them." S18 supplies `todo!()` because `ContinuationKind` is private too, so
+# naming a variant would earn E0603 about the TYPE rather than E0451 about the field.
+
+[[unit]]
+id = "proxy.continuation_materialization_sole_producer"
+class = "V0"
+description = "Both values on the continuation-control path are the classifier's: `ContinuationControlState`'s `kind` is bare-private with a private enum type, and `ContinuationControlPlan`'s `store` is bare-private and written only by `continuation_plan`. So a consumer deciding whether to establish a shared store is reading a plan the classifier produced from the deployment's own selection, not one it or a neighbour asserted. States nothing about what the plan YIELDS once read, which is `proxy.continuation_materialization`'s."
+paths = [
+  "mcp-re-proxy/src/config_state/continuation_control.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+# A forged plan is a deployment that selected shared continuation resolving flows on one
+# replica, with the startup transcript reporting what was selected.
+direct_consequence_severity = "high"
+evidence = [
+  "structural://proxy/config_state/continuation_control_sole_producer",
+]
 [[unit]]
 id = "proxy.continuation_materialization_shared"
 class = "V0"

@@ -93,6 +93,7 @@ not an omission to hide.
 | proxy.continuation_leg_binding | V0 | THM-0093 | 0 |
 | proxy.continuation_materialization | V0 | THM-0096 | 0 |
 | proxy.continuation_materialization_shared | V0 | _none_ | 0 |
+| proxy.continuation_materialization_sole_producer | V0 | _none_ | 0 |
 | proxy.credential_currency | V0 | THM-0032 | 1 |
 | proxy.credential_key_correspondence | V0 | THM-0026 | 1 |
 | proxy.credential_key_correspondence_sole_producer | V0 | _none_ | 0 |

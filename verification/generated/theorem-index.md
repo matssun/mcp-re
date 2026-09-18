@@ -133,7 +133,7 @@ any of them is closed.
 | THM-0093 | An answer leg that needs a continuation does not proceed unbound | proxy.continuation_leg_binding | unit://proxy.continuation_leg_binding | live |
 | THM-0094 | The shipped Python SDK accepts only an answer to its own request | sdk_python.exchange_path | unit://sdk_python.exchange_path | live |
 | THM-0095 | The shipped TypeScript SDK accepts only an answer to its own request | sdk_typescript.exchange_path | unit://sdk_typescript.exchange_path | live |
-| THM-0096 | The runtime installs exactly the continuation capability its plan names | proxy.continuation_materialization | unit://proxy.continuation_installation, unit://proxy.continuation_materialization, unit://proxy.continuation_materialization_shared | live |
+| THM-0096 | The runtime installs exactly the continuation capability its plan names | proxy.continuation_materialization | unit://proxy.continuation_installation, unit://proxy.continuation_materialization, unit://proxy.continuation_materialization_shared, unit://proxy.continuation_materialization_sole_producer | live |
 | THM-0097 | A replica serves no request-signer binding outside its snapshot's authority window | proxy.trust_plane_runtime | unit://proxy.trust_plane_runtime | live |
 | THM-0098 | A replica's trust snapshot is the slot-wise interpretation of one accepted trust document | proxy.trust_document_interpretation | unit://proxy.trust_document_interpretation, unit://proxy.trust_plane_runtime | live |
 | THM-0099 | The production actor resolver answers its Request-slot selector from the deployment's trust document | proxy.serving_trust_seam | unit://proxy.serving_trust_seam | live |

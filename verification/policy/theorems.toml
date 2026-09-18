@@ -5018,6 +5018,10 @@ supported_by = [
   # exclusive at compile time and no single lane runs both — see the units' own notes.
   "unit://proxy.continuation_materialization_shared",
   "unit://proxy.continuation_installation",
+  # And the boundary under all three: the plan every one of them reads is the classifier's,
+  # not one a consumer asserted. Without it, "established exactly as selected" quantifies
+  # over the consumers that exist rather than over the plans that can exist.
+  "unit://proxy.continuation_materialization_sole_producer",
 ]
 depends_on = []
 
