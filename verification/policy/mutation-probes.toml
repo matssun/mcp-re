@@ -5856,3 +5856,135 @@ The control names the cross-SDK digest directly, which is why one probe suffices
 halves of the sentence: a serialization that stops being canonical stops matching the pinned
 digest whichever way it drifts.
 """
+
+[[probe]]
+id = "M215-proxy-a-host-a-parser-would-rewrite-is-refused"
+unit = "proxy.kms_endpoint_authority"
+theorem = "THM-0091"
+conjunct = "a host whose last label is a number is admitted only when it already IS the address it resolves to"
+path = "mcp-re-proxy/src/kms_endpoint_policy/mod.rs"
+anchor = """
+    if read_as_an_address && std::net::Ipv4Addr::from_str(host).is_err() {
+"""
+weakening = """
+    if false {
+"""
+expect_red = [
+  "lib#kms_endpoint_policy::tests::check_host_refuses_a_host_a_parser_would_rewrite_to_a_different_address",
+  "lib#kms_endpoint_policy::tests::a_host_that_ends_in_a_number_must_already_be_the_address_it_resolves_to",
+]
+note = """
+THE CHARACTER ALLOWLIST IS NOT A SECOND CARRIER of this conjunct: `127.1`, `0x7f.1` and
+`2130706433` are all character-legal, and every one of them a URL parser rewrites to
+127.0.0.1 -- `1.1` to 1.0.0.1. The two checks COMPOSE, each refusing a shape the other
+admits, which is why this weakening leaves the allowlist's own controls green and takes only
+the rewrite controls red.
+
+What the conjunct buys is that a reader auditing the configured endpoint and the machine
+reaching it agree. Under the weakening an operator reviewing `kms.example.internal` in one
+entry and `2130706433` in the next cannot tell from the text that the second is loopback.
+"""
+
+[[probe]]
+id = "M216-proxy-the-host-allowlist-is-what-a-resolver-can-answer-for"
+unit = "proxy.kms_endpoint_authority"
+theorem = "THM-0091"
+conjunct = "a host carrying percent-, IDNA- or separator-encoding is refused rather than resolved to a different host than the text reads"
+path = "mcp-re-proxy/src/kms_endpoint_policy/mod.rs"
+anchor = """
+        .find(|c| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')))
+"""
+weakening = """
+        .find(|_c| false)
+"""
+expect_red = [
+  "lib#kms_endpoint_policy::tests::the_host_allowlist_is_exactly_the_characters_a_resolver_can_answer_for",
+]
+note = """
+The other half of the composition M215 describes. This one refuses the characters whose
+INTERPRETATION differs from their spelling -- a percent-escape, an IDNA label, an embedded
+separator -- and admits `127.1`, which M215's check is what refuses.
+"""
+
+[[probe]]
+id = "M217-proxy-a-port-whose-text-and-value-differ-is-refused"
+unit = "proxy.kms_endpoint_authority"
+theorem = "THM-0091"
+conjunct = "a port whose text and the value a URL parser reads differ is refused"
+path = "mcp-re-proxy/src/kms_endpoint_policy/mod.rs"
+anchor = """
+    if port.len() > 1 && port.starts_with('0') {
+"""
+weakening = """
+    if false {
+"""
+expect_red = [
+  "lib#kms_endpoint_policy::tests::check_port_refuses_a_port_whose_text_and_value_differ",
+]
+note = """
+THE LEADING-ZERO REFUSAL IS SOLE for its own shape, and separate from the digits-only check
+above it for the same composition reason: `0443` is all digits and parses to 443, so the
+digits check admits it and `u16::from_str` accepts it. Only this statement refuses a port
+whose spelling reads 0443 and whose machine interpretation is 443.
+"""
+
+[[probe]]
+id = "M218-proxy-two-roles-that-are-one-key-are-collapsed"
+unit = "proxy.signing_role_separation"
+theorem = "THM-0091"
+conjunct = "the two signing roles are compared as cryptographic identities, and a deployment whose roles are one key cannot be materialized"
+path = "mcp-re-proxy/src/capability_materialization/key_source/role_separation.rs"
+anchor = """
+            if response.raw_point() == channel.raw_point() {
+"""
+weakening = """
+            if false {
+"""
+expect_red = [
+  "lib#capability_materialization::key_source::role_separation::tests::a_deployment_whose_two_roles_are_one_key_cannot_be_materialized",
+]
+note = """
+COMPARED AS IDENTITIES, NOT AS LOCATORS, which is the whole point of the unit and the reason
+the weakening has to be here rather than at a config comparison: two roles can name different
+mechanisms, different key ids and different endpoints and still materialize the same POINT.
+`raw_point()` is what makes the answer about the key. Under the weakening every deployment
+reports Distinct, and one key signs both responses and the channel -- so a party holding a
+channel signature holds a response signature's proof material.
+
+The third arm, `NotCompared`, is not a second carrier: it is the answer when a role produced
+no key at all, and a boolean would have to spell it with the same token as separate. This
+probe leaves that arm's control green.
+"""
+
+[[probe]]
+id = "M219-proxy-a-kms-signature-is-verified-before-it-is-returned"
+unit = "proxy.aws_kms_adapter"
+theorem = "THM-0091"
+conjunct = "every signature is verified locally against the advertised public key before it is returned, and a pre-hashed signature is refused rather than emitted"
+path = "mcp-re-proxy/src/aws_kms_keysource.rs"
+anchor = """
+        verify_ed25519(
+            preimage,
+            &b64url_encode(signature.bytes()),
+            &self.verify_key,
+        )
+        .map_err(|e| {
+"""
+weakening = """
+        Ok::<(), KeyError>(())
+        .map_err(|e: KeyError| {
+"""
+expect_red = [
+  "lib#aws_kms_keysource::tests::prehash_signature_is_rejected_before_return",
+]
+note = """
+THE LOCAL VERIFICATION IS THE ONLY THING THAT CATCHES A PREHASH KEY. `MessageType = RAW` is
+what the adapter ASKS for; a KMS key configured for DIGEST signs something else and returns
+a well-formed 64-byte Ed25519 signature either way, so the length rule the operand owns
+admits it. Nothing between here and the wire re-checks: the returned signature goes into a
+response the peer verifies against the same advertised public key, and the failure surfaces
+as a remote verification error on somebody else's machine.
+
+The weakening keeps the `map_err` shape so the mutation is semantic rather than a compile
+error -- a tree that does not build measures nothing.
+"""

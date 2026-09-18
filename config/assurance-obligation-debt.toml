@@ -398,15 +398,6 @@ root_reachable = true
 status = "unreviewed"
 
 [[obligation]]
-unit = "proxy.aws_kms_adapter"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "critical"
-inherited_severity = "critical"
-root_reachable = true
-status = "unreviewed"
-
-[[obligation]]
 unit = "proxy.aws_sts_credentials"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "high"
@@ -488,15 +479,6 @@ status = "unreviewed"
 
 [[obligation]]
 unit = "proxy.gcp_kms_adapter"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "critical"
-inherited_severity = "critical"
-root_reachable = true
-status = "unreviewed"
-
-[[obligation]]
-unit = "proxy.kms_endpoint_authority"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "critical"
 direct_consequence_severity = "critical"
@@ -605,15 +587,6 @@ status = "unreviewed"
 
 [[obligation]]
 unit = "proxy.signing_credential_provenance"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "high"
-inherited_severity = "critical"
-root_reachable = true
-status = "unreviewed"
-
-[[obligation]]
-unit = "proxy.signing_role_separation"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "critical"
 direct_consequence_severity = "high"

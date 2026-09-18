@@ -5477,7 +5477,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://proxy/materialization/signing_role_separation"]
+evidence = [
+  "test://proxy/materialization/signing_role_separation",
+  "mutation://proxy/materialization/signing_role_separation",
+]
 # Both directions, and the two arms that are NOT collapses. A refusal control alone would
 # pass on an authority that refused everything, and a materialization control alone would
 # pass on one that compared nothing — so the battery has to show it separates the cases. The
@@ -5980,6 +5983,7 @@ evidence_class = "tested"
 direct_consequence_severity = "critical"
 evidence = [
   "test://proxy/kms_endpoint_authority/spelling_is_interpretation",
+  "mutation://proxy/kms_endpoint_authority/spelling_is_interpretation",
 ]
 # WHAT THIS IS AND IS NOT. It is the KMS-specific leaf: an AGREEMENT between two readings
 # of one string. It is NOT a reachability claim — a config-time check over a host string
@@ -8122,7 +8126,10 @@ paths = ["mcp-re-proxy/src/aws_kms_keysource.rs", "mcp-re-proxy/src/aws_sigv4.rs
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://proxy/aws_kms_adapter/construction_and_emission"]
+evidence = [
+  "test://proxy/aws_kms_adapter/construction_and_emission",
+  "mutation://proxy/aws_kms_adapter/construction_and_emission",
+]
 test_features = ["aws_kms_keysource"]
 tested_symbols = [
   "lib#aws_kms_keysource::tests::non_ed25519_key_spec_fails_closed",
