@@ -59,32 +59,45 @@ the Python and TypeScript SDK system roots — the two roots this campaign decom
 the two Phase 2 was scheduled around. Their carriers have been outside every fingerprint in
 the estate for the whole campaign.
 
-## Disposition: REGISTER, all six, by the mechanism now available
+## Disposition: REGISTER for four; NEW PROPOSITION for two
 
-ADR-MCPRE-069 dispositions are REGISTER / REATTRIBUTE / NEW PROPOSITION / NOT EVIDENCE. This
-is REGISTER for all six, and nothing else: each already has an owning theorem, so nothing is
-reattributed and no proposition is new.
+ADR-MCPRE-069 dispositions are REGISTER / REATTRIBUTE / NEW PROPOSITION / NOT EVIDENCE.
 
-The mechanism is the `gate_controls` field and the `gate#` control form built on the
-source-text falsifier branch, where the first two are registered against
-`proxy.dispatch_commitment` with M151 and M152 as their falsifiers. The remaining four follow
-the same shape:
+**A first version of this section said REGISTER for all six. That was wrong**, and the
+correction is recorded here rather than quietly applied, because the two dispositions say
+different things about the estate: REGISTER puts a control inside an EXISTING claim's closure;
+NEW PROPOSITION says the estate is missing a claim.
 
-| gate | unit to declare it | theorem |
-|---|---|---|
-| `serving_identity_provenance_gate.py` | `proxy.serving_identity_provenance` | THM-0080 |
-| `refusal_provenance_gate.py` | `proxy.refusal_site_totality` | THM-0081 |
-| `python_runtime_gate.py` | the THM-0094 SDK owner | THM-0094 |
-| `node_runtime_gate.py` | the THM-0095 SDK owner | THM-0095 |
+### REGISTER — four, all done on the source-text falsifier branch
 
-Not done in this packet, and deliberately: `gate_controls` does not exist on `main` yet, and
-registering a field a branch has not landed would be a registry that names a schema the tree
-does not hold. Sequenced behind the falsifier branch.
+| gate | unit | theorem | falsifier |
+|---|---|---|---|
+| `serving_product_provenance_gate.py` | `proxy.dispatch_commitment` | THM-0051 | M151 |
+| `authorization_provenance_gate.py` | `proxy.dispatch_commitment` | THM-0052 | M152 |
+| `serving_identity_provenance_gate.py` | `proxy.serving_identity_provenance` | THM-0080 | M153 |
+| `refusal_provenance_gate.py` | `proxy.refusal_site_totality` | THM-0081 | M154 |
 
-Note what registering these four also buys. `proxy.serving_identity_provenance` is currently
-`tested` with no falsifier and an open N1 obligation at `critical`; a `gate#` falsifier over
-its own carrier is the honest discharge of exactly that obligation rather than a probe pointed
-at whichever cargo control sits nearest.
+Each already had an owning theorem and an owning unit, so nothing is reattributed and no
+proposition is new. M153 also DISCHARGES an N1 obligation that was open at `critical`, against
+the unit's own carrier rather than a probe pointed at whichever cargo control sat nearest — 75
+open obligations to 73.
+
+### NEW PROPOSITION — two, and this is why
+
+`python_runtime_gate.py` and `node_runtime_gate.py` have no unit to be registered against.
+Measured over every `sdk_python.*` and `sdk_typescript.*` unit: each is about a BEHAVIOURAL
+proposition of the transport — exchange binding, verdict delivery, correlation lifecycle,
+nonce floor, bounded read. Not one states the proposition these gates establish, which is a
+SUPPORT claim: that the interpreters a package says it supports do not exceed the ones its
+battery is measured on, and that a deploy image installing the shipped wheel names one of them
+exactly.
+
+Registering them against a transport unit would put a support-claim gate inside a behavioural
+proposition's fingerprint and call the graph more precise than the measurement. The honest
+disposition is that the estate is missing a unit.
+
+Its own slice, and not bookkeeping: THM-0094 and THM-0095 are the roots directly above the
+missing proposition.
 
 ## What this does NOT claim
 
