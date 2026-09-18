@@ -26,7 +26,9 @@
 #     owes, every successor's effective severity to be at most the predecessor's, and every
 #     successor unit's `paths` to be a SUBSET of the predecessor's at the base — so new
 #     production code cannot ride one, nothing at stake rises, and the authorization is
-#     spent by the merge that uses it. A successor row is an ordinary open obligation.
+#     SPENT BY THE MERGE THAT USES IT: once a successor row is in the base registry it is an
+#     ordinary pre-existing row, and its `succeeds`/`decomposition_ref` remain as PROVENANCE
+#     rather than authority. A successor row is an ordinary open obligation.
 #   * Each row names its EXACT owning proposition and the obligation it owes, because a
 #     registry that cannot say what closing a row would mean is a list, not a ratchet.
 #
