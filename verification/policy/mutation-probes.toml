@@ -7781,3 +7781,102 @@ the moment the ceiling exists to stop them. The slot's release on a refusal and 
 worker are sibling conjuncts with their own controls, and both stay green here -- this weakening
 admits one more worker, it does not leak a slot.
 """
+
+[[probe]]
+id = "M279-proxy-each-emitter-asks-the-typed-cause-for-its-projections"
+unit = "proxy.refusal_audit_emission"
+theorem = "THM-0091"
+conjunct = "each emitter takes the typed cause and asks IT for its projections, rather than rendering one of its own"
+path = "mcp-re-proxy/src/http_profile_serve/receipt/audit_event.rs"
+anchor = """
+                cause.core_verdict().as_ref(),
+                cause.authorization_facet(authorization),
+"""
+weakening = """
+                cause.core_verdict().as_ref(),
+                cause.authorization_facet(None),
+"""
+expect_red = [
+  "tests/integration#refusal_audit_emission_test::each_emitter_records_the_typed_projections",
+]
+note = """
+THE TWO COORDINATES ARE NOT INTERCHANGEABLE, and the comment beside them says why: `None` for
+the Core verdict means Core reached NO verdict -- a policy did -- and that policy's token
+belongs in the authorization coordinate, never in Core's `reason`. The weakening passes `None` for the
+deployment's authorization facet instead of the one the exchange reached, so an authorization
+refusal reaches the record with the coordinate that names the deciding authority emptied: a
+refusal that happened, attributed to nobody.
+
+A RULE OVER SOURCE IS WHAT CAN SEE THIS, for the reason slice 20 recorded: the record is still
+written, still well-formed, and still says a refusal occurred. What it stops saying is which
+authority reached it -- and an audit record's whole job is to answer that.
+"""
+
+[[probe]]
+id = "M280-conformance-the-committed-corpus-is-what-this-implementation-emits"
+unit = "conformance.retained_corpus"
+theorem = "THM-0091"
+conjunct = "the committed bytes are compared against a fresh generation rather than trusted, and a tampered retained body no longer corresponds"
+path = "mcp-re-conformance/tests/vectors/scitt/retained/retained-hops.json"
+anchor = """
+          "sha-256=:CpSwyc8gK8crCz3K6Zp7XrzFubjZK3chS7T+rjLBlAs=:"
+"""
+weakening = """
+          "sha-256=:CpSwyc8gK8crCz3K6Zp7XrzFubjZK3chS7T+rjLBlAt=:"
+"""
+expect_red = [
+  "tests/scitt_retained_corpus_test#the_committed_bytes_are_the_ones_this_implementation_produces",
+]
+note = """
+THE CORPUS IS THE ARTIFACT, so the weakening edits a committed VECTOR rather than a source
+statement -- the only probe in this registry that does. A conformance corpus is a claim that
+these exact bytes are what the implementation emits and that they hold together as a record; a
+corpus nobody re-derives is a claim about bytes somebody once produced.
+
+One character of one Content-Digest is the whole mutation. It takes the regeneration control
+red because the committed bytes stop matching a fresh generation -- which is what makes the
+corpus a MEASUREMENT rather than a fixture, and what a reviewer of a regenerated diff is
+actually relying on.
+"""
+
+[[probe]]
+id = "M281-proxy-the-statement-is-issued-over-this-reconstruction"
+unit = "proxy.evidence_attestation"
+theorem = "THM-0091"
+conjunct = "the statement is issued over the reconstruction that is handed back with it, so an INCOMPLETE verdict cannot be discovered by decoding what was just published"
+path = "mcp-re-proxy/src/transparency/attestation.rs"
+anchor = """
+    let commitment = mcp_re_http_profile::scitt::EvidenceCommitment::from_reconstruction(
+        &reconstruction,
+        bindings_commitment.clone(),
+        verified_context_commitment.clone(),
+    );
+"""
+weakening = """
+    let commitment = mcp_re_http_profile::scitt::EvidenceCommitment::from_reconstruction(
+        &mcp_re_http_profile::reconstruct_chain(&[], verifier, expect, audit, is_revoked, now),
+        bindings_commitment.clone(),
+        verified_context_commitment.clone(),
+    );
+"""
+expect_red = [
+  "tests/integration_async#transparency_e2e_test::a_served_call_becomes_an_offline_verifiable_receipt",
+]
+note = """
+THE STATEMENT AND THE RECONSTRUCTION MUST BE ABOUT ONE CALL, and the weakening issues the
+statement over an EMPTY chain while everything downstream still holds the real one. The
+self-check catches it -- which is the point: `verify_retained_evidence` runs against the
+reconstruction that is handed back, so a statement committing to anything else cannot be
+published at all.
+
+WHY THE RECONSTRUCTION IS HANDED BACK is the other half. A caller that received only the
+statement would have to DECODE WHAT WAS JUST PUBLISHED to learn the verdict, and an INCOMPLETE
+one discovered that way is discovered after the record exists. Returning both makes the verdict
+available before anyone acts on the receipt.
+
+TWO EARLIER WEAKENINGS DID NOT MEASURE THIS. Exchanging `bindings_commitment` and
+`verified_context_commitment` is a NO-OP for this battery -- the e2e passes `None` for both --
+and restoring the old skip of the self-check did not compile. Slice 28 recorded the unit as open
+for exactly those two reasons; this probe attacks the reconstruction itself, which the declared
+controls do reach.
+"""

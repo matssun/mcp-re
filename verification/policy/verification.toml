@@ -3505,7 +3505,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://proxy/audit/refusal_emission"]
+evidence = [
+  "test://proxy/audit/refusal_emission",
+  "mutation://proxy/audit/refusal_emission",
+]
 # Measured at the ONE boundary rather than reason by reason: a battery enumerating refusal
 # causes would have to learn about the next one, and the failure mode of a stale enumeration
 # is a clean pass over an unrecorded refusal. The ordering member is the one that is easy to
@@ -7164,7 +7167,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://conformance/scitt/retained_corpus"]
+evidence = [
+  "test://conformance/scitt/retained_corpus",
+  "mutation://conformance/scitt/retained_corpus",
+]
 # The first control is the one #740 exists for. The other three are what keep it from being
 # a happy-path demonstration: a tampered byte and a truncation must stop corresponding, and
 # the committed bytes must be what this implementation emits TODAY rather than what it
@@ -8099,7 +8105,10 @@ paths = ["mcp-re-proxy/src/transparency/attestation.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://proxy/transparency/evidence_attestation"]
+evidence = [
+  "test://proxy/transparency/evidence_attestation",
+  "mutation://proxy/transparency/evidence_attestation",
+]
 # The third member is the one R9-C103/C128 exist for. The self-check used to be SKIPPED for a
 # reconstruction that broke at hop 0, on the reasoning that such a record names no call. That
 # reasoning is right about the identity fields and wrong about the submission, which is
