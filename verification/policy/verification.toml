@@ -8041,7 +8041,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://proxy/transparency/retained_record_content"]
+evidence = [
+  "test://proxy/transparency/retained_record_content",
+  "mutation://proxy/transparency/retained_record_content",
+]
 # The covered-set controls are the three ways a sender can make `signature-input` LOOK like
 # it names more than it does — a signature PARAMETER, a decoy dictionary MEMBER, and a
 # component's own PARAMETERS. The third was named in the module's own documentation and was
@@ -8683,7 +8686,10 @@ paths = ["mcp-re-client/src/config/mod.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://client/deployment_config/declared_document"]
+evidence = [
+  "test://client/deployment_config/declared_document",
+  "mutation://client/deployment_config/declared_document",
+]
 # The binding controls are the sharp ones. A binding over a header the client never sends
 # commits the request to a digest of nothing; a DPoP binding that digests the value verbatim
 # rather than what the verifier digests produces evidence no verifier can reproduce; and a
