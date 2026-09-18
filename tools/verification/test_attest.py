@@ -123,7 +123,7 @@ def test_passing_tests_alone_cannot_attest_a_unit_that_claims_mutation_evidence(
     """The structural point. A V0 claim's ordinary battery says the declared controls
     passed; it says NOTHING about whether any of them would notice the check its theorem
     names being deleted. Without this refusal the probe suite is decoration: the CI job
-    could be removed and `http_profile.verifier_results` would keep re-attesting from
+    could be removed and `http_profile.request_floor_result` would keep re-attesting from
     `test` alone."""
     got = decide(
         units("a", evidence=MUTATION_EVIDENCE),
@@ -181,7 +181,7 @@ def test_the_real_manifest_puts_the_verifier_unit_inside_the_mutation_closure():
     unit = next(
         u
         for u in load_verification()["unit"]
-        if u["id"] == "http_profile.verifier_results"
+        if u["id"] == "http_profile.request_floor_result"
     )
     assert required_lanes(unit) == {"test", "mutation"}
 

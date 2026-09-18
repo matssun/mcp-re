@@ -657,6 +657,32 @@ fn unbound_response_floor_verifies_a_receipt_with_no_request() {
     assert_eq!(v.resolved_server_actor.identity.keyid, "server-key-1");
 }
 
+/// THE SLOT CONJUNCT, ON THE UNBOUND ARM. THM-0017 says the presented keyid resolved
+/// through the trust seam FOR THE RESPONSE SLOT — and until ADR-MCPRE-068 Phase 1 the
+/// unbound operation had no control that could tell whether it did. Its bound twin has
+/// had one since the beginning (`response_signed_by_request_only_actor_fails_actor_binding`);
+/// this arm was probed by nothing, because both arms lived in one verification unit whose
+/// thirty probes each named a different theorem.
+///
+/// `client-key-1` is trusted for the REQUEST slot only. A resolution that fell back to the
+/// Request slot would find it and the operation would succeed — which is exactly what
+/// mutation probe M71 weakens the production code to do, and what this control refuses.
+#[test]
+fn an_unbound_receipt_signed_by_a_request_only_actor_fails_actor_binding() {
+    let mut rsp = HttpResponse {
+        status: 400,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: br#"{"jsonrpc":"2.0","id":null,"error":{"code":-31000,"message":"no"}}"#.to_vec(),
+    };
+    sign_response_unbound(&mut rsp, &client_key(), "client-key-1", CREATED, EXPIRES)
+        .expect("unbound response signing succeeds");
+    let err = Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_unbound_response_floor(&rsp, NOW)
+        .unwrap_err();
+    assert_eq!(err, HttpProfileError::UnresolvedKeyId);
+    assert_eq!(err.wire_code(), "mcp-re.actor_binding_failed");
+}
+
 /// A `;req` component on the unbound path is MALFORMED, not ignored and not silently
 /// tolerated: there is no request to resolve it against, so a signature claiming one
 /// cannot be evaluated at all. A bound-signed response is exactly such a message.
