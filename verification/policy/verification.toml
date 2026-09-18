@@ -3602,7 +3602,10 @@ paths = ["mcp-re-proxy/src/config_state/cross_machine.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://proxy/config_state/cross_machine_relations"]
+evidence = [
+  "test://proxy/config_state/cross_machine_relations",
+  "mutation://proxy/config_state/cross_machine_relations",
+]
 # The last control is the one that keeps this pass from becoming a second opinion: the
 # trust-epoch posture is NOT re-derived here, it is read from the machine that owns it.
 tested_symbols = [
@@ -3667,7 +3670,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://client/trust_manifest/lifecycle_battery"]
+evidence = [
+  "test://client/trust_manifest/lifecycle_battery",
+  "mutation://client/trust_manifest/lifecycle_battery",
+]
 # The negative controls carry this unit. A rolled-back version, a tampered signature, an
 # untrusted signer, a wrong profile and an expired deadline must each fail closed, and the
 # floor must not default to zero when it cannot be read — a fail-open there would accept

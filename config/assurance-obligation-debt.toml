@@ -182,15 +182,6 @@ root_reachable = true
 status = "unreviewed"
 
 [[obligation]]
-unit = "client.trust_manifest_lifecycle"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "critical"
-inherited_severity = "critical"
-root_reachable = true
-status = "unreviewed"
-
-[[obligation]]
 unit = "client.verified_outcome"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "critical"
@@ -443,15 +434,6 @@ unit = "proxy.continuation_materialization_shared"
 # edge, reaching this proposition through THM-0077's closure. Same proposition, same carrier,
 # same obligation; `direct_consequence_severity` is untouched, which is what says this is a
 # derivation and not a reclassification.
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "high"
-inherited_severity = "critical"
-root_reachable = true
-status = "unreviewed"
-
-[[obligation]]
-unit = "proxy.cross_machine_legality"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "critical"
 direct_consequence_severity = "high"

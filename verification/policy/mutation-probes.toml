@@ -5988,3 +5988,107 @@ as a remote verification error on somebody else's machine.
 The weakening keeps the `map_err` shape so the mutation is semantic rather than a compile
 error -- a tree that does not build measures nothing.
 """
+
+[[probe]]
+id = "M220-proxy-a-channel-selector-must-match-its-custody-state"
+unit = "proxy.cross_machine_legality"
+theorem = "THM-0091"
+conjunct = "an illegal combination of two configuration machines is refused unconditionally rather than reinterpreted into a weaker posture"
+path = "mcp-re-proxy/src/config_state/cross_machine.rs"
+anchor = """
+        (DelegatedChannelKeyRequest::Pkcs11(_), _) => mismatch("--pkcs11-tls-key-label", "pkcs11"),
+"""
+weakening = """
+        (DelegatedChannelKeyRequest::Pkcs11(_), _) => Vec::new(),
+"""
+expect_red = [
+  "lib#config_state::cross_machine::tests::every_selector_is_refused_under_every_other_custody_state",
+]
+note = """
+ONE ARM IS ENOUGH, and that is a fact about the proposition rather than a shortcut. The claim
+is that EACH illegal combination is refused, so a single arm that stops refusing falsifies
+it -- the three arms are three instances of one rule, not three carriers of one instance. The
+control that measures it is the exhaustive one, which walks every selector under every other
+custody state; the matching-state control stays green, correctly, because the weakening
+widens what is accepted and never narrows it.
+
+The relation reads CLASSIFIED OWNER STATES, not raw request fields, which is what makes this
+a layer-A boundary rather than a flag check: under the weakening a `--pkcs11-tls-key-label`
+is silently inert beside an AWS KMS signing source, and the operator's channel key is not the
+one they named.
+"""
+
+[[probe]]
+id = "M221-proxy-a-deny-list-nothing-reads-is-refused"
+unit = "proxy.cross_machine_legality"
+theorem = "THM-0091"
+conjunct = "a deny-list no reachable authorization profile will consult is refused rather than accepted as enforcing something"
+path = "mcp-re-proxy/src/config_state/cross_machine.rs"
+anchor = """
+    unenforceable_revocation_list_refusal(&config.authorization.revocation_list_paths)
+        .into_iter()
+        .collect()
+"""
+weakening = """
+    let _ = &config.authorization.revocation_list_paths;
+    Vec::new()
+"""
+expect_red = [
+  "lib#config_state::cross_machine::tests::a_deny_list_no_profile_will_read_is_refused",
+]
+note = """
+THE FAILURE IS SILENT AND IT FAILS OPEN, which is why the relation is unconditional. No
+reachable profile READS a grant deny-list, so a configured one enforces nothing -- and an
+operator who supplied it believes revocation is in force. Refusing at configuration time is
+the only moment anything says otherwise; there is no later error, because nothing ever
+consults the list.
+"""
+
+[[probe]]
+id = "M222-client-an-expired-manifest-fails-closed"
+unit = "client.trust_manifest_lifecycle"
+theorem = "THM-0091"
+conjunct = "the manifest's expiry deadline outranks every root inside it — a stale trust picture is never used"
+path = "mcp-re-client-core/src/trust_manifest/mod.rs"
+anchor = """
+    if now > signed.manifest.expires_at {
+"""
+weakening = """
+    if false {
+"""
+expect_red = [
+  "lib#trust_manifest::tests::expired_manifest_fails_closed",
+]
+note = """
+THE DEADLINE OUTRANKS THE ROOTS INSIDE IT, and the ORDER is what this statement establishes:
+the anchor set is built at step 6, after the signature, the profile, this deadline and the
+version floor. A root's own validity is not a second carrier -- a root can be perfectly valid
+and still belong to a trust picture the issuer has since replaced, which is exactly what an
+overlap window is for. Under the weakening a signed manifest from before a rotation keeps
+resolving its anchors forever, and a retired root answers for the issuer indefinitely.
+"""
+
+[[probe]]
+id = "M223-client-the-version-floor-is-monotone"
+unit = "client.trust_manifest_lifecycle"
+theorem = "THM-0091"
+conjunct = "the manifest's monotone version floor — never accept a version below the highest already seen"
+path = "mcp-re-client-core/src/trust_manifest/mod.rs"
+anchor = """
+    if signed.manifest.manifest_version < min_version {
+"""
+weakening = """
+    if false {
+"""
+expect_red = [
+  "lib#trust_manifest::tests::rolled_back_manifest_version_is_rejected",
+  "lib#trust_manifest::tests::the_floor_rises_on_load_and_then_rejects_the_superseded_manifest",
+]
+note = """
+THE SIGNATURE IS NOT A SECOND CARRIER, and that is the whole reason the floor exists: a
+superseded manifest is GENUINE -- the issuer really signed it -- so every signature, profile
+and expiry check passes on a replay of it. The only thing that distinguishes "this is the
+issuer's trust picture" from "this WAS the issuer's trust picture" is the version already
+seen. Under the weakening an attacker who can serve an old manifest re-opens the overlap
+window it published, and a root retired in the meantime answers again.
+"""
