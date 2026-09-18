@@ -397,6 +397,8 @@ is indistinguishable from an unconsidered one. Private fields alone are not a se
 | S12 | in-crate | no code outside `communication_assurance` can call `CertificatePeerIdentityEvidence::new` | `E0624` |
 | S13 | in-crate | no code outside `communication_assurance::certificate_peer_identity_evidence` can write the value/source pair directly | `E0451` |
 | S14 | in-crate | no code outside `trust_plan` can assemble a `TrustPlan` field by field | `E0451` |
+| S15 | in-crate | no code outside `config_state::trust_revocation` can assemble a `TrustRevocationState` | `E0451` |
+| S16 | in-crate | no code outside `config_state::trust_document` can put a path in a `TrustDocumentSource` | `E0451` |
 
 S04 is the one ADR-MCPRE-068 §12.1 split out of a composite unit, and 0D-3 completed the
 split in the registry: M113/M114/M115 falsify the constructor's runtime refusal of an illegal
@@ -441,6 +443,13 @@ to its own owner, so there is nothing for it to refuse — and the entire securi
 its signature is the single `&ValidatedDeployment` parameter that makes two owned facts
 CO-PROVENANT. Every field in S14's hostile construction could be a perfectly good value; what
 would be false is that they describe the same deployment.
+
+S15 shows why a probe's declared error code has to name the boundary and not merely a
+failure. `TrustRevocationState`'s `kind` is bare-private AND its type `RevocationKind` is a
+private enum; naming a variant in the hostile construction would be refused by `E0603` for the
+TYPE's privacy, so the probe supplies `todo!()` instead and the lane reports `E0451` about the
+field — the boundary the unit actually claims. Two privacies, one claim, and the probe must
+attack the right one.
 
 ### 9.4 The MEASURED apparatus control
 

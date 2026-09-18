@@ -2181,7 +2181,7 @@ pilot = "verus-candidate"
 [[unit]]
 id = "proxy.trust_configuration_state"
 class = "V0"
-description = "The trust-revocation classifier and the trust-document locator: which revocation posture a deployment requests, which witnesses each state requires, and where the request-signer document is read from. Claims nothing about the document's existence, readability, contents, or the keys it holds — those are materialization's, not layer A's."
+description = "WHAT THE CLASSIFIER AND THE LOCATOR DECIDE: which revocation posture a deployment requests, which witnesses each state requires, and which locators name a trust document at all. Claims nothing about the document's existence, readability, contents, or the keys it holds — those are materialization's, not layer A's — and nothing about whether either decision can be bypassed, which is a compile-time fact and belongs to `proxy.trust_configuration_state_sole_producer`."
 paths = [
   "mcp-re-proxy/src/config_state/trust_revocation.rs",
   "mcp-re-proxy/src/config_state/trust_document.rs",
@@ -2238,6 +2238,41 @@ tested_symbols = [
 # one question — what actually bounds a compromised credential's usefulness — and separating
 # them would leave the posture name in one fingerprint and the durations it names in another.
 
+
+# ---------------------------------------------------------------------------
+#
+# ONE PROPOSITION, TWO OWNERS — the same two files the tested unit covers, because they are
+# the same decision seen twice: which trust configuration a deployment is IN.
+#
+# `TrustRevocationState` carries a bare-private `kind` whose TYPE is also private, so a
+# sibling can reach neither the field nor a variant to put in it. S15 attacks the field's
+# privacy (the boundary this unit claims) and supplies `todo!()` rather than naming a variant,
+# because naming one would be refused by E0603 for the type's privacy and the lane would then
+# be measuring the wrong boundary. The enum's privacy is recorded as a second producer path
+# rather than conflated with the first.
+#
+# `TrustDocumentSource` is the ordinary refusal shape, and S16's hostile value is the EXACT
+# inhabitant `new` excludes — the empty locator. The owner's doc comment states what the
+# boundary is for: "construction itself validates, so a `TrustDocumentSource` means the same
+# thing whichever crate built it". That sentence is about every crate, which is a claim over
+# the type; the battery ranges over `new`.
+
+[[unit]]
+id = "proxy.trust_configuration_state_sole_producer"
+class = "V0"
+description = "Neither trust-configuration value can be assembled outside its owning module: `TrustRevocationState`'s `kind` is bare-private and its enum type is private too, so only the classifier produces a posture and the witnesses it declares are the ones that classifier decided; `TrustDocumentSource`'s `path` is bare-private and `new` is its only, fallible, constructor, so every locator is one that was accepted. States nothing about WHICH posture or WHICH locator is right, which is `proxy.trust_configuration_state`'s."
+paths = [
+  "mcp-re-proxy/src/config_state/trust_revocation.rs",
+  "mcp-re-proxy/src/config_state/trust_document.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+# A forged posture is a deployment whose declared witnesses nobody decided; a forged locator
+# is an empty path reaching the code that opens it.
+direct_consequence_severity = "high"
+evidence = [
+  "structural://proxy/config_state/trust_configuration_state_sole_producer",
+]
 [[unit]]
 id = "proxy.client_credential_window"
 class = "V0"

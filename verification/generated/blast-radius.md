@@ -148,6 +148,7 @@ attestations this view cannot see.
 | unit://proxy.tls_listener_state | source, contracts or evidence | THM-0048, THM-0054, THM-0103 | proxy.credential_currency (COMPILE_DEPENDENCY) |
 | unit://proxy.trust_composition_root | source, contracts or evidence | THM-0038, THM-0067, THM-0077 | _no consumer_ |
 | unit://proxy.trust_configuration_state | source, contracts or evidence | THM-0035, THM-0036 | _no consumer_ |
+| unit://proxy.trust_configuration_state_sole_producer | source, contracts or evidence | THM-0035, THM-0036 | _no consumer_ |
 | unit://proxy.trust_document_interpretation | source, contracts or evidence | THM-0098 | _no consumer_ |
 | unit://proxy.trust_epoch_source | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.trust_plan | source, contracts or evidence | THM-0037, THM-0066 | _no consumer_ |

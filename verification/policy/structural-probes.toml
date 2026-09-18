@@ -456,3 +456,61 @@ module-tree-visibility = "all four fields are bare-private to `trust_plan`, whic
 alternate-constructors = "`from_validated` is the only associated function returning Self. It is TOTAL \u2014 there is nothing to refuse, because the legality of each part is its own owner's \u2014 and its single `&ValidatedDeployment` parameter is the entire mechanism: it is what makes the two owned facts co-provenant. `response_kid` and `epoch` are passed in deliberately, being shared with the signing plane, and the five projections return borrows or a computed `TrustReloadPlan`, never the representation"
 generated-or-deserialization = "no derives that construct: no Serialize, no Deserialize, no Default. Nothing decodes a TrustPlan \u2014 it is projected from validated configuration, never parsed"
 test-only-construction = "the crate's tests build plans through `from_validated` against a `ValidatedDeployment`; no test-gated constructor and no test-gated field visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"
+
+[[probe]]
+id = "S15"
+unit = "proxy.trust_configuration_state_sole_producer"
+kind = "in-crate-source-injection"
+package = "mcp-re-proxy"
+invariant = "no code outside `config_state::trust_revocation` can assemble a TrustRevocationState, so every posture came from the classifier that also decided which witnesses that posture requires"
+insertion_path = "mcp-re-proxy/src/config_state/structural_probe_s15.rs"
+insertion_parent = "mcp-re-proxy/src/config_state/mod.rs"
+insertion_declaration = "mod structural_probe_s15;"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+note = """
+TWO LAYERS OF PRIVACY, AND THE PROBE ONLY NEEDS THE OUTER ONE. `kind` is bare-private, and
+its type `RevocationKind` is a PRIVATE enum — so a sibling cannot even name the value it
+would need. The construction supplies `todo!()` instead of naming a variant, deliberately:
+writing `RevocationKind::BoundedCache { .. }` would be refused by E0603 for the TYPE's
+privacy and the lane would then be measuring the wrong boundary. The field's privacy is the
+one this unit claims, so that is the one the probe attacks, and the enum's privacy is
+recorded as a second producer path rather than conflated with it.
+
+What a forged state would buy is a posture whose declared witnesses nobody decided — the
+classifier is what pairs a state with what it requires, and the pairing is the whole point.
+"""
+construction = "// ADR-MCPRE-068 structural probe S15. Injected into a scratch copy by verify-structural;\n// this file cannot exist in the working tree, because it would not build \u2014 which is the\n// proposition it witnesses.\nuse crate::config_state::TrustRevocationState;\n\npub fn hostile() -> TrustRevocationState {\n    TrustRevocationState {\n        kind: todo!(), // STRUCTURAL-PROBE-SITE\n    }\n}\n"
+
+[probe.producer_paths]
+module-tree-visibility = "`kind` is bare-private to `config_state::trust_revocation`, and its type `RevocationKind` is a private enum in the same module, so a sibling can reach neither the field nor a variant to put in it. The parent re-exports `TrustRevocationState` only"
+alternate-constructors = "the classifier in this module is the only producer, and every projection (`tier`, `epoch_source`, `reload_cadence`, `declared_window_secs`, `push_channel_is_inert`, `has_networked_epoch`) reads the private enum and returns a named answer, never the representation. There is no `new`, `From`, `Default` or builder taking a kind"
+generated-or-deserialization = "the derives are Debug/Clone/PartialEq/Eq. No Serialize, no Deserialize \u2014 the posture is classified from a deployment request, never decoded"
+test-only-construction = "the owner's `#[cfg(test)] mod tests` constructs only through the classifier; no test-gated constructor and no test-gated field or enum visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"
+
+[[probe]]
+id = "S16"
+unit = "proxy.trust_configuration_state_sole_producer"
+kind = "in-crate-source-injection"
+package = "mcp-re-proxy"
+invariant = "no code outside `config_state::trust_document` can put a path in a TrustDocumentSource, so every locator is one `new` accepted \u2014 which is what makes the value mean the same thing whichever crate built it"
+insertion_path = "mcp-re-proxy/src/config_state/structural_probe_s16.rs"
+insertion_parent = "mcp-re-proxy/src/config_state/mod.rs"
+insertion_declaration = "mod structural_probe_s16;"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+note = """
+THE EMPTY LOCATOR IS THE EXACT VALUE `new` REFUSES: `(!path.trim().is_empty()).then_some(…)`.
+So this construction is not merely unauthorized, it is the one inhabitant the owner's whole
+check exists to exclude — and the check is a deletable statement unless this boundary holds.
+
+The owner's own doc comment states the property this probe is for: "construction itself
+validates, so a `TrustDocumentSource` means the same thing whichever crate built it".
+"""
+construction = "// ADR-MCPRE-068 structural probe S16. Injected into a scratch copy by verify-structural;\n// this file cannot exist in the working tree, because it would not build \u2014 which is the\n// proposition it witnesses.\nuse crate::config_state::TrustDocumentSource;\n\npub fn hostile() -> TrustDocumentSource {\n    TrustDocumentSource {\n        path: String::new(), // STRUCTURAL-PROBE-SITE\n    }\n}\n"
+
+[probe.producer_paths]
+module-tree-visibility = "`path` is bare-private to `config_state::trust_document`. The parent re-exports the type only"
+alternate-constructors = "`new` is the only associated function returning Self and it is fallible, refusing an empty or whitespace-only locator. There is no `From<String>`, `FromStr`, `Default` or builder, and `path()` returns `&str`, never `&mut String`"
+generated-or-deserialization = "the derives are Debug/Clone/PartialEq/Eq. No Serialize, no Deserialize \u2014 which matters here for the same reason as for any one-field newtype over a String: a derived decoder would fill it positionally and admit exactly the empty locator `new` refuses"
+test-only-construction = "the owner's `#[cfg(test)] mod tests` constructs only through `new` and the resolver beside it; no test-gated constructor and no test-gated field visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"
