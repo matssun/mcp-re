@@ -865,50 +865,69 @@ tested_symbols = [
   "lib#tls_plane::client_revocation_posture::revocation_posture_tests::every_loaded_crl_reports_its_own_digest_and_window",
 ]
 
-[[unit]]
-id = "proxy.tls_listener_state"
-class = "V0"
-description = "Every MCP-RE construction path obtains a listener's anchors, epoch-bound session store and signing budget through one TlsListenerSecurityState; those terms cannot be supplied to it independently."
-# The COMPLETE implementation closure of the proposition, not the files whose names read
-# like it. The first version named the owner and the epoch module only — and `T03` mutates
-# `tls.rs`, so an edit there could weaken the resumption binding while this unit's
-# fingerprint stood still. Same false-freshness class as the one #596 closed.
+# ---------------------------------------------------------------------------------------
+# ADR-MCPRE-068 Phase 1 — the listener's three propositions, as three owners.
 #
-# The claim is about a PRODUCTION LISTENER's lifetime, so the closure reaches the wiring
-# that gives a listener one: `tls_plane.rs` seeds the state and rebuilds through it,
-# `delegated_tls.rs` carries the signing-budget semantics the fourth conjunct is about, and
-# `tls.rs` holds the credential validation and error vocabulary the builds go through. A
-# narrower unit proving only the owner-local relationship would be defensible, but then the
-# description would have to stop saying "production listener" and `TlsPlane` would need a
-# composition obligation of its own.
+# `proxy.tls_listener_state`: one unit over 11 files and 31 controls, named by THM-0048,
+# THM-0054 and THM-0103. Eight probes, and every one of them attacked the assembly or the
+# epoch store — so THM-0054, which is `critical`, was attacked by nothing while N1 read it as
+# satisfied. Fourth on the campaign ruling's scheduler.
+# ---------------------------------------------------------------------------------------
+
+# THE ASSEMBLY, and the five `T0*` probes are all its: each attacks a way a term could be
+# supplied to a listener independently of the state that owns it.
+[[unit]]
+id = "proxy.listener_state_assembly"
+class = "V0"
+description = "Every MCP-RE construction path obtains a listener's trust anchors, epoch-bound session store, signing budget and client-certificate verifier through one `TlsListenerSecurityState`; the terms cannot be supplied to it independently, and a rebuild through the same state keeps the cache and the epoch it was built with."
 paths = [
   "mcp-re-proxy/src/tls_listener_state/mod.rs",
-  "mcp-re-proxy/src/tls_listener_state/auth_epoch.rs",
   "mcp-re-proxy/src/tls_listener_state/assembly.rs",
-  "mcp-re-proxy/src/tls_listener_state/client_verifier.rs",
-  "mcp-re-proxy/src/tls_listener_state/resumption_binding.rs",
-  "mcp-re-proxy/src/tls_listener_state/resumption_acceptance.rs",
   "mcp-re-proxy/src/tls.rs",
   "mcp-re-proxy/src/delegated_tls.rs",
-  # MCPRE-175: the client-revocation posture and its reload worker left `tls_plane.rs`
-  # for their own owners. Both are inside this unit's closure — the fourth conjunct is
-  # about what the production listener is built with, and a CRL reload rebuilds it.
   "mcp-re-proxy/src/tls_plane/mod.rs",
-  "mcp-re-proxy/src/tls_plane/client_revocation_posture.rs",
-  "mcp-re-proxy/src/tls_plane/crl_reload_worker/mod.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
 evidence = [
-  "test://proxy/tls/listener_security_state",
-  "mutation://proxy/tls/listener_security_state",
-  # A DIFFERENT proposition from the two above, named separately so neither can stand for
-  # the other. The state battery measures the anchor epoch, resumption and the signing
-  # budget, and says nothing about revocation admission. This one is THM-0054: the
-  # handshake half — a revoked client, a stale CRL, and a client whose status the configured
-  # CRLs cannot determine — with the construction-site half beside it.
-  "test://proxy/tls/client_revocation_admission",
+  "test://proxy/listener_state/one_state_or_none",
+  "mutation://proxy/listener_state/one_state_or_none",
+]
+tested_symbols = [
+  "lib#tls_listener_state::tests::the_epoch_digests_the_anchors_this_state_owns",
+  "lib#tls_listener_state::tests::every_config_this_owner_builds_carries_this_states_epoch_bound_store",
+  "lib#tls_listener_state::tests::a_rebuild_keeps_the_cache_and_the_epoch_of_the_state_it_was_built_through",
+  "lib#tls_listener_state::tests::a_different_anchor_set_is_a_different_state_with_its_own_empty_cache",
+  "lib#tls_listener_state::tests::no_config_this_owner_builds_can_resume_outside_the_store",
+  "lib#tls_listener_state::tests::a_delegated_rebuild_reuses_the_listeners_signing_budget",
+]
+
+# THM-0054 IS `critical` AND HAD NO FALSIFIER. It shared a unit with THM-0048 and THM-0103,
+# whose eight probes attack the listener state and the epoch store; not one named it. That is
+# one of the 22 in `theorem-falsifier-coverage-2026-09-18.md`, and the split is what made it
+# merge-fatal rather than invisible. M76 calls the one method the builder's own doc says is
+# unreachable.
+#
+# `the_rules_would_catch_each_regression` is the source-text inventory's own self-test, and it
+# is the reason the four `no_production_code…` controls are evidence rather than a grep: a rule
+# that matched nothing would satisfy them all.
+[[unit]]
+id = "proxy.client_certificate_posture"
+class = "V0"
+description = "Every client-certificate verifier a production MCP-RE listener uses denies unknown revocation status, enforces revocation over the full chain and enforces CRL expiration, with no configuration or argument that can relax any of the three — and the only other verifier in the tree is the declared fault injector."
+paths = [
+  "mcp-re-proxy/src/tls_listener_state/client_verifier.rs",
+  "mcp-re-proxy/src/tls_plane/client_revocation_posture.rs",
+  "mcp-re-proxy/src/tls_plane/crl_reload_worker/mod.rs",
+  "mcp-re-proxy/src/tls.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/client_certificate_posture/deny_unknown_no_opt_out",
+  "mutation://proxy/client_certificate_posture/deny_unknown_no_opt_out",
 ]
 tested_symbols = [
   "tests/integration#tls_test::revoked_client_cert_handshake_is_rejected",
@@ -920,12 +939,27 @@ tested_symbols = [
   "tests/integration#client_verifier_posture_test::the_builder_enforces_expiration_and_admits_no_posture_argument",
   "tests/integration#client_verifier_posture_test::the_only_other_verifier_is_the_declared_fault_injector",
   "tests/integration#client_verifier_posture_test::the_rules_would_catch_each_regression",
-  "lib#tls_listener_state::tests::the_epoch_digests_the_anchors_this_state_owns",
-  "lib#tls_listener_state::tests::every_config_this_owner_builds_carries_this_states_epoch_bound_store",
-  "lib#tls_listener_state::tests::a_rebuild_keeps_the_cache_and_the_epoch_of_the_state_it_was_built_through",
-  "lib#tls_listener_state::tests::a_different_anchor_set_is_a_different_state_with_its_own_empty_cache",
-  "lib#tls_listener_state::tests::no_config_this_owner_builds_can_resume_outside_the_store",
-  "lib#tls_listener_state::tests::a_delegated_rebuild_reuses_the_listeners_signing_budget",
+]
+
+# M118 is the anti-vacuity probe and is worth naming as one: a store that refused every
+# resumption would satisfy M116 and M117 and break every honest handshake.
+[[unit]]
+id = "proxy.epoch_bound_session_store"
+class = "V0"
+description = "The epoch-bound TLS session store resumes a session under the epoch that tagged it and under no other: every value written carries the epoch in force at the write, prefixed at that epoch's own width; every read splits at that same width; a superseded session is refused and EVICTED rather than left to be re-rejected; and the epoch is a function of the anchor SET, not of its order or multiplicity."
+paths = [
+  "mcp-re-proxy/src/tls_listener_state/auth_epoch.rs",
+  "mcp-re-proxy/src/tls_listener_state/resumption_binding.rs",
+  "mcp-re-proxy/src/tls_listener_state/resumption_acceptance.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/epoch_bound_store/resumes_under_its_own_epoch",
+  "mutation://proxy/epoch_bound_store/resumes_under_its_own_epoch",
+]
+tested_symbols = [
   "lib#tls_listener_state::resumption_acceptance::handshakes::a_second_connection_resumes_while_the_trust_epoch_holds",
   "lib#tls_listener_state::resumption_acceptance::handshakes::withdrawing_a_trusted_ca_stops_resumption_and_forces_a_full_handshake",
   "lib#tls_listener_state::resumption_acceptance::handshakes::republishing_the_epoch_of_an_unchanged_ca_set_does_not_stop_resumption",
@@ -934,52 +968,15 @@ tested_symbols = [
   "lib#tls_listener_state::auth_epoch::tests::a_session_stored_under_a_withdrawn_anchor_does_not_resume",
   "lib#tls_listener_state::auth_epoch::tests::a_stale_session_is_evicted_by_get_not_left_to_be_re_rejected",
   "lib#tls_listener_state::auth_epoch::tests::a_rebuild_that_republishes_the_same_trust_keeps_the_cache",
-  # A STORE capability, and THM-0103's subject. It was named
-  # `a_rebuild_with_withdrawn_trust_advances_the_epoch_and_stops_resumption` and read as
-  # evidence for a listener-level epoch advance that no build path performs:
-  # `bind_resumption` hands `republish` the epoch the store already holds, so the change
-  # branch never fires outside a call made by hand. THM-0048 now states cache
-  # NON-CONTINUITY across a listener replacement and claims no live advance; this unit
-  # supports both theorems, so the name is what keeps the two propositions apart.
   "lib#tls_listener_state::auth_epoch::tests::republishing_a_different_epoch_supersedes_the_stores_sessions",
   "lib#tls_listener_state::auth_epoch::tests::withdrawing_an_anchor_changes_the_epoch",
   "lib#tls_listener_state::auth_epoch::tests::the_anchor_set_alone_determines_the_epoch",
-  # Registered by the #581 slice: five controls existed in the module and were named by no
-  # unit, so the store contract THM-0103 states rested on evidence the fingerprint did not
-  # carry. The epoch is a function of the anchor SET — order and duplication are not inputs —
-  # and the publication reports a change exactly when there is one.
   "lib#tls_listener_state::auth_epoch::tests::the_epoch_is_a_property_of_the_anchor_set_not_its_order",
   "lib#tls_listener_state::auth_epoch::tests::a_duplicated_anchor_does_not_change_the_epoch",
   "lib#tls_listener_state::auth_epoch::tests::the_epoch_domain_names_the_current_definition",
   "lib#tls_listener_state::auth_epoch::tests::storing_an_identical_epoch_reports_no_change",
   "lib#tls_listener_state::auth_epoch::tests::storing_a_different_epoch_reports_the_previous_one",
 ]
-
-# ---------------------------------------------------------------------------
-# Contract-consumption edges
-# ---------------------------------------------------------------------------
-#
-# `sealed = true` is an assurance obligation, not an optimization switch (§6, §"Contract
-# sealing"). Before an edge may be sealed, a review must establish that the consumer's
-# security reasoning about the dependency is FULLY represented by the named exported
-# contract. If that sentence is not defensible, the edge is unsealed.
-#
-# The engine must never infer sealing after the fact. An edge is sealed by an explicit,
-# reviewed commit to this file, before the change whose propagation it stops.
-#
-# No edges are declared yet: no unit exports a contract yet.
-
-# ---------------------------------------------------------------------------
-# Phase 2 pilot — promoted
-# ---------------------------------------------------------------------------
-#
-# The first unit carrying formal evidence. Its boundary decision is recorded in
-# baseline/phase2-pilot-boundary-decision.md; the measured outcome, including the two
-# places the tool made us change an idiom, is in the "Phase 2 result" section there.
-#
-# `features` names the Cargo feature that carries the specification text. It is off in
-# every production build, so the proof constrains code that ships without the prover in
-# its dependency graph.
 
 [[unit]]
 id = "core.time_rfc3339"
@@ -2377,8 +2374,13 @@ rationale = "The chain evaluated is projected from the acceptance, so the verdic
 [[edge]]
 # The revocation index this unit consults is the one the CRL loader builds; a weakened
 # index changes every verdict here without any control in this unit going red.
+#
+# RETARGETED by the ADR-MCPRE-068 Phase-1 split. The rationale names the per-request
+# REVOCATION verdict, which is `proxy.client_certificate_posture`'s proposition — not the
+# listener assembly's and not the epoch store's. Pointing it at the old wide unit made the
+# prerequisite the whole listener.
 kind = "COMPILE_DEPENDENCY"
-from = "proxy.tls_listener_state"
+from = "proxy.client_certificate_posture"
 to = "proxy.credential_currency"
 rationale = "The per-request revocation verdict IS the client-revocation index's, consulted at request time. A loader that admitted a CRL without a nextUpdate, or keyed the index by the wrong coordinate, would change what this unit concludes while its controls — which vary the CERTIFICATE and the CRL contents, not the loader — stayed green."
 
@@ -5069,83 +5071,70 @@ tested_symbols = [
 # record's DELIVERY fail differently and are measured by different controls.
 # ---------------------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------------------
+# ADR-MCPRE-068 Phase 1 — a record's coordinates and its vocabulary are two authorities.
+#
+# `proxy.audit_record_coordinates` carried THM-0069's whole statement AND THM-0071's half of
+# it. One decides WHERE a verdict is written; the other decides in WHOSE WORDS. Last on the
+# campaign ruling's scheduler.
+# ---------------------------------------------------------------------------------------
+
+# THE COORDINATES, which is THM-0069's whole statement. Both existing probes attack
+# `subject.rs` and both are its.
 [[unit]]
-id = "proxy.audit_record_coordinates"
+id = "proxy.audit_authority_coordinates"
 class = "V0"
-description = "What a security record may say, and in whose vocabulary: a request record always states an authorization outcome, a response record has none to carry, and the Core verdict and the authorization verdict occupy separate coordinates that cannot be read as each other."
+description = "A security record states each authority's outcome in that authority's own coordinate: every request record states an authorization outcome — not configured, authorized, or refused — a response record carries none because there is nothing after the dispatch for a policy to have decided, and the Core verdict and the authorization verdict occupy separate coordinates that cannot be read as each other."
 paths = [
   "mcp-re-proxy/src/audit_record/mod.rs",
   "mcp-re-proxy/src/audit_record/subject.rs",
-  # R11-106. The exchange-side CARRIER of the two verdicts this unit composes. It is here
-  # rather than in the serving unit because what the record may SAY about each authority is
-  # this unit's claim, and the carrier is what guarantees the two never move together.
   "mcp-re-proxy/src/http_profile_serve/authority_verdicts.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = [
+  "test://proxy/audit_coordinates/each_authority_its_own",
+  "mutation://proxy/audit_coordinates/each_authority_its_own",
+]
+tested_symbols = [
+  "lib#audit_record::subject::tests::a_request_record_contributes_the_authorization_authoritys_own_fields",
+  "lib#audit_record::subject::tests::a_response_record_contributes_nothing_to_say",
+  "lib#audit_record::subject::tests::every_constructor_lands_on_the_arm_core_says_it_is_about",
+  "lib#audit_record::subject::tests::a_verdict_core_did_not_reach_carries_no_core_reason",
+  "lib#audit_record::subject::tests::the_admission_and_authorization_coordinates_are_both_present_and_distinct",
+  "lib#http_profile_serve::authority_verdicts::tests::the_two_verdicts_start_absent_and_are_set_independently",
+  "lib#audit_record::tests::the_two_coordinates_stay_separate_on_one_record",
+]
+
+# THM-0071's HALF of the old unit — *recorded as the audit-vocabulary authority the refusal
+# carries*. It is a different authority from the coordinates next door: one decides WHERE a
+# verdict is written, this one decides in WHOSE WORDS. THREE OUTCOMES ARE NOT TWO: `not
+# configured` and `authorized` are different facts about a deployment, and a record that renders
+# the first as the second reports a decision nobody made. M77 is that weakening.
+[[unit]]
+id = "proxy.audit_vocabulary_import"
+class = "V0"
+description = "The authorization vocabulary is imported at the point the policy authority speaks and not before: a deployment that configured no policy renders as `not configured` rather than as an authorization, a policy denial puts its own token in the authorization coordinate, the two refusal arms stay distinguishable in the record, and a client-named target is classified as text rather than as a token this crate closes."
+paths = [
   "mcp-re-proxy/src/authorization/audit.rs",
   "mcp-re-proxy/src/authorization/audit/fields.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://proxy/audit/record_coordinates", "mutation://proxy/audit/record_coordinates"]
-# `before_policy_imports_no_vocabulary` is the ADR-MCPRE-066 poison pill: the arm reached
-# before any policy ran must not borrow a policy token, because a reader holding one cannot
-# tell whether a policy was ever consulted.
+evidence = [
+  "test://proxy/audit_vocabulary/imported_where_the_authority_speaks",
+  "mutation://proxy/audit_vocabulary/imported_where_the_authority_speaks",
+]
 tested_symbols = [
-  # r11 R11-164. The two controls these replace asserted the value they had just constructed:
-  # R3's structural half is the absence of an `Option` in the enum, which is a compile-time
-  # fact no runtime control can fail to observe, and the citation spent a test-evidence slot
-  # on it. What CAN regress is the DELEGATION — an arm that rebuilds, filters or renames what
-  # the authority produced — so that is what is measured, against the facet's own projection
-  # rather than a literal.
-  "lib#audit_record::subject::tests::a_request_record_contributes_the_authorization_authoritys_own_fields",
-  "lib#audit_record::subject::tests::a_response_record_contributes_nothing_to_say",
-  # R11-161. WHICH HALF a record is about was represented twice — by the arm and by the
-  # event's own `event_type` — and the two could disagree, because every constructor took
-  # any event. No public constructor takes one now, and the representation is private, so a
-  # mismatched inhabitant is UNNAMEABLE rather than refused. The first control is what makes
-  # that checkable: each constructor's arm must equal what CORE says the event's half is, so
-  # one rewired to the wrong Core call fails the battery instead of compiling. The second
-  # keeps the two rejection shapes apart — a verdict Core reached carries its token, one it
-  # did not reach carries none, and folding them would put a policy's refusal into Core's
-  # `reason`.
-  "lib#audit_record::subject::tests::every_constructor_lands_on_the_arm_core_says_it_is_about",
-  "lib#audit_record::subject::tests::a_verdict_core_did_not_reach_carries_no_core_reason",
-  # R11-106 / ADR-MCPRE-066 Addendum 1. THREE authorities now, still composed and never
-  # merged: one token meaning "both are content" would lose the distinction in a way no
-  # reader could detect. The control also reads a Degraded serve back off the record, which
-  # is the whole of what R11-106 asked for.
-  "lib#audit_record::subject::tests::the_admission_and_authorization_coordinates_are_both_present_and_distinct",
-  # The carrier, which the module-size ratchet found: two verdict fields on the serving root
-  # became a type when the admission one joined, and the property is that they do NOT move
-  # together — an exchange can refuse after admission and before authorization, and a single
-  # "verdicts reached" flag could not say so.
-  "lib#http_profile_serve::authority_verdicts::tests::the_two_verdicts_start_absent_and_are_set_independently",
-  "lib#audit_record::tests::the_two_coordinates_stay_separate_on_one_record",
   "lib#authorization::audit::tests::an_unconfigured_deployment_is_not_rendered_as_an_authorized_one",
   "lib#authorization::audit::tests::a_policy_denial_puts_its_token_in_the_authorization_coordinate",
   "lib#authorization::audit::tests::the_two_refusal_arms_are_distinguishable_in_the_record",
   "lib#authorization::audit::tests::before_policy_imports_no_vocabulary",
   "lib#authorization::audit::fields::tests::the_unconfigured_line_cannot_be_read_as_an_authorization",
-  # Which values this authority calls a closed token and which it calls open text is a
-  # COORDINATE decision — who may say what, in whose vocabulary — so its control lives here
-  # rather than with the module that spells them. `target_field` is the one place a `Token`
-  # arm and a `Text` arm sit in one match, so it is the one place the decision can go wrong.
   "lib#authorization::audit::fields::tests::a_client_named_target_is_classified_as_text",
 ]
-
-# r11 W2-A. A THIRD unit beside the coordinate and delivery ones, because this is a third
-# question. `proxy.audit_record_coordinates` claims what a record MAY SAY and in whose
-# vocabulary; `proxy.audit_delivery` claims that the stream is honest about what reached it.
-# Neither states that the TEXT preserves what was said, and attaching that here would put a
-# claim inside a unit whose evidence closure does not establish it.
-#
-# It is not folded into the delivery unit for a second reason: that unit's paths are the
-# sink, and putting the encoding property there would make the unit boundary assert the very
-# ownership this slice exists to refuse — that the transport owns the format.
-#
-# Two files, one proposition. `scalar.rs` is the injective escape and its inverse, statable
-# with nothing in scope but a string; `text.rs` is the record grammar built over it. The
-# claim is the composition, so the closure is both.
 
 [[unit]]
 id = "proxy.audit_text_rendering"

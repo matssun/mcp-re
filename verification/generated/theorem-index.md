@@ -85,13 +85,13 @@ any of them is closed.
 | THM-0045 | The backend is reached only by consuming a fully assembled pre-dispatch commitment | proxy.dispatch_commitment | unit://proxy.dispatch_commitment | live |
 | THM-0046 | A refusal carries which authority reached it, over a closed set, unrendered | proxy.refusal_provenance | unit://proxy.refusal_provenance | live |
 | THM-0047 | The verifier's assurance products are not substitutable | http_profile.verifier_result_separation | unit://http_profile.verifier_result_separation | live |
-| THM-0048 | Every listener obtains its whole security posture through one listener state | proxy.tls_listener_state | unit://proxy.tls_listener_state | live |
+| THM-0048 | Every listener obtains its whole security posture through one listener state | proxy.listener_state_assembly | unit://proxy.listener_state_assembly | live |
 | THM-0049 | Every illegal cross-owner configuration combination is refused at layer A | proxy.cross_machine_legality | unit://proxy.cross_machine_legality | live |
 | THM-0050 | Distinct verification keys cannot feasibly be made to share a keyid | http_profile.keyid_selector | unit://http_profile.keyid_selector | live |
 | THM-0051 | The pipeline holds, at dispatch, the verification product of this very exchange | proxy.dispatch_commitment | unit://http_profile.verifier_result_separation, unit://proxy.dispatch_commitment | live |
 | THM-0052 | A dispatched body was released by the decision a configured policy produced | proxy.dispatch_commitment | unit://proxy.dispatch_commitment, unit://proxy.pdp_decision_relation | live |
 | THM-0053 | A presented admission assertion is authentic, in its window, and for this audience | http_profile.admission_assertion | unit://http_profile.admission_assertion | live |
-| THM-0054 | Every production listener denies unknown client revocation status | proxy.tls_listener_state | unit://proxy.tls_listener_state | live |
+| THM-0054 | Every production listener denies unknown client revocation status | proxy.client_certificate_posture | unit://proxy.client_certificate_posture | live |
 | THM-0055 | The keyid derivation introduces no collisions of its own | http_profile.keyid | unit://http_profile.keyid | live |
 | THM-0056 | The posture that claims nothing is produced only where no policy is configured | proxy.authorization_posture | unit://proxy.authorization_posture | live |
 | THM-0057 | A client's trust anchors are the ones the current signed manifest published | client.trust_manifest_lifecycle | unit://client.trust_manifest_lifecycle | live |
@@ -106,9 +106,9 @@ any of them is closed.
 | THM-0066 | The serving PEP resolves actors through the deployment's materialized trust authority | proxy.serving_trust_seam | unit://proxy.serving_trust_seam, unit://proxy.trust_plan | live |
 | THM-0067 | The composition root re-reads no owner's security semantics from the request | proxy.trust_composition_root | unit://proxy.trust_composition_root | live |
 | THM-0068 | A pinned transparency service is one operator-reviewed document, or it is not a pin | http_profile.scitt_service_pin | unit://http_profile.scitt_service_pin | live |
-| THM-0069 | A security record states each authority's outcome in that authority's own coordinate | proxy.audit_record_coordinates | unit://proxy.audit_record_coordinates, unit://proxy.refusal_provenance | live |
+| THM-0069 | A security record states each authority's outcome in that authority's own coordinate | proxy.audit_authority_coordinates | unit://proxy.audit_authority_coordinates, unit://proxy.refusal_provenance | live |
 | THM-0070 | The record stream is honest about what reached it | proxy.audit_delivery | unit://proxy.audit_delivery | live |
-| THM-0071 | Every reachable in-exchange refusal has a typed provenance that reaches the record | proxy.audit_record_coordinates | unit://proxy.audit_record_coordinates, unit://proxy.refusal_provenance | live |
+| THM-0071 | Every reachable in-exchange refusal has a typed provenance that reaches the record | proxy.audit_vocabulary_import | unit://proxy.audit_vocabulary_import, unit://proxy.refusal_provenance | live |
 | THM-0072 | A verified receipt proves registration on the service this deployment pinned | http_profile.scitt_service_pin | unit://http_profile.scitt_service_pin | live |
 | THM-0073 | Serving materialization refuses a deployment whose two signing roles are one key | proxy.signing_role_separation | unit://proxy.signing_role_separation | live |
 | THM-0074 | No unearned dispatch | proxy.dispatch_commitment | unit://proxy.dispatch_commitment, unit://proxy.exchange_relation | live |
@@ -140,7 +140,7 @@ any of them is closed.
 | THM-0100 | A replica's exposure to a key its document no longer enrols is confined to the serving interval it prints | proxy.trust_plane_runtime | unit://proxy.trust_plane_runtime | live |
 | THM-0101 | An emitted exchange transition corresponds to the work that justifies it, except the six the assembly owns | proxy.exchange_transition_ownership | unit://proxy.exchange_publication, unit://proxy.exchange_transition_ownership | live |
 | THM-0102 | A validated deployment's connection-age bound never exceeds the credential lifetime it reports as its exposure window | proxy.client_credential_window | unit://proxy.client_credential_window, unit://proxy.client_credential_window_sole_producer | live |
-| THM-0103 | The epoch-bound session store resumes a session under the epoch that tagged it, and under no other | proxy.tls_listener_state | unit://proxy.tls_listener_state | live |
+| THM-0103 | The epoch-bound session store resumes a session under the epoch that tagged it, and under no other | proxy.epoch_bound_session_store | unit://proxy.epoch_bound_session_store | live |
 | THM-0104 | Shutdown stops admission and bounds the wait on admitted work; what the drain leaves behind it never resumes | proxy.serving_drain | unit://proxy.serving_drain | live |
 | THM-0105 | Replay retention is a bounded per-replica account, charged before the store is touched and handed back only by an answer that proves nothing was retained | proxy.async_replay_retention | unit://proxy.async_replay_retention | live |
 | THM-0106 | The Redis replay backend refuses a server that may drop a nonce, and turns every non-answer into an outage | proxy.redis_replay_adapter | unit://proxy.redis_replay_adapter | live |
