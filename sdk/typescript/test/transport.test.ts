@@ -28,11 +28,15 @@ const boundVerdict = vi.hoisted(() => ({ override: null as boolean | null }));
 // a verdict rather than about producing one. `boundVerdict` stays as the narrow knob the
 // binding tests already use.
 const coreVerdict = vi.hoisted(() => ({ override: null as Record<string, unknown> | null }));
+// The request body the core was handed, recorded on every call. Read by the byte-identity
+// control below; nothing else depends on it, and it is never used to CHANGE a verdict.
+const lastVerifiedRequestBody = vi.hoisted(() => ({ value: null as Buffer | null }));
 vi.mock("../native/binding.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../native/binding.js")>();
   return {
     ...actual,
     verifyResponse: (...args: Parameters<typeof actual.verifyResponse>) => {
+      lastVerifiedRequestBody.value = args[6] as Buffer;
       if (coreVerdict.override !== null) return coreVerdict.override;
       return boundVerdict.override === null
         ? actual.verifyResponse(...args)
@@ -1051,6 +1055,33 @@ describe("McpReHttpTransport verified-reply shape", () => {
         `${body} must not be delivered as a result`,
       ).toBe("mcp-re.malformed_envelope");
     }
+  });
+
+  it("shows the verifier the bytes that were transmitted", async () => {
+    // The signature covers BYTES. `signs the request body the caller's message described`
+    // reads the posted body as JSON, so it cannot tell `signed.body` from a
+    // re-serialization of it — both parse to the same document — and an implementation
+    // that re-derived the bytes for either leg would keep it green. What the exchange
+    // must establish is byte identity between what went on the wire and what the verdict
+    // was computed over; anything else answers a question nobody asked.
+    let posted: Buffer | null = null;
+    coreVerdict.override = OK;
+    try {
+      const transport = new McpReHttpTransport(minimalConfig(), async (_m, _u, _h, body) => {
+        posted = body;
+        return { status: 200, headers: [], body: Buffer.from('{"jsonrpc":"2.0","id":9,"result":{}}') };
+      });
+      await transport.start();
+      transport.onmessage = () => {};
+      await transport.send(REQUEST);
+    } finally {
+      coreVerdict.override = null;
+    }
+    expect(posted, "the poster was never called").not.toBeNull();
+    expect(
+      lastVerifiedRequestBody.value?.equals(posted as unknown as Buffer),
+      "the verifier judged bytes other than the ones transmitted",
+    ).toBe(true);
   });
 
   it("still delivers an ordinary verified reply", async () => {

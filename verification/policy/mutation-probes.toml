@@ -5678,3 +5678,81 @@ expect_red = [
 note = """
 The TypeScript instance of M206.
 """
+
+[[probe]]
+id = "M209-python-the-verifier-sees-the-transmitted-bytes"
+unit = "sdk_python.exchange_binding"
+theorem = "THM-0094"
+conjunct = "the value returned by sign_request is the one POSTed and the one passed to the verifier, and nothing is re-derived or re-serialized for it"
+path = "sdk/python/python/mcp_re_sdk/transport.py"
+anchor = """
+            reply = await poster(signed.method, signed.target_uri, signed.headers, signed.body())
+"""
+weakening = """
+            reply = await poster(
+                signed.method,
+                signed.target_uri,
+                signed.headers,
+                json.dumps(json.loads(signed.body())).encode(),
+            )
+"""
+expect_red = [
+  "pytest#tests/test_transport.py::test_the_verifier_is_shown_the_bytes_that_were_transmitted",
+]
+note = """
+THIS PROBE FAILED FIRST, and the reason is instructive: the declared control read the posted
+body as JSON, so it could not tell `signed.body()` from a re-serialization of it. Both decode
+to the same document, and an implementation that re-derived the bytes for either leg kept it
+green.
+
+THE PROPOSITION IS AN ABSENCE -- "nothing is re-derived, re-serialized or reconstructed" --
+so the weakening ADDS a step rather than deleting one, and the control it needs asserts BYTE
+identity rather than document equality. The new control captures what the poster received and
+what the verifier was handed and compares the two: the signature covers bytes, and a verdict
+computed over anything else answers a question nobody asked.
+"""
+
+[[probe]]
+id = "M210-typescript-the-verifier-sees-the-transmitted-bytes"
+unit = "sdk_typescript.exchange_binding"
+theorem = "THM-0095"
+conjunct = "the value returned by signRequest is the one POSTed and the one passed to the verifier, and nothing is re-derived or re-serialized for it"
+path = "sdk/typescript/src/transport.ts"
+anchor = """
+        const httpReply = await this.#poster(
+          signed.method,
+          signed.targetUri,
+          signed.headers,
+          signed.body,
+        );
+"""
+weakening = """
+        const httpReply = await this.#poster(
+          signed.method,
+          signed.targetUri,
+          signed.headers,
+          Buffer.from(
+            JSON.stringify(
+              Object.fromEntries(
+                Object.entries(JSON.parse(signed.body.toString("utf8")) as object).reverse(),
+              ),
+            ),
+          ),
+        );
+"""
+expect_red = [
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > shows the verifier the bytes that were transmitted",
+]
+note = """
+The TypeScript instance of M209, with the same gap and the same repair: the declared control
+read the posted body as JSON and could not see a re-serialization. The new control records
+what the poster received and what the core was handed, and compares the buffers.
+
+THE FIRST WEAKENING HERE WAS NOT ONE. `JSON.stringify(JSON.parse(x))` round-trips the core's
+compact output to the SAME BYTES, so the probe changed nothing and the control stayed green
+truthfully. Python's twin differs only by accident of its library: `json.dumps` defaults to
+`", "` / `": "` separators, so the same round-trip there does change the bytes. The weakening
+now REORDERS the members, which preserves the document and changes the serialization -- which
+is what "re-derived" means here. A probe whose mutation is a no-op measures nothing, and the
+lane reporting FAIL for it was correct both times.
+"""

@@ -4139,9 +4139,13 @@ paths = ["sdk/python/python/mcp_re_sdk/transport.py"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://sdk_python/exchange_binding/the_verifier_sees_this_transmission"]
+evidence = [
+  "test://sdk_python/exchange_binding/the_verifier_sees_this_transmission",
+  "mutation://sdk_python/exchange_binding/the_verifier_sees_this_transmission",
+]
 tested_symbols = [
   "pytest#tests/test_transport.py::test_the_signed_body_is_the_request_the_caller_described",
+  "pytest#tests/test_transport.py::test_the_verifier_is_shown_the_bytes_that_were_transmitted",
   # The anti-vacuity control for the stubbed verdicts: a duck-typed stub cannot track the
   # core's shape, so a renamed member would leave the adapter reading `None` in production.
   "pytest#tests/test_transport.py::test_the_stubbed_verdict_shape_is_the_cores_own",
@@ -4557,9 +4561,13 @@ paths = ["sdk/typescript/src/transport.ts"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://sdk_typescript/exchange_binding/the_verifier_sees_this_transmission"]
+evidence = [
+  "test://sdk_typescript/exchange_binding/the_verifier_sees_this_transmission",
+  "mutation://sdk_typescript/exchange_binding/the_verifier_sees_this_transmission",
+]
 tested_symbols = [
   "vitest#test/transport.test.ts > McpReHttpTransport signing inputs > signs the request body the caller's message described",
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > shows the verifier the bytes that were transmitted",
   # ADR-MCPRE-069 `register`
   "vitest#test/transport.test.ts > McpReHttpTransport signing inputs > signs a request with no params",
   "vitest#test/transport.test.ts > the forced verdicts are the core's own shape > declares no member the binding does not",

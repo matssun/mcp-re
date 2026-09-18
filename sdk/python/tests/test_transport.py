@@ -694,6 +694,39 @@ async def test_the_signed_body_is_the_request_the_caller_described():
 
 
 @pytest.mark.anyio
+async def test_the_verifier_is_shown_the_bytes_that_were_transmitted(monkeypatch):
+    """The verdict is about the transmission, not about a body that resembles it.
+
+    `test_the_signed_body_is_the_request_the_caller_described` reads the posted body as
+    JSON, so it cannot tell `signed.body()` from a re-serialization of it: both decode to
+    the same document, and an implementation that re-derived the bytes for either leg
+    would keep it green. What the exchange must establish is BYTE identity — the value
+    `sign_request` produced is the one that went on the wire and the one the verifier
+    judged — because the signature covers bytes, and a verdict computed over anything
+    else answers a question nobody asked.
+    """
+    import mcp_re_sdk.transport as t
+
+    seen: dict = {}
+
+    async def poster(method, target_uri, headers, body) -> HttpReply:
+        seen["posted"] = body
+        return HttpReply(status=200, headers=[], body=b"{}")
+
+    def capturing_verify(*args, **kwargs):
+        seen["verified"] = args[6]
+        raise McpReError("mcp-re.replay_detected")
+
+    monkeypatch.setattr(t._core, "verify_response", capturing_verify)
+    await _send(_config(), poster, _request(method="tools/list", id=7))
+
+    assert seen["posted"] == seen["verified"], (
+        "the verifier judged bytes other than the ones transmitted"
+    )
+    assert json.loads(seen["posted"])["method"] == "tools/list"
+
+
+@pytest.mark.anyio
 async def test_the_correlation_entry_records_the_authorization_binding_digest():
     # ADR-MCPS-044 enumerates it; retained for audit only, never re-interpreted.
     #
