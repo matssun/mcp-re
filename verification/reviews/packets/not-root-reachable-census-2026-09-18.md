@@ -75,7 +75,7 @@ proposition that is real, owned, evidenced, and simply not part of a boundary pr
 > exists to avoid, arriving through the fix rather than through the defect.
 >
 > Recorded as a dependency correction in
-> `verification/reviews/claim-corrections/THM-0075-2026-09-18.json`: no statement, consequence
+> `verification/claim-corrections/THM-0075-2026-09-18.json`: no statement, consequence
 > or scope text moves.
 
 The original five-step record follows, unedited.

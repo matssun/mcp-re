@@ -51,9 +51,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-#: Where correction records live — in the tree, beside the reviews they extend, for the
-#: reason `_review` gives: a record that is not in the tree cannot be audited from a clone.
-CORRECTIONS_DIR = ("reviews", "claim-corrections")
+#: Where correction records live — in the tree, for the reason `_review` gives: a record that
+#: is not in the tree cannot be audited from a clone.
+#:
+#: DELIBERATELY NOT UNDER `verification/reviews/`, and `scripts/registry_approval_gate.py`
+#: is why. That gate requires every record under `reviews/` to name a `reviewed_fingerprint`,
+#: because "a review that does not name what it reviewed approves nothing in particular" — and
+#: it caught these records on their first CI run. It was right. A correction is NOT a review;
+#: it is a recorded delta ON one, and filing it beside the approvals invites exactly the
+#: confusion the gate exists to prevent.
+CORRECTIONS_DIR = ("claim-corrections",)
 
 #: The record schema, CLOSED. Same rule as `_review._RECORD_KEYS`: a key outside this set is
 #: a fact this schema cannot compare, and a record carrying one would be read as authorizing

@@ -849,7 +849,7 @@ establishment and has not yet produced it*. Recording one as the other is how a 
 premise and a temporary backlog become indistinguishable — which is the exact defect §4.2
 exists to fix, reintroduced one layer over.
 
-**THE CLAIM-CORRECTION REGISTER, `verification/reviews/claim-corrections/`, is a third thing
+**THE CLAIM-CORRECTION REGISTER, `verification/claim-corrections/`, is a third thing
 and is NOT a ratchet.** The owner's ruling of 2026-09-18 makes a class of Phase-1 claim edit
 ordinary work:
 

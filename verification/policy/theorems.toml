@@ -4106,7 +4106,7 @@ owner = "proxy.signing_credential_provenance"
 review_requirement = "Owner security-specification review"
 supported_by = ["unit://proxy.signing_credential_provenance"]
 # ADR-MCPRE-068 Phase-1 DEPENDENCY CORRECTION, under the campaign ruling of 2026-09-18, and
-# recorded in `verification/reviews/claim-corrections/THM-0075-2026-09-18.json` because it is
+# recorded in `verification/claim-corrections/THM-0075-2026-09-18.json` because it is
 # THM-0075 whose published claim the edge moves.
 #
 # THM-0116 IS THE EDGE. This claim is that the serving path signs under the credential source
@@ -4578,7 +4578,7 @@ supported_by = [
 # correcting a statement decomposition shows overstates or misdescribes what production
 # establishes, provided the accepted promise is not weakened, removed or materially expanded.
 # Six corrections, C1-C6, recorded old->new in
-# `verification/reviews/claim-corrections/THM-0094-2026-09-18.json` with the reason from the
+# `verification/claim-corrections/THM-0094-2026-09-18.json` with the reason from the
 # decomposition, and argued in `packets/thm-0094-consequence-decomposition-2026-09-18.md` §10.
 #
 # `depends_on` WAS EMPTY AND THAT WAS FALSE: the SDK's whole cryptographic argument is

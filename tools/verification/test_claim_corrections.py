@@ -72,7 +72,23 @@ def refuses(name: str, raw: dict, expect: str) -> None:
     check(name, False, "the record was ACCEPTED")
 
 
-print("the record schema")
+print("where the register lives")
+from _claim_corrections import corrections_root  # noqa: E402
+
+_repo = Path(__file__).resolve().parents[2]
+check(
+    "the register is NOT under verification/reviews/",
+    _repo / "verification" / "reviews" not in corrections_root(_repo).parents,
+    "scripts/registry_approval_gate.py requires every record under reviews/ to name a "
+    "reviewed_fingerprint, and a correction is not a review",
+)
+check(
+    "the register is under verification/",
+    (_repo / "verification") in corrections_root(_repo).parents,
+    "a record that is not in the tree cannot be audited from a clone",
+)
+
+print("\nthe record schema")
 check("a well-formed record loads", bool(load_one(record())))
 refuses("an unknown key is refused", {**record(), "approved": True}, "unknown key")
 refuses("a missing key is refused", {k: v for k, v in record().items() if k != "reason"}, "missing required key")
