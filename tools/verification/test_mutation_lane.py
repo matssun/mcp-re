@@ -601,6 +601,34 @@ def test_an_absent_matrix_and_a_stale_artefact_are_different_refusals():
     assert "UNPREPARED" in guard
 
 
+def test_a_needed_artefact_is_looked_for_where_each_preparation_leaves_it():
+    """The Python native module has TWO spellings, and the lane refused CI over knowing one.
+
+    `maturin develop` leaves `_core.abi3.so` beside the package in the source tree;
+    `prepare_python_matrix.sh` -- the form the verification workflow runs, and the one that
+    pins an environment per supported interpreter -- builds a WHEEL and installs it, so the
+    tree has no `.so` at all. A lane that knew only the first spelling reported a correctly
+    prepared runner as an unbuilt environment and failed every Python probe on it.
+
+    Asked over the declared candidates rather than by running a probe, so it states the rule
+    instead of re-measuring one environment: the tree spelling is FIRST (a developer's own
+    build wins over an installed one), and an installed spelling follows it.
+    """
+    candidates = lane._SCRATCH_NEEDS[lane.PYTHON]["python/mcp_re_sdk/_core.abi3.so"]
+    assert candidates[0] == "python/mcp_re_sdk/_core.abi3.so", candidates
+    assert any("site-packages" in spelling for spelling in candidates[1:]), candidates
+    # And whichever is found, the battery imports it from the tree layout: the INSTALL path
+    # is the first spelling, so a probe measures one layout in both environments.
+    found = lane._first_present(
+        lane.REPO_ROOT / "sdk/python",
+        "python/mcp_re_sdk/_core.abi3.so",
+        ("does/not/exist", *candidates),
+    )
+    assert found, "neither spelling is present in this workspace"
+    for _source, relative in found:
+        assert relative == "python/mcp_re_sdk/_core.abi3.so", relative
+
+
 def test_an_unavailable_probe_is_named_in_the_verdict_line():
     """A skipped probe that did not appear in the verdict would let this job's green be
     read as "every registered probe was applied", which is the false green the whole lane

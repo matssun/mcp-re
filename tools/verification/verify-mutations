@@ -309,9 +309,24 @@ def probe_runtime(eco, toolchains: dict) -> tuple[str | None, str | None]:
 #: Both SDKs are Rust extensions with a thin language-native wrapper, so both need their
 #: compiled artefact as well as their dependency tree. The TypeScript binding's filename
 #: carries the host triple, so it is discovered rather than spelled.
+#:
+#: Each entry maps the path the battery LOOKS FOR to the places the artefact may actually
+#: live, in order. Python needs both: `maturin develop` leaves `_core.abi3.so` beside the
+#: package in the source tree, while `prepare_python_matrix.sh` -- the form CI runs, and the
+#: one that pins an environment per supported interpreter -- builds a WHEEL and installs it,
+#: leaving the tree without a `.so` at all. A lane that knew only the first spelling refused
+#: every Python probe on a correctly prepared runner and called the environment unbuilt.
 _SCRATCH_NEEDS = {
-    PYTHON: ("python/mcp_re_sdk/_core.abi3.so",),
-    TYPESCRIPT: ("node_modules", "native/*.node"),
+    PYTHON: {
+        "python/mcp_re_sdk/_core.abi3.so": (
+            "python/mcp_re_sdk/_core.abi3.so",
+            ".venv-cp*/lib/python*/site-packages/mcp_re_sdk/_core.abi3.so",
+        ),
+    },
+    TYPESCRIPT: {
+        "node_modules": ("node_modules",),
+        "native/*.node": ("native/*.node",),
+    },
 }
 
 #: The script that builds each ecosystem's matrix. NAMED, not derived from `eco.name`:
@@ -365,21 +380,16 @@ def prepare_scratch(
             f"it, so a weakening of its sources cannot be measured here: the battery would "
             f"run the OLD native code against the NEW declaration"
         )
-    for relative in needs:
-        if "*" in relative:
-            parent, _, pattern = relative.rpartition("/")
-            sources = sorted((REPO_ROOT / package / parent).glob(pattern))
-        else:
-            source = REPO_ROOT / package / relative
-            sources = [source] if source.exists() else []
+    for wanted, candidates in needs.items():
+        sources = _first_present(REPO_ROOT / package, wanted, candidates)
         if not sources:
             return UNPREPARED, (
-                f"{eco.name} battery needs {package}/{relative}, which this workspace does "
+                f"{eco.name} battery needs {package}/{wanted}, which this workspace does "
                 f"not have. Prepared by `{_MATRIX_SCRIPT[eco]}`; a lane that ran without it "
                 f"would report the resulting import failure as a red battery"
             )
-        for source in sources:
-            target = tree / package / source.relative_to(REPO_ROOT / package)
+        for source, relative in sources:
+            target = tree / package / relative
             if target.exists():
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -388,6 +398,38 @@ def prepare_scratch(
             else:
                 shutil.copy2(source, target)
     return None
+
+
+def _first_present(root: Path, wanted: str, candidates) -> list[tuple[Path, str]]:
+    """The first candidate spelling that exists, as `(source, path under root)` pairs.
+
+    ORDER IS AUTHORITY: the source tree first, then a prepared environment. Both spellings
+    name the same built artefact, and where it lands depends on which preparation ran -- a
+    developer's `maturin develop` or the matrix script CI uses.
+
+    `wanted` is where it is INSTALLED in the scratch tree, and it is the key the battery
+    imports from -- never the spelling it happened to be found at. So a probe measures one
+    layout whichever preparation built the artefact.
+    """
+    for candidate in candidates:
+        if "*" in candidate:
+            # The spelling may glob in any segment (`.venv-cp*/lib/python*/...`), so the
+            # whole thing is walked rather than only its last one.
+            found = sorted(root.glob(candidate))
+        else:
+            source = root / candidate
+            found = [source] if source.exists() else []
+        if not found:
+            continue
+        install_parent = wanted.rpartition("/")[0]
+        return [
+            (
+                source,
+                f"{install_parent}/{source.name}" if install_parent else source.name,
+            )
+            for source in found
+        ]
+    return []
 
 
 def run_battery(
