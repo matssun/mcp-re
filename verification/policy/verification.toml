@@ -3914,7 +3914,10 @@ paths = ["mcp-re-client-proxy/src/proxy.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://client/proxy/request_correspondence"]
+evidence = [
+  "test://client/proxy/request_correspondence",
+  "mutation://client/proxy/request_correspondence",
+]
 # Measured through `include_str!`, which makes the scan a COMPILE-TIME dependency on the
 # file it is about: a module that moves or is renamed stops the battery compiling rather
 # than leaving it to measure nothing. The negative member is the load-bearing one —
@@ -5487,7 +5490,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://proxy/signing/credential_provenance"]
+evidence = [
+  "test://proxy/signing/credential_provenance",
+  "mutation://proxy/signing/credential_provenance",
+]
 # The fourth member is not decoration. Three source-text rules go vacuously true the moment
 # a matcher stops matching, and a green run over a moved composition root would then mean
 # nothing at all.
@@ -6405,7 +6411,10 @@ paths = ["mcp-re-proxy/src/app.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://proxy/continuation_installation/root_installs_what_was_established"]
+evidence = [
+  "test://proxy/continuation_installation/root_installs_what_was_established",
+  "mutation://proxy/continuation_installation/root_installs_what_was_established",
+]
 # A SOURCE INVENTORY, and the reason is a lane fact rather than a preference: no hermetic
 # configuration reaches the posture phase, so a test that starts the proxy measures nothing
 # here. The installation is three lines of straight-line code and what a reader checks by

@@ -6976,3 +6976,105 @@ THIS PROBE EXPOSED A LANE DEFECT before it measured anything: `bin/<name>` is on
 declared Cargo target shapes and the lane held a second, smaller idea of them, so the battery
 never ran and the probe was blamed. Fixed in the lane, not here.
 """
+
+[[probe]]
+id = "M253-proxy-no-production-path-installs-a-node-local-continuation-tier"
+unit = "proxy.continuation_installation"
+theorem = "THM-0091"
+conjunct = "no production path installs a node-local continuation tier — a deployment that selected nothing installs NO store"
+path = "mcp-re-proxy/src/app.rs"
+anchor = """
+    if let Some(store) = continuation_store {
+"""
+weakening = """
+    type _NodeLocal = crate::continuation_store::InMemoryContinuationStore;
+    if let Some(store) = continuation_store {
+"""
+expect_red = [
+  "tests/integration#continuation_installation_test::no_production_path_installs_a_node_local_continuation_tier",
+]
+note = """
+AN ABSENCE AGAIN, so the weakening ADDS the forbidden thing -- the same shape as M246, and the
+same reason only a rule over source can see it: a production path REACHING the node-local tier
+is a fact about what the composition root can do next, not about what it does today.
+
+The ruling this holds is from 2026-09-03. `InMemoryContinuationStore` is a `pub` item of this
+crate, so nothing but PLACEMENT stops a future composition root from reaching for it the next
+time OFF looks inconvenient -- and a node-local tier is a different capability with a different
+scope, which the OFF posture line does not describe. A deployment that selected no correlation
+capability would then hold a store whose correlation does not survive a replica change, while
+its transcript says it holds none.
+"""
+
+[[probe]]
+id = "M254-proxy-the-signing-plane-comes-from-the-materialized-source"
+unit = "proxy.signing_credential_provenance"
+theorem = "THM-0091"
+conjunct = "the signing plane is installed from the key source the materializer opened, not from one the root named itself"
+path = "mcp-re-proxy/src/app.rs"
+anchor = """
+    building.install_signing(crate::signing_plane::SigningPlane::materialize(
+        &signing_plan,
+        key_source,
+        startup_now_unix,
+        Arc::clone(&shutdown),
+    )?);
+"""
+weakening = """
+    let rival = key_source;
+    building.install_signing(crate::signing_plane::SigningPlane::materialize(
+        &signing_plan,
+        rival,
+        startup_now_unix,
+        Arc::clone(&shutdown),
+    )?);
+"""
+expect_red = [
+  "tests/integration#signing_credential_provenance_test::the_signing_plane_is_materialized_from_the_materialized_source",
+]
+note = """
+THE RULE READS THE CALL, NOT THE VALUE, and that is the honest thing for it to read: no test
+can look at a compiled binary and ask which credential a signing plane holds. What it CAN
+establish is that the composition root names the source the materializer opened -- so the
+weakening renames the binding and changes nothing else. The plane still signs with the same
+key today.
+
+That is the point. The rule is about what the root can do NEXT: a plane materialized from
+anything other than the validated source signs with a credential the deployment did not
+validate, on a data plane whose startup transcript describes a different one, and the two
+agreeing today is not a property anything holds.
+
+The first weakening for this unit attacked the rival-constructor rule instead and DID NOT
+BUILD: a bare mention of `FileKeySource::` that compiles has to be a real call, and the
+reachable constructors are feature-gated. The lane refused it as a measurement failure, which
+is correct -- and the rule it was aimed at stays covered by this unit's other controls.
+"""
+
+[[probe]]
+id = "M255-client-the-expectation-comes-from-the-request-that-was-sent"
+unit = "client.proxy_request_correspondence"
+theorem = "THM-0091"
+conjunct = "the SignedRequest handed to the transport and the ResponseExpectation handed to response verification come from ONE owner"
+path = "mcp-re-client-proxy/src/proxy.rs"
+anchor = """
+        let mut expectation = ResponseExpectation::for_signed(signed);
+"""
+weakening = """
+        let mut expectation = ResponseExpectation::for_signed(&signed.clone());
+"""
+expect_red = [
+  "lib#proxy::tests::both_verification_paths_take_the_signed_request_owner",
+]
+note = """
+A CLONE IS THE MILDEST SECOND OWNER, and it is deliberately what this weakening introduces.
+The cloned value is EQUAL today, so no behaviour changes and no behavioural test could see it
+-- which is exactly the class of edit the rule exists to catch, because the next one is a
+reconstruction rather than a copy and the rule cannot tell the two apart from the outside.
+
+What must not be overclaimed: this probe shows the rule is load-bearing over the joint it
+reads, not that a clone is itself a vulnerability. The proposition is that ONE owner produces
+both the request that goes on the wire and the expectation the response is judged against; a
+second value equal by construction today is the first step away from it, and the low-level
+verifier cannot see the joint at all -- which is why this unit exists beside
+`client.response_binding_disposition` rather than inside it.
+"""
