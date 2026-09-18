@@ -496,6 +496,16 @@ jobs:
           # the suite asserts the count is non-zero rather than only that it runs.
           python3 tools/verification/test_premise_class.py
 
+          # ADR-MCPRE-068 N3 — the severity derivation, Phase 0E. `effective_severity` is
+          # derived and never stored, which is only worth more than a stored field if the
+          # DERIVATION is what gets checked. Each control is a way to produce a number that
+          # is wrong: stopping at the root set (the reading the ratification rejected),
+          # propagating one hop, taking a minimum, defaulting an absent label to `none`, or
+          # letting a cycle make the answer depend on iteration order. The last control runs
+          # on the live registries and asserts the result is NON-EMPTY — an empty derivation
+          # would leave every fixture control above true and meaningless.
+          python3 tools/verification/test_assurance_graph.py
+
       # ADR-MCPRE-068 §9.4 — the class-transition ratchet. A downgrade from `proved` to
       # `tested` passes registry adequacy trivially: delete the formal URI, delete the
       # class, and nothing notices the claim got weaker. Only a comparison against the base
@@ -513,6 +523,20 @@ jobs:
         run: |
           python3 scripts/evidence_class_ratchet.py --selftest
           python3 scripts/evidence_class_ratchet.py --base origin/main
+
+      # ADR-MCPRE-068 N1 — the obligation ratchet, Phase 0E. Same `fetch-depth: 0` clone and
+      # the same NO FETCH rule as the step above, for the same reason.
+      #
+      # It holds the 63 falsifier obligations that predate N1's activation. What makes it a
+      # ratchet rather than a waiver is that it may only SHRINK and is closed to new work: a
+      # proposition that gains an obligation by being added, reclassified or raised in
+      # severity discharges it or fails, and `tools/verification/verify --manifests` fails on
+      # the same fact independently. A registered row is not satisfied by being registered —
+      # it stays INCOMPLETE, and `review` prints it as an open obligation.
+      - name: N1 obligation ratchet (ADR-MCPRE-068 §9.4)
+        run: |
+          python3 scripts/assurance_obligation_gate.py --selftest
+          python3 scripts/assurance_obligation_gate.py --base origin/main
 
       # ADR-MCPRE-059 §28 + the ratified security boundary. The registry's `root_theorems`
       # and `docs/spec/security-boundary.md` §2 are ONE fact — what MCP-RE promises —

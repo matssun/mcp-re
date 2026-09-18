@@ -1,0 +1,615 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# THE ADR-MCPRE-068 N1 OBLIGATION BACKLOG — a MIGRATION RATCHET, and nothing else.
+#
+# N1: any proposition classified `tested` whose EFFECTIVE consequence severity is Medium,
+# High or Critical must name at least one registered falsifier that attacks its production
+# property. This file lists the propositions that owed one when the rule was switched on, so
+# that switching it on did not require discharging 63 obligations in a single change.
+#
+# WHAT IT IS NOT, and each of these is mechanical rather than aspirational
+# (ADR-MCPRE-068 §9.4, as narrowed by the owner's ratification):
+#
+#   * NOT an evidence class, an exception, a waiver, or a substitute for a falsifier. A row
+#     never subtracts from the obligation and never adds to the assurance.
+#   * An entry remains INCOMPLETE. `review` reports it as an open obligation, and an
+#     incomplete proposition does not satisfy a root assurance dependency.
+#   * CLOSED TO NEW WORK. A proposition that gains an obligation by being added,
+#     reclassified, or raised in severity discharges it or fails the gate. It may not be
+#     added here — `scripts/assurance_obligation_gate.py` refuses a row this file did not
+#     already hold at the baseline.
+#   * ONE-WAY. A row closes and never reopens; nothing returns to `unreviewed`.
+#   * Each row names its EXACT owning proposition and the obligation it owes, because a
+#     registry that cannot say what closing a row would mean is a list, not a ratchet.
+#
+# IT DOES NOT DUPLICATE `assumptions.toml`. A premise there says WHY a chain terminates
+# without MCP-RE establishing the proposition. A row here says MCP-RE OWES this
+# establishment and has not yet produced it. Recording one as the other is how a permanent
+# gap acquires a temporary shape, or a migration residue acquires a permanent one.
+#
+# THE MEASURED POPULATION IS LARGER THAN THE RECORD ESTIMATED, and the difference is the
+# ratification working. §2 estimated 42 obligated units by counting the ROOT-REACHABLE
+# estate. N3 as ratified rejects root-only severity, so a unit's own `direct` label obligates
+# it whether or not a declared root reaches it — which adds 28 propositions the estimate
+# could not see. 63 is measured, not estimated.
+#
+#   effective severity of the 63:  34 critical, 19 high, 10 medium
+#   root-reachable:                35 of 63
+#
+# `root_reachable` is recorded per row as the graph fact it is. NOT-ROOT-REACHABLE means
+# only that no currently declared system root transitively depends on this proposition. It
+# is not low importance, not complete assurance, and not permission to omit evidence — and
+# it does not reduce the obligation, which is why those rows are here at all.
+#
+# Run: python3 scripts/assurance_obligation_gate.py
+
+schema_version = 1
+baseline_sha = "2256cd74d66dcc0ede4590e2351c69bf595357a8"
+baseline_rule = "ADR-MCPRE-068 N1, activated in Phase 0E"
+
+[[obligation]]
+unit = "client.anchor_refresh"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "high"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "client.binding_spec_refusal"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "medium"
+direct_consequence_severity = "medium"
+inherited_severity = "medium"
+root_reachable = false
+status = "unreviewed"
+
+[[obligation]]
+unit = "client.delegation_policy_seal"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "medium"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "client.deployment_config"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "high"
+direct_consequence_severity = "high"
+inherited_severity = "high"
+root_reachable = false
+status = "unreviewed"
+
+[[obligation]]
+unit = "client.execution_contract"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "high"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "client.local_serving_pipeline"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "medium"
+direct_consequence_severity = "medium"
+inherited_severity = "medium"
+root_reachable = false
+status = "unreviewed"
+
+[[obligation]]
+unit = "client.manifest_floor"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "high"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "client.proxy_request_correspondence"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "critical"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "client.request_construction"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "high"
+direct_consequence_severity = "high"
+inherited_severity = "medium"
+root_reachable = false
+status = "unreviewed"
+
+[[obligation]]
+unit = "client.response_acceptance"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "critical"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "client.serving_lifetime"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "high"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "client.trust_manifest_lifecycle"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "critical"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "client.verified_outcome"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "high"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "conformance.retained_corpus"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "high"
+direct_consequence_severity = "medium"
+inherited_severity = "high"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "core.audit_vocabulary"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "medium"
+direct_consequence_severity = "medium"
+inherited_severity = "medium"
+root_reachable = false
+status = "unreviewed"
+
+[[obligation]]
+unit = "core.content_address"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "high"
+direct_consequence_severity = "high"
+inherited_severity = "none"
+root_reachable = false
+status = "unreviewed"
+
+[[obligation]]
+unit = "core.replay_seam"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "critical"
+inherited_severity = "high"
+root_reachable = false
+status = "unreviewed"
+
+[[obligation]]
+unit = "core.trust_resolver_seam"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "critical"
+inherited_severity = "medium"
+root_reachable = false
+status = "unreviewed"
+
+[[obligation]]
+unit = "host.request_freshness_inputs"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "critical"
+inherited_severity = "critical"
+root_reachable = false
+status = "unreviewed"
+
+[[obligation]]
+unit = "http_profile.admission_assertion"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "critical"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "http_profile.bodyless_acknowledgement"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "high"
+direct_consequence_severity = "high"
+inherited_severity = "none"
+root_reachable = false
+status = "unreviewed"
+
+[[obligation]]
+unit = "http_profile.keyid"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "high"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "http_profile.keyid_selector"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "critical"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "http_profile.replay_key"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "critical"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "http_profile.request_envelope"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "high"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "http_profile.response_emission_binding"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "critical"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "http_profile.retained_chain_record"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "high"
+direct_consequence_severity = "high"
+inherited_severity = "none"
+root_reachable = false
+status = "unreviewed"
+
+[[obligation]]
+unit = "http_profile.scitt_service_pin"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "high"
+direct_consequence_severity = "high"
+inherited_severity = "high"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "http_profile.submitted_hop_identity"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "high"
+direct_consequence_severity = "high"
+inherited_severity = "high"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "policy.authorization_taxonomy"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "medium"
+direct_consequence_severity = "medium"
+inherited_severity = "medium"
+root_reachable = false
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.admission_configuration_state"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "high"
+direct_consequence_severity = "high"
+inherited_severity = "none"
+root_reachable = false
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.audit_text_rendering"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "medium"
+direct_consequence_severity = "medium"
+inherited_severity = "medium"
+root_reachable = false
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.authorization_capability"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "critical"
+inherited_severity = "none"
+root_reachable = false
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.authorization_configuration_state"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "high"
+direct_consequence_severity = "high"
+inherited_severity = "none"
+root_reachable = false
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.authorization_posture"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "high"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.aws_kms_adapter"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "critical"
+inherited_severity = "high"
+root_reachable = false
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.aws_sts_credentials"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "high"
+direct_consequence_severity = "high"
+inherited_severity = "high"
+root_reachable = false
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.capsule_anchor_registration_leaf"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "medium"
+direct_consequence_severity = "medium"
+inherited_severity = "none"
+root_reachable = false
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.client_revocation_currency"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "high"
+direct_consequence_severity = "high"
+inherited_severity = "medium"
+root_reachable = false
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.continuation_installation"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "high"
+direct_consequence_severity = "high"
+inherited_severity = "high"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.continuation_materialization_shared"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "high"
+direct_consequence_severity = "high"
+inherited_severity = "high"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.cross_machine_legality"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "high"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.custody_exposure"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "critical"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.evidence_attestation"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "high"
+direct_consequence_severity = "high"
+inherited_severity = "high"
+root_reachable = false
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.gcp_kms_adapter"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "critical"
+inherited_severity = "high"
+root_reachable = false
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.kms_endpoint_authority"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "critical"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.operator_facing_redaction"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "high"
+direct_consequence_severity = "high"
+inherited_severity = "none"
+root_reachable = false
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.outstanding_id_provenance"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "high"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.pkcs11_adapter"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "critical"
+inherited_severity = "high"
+root_reachable = false
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.refusal_audit_emission"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "medium"
+direct_consequence_severity = "medium"
+inherited_severity = "medium"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.refusal_provenance"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "high"
+direct_consequence_severity = "medium"
+inherited_severity = "high"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.remote_signer_call_aws"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "medium"
+direct_consequence_severity = "medium"
+inherited_severity = "medium"
+root_reachable = false
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.remote_signer_call_gcp"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "medium"
+direct_consequence_severity = "medium"
+inherited_severity = "medium"
+root_reachable = false
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.replay_materialization"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "critical"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.response_signing"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "critical"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.retained_record_content"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "high"
+direct_consequence_severity = "high"
+inherited_severity = "high"
+root_reachable = false
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.scrapi_registration_leaf"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "medium"
+direct_consequence_severity = "medium"
+inherited_severity = "none"
+root_reachable = false
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.serving_identity_provenance"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "critical"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.signing_credential_provenance"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "high"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.signing_role_separation"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "high"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "proxy.trust_composition_root"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "high"
+direct_consequence_severity = "high"
+inherited_severity = "high"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "sdk_python.exchange_path"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "critical"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+
+[[obligation]]
+unit = "sdk_typescript.exchange_path"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "critical"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"

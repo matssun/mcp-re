@@ -52,11 +52,13 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from _assurance_graph import unmet_obligations  # noqa: E402
 from _compose import compose, contradictions, requirements  # noqa: E402
 from _evidence import evidence_store, write_bundle  # noqa: E402
 from _theorems import load_theorems, unsupported_theorems  # noqa: E402
@@ -204,6 +206,30 @@ class RunOutcome:
             return "<unreadable>"
 
 
+#: The pre-existing N1 obligations, as unit ids.
+#:
+#: Read here rather than imported from `scripts/assurance_obligation_gate.py`, which is the
+#: RATCHET over this file: the ratchet decides whether the registry may change, and this
+#: decides only whether a given obligation is new. Depending on the ratchet to answer that
+#: would make the platform lane green or red according to a script it does not run.
+OBLIGATION_DEBT = Path(__file__).resolve().parents[2] / "config" / "assurance-obligation-debt.toml"
+
+
+def registered_obligations() -> set[str]:
+    """Unit ids with a pre-existing, still-open N1 obligation row.
+
+    A MISSING FILE IS AN EMPTY SET, and that is fail-closed rather than fail-open: with no
+    registry every unmet obligation reads as new, and the lane refuses. The opposite default
+    — treating an unreadable registry as covering everything — is how a deleted debt file
+    would silently discharge 63 obligations.
+    """
+    if not OBLIGATION_DEBT.is_file():
+        return set()
+    with OBLIGATION_DEBT.open("rb") as handle:
+        doc = tomllib.load(handle)
+    return {str(row["unit"]) for row in doc.get("obligation", [])}
+
+
 def validate_manifests() -> tuple[bool, list[str]]:
     notes: list[str] = []
     try:
@@ -229,6 +255,28 @@ def validate_manifests() -> tuple[bool, list[str]]:
     defects = assumption_scope_defects(doc, assumptions)
     if defects:
         return False, defects
+    # N1's severity-gated clause (ADR-MCPRE-068 §9, activated in Phase 0E). It lives here
+    # rather than in `load_verification` because it is the one registry-adequacy clause that
+    # needs a DERIVED value: `effective_severity` is a closure over the proposition graph,
+    # and the unit loader does not hold the theorem registry. This is the first point that
+    # holds both.
+    #
+    # The rule is "owes AND is not registered", not "owes". A proposition in
+    # `config/assurance-obligation-debt.toml` is not malformed — it is honestly INCOMPLETE,
+    # which is exactly the owner's mapping: an honest unmet obligation is tracked and
+    # ratcheted, while a declaration that cannot be reconciled with its own record is fatal.
+    # `scripts/assurance_obligation_gate.py` is what keeps that registry from becoming a
+    # waiver; this check is what makes a NEW obligation fatal on the spot.
+    unregistered = sorted(set(unmet_obligations(theorems, doc)) - registered_obligations())
+    if unregistered:
+        return False, [
+            f"unit {unit!r} is `tested` with effective severity Medium or higher and names "
+            f"no `mutation://` falsifier, and is not a pre-existing obligation in "
+            f"config/assurance-obligation-debt.toml. ADR-MCPRE-068 N1: register a falsifier "
+            f"that attacks its production property, or reclassify the proposition into a "
+            f"class whose mechanics it satisfies. The migration ratchet is closed to new work."
+            for unit in unregistered
+        ]
     notes.append(f"policy revision {doc['policy_revision']}")
     notes.append(f"{len(doc.get('unit', []))} unit(s), {len(doc.get('edge', []))} edge(s)")
     # Reported, never counted, and phrased as the structural fact it is. A resolving
