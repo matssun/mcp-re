@@ -24,6 +24,7 @@ from __future__ import annotations
 import importlib.util
 import inspect
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -610,23 +611,34 @@ def test_a_needed_artefact_is_looked_for_where_each_preparation_leaves_it():
     tree has no `.so` at all. A lane that knew only the first spelling reported a correctly
     prepared runner as an unbuilt environment and failed every Python probe on it.
 
-    Asked over the declared candidates rather than by running a probe, so it states the rule
-    instead of re-measuring one environment: the tree spelling is FIRST (a developer's own
-    build wins over an installed one), and an installed spelling follows it.
+    Asked over a CONSTRUCTED workspace rather than this one, because the two layouts are the
+    point and no single environment has both -- and the fast job that runs these self-tests
+    builds no SDK matrix at all, so a control needing either spelling present would fail
+    there for the environment rather than for the rule.
     """
-    candidates = lane._SCRATCH_NEEDS[lane.PYTHON]["python/mcp_re_sdk/_core.abi3.so"]
-    assert candidates[0] == "python/mcp_re_sdk/_core.abi3.so", candidates
+    wanted = "python/mcp_re_sdk/_core.abi3.so"
+    candidates = lane._SCRATCH_NEEDS[lane.PYTHON][wanted]
+    assert candidates[0] == wanted, candidates
     assert any("site-packages" in spelling for spelling in candidates[1:]), candidates
-    # And whichever is found, the battery imports it from the tree layout: the INSTALL path
-    # is the first spelling, so a probe measures one layout in both environments.
-    found = lane._first_present(
-        lane.REPO_ROOT / "sdk/python",
-        "python/mcp_re_sdk/_core.abi3.so",
-        ("does/not/exist", *candidates),
-    )
-    assert found, "neither spelling is present in this workspace"
-    for _source, relative in found:
-        assert relative == "python/mcp_re_sdk/_core.abi3.so", relative
+
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        assert lane._first_present(root, wanted, candidates) == [], "an empty workspace"
+
+        # The installed spelling ALONE resolves -- the shape a prepared runner has.
+        installed = root / ".venv-cp314/lib/python3.14/site-packages/mcp_re_sdk"
+        installed.mkdir(parents=True)
+        (installed / "_core.abi3.so").write_bytes(b"")
+        from_wheel = lane._first_present(root, wanted, candidates)
+        assert [relative for _s, relative in from_wheel] == [wanted], from_wheel
+
+        # And with both present the source tree wins, so a developer's own build is what a
+        # probe measures against their own edits.
+        tree = root / "python/mcp_re_sdk"
+        tree.mkdir(parents=True)
+        (tree / "_core.abi3.so").write_bytes(b"")
+        from_tree = lane._first_present(root, wanted, candidates)
+        assert [source for source, _r in from_tree] == [tree / "_core.abi3.so"], from_tree
 
 
 def test_an_unavailable_probe_is_named_in_the_verdict_line():
