@@ -302,7 +302,7 @@ def test_the_probe_set_participates_in_the_units_fingerprint():
 
     # And SCOPED: another unit's probes must not enter this unit's fingerprint, or every
     # unit would be dirtied by every other unit's probe edits.
-    other = UNITS["proxy.tls_listener_state"]
+    other = UNITS["proxy.epoch_bound_session_store"]
     other_probes = fingerprint_unit(other, doc, toolchains, assumptions)["components"][
         "mutation_probes"
     ]
@@ -336,7 +336,7 @@ def test_the_documented_matrix_count_is_checked_against_the_registry():
     assert lane.check_matrix_count(documented[:3]) is not None
     # Another unit's probes are not part of that section's count, so adding one must not
     # make the document look stale.
-    assert lane.check_matrix_count(probes + [{"unit": "proxy.tls_listener_state"}]) is None
+    assert lane.check_matrix_count(probes + [{"unit": "proxy.epoch_bound_session_store"}]) is None
 
 
 if __name__ == "__main__":

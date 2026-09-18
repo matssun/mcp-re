@@ -1458,7 +1458,7 @@ tool_specific_mechanism = "foreign-dependency"
 # advertises over.
 # ---------------------------------------------------------------------------
 #
-# Registered narrowly and for one reason. `proxy.trust_plane_runtime`'s claim (THM-0097) is
+# Registered narrowly and for one reason. `proxy.trust_resolution_window`'s claim (THM-0097) is
 # ONE replica wide and needs no premise: what a replica does with an event it was handed is
 # local, which is why the reader that produces the event is a separate unit,
 # `proxy.trust_epoch_source`, and this premise is scoped to THAT one. But the code PRINTS a fleet statement — "the trust cache flushes within one poll
@@ -1772,7 +1772,15 @@ It stops being acceptable if the epoch derivation moves to a digest without SHA-
 standing, or if anchor sets ever stop being operator-chosen — an anchor set an adversary
 could steer would need ASM-0037's strength, not this.
 """
-scope = ["unit://proxy.tls_listener_state", "boundary://boundary.crypto_primitives"]
+# SCOPE NARROWED by the ADR-MCPRE-068 Phase-1 split. The premise is about the trust-epoch
+# DERIVATION producing distinct digests for distinct anchor sets, which is exactly the
+# epoch-bound store's proposition — `proxy.listener_state_assembly` reads the epoch the store
+# publishes and does not derive one, and `proxy.client_certificate_posture` never touches it.
+scope = [
+  "unit://proxy.epoch_bound_session_store",
+  "unit://proxy.listener_state_assembly",
+  "boundary://boundary.crypto_primitives",
+]
 owner = "mats@sundvall.name"
 introduced_by = "r11 R11-586 owner ruling (security funnel round 11, tracker #879)"
 review_requirement = "Owner review; any change to the trust-epoch derivation's digest algorithm, and any deployment model in which the trust-anchor set is not operator-chosen."
