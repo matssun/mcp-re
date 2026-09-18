@@ -35,13 +35,50 @@ proposition that is real, owned, evidenced, and simply not part of a boundary pr
 
 ---
 
-## 2. The candidate root — remote signing custody
+## 2. Remote signing — the candidate root, and the ruling that declined it
 
-Stated under ADR-MCPRE-068 Phase 1's five-step procedure for a root addition. **It is not
-added here.** Root membership is owner-ratified (ADR-MCPRE-059 §21.1), and
-`scripts/claim_surface_gate.py` requires a `docs/spec/security-boundary.md` §2 claim row for
-every declared root — so adding one is a two-document change that needs the ratification
-first.
+> **WITHDRAWN 2026-09-18 by the campaign ruling.** *"Do not add the proposed
+> remote-signing-custody root… The Phase-1 finding is therefore a **composition/dependency
+> gap**, not a missing independent root. Place the remote-signing correspondence propositions
+> at their correct altitude beneath the existing signing root."*
+>
+> **The ruling is right, and the five-step record below is kept as the reasoning it corrects.**
+> Step 3 asked whether any existing root SUBSUMES the promise and answered no — but *subsumes*
+> was the wrong test, and it is the test that makes a missing edge look like a missing root.
+> THM-0075 does not subsume the correspondence proposition; it **should depend on it**. The
+> test that separates the two is the ruling's own second criterion: can the promise hold or
+> fail **independently of** every existing root? It cannot. A signature that does not verify
+> under the advertised key is a failure OF *no unearned response attribution*, not beside it.
+>
+> **What landed instead, in one edge**: `THM-0082 depends_on += THM-0116`. THM-0082 — *the
+> serving path signs under the credential source materialization produced* — is already in
+> THM-0075's closure, and for a non-exporting source that sentence means something only if the
+> source established the key it advertises before signing anything. THM-0116 already depends
+> on THM-0108 and THM-0089, so the whole correspondence sub-graph enters the signing root's
+> closure by that one edge.
+>
+> **Measured**: five units become root-reachable — `proxy.aws_kms_adapter`,
+> `proxy.gcp_kms_adapter`, `proxy.pkcs11_adapter`, `proxy.kms_ed25519_seam`,
+> `proxy.kms_endpoint_authority`. THM-0116's effective severity rises `high` → `critical` by
+> inheritance, which is N3 deriving rather than a declared change. **No unit's N1 obligation
+> moves**, because the adapter units already carry `critical` direct labels; three debt rows
+> take a derivation correction to `inherited_severity` and `root_reachable` with
+> `effective_severity` untouched, which is the one edit a row may take.
+>
+> **No umbrella theorem was created** to preserve the phrase *remote signing custody*. Both
+> correspondence propositions already existed, as THM-0116 and THM-0108. A parent stating
+> their conjunction would own nothing.
+>
+> **THM-0117 and THM-0115 are deliberately NOT edges.** A credential used past its issuer's
+> stated lifetime changes nothing a signature attributes, and the quota window is throttling.
+> Adding either would claim support the argument does not use — the failure the root set
+> exists to avoid, arriving through the fix rather than through the defect.
+>
+> Recorded as a dependency correction in
+> `verification/reviews/claim-corrections/THM-0075-2026-09-18.json`: no statement, consequence
+> or scope text moves.
+
+The original five-step record follows, unedited.
 
 ### 1. The candidate
 
