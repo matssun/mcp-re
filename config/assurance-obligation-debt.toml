@@ -655,28 +655,6 @@ succeeds = "sdk_python.exchange_path"
 decomposition_ref = "verification/reviews/packets/thm-0094-consequence-decomposition-2026-09-18.md"
 
 [[obligation]]
-unit = "sdk_python.execution_report"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "critical"
-inherited_severity = "critical"
-root_reachable = true
-status = "unreviewed"
-succeeds = "sdk_python.exchange_path"
-decomposition_ref = "verification/reviews/packets/thm-0094-consequence-decomposition-2026-09-18.md"
-
-[[obligation]]
-unit = "sdk_python.local_failure_provenance"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "critical"
-inherited_severity = "critical"
-root_reachable = true
-status = "unreviewed"
-succeeds = "sdk_python.exchange_path"
-decomposition_ref = "verification/reviews/packets/thm-0094-consequence-decomposition-2026-09-18.md"
-
-[[obligation]]
 unit = "sdk_python.signer_policy"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "high"
@@ -735,28 +713,6 @@ decomposition_ref = "verification/reviews/packets/thm-0095-consequence-decomposi
 
 [[obligation]]
 unit = "sdk_typescript.exchange_binding"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "critical"
-inherited_severity = "critical"
-root_reachable = true
-status = "unreviewed"
-succeeds = "sdk_typescript.exchange_path"
-decomposition_ref = "verification/reviews/packets/thm-0095-consequence-decomposition-2026-09-18.md"
-
-[[obligation]]
-unit = "sdk_typescript.execution_report"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "critical"
-inherited_severity = "critical"
-root_reachable = true
-status = "unreviewed"
-succeeds = "sdk_typescript.exchange_path"
-decomposition_ref = "verification/reviews/packets/thm-0095-consequence-decomposition-2026-09-18.md"
-
-[[obligation]]
-unit = "sdk_typescript.local_failure_provenance"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "critical"
 direct_consequence_severity = "critical"

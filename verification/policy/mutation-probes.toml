@@ -5402,3 +5402,101 @@ parent task of the group running every concurrent exchange, so raising would end
 session over one peer-influenced reply; TypeScript throws from the one `send()`. Both are
 probed for the same conjunct.
 """
+
+[[probe]]
+id = "M197-python-no-member-the-receipt-did-not-carry"
+unit = "sdk_python.execution_report"
+theorem = "THM-0094"
+conjunct = "a member the verified receipt did not carry is not invented for the application"
+path = "sdk/python/python/mcp_re_sdk/transport.py"
+anchor = """
+        if value is not None:
+"""
+weakening = """
+        if True:
+"""
+expect_red = [
+  "pytest#tests/test_transport.py::test_a_post_dispatch_rejection_reports_its_execution_and_retry_contract",
+]
+note = """
+AN EXPLICIT NULL IS AN INVENTED MEMBER. Under the weakening every key is emitted whatever
+the receipt said, so `executionStatus: null` reaches an application that branches on the
+member's PRESENCE. ADR-MCPRE-058 SL-10 is what makes that a security conjunct rather than a
+tidiness one: an absent `executionStatus` means the server stated nothing, and a caller that
+reads the key as stated collapses "unknown whether it ran" into an answer at the one place
+that decides whether a retry re-executes a tool call that already ran.
+"""
+
+[[probe]]
+id = "M198-typescript-no-member-the-receipt-did-not-carry"
+unit = "sdk_typescript.execution_report"
+theorem = "THM-0095"
+conjunct = "a member the verified receipt did not carry is not invented for the application"
+path = "sdk/typescript/src/transport.ts"
+anchor = """
+    if (value !== undefined && value !== null) data[key] = value;
+"""
+weakening = """
+    data[key] = value;
+"""
+expect_red = [
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > reports the execution and retry contract a post-dispatch rejection carried",
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > invents no disposition for a receipt that stated none",
+]
+note = """
+The TypeScript instance of M197, and it found a CONTROL DEFECT on the way. Its second
+control -- a receipt that stated NO disposition must produce `{ requestBound }` and nothing
+else -- stayed GREEN under the weakening, because `toEqual` ignores an undefined-valued key
+and so cannot tell `{ requestBound }` from `{ requestBound, executionStatus: undefined }`.
+An emitted-but-undefined member is exactly what that control exists to refuse, so it could
+not fail for the reason it exists for (R9-C094's shape). It now asserts the KEY SET first
+and compares with `toStrictEqual`.
+"""
+
+[[probe]]
+id = "M199-python-no-borrowed-wire-vocabulary"
+unit = "sdk_python.local_failure_provenance"
+theorem = "THM-0094"
+conjunct = "a condition this SDK originated is reported under the SDK's own prefix, never as a frozen mcp-re.* token the peer did not send"
+path = "sdk/python/python/mcp_re_sdk/transport.py"
+anchor = """
+    return token if _WIRE_CODE.match(token) else None
+"""
+weakening = """
+    return token
+"""
+expect_red = [
+  "pytest#tests/test_transport.py::test_a_value_error_that_is_not_a_token_is_labelled_a_local_condition",
+]
+note = """
+THE `None` RETURN IS THE CARRIER, not a null-guard. Every caller spells the delivery as
+`_peer_wire_code(...) or "mcp-re-sdk: ..."`, so the ONLY thing separating a local condition
+from a peer verdict is this predicate refusing to call a reset connection, a TLS error or a
+caller-raised timeout a token. Under the weakening the SDK's own failures occupy the field
+that otherwise only ever holds something the peer said, and a caller branching on the frozen
+taxonomy (REQ-14/POL-6) acts on a verdict no peer issued.
+"""
+
+[[probe]]
+id = "M200-typescript-no-borrowed-wire-vocabulary"
+unit = "sdk_typescript.local_failure_provenance"
+theorem = "THM-0095"
+conjunct = "a condition this SDK originated is reported under the SDK's own prefix, never as a frozen mcp-re.* token the peer did not send"
+path = "sdk/typescript/src/transport.ts"
+anchor = """
+  return /^mcp-re\\.[a-z0-9_]+$/.test(token) ? token : null;
+"""
+weakening = """
+  return token;
+"""
+expect_red = [
+  "vitest#test/transport.test.ts > McpReHttpTransport peer wire codes > still labels a genuine local failure as one",
+  "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > delivers a network error under the local prefix, not as something the peer said",
+]
+note = """
+The TypeScript instance of M199, with the same `?? \"mcp-re-sdk: ...\"` spelling at both of
+its call sites. The sibling control -- delivering a CORE failure as its frozen token -- is
+deliberately NOT expected red: it stays green under the weakening, because the weakening
+only widens what counts as a token. A probe that expected it would be measuring the wrong
+direction.
+"""

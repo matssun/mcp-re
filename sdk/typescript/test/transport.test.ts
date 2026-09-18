@@ -1116,8 +1116,12 @@ describe("McpReHttpTransport verified-reply shape", () => {
       },
       "{}",
     );
-    expect((delivered as { error: { data: unknown } }).error.data).toEqual({
-      requestBound: false,
-    });
+    const data = (delivered as { error: { data: Record<string, unknown> } }).error.data;
+    // `toEqual` IGNORES an undefined-valued key, so it cannot tell `{ requestBound }` from
+    // `{ requestBound, executionStatus: undefined }` — and an emitted-but-undefined member
+    // is exactly what a receipt that stated nothing must not produce. The key set is
+    // asserted first so the control fails for the reason it exists for.
+    expect(Object.keys(data).sort()).toEqual(["requestBound"]);
+    expect(data).toStrictEqual({ requestBound: false });
   });
 });

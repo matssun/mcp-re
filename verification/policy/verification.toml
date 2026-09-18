@@ -4202,7 +4202,10 @@ paths = ["sdk/python/python/mcp_re_sdk/transport.py"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://sdk_python/execution_report/only_what_the_receipt_said"]
+evidence = [
+  "test://sdk_python/execution_report/only_what_the_receipt_said",
+  "mutation://sdk_python/execution_report/only_what_the_receipt_said",
+]
 tested_symbols = [
   "pytest#tests/test_transport.py::test_a_post_dispatch_rejection_reports_its_execution_and_retry_contract",
   # The transport deadline is the condition under which this SDK knows LEAST about whether
@@ -4221,7 +4224,10 @@ paths = ["sdk/python/python/mcp_re_sdk/transport.py"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://sdk_python/local_failure/no_borrowed_vocabulary"]
+evidence = [
+  "test://sdk_python/local_failure/no_borrowed_vocabulary",
+  "mutation://sdk_python/local_failure/no_borrowed_vocabulary",
+]
 tested_symbols = [
   "pytest#tests/test_transport.py::test_a_wire_failure_is_delivered_as_a_correlated_json_rpc_error",
   "pytest#tests/test_transport.py::test_a_local_signer_failure_is_delivered_without_claiming_a_wire_code",
@@ -4605,7 +4611,10 @@ paths = ["sdk/typescript/src/transport.ts"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://sdk_typescript/execution_report/only_what_the_receipt_said"]
+evidence = [
+  "test://sdk_typescript/execution_report/only_what_the_receipt_said",
+  "mutation://sdk_typescript/execution_report/only_what_the_receipt_said",
+]
 tested_symbols = [
   "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > reports the execution and retry contract a post-dispatch rejection carried",
   "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > invents no disposition for a receipt that stated none",
@@ -4623,7 +4632,10 @@ paths = ["sdk/typescript/src/transport.ts"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://sdk_typescript/local_failure/no_borrowed_vocabulary"]
+evidence = [
+  "test://sdk_typescript/local_failure/no_borrowed_vocabulary",
+  "mutation://sdk_typescript/local_failure/no_borrowed_vocabulary",
+]
 tested_symbols = [
   "vitest#test/transport.test.ts > McpReHttpTransport peer wire codes > delivers a core failure as its frozen token, not as a local SDK error",
   "vitest#test/transport.test.ts > McpReHttpTransport peer wire codes > still labels a genuine local failure as one",
