@@ -278,6 +278,13 @@ on:
       # and on the adapter producing that representation, so a change to either dirties
       # the units.
       - "mcp-re-proxy/src/communication_assurance/**"
+      # ADR-MCPRE-068 Phase 0D-8: the crate root is a PROBE input, not a fingerprint one.
+      # S12 and S13 attack the `communication_assurance` authority boundary from OUTSIDE it,
+      # so their insertion parent is `lib.rs` — the lane edits that file in its scratch copy
+      # to declare the injected module. A change to it can therefore change what the probes
+      # compile against, and the lane must re-run. This is the one filter here that exists
+      # for a probe's site rather than for a unit's sources.
+      - "mcp-re-proxy/src/lib.rs"
       # The merged plain-library integration binary carries this unit's DER-level
       # controls, and encoding v4 digests those sources, not only their names. The
       # `test_source_patterns` emits BOTH layouts a cargo test target can have, so
@@ -579,6 +586,13 @@ on:
       # and on the adapter producing that representation, so a change to either dirties
       # the units.
       - "mcp-re-proxy/src/communication_assurance/**"
+      # ADR-MCPRE-068 Phase 0D-8: the crate root is a PROBE input, not a fingerprint one.
+      # S12 and S13 attack the `communication_assurance` authority boundary from OUTSIDE it,
+      # so their insertion parent is `lib.rs` — the lane edits that file in its scratch copy
+      # to declare the injected module. A change to it can therefore change what the probes
+      # compile against, and the lane must re-run. This is the one filter here that exists
+      # for a probe's site rather than for a unit's sources.
+      - "mcp-re-proxy/src/lib.rs"
       # The merged plain-library integration binary carries this unit's DER-level
       # controls, and encoding v4 digests those sources, not only their names. The
       # `test_source_patterns` emits BOTH layouts a cargo test target can have, so
