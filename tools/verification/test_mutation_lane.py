@@ -40,7 +40,7 @@ UNITS = {unit["id"]: unit for unit in load_verification().get("unit", [])}
 def _probe(**overrides):
     probe = {
         "id": "T-01",
-        "unit": "http_profile.verifier_results",
+        "unit": "http_profile.request_floor_result",
         "theorem": "THM-0014",
         "conjunct": "a conjunct",
         "path": "mcp-re-http-profile/src/verify.rs",
@@ -262,11 +262,11 @@ def test_a_doctest_control_may_not_be_expected_to_go_red():
 
 def test_the_unit_declares_mutation_evidence_so_attestation_depends_on_it():
     """Without the `mutation://` URI the probe suite is decoration: `attest` would issue
-    `http_profile.verifier_results` from the ordinary test evidence alone, and the CI job
+    `http_profile.request_floor_result` from the ordinary test evidence alone, and the CI job
     could be deleted with no unit ever deriving DIRTY."""
     from _evidence import required_lanes
 
-    unit = UNITS["http_profile.verifier_results"]
+    unit = UNITS["http_profile.request_floor_result"]
     assert lane.claims_mutation_evidence(unit)
     assert "mutation" in required_lanes(unit)
 
@@ -294,7 +294,7 @@ def test_the_probe_set_participates_in_the_units_fingerprint():
 
     doc = load_verification()
     toolchains, assumptions = load_toolchains(), load_assumptions()
-    unit = UNITS["http_profile.verifier_results"]
+    unit = UNITS["http_profile.request_floor_result"]
     components = fingerprint_unit(unit, doc, toolchains, assumptions)["components"]
     scoped = [p for p in lane.load_probes() if p["unit"] == unit["id"]]
     assert len(components["mutation_probes"]) == len(scoped)
@@ -332,7 +332,7 @@ def test_the_documented_matrix_count_is_checked_against_the_registry():
     matrix was written by hand."""
     probes = lane.load_probes()
     assert lane.check_matrix_count(probes) is None
-    documented = [p for p in probes if p["unit"] == lane.MATRIX_UNIT]
+    documented = [p for p in probes if p["unit"] in lane.MATRIX_UNITS]
     assert lane.check_matrix_count(documented[:3]) is not None
     # Another unit's probes are not part of that section's count, so adding one must not
     # make the document look stale.

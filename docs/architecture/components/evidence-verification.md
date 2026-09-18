@@ -128,18 +128,24 @@ Registry: [`verification/policy/theorems.toml`](../../../verification/policy/the
 | No untyped artifact binding leaves the verifier as verified | full profile | THM-0008 · `unit://http_profile.artifact_typing` | in registry |
 | A presented continuation cannot bypass verification | full profile | THM-0009 · `unit://http_profile.continuation_unbypassability` | in registry |
 | Continuation handles match their presented inputs in role | full profile | THM-0010 · `unit://http_profile.continuation_binding` | in registry |
-| **Request floor** — a successful `verify_request_floor` establishes digest, signature, freshness and Request-slot trust resolution | floor | THM-0014 · `unit://http_profile.verifier_results` | in registry |
-| **Full request** — the floor, plus block validation, audience/target equality and declared artifact enforcement | full profile | THM-0015 | in registry |
-| **Bound response facts** — digest, current parameters, and a signature over a base whose `;req` resolved against the supplied request, under the accepted signer's key | floor (shared) | THM-0021 | in registry |
-| **Unbound response facts** — the same, over response components only, with `;req` refused as malformed | floor (shared) | THM-0022 | in registry |
-| **Bound response floor** — the bound facts, plus **trust-seam** authorization of the signer in the Response slot | floor | THM-0016 | in registry |
-| **Unbound response floor** — the unbound facts, plus trust-seam authorization | floor | THM-0017 | in registry |
-| **Full bound response** — the seam-authorized bound floor, plus signer correspondence and equality with the expected handle | full profile | THM-0018 | in registry |
-| **Delegated bound response** — the bound facts, plus **credential-chain** authorization and the block agreement | full profile | THM-0019 | in registry |
-| **Delegated unbound response** — the unbound facts, plus credential-chain authorization, and never a binding | full profile | THM-0020 | in registry |
+| **Request floor** — a successful `verify_request_floor` establishes digest, signature, freshness and Request-slot trust resolution | floor | THM-0014 · `unit://http_profile.request_floor_result` | in registry |
+| **Full request** — the floor, plus block validation, audience/target equality and declared artifact enforcement | full profile | THM-0015 · `unit://http_profile.request_full_result` | in registry |
+| **Bound response facts** — digest, current parameters, and a signature over a base whose `;req` resolved against the supplied request, under the accepted signer's key | floor (shared) | THM-0021 · `unit://http_profile.bound_response_shared_facts` | in registry |
+| **Unbound response facts** — the same, over response components only, with `;req` refused as malformed | floor (shared) | THM-0022 · `unit://http_profile.unbound_response_shared_facts` | in registry |
+| **Bound response floor** — the bound facts, plus **trust-seam** authorization of the signer in the Response slot | floor | THM-0016 · `unit://http_profile.bound_response_seam_result` | in registry |
+| **Unbound response floor** — the unbound facts, plus trust-seam authorization | floor | THM-0017 · `unit://http_profile.unbound_response_seam_result` | in registry |
+| **Full bound response** — the seam-authorized bound floor, plus signer correspondence and equality with the expected handle | full profile | THM-0018 · `unit://http_profile.bound_response_full_result` | in registry |
+| **Delegated bound response** — the bound facts, plus **credential-chain** authorization and the block agreement | full profile | THM-0019 · `unit://http_profile.delegated_bound_result` | in registry |
+| **Delegated unbound response** — the unbound facts, plus credential-chain authorization, and never a binding | full profile | THM-0020 · `unit://http_profile.delegated_unbound_result` | in registry |
 
-Nine claims over one review unit: seven public operations, plus the two propositions two
-operations each genuinely share.
+Nine claims over NINE review units, plus a tenth for the credential chain — and until
+ADR-MCPRE-068 Phase 1 they were nine claims over ONE. The unit layer lagged the theorem layer
+by exactly this table: every row below was already a separate proposition, and every one
+resolved to the same 56 files and the same 73 controls.
+
+What that cost is in `verification/reviews/packets/verifier-results-decomposition-2026-09-18.md`.
+The short version is that N1 accounts per UNIT, so ten claims shared one answer — and two of
+them, THM-0017 and THM-0065, were attacked by nothing while the graph read them as falsified.
 
 ```text
 request floor (0014) ─────────> full request (0015)
@@ -221,12 +227,19 @@ Lane identity is part of each property (ADR-061 §12). `mcp-re-http-profile` tes
 
 ### 9.1 The V0 mutation probe
 
-`unit://http_profile.verifier_results` is class **V0**: nothing above it may read as more
-than "a test battery passed". A passing battery is not, on its own, evidence that a
-production check is load-bearing — so every conjunct THM-0014 … THM-0022 names was probed
-by deleting or defanging exactly that check, re-running the declared battery, and observing
-which declared member goes red. **30 mutations, each turning at least one declared member
-red.**
+The verifier's ten propositions are class **V0**: nothing above them may read as more than
+"a test battery passed". A passing battery is not, on its own, evidence that a production
+check is load-bearing — so every conjunct THM-0014 … THM-0022 names was probed by deleting or
+defanging exactly that check, re-running the declared battery, and observing which declared
+member goes red. **31 mutations, each turning at least one declared member red.**
+
+**They used to be thirty, over one unit.** ADR-MCPRE-068 Phase 1 split
+`http_profile.verifier_results` — 56 files, 73 controls, ten theorems — into one unit per
+proposition, and the probes were already labelled with the theorem each attacks, so the split
+re-partitioned them rather than rewriting them. The thirty-first is **M71**, THM-0017's first
+falsifier: the wide unit carried thirty probes, not one of them named THM-0017, and N1 —
+which accounts per unit — read the proposition as falsified on the strength of its
+neighbours.
 
 The probes are **registered and executable**, not remembered:
 [`verification/policy/mutation-probes.toml`](../../../verification/policy/mutation-probes.toml)

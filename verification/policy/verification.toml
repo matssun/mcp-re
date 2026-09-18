@@ -136,146 +136,88 @@ tested_symbols = [
   "lib#keyid::tests::the_keyid_encoding_is_injective_over_the_digest_width",
 ]
 
+# ---------------------------------------------------------------------------------------
+# ADR-MCPRE-068 Phase 1 — the verifier's ten propositions, as ten owners.
+#
+# WHAT WAS HERE. `http_profile.verifier_results`: ONE class-V0 unit over 56 source files and
+# 73 controls, named in the `supported_by` of TEN theorems — nine of them titled after one of
+# the nine public operations `Verifier` exposes. The theorem layer did the decomposition. The
+# unit layer never followed, and the unit's own description stated the count: "the seven
+# public verifier operations and the products they return".
+#
+# Measured in `verification/reviews/packets/verifier-results-decomposition-2026-09-18.md`:
+#
+#   * THM-0017 and THM-0065 were attacked by NOTHING while N1 read them as satisfied, because
+#     N1 accounts per UNIT and ten claims shared one. That is ADR-MCPRE-068's own defect one
+#     layer up, where the adjacency is between THEOREMS rather than between checks.
+#   * an edit to any of the 56 files invalidated the standing evidence for all ten claims,
+#     including ones that do not read it;
+#   * 38 of 73 controls were named by no probe, and 18 of those were a coherent
+#     credential-chain battery — a different authority, with no unit.
+#
+# THE EVIDENCE ALREADY KNEW THE ANSWER. Every probe carries a `theorem` field and they group
+# 4/4/1/4/6/4/2/5 across eight of the ten, so this split is a RE-PARTITION of labelled
+# evidence rather than the production of new evidence. 73 controls, 30 probes, no control in
+# two units, none dropped.
+#
+# THE SHARED FLOOR MACHINERY IS IN EVERY UNIT'S PATHS, deliberately. `sigbase.rs`,
+# `digest.rs`, the RFC 9421 component and signature-parameter readers and the core crypto are
+# read by every operation, so they belong in every fingerprint that depends on them. What the
+# split buys is the OTHER direction: an edit to `delegated/unbound.rs` now dirties the two
+# unbound propositions and nothing else, where before it dirtied all ten.
+#
+# THM-0065 LOSES ITS EDGE TO THIS UNIT ENTIRELY. Its subject is EMISSION — a response this
+# proxy signs in the bound form binds the request it answers — and it already owns
+# `http_profile.response_emission_binding` and already depends on THM-0021 and THM-0022 for
+# the verification half. The edge claimed support the argument reaches through its premises.
+# ---------------------------------------------------------------------------------------
+
+# The floor, and the operation every other request proposition is stated on top of.
 [[unit]]
-id = "http_profile.verifier_results"
+id = "http_profile.request_floor_result"
 class = "V0"
-description = "The seven public verifier operations and the products they return, including the facts two authorization paths share: what a SUCCESSFUL return of each establishes."
+description = "What a successful `Verifier::verify_request_floor` return ESTABLISHES about the request supplied: the covered `Content-Digest` agreed with the body, the RFC 9421 signature verified over the reconstructed base under a policy-accepted algorithm, the parameters were admitted as current, and the presented keyid resolved through the trust seam for the Request slot."
 paths = [
   "mcp-re-http-profile/src/verifier.rs",
+  "mcp-re-http-profile/src/verify/mod.rs",
+  "mcp-re-http-profile/src/sigbase.rs",
+  "mcp-re-http-profile/src/digest.rs",
+  "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/message.rs",
+  "mcp-re-http-profile/src/evidence.rs",
+  "mcp-re-http-profile/src/ids.rs",
+  "mcp-re-http-profile/src/error.rs",
+  "mcp-re-http-profile/src/policy.rs",
+  "mcp-re-http-profile/src/verify/floor/mod.rs",
   "mcp-re-http-profile/src/verify/floor/components.rs",
   "mcp-re-http-profile/src/verify/floor/covered_components.rs",
-  "mcp-re-http-profile/src/verify/floor/mod.rs",
-  "mcp-re-http-profile/src/verify/floor/params.rs",
-  "mcp-re-http-profile/src/verify/floor/request.rs",
-  "mcp-re-http-profile/src/verify/floor/response.rs",
   "mcp-re-http-profile/src/verify/floor/sf_dictionary.rs",
   "mcp-re-http-profile/src/verify/floor/signature.rs",
   "mcp-re-http-profile/src/verify/floor/signature_input.rs",
   "mcp-re-http-profile/src/verify/floor/signature_parameters.rs",
   "mcp-re-http-profile/src/verify/floor/transport_headers.rs",
-  "mcp-re-http-profile/src/verify/floor/trust_slot.rs",
-  "mcp-re-http-profile/src/verify/bound_request.rs",
-  "mcp-re-http-profile/src/verify/full/delegated/bound.rs",
-  "mcp-re-http-profile/src/verify/full/delegated/credential_chain.rs",
-  "mcp-re-http-profile/src/verify/full/delegated/expectations.rs",
-  "mcp-re-http-profile/src/verify/full/delegated/mod.rs",
-  "mcp-re-http-profile/src/verify/full/delegated/unbound.rs",
-  "mcp-re-http-profile/src/verify/full/mod.rs",
-  "mcp-re-http-profile/src/verify/full/request.rs",
-  "mcp-re-http-profile/src/verify/full/response.rs",
-  "mcp-re-http-profile/src/verify/mod.rs",
-  "mcp-re-http-profile/src/verified_request/mod.rs",
-  "mcp-re-http-profile/src/verified_request/floor.rs",
-  "mcp-re-http-profile/src/verified_response/mod.rs",
-  "mcp-re-http-profile/src/verified_response/facts.rs",
-  "mcp-re-http-profile/src/verified_response/bound.rs",
-  "mcp-re-http-profile/src/verified_response/unbound.rs",
-  "mcp-re-http-profile/src/sigbase.rs",
-  "mcp-re-http-profile/src/digest.rs",
-  "mcp-re-http-profile/src/policy.rs",
-  # MCPRE-175 gave the credential its own subtree: the claim types, the §3 steps that
-  # decide whether one may be believed, and the root custody seam that mints one. The
-  # closure follows all three — a unit that named only `mod.rs` would fingerprint the
-  # types while the verification steps it depends on moved outside its provenance.
-  "mcp-re-http-profile/src/delegation/mod.rs",
-  "mcp-re-http-profile/src/delegation/parse.rs",
-  "mcp-re-http-profile/src/delegation/verify.rs",
-  "mcp-re-http-profile/src/delegation/issue.rs",
-  "mcp-re-http-profile/src/block.rs",
-  # The whole body-refusal rule, not the structural half of it. `reject_unrepresentable_json`
-  # lives in `representable.rs` and delegates every NUMBER token to `carried_number.rs`,
-  # which delegates the value comparison to `decimal_token.rs` — so a closure naming only
-  # the first two would let the rule that decides which values are refused change under a
-  # fingerprint that did not move.
   "mcp-re-http-profile/src/body/mod.rs",
   "mcp-re-http-profile/src/body/representable.rs",
   "mcp-re-http-profile/src/body/carried_number.rs",
   "mcp-re-http-profile/src/body/decimal_token.rs",
-  "mcp-re-http-profile/src/message.rs",
-  "mcp-re-http-profile/src/ids.rs",
-  "mcp-re-http-profile/src/evidence.rs",
-  "mcp-re-http-profile/src/error.rs",
-  "mcp-re-http-profile/src/artifact.rs",
-  # ADR-MCPRE-065 Slice 2 put a SECOND typed artifact verifier on the successful
-  # `verify_request` path: `enforce_full_profile_bindings` calls
-  # `pdp_decision::verify_pdp_decision_binding` before the OAuth dispatcher and continues
-  # past it. A closure claiming to be the complete security-relevant implementation of the
-  # seven verifier operations has to contain it — the OTHER half of that provenance, the
-  # dispatch RELATION itself, is `http_profile.artifact_verification_boundary`.
-  #
-  # `claims.rs`, `issue.rs` and `verify.rs` are deliberately absent: they are the
-  # authorization semantics of a decision document, which no verifier operation here
-  # reaches. Neighbouring code is not closure.
-  "mcp-re-http-profile/src/pdp_decision/mod.rs",
-  "mcp-re-http-profile/src/pdp_decision/binding.rs",
-  "mcp-re-http-profile/src/mcp_transport/mod.rs",
-  "mcp-re-http-profile/src/mcp_transport/agreement.rs",
-  "mcp-re-http-profile/src/sign.rs",
-  # Both halves of the rejection authority: how a body is framed and signed, and the
-  # execution/retry contract it projects. The retry contract moved into its own module in
-  # #741; leaving it out would drop the projection this closure verifies from the closure.
-  "mcp-re-http-profile/src/rejection/mod.rs",
-  "mcp-re-http-profile/src/rejection/retry_contract.rs",
   "mcp-re-core/src/crypto.rs",
   "mcp-re-core/src/error.rs",
   "mcp-re-core/src/encoding.rs",
+  "mcp-re-http-profile/src/verify/floor/params.rs",
+  "mcp-re-http-profile/src/verify/floor/request.rs",
+  "mcp-re-http-profile/src/verify/floor/trust_slot.rs",
+  "mcp-re-http-profile/src/verified_request/mod.rs",
+  "mcp-re-http-profile/src/verified_request/floor.rs",
 ]
 exported_contracts = []
-# The closure spans two Cargo packages, so the battery's package is named rather than
-# derived — and the loader refuses any name that is not one of the packages above.
 test_package = "mcp-re-http-profile"
-# TWO evidence classes, because a V0 claim needs two different questions answered.
-#
-#   test://      did every declared control pass?
-#   mutation://  would any of them NOTICE the check its theorem names being deleted?
-#
-# The second is not implied by the first, and the registry it names
-# (`verification/policy/mutation-probes.toml`) would be deletable decoration if it were
-# not declared here: `_evidence.required_lanes` reads every scheme, so this URI is what
-# makes `attest` REFUSE a unit with no mutation PASS at its exact fingerprint. The probe
-# entries and the lane binary are themselves fingerprint inputs (encoding v5), so a
-# shrunken suite cannot satisfy a standing attestation either.
 evidence_class = "tested"
 direct_consequence_severity = "critical"
 evidence = [
-  "test://http_profile/verifier/result_propositions",
-  "mutation://http_profile/verifier/result_propositions",
+  "test://http_profile/request_floor/what_a_successful_return_establishes",
+  "mutation://http_profile/request_floor/what_a_successful_return_establishes",
 ]
-# The battery is a NEGATIVE battery with positives attached, not the other way round.
-#
-# These are V0 claims, so a conjunct nobody can break is a conjunct the evidence does not
-# establish, however many tests pass. Every member below was mutation-probed: the
-# production check the theorem names was deleted or defanged, the battery re-run, and the
-# named control observed to go red.
-#
-# The probes are REGISTERED, not remembered: `verification/policy/mutation-probes.toml`
-# names each weakening and the control(s) it must turn red, and
-# `tools/verification/verify-mutations` re-applies them to a COPY of the tree on every run
-# that touches this unit. A probe whose anchor no longer matches exactly once is STALE and
-# fails the lane — a demand to re-adjudicate the probe against the new implementation,
-# never to restore the old code. The matrix a reviewer reads is
-# `docs/architecture/components/evidence-verification.md` §9.1, and the lane checks its
-# stated count against the registry so the two cannot drift.
-#
-# The probe found three conjuncts that nothing here reached, and each got a control rather
-# than a softened statement:
-#
-#   * the audience-tuple/`@target-uri` CONSISTENCY conjunct — `audience_mismatch_fails`
-#     moves `audience_id`, so it fails on the equality conjunct and survives deleting the
-#     other one;
-#   * the response `server_signer` correspondence check, on both the seam-authorized and
-#     the delegated path — the existing response negatives move the request evidence or the
-#     `;req` base instead;
-#   * the delegated wire-keyid comparison on the UNBOUND path.
-#
-# Five targets carry the battery. `rejection/` holds the only in-crate exercise of the
-# seam-authorized unbound floor through `verify_signed_rejection`; `delegation.rs`'s module
-# tests are the credential-layer negatives the two delegated claims rest on and are listed
-# here because those claims assert what they check; the delegated-unbound members were
-# written for this claim, because that operation previously had evidence only in a proxy
-# integration test — a different unit, so nothing resolvable.
 tested_symbols = [
-  # --- request floor (THM-0014) ---
   "tests/proof_path_test#request_roundtrip_verifies_and_yields_split_form_evidence",
   "tests/proof_path_test#body_tamper_fails_closed",
   "tests/proof_path_test#wrong_content_digest_fails_closed",
@@ -287,7 +229,57 @@ tested_symbols = [
   "tests/proof_path_test#request_signed_by_response_only_actor_fails_actor_binding",
   "tests/proof_path_test#resolver_returning_wrong_slot_is_rejected",
   "tests/algorithm_confusion_test#an_ed25519_signature_declaring_ml_dsa_is_rejected",
-  # --- full request (THM-0015) ---
+]
+
+# THM-0015's owner.
+[[unit]]
+id = "http_profile.request_full_result"
+class = "V0"
+description = "What a successful `Verifier::verify_request` return ESTABLISHES beyond the floor: the request evidence block parsed and validated under the profile tag, its audience tuple equalled the verifier's own and agreed with the `@target-uri`, and every artifact binding the block declared was verified through the supported typed verification for its own type."
+paths = [
+  "mcp-re-http-profile/src/verifier.rs",
+  "mcp-re-http-profile/src/verify/mod.rs",
+  "mcp-re-http-profile/src/sigbase.rs",
+  "mcp-re-http-profile/src/digest.rs",
+  "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/message.rs",
+  "mcp-re-http-profile/src/evidence.rs",
+  "mcp-re-http-profile/src/ids.rs",
+  "mcp-re-http-profile/src/error.rs",
+  "mcp-re-http-profile/src/policy.rs",
+  "mcp-re-http-profile/src/verify/floor/mod.rs",
+  "mcp-re-http-profile/src/verify/floor/components.rs",
+  "mcp-re-http-profile/src/verify/floor/covered_components.rs",
+  "mcp-re-http-profile/src/verify/floor/sf_dictionary.rs",
+  "mcp-re-http-profile/src/verify/floor/signature.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_input.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_parameters.rs",
+  "mcp-re-http-profile/src/verify/floor/transport_headers.rs",
+  "mcp-re-http-profile/src/body/mod.rs",
+  "mcp-re-http-profile/src/body/representable.rs",
+  "mcp-re-http-profile/src/body/carried_number.rs",
+  "mcp-re-http-profile/src/body/decimal_token.rs",
+  "mcp-re-core/src/crypto.rs",
+  "mcp-re-core/src/error.rs",
+  "mcp-re-core/src/encoding.rs",
+  "mcp-re-http-profile/src/verify/full/mod.rs",
+  "mcp-re-http-profile/src/verify/full/request.rs",
+  "mcp-re-http-profile/src/artifact.rs",
+  "mcp-re-http-profile/src/pdp_decision/mod.rs",
+  "mcp-re-http-profile/src/pdp_decision/binding.rs",
+  "mcp-re-http-profile/src/verified_request/mod.rs",
+  "mcp-re-http-profile/src/mcp_transport/mod.rs",
+  "mcp-re-http-profile/src/mcp_transport/agreement.rs",
+]
+exported_contracts = []
+test_package = "mcp-re-http-profile"
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://http_profile/request_full/audience_and_artifact_binding",
+  "mutation://http_profile/request_full/audience_and_artifact_binding",
+]
+tested_symbols = [
   "tests/full_profile_test#full_request_roundtrip_exposes_audience_and_block",
   "tests/full_profile_test#missing_request_block_fails_in_full_profile",
   "tests/full_profile_test#wrong_profile_in_block_fails",
@@ -295,53 +287,445 @@ tested_symbols = [
   "tests/full_profile_test#a_target_uri_disagreeing_with_the_audience_tuple_fails",
   "tests/full_profile_test#artifact_binding_mismatch_fails",
   "tests/full_profile_test#unverifiable_binding_without_material_fails_closed",
-  # The pdp-decision conjunct of THM-0015: what a SUCCESSFUL `verify_request` establishes
-  # about a carried authorization decision, and the two ways that branch refuses. A source
-  # file inside the closure whose conjunct nothing tested would be provenance without
-  # evidence.
   "tests/full_profile_test#a_carried_pdp_decision_verifies_through_its_own_typed_branch",
   "tests/full_profile_test#a_carried_decision_that_is_not_the_bound_document_is_refused",
   "tests/full_profile_test#a_pdp_decision_binding_with_no_carried_decision_is_refused",
   "lib#pdp_decision::binding::tests::a_different_document_does_not",
-  # --- bound response floor (THM-0016) ---
+]
+
+# Stated once for three operations, because it IS one proposition: the three differ in what
+# they establish ON TOP of it, not in these facts. THM-0016, THM-0018 and THM-0019 all rest on
+# this one, which is why it is a unit rather than a repeated sentence.
+[[unit]]
+id = "http_profile.bound_response_shared_facts"
+class = "V0"
+description = "The facts EVERY bound-response operation establishes, whichever of the three returned Ok: the covered `Content-Digest` agreed with the body, the parameters were admitted as current under a policy-accepted algorithm, and the signature verified over a base whose `;req` components resolved against the request being answered."
+paths = [
+  "mcp-re-http-profile/src/verifier.rs",
+  "mcp-re-http-profile/src/verify/mod.rs",
+  "mcp-re-http-profile/src/sigbase.rs",
+  "mcp-re-http-profile/src/digest.rs",
+  "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/message.rs",
+  "mcp-re-http-profile/src/evidence.rs",
+  "mcp-re-http-profile/src/ids.rs",
+  "mcp-re-http-profile/src/error.rs",
+  "mcp-re-http-profile/src/policy.rs",
+  "mcp-re-http-profile/src/verify/floor/mod.rs",
+  "mcp-re-http-profile/src/verify/floor/components.rs",
+  "mcp-re-http-profile/src/verify/floor/covered_components.rs",
+  "mcp-re-http-profile/src/verify/floor/sf_dictionary.rs",
+  "mcp-re-http-profile/src/verify/floor/signature.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_input.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_parameters.rs",
+  "mcp-re-http-profile/src/verify/floor/transport_headers.rs",
+  "mcp-re-http-profile/src/body/mod.rs",
+  "mcp-re-http-profile/src/body/representable.rs",
+  "mcp-re-http-profile/src/body/carried_number.rs",
+  "mcp-re-http-profile/src/body/decimal_token.rs",
+  "mcp-re-core/src/crypto.rs",
+  "mcp-re-core/src/error.rs",
+  "mcp-re-core/src/encoding.rs",
+  "mcp-re-http-profile/src/verify/floor/response.rs",
+  "mcp-re-http-profile/src/verify/bound_request.rs",
+  "mcp-re-http-profile/src/verified_response/mod.rs",
+  "mcp-re-http-profile/src/verified_response/facts.rs",
+  "mcp-re-http-profile/src/verified_response/bound.rs",
+  "mcp-re-http-profile/src/rejection/mod.rs",
+  "mcp-re-http-profile/src/rejection/retry_contract.rs",
+]
+exported_contracts = []
+test_package = "mcp-re-http-profile"
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://http_profile/bound_response/shared_facts",
+  "mutation://http_profile/bound_response/shared_facts",
+]
+tested_symbols = [
   "tests/proof_path_test#response_roundtrip_bound_to_request_verifies",
   "tests/proof_path_test#response_splice_fails_closed",
-  "tests/proof_path_test#response_signed_by_request_only_actor_fails_actor_binding",
   "lib#rejection::tests::tampered_message_does_not_change_the_trusted_wire_code",
   "lib#rejection::tests::spliced_rejection_onto_a_different_request_fails",
-  # --- unbound response floor (THM-0017) ---
+  "tests/delegation_e2e_test#body_tamper_is_caught_by_content_digest",
+]
+
+# THM-0016's owner.
+[[unit]]
+id = "http_profile.bound_response_seam_result"
+class = "V0"
+description = "What a successful `Verifier::verify_bound_response_floor` return ESTABLISHES beyond the shared bound facts: the presented keyid resolved through the trust seam for the Response slot, and the actor the seam returned IS the accepted signer — the signature verified under the key the seam supplied."
+paths = [
+  "mcp-re-http-profile/src/verifier.rs",
+  "mcp-re-http-profile/src/verify/mod.rs",
+  "mcp-re-http-profile/src/sigbase.rs",
+  "mcp-re-http-profile/src/digest.rs",
+  "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/message.rs",
+  "mcp-re-http-profile/src/evidence.rs",
+  "mcp-re-http-profile/src/ids.rs",
+  "mcp-re-http-profile/src/error.rs",
+  "mcp-re-http-profile/src/policy.rs",
+  "mcp-re-http-profile/src/verify/floor/mod.rs",
+  "mcp-re-http-profile/src/verify/floor/components.rs",
+  "mcp-re-http-profile/src/verify/floor/covered_components.rs",
+  "mcp-re-http-profile/src/verify/floor/sf_dictionary.rs",
+  "mcp-re-http-profile/src/verify/floor/signature.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_input.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_parameters.rs",
+  "mcp-re-http-profile/src/verify/floor/transport_headers.rs",
+  "mcp-re-http-profile/src/body/mod.rs",
+  "mcp-re-http-profile/src/body/representable.rs",
+  "mcp-re-http-profile/src/body/carried_number.rs",
+  "mcp-re-http-profile/src/body/decimal_token.rs",
+  "mcp-re-core/src/crypto.rs",
+  "mcp-re-core/src/error.rs",
+  "mcp-re-core/src/encoding.rs",
+  "mcp-re-http-profile/src/verify/floor/response.rs",
+  "mcp-re-http-profile/src/verify/floor/trust_slot.rs",
+  "mcp-re-http-profile/src/verified_response/bound.rs",
+]
+exported_contracts = []
+test_package = "mcp-re-http-profile"
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://http_profile/bound_response/trust_seam_authorization",
+  "mutation://http_profile/bound_response/trust_seam_authorization",
+]
+tested_symbols = [
+  "tests/proof_path_test#response_signed_by_request_only_actor_fails_actor_binding",
+]
+
+# THM-0022's owner.
+[[unit]]
+id = "http_profile.unbound_response_shared_facts"
+class = "V0"
+description = "The facts EVERY unbound-response operation establishes: the covered `Content-Digest` agreed with the body, the parameters were admitted as current under a policy-accepted algorithm, and the signature verified over a base covering ONLY response components — a `;req` component on this path is refused rather than resolved against nothing."
+paths = [
+  "mcp-re-http-profile/src/verifier.rs",
+  "mcp-re-http-profile/src/verify/mod.rs",
+  "mcp-re-http-profile/src/sigbase.rs",
+  "mcp-re-http-profile/src/digest.rs",
+  "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/message.rs",
+  "mcp-re-http-profile/src/evidence.rs",
+  "mcp-re-http-profile/src/ids.rs",
+  "mcp-re-http-profile/src/error.rs",
+  "mcp-re-http-profile/src/policy.rs",
+  "mcp-re-http-profile/src/verify/floor/mod.rs",
+  "mcp-re-http-profile/src/verify/floor/components.rs",
+  "mcp-re-http-profile/src/verify/floor/covered_components.rs",
+  "mcp-re-http-profile/src/verify/floor/sf_dictionary.rs",
+  "mcp-re-http-profile/src/verify/floor/signature.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_input.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_parameters.rs",
+  "mcp-re-http-profile/src/verify/floor/transport_headers.rs",
+  "mcp-re-http-profile/src/body/mod.rs",
+  "mcp-re-http-profile/src/body/representable.rs",
+  "mcp-re-http-profile/src/body/carried_number.rs",
+  "mcp-re-http-profile/src/body/decimal_token.rs",
+  "mcp-re-core/src/crypto.rs",
+  "mcp-re-core/src/error.rs",
+  "mcp-re-core/src/encoding.rs",
+  "mcp-re-http-profile/src/verify/floor/response.rs",
+  "mcp-re-http-profile/src/verified_response/mod.rs",
+  "mcp-re-http-profile/src/verified_response/facts.rs",
+  "mcp-re-http-profile/src/verified_response/unbound.rs",
+  "mcp-re-http-profile/src/rejection/mod.rs",
+  "mcp-re-http-profile/src/verify/full/delegated/unbound.rs",
+]
+exported_contracts = []
+test_package = "mcp-re-http-profile"
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://http_profile/unbound_response/shared_facts",
+  "mutation://http_profile/unbound_response/shared_facts",
+]
+tested_symbols = [
   "tests/proof_path_test#unbound_response_floor_verifies_a_receipt_with_no_request",
   "tests/proof_path_test#a_req_component_is_refused_on_the_unbound_floor",
   "tests/proof_path_test#the_unbound_floor_signature_check_is_load_bearing",
   "tests/proof_path_test#the_unbound_floor_content_digest_check_is_load_bearing",
   "lib#rejection::tests::unbound_rejection_verifies_without_request_context",
-  # --- full bound response (THM-0018) ---
+  "tests/delegation_e2e_test#a_req_component_is_refused_on_the_delegated_unbound_path",
+  "tests/delegation_e2e_test#an_unbound_receipt_body_tamper_is_caught_by_content_digest",
+]
+
+# THE ONE LEAF THIS SPLIT LEAVES OWING, and making it visible is half the point of the
+# split. THM-0017 was `supported_by` a unit carrying thirty probes and NONE of them named it, so
+# N1 read the proposition as falsified. It is `high`, it is in THM-0075's closure, and nothing
+# attacks it. `verifier-results-decomposition-2026-09-18.md` P2-V1 is its obligation; the row
+# enters the N1 backlog by SUCCESSION rather than as new debt.
+[[unit]]
+id = "http_profile.unbound_response_seam_result"
+class = "V0"
+description = "What a successful `Verifier::verify_unbound_response_floor` return ESTABLISHES beyond the shared unbound facts: the presented keyid resolved through the trust seam for the Response slot, and the actor the seam returned IS the accepted signer."
+paths = [
+  "mcp-re-http-profile/src/verifier.rs",
+  "mcp-re-http-profile/src/verify/mod.rs",
+  "mcp-re-http-profile/src/sigbase.rs",
+  "mcp-re-http-profile/src/digest.rs",
+  "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/message.rs",
+  "mcp-re-http-profile/src/evidence.rs",
+  "mcp-re-http-profile/src/ids.rs",
+  "mcp-re-http-profile/src/error.rs",
+  "mcp-re-http-profile/src/policy.rs",
+  "mcp-re-http-profile/src/verify/floor/mod.rs",
+  "mcp-re-http-profile/src/verify/floor/components.rs",
+  "mcp-re-http-profile/src/verify/floor/covered_components.rs",
+  "mcp-re-http-profile/src/verify/floor/sf_dictionary.rs",
+  "mcp-re-http-profile/src/verify/floor/signature.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_input.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_parameters.rs",
+  "mcp-re-http-profile/src/verify/floor/transport_headers.rs",
+  "mcp-re-http-profile/src/body/mod.rs",
+  "mcp-re-http-profile/src/body/representable.rs",
+  "mcp-re-http-profile/src/body/carried_number.rs",
+  "mcp-re-http-profile/src/body/decimal_token.rs",
+  "mcp-re-core/src/crypto.rs",
+  "mcp-re-core/src/error.rs",
+  "mcp-re-core/src/encoding.rs",
+  "mcp-re-http-profile/src/verify/floor/response.rs",
+  "mcp-re-http-profile/src/verify/floor/trust_slot.rs",
+  "mcp-re-http-profile/src/verified_response/unbound.rs",
+]
+exported_contracts = []
+test_package = "mcp-re-http-profile"
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://http_profile/unbound_response/trust_seam_authorization",
+  "mutation://http_profile/unbound_response/trust_seam_authorization",
+]
+tested_symbols = [
+  # THE SLOT CONJUNCT'S OWN CONTROL, written by the split that made its absence visible: the
+  # bound arm has had one since the beginning and this arm was probed by nothing.
+  "tests/proof_path_test#an_unbound_receipt_signed_by_a_request_only_actor_fails_actor_binding",
+  "tests/delegation_e2e_test#an_unbound_receipt_whose_root_is_unknown_to_the_seam_is_untrusted",
+]
+
+# THM-0018's owner.
+[[unit]]
+id = "http_profile.bound_response_full_result"
+class = "V0"
+description = "What a successful `Verifier::verify_bound_response` return ESTABLISHES beyond the trust-seam-authorized floor: the response evidence block parsed and validated under the profile tag, the `server_signer` identity it declared carries the keyid the signature was accepted under, and the `request_evidence` handle it carried is the handle of the request under verification."
+paths = [
+  "mcp-re-http-profile/src/verifier.rs",
+  "mcp-re-http-profile/src/verify/mod.rs",
+  "mcp-re-http-profile/src/sigbase.rs",
+  "mcp-re-http-profile/src/digest.rs",
+  "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/message.rs",
+  "mcp-re-http-profile/src/evidence.rs",
+  "mcp-re-http-profile/src/ids.rs",
+  "mcp-re-http-profile/src/error.rs",
+  "mcp-re-http-profile/src/policy.rs",
+  "mcp-re-http-profile/src/verify/floor/mod.rs",
+  "mcp-re-http-profile/src/verify/floor/components.rs",
+  "mcp-re-http-profile/src/verify/floor/covered_components.rs",
+  "mcp-re-http-profile/src/verify/floor/sf_dictionary.rs",
+  "mcp-re-http-profile/src/verify/floor/signature.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_input.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_parameters.rs",
+  "mcp-re-http-profile/src/verify/floor/transport_headers.rs",
+  "mcp-re-http-profile/src/body/mod.rs",
+  "mcp-re-http-profile/src/body/representable.rs",
+  "mcp-re-http-profile/src/body/carried_number.rs",
+  "mcp-re-http-profile/src/body/decimal_token.rs",
+  "mcp-re-core/src/crypto.rs",
+  "mcp-re-core/src/error.rs",
+  "mcp-re-core/src/encoding.rs",
+  "mcp-re-http-profile/src/verify/full/mod.rs",
+  "mcp-re-http-profile/src/verify/full/response.rs",
+  "mcp-re-http-profile/src/verified_response/bound.rs",
+  "mcp-re-http-profile/src/verify/bound_request.rs",
+]
+exported_contracts = []
+test_package = "mcp-re-http-profile"
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://http_profile/bound_response/block_agreement",
+  "mutation://http_profile/bound_response/block_agreement",
+]
+tested_symbols = [
   "tests/full_profile_test#full_response_roundtrip_binds_request_evidence",
   "tests/full_profile_test#a_block_declaring_a_signer_it_did_not_sign_as_fails",
   "tests/full_profile_test#response_request_evidence_mismatch_emits_request_binding_mismatch",
   "tests/full_profile_test#cryptographic_req_splice_still_fails_at_the_floor",
   "tests/full_profile_test#a_valid_exchange_cannot_be_verified_as_the_answer_to_a_different_request",
   "tests/full_profile_test#two_requests_differing_only_in_a_signed_parameter_have_different_handles",
-  # --- delegated bound response (THM-0019) ---
-  "tests/delegation_e2e_test#valid_delegated_response_verifies_under_cnf_key",
-  "tests/delegation_e2e_test#direct_root_signed_response_is_rejected_credential_missing",
+]
+
+# THM-0019's owner.
+[[unit]]
+id = "http_profile.delegated_bound_result"
+class = "V0"
+description = "What a successful `Verifier::verify_delegated_bound_response` return ESTABLISHES beyond the shared bound facts: the block carried an inline delegation credential, the wire keyid and the block's declared signer are the credential's own delegated kid, the signature verified under the key the credential confirms, and the `request_evidence` handle is the handle of the request under verification."
+paths = [
+  "mcp-re-http-profile/src/verifier.rs",
+  "mcp-re-http-profile/src/verify/mod.rs",
+  "mcp-re-http-profile/src/sigbase.rs",
+  "mcp-re-http-profile/src/digest.rs",
+  "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/message.rs",
+  "mcp-re-http-profile/src/evidence.rs",
+  "mcp-re-http-profile/src/ids.rs",
+  "mcp-re-http-profile/src/error.rs",
+  "mcp-re-http-profile/src/policy.rs",
+  "mcp-re-http-profile/src/verify/floor/mod.rs",
+  "mcp-re-http-profile/src/verify/floor/components.rs",
+  "mcp-re-http-profile/src/verify/floor/covered_components.rs",
+  "mcp-re-http-profile/src/verify/floor/sf_dictionary.rs",
+  "mcp-re-http-profile/src/verify/floor/signature.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_input.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_parameters.rs",
+  "mcp-re-http-profile/src/verify/floor/transport_headers.rs",
+  "mcp-re-http-profile/src/body/mod.rs",
+  "mcp-re-http-profile/src/body/representable.rs",
+  "mcp-re-http-profile/src/body/carried_number.rs",
+  "mcp-re-http-profile/src/body/decimal_token.rs",
+  "mcp-re-core/src/crypto.rs",
+  "mcp-re-core/src/error.rs",
+  "mcp-re-core/src/encoding.rs",
+  "mcp-re-http-profile/src/verify/full/mod.rs",
+  "mcp-re-http-profile/src/verify/full/delegated/mod.rs",
+  "mcp-re-http-profile/src/verify/full/delegated/bound.rs",
+  "mcp-re-http-profile/src/verify/full/delegated/expectations.rs",
+  "mcp-re-http-profile/src/verified_response/bound.rs",
+]
+exported_contracts = []
+test_package = "mcp-re-http-profile"
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://http_profile/delegated_bound/credential_binding",
+  "mutation://http_profile/delegated_bound/credential_binding",
+]
+tested_symbols = [
   "tests/delegation_e2e_test#response_keyid_not_delegated_kid_is_key_mismatch",
-  "tests/delegation_e2e_test#response_signed_by_key_other_than_cnf_is_key_mismatch",
   "tests/delegation_e2e_test#a_block_naming_a_keyid_the_credential_did_not_confirm_is_key_mismatch",
+  "tests/delegation_e2e_test#response_signed_by_key_other_than_cnf_is_key_mismatch",
   "tests/delegation_e2e_test#a_delegated_response_advertising_another_requests_evidence_is_refused",
-  "tests/delegation_e2e_test#body_tamper_is_caught_by_content_digest",
-  "tests/delegation_e2e_test#stale_epoch_rejected_end_to_end",
-  "tests/delegation_e2e_test#revoked_delegated_key_rejected_end_to_end",
-  # --- delegated unbound response (THM-0020) ---
   "tests/delegation_e2e_test#a_delegated_preflight_receipt_verifies_without_request_binding",
+]
+
+# THM-0020's owner.
+[[unit]]
+id = "http_profile.delegated_unbound_result"
+class = "V0"
+description = "What a successful `Verifier::verify_delegated_unbound_response` return ESTABLISHES beyond the shared unbound facts: an inline delegation credential was REQUIRED and present, the wire keyid and the block's declared signer are the credential's own delegated kid, and the signature verified under the key the credential confirms — and never a request binding."
+paths = [
+  "mcp-re-http-profile/src/verifier.rs",
+  "mcp-re-http-profile/src/verify/mod.rs",
+  "mcp-re-http-profile/src/sigbase.rs",
+  "mcp-re-http-profile/src/digest.rs",
+  "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/message.rs",
+  "mcp-re-http-profile/src/evidence.rs",
+  "mcp-re-http-profile/src/ids.rs",
+  "mcp-re-http-profile/src/error.rs",
+  "mcp-re-http-profile/src/policy.rs",
+  "mcp-re-http-profile/src/verify/floor/mod.rs",
+  "mcp-re-http-profile/src/verify/floor/components.rs",
+  "mcp-re-http-profile/src/verify/floor/covered_components.rs",
+  "mcp-re-http-profile/src/verify/floor/sf_dictionary.rs",
+  "mcp-re-http-profile/src/verify/floor/signature.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_input.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_parameters.rs",
+  "mcp-re-http-profile/src/verify/floor/transport_headers.rs",
+  "mcp-re-http-profile/src/body/mod.rs",
+  "mcp-re-http-profile/src/body/representable.rs",
+  "mcp-re-http-profile/src/body/carried_number.rs",
+  "mcp-re-http-profile/src/body/decimal_token.rs",
+  "mcp-re-core/src/crypto.rs",
+  "mcp-re-core/src/error.rs",
+  "mcp-re-core/src/encoding.rs",
+  "mcp-re-http-profile/src/verify/full/mod.rs",
+  "mcp-re-http-profile/src/verify/full/delegated/mod.rs",
+  "mcp-re-http-profile/src/verify/full/delegated/unbound.rs",
+  "mcp-re-http-profile/src/verify/full/delegated/expectations.rs",
+  "mcp-re-http-profile/src/verified_response/unbound.rs",
+]
+exported_contracts = []
+test_package = "mcp-re-http-profile"
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://http_profile/delegated_unbound/credential_binding",
+  "mutation://http_profile/delegated_unbound/credential_binding",
+]
+tested_symbols = [
   "tests/delegation_e2e_test#an_unbound_receipt_without_a_credential_is_refused",
   "tests/delegation_e2e_test#an_unbound_receipt_signed_by_a_key_other_than_cnf_is_key_mismatch",
   "tests/delegation_e2e_test#an_unbound_receipt_naming_a_keyid_the_credential_did_not_confirm_is_key_mismatch",
   "tests/delegation_e2e_test#an_unbound_receipt_whose_wire_keyid_is_not_the_delegated_kid_is_key_mismatch",
-  "tests/delegation_e2e_test#an_unbound_receipt_whose_root_is_unknown_to_the_seam_is_untrusted",
-  "tests/delegation_e2e_test#a_req_component_is_refused_on_the_delegated_unbound_path",
-  "tests/delegation_e2e_test#an_unbound_receipt_body_tamper_is_caught_by_content_digest",
-  # --- the credential layer both delegated claims assert (THM-0019, THM-0020) ---
+]
+
+# A PROPOSITION NO THEOREM STATES, and the split is what made that visible. Eighteen controls
+# over `delegation/verify.rs` — validity, algorithm, type, root signature, issuer trust, expiry
+# and skew, audience, profile, key use, trust epoch, rollout window, three revocation
+# identifiers, `cnf` binding and segment count — sat inside a unit whose subject was `what a
+# successful verifier operation establishes`, carried as support for whichever of ten theorems a
+# reader happened to be following.
+#
+# It is an ADR-MCPRE-069 `new-proposition` at the UNIT layer: the evidence is registered and the
+# claim is not. §5 of that record makes STATING the claim a product step, so this unit exists
+# and no theorem is invented for it here — `verifier-results-decomposition-2026-09-18.md` P2-V2
+# is the obligation.
+[[unit]]
+id = "http_profile.delegated_credential_chain"
+class = "V0"
+description = "What an inline delegation credential must be before any response proposition may rest on it: three segments under the profile's own algorithm, type and key use; a root signature that verifies under an issuer key the trust seam resolved for the Response slot; inside its own nbf/exp window under a clamped skew; scoped to this verifier's audience; at an accepted trust epoch; and named on no revocation list by delegated kid, issuer kid or jti."
+paths = [
+  "mcp-re-http-profile/src/verifier.rs",
+  "mcp-re-http-profile/src/verify/mod.rs",
+  "mcp-re-http-profile/src/sigbase.rs",
+  "mcp-re-http-profile/src/digest.rs",
+  "mcp-re-http-profile/src/block.rs",
+  "mcp-re-http-profile/src/message.rs",
+  "mcp-re-http-profile/src/evidence.rs",
+  "mcp-re-http-profile/src/ids.rs",
+  "mcp-re-http-profile/src/error.rs",
+  "mcp-re-http-profile/src/policy.rs",
+  "mcp-re-http-profile/src/verify/floor/mod.rs",
+  "mcp-re-http-profile/src/verify/floor/components.rs",
+  "mcp-re-http-profile/src/verify/floor/covered_components.rs",
+  "mcp-re-http-profile/src/verify/floor/sf_dictionary.rs",
+  "mcp-re-http-profile/src/verify/floor/signature.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_input.rs",
+  "mcp-re-http-profile/src/verify/floor/signature_parameters.rs",
+  "mcp-re-http-profile/src/verify/floor/transport_headers.rs",
+  "mcp-re-http-profile/src/body/mod.rs",
+  "mcp-re-http-profile/src/body/representable.rs",
+  "mcp-re-http-profile/src/body/carried_number.rs",
+  "mcp-re-http-profile/src/body/decimal_token.rs",
+  "mcp-re-core/src/crypto.rs",
+  "mcp-re-core/src/error.rs",
+  "mcp-re-core/src/encoding.rs",
+  "mcp-re-http-profile/src/delegation/mod.rs",
+  "mcp-re-http-profile/src/delegation/parse.rs",
+  "mcp-re-http-profile/src/delegation/verify.rs",
+  "mcp-re-http-profile/src/delegation/issue.rs",
+  "mcp-re-http-profile/src/verify/full/delegated/mod.rs",
+  "mcp-re-http-profile/src/verify/full/delegated/credential_chain.rs",
+]
+exported_contracts = []
+test_package = "mcp-re-http-profile"
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://http_profile/delegated_credential/chain_admission",
+  "mutation://http_profile/delegated_credential/chain_admission",
+]
+tested_symbols = [
+  "tests/delegation_e2e_test#valid_delegated_response_verifies_under_cnf_key",
+  "tests/delegation_e2e_test#direct_root_signed_response_is_rejected_credential_missing",
+  "tests/delegation_e2e_test#stale_epoch_rejected_end_to_end",
+  "tests/delegation_e2e_test#revoked_delegated_key_rejected_end_to_end",
   "lib#delegation::tests::valid_credential_accepts_and_yields_delegated_key",
   "lib#delegation::tests::wrong_alg_is_credential_invalid",
   "lib#delegation::tests::wrong_typ_is_credential_invalid",
@@ -361,21 +745,6 @@ tested_symbols = [
   "lib#delegation::tests::cnf_kid_not_delegated_kid_is_credential_invalid",
   "lib#delegation::tests::not_three_segments_is_credential_invalid",
 ]
-
-# The structural half: the products are not interchangeable, and that is checked by the
-# compiler rather than asserted in prose. The controls were landed and PROBED in #570/#571
-# — each was rewritten so it SHOULD compile and the test then failed — so this unit records
-# them where they are, rather than growing a second copy.
-#
-# A FOURTH control was added when the delegated products stopped nesting the seam-authorized
-# ones: there is now no field, projection or conversion from a `VerifiedDelegatedMcpResponse`
-# to a `VerifiedMcpResponse`, so a consumer whose reasoning needs a trust-store entry for the
-# SIGNING key cannot be handed a credential-authorized value. It sits on the same item as
-# the bound/unbound control, which the lane matches as a battery, and it was probed the same
-# way: rewritten so it should compile, and the doctest then failed.
-#
-# Their lane is `cargo test --doc`. Bazel runs no doctests, and this manifest does not
-# pretend otherwise.
 
 [[unit]]
 id = "http_profile.verifier_result_separation"
@@ -439,7 +808,7 @@ evidence = ["structural://http_profile/verifier/assurance_type_separation"]
 # supplied independently", and the probe below is what distinguishes those.
 #
 # Class V0: there is no `ensures` here. The battery is what the claim rests on, so it
-# carries `mutation://` for the same reason `http_profile.verifier_results` does.
+# carries `mutation://` for the same reason the verifier's ten propositions do.
 #
 # NOT claimed by this unit, and the distinction is the whole point of the census: the STORE
 # refuses a session whose epoch no longer matches (`tls_listener_state::auth_epoch`, and the
@@ -2123,8 +2492,12 @@ rationale = "The channel operand is the authenticated peer, with whatever curren
 [[edge]]
 # The request operand is projected from what the verifier resolved. A verifier that resolved
 # an actor it should not have would put the wrong subject under a true-looking binding.
+# RETARGETED by the ADR-MCPRE-068 Phase-1 split. The rationale below names the REQUEST
+# verifier's seam resolution, which is `http_profile.request_floor_result`'s proposition —
+# "the presented keyid was resolved through the trust seam for the Request slot". Pointing it
+# at the wide unit made the prerequisite the whole verifier; it is one operation's product.
 kind = "COMPILE_DEPENDENCY"
-from = "http_profile.verifier_results"
+from = "http_profile.request_floor_result"
 to = "proxy.request_peer_binding"
 rationale = "The subject bound here IS the one the RFC 9421 verifier resolved through the trust seam. A verifier that admitted an untrusted key for a subject would make this relation true of a principal that never signed, and these controls — which hold verification fixed and vary the identities — would stay green."
 
@@ -5288,7 +5661,7 @@ paths = [
   "mcp-re-http-profile/src/custody/active_key.rs",
 ]
 exported_contracts = []
-# TWO classes, for the reason `http_profile.verifier_results` carries two. The seal added by
+# TWO classes, for the reason each of the verifier's propositions carries two. The seal added by
 # R11-307/R11-036 is a NEGATIVE conjunct — an illegal `(ttl, overlap)` pair has no inhabitant
 # — and a green battery is not evidence that the refusal is load-bearing. The compile-time
 # half (private fields, `of` the sole producer) no runtime weakening can move; the runtime

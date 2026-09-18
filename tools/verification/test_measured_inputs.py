@@ -121,11 +121,17 @@ def test_the_effective_test_selection_is_measured_not_only_its_uri():
     """A `test://` URI is a LABEL. Until encoding v4 it was the only test component, so a
     battery could fall from 67 declared controls to 5 — or move to another Cargo package —
     with the URI, and therefore the fingerprint, unchanged."""
-    selection = components("http_profile.verifier_results")["test_selection"]
+    unit_id = "http_profile.request_floor_result"
+    selection = components(unit_id)["test_selection"]
     assert selection["package"] == "mcp-re-http-profile"
-    assert len(selection["symbols"]) > 50
+    # COMPARED AGAINST THE REGISTRY rather than against a magnitude. The original assertion
+    # was `> 50 symbols`, chosen when this fixture was `http_profile.verifier_results` — one
+    # unit carrying 73 controls for ten propositions, which the ADR-MCPRE-068 Phase-1 split
+    # replaced with ten units. A count is the wrong invariant anyway: it passes a battery that
+    # swapped every member. What the component must hold is THIS unit's declared symbols.
+    assert set(selection["symbols"]) == set(UNITS[unit_id]["tested_symbols"])
     assert (
-        "tests/full_profile_test#a_target_uri_disagreeing_with_the_audience_tuple_fails"
+        "tests/proof_path_test#keyid_swap_to_another_trusted_key_fails_the_signature"
         in selection["symbols"]
     )
 
@@ -133,7 +139,7 @@ def test_the_effective_test_selection_is_measured_not_only_its_uri():
 def test_dropping_a_declared_control_moves_the_fingerprint():
     """The property the previous encoding did not have. Shrinking the battery must be
     visible, or a unit can lose its negative controls and stay FRESH."""
-    unit = dict(UNITS["http_profile.verifier_results"])
+    unit = dict(UNITS["http_profile.request_floor_result"])
     before = fingerprint_unit(unit, DOC, TOOLCHAINS, ASSUMPTIONS)["fingerprint"]
     unit["tested_symbols"] = unit["tested_symbols"][:5]
     after = fingerprint_unit(unit, DOC, TOOLCHAINS, ASSUMPTIONS)["fingerprint"]
@@ -181,7 +187,7 @@ def test_moving_the_battery_to_another_package_moves_the_fingerprint():
     """`test_package` selects which package the lane runs in, so it decides what was
     measured; a fingerprint blind to it would let the measurement move under a standing
     attestation."""
-    unit = dict(UNITS["http_profile.verifier_results"])
+    unit = dict(UNITS["http_profile.request_floor_result"])
     before = fingerprint_unit(unit, DOC, TOOLCHAINS, ASSUMPTIONS)["fingerprint"]
     unit["test_package"] = "mcp-re-core"
     after = fingerprint_unit(unit, DOC, TOOLCHAINS, ASSUMPTIONS)["fingerprint"]
@@ -191,11 +197,12 @@ def test_moving_the_battery_to_another_package_moves_the_fingerprint():
 def test_the_integration_test_sources_are_measured_not_only_their_names():
     """A control can keep its declared name and lose its body: the selector still resolves,
     the lane still reports a pass. The name is the label; the file is the evidence."""
-    sources = components("http_profile.verifier_results")["test_sources"]
-    assert "mcp-re-http-profile/tests/delegation_e2e_test.rs" in sources
+    sources = components("http_profile.request_floor_result")["test_sources"]
+    # Exactly the integration targets this unit's battery selects, and no others — see the
+    # measured-not-counted note above.
     assert "mcp-re-http-profile/tests/proof_path_test.rs" in sources
-    assert "mcp-re-http-profile/tests/full_profile_test.rs" in sources
     assert "mcp-re-http-profile/tests/algorithm_confusion_test.rs" in sources
+    assert "mcp-re-http-profile/tests/delegation_e2e_test.rs" not in sources
     assert all(digest.startswith("sha256:") for digest in sources.values())
     # A target the unit does not select is not measured: the component is the unit's
     # evidence, not the package's test directory.
@@ -254,7 +261,7 @@ def test_the_test_lane_instrument_is_part_of_the_evidence_identity():
     changed is evidence whose meaning changed — the same argument that puts the toolchain in
     the fingerprint, and the reason #745's adapter registry joined the set rather than
     sitting beside it unmeasured."""
-    lane = components("http_profile.verifier_results")["test_lane_identity"]
+    lane = components("http_profile.request_floor_result")["test_lane_identity"]
     assert set(lane) == {
         "tools/verification/verify-tests",
         "tools/verification/_manifest.py",
@@ -268,10 +275,20 @@ def test_the_probe_set_is_measured_so_the_suite_cannot_silently_shrink():
     over a suite that can shrink proves as little as the v3 test component did. Each probe
     entry is digested WHOLE, so softening a weakening or widening an `expect_red` moves the
     fingerprint and invalidates the standing mutation PASS."""
-    probes = components("http_profile.verifier_results")["mutation_probes"]
-    assert len(probes) > 20
+    unit_id = "http_profile.request_floor_result"
+    probes = components(unit_id)["mutation_probes"]
+    # Again the registry rather than a magnitude: every probe registered against this unit,
+    # and nothing else. Before the Phase-1 split this read `> 20`, which was a property of a
+    # unit that answered for ten propositions.
+    import tomllib as _t
+    registered = {
+        pr["id"]
+        for pr in _t.load(open("verification/policy/mutation-probes.toml", "rb"))["probe"]
+        if pr["unit"] == unit_id
+    }
+    assert set(probes) == registered and registered
     assert all(digest.startswith("sha256:") for digest in probes.values())
-    lane = components("http_profile.verifier_results")["mutation_lane_identity"]
+    lane = components("http_profile.request_floor_result")["mutation_lane_identity"]
     assert set(lane) == {"tools/verification/verify-mutations"}
 
 

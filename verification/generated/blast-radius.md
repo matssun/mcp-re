@@ -52,23 +52,32 @@ attestations this view cannot see.
 | unit://http_profile.artifact_typing | source, contracts or evidence | THM-0007 | _no consumer_ |
 | unit://http_profile.artifact_verification_boundary | source, contracts or evidence | THM-0008, THM-0015 | _no consumer_ |
 | unit://http_profile.bodyless_acknowledgement | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://http_profile.bound_response_full_result | source, contracts or evidence | THM-0018 | _no consumer_ |
+| unit://http_profile.bound_response_seam_result | source, contracts or evidence | THM-0016 | _no consumer_ |
+| unit://http_profile.bound_response_shared_facts | source, contracts or evidence | THM-0021 | _no consumer_ |
 | unit://http_profile.continuation_binding | source, contracts or evidence | THM-0010 | http_profile.continuation_unbypassability (PROOF_DEPENDENCY) |
 | unit://http_profile.continuation_unbypassability | source, contracts or evidence | THM-0009 | _no consumer_ |
+| unit://http_profile.delegated_bound_result | source, contracts or evidence | THM-0019 | _no consumer_ |
+| unit://http_profile.delegated_credential_chain | source, contracts or evidence | THM-0019, THM-0020 | _no consumer_ |
 | unit://http_profile.delegated_signing_custody | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://http_profile.delegated_unbound_result | source, contracts or evidence | THM-0020 | _no consumer_ |
 | unit://http_profile.freshness_window | source, contracts or evidence | THM-0001, THM-0014, THM-0016, THM-0017, THM-0021, THM-0022 | _no consumer_ |
 | unit://http_profile.keyid | source, contracts or evidence | THM-0055 | _no consumer_ |
 | unit://http_profile.keyid_selector | source, contracts or evidence | THM-0050 | _no consumer_ |
 | unit://http_profile.pdp_decision_authentication | source, contracts or evidence | THM-0039 | _no consumer_ |
 | unit://http_profile.replay_key | source, contracts or evidence | THM-0079 | _no consumer_ |
 | unit://http_profile.request_envelope | source, contracts or evidence | THM-0083 | _no consumer_ |
+| unit://http_profile.request_floor_result | source, contracts or evidence | THM-0014 | proxy.request_peer_binding (COMPILE_DEPENDENCY) |
+| unit://http_profile.request_full_result | source, contracts or evidence | THM-0015 | _no consumer_ |
 | unit://http_profile.response_emission_binding | source, contracts or evidence | THM-0065, THM-0075 | _no consumer_ |
 | unit://http_profile.retained_chain_record | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://http_profile.scitt_receipt_offline | source, contracts or evidence | THM-0041, THM-0072 | _no consumer_ |
 | unit://http_profile.scitt_retained_correspondence | source, contracts or evidence | THM-0042 | _no consumer_ |
 | unit://http_profile.scitt_service_pin | source, contracts or evidence | THM-0068, THM-0072 | _no consumer_ |
 | unit://http_profile.submitted_hop_identity | source, contracts or evidence | THM-0042 | http_profile.scitt_retained_correspondence (PROOF_DEPENDENCY) |
+| unit://http_profile.unbound_response_seam_result | source, contracts or evidence | THM-0017 | _no consumer_ |
+| unit://http_profile.unbound_response_shared_facts | source, contracts or evidence | THM-0022 | _no consumer_ |
 | unit://http_profile.verifier_result_separation | source, contracts or evidence | THM-0047, THM-0051 | _no consumer_ |
-| unit://http_profile.verifier_results | source, contracts or evidence | THM-0014, THM-0015, THM-0016, THM-0017, THM-0018, THM-0019, THM-0020, THM-0021, THM-0022, THM-0065 | proxy.request_peer_binding (COMPILE_DEPENDENCY) |
 | unit://policy.authorization_taxonomy | source, contracts or evidence | THM-0111 | _no consumer_ |
 | unit://proxy.admission_configuration_state | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.admission_configuration_state_sole_producer | source, contracts or evidence | _no theorem_ | _no consumer_ |
@@ -335,9 +344,9 @@ attestations this view cannot see.
 | ASM-0024 | description, justification, scope or mechanism | http_profile.admission_currency, http_profile.artifact_typing, http_profile.continuation_binding, http_profile.continuation_unbypassability, http_profile.freshness_window | assumption review |
 | ASM-0025 | description, justification, scope or mechanism | http_profile.admission_currency, http_profile.artifact_typing, http_profile.continuation_binding, http_profile.continuation_unbypassability, http_profile.freshness_window | assumption review |
 | ASM-0026 | description, justification, scope or mechanism | http_profile.admission_currency, http_profile.artifact_typing, http_profile.continuation_binding, http_profile.continuation_unbypassability, http_profile.freshness_window | assumption review |
-| ASM-0027 | description, justification, scope or mechanism | http_profile.verifier_results | assumption review |
-| ASM-0028 | description, justification, scope or mechanism | http_profile.verifier_results | assumption review |
-| ASM-0029 | description, justification, scope or mechanism | http_profile.verifier_results | assumption review |
+| ASM-0027 | description, justification, scope or mechanism | http_profile.bound_response_seam_result, http_profile.bound_response_shared_facts, http_profile.delegated_bound_result, http_profile.delegated_credential_chain, http_profile.delegated_unbound_result, http_profile.request_floor_result, http_profile.unbound_response_seam_result, http_profile.unbound_response_shared_facts | assumption review |
+| ASM-0028 | description, justification, scope or mechanism | http_profile.bound_response_full_result, http_profile.bound_response_shared_facts, http_profile.delegated_bound_result, http_profile.request_floor_result, http_profile.request_full_result, http_profile.unbound_response_shared_facts | assumption review |
+| ASM-0029 | description, justification, scope or mechanism | http_profile.bound_response_seam_result, http_profile.delegated_credential_chain, http_profile.request_floor_result, http_profile.unbound_response_seam_result | assumption review |
 | ASM-0030 | description, justification, scope or mechanism | proxy.certificate_identity | assumption review |
 | ASM-0031 | description, justification, scope or mechanism | proxy.ed25519_public_key | assumption review |
 | ASM-0032 | description, justification, scope or mechanism | proxy.credential_key_correspondence | assumption review |
