@@ -7880,3 +7880,66 @@ and restoring the old skip of the self-check did not compile. Slice 28 recorded 
 for exactly those two reasons; this probe attacks the reconstruction itself, which the declared
 controls do reach.
 """
+
+[[probe]]
+id = "M282-typescript-nothing-is-signed-after-close"
+unit = "sdk_typescript.post_close_emission"
+theorem = "THM-0095"
+conjunct = "after close(), nothing further is signed or transmitted — a queued request is not signed or POSTed, and a continuation chain stops rather than signing a fresh answer leg"
+path = "sdk/typescript/src/transport.ts"
+anchor = """
+  #refuseIfClosed(): void {
+    if (this.#state !== TransportState.Open) {
+      throw new ConnectionClosed("the transport was closed");
+    }
+  }
+"""
+weakening = """
+  #refuseIfClosed(): void {
+    if (false) {
+      throw new ConnectionClosed("the transport was closed");
+    }
+  }
+"""
+also = [
+  { path = "sdk/typescript/src/transport.ts", anchor = """
+        if (this.#abort.signal.aborted) throw this.#abort.signal.reason;
+        const created = now();
+""", weakening = """
+        const created = now();
+""" },
+  { path = "sdk/typescript/src/transport.ts", anchor = """
+        if (this.#abort.signal.aborted) throw this.#abort.signal.reason;
+
+        const responses = await config.answerInputRequired({
+""", weakening = """
+        const responses = await config.answerInputRequired({
+""" },
+]
+expect_red = [
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > does not sign or POST a request still queued at the semaphore when close() lands",
+]
+note = """
+THE FIRST COMPOUND FALSIFIER IN THIS REGISTRY, and the reason it exists is a measurement rather
+than a preference. Three sites each enforce the WHOLE proposition on the paths a closed
+transport can still reach -- `#refuseIfClosed()` reading `#state`, and the two per-leg abort
+checks in the exchange -- so removing ANY ONE of them leaves every declared control green. The
+one-anchor schema reported the conjunct as unprotected, which was false: it was protected three
+times over, and the lane could not say so.
+
+DEFENCE IN DEPTH, NOT COMPOSITION, and the distinction decides which mechanism is correct. Each
+of these sites refuses the same thing -- work continuing after `close()`. Where two checks each
+refuse a shape the OTHER admits, they are two conjuncts and each takes its own probe; weakening
+both at once would report one discharge for two propositions.
+
+WHAT THE WEAKENING BUYS AN ATTACKER is what the module already documents: emitting a queued or
+continuing leg after `close()` hands the server a valid, fresh, correctly-signed request the
+caller believes it cancelled -- re-populating the correlation store and re-prompting a human
+through `answerInputRequired` after `onclose` has fired.
+
+THE ASM-0043 NOTE REMAINS. The per-leg checks read `this.#abort.signal.aborted`, the runtime
+semantic ASM-0043 was withdrawn to stop trusting; `#refuseIfClosed()` reads `#state`, an
+ordinary field this class assigns, which is the repair that let the premise be withdrawn. This
+probe measures the set as it stands. Ceasing to credit the weaker carrier is a REMEDIATION
+question about which sites should remain, not a falsifier question, and it is not answered here.
+"""

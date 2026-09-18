@@ -4970,7 +4970,10 @@ paths = ["sdk/typescript/src/transport.ts"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://sdk_typescript/post_close_emission/nothing_is_signed_after_close"]
+evidence = [
+  "test://sdk_typescript/post_close_emission/nothing_is_signed_after_close",
+  "mutation://sdk_typescript/post_close_emission/nothing_is_signed_after_close",
+]
 tested_symbols = [
   "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > does not sign or POST a request still queued at the semaphore when close() lands",
   "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > says nothing about execution when close() aborts an in-flight exchange",
