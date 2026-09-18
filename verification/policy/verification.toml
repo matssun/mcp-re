@@ -4310,7 +4310,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://sdk_python/correlation_lifecycle/the_window_and_the_bound"]
+evidence = [
+  "test://sdk_python/correlation_lifecycle/the_window_and_the_bound",
+  "mutation://sdk_python/correlation_lifecycle/the_window_and_the_bound",
+]
 tested_symbols = [
   "pytest#tests/test_transport.py::test_a_failed_exchange_does_not_leave_its_correlation_entry_outstanding",
   "pytest#tests/test_transport.py::test_close_clears_abandoned_correlation_state",
@@ -4376,7 +4379,10 @@ paths = ["sdk/python/python/mcp_re_sdk/transport.py"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://sdk_python/notification_delivery/acknowledged_or_undelivered"]
+evidence = [
+  "test://sdk_python/notification_delivery/acknowledged_or_undelivered",
+  "mutation://sdk_python/notification_delivery/acknowledged_or_undelivered",
+]
 tested_symbols = [
   "pytest#tests/test_transport.py::test_an_unsigned_acknowledgement_fails_the_transport_closed",
   "pytest#tests/test_transport.py::test_a_non_202_answer_to_a_notification_fails_closed",
@@ -4706,7 +4712,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://sdk_typescript/correlation_lifecycle/the_window_and_the_bound"]
+evidence = [
+  "test://sdk_typescript/correlation_lifecycle/the_window_and_the_bound",
+  "mutation://sdk_typescript/correlation_lifecycle/the_window_and_the_bound",
+]
 tested_symbols = [
   "vitest#test/correlation.test.ts > fails closed > rejects a response binding to nothing outstanding",
   "vitest#test/correlation.test.ts > fails closed > rejects a late response",
@@ -4816,7 +4825,10 @@ paths = ["sdk/typescript/src/transport.ts"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://sdk_typescript/notification_delivery/acknowledged_or_undelivered"]
+evidence = [
+  "test://sdk_typescript/notification_delivery/acknowledged_or_undelivered",
+  "mutation://sdk_typescript/notification_delivery/acknowledged_or_undelivered",
+]
 tested_symbols = [
   "vitest#test/transport.test.ts > McpReHttpTransport notification handling > fails closed on an unsigned acknowledgement",
   "vitest#test/transport.test.ts > McpReHttpTransport notification handling > fails closed on a bodied 200 in place of an acknowledgement",

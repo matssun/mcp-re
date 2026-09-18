@@ -5308,3 +5308,97 @@ The TypeScript instance of M191. `JSONRPCMessageSchema` is a UNION that accepts 
 so the parser downstream is not a second carrier: it validates the method-bearing body
 happily, as a request.
 """
+
+[[probe]]
+id = "M193-python-a-late-response-is-refused"
+unit = "sdk_python.correlation_lifecycle"
+theorem = "THM-0094"
+conjunct = "a request is answerable only inside the window it declared — a response arriving past it is refused rather than delivered"
+path = "sdk/python/python/mcp_re_sdk/correlation.py"
+anchor = """
+        return now > self.expires
+"""
+weakening = """
+        return False
+"""
+expect_red = [
+  "pytest#tests/test_correlation.py::TestFailsClosed::test_a_late_response_is_rejected",
+]
+note = """
+THE PREDICATE IS THE WINDOW. `is_expired` is consulted by `take`, by the input-required
+association and by reaping, so it is one carrier of several conjuncts rather than one of
+several carriers of one. Under the weakening a response is answerable forever: the entry
+never retires on lateness, and reaping -- the thing that BOUNDS the store -- drops nothing,
+so a session of unanswered requests grows without limit. The `_consumed` grace map is not a
+second carrier: it distinguishes a duplicate from an unbound response among ids that were
+already consumed, and says nothing about an id that never expires.
+"""
+
+[[probe]]
+id = "M194-typescript-a-late-response-is-refused"
+unit = "sdk_typescript.correlation_lifecycle"
+theorem = "THM-0095"
+conjunct = "a request is answerable only inside the window it declared — a response arriving past it is refused rather than delivered"
+path = "sdk/typescript/src/correlation.ts"
+anchor = """
+const isExpired = (p: PendingRequest, now: number): boolean => now > p.expires;
+"""
+weakening = """
+const isExpired = (p: PendingRequest, now: number): boolean => false && now > p.expires;
+"""
+expect_red = [
+  "vitest#test/correlation.test.ts > fails closed > rejects a late response",
+  "vitest#test/correlation.test.ts > fails closed > retires the entry when a response is late",
+  "vitest#test/correlation.test.ts > reaping > drops only the dead",
+]
+note = """
+The TypeScript instance of M193. The weakening keeps both parameters read so the
+substitution is a semantic change and not a compile error -- the lane treats a tree that
+does not build as a measurement failure, which would say nothing about the conjunct.
+"""
+
+[[probe]]
+id = "M195-python-a-client-side-response-is-refused"
+unit = "sdk_python.notification_delivery"
+theorem = "THM-0094"
+conjunct = "a client->server response, which MCP-RE profiles no carrier for, is refused rather than signed as a fabricated notification"
+path = "sdk/python/python/mcp_re_sdk/transport.py"
+anchor = """
+                if not isinstance(message, JSONRPCRequest):
+"""
+weakening = """
+                if False:
+"""
+expect_red = [
+  "pytest#tests/test_transport.py::test_a_client_side_response_is_refused_rather_than_carried_as_a_notification",
+]
+note = """
+THE TRIGGER IS PEER-INFLUENCEABLE, which is what makes this a security conjunct rather than
+a type-hygiene one: a verified reply body carrying a `method` parses as a server->client
+request, `ClientSession` answers it with a RESPONSE, and that answer arrives here. Under the
+weakening the response falls through to the request path and is signed as a message the
+application never composed.
+"""
+
+[[probe]]
+id = "M196-typescript-a-client-side-response-is-refused"
+unit = "sdk_typescript.notification_delivery"
+theorem = "THM-0095"
+conjunct = "a client->server response, which MCP-RE profiles no carrier for, is refused rather than signed as a fabricated notification"
+path = "sdk/typescript/src/transport.ts"
+anchor = """
+    if (!("method" in message)) {
+"""
+weakening = """
+    if (false) {
+"""
+expect_red = [
+  "vitest#test/transport.test.ts > McpReHttpTransport notification handling > refuses a client-side RESPONSE rather than carrying it as a notification",
+]
+note = """
+The TypeScript instance of M195. The two SDKs differ in BLAST RADIUS and not in the
+refusal: Python reports it on the diagnostic channel because the refusal happens in the
+parent task of the group running every concurrent exchange, so raising would end an entire
+session over one peer-influenced reply; TypeScript throws from the one `send()`. Both are
+probed for the same conjunct.
+"""
