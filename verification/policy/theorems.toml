@@ -598,7 +598,17 @@ checked.
 """
 owner = "proxy.runtime_lifecycle"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.runtime_lifecycle"]
+# ADR-MCPRE-068 Phase 1. The statement's second clause — "apply is the only mutator" — is a
+# claim about what no other code can do to the value, and until 2026-09-18 nothing
+# established it: the battery exercises the mutators that exist, and a seal quantifies over
+# the ones that do not. `proxy.runtime_lifecycle_sole_mutator` carries it, with two compile
+# refusals for the two producer routes. NO CLAIM CORRECTION WAS NEEDED here — unlike the two
+# SDK roots, this statement was already right, and what was missing was evidence for a
+# sentence it had asserted since ratification.
+supported_by = [
+  "unit://proxy.runtime_lifecycle",
+  "unit://proxy.runtime_lifecycle_sole_mutator",
+]
 depends_on = []
 
 [[theorem]]
