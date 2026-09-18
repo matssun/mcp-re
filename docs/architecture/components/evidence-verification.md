@@ -396,6 +396,7 @@ is indistinguishable from an unconsidered one. Private fields alone are not a se
 | S11 | in-crate | no code outside `communication_assurance::signing_key_evidence` can assemble `CryptographicSigningKeyEvidence` | `E0451` |
 | S12 | in-crate | no code outside `communication_assurance` can call `CertificatePeerIdentityEvidence::new` | `E0624` |
 | S13 | in-crate | no code outside `communication_assurance::certificate_peer_identity_evidence` can write the value/source pair directly | `E0451` |
+| S14 | in-crate | no code outside `trust_plan` can assemble a `TrustPlan` field by field | `E0451` |
 
 S04 is the one ADR-MCPRE-068 §12.1 split out of a composite unit, and 0D-3 completed the
 split in the registry: M113/M114/M115 falsify the constructor's runtime refusal of an illegal
@@ -433,6 +434,13 @@ is `pub(super)` by the owner's deliberate argument, so the boundary is the AUTHO
 one file — these two are injected at the crate root, and a probe inside `communication_assurance`
 would compile, correctly. They are two probes because a `pub(super)` constructor closes
 nothing if the representation is reachable: S12 attacks the constructor, S13 the literal.
+
+S14 is the third shape a structural claim takes here, and the one that shows the class is not
+only about refusals. `TrustPlan::from_validated` is TOTAL — the legality of each part belongs
+to its own owner, so there is nothing for it to refuse — and the entire security content of
+its signature is the single `&ValidatedDeployment` parameter that makes two owned facts
+CO-PROVENANT. Every field in S14's hostile construction could be a perfectly good value; what
+would be false is that they describe the same deployment.
 
 ### 9.4 The MEASURED apparatus control
 

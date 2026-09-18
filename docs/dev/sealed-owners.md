@@ -708,6 +708,44 @@ S12 had the same typo and passed, because rustc resolves call visibility before 
 path; so the distinction between "refused by the boundary" and "refused by something" is not
 academic, and the weak form of this check would have accepted a typo as a seal.
 
+### The seventh: `TrustPlan`, where the seal is co-provenance
+
+**Landed 2026-09-18, ADR-MCPRE-068 Phase 0D-9.** A third kind of structural claim, after
+*refusal made unavoidable* and *the authority that may pair*. Here the constructor refuses
+nothing at all — `from_validated` is **total** — and the entire security content of its
+signature is its single `&ValidatedDeployment` parameter. The owner says so:
+
+> the one producer, and it takes a `ValidatedDeployment` — so both owned facts come from one
+> deployment, and no caller can supply them separately.
+
+That sentence is about **who may pair the fields**, not about whether any one of them is
+legal; the legality of each part belongs to its own owner. No behavioural test can reach it,
+because in the hostile construction every field could be a perfectly good value — what would
+be false is that they describe the same deployment. A struct literal restores exactly the
+hand-pairing the parameter removes, which is why S14 is a literal rather than a bad argument.
+
+| proposition | unit | class | falsifier |
+|---|---|---|---|
+| what the plan projects, and that reload is derived rather than stored | `proxy.trust_plan` | `tested` | M66 |
+| the posture and the locator describe one deployment | `proxy.trust_plan_co_provenance` | `structural` | S14 — `E0451` |
+
+```text
+cargo test -p mcp-re-proxy --lib -- trust_plan::tests
+    test result: ok. 4 passed; 0 failed        # with all four fields opened to pub(crate)
+
+verify-structural --probe S14
+    FAIL S14: the hostile construction COMPILED.
+```
+
+**Three shapes of structural claim now have units,** and they are worth telling apart when
+writing the next one:
+
+| shape | what the probe shows | example |
+|---|---|---|
+| a refusal made unavoidable | the check cannot be routed around | S04, S06, S08 |
+| provenance closed | the value's bytes or pairing are the owner's | S07, S09–S11, S12/S13 |
+| co-provenance | separately legal parts cannot be combined by a caller | S14 |
+
 The remaining unit-backed sealed owners follow the same split, one owner per change.
 
 ## Open
