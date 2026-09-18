@@ -3712,6 +3712,16 @@ depends_on = [
   # disposition, and the dispatch commitment itself, read a machine at least as far along
   # as the work actually got. The six assembly-owned transitions are excluded by name.
   "THM-0101",
+  # ADR-MCPRE-068 Phase 1. The antecedent quantifies over the obligations "selected by the
+  # validated deployment", and nothing in the 48-theorem closure said that the set the
+  # serving runtime holds IS the operator's validated selection rather than a posture
+  # silently reinterpreted during materialization. Without it "selected" names no
+  # determinate set and the implication can hold vacuously about a set nobody chose.
+  #
+  # NOT the disclaimer in this root's own scope. "Not a claim that the set is right" refuses
+  # ADEQUACY — whether the operator chose enough. This is IDENTITY — whether the set being
+  # served is the one validated. The scope disclaims the first and is silent on the second.
+  "THM-0077",
 ]
 
 [[theorem]]

@@ -257,7 +257,7 @@ attestations this view cannot see.
 | THM-0074 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0075 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0076 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
-| THM-0077 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
+| THM-0077 | statement, consequence, scope or review requirement | specification review | THM-0074 |
 | THM-0078 | statement, consequence, scope or review requirement | specification review | _no dependent_ |
 | THM-0079 | statement, consequence, scope or review requirement | specification review | THM-0074 |
 | THM-0080 | statement, consequence, scope or review requirement | specification review | THM-0074 |
