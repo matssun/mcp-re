@@ -7930,7 +7930,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://host/request_freshness_inputs"]
+evidence = [
+  "test://host/request_freshness_inputs",
+  "mutation://host/request_freshness_inputs",
+]
 # Three groups. The entropy controls are about the production source; the gating controls are
 # about the fixtures NOT being on the production surface, which is a two-part boundary — the
 # `#[cfg]` on each item AND the feature not being default and not being a normal dependency.
@@ -8310,7 +8313,10 @@ paths = ["mcp-re-core/src/replay.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://core/replay_seam/decision_and_outage"]
+evidence = [
+  "test://core/replay_seam/decision_and_outage",
+  "mutation://core/replay_seam/decision_and_outage",
+]
 # The key's shape is the first three: a nonce is fresh again under a different signer or a
 # different AUDIENCE, which is what makes the triple a triple rather than a nonce. There is no
 # principal control because the principal is not in the key — it is the retention budget's
@@ -8344,7 +8350,10 @@ paths = ["mcp-re-core/src/resolver.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://core/trust_resolver_seam/binding_and_outage"]
+evidence = [
+  "test://core/trust_resolver_seam/binding_and_outage",
+  "mutation://core/trust_resolver_seam/binding_and_outage",
+]
 # The injectivity control is the one that is not about the mapping's happy path: without it,
 # a signer whose name contains the delimiter could resolve under another signer's key id.
 tested_symbols = [

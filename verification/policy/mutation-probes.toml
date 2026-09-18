@@ -6388,3 +6388,101 @@ The `iat`-ahead half travels with it because a future issuance floors BOTH age c
 -- this N cap and the §5.2 degraded P window -- at zero under saturation, and so passes them
 for the assertion's whole TTL. Two halves of one refusal, one anchor.
 """
+
+[[probe]]
+id = "M234-core-the-resolver-key-is-injective"
+unit = "core.trust_resolver_seam"
+theorem = "THM-0091"
+conjunct = "the composite (signer, key_id) lookup key is injective across pairs containing the delimiter"
+path = "mcp-re-core/src/resolver.rs"
+anchor = """
+        format!("{}:{}|{}:{}", signer.len(), signer, key_id.len(), key_id)
+"""
+weakening = """
+        format!("{signer}|{key_id}")
+"""
+expect_red = [
+  "lib#resolver::tests::composite_key_is_injective_across_delimiter_containing_pairs",
+]
+note = """
+THE LENGTH PREFIX IS THE INJECTIVITY, and dropping it is not a formatting change: two
+DIFFERENT `(signer, key_id)` pairs whose fields contain the delimiter compose to one key, so
+one tenant's binding resolves a key enrolled under another's. Every gate around this passes --
+the resolver is asked a well-formed question and answers with a genuinely enrolled key.
+
+That the fields are length-prefixed IN BYTES rather than escaped is what makes the parse
+unambiguous regardless of what the fields contain; the same hardening is in
+`SharedReplayCache::composite_key`, which is a sibling proposition in another unit rather than
+a second carrier of this one.
+
+THIS PROBE FAILED FIRST, AND THE CONTROL WAS TESTING THE WRONG DELIMITER. Its corpus was
+`("a#b", "c")` against `("a", "b#c")` -- the pairs a naive DID-shaped `#` join collides, and
+`compose_key` does not use `#`. So the control exercised nothing about this encoding: under a
+bare `{signer}|{key_id}` join those two pairs stay distinct and it passed. The characters that
+can tell the length-prefixed form from a bare join of the same two fields are the ones the
+function ITSELF joins on, `:` and `|`, and the control now includes them.
+"""
+
+[[probe]]
+id = "M235-host-a-pre-epoch-clock-is-never-fabricated"
+unit = "host.request_freshness_inputs"
+theorem = "THM-0091"
+conjunct = "a clock reports a pre-epoch reading faithfully rather than fabricating a plausible time"
+path = "mcp-re-host/src/clock.rs"
+anchor = """
+    i64::try_from(secs).map_or(i64::MIN, |magnitude| {
+        magnitude.checked_neg().unwrap_or(i64::MIN)
+    })
+"""
+weakening = """
+    {
+        #[allow(clippy::arithmetic_side_effects, clippy::cast_possible_wrap)]
+        let wrapped = -(secs as i64);
+        wrapped
+    }
+"""
+expect_red = [
+  "lib#clock::tests::a_magnitude_past_the_i64_boundary_saturates_before_the_epoch_never_after_it",
+]
+note = """
+THE WEAKENING IS THE HISTORICAL DEFECT, restored exactly. `(2^63 + 1) as i64` wraps to
+`i64::MIN + 1`, whose negation is `i64::MAX` -- so a clock set unrepresentably far BEFORE the
+epoch reports the furthest instant in the FUTURE, which every freshness window accepts. The
+magnitude has to be refused before it is negated, not after, and `try_from` rather than an
+`as` cast is the whole content of the function.
+
+Nothing downstream is a second carrier: a freshness window is given an `i64` and has no way to
+ask whether it was fabricated.
+"""
+
+[[probe]]
+id = "M236-core-a-poisoned-replay-cache-refuses-rather-than-admits"
+unit = "core.replay_seam"
+theorem = "THM-0091"
+conjunct = "every failure the reference cache owns is a value rather than a panic, and never an allow"
+path = "mcp-re-core/src/replay.rs"
+anchor = """
+        let mut seen = self
+            .seen
+            .lock()
+            .map_err(|e| ReplayCacheError::Unavailable {
+                details: format!("in-memory replay cache mutex poisoned: {e}"),
+            })?;
+"""
+weakening = """
+        let mut seen = self.seen.lock().unwrap_or_else(|e| e.into_inner());
+"""
+expect_red = [
+  "lib#replay::tests::a_poisoned_lock_refuses_as_unavailable_rather_than_panicking",
+]
+note = """
+RECOVERING THE GUARD IS THE WEAKENING, and it is the tempting one -- it does not panic, so it
+passes every "no panic on the serving path" reading of the contract. What it does instead is
+ADMIT: a cache whose invariant a panic elsewhere already broke answers `Fresh`, and a nonce
+that is not reliably retained can be replayed. The seam's rule is that an operational failure
+is an error value and NEVER an allow, and those are two different properties -- this weakening
+keeps the first and discards the second.
+
+The entry ceiling below is a sibling conjunct on the same rule, not a second carrier: it
+refuses when the cache is full, and says nothing about a cache whose lock is poisoned.
+"""

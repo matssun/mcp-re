@@ -183,33 +183,6 @@ root_reachable = false
 status = "unreviewed"
 
 [[obligation]]
-unit = "core.replay_seam"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "critical"
-inherited_severity = "high"
-root_reachable = false
-status = "unreviewed"
-
-[[obligation]]
-unit = "core.trust_resolver_seam"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "critical"
-inherited_severity = "medium"
-root_reachable = false
-status = "unreviewed"
-
-[[obligation]]
-unit = "host.request_freshness_inputs"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "critical"
-inherited_severity = "critical"
-root_reachable = false
-status = "unreviewed"
-
-[[obligation]]
 unit = "http_profile.bodyless_acknowledgement"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "high"
