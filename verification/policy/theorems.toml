@@ -3097,7 +3097,8 @@ direct_consequence_severity = "high"
 scope = """
 COMPOSITION, not classification and not trust. The three-way discriminator itself is
 `client.execution_contract`'s under THM-0061; whether the bytes are genuine and answer this
-request is `client.response_acceptance`'s under THM-0076. What is established here is that
+request is `client.response_signer_authorization`'s and
+`client.response_binding_disposition`'s under THM-0076. What is established here is that
 the shipped proxy composes those answers without adding a reading of its own — in particular
 that it does not ask the classification question a second time over the raw body, which is
 how two readers of one message come to disagree about what it says.
@@ -3114,7 +3115,7 @@ producer in the workspace — and NOT of the type. `VerifiedDelegatedResponse` a
 verified-response types carry `pub` fields deliberately, for the prover, and
 `VerifiedMcpResponse::from_block` says so in its own words: a convenience, not a seal. A caller
 outside this workspace could assemble one, and nothing here claims otherwise. Sealing that
-chain is `client.response_acceptance`'s question, not this claim's.
+chain is `client.response_signer_authorization`'s question, not this claim's.
 """
 owner = "client.verified_outcome"
 review_requirement = "Owner security-specification review"
@@ -3152,7 +3153,7 @@ under THM-0120. What is established here is that the deployable's serving path p
 
 NOT A FRESHNESS BOUND. How stale anchors may become between cycles is the configured cadence's
 and no number is asserted here; the configuration boundary bounds `trust.reload_secs`, and
-that bound is `client.config_lattice`'s.
+that bound is `client.local_leg_declaration`'s.
 
 NOT AN AVAILABILITY CLAIM. It says nothing about the refresher continuing to make progress
 under a wedged filesystem.
@@ -4908,7 +4909,7 @@ direct_consequence_severity = "critical"
 scope = """
 The SHIPPED path, and that is the whole point of registering it. THM-0057 through THM-0061
 establish what the client-core verifier does with an expectation and a response; every one of
-them takes the PAIRING as given, and `client.response_acceptance`'s scope says so explicitly —
+them takes the PAIRING as given, and `client.response_binding_disposition`'s scope says so explicitly —
 pairing an expectation with the request it describes is the caller's obligation.
 
 For a raw FFI caller that is the honest boundary and it stays there: `ResponseExpectation::new`
@@ -5334,7 +5335,7 @@ direct_consequence_severity = "critical"
 scope = """
 ONE replica. The BYTES are the input authority: nothing here says which path was read, who
 wrote the file, or that its contents are the operator's intent — the locator belongs to
-`proxy.trust_configuration_state`, and reading the file is the caller's. Nothing about WHEN a
+`proxy.trust_document_locator`, and reading the file is the caller's. Nothing about WHEN a
 change to the bytes reaches the snapshot, or what is served meanwhile: that is the reload
 cadence and THM-0097.
 
@@ -6734,7 +6735,7 @@ direct_consequence_severity = "medium"
 scope = """
 THE SEAM AND THE REFERENCE IMPLEMENTATION. Nothing here is about the runtime trust plane's
 tiers, its caching windows, or its revocation channel — those are THM-0097 through THM-0100's,
-over `proxy.trust_plane_runtime`.
+over `proxy.trust_resolution_window` and `proxy.trust_reload_cadence`.
 
 NOT A CLAIM ABOUT WHICH KEYS A DEPLOYMENT TRUSTS. The resolver answers from what it was given;
 where the bindings came from and whether they were authorized is the trust document's
@@ -6948,7 +6949,8 @@ caller as an unexplained broken pipe instead of the refusal it was given.
 direct_consequence_severity = "medium"
 scope = """
 WHAT HAPPENS TO AN ADMITTED REQUEST, NOT WHOSE REQUESTS ARE ADMITTED. The bind scope, the
-accepted authority and the head fields are `client.local_ingress_authority`'s under THM-0091.
+accepted authority and the head fields are `client.bind_scope`'s,
+`client.accepted_authority`'s and `client.caller_shape_admission`'s under THM-0091.
 
 NOT THE REMOTE LEG. What is sent, how it is signed, and whether the answer verifies are
 `client.proxy_request_correspondence`'s and the transport units'.
@@ -7157,7 +7159,7 @@ separators and bidi controls, and each of them in leading, medial and trailing p
 
 The CLASSIFICATION is not established here, and cannot be by this unit: whether a given
 value is a closed token or open text is its owner's decision, measured by
-`proxy.audit_record_coordinates`. What this unit establishes is that the decision is
+`proxy.audit_vocabulary_import`. What this unit establishes is that the decision is
 honoured — a `Text` is escaped, a `Token` is not — and the type system carries the other
 half, because `AuditValue::Token` takes `&'static str` and a string read out of a request
 body is not `'static`.
