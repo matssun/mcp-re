@@ -876,7 +876,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://proxy/tls/client_revocation_currency"]
+evidence = [
+  "test://proxy/tls/client_revocation_currency",
+  "mutation://proxy/tls/client_revocation_currency",
+]
 # The first two are the ones that carry the claim rather than a symptom of it. A latch that
 # a later reload could clear would satisfy every "the fault is recorded" assertion and still
 # let a straggler success report the cadence as kept; and a stale CRL that has no INHABITANT
@@ -3576,7 +3579,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://proxy/refusal/provenance_battery"]
+evidence = [
+  "test://proxy/refusal/provenance_battery",
+  "mutation://proxy/refusal/provenance_battery",
+]
 # The negative controls carry this unit. `a_policy_denial_has_no_core_verdict_to_be_recorded_under`
 # and `a_core_verdict_never_attributes_a_refusal_to_a_policy` are the two directions of the
 # separation `PolicyError` may never acquire a route across.
@@ -6926,7 +6932,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://proxy/deployment_request/operator_facing_redaction"]
+evidence = [
+  "test://proxy/deployment_request/operator_facing_redaction",
+  "mutation://proxy/deployment_request/operator_facing_redaction",
+]
 # `capability_materialization::key_source::pin` asserts the same property at the CONSUMER and
 # is deliberately NOT named: its source is not in this unit's `paths`, so citing it would be
 # the SF-1 defect — evidence whose file the unit does not measure, rewritable under the same

@@ -7163,3 +7163,90 @@ header set no longer has to match the set the signature was computed over. The
 content-injection control is a sibling conjunct rather than a second carrier: it catches a
 body arriving where none was signed, and says nothing about a header arriving alone.
 """
+
+[[probe]]
+id = "M259-proxy-a-pkcs11-pin-is-not-printable"
+unit = "proxy.operator_facing_redaction"
+theorem = "THM-0091"
+conjunct = "the PKCS#11 User PIN cannot be printed as configured — not the value, and not its length"
+path = "mcp-re-proxy/src/deployment_request/secret_string.rs"
+anchor = """
+        f.write_str("SecretString(redacted)")
+"""
+weakening = """
+        f.write_str(self.0.as_str())
+"""
+expect_red = [
+  "lib#deployment_request::secret_string::tests::the_debug_rendering_carries_no_part_of_the_secret",
+]
+note = """
+THE TYPE IS THE ONLY THING STOPPING THIS, which is what makes a `Debug` impl a security carrier
+rather than a convenience. A deployment request is derived-`Debug` all the way down and printed
+by ordinary diagnostics; nothing at a call site decides whether this field is safe to render,
+and no reviewer sees the moment it happens. The PIN unlocks a token holding the
+response-signing key, so it sits in the same custody class as the key itself -- and the
+redaction deliberately carries NO LENGTH either, because a PIN's length is worth guessing with.
+
+The sibling control -- the value is still readable where it is needed -- stays green under the
+weakening, correctly: the seal is about the rendering, not about access.
+"""
+
+[[probe]]
+id = "M260-proxy-a-stale-crl-produces-no-evidence-to-install"
+unit = "proxy.client_revocation_currency"
+theorem = "THM-0091"
+conjunct = "a set of CRLs is installable only when every one of them is inside its own nextUpdate window"
+path = "mcp-re-proxy/src/tls_plane/crl_evidence.rs"
+anchor = """
+        CrlFreshness::Stale { next_update_unix } => Err(format!(
+"""
+weakening = """
+        CrlFreshness::Stale { next_update_unix } => Ok(eprintln!(
+"""
+expect_red = [
+  "lib#tls_plane::crl_evidence::tests::a_stale_crl_produces_no_evidence_to_install",
+]
+note = """
+STARTUP IS WHERE A STALE CRL IS STILL A CONFIGURATION FACT. The verifier enforces CRL
+expiration, so a replica that installs a CRL past its `nextUpdate` fails every new client
+handshake closed -- correctly, and with no way for the operator to tell that the cause is their
+own revocation list rather than the clients. Refusing to produce evidence from it is what turns
+a silent outage into a named startup refusal.
+
+The NEAR-EXPIRY arm is not a second carrier: it WARNS and returns Ok, deliberately, so a
+refreshed CRL can be installed before the window closes. The two arms are a graded response to
+one measurement, and only the stale one refuses.
+"""
+
+[[probe]]
+id = "M261-proxy-each-authority-names-its-own-token"
+unit = "proxy.refusal_provenance"
+theorem = "THM-0091"
+conjunct = "the presentation boundary adds no vocabulary and makes no choice — it asks each authority what it says"
+path = "mcp-re-proxy/src/refusal/cause.rs"
+anchor = """
+            RefusalCause::Authorization(r) => r.wire_code(),
+"""
+weakening = """
+            RefusalCause::Authorization(_) => "mcp-re.authorization_denied",
+"""
+expect_red = [
+  "lib#refusal::cause::tests::the_two_authorization_arms_stay_distinguishable",
+]
+note = """
+THE TWO ARMS ARE THE PROPOSITION, and a single substituted token is what collapses them. An
+authorization refusal has two: a POLICY denied this, and the deployment could not establish the
+action to ask about. Both are non-grants and both are served as an `mcp-re.authorization_*`
+token, so a reader that only sees the served code cannot tell them apart -- and the weakening
+serves one token for both.
+
+WHOSE VOCABULARY IT IS matters as much as which token. The subordinate
+`PolicyError -> mcp-re.authorization_*` mapping belongs to `mcp_re_policy::PolicyError` alone;
+this boundary asks each authority what it says and adds nothing. A constant here is this file
+minting vocabulary it does not own, which is the defect whether or not the constant happens to
+be a legal token today.
+
+The first `expect_red` named the core-producer control instead, and it stayed green -- correctly,
+because the weakening touches only the Authorization arm. A probe is adjudicated against the
+control that measures the arm it weakens.
+"""

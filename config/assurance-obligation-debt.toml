@@ -192,15 +192,6 @@ root_reachable = false
 status = "unreviewed"
 
 [[obligation]]
-unit = "proxy.client_revocation_currency"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "high"
-direct_consequence_severity = "high"
-inherited_severity = "medium"
-root_reachable = false
-status = "unreviewed"
-
-[[obligation]]
 unit = "proxy.evidence_attestation"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "high"
@@ -210,29 +201,11 @@ root_reachable = false
 status = "unreviewed"
 
 [[obligation]]
-unit = "proxy.operator_facing_redaction"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "high"
-direct_consequence_severity = "high"
-inherited_severity = "none"
-root_reachable = false
-status = "unreviewed"
-
-[[obligation]]
 unit = "proxy.refusal_audit_emission"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "medium"
 direct_consequence_severity = "medium"
 inherited_severity = "medium"
-root_reachable = true
-status = "unreviewed"
-
-[[obligation]]
-unit = "proxy.refusal_provenance"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "high"
-direct_consequence_severity = "medium"
-inherited_severity = "high"
 root_reachable = true
 status = "unreviewed"
 
