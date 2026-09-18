@@ -1,39 +1,41 @@
 {
-  "subject": "THM-0091",
   "authority": "adr-068-phase1",
-  "ruling": "ADR-MCPRE-068 Phase-1 campaign ruling, item 1: Phase 1 authorizes correction of a theorem statement when decomposition demonstrates that the old wording overstates or misdescribes what production establishes, provided the accepted system promise is not weakened, removed, or materially expanded. The owner did not individually review this fingerprint; the authority recorded here is that ruling.",
-  "packet": "verification/reviews/packets/thm-0091-consequence-decomposition-2026-09-18.md",
-  "from_fingerprint": "sha256:21502a0d158da5aaca9a2eff9c07d4c612a5e16b297f1b241135df9ea7e6b7f8",
-  "to_fingerprint": "sha256:20f89a291e53e454086014366d76597919e7bfb98eb509246e9a8c54a77ee6e6",
-  "changed_components": ["theorem_claim"],
-  "reason": "The consequence-first decomposition of THM-0091 into seven owners measured three things about the statement. (1) It asserted two facts that are STRUCTURAL and described them as if they were behavioural: `possession of the scope IS that permission - there is no other constructor` and `the authority set is derived from that scope and never from the flag` are claims about what cannot be CONSTRUCTED, and nothing in the evidence attacked either. Nothing could: a mutation probe deletes a runtime check and neither sentence names one. Both are now compile-refusals, S22 and S23, each measured `refused by E0451`. (2) The operator-document half of the same sentence - unstated is a refusal, a misspelled declaration is a startup failure rather than a silent default - is carried by `client.local_leg_declaration` and was not said. (3) The scope did not record the seal/decision split, so a reader met `bind_scope` and `accepted_authority` twice in the support with no account of why, and it left the three caller-shape PREDICATES outside the closure the statement names. C4 of the packet is NOT applied: `depends_on = []` is correct and unchanged.",
-  "root_consequence_unchanged": true,
-  "product_behavior_unchanged": true,
-  "severity_before": "critical",
-  "severity_after": "critical",
-  "severity_justification": "Unchanged. The correction states two already-asserted facts more precisely and adds two scope paragraphs about what the support does and does not establish. Nothing the sidecar accepts or refuses differs, and the worst credible consequence - a browser page obtaining signed, attributed MCP-RE calls under the agent's identity - is the same event.",
-  "dependency_correction": null,
+  "changed_components": [
+    "theorem_claim"
+  ],
   "corrections": [
     {
-      "id": "C1",
       "field": "statement",
-      "old": "The listener is where the deployment said: an off-host bind exists only against an explicit operator declaration, and possession of the scope IS that permission - there is no other constructor. The authority set is derived from that scope and never from the flag, so permitting an off-host bind widens the names that reach signing by exactly the listener's own address and by nothing else; a rebound name is refused on an exposed listener as it is on a loopback one.",
+      "id": "C1",
       "new": "The listener is where the deployment said. An off-host bind exists only against an explicit operator declaration: unstated is a refusal and never a permission, and a misspelled declaration is a startup failure rather than a silent default. Possession of the scope IS that permission - there is no other constructor, and that is COMPILE-REFUSED rather than checked: the representation is private and no second constructor can be written. The authority set is derived from that scope and never from the operator's flag, refused the same way - no constructor takes the flag at all - so permitting an off-host bind widens the names that reach signing by exactly the listener's own address and by nothing else; a rebound name is refused on an exposed listener as it is on a loopback one.",
+      "old": "The listener is where the deployment said: an off-host bind exists only against an explicit operator declaration, and possession of the scope IS that permission - there is no other constructor. The authority set is derived from that scope and never from the flag, so permitting an off-host bind widens the names that reach signing by exactly the listener's own address and by nothing else; a rebound name is refused on an exposed listener as it is on a loopback one.",
       "reason": "Says that two of the facts are structural rather than checked, which is what S22 and S23 now establish at E0451, and adds the operator-document half that `client.local_leg_declaration` carries. The promise is not widened: the same binds are permitted and the same names reach signing. It is the ESTABLISHMENT MODE that was misdescribed, and a reader who took `there is no other constructor` for a runtime check would have looked for a control that cannot exist."
     },
     {
-      "id": "C2",
       "field": "scope",
-      "old": "",
+      "id": "C2",
       "new": "A SEAL AND A DECISION ARE TWO FACTS, which is why `bind_scope` and `accepted_authority` each appear twice in the support. A seal says an illegal inhabitant cannot be BUILT; it says nothing whatever about whether the decision that built the legal one was RIGHT. The compile-refusals establish only the first, and the deployment's answer - which declaration permits which bind, and which names the resulting authority admits - is a separate proposition with its own controls. Neither substitutes for the other, and reading the seal as though it decided anything is the reading this paragraph exists to refuse.",
+      "old": "",
       "reason": "Records the seal/decision split. Without it the support reads as duplicated rather than as two propositions, and the standing hazard is a reader concluding that a `structural` unit establishes the decision it seals the representation of."
     },
     {
-      "id": "C3",
       "field": "scope",
-      "old": "",
+      "id": "C3",
       "new": "THE PREDICATES THE STATEMENT NAMES ARE IN THE CLOSURE. The three caller-shape refusals are decided by the predicates themselves, not only by the code that calls them, and both halves are inside this root. What remains outside is what happens to a request this root has already ADMITTED - the in-flight ceiling, routing, rendering and the close sequence - which is `client.local_serving_pipeline`'s and is reached only after admission has succeeded.",
+      "old": "",
       "reason": "F2 of the packet: the root's closure reached the WIRING and not the PREDICATE. `is_loopback_host` and `is_json_content_type` were inside a unit whose own description says it governs an ADMITTED request - an admission authority inside a post-admission unit. `serve/guards.rs` is `client.caller_shape_admission`'s now and M90 attacks `is_loopback_host` directly; the scope says where the boundary actually falls."
     }
-  ]
+  ],
+  "dependency_correction": null,
+  "from_fingerprint": "sha256:21502a0d158da5aaca9a2eff9c07d4c612a5e16b297f1b241135df9ea7e6b7f8",
+  "packet": "verification/reviews/packets/thm-0091-consequence-decomposition-2026-09-18.md",
+  "product_behavior_unchanged": true,
+  "reason": "The consequence-first decomposition of THM-0091 into seven owners measured three things about the statement. (1) It asserted two facts that are STRUCTURAL and described them as if they were behavioural: `possession of the scope IS that permission - there is no other constructor` and `the authority set is derived from that scope and never from the flag` are claims about what cannot be CONSTRUCTED, and nothing in the evidence attacked either. Nothing could: a mutation probe deletes a runtime check and neither sentence names one. Both are now compile-refusals, S22 and S23, each measured `refused by E0451`. (2) The operator-document half of the same sentence - unstated is a refusal, a misspelled declaration is a startup failure rather than a silent default - is carried by `client.local_leg_declaration` and was not said. (3) The scope did not record the seal/decision split, so a reader met `bind_scope` and `accepted_authority` twice in the support with no account of why, and it left the three caller-shape PREDICATES outside the closure the statement names. C4 of the packet is NOT applied: `depends_on = []` is correct and unchanged.\n\nRE-DERIVED FROM THE COMPLETED PHASE-1 TREE, not carried forward. This record was first written while the twelve-root decomposition was still on held branches. Both endpoints were read again from main after every other Phase-1 slice had landed (#996, #997, #998, #999, #989, #1000), and both survived -- THM-0091 declares `depends_on = []`, so its dependency closure is empty and nothing upstream can move it; the transition recorded here is entirely local to its own statement and scope. That is a measured result rather than an inference from the shape of the edit: the same assumption was made for THM-0074 and was wrong in BOTH endpoints.\n\nRe-proved at this tree rather than cited from the earlier branch:\n  * `security_consequence` is byte-identical to main -- the product promise is unchanged, and the worst credible consequence is the same event.\n  * `depends_on`, `direct_consequence_severity`, `owner`, `review_requirement` and `supported_by` are all unchanged. Only `statement` and `scope` move, which is what makes this a correction of the ESTABLISHMENT DESCRIPTION and not of the promise.\n  * S22 and S23 still attack the two facts the corrected statement calls structural: `verify-structural --probe S22` and `--probe S23` each report the hostile construction REFUSED by E0451 at this head. The correction describes the claim as structural, and the compiler still refuses the illegal inhabitant.\n  * Every unit named in the corrected claim surface exists in the registry. The SDK and verifier splits renamed units across this campaign, and a scope naming a dead unit would be a claim surface pointing at nothing.",
+  "root_consequence_unchanged": true,
+  "ruling": "ADR-MCPRE-068 Phase-1 campaign ruling, item 1: Phase 1 authorizes correction of a theorem statement when decomposition demonstrates that the old wording overstates or misdescribes what production establishes, provided the accepted system promise is not weakened, removed, or materially expanded. The owner did not individually review this fingerprint; the authority recorded here is that ruling.",
+  "severity_after": "critical",
+  "severity_before": "critical",
+  "severity_justification": "Unchanged. The correction states two already-asserted facts more precisely and adds two scope paragraphs about what the support does and does not establish. Nothing the sidecar accepts or refuses differs, and the worst credible consequence - a browser page obtaining signed, attributed MCP-RE calls under the agent's identity - is the same event.",
+  "subject": "THM-0091",
+  "to_fingerprint": "sha256:20f89a291e53e454086014366d76597919e7bfb98eb509246e9a8c54a77ee6e6"
 }
