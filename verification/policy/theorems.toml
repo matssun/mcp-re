@@ -4702,9 +4702,21 @@ of silently carrying it; a line outside the set is outside this claim; and
 `scripts/node_runtime_gate.py` refuses a support claim wider than the measured set — or, as
 this package once had, no support claim at all.
 """
-owner = "sdk_typescript.exchange_path"
+owner = "sdk_typescript.exchange_binding"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://sdk_typescript.exchange_path"]
+supported_by = [
+  "unit://sdk_typescript.exchange_binding",
+  "unit://sdk_typescript.verdict_delivery",
+  "unit://sdk_typescript.execution_report",
+  "unit://sdk_typescript.local_failure_provenance",
+  "unit://sdk_typescript.reply_envelope",
+  "unit://sdk_typescript.continuation_drive",
+  "unit://sdk_typescript.correlation_lifecycle",
+  "unit://sdk_typescript.nonce_floor",
+  "unit://sdk_typescript.notification_delivery",
+  "unit://sdk_typescript.trust_anchor_completeness",
+  "unit://sdk_typescript.post_close_emission",
+]
 depends_on = []
 
 [[theorem]]
