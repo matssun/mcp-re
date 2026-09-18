@@ -46,6 +46,14 @@
 #   effective severity of the 63:  34 critical, 19 high, 10 medium
 #   root-reachable:                35 of 63
 #
+# A DERIVATION CORRECTION IS THE ONE EDIT A ROW MAY TAKE, and it is not a waiver. When a
+# Phase-1 dependency correction places an existing proposition under a root, three rows'
+# `inherited_severity` and `root_reachable` move while `effective_severity` — the value N1
+# obligates on — does not. The obligation is the same size; the derivation now decomposes it
+# correctly. `scripts/assurance_obligation_gate.py` says so in its own refusal: reachability
+# "changes nothing about the obligation, and a stale copy of it is a reader's false premise".
+# Applied 2026-09-18 for the AWS/GCP/PKCS#11 adapter rows, when THM-0082 gained THM-0116.
+#
 # `root_reachable` is recorded per row as the graph fact it is. NOT-ROOT-REACHABLE means
 # only that no currently declared system root transitively depends on this proposition. It
 # is not low importance, not complete assurance, and not permission to omit evidence — and
@@ -377,8 +385,8 @@ unit = "proxy.aws_kms_adapter"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "critical"
 direct_consequence_severity = "critical"
-inherited_severity = "high"
-root_reachable = false
+inherited_severity = "critical"
+root_reachable = true
 status = "unreviewed"
 
 [[obligation]]
@@ -458,8 +466,8 @@ unit = "proxy.gcp_kms_adapter"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "critical"
 direct_consequence_severity = "critical"
-inherited_severity = "high"
-root_reachable = false
+inherited_severity = "critical"
+root_reachable = true
 status = "unreviewed"
 
 [[obligation]]
@@ -494,8 +502,8 @@ unit = "proxy.pkcs11_adapter"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "critical"
 direct_consequence_severity = "critical"
-inherited_severity = "high"
-root_reachable = false
+inherited_severity = "critical"
+root_reachable = true
 status = "unreviewed"
 
 [[obligation]]

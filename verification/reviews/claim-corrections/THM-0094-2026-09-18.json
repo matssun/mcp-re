@@ -1,0 +1,61 @@
+{
+  "authority": "adr-068-phase1",
+  "changed_components": [
+    "theorem_claim",
+    "theorem_dependencies"
+  ],
+  "corrections": [
+    {
+      "field": "statement",
+      "id": "C1",
+      "new": "The verdict this SDK acts on was computed by the audited core over the exact request bytes this exchange signed and transmitted; nothing is re-derived or re-serialized for the verifier, so what THM-0058 and THM-0059 establish about a verdict is established about THIS transmission. ... a request is answerable only inside the window it declared.",
+      "old": "Every reply is taken from the correlation entry the request created, and a reply binding to nothing outstanding, arriving late, or repeating one already answered is refused rather than delivered.",
+      "reason": "`binding to nothing outstanding` and `repeating one already answered` are unreachable from the shipped exchange path; they are properties of `CorrelationStore` AS A VALUE, exercised at its own API, and are stated there instead. `arriving late` IS reachable and is kept. The promise is unchanged and better supported: it now names the cryptographic binding rather than a store lookup that cannot fail."
+    },
+    {
+      "field": "depends_on",
+      "id": "C2",
+      "new": "[\"THM-0058\", \"THM-0059\", \"THM-0060\", \"THM-0061\"]",
+      "old": "[]",
+      "reason": "The dependency correction C1 makes explicit. `verify_delegated_response` decides binding, trust, revocation, epoch and audience; `DelegationPolicy` clamps the skew; `ExecutionContract` and `continuation_state` decide what a receipt stated and whether a reply is terminal. THM-0126 is deliberately excluded: the PyO3 binding derives that fact independently rather than consuming it (packet P2-D)."
+    },
+    {
+      "field": "scope",
+      "id": "C3",
+      "new": "THE PyO3 BINDING IS NOT COVERED. ... This claim therefore ASSUMES the projection is faithful rather than establishing it \u2014 recorded as a review obligation, not waved past.",
+      "old": "(no paragraph about the PyO3 binding)",
+      "reason": "`sdk/python/src/lib.rs` and `trust.rs` build the pinned root resolver and project the core's verdict into the object the execution-honesty leaf reports verbatim, and they are in no unit's paths. Stating the assumption NARROWS the claim to what it establishes; it does not withdraw anything the claim previously established, because nothing established the projection before either."
+    },
+    {
+      "field": "scope",
+      "id": "C4",
+      "new": "THE RESPONSE READ BOUND IS OUTSIDE IT, AND ITS WORST CASE IS STATED RATHER THAN ROUNDED OFF. ... But the bound itself is AVAILABILITY. ... What this claim takes from the deadline is only honesty ... and that is `sdk_python.local_failure_provenance`'s proposition, not the bound's.",
+      "old": "THE RESPONSE DEADLINE IS ENFORCED, AND ITS WORST CASE IS STATED RATHER THAN ROUNDED OFF. ... What this claim takes from the bound is not availability but honesty",
+      "reason": "The Phase-1 inverse falsifier: remove the aggregate bound and a trickling peer holds a worker, which hands the application no wrong answer. The honesty half was always the claim's and is kept, now attributed to the leaf that owns it. The worst-case paragraph is retained verbatim."
+    },
+    {
+      "field": "scope",
+      "id": "C5",
+      "new": "REQUEST-SIDE ATTRIBUTION IS OUTSIDE IT. Which identity may sign, and under which custody class, is `sdk_python.signer_policy`; which authorization artefacts a request is bound to is `sdk_python.authorization_binding`.",
+      "old": "(no paragraph excluding request-side attribution)",
+      "reason": "Same inverse falsifier: remove either and the answer the application receives still binds to the request that was sent. Both remain registered propositions at their own severities; naming them in scope records where they went rather than dropping them."
+    },
+    {
+      "field": "statement",
+      "id": "C6",
+      "new": "A response is accepted only under a trust picture that was complete at construction ... and a request is answerable only inside the window it declared. No request is signed under a nonce below the 128-bit floor",
+      "old": "A response is accepted only under the configured trust anchor, epoch, audience and revocation posture",
+      "reason": "Two conjuncts the decomposition found EVIDENCED and unstated. The trust-anchor completeness controls exist and the TypeScript member already claims them; `sdk_python.nonce_floor` had seven passing controls and no claim at all. Stating a conjunct the implementation already enforces is a precision correction, not an expansion: no accepted request becomes refused and no refused request becomes accepted."
+    }
+  ],
+  "from_fingerprint": "sha256:ea2a919168b3aac5200e3985bdea22e0244b0d65c05b3c81462b6c6b96176d31",
+  "packet": "verification/reviews/packets/thm-0094-consequence-decomposition-2026-09-18.md",
+  "product_behavior_unchanged": true,
+  "reason": "The consequence-first decomposition of THM-0094 into ten leaves measured two things the statement got wrong. (1) Its headline correlation sentence named three refusals and two of them are UNREACHABLE from `_exchange`: the correlation id handed to `CorrelationStore.take()` is the one `record()` returned three statements earlier in the same loop iteration, and MCP-RE is one signed POST per request, so there is no inbox and no lookup by any value a peer controls. What binds a reply to its request is the audited core over the bytes this exchange signed. (2) `depends_on = []` was false: the SDK's whole cryptographic argument is `mcp_re_client_core`'s. Both corrections make the SAME promise rest on the mechanism that actually keeps it.",
+  "root_consequence_unchanged": true,
+  "ruling": "ADR-MCPRE-068 Phase-1 campaign ruling, 2026-09-18: Phase 1 authorizes correction of a theorem statement when decomposition demonstrates that the old wording overstates or misdescribes what production establishes, provided the accepted system promise is not weakened, removed, or materially expanded.",
+  "severity_after": "critical",
+  "severity_before": "critical",
+  "subject": "THM-0094",
+  "to_fingerprint": "sha256:0267a5ddc2b02a08a0a8830ac9263838db0035fdfec530a115f1076c10098e63"
+}

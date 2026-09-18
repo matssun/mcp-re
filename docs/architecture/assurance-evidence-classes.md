@@ -849,6 +849,29 @@ establishment and has not yet produced it*. Recording one as the other is how a 
 premise and a temporary backlog become indistinguishable — which is the exact defect §4.2
 exists to fix, reintroduced one layer over.
 
+**THE CLAIM-CORRECTION REGISTER, `verification/reviews/claim-corrections/`, is a third thing
+and is NOT a ratchet.** The owner's ruling of 2026-09-18 makes a class of Phase-1 claim edit
+ordinary work:
+
+> Phase 1 already authorizes correction of a theorem statement when decomposition
+> demonstrates that the old wording overstates or misdescribes what production establishes,
+> **provided the accepted system promise is not weakened, removed, or materially expanded.**
+
+`scripts/claim_surface_gate.py` is not disabled for it. What changed is that the gate can now
+tell a RECORDED correction from an arbitrary edit: a record carries the old text, the new
+text, the reason from the decomposition, and the assertions that put it inside the ruling —
+`root_consequence_unchanged`, `product_behavior_unchanged`, and a severity that may move only
+with an independent justification. Records form a CHAIN whose first link starts at the
+fingerprint the owner's specification review actually covers and whose last ends at the tree's
+current one, so the owner's review stays the base of the authority rather than a thing routed
+around, and the mechanism is one-shot: the next edit produces a fingerprint no record names.
+
+**It does NOT make the specification-review axis fresh.** `derive_review_state` still returns
+`STALE_CLAIM`, so §28.8 closure and release-mode establishment still ask for the human. The
+merge path publishes; the release path asks. Recording a correction as an approval would be
+the single-command self-approval §14.7 exists to prevent, and the register is explicit that
+its authority is the campaign ruling and never a review the owner did not perform.
+
 **No row in either registry is ever evidence.** Neither counts as an attestation, as FRESH,
 or as ESTABLISHED. Both are visible unresolved assurance debt, which is the only thing N2
 permits them to be.
