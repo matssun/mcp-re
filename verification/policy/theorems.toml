@@ -1173,7 +1173,15 @@ not about admission.
 """
 owner = "proxy.certificate_identity"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.certificate_identity"]
+# TWO units. `proxy.certificate_identity` establishes what the interpreter DECIDES — the
+# configured field, no fallback, every refusal named. `proxy.certificate_identity_authority_boundary`
+# establishes that the value/source PAIRING happens only inside the communication-assurance
+# authority, which is what makes the `source` a provenance report rather than a label any
+# module could attach.
+supported_by = [
+  "unit://proxy.certificate_identity",
+  "unit://proxy.certificate_identity_authority_boundary",
+]
 depends_on = ["THM-0023"]
 
 [[theorem]]

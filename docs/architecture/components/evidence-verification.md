@@ -394,6 +394,8 @@ is indistinguishable from an unconsidered one. Private fields alone are not a se
 | S09 | in-crate | no code outside `communication_assurance::credential_key_correspondence` can assemble `CredentialKeyCorrespondenceFacts` | `E0451` |
 | S10 | in-crate | no code outside `communication_assurance::credential_public_key_evidence` can assemble `CredentialPublicKeyEvidence` | `E0451` |
 | S11 | in-crate | no code outside `communication_assurance::signing_key_evidence` can assemble `CryptographicSigningKeyEvidence` | `E0451` |
+| S12 | in-crate | no code outside `communication_assurance` can call `CertificatePeerIdentityEvidence::new` | `E0624` |
+| S13 | in-crate | no code outside `communication_assurance::certificate_peer_identity_evidence` can write the value/source pair directly | `E0451` |
 
 S04 is the one ADR-MCPRE-068 §12.1 split out of a composite unit, and 0D-3 completed the
 split in the registry: M113/M114/M115 falsify the constructor's runtime refusal of an illegal
@@ -425,6 +427,12 @@ conjunction: correspondence is a relation between two PARTIES, so forging either
 would leave the other two unwitnessed. S09's value is also the `_correspondence` witness
 `DelegatedCertResolver` holds, so a forgeable fact would leave S06's boundary closed around a
 token that proves nothing.
+
+S12 and S13 are the pair that shows a probe's site is part of its claim. `CertificatePeerIdentityEvidence::new`
+is `pub(super)` by the owner's deliberate argument, so the boundary is the AUTHORITY and not
+one file — these two are injected at the crate root, and a probe inside `communication_assurance`
+would compile, correctly. They are two probes because a `pub(super)` constructor closes
+nothing if the representation is reachable: S12 attacks the constructor, S13 the literal.
 
 ### 9.4 The MEASURED apparatus control
 
