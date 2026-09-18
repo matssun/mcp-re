@@ -4460,12 +4460,16 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://sdk_python/signer_policy/checked_before_anything_is_signed"]
+evidence = [
+  "test://sdk_python/signer_policy/checked_before_anything_is_signed",
+  "mutation://sdk_python/signer_policy/checked_before_anything_is_signed",
+]
 tested_symbols = [
   "pytest#tests/test_transport.py::test_a_satisfied_policy_opens_the_transport",
   # ADR-MCPRE-069 `register`.
   "pytest#tests/test_transport.py::test_the_signer_is_checked_before_anything_is_signed",
   "pytest#tests/test_transport.py::test_a_hardened_policy_opens_with_a_non_exporting_signer",
+  "pytest#tests/test_transport.py::test_a_hardened_policy_refuses_software_custody",
   # `test_transport_e2e.py::test_the_hardening_profile_refuses_a_software_key_before_connecting`
   # belongs here and is NOT registered: that file does not run in the measured lane. See
   # `sdk_python.exchange_binding` and the packet's P2-E.
@@ -4941,7 +4945,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://sdk_typescript/signer_policy/checked_before_anything_is_signed"]
+evidence = [
+  "test://sdk_typescript/signer_policy/checked_before_anything_is_signed",
+  "mutation://sdk_typescript/signer_policy/checked_before_anything_is_signed",
+]
 tested_symbols = [
   "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > checks the signer against the route policy in start(), before anything is signed",
   "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > accepts a signer that satisfies the policy",

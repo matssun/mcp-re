@@ -5500,3 +5500,97 @@ deliberately NOT expected red: it stays green under the weakening, because the w
 only widens what counts as a token. A probe that expected it would be measuring the wrong
 direction.
 """
+
+[[probe]]
+id = "M201-python-the-transport-does-not-open-unchecked"
+unit = "sdk_python.signer_policy"
+theorem = "THM-0094"
+conjunct = "the transport does not open unless the signer satisfies the route's policy, checked before anything is signed"
+path = "sdk/python/python/mcp_re_sdk/transport.py"
+anchor = """
+    if config.policy is not None:
+        config.policy.check(config.signer)
+"""
+weakening = """
+    if False:
+        config.policy.check(config.signer)
+"""
+expect_red = [
+  "pytest#tests/test_transport.py::test_the_signer_is_checked_before_anything_is_signed",
+]
+note = """
+THE CALL SITE IS THE ORDERING, which is the half of this proposition a `SignerPolicy` unit
+test cannot reach. `check` refusing a wrong signer is a property of the policy object;
+"before anything is signed" is a property of WHERE it is called, and the only thing that
+establishes it is this statement standing ahead of the stream setup and every exchange.
+Under the weakening a route with an expected signer opens against any signer at all and the
+first thing that reveals it is a signed request already on the wire.
+"""
+
+[[probe]]
+id = "M202-python-hardening-refuses-exportable-custody"
+unit = "sdk_python.signer_policy"
+theorem = "THM-0094"
+conjunct = "non-exporting custody is required where the hardening profile demands it"
+path = "sdk/python/python/mcp_re_sdk/custody.py"
+anchor = """
+        if self.require_non_exporting and signer.custody is not CustodyClass.NON_EXPORTING:
+"""
+weakening = """
+        if False:
+"""
+expect_red = [
+  "pytest#tests/test_transport.py::test_a_hardened_policy_refuses_software_custody",
+]
+note = """
+THIS PROBE FAILED FIRST. The Python battery declared the hardening profile's POSITIVE case
+-- a hardened policy opens with a non-exporting signer -- and nothing about its refusal, so
+removing the check left every expected control green. A control that only witnesses the
+accepting direction cannot see a check that stopped rejecting.
+
+TypeScript already declared the refusal, so this is the second measured instance of the same
+asymmetry slice 3 found on the wire code: the two SDKs implement one proposition and their
+batteries cover DIFFERENT halves of it. The written control is the Python half, and what it
+refuses is the whole point of the profile -- an exportable software key means the private
+key is a value in this process's memory, so the actor binding it signs proves possession of
+something that can be copied out of the host.
+"""
+
+[[probe]]
+id = "M203-typescript-the-transport-does-not-open-unchecked"
+unit = "sdk_typescript.signer_policy"
+theorem = "THM-0095"
+conjunct = "the transport does not open unless the signer satisfies the route's policy, checked before anything is signed"
+path = "sdk/typescript/src/transport.ts"
+anchor = """
+    this.#config.policy?.check(this.#config.signer);
+"""
+weakening = """
+    void this.#config.policy;
+"""
+expect_red = [
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > checks the signer against the route policy in start(), before anything is signed",
+]
+note = """
+The TypeScript instance of M201, at `start()`. The weakening keeps the member read so the
+substitution is semantic rather than a compile error.
+"""
+
+[[probe]]
+id = "M204-typescript-hardening-refuses-exportable-custody"
+unit = "sdk_typescript.signer_policy"
+theorem = "THM-0095"
+conjunct = "non-exporting custody is required where the hardening profile demands it"
+path = "sdk/typescript/src/custody.ts"
+anchor = """
+    if (this.requireNonExporting && signer.custody !== CustodyClass.NonExporting) {
+"""
+weakening = """
+    if (false) {
+"""
+expect_red = [
+  "vitest#test/custody.test.ts > SignerPolicy fails closed > hardening rejects software custody with mcp-re.actor_binding_failed",
+]
+note = """
+The TypeScript instance of M202, and the SDK whose battery names the refusal directly.
+"""

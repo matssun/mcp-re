@@ -326,6 +326,26 @@ async def test_a_hardened_policy_opens_with_a_non_exporting_signer():
         assert read is not None and write is not None
 
 
+@pytest.mark.anyio
+async def test_a_hardened_policy_refuses_software_custody():
+    """The hardening profile's REFUSAL, which the positive case above cannot witness.
+
+    A route that demands non-exporting custody and opens against an exportable software
+    key has granted exactly what the profile exists to deny: the private key is a value
+    in this process's memory, so the actor binding it signs proves possession of
+    something that can be copied out of the host. The TypeScript twin declares the same
+    refusal; this is the Python half.
+    """
+    config = _config(
+        signer=Signer.software(CLIENT_SEED, "did:example:host-a", "client-key-1"),
+        policy=SignerPolicy.hardened("did:example:host-a"),
+    )
+    with pytest.raises(McpReError) as ei:
+        async with mcp_re_http_transport(config, _capturing_poster([])):
+            pass
+    assert ei.value.wire_code == "mcp-re.actor_binding_failed"
+
+
 # --- failure delivery ------------------------------------------------------------
 
 
