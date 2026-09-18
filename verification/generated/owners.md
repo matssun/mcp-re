@@ -73,9 +73,14 @@ not an omission to hide.
 | http_profile.request_full_result | V0 | THM-0015 | 1 |
 | http_profile.response_emission_binding | V0 | THM-0065 | 0 |
 | http_profile.retained_chain_record | V0 | _none_ | 0 |
-| http_profile.scitt_receipt_offline | V0 | THM-0041, THM-0072 | 0 |
+| http_profile.scitt_algorithm_agreement | V0 | _none_ | 0 |
+| http_profile.scitt_derived_root | V0 | THM-0041 | 0 |
+| http_profile.scitt_inclusion_fold | V0 | _none_ | 0 |
+| http_profile.scitt_position_commitment | V0 | _none_ | 0 |
+| http_profile.scitt_receipt_shape | V0 | _none_ | 0 |
 | http_profile.scitt_retained_correspondence | V0 | THM-0042 | 0 |
-| http_profile.scitt_service_pin | V0 | THM-0068 | 0 |
+| http_profile.scitt_service_pin | V0 | THM-0068, THM-0072 | 0 |
+| http_profile.scitt_statement_attribution | V0 | _none_ | 0 |
 | http_profile.submitted_hop_identity | V0 | _none_ | 0 |
 | http_profile.unbound_response_seam_result | V0 | THM-0017 | 2 |
 | http_profile.unbound_response_shared_facts | V0 | THM-0022 | 2 |

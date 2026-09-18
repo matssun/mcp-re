@@ -2265,7 +2265,7 @@ expect_red = [
 
 [[probe]]
 id = "M78-the-root-is-derived-never-supplied"
-unit = "http_profile.scitt_receipt_offline"
+unit = "http_profile.scitt_derived_root"
 theorem = "THM-0041"
 conjunct = "the inclusion fold's output is compared against the root the receipt commits to"
 # The whole offline argument. Take the root from the receipt instead of from the fold and a
@@ -2288,7 +2288,7 @@ expect_red = [
 
 [[probe]]
 id = "M79-a-statement-is-attributed-by-its-signature-not-its-claim"
-unit = "http_profile.scitt_receipt_offline"
+unit = "http_profile.scitt_statement_attribution"
 theorem = "THM-0041"
 conjunct = "the statement's own Sig_structure verified under a key resolved for its issuer kid"
 # `SignedStatement::from_cose` parses WITHOUT verifying, so possession proves nothing about
@@ -4556,3 +4556,116 @@ weakening = """
 expect_red = [
   "tests/integration#remote_signer_bound_test::every_remote_signer_dispatch_is_bounded_by_the_shared_timeout",
 ]
+
+# --- ADR-MCPRE-068 Phase 1 — the four falsifiers the SCITT split needs -------------------
+#
+# `http_profile.scitt_receipt_offline` named SIX propositions in its own description and
+# carried TWO probes. Splitting it into six owners made the other four merge-fatal instead of
+# invisible, which is the same thing the verifier split did for THM-0017.
+
+[[probe]]
+id = "M72-the-fold-reaches-the-root-or-refuses"
+unit = "http_profile.scitt_inclusion_fold"
+theorem = "THM-0041"
+conjunct = "a proof with fewer siblings than the tree requires does not reach the root and is refused"
+path = "mcp-re-http-profile/src/scitt/merkle.rs"
+note = """
+THE TWO RESIDUE CHECKS ARE THE WHOLE OF RFC 9162's POSITION BINDING. Without the `snode != 0`
+refusal a short path stops folding early and returns an intermediate node as if it were the
+root — which is exactly how a receipt for one position is restated at another, and is what
+`restating_the_log_position_at_a_different_path_length_does_not_verify` exists to catch.
+"""
+anchor = """    if snode != 0 {
+        // Fewer siblings than the tree requires: the proof does not reach the root.
+        return Err(HttpProfileError::ReceiptInclusionInvalid);
+    }
+"""
+weakening = """    if false {
+        // Fewer siblings than the tree requires: the proof does not reach the root.
+        return Err(HttpProfileError::ReceiptInclusionInvalid);
+    }
+"""
+expect_red = [
+  "lib#scitt::merkle::tests::restating_the_log_position_at_a_different_path_length_does_not_verify",
+  "lib#scitt::merkle::tests::an_empty_inclusion_path_is_only_valid_for_a_single_leaf_tree",
+]
+
+[[probe]]
+id = "M73-a-leaf-index-outside-the-tree-is-refused-before-any-fold"
+unit = "http_profile.scitt_receipt_shape"
+theorem = "THM-0041"
+conjunct = "a leaf index outside the tree is refused before any fold is attempted"
+path = "mcp-re-http-profile/src/scitt/receipt/parse.rs"
+note = """
+BEFORE ANY FOLD is the load-bearing half, and the split MEASURED where that refusal lives. The
+first draft of this probe attacked the identical guard at the top of
+`rfc9162_root_from_inclusion_proof`, and the control stayed GREEN: by then the PARSER has
+already refused, so the fold's copy is defence in depth rather than the check this conjunct
+names. The proposition is about the receipt's SHAPE — a leaf index that names a position the
+tree does not have is not a receipt — so the probe attacks the parser, where the refusal
+actually happens.
+
+That the fold carries the same guard is right and is not what this control establishes; it is
+what stops the fold from being unsafe when called from somewhere the parser has not run.
+"""
+anchor = """    if leaf_index >= tree_size {
+        return Err(HttpProfileError::MalformedEvidence(
+            "scitt inclusion proof leaf index outside tree",
+        ));
+    }
+"""
+weakening = """    if false {
+        return Err(HttpProfileError::MalformedEvidence(
+            "scitt inclusion proof leaf index outside tree",
+        ));
+    }
+"""
+expect_red = [
+  "lib#scitt::receipt::parse::tests::a_leaf_index_outside_the_tree_is_refused_before_any_fold",
+]
+
+[[probe]]
+id = "M74-a-bound-profile-refuses-a-receipt-that-commits-to-no-position"
+unit = "http_profile.scitt_position_commitment"
+theorem = "THM-0041"
+conjunct = "where the pinned profile binds a position, a receipt carrying no position commitment is refused rather than accepted on the fold alone"
+path = "mcp-re-http-profile/src/scitt/offline.rs"
+note = """
+STRIPPING THE PARAMETER IS THE ATTACK. The comment above this match says it: accepting a
+receipt with no position commitment because it did not carry one "would let an attacker strip
+the parameter and make pinning the stronger profile worth nothing". The fold still verifies —
+a true receipt at a position nobody signed is exactly what remains — so nothing else in the
+composition refuses it.
+"""
+anchor = """        (ReceiptPositionProfile::Bound, None) => {
+            return Err(HttpProfileError::ReceiptPositionUnbound)
+        }
+"""
+weakening = """        (ReceiptPositionProfile::Bound, None) => {}
+"""
+expect_red = [
+  "lib#scitt::offline::tests::a_bound_service_refuses_a_receipt_that_carries_no_position_commitment",
+]
+
+[[probe]]
+id = "M75-an-algorithm-that-disagrees-with-the-resolved-key-is-refused"
+unit = "http_profile.scitt_algorithm_agreement"
+theorem = "THM-0041"
+conjunct = "the protected `alg` and the resolved key must agree; a disagreement is refused rather than resolved in the key's favour"
+path = "mcp-re-http-profile/src/scitt/cose_key/verify.rs"
+note = """
+THE PAIR IS THE CHECK, and the module says so: `(protected alg, resolved key)` is exhaustive,
+which is the point. Weakening the mismatch arm to fall through to the key's own algorithm
+would make the protected header advisory — a signer could declare one algorithm and be
+verified under another, which is the confusion this exhaustive match exists to remove.
+"""
+anchor = """        (iana::Algorithm::EdDSA | iana::Algorithm::ES256, _) => Err(
+            HttpProfileError::MalformedEvidence("scitt cose algorithm key mismatch"),
+        ),
+"""
+weakening = """        (iana::Algorithm::EdDSA | iana::Algorithm::ES256, _) => Ok(()),
+"""
+expect_red = [
+  "lib#scitt::cose_key::tests::an_algorithm_that_disagrees_with_the_resolved_key_is_refused",
+]
+
