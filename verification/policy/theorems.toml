@@ -2606,9 +2606,11 @@ that is a property of one construction site over a foreign trait object, not of 
 owner holds, and it is registered separately as an open proposition. It says nothing about
 the handshake's own correctness.
 """
-owner = "proxy.tls_listener_state"
+owner = "proxy.listener_state_assembly"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.tls_listener_state"]
+supported_by = [
+  "unit://proxy.listener_state_assembly",
+]
 # The non-continuity clause USES the store's contract: that a session tagged with a
 # superseded epoch is not returned. This claim is about the owner's terms travelling
 # together and about the epoch being a function of the anchor set; THM-0103 is about what
@@ -2850,9 +2852,11 @@ It does not establish that the CRLs a deployment loads are current or complete, 
 establishes nothing about the per-request revocation check, which is a separate authority
 holding the same invariant.
 """
-owner = "proxy.tls_listener_state"
+owner = "proxy.client_certificate_posture"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.tls_listener_state"]
+supported_by = [
+  "unit://proxy.client_certificate_posture",
+]
 depends_on = ["THM-0048"]
 
 [[theorem]]
@@ -3456,9 +3460,12 @@ two authorities are separately typed and `PolicyError -> &'static str -> Core re
 as a route. It does not establish that the record was delivered (THM-0070), and it establishes
 nothing about the truth of either authority's verdict.
 """
-owner = "proxy.audit_record_coordinates"
+owner = "proxy.audit_authority_coordinates"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.audit_record_coordinates", "unit://proxy.refusal_provenance"]
+supported_by = [
+  "unit://proxy.audit_authority_coordinates",
+  "unit://proxy.refusal_provenance",
+]
 depends_on = ["THM-0046"]
 
 [[theorem]]
@@ -3545,9 +3552,12 @@ establish that the right cause is chosen at any given site, nor that the frozen 
 are individually well-named; both are the owning units' controls and neither is a totality
 property.
 """
-owner = "proxy.audit_record_coordinates"
+owner = "proxy.audit_vocabulary_import"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.audit_record_coordinates", "unit://proxy.refusal_provenance"]
+supported_by = [
+  "unit://proxy.audit_vocabulary_import",
+  "unit://proxy.refusal_provenance",
+]
 depends_on = ["THM-0069", "THM-0046", "THM-0081", "THM-0070", "THM-0085"]
 
 [[theorem]]
@@ -5535,9 +5545,11 @@ in-memory cache's own eviction policy under pressure is rustls's. Executable, cl
 controls over the store's contract plus real-handshake acceptance inside the owner's module
 tree.
 """
-owner = "proxy.tls_listener_state"
+owner = "proxy.epoch_bound_session_store"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.tls_listener_state"]
+supported_by = [
+  "unit://proxy.epoch_bound_session_store",
+]
 depends_on = []
 
 [[theorem]]

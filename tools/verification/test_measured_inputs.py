@@ -383,7 +383,7 @@ def test_widening_a_boundarys_cap_dirties_the_units_it_binds():
     invalidated nothing: every claim above it kept deriving FRESH while the argument
     beneath it had changed.
     """
-    unit = UNITS["proxy.tls_listener_state"]
+    unit = UNITS["proxy.epoch_bound_session_store"]
     before = fingerprint_unit(unit, DOC, TOOLCHAINS, ASSUMPTIONS, BOUNDARIES_REAL)
     widened = {
         "boundary": [
@@ -402,7 +402,7 @@ def test_narrowing_a_boundarys_paths_dirties_the_unit_it_stops_covering():
     covers a unit has stopped bounding that unit's class, which is the same relaxation
     reached by a different field.
     """
-    unit = UNITS["proxy.tls_listener_state"]
+    unit = UNITS["proxy.epoch_bound_session_store"]
     before = fingerprint_unit(unit, DOC, TOOLCHAINS, ASSUMPTIONS, BOUNDARIES_REAL)
     emptied = {
         "boundary": [

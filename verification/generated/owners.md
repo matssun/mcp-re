@@ -85,9 +85,10 @@ not an omission to hide.
 | proxy.admission_currency_gate | V0 | _none_ | 0 |
 | proxy.admission_state_source | V0 | _none_ | 0 |
 | proxy.async_replay_retention | V0 | THM-0105 | 0 |
+| proxy.audit_authority_coordinates | V0 | THM-0069 | 0 |
 | proxy.audit_delivery | V0 | THM-0070 | 0 |
-| proxy.audit_record_coordinates | V0 | THM-0069, THM-0071 | 0 |
 | proxy.audit_text_rendering | V0 | THM-0130 | 0 |
+| proxy.audit_vocabulary_import | V0 | THM-0071 | 0 |
 | proxy.authenticated_relationship_peer | V0 | THM-0031 | 1 |
 | proxy.authorization_capability | V0 | _none_ | 0 |
 | proxy.authorization_configuration_state | V0 | _none_ | 0 |
@@ -99,6 +100,7 @@ not an omission to hide.
 | proxy.certificate_identity_authority_boundary | V0 | _none_ | 0 |
 | proxy.channel_associated_credential | V0 | THM-0028 | 1 |
 | proxy.channel_associated_identity | V0 | THM-0029 | 1 |
+| proxy.client_certificate_posture | V0 | THM-0054 | 0 |
 | proxy.client_credential_window | V0 | THM-0102 | 0 |
 | proxy.client_credential_window_sole_producer | V0 | _none_ | 0 |
 | proxy.client_revocation_currency | V0 | THM-0131 | 0 |
@@ -122,6 +124,7 @@ not an omission to hide.
 | proxy.dispatch_commitment | V0 | THM-0045, THM-0051, THM-0052, THM-0074 | 0 |
 | proxy.ed25519_public_key | V0 | THM-0025 | 1 |
 | proxy.ed25519_public_key_sole_producer | V0 | _none_ | 0 |
+| proxy.epoch_bound_session_store | V0 | THM-0103 | 1 |
 | proxy.etcd_replay_adapter | V0 | THM-0107 | 0 |
 | proxy.evidence_attestation | V0 | THM-0113 | 0 |
 | proxy.exchange_publication | V0 | _none_ | 0 |
@@ -131,6 +134,7 @@ not an omission to hide.
 | proxy.gcp_kms_adapter | V0 | _none_ | 0 |
 | proxy.kms_ed25519_seam | V0 | THM-0108 | 0 |
 | proxy.kms_endpoint_authority | V0 | THM-0089 | 0 |
+| proxy.listener_state_assembly | V0 | THM-0048 | 1 |
 | proxy.mechanism_verified_credential | V0 | THM-0030 | 1 |
 | proxy.online_ocsp_reachability | V0 | THM-0013 | 0 |
 | proxy.operator_facing_redaction | V0 | _none_ | 0 |
@@ -160,7 +164,6 @@ not an omission to hide.
 | proxy.serving_trust_seam | V0 | THM-0066, THM-0099 | 0 |
 | proxy.signing_credential_provenance | V0 | THM-0082 | 0 |
 | proxy.signing_role_separation | V0 | THM-0073 | 0 |
-| proxy.tls_listener_state | V0 | THM-0048, THM-0054, THM-0103 | 1 |
 | proxy.trust_composition_root | V0 | THM-0038, THM-0067, THM-0077 | 0 |
 | proxy.trust_configuration_state | V0 | THM-0035, THM-0036 | 0 |
 | proxy.trust_configuration_state_sole_producer | V0 | _none_ | 0 |

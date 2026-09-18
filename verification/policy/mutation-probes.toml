@@ -818,7 +818,8 @@ expect_red = [
 
 [[probe]]
 id = "T01-per-build-session-store"
-unit = "proxy.tls_listener_state"
+unit = "proxy.listener_state_assembly"
+theorem = "THM-0048"
 conjunct = "a rebuild binds the config to the store this state was established with, not to a new one"
 path = "mcp-re-proxy/src/tls_listener_state/mod.rs"
 anchor = """
@@ -839,7 +840,8 @@ expect_red = [
 
 [[probe]]
 id = "T05-the-build-path-installs-no-epoch-bound-store"
-unit = "proxy.tls_listener_state"
+unit = "proxy.listener_state_assembly"
+theorem = "THM-0048"
 conjunct = "every config this owner builds carries this state's epoch-bound session store"
 # The defect R11-604 named. `resumption_acceptance` drives REAL handshakes, but against a
 # `ServerConfig` it assembles itself — its own verifier, its own epoch-bound store — so it
@@ -865,7 +867,8 @@ expect_red = [
 
 [[probe]]
 id = "T02-epoch-not-from-the-owners-anchors"
-unit = "proxy.tls_listener_state"
+unit = "proxy.listener_state_assembly"
+theorem = "THM-0048"
 conjunct = "the epoch a config is bound under digests the anchors this state owns"
 path = "mcp-re-proxy/src/tls_listener_state/mod.rs"
 anchor = """
@@ -889,7 +892,8 @@ expect_red = [
 
 [[probe]]
 id = "T03-stateless-tickets-bypass-the-store"
-unit = "proxy.tls_listener_state"
+unit = "proxy.listener_state_assembly"
+theorem = "THM-0048"
 conjunct = "no config this owner builds can resume outside the epoch-tagged store"
 path = "mcp-re-proxy/src/tls_listener_state/resumption_binding.rs"
 anchor = """
@@ -904,7 +908,8 @@ expect_red = [
 
 [[probe]]
 id = "T04-per-build-signing-budget"
-unit = "proxy.tls_listener_state"
+unit = "proxy.listener_state_assembly"
+theorem = "THM-0048"
 conjunct = "a delegated rebuild reuses the listener's handshake-signature budget rather than creating one"
 path = "mcp-re-proxy/src/tls_listener_state/mod.rs"
 anchor = """
@@ -3384,7 +3389,7 @@ expect_red = [
 
 [[probe]]
 id = "M116-a-superseded-session-is-refused"
-unit = "proxy.tls_listener_state"
+unit = "proxy.epoch_bound_session_store"
 theorem = "THM-0103"
 conjunct = "a read returns the session only if the stored tag equals the epoch in force — a session tagged under withdrawn trust does not resume"
 path = "mcp-re-proxy/src/tls_listener_state/auth_epoch.rs"
@@ -3403,7 +3408,7 @@ expect_red = [
 
 [[probe]]
 id = "M117-a-stale-session-is-evicted-not-left"
-unit = "proxy.tls_listener_state"
+unit = "proxy.epoch_bound_session_store"
 theorem = "THM-0103"
 conjunct = "a get that mismatches evicts the entry rather than leaving it to be re-read and re-rejected"
 path = "mcp-re-proxy/src/tls_listener_state/auth_epoch.rs"
@@ -3418,7 +3423,7 @@ expect_red = [
 
 [[probe]]
 id = "M118-a-current-session-does-resume"
-unit = "proxy.tls_listener_state"
+unit = "proxy.epoch_bound_session_store"
 theorem = "THM-0103"
 conjunct = "the gate is not vacuously closed — a session stored under the epoch in force IS returned, and rustls reports Resumed"
 path = "mcp-re-proxy/src/tls_listener_state/auth_epoch.rs"
@@ -4284,7 +4289,8 @@ expect_red = [
 
 [[probe]]
 id = "M165-a-record-states-its-half-twice-and-the-two-can-disagree"
-unit = "proxy.audit_record_coordinates"
+unit = "proxy.audit_authority_coordinates"
+theorem = "THM-0069"
 conjunct = "which half of the exchange a record is about is stated once, by the event CORE minted, and the arm cannot contradict it"
 # The weakening rewires one constructor to the wrong half's Core call — the mistake the old
 # shape made possible by handing every constructor an arbitrary `AuditEvent`. Under it a
@@ -4312,7 +4318,8 @@ expect_red = [
 
 [[probe]]
 id = "M166-a-policys-refusal-is-written-into-cores-reason"
-unit = "proxy.audit_record_coordinates"
+unit = "proxy.audit_authority_coordinates"
+theorem = "THM-0069"
 conjunct = "a rejection Core did not decide carries no Core reason"
 # The weakening collapses the two rejection shapes: a verdict Core reached and one it did not
 # become the same record. ADR-MCPRE-066 §1.1 refuses it — the authority that terminated the
@@ -4544,5 +4551,83 @@ weakening = """        (iana::Algorithm::EdDSA | iana::Algorithm::ES256, _) => O
 """
 expect_red = [
   "lib#scitt::cose_key::tests::an_algorithm_that_disagrees_with_the_resolved_key_is_refused",
+]
+
+# --- ADR-MCPRE-068 Phase 1 — the two falsifiers the last two splits need ------------------
+
+[[probe]]
+id = "M76-unknown-revocation-status-is-denied-with-no-opt-out"
+unit = "proxy.client_certificate_posture"
+theorem = "THM-0054"
+conjunct = "a client whose revocation status cannot be determined is denied, and no argument can relax it"
+path = "mcp-re-proxy/src/tls_listener_state/client_verifier.rs"
+note = """
+THM-0054 IS `critical` AND HAD NO FALSIFIER. It shared a unit with THM-0048 and THM-0103,
+whose eight probes all attack the listener state and the epoch store — one of the 22
+theorems `theorem-falsifier-coverage-2026-09-18.md` counts as covered by nothing that names
+them, and the split is what made it merge-fatal rather than invisible.
+
+The weakening is the one the builder's own doc says is not reachable:
+`allow_unknown_revocation_status()` is NOT called, and there is no parameter that could cause
+it to be. Calling it is therefore the exact counterexample the claim excludes, and rustls'
+`UnknownStatusPolicy::Deny` default is what the claim rests on.
+"""
+anchor = """    WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider)
+        .with_crls(crls)
+        .enforce_revocation_expiration()
+        .build()
+"""
+weakening = """    WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider)
+        .with_crls(crls)
+        .enforce_revocation_expiration()
+        .allow_unknown_revocation_status()
+        .build()
+"""
+# AIMED AT THE INVENTORY CONTROL, and the reason is a measurement this probe made.
+#
+# The obvious target was `tls_test::a_client_whose_revocation_status_cannot_be_determined_is_
+# denied`, and it does NOT detect this weakening. Instrumented in both worlds, the server
+# reports the same thing either way:
+#
+#     PROBE-OBSERVED: Some((InvalidData, "invalid peer certificate: BadSignature"))
+#
+# The fixture's client leaf is refused for a BAD SIGNATURE before any revocation decision is
+# reached, so the control has never exercised the property it names — its own comment says the
+# CRL is there "to switch revocation checking ON, so the second CA's leaf reaches the
+# unknown-status decision", and the leaf does not reach it. Recorded as P2-C1 in
+# `remaining-splits-2026-09-18.md`; the fixture is a product question, not an assurance one.
+#
+# `no_production_code_relaxes_the_unknown_status_policy` IS load-bearing for exactly this
+# weakening, because the weakening is the thing it scans for: a call to
+# `allow_unknown_revocation_status()` in production code. That is a source-text inventory
+# rather than a handshake, and the claim it establishes — no configuration or argument can
+# relax the policy — is a source-text claim.
+expect_red = [
+  "tests/integration#client_verifier_posture_test::no_production_code_relaxes_the_unknown_status_policy",
+]
+
+[[probe]]
+id = "M77-an-unconfigured-deployment-is-not-rendered-as-an-authorized-one"
+unit = "proxy.audit_vocabulary_import"
+theorem = "THM-0071"
+conjunct = "a deployment that configured no policy renders as `not configured`, never as an authorization the record could be read as having granted"
+path = "mcp-re-proxy/src/authorization/audit/fields.rs"
+note = """
+THE THREE OUTCOMES ARE NOT TWO. `not configured` and `authorized` are different facts about a
+deployment, and a record that renders the first as the second reports a decision nobody made —
+which is the reading an auditor would act on. The `before policy imports no vocabulary` control
+is the other half: the vocabulary is imported at the point the policy authority speaks and not
+before, so an absent policy contributes no token rather than a neutral-looking one.
+"""
+anchor = """            AuthorizationFacet::NotConfigured => {
+                vec![AuditField::token("authz", "not-configured")]
+            }
+"""
+weakening = """            AuthorizationFacet::NotConfigured => {
+                vec![AuditField::token("authz", "authorized")]
+            }
+"""
+expect_red = [
+  "lib#authorization::audit::fields::tests::the_unconfigured_line_cannot_be_read_as_an_authorization",
 ]
 
