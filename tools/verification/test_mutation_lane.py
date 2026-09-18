@@ -24,6 +24,7 @@ from __future__ import annotations
 import importlib.util
 import inspect
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -238,11 +239,26 @@ def test_run_battery_keys_results_by_target_and_symbol():
 
 def test_every_registered_expectation_carries_its_target():
     """A bare symbol in the registry would be unmatchable against the target-qualified
-    results, so this is both an identity rule and a liveness one."""
+    results, so this is both an identity rule and a liveness one.
+
+    WHICH TARGETS ARE RUNNABLE IS THE ECOSYSTEM'S ANSWER, asked here rather than kept as a
+    list. The literal `("lib#", "tests/", "gate#")` this used to carry was a cargo list, so
+    the first `pytest#` expectation registered would have been refused by the lane's own
+    test while the lane ran it correctly -- a rule drifting behind the thing it checks.
+    `gate#` is not any ecosystem's target: it is this lane's own control form, resolved by
+    `run_gates` rather than by a test runner, so it is named beside them.
+    """
+    from _ecosystems import ECOSYSTEMS, valid_target
+
     for probe in lane.load_probes():
         for name in probe["expect_red"]:
-            assert name.startswith(("lib#", "tests/", "gate#")), (probe["id"], name)
             assert "#" in name, (probe["id"], name)
+            target, _, symbol = name.partition("#")
+            assert symbol, (probe["id"], name)
+            runnable = name.startswith("gate#") or any(
+                valid_target(eco, target) for eco in ECOSYSTEMS
+            )
+            assert runnable, (probe["id"], name)
 
 
 def test_a_doctest_control_may_not_be_expected_to_go_red():
@@ -282,7 +298,7 @@ def test_a_declared_gate_control_resolves_as_a_battery_member():
         unit="proxy.dispatch_commitment",
         expect_red=["gate#scripts/authorization_provenance_gate.py"],
     )
-    _package, _grouped, _features, gates = lane.declared_battery(UNITS, probe, "p")
+    _package, _grouped, _features, gates, _eco = lane.declared_battery(UNITS, probe, "p")
     assert "scripts/authorization_provenance_gate.py" in gates, gates
 
 
@@ -460,6 +476,232 @@ def test_the_documented_matrix_count_is_checked_against_the_registry():
     # Another unit's probes are not part of that section's count, so adding one must not
     # make the document look stale.
     assert lane.check_matrix_count(probes + [{"unit": "proxy.epoch_bound_session_store"}]) is None
+
+
+# --- ADR-MCPRE-068 Phase 2: the lane reaches the two SDK roots -----------------
+#
+# Every case here is a way the extension could report redness it had not measured. The
+# lane's rule does not change per ecosystem -- a control that did not run is not red --
+# so each Rust case above has a counterpart the moment a second runner can be selected.
+
+
+def _sdk_unit(prefix: str) -> tuple[str, dict]:
+    """A real registered unit of that ecosystem, with a symbol of it, or skip the case.
+
+    Read from the registry rather than invented: a fixture unit would prove the lane can
+    run a shape nothing declares, which is the opposite of the property.
+    """
+    for uid, unit in sorted(UNITS.items()):
+        if uid.startswith(prefix) and unit.get("tested_symbols"):
+            return uid, unit
+    raise AssertionError(f"no registered {prefix} unit with controls")
+
+
+def test_a_python_unit_resolves_its_project_and_carries_its_ecosystem():
+    """Resolution was never the blocker, and this pins that so the next reader does not
+    re-remove a refusal that does not exist: `test_package_for` is ecosystem-aware and
+    answers `sdk/python` here. What the battery needs from `declared_battery` is the
+    ECOSYSTEM, because that is what decides how the selection is run."""
+    from _manifest import test_package_for
+
+    uid, unit = _sdk_unit("sdk_python.")
+    assert test_package_for(unit), "the manifest resolves a project for an SDK unit"
+    probe = _probe(unit=uid, expect_red=[unit["tested_symbols"][0]])
+    package, grouped, _features, _gates, eco = lane.declared_battery(UNITS, probe, "p")
+    assert package, "a python unit must resolve a project"
+    assert eco is lane.PYTHON
+    assert "pytest" in grouped, grouped
+
+
+def test_a_typescript_unit_resolves_a_project_too():
+    uid, unit = _sdk_unit("sdk_typescript.")
+    probe = _probe(unit=uid, expect_red=[unit["tested_symbols"][0]])
+    package, grouped, _features, _gates, eco = lane.declared_battery(UNITS, probe, "p")
+    assert package, "a typescript unit must resolve a project"
+    assert eco is lane.TYPESCRIPT
+    assert "vitest" in grouped, grouped
+
+
+def test_an_undeclared_control_is_still_refused_on_an_sdk_unit():
+    """The declared-battery rule is the lane's, not cargo's. It must not have been lost
+    with the ecosystem dispatch."""
+    uid, _unit = _sdk_unit("sdk_python.")
+    _expect_manifest_error(
+        lambda: lane.declared_battery(
+            UNITS, _probe(unit=uid, expect_red=["pytest#tests/nope.py::not_declared"]), "p"
+        ),
+        "an undeclared control must be refused whatever the ecosystem",
+    )
+
+
+def test_every_ecosystem_can_say_the_tree_did_not_build():
+    """A weakening routinely breaks the build. If no marker matched for an ecosystem, that
+    state would parse as zero results and then as controls that never ran -- which the
+    adjudicator reports as a MEASUREMENT FAILURE, so it is not a false green, but it makes
+    every probe over that ecosystem permanently unmeasurable."""
+    for eco in (lane.CARGO, lane.PYTHON, lane.TYPESCRIPT):
+        assert lane._DID_NOT_BUILD.get(eco), f"{eco.name} names no did-not-build marker"
+
+
+def test_a_tree_that_did_not_build_is_not_red_in_any_ecosystem():
+    """The false green this guards. If a broken tree read as `FAILED` for every control, a
+    probe would be satisfied by BREAKING the tree rather than by weakening the property,
+    and the redness would measure the compiler instead of the claim. Same rule, same
+    reason, as a gate control that the weakening DELETED."""
+    for eco, marker in (
+        (lane.CARGO, "error[E0432]: unresolved import"),
+        (lane.PYTHON, "ERROR collecting tests/test_mtls.py"),
+        (lane.TYPESCRIPT, "Failed to load url ./transport"),
+    ):
+        assert lane._did_not_build(eco, marker), eco.name
+        assert not lane._did_not_build(eco, "everything is fine"), eco.name
+
+
+def test_an_unreadable_report_is_not_red():
+    """`parse_results` raises when the runner collected cases and the reader understood
+    none of them. That is the lane's own blindness; presenting it as a red battery would
+    satisfy the probe with a parsing bug."""
+    body = inspect.getsource(lane.run_battery)
+    assert "except ReportUnreadable" in body
+    assert body.index("except ReportUnreadable") < body.index("return True, results")
+
+
+def test_every_declared_cargo_target_shape_is_runnable():
+    """Four shapes, one declaration of them, and this lane must not hold a second.
+
+    `_ecosystems` declares `lib`, `doc`, `tests/<name>` and `bin/<name>`, and this lane
+    used to build its own Cargo argv from `lib` and `tests/<name>` alone. A `bin/<name>`
+    battery became `--test -re-client`: cargo refuses that with a message which is not a
+    build failure, so the lane reported a MEASUREMENT FAILURE and blamed a probe whose
+    weakening works. The registry can name any of the four, so all four must run.
+    """
+    from _ecosystems import CARGO, test_argv
+
+    shapes = {
+        "lib": ["--lib"],
+        "doc": ["--doc"],
+        "tests/full_profile_test": ["--test", "full_profile_test"],
+        "bin/mcp-re-client": ["--bin", "mcp-re-client"],
+    }
+    for target, expected in shapes.items():
+        argv = test_argv(CARGO, "p", target, ["sym"], [], None)
+        assert expected[0] in argv, (target, argv)
+        for token in expected:
+            assert token in argv, (target, argv)
+    # And the lane asks the seam rather than answering for itself.
+    assert "target_argv(" not in inspect.getsource(lane.run_battery)
+
+
+def test_the_battery_runs_through_the_same_seam_as_the_test_lane():
+    """A control green in the test lane and unrunnable in this one would be two answers
+    about one declared symbol. Both resolve the command and the report through
+    `_ecosystems`, so there is one answer per ecosystem rather than one per tool."""
+    body = inspect.getsource(lane.run_battery)
+    assert "test_argv(eco," in body
+    assert "parse_results(eco," in body
+
+
+def test_a_non_cargo_battery_runs_inside_its_own_project():
+    """pytest and vitest selections are relative to the project that holds their
+    configuration; cargo is driven from the workspace root with `-p`. Running a pytest
+    selection from the tree root would select nothing and report a green battery."""
+    body = inspect.getsource(lane.run_battery)
+    assert "cwd = tree / package" in body
+    assert "cwd = tree\n" in body or "cwd = tree" in body
+
+
+def test_an_absent_matrix_and_a_stale_artefact_are_different_refusals():
+    """`prepare_scratch` returns a typed cause, and only one of them is skippable.
+
+    An absent SDK matrix is an ENVIRONMENT fact -- the lean lane is reported the same way
+    outside the extraction image. A probe that would weaken a source the carried binary was
+    compiled from is a PROBE DEFECT: the battery would run old native code against a new
+    declaration, and no flag may wave that through. Sharing one signal would make
+    `--skip-unprepared` silently skip the defect too.
+    """
+    assert lane.UNPREPARED != lane.STALE
+    body = inspect.getsource(lane.main)
+    assert "cause == lane.UNPREPARED" in body or "cause == UNPREPARED" in body
+    # The skip is conditioned on BOTH the cause and the flag, never on the flag alone.
+    assert "args.skip_unprepared" in body
+    guard = body[body.index("args.skip_unprepared") - 120 : body.index("args.skip_unprepared")]
+    assert "UNPREPARED" in guard
+
+
+def test_a_needed_artefact_is_looked_for_where_each_preparation_leaves_it():
+    """The Python native module has TWO spellings, and the lane refused CI over knowing one.
+
+    `maturin develop` leaves `_core.abi3.so` beside the package in the source tree;
+    `prepare_python_matrix.sh` -- the form the verification workflow runs, and the one that
+    pins an environment per supported interpreter -- builds a WHEEL and installs it, so the
+    tree has no `.so` at all. A lane that knew only the first spelling reported a correctly
+    prepared runner as an unbuilt environment and failed every Python probe on it.
+
+    Asked over a CONSTRUCTED workspace rather than this one, because the two layouts are the
+    point and no single environment has both -- and the fast job that runs these self-tests
+    builds no SDK matrix at all, so a control needing either spelling present would fail
+    there for the environment rather than for the rule.
+    """
+    wanted = "python/mcp_re_sdk/_core.abi3.so"
+    candidates = lane._SCRATCH_NEEDS[lane.PYTHON][wanted]
+    assert candidates[0] == wanted, candidates
+    assert any("site-packages" in spelling for spelling in candidates[1:]), candidates
+
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        assert lane._first_present(root, wanted, candidates) == [], "an empty workspace"
+
+        # The installed spelling ALONE resolves -- the shape a prepared runner has.
+        installed = root / ".venv-cp314/lib/python3.14/site-packages/mcp_re_sdk"
+        installed.mkdir(parents=True)
+        (installed / "_core.abi3.so").write_bytes(b"")
+        from_wheel = lane._first_present(root, wanted, candidates)
+        assert [relative for _s, relative in from_wheel] == [wanted], from_wheel
+
+        # And with both present the source tree wins, so a developer's own build is what a
+        # probe measures against their own edits.
+        tree = root / "python/mcp_re_sdk"
+        tree.mkdir(parents=True)
+        (tree / "_core.abi3.so").write_bytes(b"")
+        from_tree = lane._first_present(root, wanted, candidates)
+        assert [source for source, _r in from_tree] == [tree / "_core.abi3.so"], from_tree
+
+
+def test_an_unavailable_probe_is_named_in_the_verdict_line():
+    """A skipped probe that did not appear in the verdict would let this job's green be
+    read as "every registered probe was applied", which is the false green the whole lane
+    exists to refuse -- one level up."""
+    body = inspect.getsource(lane.main)
+    assert "UNAVAILABLE in this environment" in body
+    assert "unavailable.append" in body
+
+
+def test_the_fast_job_declares_what_it_skips():
+    """The workflow step was called "Apply every registered probe". With the flag that
+    sentence is false, and a step name is what a reader takes the job to have measured."""
+    workflow = (lane.REPO_ROOT / ".github/workflows/mutation-probe.yml").read_text()
+    assert "--skip-unprepared" in workflow
+    assert "Apply every registered probe" not in workflow
+
+
+def test_skipping_every_probe_is_not_a_pass():
+    """`--skip-unprepared` reintroduced the exact shape this lane set is ratified against:
+    every probe skipped, nothing weakened, nothing observed, and a green verdict. Measured
+    by hiding `node_modules` and running the flag -- it printed `PASS -- 0 probe(s)`."""
+    body = inspect.getsource(lane.main)
+    assert "measured == 0" in body
+    assert "VERDICT: UNAVAILABLE" in body
+    # And the pass branch is reached only after that check.
+    assert body.index("measured == 0") < body.index("verify-mutations: PASS")
+
+
+def test_the_refusal_names_a_script_that_exists():
+    """The message derived the filename from the ecosystem name, so TypeScript's refusal
+    told a reader to run `prepare_typescript_matrix.sh`. There is no such file -- the Node
+    matrix is built by `prepare_node_matrix.sh` -- and a confident pointer to a file that
+    does not exist is worse than none."""
+    for eco, script in lane._MATRIX_SCRIPT.items():
+        assert (lane.REPO_ROOT / script).is_file(), (eco.name, script)
 
 
 if __name__ == "__main__":

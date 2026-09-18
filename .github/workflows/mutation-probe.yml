@@ -100,5 +100,13 @@ jobs:
       # Unpiped, and the verdict line is read from the exit status: a gate read through a
       # pipe reports the pipe's status, which has already turned a failed gate green once
       # in this repository.
-      - name: Apply every registered probe
-        run: tools/verification/verify-mutations
+      #
+      # `--skip-unprepared` because this job deliberately builds no SDK matrix. A probe over
+      # an `sdk_python.*` or `sdk_typescript.*` unit needs a maturin wheel and a four-runtime
+      # Node install, which is the umbrella run's job and is most of why it takes an hour.
+      # Those probes are reported UNAVAILABLE BY NAME and counted in the verdict line, so
+      # this job's green cannot be read as "every probe was applied" — which is why the step
+      # is no longer called that. Without the flag they FAIL here, and correctly: an absent
+      # prepared environment in a lane that was supposed to have one is a defect.
+      - name: Apply every probe this environment can run
+        run: tools/verification/verify-mutations --skip-unprepared
