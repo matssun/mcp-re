@@ -5880,7 +5880,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://proxy/transparency/capsule_anchor_registration_certainty"]
+evidence = [
+  "test://proxy/transparency/capsule_anchor_registration_certainty",
+  "mutation://proxy/transparency/capsule_anchor_registration_certainty",
+]
 # `wire.rs` carries no controls of its own — its vocabulary is exercised through the two
 # modules above, whose fixtures drive real request and response shapes. It is in `paths`
 # because a change to it changes what those controls measure; it is not cited, because
@@ -5911,7 +5914,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://proxy/transparency/scrapi_registration_certainty"]
+evidence = [
+  "test://proxy/transparency/scrapi_registration_certainty",
+  "mutation://proxy/transparency/scrapi_registration_certainty",
+]
 # The capsule-anchor leaf is deliberately NOT here. Two registration mechanisms with
 # different wire vocabularies and different fault algebras are two units: a union would
 # invent an exclusion the deployment does not have, and a peer differing on a leaf's own
@@ -8211,7 +8217,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://proxy/remote_signer_call/quota_verdict_gcp"]
+evidence = [
+  "test://proxy/remote_signer_call/quota_verdict_gcp",
+  "mutation://proxy/remote_signer_call/quota_verdict_gcp",
+]
 test_features = ["gcp_kms_keysource"]
 # ONE control beyond the shared ones, deliberately. Everything the two arms share is measured
 # by the AWS unit with controls that are not `cfg`-gated and therefore run in this lane too;
@@ -8664,7 +8673,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://client/local_serving_pipeline/admitted_request"]
+evidence = [
+  "test://client/local_serving_pipeline/admitted_request",
+  "mutation://client/local_serving_pipeline/admitted_request",
+]
 # The panicking-worker control is the one an ordinary battery does not reach: a slot that a
 # panic leaks is a ceiling that ratchets down to zero over a process's life, which is a local
 # denial of service nothing reports.

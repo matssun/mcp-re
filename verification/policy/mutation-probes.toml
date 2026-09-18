@@ -7658,3 +7658,126 @@ The stated-name path is not a second carrier: it is what distinguishes one provi
 exhaustion vocabulary from the other's, on answers the service itself produced. Two disjoint
 populations, one verdict -- composition, and the weakening drops half the status half.
 """
+
+[[probe]]
+id = "M275-proxy-only-an-explicit-refusal-is-a-definitive-negative"
+unit = "proxy.scrapi_registration_leaf"
+theorem = "THM-0091"
+conjunct = "certainty is decided once — only an explicit client-error refusal is a definitive negative, and everything after the bytes went out is indeterminate"
+path = "mcp-re-proxy/src/transparency/auditor/registration/scrapi/fault.rs"
+anchor = """
+        Scrapi11Fault::MalformedResponse { phase, detail } => RegistrationError::Indeterminate(
+"""
+weakening = """
+        Scrapi11Fault::MalformedResponse { phase, detail } => RegistrationError::Refused(
+"""
+expect_red = [
+  "lib#transparency::auditor::registration::scrapi::tests::every_post_submission_fault_is_indeterminate",
+]
+note = """
+INDETERMINATE IS A WEAKER CLAIM THAN REFUSED, AND IT IS THE TRUE ONE. An answer this profile
+cannot read -- a receipt under a media type it does not parse, a 201 with an empty body -- says
+nothing about whether the service ACCEPTED the statement. The bytes went out; what came back was
+unreadable; the log may hold the record. The weakening asserts the convenient reading as a fact.
+
+What it costs is an operator sent to re-submit a record already registered: a transparency log
+with two entries for one call, which is a worse record than a missing one because nothing later
+can tell which is the duplicate. Only an explicit refusal and an explicit rate limit are
+definitive, because in both the service READ the submission and declined it.
+"""
+
+[[probe]]
+id = "M276-proxy-a-chained-cause-never-enters-the-body-a-classifier-reads"
+unit = "proxy.remote_signer_call_gcp"
+theorem = "THM-0091"
+conjunct = "the chained cause renders for an operator and never enters the body a classifier reads"
+path = "mcp-re-proxy/src/remote_signer_call/mod.rs"
+anchor = """
+    pub(crate) fn body(&self) -> Option<&str> {
+        match &self.outcome {
+            CallOutcome::Status(_, body) => Some(body),
+            CallOutcome::Rendered(_) | CallOutcome::Transport(_) => None,
+        }
+    }
+"""
+weakening = """
+    pub(crate) fn body(&self) -> Option<&str> {
+        match (&self.outcome, &self.after) {
+            (_, Some(cause)) => Some(cause),
+            (CallOutcome::Status(_, body), None) => Some(body),
+            (CallOutcome::Rendered(_) | CallOutcome::Transport(_), None) => None,
+        }
+    }
+"""
+expect_red = [
+  "lib#remote_signer_call::tests::a_chained_cause_renders_but_never_enters_the_body",
+]
+note = """
+PROSE WHERE A CLASSIFIER READS A SERVICE'S OWN WORDS. When a credential retry fails an operator
+needs BOTH halves -- the 401 that caused the retry, and the second failure -- and the obvious way
+to keep them is to append the cause to the body. That is exactly what this weakening does, and
+it puts an operator-facing sentence into the field `quota_signals` reads for a stated error
+name.
+
+The classifier looks for one provider's exhaustion vocabulary in the service's own answer. A
+chained cause is not that answer; a body that contains one can state a quota the service never
+stated, and the retry window arms on a sentence this process wrote about itself. So the cause
+travels ALONGSIDE, and `body` returns only what the service said.
+"""
+
+[[probe]]
+id = "M277-proxy-a-capsule-anchor-submission-that-never-went-out-is-indeterminate"
+unit = "proxy.capsule_anchor_registration_leaf"
+theorem = "THM-0091"
+conjunct = "what this operated service's answer MEANS — a submission that never went out is indeterminate, not a refusal"
+path = "mcp-re-proxy/src/transparency/auditor/registration/capsule_anchor/fault.rs"
+anchor = """
+        CapsuleAnchorFault::Transport { detail } => RegistrationError::Indeterminate(format!(
+"""
+weakening = """
+        CapsuleAnchorFault::Transport { detail } => RegistrationError::Refused(format!(
+"""
+expect_red = [
+  "lib#transparency::auditor::registration::capsule_anchor::tests::a_submission_that_never_went_out_is_indeterminate",
+]
+note = """
+A SECOND MECHANISM LEAF, NOT A CONFIGURATION OF THE FIRST, and this probe is why that split is
+load-bearing rather than tidy: capsule-anchor and SCRAPI answer the same question -- is this
+statement registered? -- through different contracts, and each decides certainty in its own
+code. M275 weakens SCRAPI's mapping and leaves this one green; this weakens capsule-anchor's and
+leaves SCRAPI's green. Two units, two falsifiers, because a fix to one would not reach the
+other.
+
+The conjunct itself is the conservative direction: a transport failure means the bytes may or
+may not have arrived, so reporting it as a refusal sends an operator to re-submit a record the
+service may already hold.
+"""
+
+[[probe]]
+id = "M278-client-the-in-flight-ceiling-refuses-before-a-worker-is-spawned"
+unit = "client.local_serving_pipeline"
+theorem = "THM-0091"
+conjunct = "an in-flight ceiling claimed BEFORE any worker is spawned, compared against the observed depth and nothing else"
+path = "mcp-re-client/src/serve/admission.rs"
+anchor = """
+    (claimed <= ceiling).then_some(slot)
+"""
+weakening = """
+    (claimed <= ceiling.saturating_add(1)).then_some(slot)
+"""
+expect_red = [
+  "lib#serve::admission::tests::a_zero_ceiling_admits_nothing",
+]
+note = """
+OFF BY ONE IS THE WHOLE WEAKENING, and it is chosen over deleting the comparison because the
+interesting failure is not "no ceiling" -- it is a ceiling that is not the number the operator
+set. The control that sees it is the ZERO one: a ceiling of zero must admit nothing, and under
+`ceiling + 1` it admits exactly one worker, so a deployment that turned local serving off by
+setting the ceiling to zero serves one request at a time instead.
+
+The comparison is saturating deliberately: the observed depth is compared against `ceiling` and
+nothing else, so the ceiling refuses where wrapping would admit unbounded workers at exactly
+the moment the ceiling exists to stop them. The slot's release on a refusal and on a panicking
+worker are sibling conjuncts with their own controls, and both stay green here -- this weakening
+admits one more worker, it does not leak a slot.
+"""
