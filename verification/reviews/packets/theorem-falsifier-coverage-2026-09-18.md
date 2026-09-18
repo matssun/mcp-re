@@ -14,39 +14,60 @@ packet asks how general that is, and the answer is: it is the shape of the whole
 | live theorems | **130** |
 | named by at least one probe (`[[probe]].theorem`) | **51** |
 | named by none | **79** |
-| of those 79, ROOT-REACHABLE **and** every supporting unit carries some probe | **25** |
-| of those 25, `critical` | **14** |
+| of those 79, ROOT-REACHABLE, **every** supporting unit covered, **none** owing | **22** |
+| of those 22, `critical` | **11** |
 
-The 25 are the population this packet is about. Each is a proposition a declared system root
-transitively depends on, whose supporting unit **does** carry a `mutation://` or
-`structural://` probe — so N1 is satisfied, `review` prints no obligation, and the debt
-registry holds no row — and which **no registered probe names**.
+**The first draft of this table said 25 and 14, and the looser rule is the reason.** It asked
+whether *some* supporting unit carried a probe; the rule that matters asks whether **every**
+supporting unit is either probed or not `tested`, **and** that none of them is in
+`config/assurance-obligation-debt.toml`. A theorem one of whose units honestly OWES is not
+this defect — its gap is recorded where a gap is supposed to be recorded, and counting it here
+would inflate a population by the propositions the ratchet is already holding.
 
-The other 54 are not this defect. Their units carry no probe at all, so N1 either obligates
-them (and the debt registry has the row) or their class is not `tested`. Their status is
-honest; these 25 are the ones where it is not.
+THM-0064 is the worked example of the difference. *A non-exporting custody selection keeps the
+private key off this process* is supported by `proxy.custody_exposure` (`tested`, **owing**,
+registered) and `proxy.custody_exposure_sole_producer` (`structural`, probe S17). Phase 0D-11's
+own landing note says so: *"NOTED, not fixed: the `tested` half carries no `mutation://`
+evidence — a pre-existing N1 gap the census counts."* It is counted, in the right place, and
+it is not in the 22.
 
-### 1.1 The 14 critical ones
+Under the strict rule, the count of theorems in the "covered but owing" bucket is **zero** —
+so the 22 is not a sample of a larger honest population. It is the whole of the hidden one.
+
+### 1.1 The 22
 
 ```
-THM-0003  admission verdict integrity
-THM-0006  presenter binding
-THM-0051  the pipeline holds, at dispatch, the verification product it was given
-THM-0052  a dispatched body was released by the decision a configured PDP made
-THM-0054  every production listener denies unknown client revocation state
-THM-0062  a response-signing credential exists only while a valid delegated key does
-THM-0064  a non-exporting custody selection keeps the private key off this process
-THM-0065  an emitted bound response signature binds the request it answers
-THM-0066  the serving PEP resolves actors through the deployment's own seam
-THM-0074  NO UNEARNED DISPATCH                                   ← a declared ROOT
-THM-0090  a credential leaves this proxy only to the endpoint its text names
-THM-0091  the sidecar signs only for a request its ingress policy admitted  ← a declared ROOT
-THM-0017  (high) a successful unbound response-floor verification …
-THM-0005  (high) a degraded admission is a CANDIDATE …
+critical  THM-0003  admission verdict integrity
+critical  THM-0006  presenter binding
+critical  THM-0009  a presented continuation cannot bypass verification
+critical  THM-0051  the pipeline holds, at dispatch, the verification product it was given
+critical  THM-0052  a dispatched body was released by the decision a configured PDP made
+critical  THM-0054  every production listener denies unknown client revocation state
+critical  THM-0062  a response-signing credential exists only while a valid delegated key does
+critical  THM-0066  the serving PEP resolves actors through the deployment's own seam
+critical  THM-0074  NO UNEARNED DISPATCH                                    ← a declared ROOT
+critical  THM-0090  a credential leaves this proxy only to the endpoint its text names
+critical  THM-0091  the sidecar signs only for a request its ingress policy admitted  ← ROOT
+high      THM-0001  admitted request parameters imply a current freshness window
+high      THM-0005  a degraded admission is a CANDIDATE, and requires deployment consent
+high      THM-0007  a typed artifact verifier admits only its own type
+high      THM-0010  continuation handles match their presented inputs in role and order
+high      THM-0044  an exchange's retry consequence never under-reports what may have run
+high      THM-0045  the backend is reached only by consuming a fully assembled commitment
+high      THM-0047  the verifier's assurance products are not substitutable
+high      THM-0048  every listener obtains its whole security posture through one seam
+medium    THM-0070  the record stream is honest about what reached it
+medium    THM-0081  every production refusal is inside the exchange lifecycle
+medium    THM-0088  a retention artefact reads as a crossing only for an exchange that had one
 ```
 
 **Two declared roots are in the list.** THM-0074 and THM-0091 are named by no probe; their
 supporting units are probed, and every probe under them names a different theorem.
+
+**THM-0091 stays in the list even after its own decomposition lands**, and that is the sharpest
+single argument for P2-T1: its two new falsifiers are `structural://` probes, and **the
+structural registry has no `theorem` key at all**. A claim cannot be named by a structural
+probe, whatever the probe establishes.
 
 ---
 
