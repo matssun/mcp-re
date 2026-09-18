@@ -134,6 +134,42 @@ both gates are invoked as `python3 <path>` by CI, by `local_gate.sh` and by this
 execute bit here would fail a control that starts perfectly well; that bit is
 `merge_path_gate.py`'s question, about scripts invoked by path.
 
+## The other gate carriers, and one disposition that is NOT REGISTER
+
+A later Phase-1 root decomposition measured the same defect estate-wide: of 38 gate scripts,
+ZERO are in any unit's `paths`, and SIX are named by a theorem, in its own text, as what
+establishes it. The record is `gate-carriers-are-unowned-2026-09-18.md`. Four of the six are
+registered here, each with its own falsifier:
+
+| gate | unit | theorem | probe |
+|---|---|---|---|
+| `serving_product_provenance_gate.py` | `proxy.dispatch_commitment` | THM-0051 | M151 |
+| `authorization_provenance_gate.py` | `proxy.dispatch_commitment` | THM-0052 | M152 |
+| `serving_identity_provenance_gate.py` | `proxy.serving_identity_provenance` | THM-0080 | M153 |
+| `refusal_provenance_gate.py` | `proxy.refusal_site_totality` | THM-0081 | M154 |
+
+M153 discharges an N1 obligation that was open at `critical` — and discharges it against the
+unit's OWN carrier rather than against whichever cargo control sat nearest, which is the thing
+this phase exists to stop.
+
+**The remaining two are a different disposition, and the earlier packet had it wrong.**
+`python_runtime_gate.py` and `node_runtime_gate.py` are named by THM-0094 and THM-0095, and
+that packet said REGISTER for all six. Measured: every `sdk_python.*` and `sdk_typescript.*`
+unit is about a behavioural proposition of the transport — exchange binding, verdict delivery,
+correlation lifecycle, nonce floor. **Not one states the runtime support claim**, which is
+what those gates establish: that the interpreters a package claims to support do not exceed
+the ones its battery is measured on, and that a deploy image installing the wheel names one of
+them exactly.
+
+So there is no unit to register them against. The ADR-MCPRE-069 disposition is **NEW
+PROPOSITION**, not REGISTER — and the two are not interchangeable: REGISTER puts a control
+inside an existing claim's closure, where NEW PROPOSITION says the estate is missing a claim.
+Registering them against a transport unit would have put a support-claim gate inside a
+behavioural proposition's fingerprint and called the graph more precise than it is.
+
+Its own slice, and it is not merely bookkeeping: THM-0094 and THM-0095 are the two SDK system
+roots, so the missing proposition sits directly under two `critical` roots.
+
 ## What this changes about the residue
 
 The residue was three units. Two close with ordinary probes and no new machinery. One needed

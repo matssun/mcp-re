@@ -4638,3 +4638,57 @@ Law A-1 by name. The token is introduced in CODE rather than in a comment delibe
 gate reads `code_only` text, so a hint in prose would leave it green, and a probe that went
 red on a comment would be measuring the wrong thing.
 """
+
+[[probe]]
+id = "M153-serving-identity-raw-route"
+unit = "proxy.serving_identity_provenance"
+theorem = "THM-0080"
+conjunct = "neither direct-TLS serving path names a raw-certificate route for identity or for currency"
+path = "mcp-re-proxy/src/async_serve/mod.rs"
+anchor = """
+use std::future::Future;
+"""
+weakening = """
+const _RAW_IDENTITY_ROUTE: &str = "extract_identity";
+use std::future::Future;
+"""
+expect_red = [
+  "gate#scripts/serving_identity_provenance_gate.py",
+]
+note = """
+Rule 1, a token-ABSENCE claim over a subtree: the proposition is that this name does not appear
+in the async serving path, so introducing the name is the true falsifier and not a proxy for
+one — the same shape as M152 over Law A-1.
+
+Rule 4 is the sharper conjunct and is deliberately NOT probed here. The gate's own
+documentation says so: the defect that matters is a signature widening — "just pass the leaf
+too, we already have it" — and a weakening that adds a parameter must update every call site,
+where a probe identifies exactly ONE. Recorded rather than approximated, because a probe that
+edited one site would report STALE and a probe that faked it would measure nothing.
+"""
+
+[[probe]]
+id = "M154-undeclared-served-mint"
+unit = "proxy.refusal_site_totality"
+theorem = "THM-0081"
+conjunct = "the pre-exchange transport refusal sites are exactly the declared four, and no exit answers from source position"
+path = "mcp-re-proxy/src/async_serve/connection.rs"
+anchor = """
+use std::sync::Arc;
+"""
+weakening = """
+fn _undeclared_refusal_site() -> super::ServedHttpResponse {
+    super::ServedHttpResponse::json(403, Vec::new())
+}
+use std::sync::Arc;
+"""
+expect_red = [
+  "gate#scripts/refusal_provenance_gate.py",
+]
+note = """
+A REAL mint at an undeclared site, not a string literal naming one. The distinction is the
+point: clause 12c counts the files that mint a served response, and tripping it with a token
+inside a string would demonstrate that the matcher sees text rather than that the rule catches
+an out-of-lifecycle exit. This adds the third production file that can answer from source
+position, which is exactly THM-0081's "no third, unclassified refusal path".
+"""

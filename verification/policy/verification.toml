@@ -2990,6 +2990,13 @@ evidence = [
   # writes no record, so `attest` issues the unit from the ordinary battery regardless.
   "mutation://proxy/refusal/pre_dispatch_retention",
 ]
+# ADR-MCPRE-069 disposition REGISTER. THM-0081's own scope names this gate's clause 12c as
+# what holds the served mint to one call site ACROSS THE WORKSPACE — a width no cargo control
+# in this crate can reach — and says why a type cannot do it: `ServedHttpResponse` is a wire
+# frame with public fields that the async fleet, the blocking harness and external embedders
+# all construct, so "deleting the battery leaves an out-of-lifecycle exit compiling". Until
+# now no unit's closure covered the gate. M154 is the falsifier.
+gate_controls = ["scripts/refusal_provenance_gate.py"]
 # Six members, and the last is not decoration. Four rules over source text are vacuously
 # true the moment a matcher stops matching, so the battery that would report a clean pass
 # over a moved subtree is the battery that must also demonstrate it still detects each
@@ -4229,7 +4236,14 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://proxy/serving/identity_provenance"]
+evidence = [
+  "test://proxy/serving/identity_provenance",
+  # ADR-MCPRE-069 disposition REGISTER. THM-0080 names this gate, in its own text, as what
+  # establishes it, and until now no unit's closure covered it: the rules could be softened
+  # under a standing PASS. M153 is the falsifier.
+  "mutation://proxy/serving/identity_provenance",
+]
+gate_controls = ["scripts/serving_identity_provenance_gate.py"]
 # The third member is the load-bearing one: the mechanism that forbids pairing an acceptance
 # from one relationship with an identity from another credential is the ABSENCE of a
 # parameter, which is a property of a signature — and a signature is what an edit widens

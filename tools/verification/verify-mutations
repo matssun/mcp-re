@@ -143,8 +143,14 @@ def declared_battery(
     unit = units.get(probe["unit"])
     if unit is None:
         raise ManifestError(f"{where}: unit {probe['unit']!r} is not in verification.toml")
+    # A probe whose every expectation is a GATE names no compiled control, so it needs no
+    # cargo package — and demanding one would refuse the probe on a Python or TypeScript unit
+    # whose carrier is a source-text gate over the whole workspace. That is the shape of
+    # THM-0094's and THM-0095's carriers, so the refusal would fall exactly on the two SDK
+    # system roots this lane was extended to reach.
+    gate_only = all(str(n).startswith("gate#") for n in probe["expect_red"])
     package = test_package_for(unit)
-    if package is None:
+    if package is None and not gate_only:
         raise ManifestError(f"{where}: unit {probe['unit']!r} has no runnable test package")
     grouped: dict[str, list[str]] = {}
     declared: set[str] = set()
@@ -176,6 +182,11 @@ def declared_battery(
             f"expecting it could never be satisfied honestly."
         )
     features = sorted(str(f) for f in unit.get("test_features", []))
+    if gate_only:
+        # Run only what the probe NAMES. The adjudicator reads nothing but `expect_red`, so a
+        # cargo battery here would be measured and discarded — and on a unit whose symbols are
+        # `pytest#` or `vitest#` it cannot be run at all, because `target_argv` speaks cargo.
+        grouped = {}
     return package, grouped, features, gates
 
 
@@ -443,7 +454,12 @@ def main() -> int:
                 failures.append(probe["id"])
                 continue
             try:
-                ran, results = run_battery(tree, package, grouped, target_dir, features)
+                if grouped:
+                    ran, results = run_battery(tree, package, grouped, target_dir, features)
+                else:
+                    # Nothing to compile, so nothing can fail to compile. `ran` is about the
+                    # CARGO battery; a gate reads the tree and reports for itself.
+                    ran, results = True, {}
                 results.update(run_gates(tree, gates))
             finally:
                 (tree / probe["path"]).write_text(original)
