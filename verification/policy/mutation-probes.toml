@@ -7598,3 +7598,63 @@ renamed Core token leaves a carrier emitting the old spelling (ADR-MCPRE-066 Sli
 match is the sole carrier of both facts, and the weakening reaches the wire token without
 touching any string.
 """
+
+[[probe]]
+id = "M273-proxy-one-logical-audit-record-is-one-physical-record"
+unit = "proxy.audit_text_rendering"
+theorem = "THM-0091"
+conjunct = "every scalar is escaped into an image free of the record grammar's separators, and the escape is injective"
+path = "mcp-re-proxy/src/audit_record/scalar.rs"
+anchor = """
+            ' ' => out.push_str("\\\\s"),
+"""
+weakening = """
+            ' ' => out.push(' '),
+"""
+expect_red = [
+  "lib#audit_record::scalar::tests::every_scalar_round_trips",
+]
+note = """
+ONE LOGICAL RECORD MUST BE ONE PHYSICAL RECORD, and a space is a separator in this grammar. A
+scalar that renders a bare space splits its own line: a field value becomes two fields, or the
+record becomes two records, and a pipeline reading them gets a well-formed record that says
+something nobody wrote. Nothing later can undo it, because by then the bytes are the same bytes
+a legitimate two-field record would have produced.
+
+THE INJECTIVITY IS THE PROPERTY, not the escaping, which is why the round-trip control is what
+goes red: the inverse must recover exactly the value, and a scalar that passes a separator
+through has an image the inverse cannot tell from a different value's. `escape_scalar` is the
+ONE authority over this -- the module states it as an invariant, not as a convention -- and the
+verbatim control stays green under this weakening because a separator-free string still renders
+verbatim. That is the sibling conjunct, and it cannot see a separator being let through.
+"""
+
+[[probe]]
+id = "M274-proxy-a-shed-load-status-is-exhaustion-whatever-the-body-says"
+unit = "proxy.remote_signer_call_aws"
+theorem = "THM-0091"
+conjunct = "shed-load statuses are read first, ahead of the stated error name"
+path = "mcp-re-proxy/src/remote_signer_call/quota_signals.rs"
+anchor = """
+fn is_load_shedding_status(status: Option<u16>) -> bool {
+    matches!(status, Some(429) | Some(503))
+}
+"""
+weakening = """
+fn is_load_shedding_status(status: Option<u16>) -> bool {
+    matches!(status, Some(503))
+}
+"""
+expect_red = [
+  "lib#remote_signer_call::quota_signals::tests::a_shed_load_status_is_exhaustion_on_either_provider_whatever_the_body_says",
+]
+note = """
+THE STATUS IS THE ONLY FACT A SHED-LOAD ANSWER CARRIES. A 429 minted by a gateway in front of
+the service has no AWS `__type` and no Cloud KMS `error.status` -- there is no body to classify,
+because the service never saw the request. Reading the status FIRST is what lets the classifier
+answer at all; reading the body first would answer "states no quota" and arm nothing.
+
+The stated-name path is not a second carrier: it is what distinguishes one provider's
+exhaustion vocabulary from the other's, on answers the service itself produced. Two disjoint
+populations, one verdict -- composition, and the weakening drops half the status half.
+"""

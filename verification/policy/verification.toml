@@ -5834,7 +5834,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://proxy/audit/text_rendering"]
+evidence = [
+  "test://proxy/audit/text_rendering",
+  "mutation://proxy/audit/text_rendering",
+]
 # The anti-collision control is the one that carries the claim rather than a symptom of it:
 # an escape that mapped LF and the two characters `\n` to one image would pass every
 # "no newline in the output" assertion and still be non-injective, which is the difference
@@ -8124,7 +8127,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://proxy/remote_signer_call/quota_verdict_aws"]
+evidence = [
+  "test://proxy/remote_signer_call/quota_verdict_aws",
+  "mutation://proxy/remote_signer_call/quota_verdict_aws",
+]
 # The lane this arm is compiled by. Named rather than left to another lane: the module does
 # not exist in the default crate at all, so a plain `cargo test --workspace` compiles it to
 # ZERO tests and would report a green that measured nothing.

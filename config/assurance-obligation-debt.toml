@@ -84,15 +84,6 @@ root_reachable = true
 status = "unreviewed"
 
 [[obligation]]
-unit = "proxy.audit_text_rendering"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "medium"
-direct_consequence_severity = "medium"
-inherited_severity = "medium"
-root_reachable = false
-status = "unreviewed"
-
-[[obligation]]
 unit = "proxy.capsule_anchor_registration_leaf"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "medium"
@@ -117,15 +108,6 @@ effective_severity = "medium"
 direct_consequence_severity = "medium"
 inherited_severity = "medium"
 root_reachable = true
-status = "unreviewed"
-
-[[obligation]]
-unit = "proxy.remote_signer_call_aws"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "medium"
-direct_consequence_severity = "medium"
-inherited_severity = "medium"
-root_reachable = false
 status = "unreviewed"
 
 [[obligation]]
