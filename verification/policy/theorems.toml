@@ -4747,12 +4747,15 @@ statement = """
 A request that reaches the shipped `mcp-re-client` sidecar outside the deployment-selected
 listener and HTTP-authority policy cannot cause it to initiate a signed MCP-RE exchange.
 
-The listener is where the deployment said: an off-host bind exists only against an explicit
-operator declaration, and possession of the scope IS that permission — there is no other
-constructor. The authority set is derived from that scope and never from the flag, so
-permitting an off-host bind widens the names that reach signing by exactly the listener's
-own address and by nothing else; a rebound name is refused on an exposed listener as it is
-on a loopback one. Framing is settled before any header is believed, and the three
+The listener is where the deployment said. An off-host bind exists only against an explicit
+operator declaration: unstated is a refusal and never a permission, and a misspelled
+declaration is a startup failure rather than a silent default. Possession of the scope IS
+that permission — there is no other constructor, and that is COMPILE-REFUSED rather than
+checked: the representation is private and no second constructor can be written. The
+authority set is derived from that scope and never from the operator's flag, refused the same
+way — no constructor takes the flag at all — so permitting an off-host bind widens the names
+that reach signing by exactly the listener's own address and by nothing else; a rebound name
+is refused on an exposed listener as it is on a loopback one. Framing is settled before any header is believed, and the three
 caller-shape refusals — a present `Origin`, a `Host` that does not name this listener, a
 body that is not JSON — all run before a single byte is signed. A repeated `Content-Length`
 or `Host` is refused rather than resolved.
@@ -4788,6 +4791,20 @@ It ends at ADMISSION. What the sidecar then does with an admitted request — th
 response it accepts answers the request it sent, that the signer was authorized, that the
 trust document it resolves anchors from is current — is THM-0084, THM-0057 through THM-0061
 and THM-0057's neighbourhood, and none of it is re-derived here.
+
+A SEAL AND A DECISION ARE TWO FACTS, which is why `bind_scope` and `accepted_authority` each
+appear twice in the support. A seal says an illegal inhabitant cannot be BUILT; it says
+nothing whatever about whether the decision that built the legal one was RIGHT. The
+compile-refusals establish only the first, and the deployment's answer — which declaration
+permits which bind, and which names the resulting authority admits — is a separate
+proposition with its own controls. Neither substitutes for the other, and reading the seal as
+though it decided anything is the reading this paragraph exists to refuse.
+
+THE PREDICATES THE STATEMENT NAMES ARE IN THE CLOSURE. The three caller-shape refusals are
+decided by the predicates themselves, not only by the code that calls them, and both halves
+are inside this root. What remains outside is what happens to a request this root has already
+ADMITTED — the in-flight ceiling, routing, rendering and the close sequence — which is
+`client.local_serving_pipeline`'s and is reached only after admission has succeeded.
 
 `client.trust_manifest_lifecycle` is deliberately NOT a dependency. The blueprint named it
 as the source of "what the sidecar is configured to be", and the measurement does not bear
