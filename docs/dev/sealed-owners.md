@@ -818,6 +818,39 @@ rather than naming a variant, because naming one would be refused by `E0603` for
 and this split does not change that. It is a pre-existing falsifier gap the census already
 counts, and Phase 0E's N1 activation is where it becomes an obligation rather than a note.
 
+### The tenth: the continuation pair, where sealing the state does not seal the plan
+
+**Landed 2026-09-18, ADR-MCPRE-068 Phase 0D-12.** Two values on one path, and the second is
+the reason this unit carries two probes.
+
+`ContinuationControlState` is the classified posture (S18). `ContinuationControlPlan` is what
+consumers actually **read** to decide whether a shared store must be established, and it is a
+value in its own right, handed onward. Its `store: None` means *"flows resolve on the replica
+that opened them"* — legal for some deployment and wrong for one that selected a shared
+store. A caller able to write that field could assert single-replica resolution **without
+touching the state the plan is supposed to project**, so a probe against the state alone
+would leave the route unwitnessed.
+
+| probe | value | what a forgery would buy |
+|---|---|---|
+| S18 | `ContinuationControlState` | a posture the classifier never reached |
+| S19 | `ContinuationControlPlan` | single-replica resolution asserted for a shared-store deployment, with the state still saying otherwise |
+
+```text
+cargo test -p mcp-re-proxy --lib -- config_state::continuation_control \
+                                    serving_capabilities::continuation startup_posture
+    test result: ok. 15 passed; 0 failed       # with both fields opened to pub(crate)
+
+verify-structural --probe S18 --probe S19
+    FAIL: 2 of 2 probe(s) did not witness a closed construction boundary
+```
+
+**The lane refused a broken probe for the second time in this campaign**, and differently:
+S19's first draft imported `ContinuationControlPlan` from `config_state`, which does not
+re-export it, and the lane reported `saw ['E0432']` — an unresolved import is not a seal.
+Between this and S13's `E0599`, the declared-error-code rule has now caught two probe defects
+that the weak *"does not compile"* form would have recorded as evidence.
+
 The remaining unit-backed sealed owners follow the same split, one owner per change.
 
 ## Open

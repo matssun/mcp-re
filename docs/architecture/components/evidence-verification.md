@@ -400,6 +400,8 @@ is indistinguishable from an unconsidered one. Private fields alone are not a se
 | S15 | in-crate | no code outside `config_state::trust_revocation` can assemble a `TrustRevocationState` | `E0451` |
 | S16 | in-crate | no code outside `config_state::trust_document` can put a path in a `TrustDocumentSource` | `E0451` |
 | S17 | in-crate | no code outside `config_state::custody` can assemble a `CustodyState` | `E0451` |
+| S18 | in-crate | no code outside `config_state::continuation_control` can assemble a `ContinuationControlState` | `E0451` |
+| S19 | in-crate | no code outside `config_state::continuation_control` can assemble a `ContinuationControlPlan` | `E0451` |
 
 S04 is the one ADR-MCPRE-068 §12.1 split out of a composite unit, and 0D-3 completed the
 split in the registry: M113/M114/M115 falsify the constructor's runtime refusal of an illegal
@@ -451,6 +453,13 @@ private enum; naming a variant in the hostile construction would be refused by `
 TYPE's privacy, so the probe supplies `todo!()` instead and the lane reports `E0451` about the
 field — the boundary the unit actually claims. Two privacies, one claim, and the probe must
 attack the right one.
+
+**The declared error code has now caught two defects in probes written for this campaign**,
+and neither would have been caught by a check that only required "does not compile": S13's
+first draft named an enum variant that does not exist (`E0599`), and S19's imported a type
+from a module that does not re-export it (`E0432`). Both were reported as MEASUREMENT
+FAILURES rather than as closed boundaries, which is the distinction this lane exists to
+keep.
 
 ### 9.4 The MEASURED apparatus control
 
