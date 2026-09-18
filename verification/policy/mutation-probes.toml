@@ -5139,3 +5139,99 @@ looks at what is IN the array, and the revocation comparison downstream only ask
 membership -- an entry that cannot equal any delegated kid, issuer kid or `jti` makes the
 denylist non-empty and inert at the same time.
 """
+
+[[probe]]
+id = "M186-python-nonsuccess-verdict-is-an-error"
+unit = "sdk_python.verdict_delivery"
+theorem = "THM-0094"
+conjunct = "a verdict whose outcome is not success reaches the application as a correlated JSON-RPC error and never as a result"
+path = "sdk/python/python/mcp_re_sdk/transport.py"
+anchor = """
+            if verified.outcome != "success":
+"""
+weakening = """
+            if False:
+"""
+expect_red = [
+  "pytest#tests/test_transport_replay.py::test_a_verified_rejection_receipt_is_delivered_as_an_error_not_a_result",
+]
+note = """
+THE OUTCOME IS THE ONLY GATE between a rejection receipt and the result path. Everything
+below this statement treats the verified body as a reply to hand the session, so under the
+weakening a receipt the boundary REFUSED arrives as a successful result -- the application
+cannot tell it was rejected at all. The signature verification above is not a second
+carrier: it establishes that the peer really said this, which is exactly what makes the
+rejection authentic rather than ignorable.
+"""
+
+[[probe]]
+id = "M187-typescript-nonsuccess-verdict-is-an-error"
+unit = "sdk_typescript.verdict_delivery"
+theorem = "THM-0095"
+conjunct = "a verdict whose outcome is not success reaches the application as a correlated JSON-RPC error and never as a result"
+path = "sdk/typescript/src/transport.ts"
+anchor = """
+        if (verified.outcome !== "success") {
+"""
+weakening = """
+        if (false) {
+"""
+expect_red = [
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > delivers a verified rejection receipt as an error, not a result",
+]
+note = """
+The TypeScript instance of M186, at the same position in the same exchange.
+"""
+
+[[probe]]
+id = "M188-typescript-empty-wire-code-is-substituted"
+unit = "sdk_typescript.verdict_delivery"
+theorem = "THM-0095"
+conjunct = "an empty wire code is substituted rather than passed through as an error the application cannot act on"
+path = "sdk/typescript/src/transport.ts"
+anchor = """
+            verified.wireCode ? verified.wireCode : "mcp-re.response_sig_invalid",
+"""
+weakening = """
+            verified.wireCode as string,
+"""
+expect_red = [
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > substitutes a wire code the receipt did not carry",
+]
+note = """
+THIS PROBE FAILED FIRST, and the control it names is what the failure bought. The unit
+DECLARES the substitution -- "an EMPTY wire code is substituted rather than passed through
+as an error the application cannot act on" -- and the declared battery did not cover it:
+the weakening passed the raw value through and every expected control stayed green. The
+lane's refusal says what to do about that, and it is not to soften the statement.
+
+What passing it through would deliver is an error whose `message` is the empty string.
+Still an error and still never a result, so the sibling conjunct M187 holds -- which is
+exactly why M187 cannot stand in for this one. `wireCode` is documented as a frozen
+`mcp-re.*` token an application BRANCHES on, and the empty string matches no documented
+token at all.
+"""
+
+[[probe]]
+id = "M189-python-absent-wire-code-is-substituted"
+unit = "sdk_python.verdict_delivery"
+theorem = "THM-0094"
+conjunct = "a wire code the receipt did not carry is substituted rather than passed through as an error the application cannot act on"
+path = "sdk/python/python/mcp_re_sdk/transport.py"
+anchor = """
+                    verified.wire_code or "mcp-re.response_sig_invalid",
+"""
+weakening = """
+                    verified.wire_code,
+"""
+expect_red = [
+  "pytest#tests/test_transport.py::test_a_wire_code_the_receipt_did_not_carry_is_substituted[None]",
+  "pytest#tests/test_transport.py::test_a_wire_code_the_receipt_did_not_carry_is_substituted[]",
+]
+note = """
+The Python twin of M188, and it exposed a SECOND gap: the TypeScript unit declared the
+substitution and had no control for it, while the Python unit had neither. The check was
+there in production -- `verified.wire_code or ...` -- and nothing in the declaration or the
+battery said so, which is the same defect in the other direction. Both halves are repaired
+here: the description states the conjunct and the battery covers it.
+"""

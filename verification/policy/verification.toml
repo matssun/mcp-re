@@ -4165,12 +4165,15 @@ tested_symbols = [
 [[unit]]
 id = "sdk_python.verdict_delivery"
 class = "V0"
-description = "A verdict whose outcome is not `success` reaches the application as a correlated JSON-RPC error and never as a result, and the receipt's request-binding fact travels beside the frozen wire token rather than inside it."
+description = "A verdict whose outcome is not `success` reaches the application as a correlated JSON-RPC error and never as a result; a wire code the receipt did not carry is substituted rather than passed through as an error the application cannot act on; and the receipt's request-binding fact travels beside the frozen wire token rather than inside it."
 paths = ["sdk/python/python/mcp_re_sdk/transport.py"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://sdk_python/verdict_delivery/a_refusal_is_never_a_result"]
+evidence = [
+  "test://sdk_python/verdict_delivery/a_refusal_is_never_a_result",
+  "mutation://sdk_python/verdict_delivery/a_refusal_is_never_a_result",
+]
 tested_symbols = [
   "pytest#tests/test_transport_replay.py::test_a_recorded_delegated_session_verifies_and_reaches_the_app_as_plain_mcp",
   "pytest#tests/test_transport_replay.py::test_one_appended_byte_of_the_recorded_body_fails_closed",
@@ -4183,6 +4186,8 @@ tested_symbols = [
   # credential's whole validity window, so the caller must be able to tell "the boundary
   # rejected MY request" from "a generic rejection arrived".
   "pytest#tests/test_transport.py::test_an_unbound_rejection_receipt_is_reported_as_not_request_bound",
+  "pytest#tests/test_transport.py::test_a_wire_code_the_receipt_did_not_carry_is_substituted[None]",
+  "pytest#tests/test_transport.py::test_a_wire_code_the_receipt_did_not_carry_is_substituted[]",
 ]
 
 # C3. The leaf the whole root FAMILY exists for. A byte-level parity fixture pins what the
@@ -4555,7 +4560,10 @@ paths = ["sdk/typescript/src/transport.ts"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://sdk_typescript/verdict_delivery/a_refusal_is_never_a_result"]
+evidence = [
+  "test://sdk_typescript/verdict_delivery/a_refusal_is_never_a_result",
+  "mutation://sdk_typescript/verdict_delivery/a_refusal_is_never_a_result",
+]
 tested_symbols = [
   # ADR-MCPRE-069 `register`
   "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > refuses the same recorded response under an untrusted root anchor",
@@ -4570,6 +4578,7 @@ tested_symbols = [
   "vitest#test/transport.test.ts > McpReHttpTransport rejection receipt binding > reports a preflight-unbound receipt as NOT request-bound",
   "vitest#test/transport.test.ts > McpReHttpTransport rejection receipt binding > reports a request-bound receipt as request-bound",
   "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > still delivers an ordinary verified reply",
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > substitutes a wire code the receipt did not carry",
 ]
 
 # The leaf the whole root FAMILY exists for, and the control that names the difference is

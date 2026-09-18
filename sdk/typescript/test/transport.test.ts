@@ -1086,6 +1086,26 @@ describe("McpReHttpTransport verified-reply shape", () => {
     });
   });
 
+  it("substitutes a wire code the receipt did not carry", async () => {
+    // `wireCode` is documented as a frozen `mcp-re.*` token an application BRANCHES on,
+    // and the core leaves it null or empty for a rejection that carries no peer reason --
+    // a signature that did not verify has no wire code to report, because there is no
+    // trustworthy peer statement to report. Passing that through would deliver an error
+    // whose `message` is the empty string: still an error and still never a result, but
+    // one no caller can act on, and one that matches no documented token. The substituted
+    // value names what actually happened.
+    for (const wireCode of ["", null, undefined]) {
+      const delivered = await deliver(
+        { outcome: "rejection", wireCode, bound: false, requestState: null },
+        "{}",
+      );
+      expect(
+        (delivered as { error: { message: string } }).error.message,
+        `a ${JSON.stringify(wireCode)} wire code reached the application unsubstituted`,
+      ).toBe("mcp-re.response_sig_invalid");
+    }
+  });
+
   it("invents no disposition for a receipt that stated none", async () => {
     const delivered = await deliver(
       {
