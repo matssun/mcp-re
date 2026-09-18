@@ -72,31 +72,31 @@ any of them is closed.
 | THM-0032 | Per-request credential currency is decided from the credential the mechanism accepted, and reports which of its five facts refused | proxy.credential_currency | unit://proxy.credential_currency | live |
 | THM-0033 | A current authenticated peer's currency is evaluated against the credential that same peer authenticated with | proxy.current_authenticated_peer | unit://proxy.current_authenticated_peer | live |
 | THM-0034 | A request is bound to its relationship by relating the authenticated peer to the resolved actor's SUBJECT, never to the composite actor id | proxy.request_peer_binding | unit://proxy.request_peer_binding | live |
-| THM-0035 | A successfully classified trust-revocation state carries the witnesses its own state form requires | proxy.trust_configuration_state | unit://proxy.trust_configuration_state, unit://proxy.trust_configuration_state_sole_producer | live |
-| THM-0036 | A networked trust-epoch source is handed over as a paired locator and key, or not at all | proxy.trust_configuration_state | unit://proxy.trust_configuration_state, unit://proxy.trust_configuration_state_sole_producer | live |
+| THM-0035 | A successfully classified trust-revocation state carries the witnesses its own state form requires | proxy.trust_revocation_classification | unit://proxy.trust_configuration_state_sole_producer, unit://proxy.trust_revocation_classification | live |
+| THM-0036 | A networked trust-epoch source is handed over as a paired locator and key, or not at all | proxy.trust_document_locator | unit://proxy.trust_configuration_state_sole_producer, unit://proxy.trust_document_locator | live |
 | THM-0037 | A trust plan's reload cadence is a projection of the revocation posture, never a second value | proxy.trust_plan | unit://proxy.trust_plan, unit://proxy.trust_plan_co_provenance | live |
 | THM-0038 | The composition root consumes trust as owner projections and re-reads no trust field from the request | proxy.trust_composition_root | unit://proxy.trust_composition_root | live |
 | THM-0039 | An accepted PDP decision was authenticated under a key the trust seam resolved | http_profile.pdp_decision_authentication | unit://http_profile.pdp_decision_authentication | live |
 | THM-0040 | An authorized request was permitted by a decision about that very request | proxy.pdp_decision_relation | unit://proxy.pdp_decision_relation | live |
-| THM-0041 | An offline-verified receipt proves registration, and its root was never supplied | http_profile.scitt_receipt_offline | unit://http_profile.scitt_receipt_offline | live |
+| THM-0041 | An offline-verified receipt proves registration, and its root was never supplied | http_profile.scitt_derived_root | unit://http_profile.scitt_algorithm_agreement, unit://http_profile.scitt_derived_root, unit://http_profile.scitt_inclusion_fold, unit://http_profile.scitt_position_commitment, unit://http_profile.scitt_receipt_shape, unit://http_profile.scitt_statement_attribution | live |
 | THM-0042 | Retained evidence is the evidence the statement was made about | http_profile.scitt_retained_correspondence | unit://conformance.retained_corpus, unit://http_profile.scitt_retained_correspondence, unit://http_profile.submitted_hop_identity | live |
-| THM-0043 | The exchange relation is decided everywhere and the execution threshold partitions it | proxy.exchange_lifecycle | unit://proxy.exchange_lifecycle | live |
-| THM-0044 | An exchange's retry consequence never under-reports what may have happened | proxy.exchange_lifecycle | unit://proxy.exchange_lifecycle | live |
+| THM-0043 | The exchange relation is decided everywhere and the execution threshold partitions it | proxy.exchange_relation | unit://proxy.exchange_relation | live |
+| THM-0044 | An exchange's retry consequence never under-reports what may have happened | proxy.exchange_retry_consequence | unit://proxy.exchange_retry_consequence | live |
 | THM-0045 | The backend is reached only by consuming a fully assembled pre-dispatch commitment | proxy.dispatch_commitment | unit://proxy.dispatch_commitment | live |
 | THM-0046 | A refusal carries which authority reached it, over a closed set, unrendered | proxy.refusal_provenance | unit://proxy.refusal_provenance | live |
 | THM-0047 | The verifier's assurance products are not substitutable | http_profile.verifier_result_separation | unit://http_profile.verifier_result_separation | live |
-| THM-0048 | Every listener obtains its whole security posture through one listener state | proxy.tls_listener_state | unit://proxy.tls_listener_state | live |
+| THM-0048 | Every listener obtains its whole security posture through one listener state | proxy.listener_state_assembly | unit://proxy.listener_state_assembly | live |
 | THM-0049 | Every illegal cross-owner configuration combination is refused at layer A | proxy.cross_machine_legality | unit://proxy.cross_machine_legality | live |
 | THM-0050 | Distinct verification keys cannot feasibly be made to share a keyid | http_profile.keyid_selector | unit://http_profile.keyid_selector | live |
 | THM-0051 | The pipeline holds, at dispatch, the verification product of this very exchange | proxy.dispatch_commitment | unit://http_profile.verifier_result_separation, unit://proxy.dispatch_commitment | live |
 | THM-0052 | A dispatched body was released by the decision a configured policy produced | proxy.dispatch_commitment | unit://proxy.dispatch_commitment, unit://proxy.pdp_decision_relation | live |
 | THM-0053 | A presented admission assertion is authentic, in its window, and for this audience | http_profile.admission_assertion | unit://http_profile.admission_assertion | live |
-| THM-0054 | Every production listener denies unknown client revocation status | proxy.tls_listener_state | unit://proxy.tls_listener_state | live |
+| THM-0054 | Every production listener denies unknown client revocation status | proxy.client_certificate_posture | unit://proxy.client_certificate_posture | live |
 | THM-0055 | The keyid derivation introduces no collisions of its own | http_profile.keyid | unit://http_profile.keyid | live |
 | THM-0056 | The posture that claims nothing is produced only where no policy is configured | proxy.authorization_posture | unit://proxy.authorization_posture | live |
 | THM-0057 | A client's trust anchors are the ones the current signed manifest published | client.trust_manifest_lifecycle | unit://client.trust_manifest_lifecycle | live |
-| THM-0058 | A client accepts a response only under a signer its trust configuration authorizes | client.response_acceptance | unit://client.response_acceptance, unit://client.trust_manifest_lifecycle | live |
-| THM-0059 | An unbound receipt is never a success and never another request's answer | client.response_acceptance | unit://client.response_acceptance | live |
+| THM-0058 | A client accepts a response only under a signer its trust configuration authorizes | client.response_signer_authorization | unit://client.response_signer_authorization, unit://client.trust_manifest_lifecycle | live |
+| THM-0059 | An unbound receipt is never a success and never another request's answer | client.response_binding_disposition | unit://client.response_binding_disposition | live |
 | THM-0060 | The client's clock skew is bounded at construction and read once | client.delegation_policy_seal | unit://client.delegation_policy_seal | live |
 | THM-0061 | A receipt that says nothing is not a receipt that says nothing ran | client.execution_contract | unit://client.execution_contract | live |
 | THM-0062 | A response-signing credential exists only while a valid delegated key does | proxy.delegated_signing_credential | unit://proxy.delegated_signing_credential | live |
@@ -106,16 +106,16 @@ any of them is closed.
 | THM-0066 | The serving PEP resolves actors through the deployment's materialized trust authority | proxy.serving_trust_seam | unit://proxy.serving_trust_seam, unit://proxy.trust_plan | live |
 | THM-0067 | The composition root re-reads no owner's security semantics from the request | proxy.trust_composition_root | unit://proxy.trust_composition_root | live |
 | THM-0068 | A pinned transparency service is one operator-reviewed document, or it is not a pin | http_profile.scitt_service_pin | unit://http_profile.scitt_service_pin | live |
-| THM-0069 | A security record states each authority's outcome in that authority's own coordinate | proxy.audit_record_coordinates | unit://proxy.audit_record_coordinates, unit://proxy.refusal_provenance | live |
+| THM-0069 | A security record states each authority's outcome in that authority's own coordinate | proxy.audit_authority_coordinates | unit://proxy.audit_authority_coordinates, unit://proxy.refusal_provenance | live |
 | THM-0070 | The record stream is honest about what reached it | proxy.audit_delivery | unit://proxy.audit_delivery | live |
-| THM-0071 | Every reachable in-exchange refusal has a typed provenance that reaches the record | proxy.audit_record_coordinates | unit://proxy.audit_record_coordinates, unit://proxy.refusal_provenance | live |
-| THM-0072 | A verified receipt proves registration on the service this deployment pinned | http_profile.scitt_receipt_offline | unit://http_profile.scitt_receipt_offline, unit://http_profile.scitt_service_pin | live |
+| THM-0071 | Every reachable in-exchange refusal has a typed provenance that reaches the record | proxy.audit_vocabulary_import | unit://proxy.audit_vocabulary_import, unit://proxy.refusal_provenance | live |
+| THM-0072 | A verified receipt proves registration on the service this deployment pinned | http_profile.scitt_service_pin | unit://http_profile.scitt_service_pin | live |
 | THM-0073 | Serving materialization refuses a deployment whose two signing roles are one key | proxy.signing_role_separation | unit://proxy.signing_role_separation | live |
-| THM-0074 | No unearned dispatch | proxy.dispatch_commitment | unit://proxy.dispatch_commitment, unit://proxy.exchange_lifecycle | live |
+| THM-0074 | No unearned dispatch | proxy.dispatch_commitment | unit://proxy.dispatch_commitment, unit://proxy.exchange_relation | live |
 | THM-0075 | No unearned response attribution | proxy.response_signing | unit://http_profile.response_emission_binding, unit://proxy.response_signing | live |
-| THM-0076 | A client accepts only an answer to its own request, under a signer it trusts | client.response_acceptance | unit://client.response_acceptance | live |
+| THM-0076 | A client accepts only an answer to its own request, under a signer it trusts | client.response_binding_disposition | unit://client.response_binding_disposition, unit://client.response_signer_authorization | live |
 | THM-0077 | No deployment serves a posture nobody selected | proxy.trust_composition_root | unit://proxy.cross_machine_legality, unit://proxy.trust_composition_root | live |
-| THM-0078 | Refusal is terminal, and no refusal-side effect reads as success | proxy.exchange_lifecycle | unit://proxy.exchange_lifecycle, unit://proxy.refusal_provenance | live |
+| THM-0078 | Refusal is terminal, and no refusal-side effect reads as success | proxy.exchange_relation | unit://proxy.exchange_relation, unit://proxy.refusal_provenance | live |
 | THM-0079 | Distinct signed exchanges have distinct replay keys | http_profile.replay_key | unit://http_profile.replay_key | live |
 | THM-0080 | Serving derives peer identity only from the credential the mechanism accepted | proxy.serving_identity_provenance | unit://proxy.serving_identity_provenance | live |
 | THM-0081 | Every production refusal is inside the exchange lifecycle | proxy.refusal_site_totality | unit://proxy.refusal_site_totality | live |
@@ -134,13 +134,13 @@ any of them is closed.
 | THM-0094 | The shipped Python SDK accepts only an answer to its own request | sdk_python.exchange_binding | unit://sdk_python.continuation_drive, unit://sdk_python.correlation_lifecycle, unit://sdk_python.exchange_binding, unit://sdk_python.execution_report, unit://sdk_python.local_failure_provenance, unit://sdk_python.nonce_floor, unit://sdk_python.notification_delivery, unit://sdk_python.reply_envelope, unit://sdk_python.trust_anchor_completeness, unit://sdk_python.verdict_delivery | live |
 | THM-0095 | The shipped TypeScript SDK accepts only an answer to its own request | sdk_typescript.exchange_path | unit://sdk_typescript.exchange_path | live |
 | THM-0096 | The runtime installs exactly the continuation capability its plan names | proxy.continuation_materialization | unit://proxy.continuation_installation, unit://proxy.continuation_materialization, unit://proxy.continuation_materialization_shared, unit://proxy.continuation_materialization_sole_producer | live |
-| THM-0097 | A replica serves no request-signer binding outside its snapshot's authority window | proxy.trust_plane_runtime | unit://proxy.trust_plane_runtime | live |
-| THM-0098 | A replica's trust snapshot is the slot-wise interpretation of one accepted trust document | proxy.trust_document_interpretation | unit://proxy.trust_document_interpretation, unit://proxy.trust_plane_runtime | live |
+| THM-0097 | A replica serves no request-signer binding outside its snapshot's authority window | proxy.trust_resolution_window | unit://proxy.trust_resolution_window | live |
+| THM-0098 | A replica's trust snapshot is the slot-wise interpretation of one accepted trust document | proxy.trust_document_interpretation | unit://proxy.trust_document_interpretation, unit://proxy.trust_resolution_window | live |
 | THM-0099 | The production actor resolver answers its Request-slot selector from the deployment's trust document | proxy.serving_trust_seam | unit://proxy.serving_trust_seam | live |
-| THM-0100 | A replica's exposure to a key its document no longer enrols is confined to the serving interval it prints | proxy.trust_plane_runtime | unit://proxy.trust_plane_runtime | live |
-| THM-0101 | An emitted exchange transition corresponds to the work that justifies it, except the six the assembly owns | proxy.exchange_transition_ownership | unit://proxy.exchange_lifecycle, unit://proxy.exchange_transition_ownership | live |
+| THM-0100 | A replica's exposure to a key its document no longer enrols is confined to the serving interval it prints | proxy.trust_reload_cadence | unit://proxy.trust_reload_cadence | live |
+| THM-0101 | An emitted exchange transition corresponds to the work that justifies it, except the six the assembly owns | proxy.exchange_transition_ownership | unit://proxy.exchange_publication, unit://proxy.exchange_transition_ownership | live |
 | THM-0102 | A validated deployment's connection-age bound never exceeds the credential lifetime it reports as its exposure window | proxy.client_credential_window | unit://proxy.client_credential_window, unit://proxy.client_credential_window_sole_producer | live |
-| THM-0103 | The epoch-bound session store resumes a session under the epoch that tagged it, and under no other | proxy.tls_listener_state | unit://proxy.tls_listener_state | live |
+| THM-0103 | The epoch-bound session store resumes a session under the epoch that tagged it, and under no other | proxy.epoch_bound_session_store | unit://proxy.epoch_bound_session_store | live |
 | THM-0104 | Shutdown stops admission and bounds the wait on admitted work; what the drain leaves behind it never resumes | proxy.serving_drain | unit://proxy.serving_drain | live |
 | THM-0105 | Replay retention is a bounded per-replica account, charged before the store is touched and handed back only by an answer that proves nothing was retained | proxy.async_replay_retention | unit://proxy.async_replay_retention | live |
 | THM-0106 | The Redis replay backend refuses a server that may drop a nonce, and turns every non-answer into an outage | proxy.redis_replay_adapter | unit://proxy.redis_replay_adapter | live |

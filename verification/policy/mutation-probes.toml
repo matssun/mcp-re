@@ -818,7 +818,8 @@ expect_red = [
 
 [[probe]]
 id = "T01-per-build-session-store"
-unit = "proxy.tls_listener_state"
+unit = "proxy.listener_state_assembly"
+theorem = "THM-0048"
 conjunct = "a rebuild binds the config to the store this state was established with, not to a new one"
 path = "mcp-re-proxy/src/tls_listener_state/mod.rs"
 anchor = """
@@ -839,7 +840,8 @@ expect_red = [
 
 [[probe]]
 id = "T05-the-build-path-installs-no-epoch-bound-store"
-unit = "proxy.tls_listener_state"
+unit = "proxy.listener_state_assembly"
+theorem = "THM-0048"
 conjunct = "every config this owner builds carries this state's epoch-bound session store"
 # The defect R11-604 named. `resumption_acceptance` drives REAL handshakes, but against a
 # `ServerConfig` it assembles itself — its own verifier, its own epoch-bound store — so it
@@ -865,7 +867,8 @@ expect_red = [
 
 [[probe]]
 id = "T02-epoch-not-from-the-owners-anchors"
-unit = "proxy.tls_listener_state"
+unit = "proxy.listener_state_assembly"
+theorem = "THM-0048"
 conjunct = "the epoch a config is bound under digests the anchors this state owns"
 path = "mcp-re-proxy/src/tls_listener_state/mod.rs"
 anchor = """
@@ -889,7 +892,8 @@ expect_red = [
 
 [[probe]]
 id = "T03-stateless-tickets-bypass-the-store"
-unit = "proxy.tls_listener_state"
+unit = "proxy.listener_state_assembly"
+theorem = "THM-0048"
 conjunct = "no config this owner builds can resume outside the epoch-tagged store"
 path = "mcp-re-proxy/src/tls_listener_state/resumption_binding.rs"
 anchor = """
@@ -904,7 +908,8 @@ expect_red = [
 
 [[probe]]
 id = "T04-per-build-signing-budget"
-unit = "proxy.tls_listener_state"
+unit = "proxy.listener_state_assembly"
+theorem = "THM-0048"
 conjunct = "a delegated rebuild reuses the listener's handshake-signature budget rather than creating one"
 path = "mcp-re-proxy/src/tls_listener_state/mod.rs"
 anchor = """
@@ -1942,7 +1947,7 @@ expect_red = [
 
 [[probe]]
 id = "M63-a-zero-cadence-is-a-spinning-reloader"
-unit = "proxy.trust_configuration_state"
+unit = "proxy.trust_revocation_classification"
 theorem = "THM-0035"
 conjunct = "a successfully classified state carries the witnesses its own state form requires"
 # A zero cadence names no legal state: `Halt::sleep(0)` sets a deadline already in the past,
@@ -1962,7 +1967,7 @@ expect_red = [
 
 [[probe]]
 id = "M64-the-cadence-is-held-to-the-window-the-state-claims"
-unit = "proxy.trust_configuration_state"
+unit = "proxy.trust_revocation_classification"
 theorem = "THM-0035"
 conjunct = "each state holds its cadence to the revocation window it claims"
 # The witness that makes a tier's claim true rather than advertised: a key removed from
@@ -1981,7 +1986,7 @@ expect_red = [
 
 [[probe]]
 id = "M65-an-epoch-source-is-what-makes-a-push-state-networked"
-unit = "proxy.trust_configuration_state"
+unit = "proxy.trust_document_locator"
 theorem = "THM-0036"
 conjunct = "a networked trust-epoch source is handed over as a paired locator and key, or not at all"
 # Classifying every push deployment as networked is the "or not at all" half deleted: a
@@ -2265,7 +2270,7 @@ expect_red = [
 
 [[probe]]
 id = "M78-the-root-is-derived-never-supplied"
-unit = "http_profile.scitt_receipt_offline"
+unit = "http_profile.scitt_derived_root"
 theorem = "THM-0041"
 conjunct = "the inclusion fold's output is compared against the root the receipt commits to"
 # The whole offline argument. Take the root from the receipt instead of from the fold and a
@@ -2288,7 +2293,7 @@ expect_red = [
 
 [[probe]]
 id = "M79-a-statement-is-attributed-by-its-signature-not-its-claim"
-unit = "http_profile.scitt_receipt_offline"
+unit = "http_profile.scitt_statement_attribution"
 theorem = "THM-0041"
 conjunct = "the statement's own Sig_structure verified under a key resolved for its issuer kid"
 # `SignedStatement::from_cose` parses WITHOUT verifying, so possession proves nothing about
@@ -2475,7 +2480,8 @@ expect_red = [
 
 [[probe]]
 id = "M81-an-illegal-advance-is-latched-not-ignored"
-unit = "proxy.exchange_lifecycle"
+unit = "proxy.exchange_relation"
+theorem = "THM-0043"
 conjunct = "an advance the relation does not admit latches an anomaly, in every build"
 # The latch is the whole enforcement. `advance` cannot refuse — the serving path is
 # straight-line code and a refused step would silently under-report — so the disagreement
@@ -2490,14 +2496,19 @@ anchor = """
 """
 weakening = """
 """
+# TRIMMED by the ADR-MCPRE-068 Phase-1 split. The second control —
+# `an_illegal_advance_never_reports_the_exchange_as_retry_safe` — is a CONSEQUENCE
+# proposition and is `proxy.exchange_retry_consequence`'s: it says an illegal advance cannot
+# make the exchange look retry-safe, which is about what may be REPORTED rather than about
+# whether the relation latched. A probe may only expect a control its own unit declares.
 expect_red = [
   "lib#exchange_state::tests::an_illegal_advance_is_refused_and_latched_in_every_build",
-  "lib#exchange_state::tests::an_illegal_advance_never_reports_the_exchange_as_retry_safe",
 ]
 
 [[probe]]
 id = "M90-a-success-the-machine-cannot-vouch-for-is-not-published"
-unit = "proxy.exchange_lifecycle"
+unit = "proxy.exchange_publication"
+theorem = "THM-0101"
 conjunct = "an exchange whose prospective terminal does not satisfy the model publishes no success"
 # THE LOAD-BEARING NEGATIVE for the enforcement that replaced two `debug_assert!`s. Those
 # assertions were the reason this probe is necessary: the machine detected the violation and
@@ -2535,7 +2546,8 @@ expect_red = [
 
 [[probe]]
 id = "M91-a-refused-publication-is-remembered-not-re-derived"
-unit = "proxy.exchange_lifecycle"
+unit = "proxy.exchange_publication"
+theorem = "THM-0101"
 conjunct = "a refused publication latches on the live machine, so a later attempt cannot succeed"
 # THE PROPOSITION, stated so it cannot drift back:
 #
@@ -2567,7 +2579,8 @@ expect_red = [
 
 [[probe]]
 id = "M93-the-202-is-not-minted-before-its-terminal-is-authorized"
-unit = "proxy.exchange_lifecycle"
+unit = "proxy.exchange_publication"
+theorem = "THM-0101"
 conjunct = "the notification terminal is decided before the 202 is signed, and the refusal exits"
 # The notification half of the same proposition M92 covers for the bodied path, and the one
 # the unit could not state until `notification.rs` entered its `paths`.
@@ -2621,7 +2634,8 @@ expect_red = [
 
 [[probe]]
 id = "M82-the-backend-projection-is-derived-not-asserted"
-unit = "proxy.exchange_lifecycle"
+unit = "proxy.exchange_retry_consequence"
+theorem = "THM-0044"
 conjunct = "the backend projection is derived from the request state, so the two cannot disagree"
 # The second-source-of-truth failure this module exists to avoid. Freeze the projection and
 # `BackendState` becomes a value someone must remember to set, which is the shape that let a
@@ -2643,7 +2657,8 @@ expect_red = [
 
 [[probe]]
 id = "M83-a-spent-approval-stays-spent"
-unit = "proxy.exchange_lifecycle"
+unit = "proxy.exchange_retry_consequence"
+theorem = "THM-0044"
 conjunct = "Consumed latches: no later observation may report a spent approval as unspent"
 # The defect the module was built around. Once a human's approval is destroyed it is
 # destroyed for the rest of the exchange; a later `Peeked` observation overwriting it makes
@@ -3072,14 +3087,14 @@ expect_red = [
 ]
 
 # ---------------------------------------------------------------------------
-# proxy.trust_plane_runtime (M92–M95, M98, M99 — THM-0097) and proxy.trust_epoch_source
+# proxy.trust_resolution_window (M92–M95, M98, M99 — THM-0097) and proxy.trust_epoch_source
 # (M96, M97 — no theorem) — v0.17 trust-plane ownership slice. The eight weakenings are the
 # deletions the census found the battery would otherwise not notice.
 # ---------------------------------------------------------------------------
 
 [[probe]]
 id = "M92-trust-flush-is-applied-before-the-lookup"
-unit = "proxy.trust_plane_runtime"
+unit = "proxy.trust_resolution_window"
 theorem = "THM-0097"
 conjunct = "a change of the shared epoch this replica observes strips every cached binding's authority before the next lookup"
 path = "mcp-re-proxy/src/trust_plane/push_trust.rs"
@@ -3096,7 +3111,7 @@ expect_red = [
 
 [[probe]]
 id = "M93-an-invalidated-entry-does-not-answer"
-unit = "proxy.trust_plane_runtime"
+unit = "proxy.trust_resolution_window"
 theorem = "THM-0097"
 conjunct = "strips every cached binding's authority — an invalidated entry answers nothing on its own"
 path = "mcp-re-proxy/src/trust_plane/trust_cache.rs"
@@ -3115,7 +3130,7 @@ expect_red = [
 
 [[probe]]
 id = "M94-a-flush-cannot-extend-a-deadline"
-unit = "proxy.trust_plane_runtime"
+unit = "proxy.trust_resolution_window"
 theorem = "THM-0097"
 conjunct = "a cached positive binding never answers past the deadline it was first cached under"
 path = "mcp-re-proxy/src/trust_plane/trust_cache.rs"
@@ -3135,7 +3150,7 @@ expect_red = [
 
 [[probe]]
 id = "M95-the-window-closes"
-unit = "proxy.trust_plane_runtime"
+unit = "proxy.trust_resolution_window"
 theorem = "THM-0097"
 conjunct = "a cached positive binding answers for at most T"
 path = "mcp-re-proxy/src/trust_plane/trust_cache.rs"
@@ -3188,7 +3203,7 @@ expect_red = [
 
 [[probe]]
 id = "M98-a-stale-store-refuses"
-unit = "proxy.trust_plane_runtime"
+unit = "proxy.trust_resolution_window"
 theorem = "THM-0097"
 conjunct = "a store that has stopped being maintained refuses with Unavailable rather than serving"
 path = "mcp-re-proxy/src/trust_plane/freshness.rs"
@@ -3207,7 +3222,7 @@ expect_red = [
 
 [[probe]]
 id = "M99-keep-last-good-is-bounded"
-unit = "proxy.trust_plane_runtime"
+unit = "proxy.trust_resolution_window"
 theorem = "THM-0097"
 conjunct = "a store that has stopped being maintained — the reload's keep-last-good tolerance is bounded by exactly the budget"
 path = "mcp-re-proxy/src/trust_plane/reload/mod.rs"
@@ -3348,7 +3363,7 @@ expect_red = [
 
 [[probe]]
 id = "M107-the-reload-sleeps-exactly-its-cadence"
-unit = "proxy.trust_plane_runtime"
+unit = "proxy.trust_reload_cadence"
 theorem = "THM-0100"
 conjunct = "the reload worker reads again no later than R after the previous cycle — each cycle is one halt-aware sleep of exactly R"
 path = "mcp-re-proxy/src/trust_plane/reload/mod.rs"
@@ -3364,7 +3379,7 @@ expect_red = [
 
 [[probe]]
 id = "M108-a-successful-cycle-swaps-the-snapshot"
-unit = "proxy.trust_plane_runtime"
+unit = "proxy.trust_reload_cadence"
 theorem = "THM-0100"
 conjunct = "a successful cycle swaps the snapshot the resolver and the signer directory answer from"
 path = "mcp-re-proxy/src/trust_plane/reload/mod.rs"
@@ -3382,7 +3397,7 @@ expect_red = [
 
 [[probe]]
 id = "M109-the-printed-window-is-R-plus-T"
-unit = "proxy.trust_plane_runtime"
+unit = "proxy.trust_reload_cadence"
 theorem = "THM-0100"
 conjunct = "the delivered revocation window the transcript prints is exactly R + T for the caching tiers"
 path = "mcp-re-proxy/src/trust_plane/delivered_window.rs"
@@ -3507,7 +3522,7 @@ expect_red = [
 
 [[probe]]
 id = "M116-a-superseded-session-is-refused"
-unit = "proxy.tls_listener_state"
+unit = "proxy.epoch_bound_session_store"
 theorem = "THM-0103"
 conjunct = "a read returns the session only if the stored tag equals the epoch in force — a session tagged under withdrawn trust does not resume"
 path = "mcp-re-proxy/src/tls_listener_state/auth_epoch.rs"
@@ -3526,7 +3541,7 @@ expect_red = [
 
 [[probe]]
 id = "M117-a-stale-session-is-evicted-not-left"
-unit = "proxy.tls_listener_state"
+unit = "proxy.epoch_bound_session_store"
 theorem = "THM-0103"
 conjunct = "a get that mismatches evicts the entry rather than leaving it to be re-read and re-rejected"
 path = "mcp-re-proxy/src/tls_listener_state/auth_epoch.rs"
@@ -3541,7 +3556,7 @@ expect_red = [
 
 [[probe]]
 id = "M118-a-current-session-does-resume"
-unit = "proxy.tls_listener_state"
+unit = "proxy.epoch_bound_session_store"
 theorem = "THM-0103"
 conjunct = "the gate is not vacuously closed — a session stored under the epoch in force IS returned, and rustls reports Resumed"
 path = "mcp-re-proxy/src/tls_listener_state/auth_epoch.rs"
@@ -3883,7 +3898,7 @@ expect_red = [
 
 [[probe]]
 id = "M135-a-dead-trust-reloader-must-stop-the-resolver"
-unit = "proxy.trust_plane_runtime"
+unit = "proxy.trust_resolution_window"
 theorem = "THM-0097"
 conjunct = "a snapshot that has stopped being maintained refuses with Unavailable rather than serving"
 path = "mcp-re-proxy/src/trust_plane/reload/supervision.rs"
@@ -4211,7 +4226,7 @@ expect_red = [
 
 [[probe]]
 id = "M148-an-oversized-trust-document-is-refused-not-truncated"
-unit = "proxy.trust_plane_runtime"
+unit = "proxy.trust_resolution_window"
 conjunct = "a --trust document past the read bound is refused whole, never handed to the parser cut in half"
 # The weakening keeps the bound on the READ and drops the refusal, so an oversized document
 # reaches the parser truncated. That is the failure mode the extra byte exists to prevent:
@@ -4407,7 +4422,8 @@ expect_red = [
 
 [[probe]]
 id = "M165-a-record-states-its-half-twice-and-the-two-can-disagree"
-unit = "proxy.audit_record_coordinates"
+unit = "proxy.audit_authority_coordinates"
+theorem = "THM-0069"
 conjunct = "which half of the exchange a record is about is stated once, by the event CORE minted, and the arm cannot contradict it"
 # The weakening rewires one constructor to the wrong half's Core call — the mistake the old
 # shape made possible by handing every constructor an arbitrary `AuditEvent`. Under it a
@@ -4435,7 +4451,8 @@ expect_red = [
 
 [[probe]]
 id = "M166-a-policys-refusal-is-written-into-cores-reason"
-unit = "proxy.audit_record_coordinates"
+unit = "proxy.audit_authority_coordinates"
+theorem = "THM-0069"
 conjunct = "a rejection Core did not decide carries no Core reason"
 # The weakening collapses the two rejection shapes: a verdict Core reached and one it did not
 # become the same record. ADR-MCPRE-066 §1.1 refuses it — the authority that terminated the
@@ -4556,3 +4573,194 @@ weakening = """
 expect_red = [
   "tests/integration#remote_signer_bound_test::every_remote_signer_dispatch_is_bounded_by_the_shared_timeout",
 ]
+
+# --- ADR-MCPRE-068 Phase 1 — the four falsifiers the SCITT split needs -------------------
+#
+# `http_profile.scitt_receipt_offline` named SIX propositions in its own description and
+# carried TWO probes. Splitting it into six owners made the other four merge-fatal instead of
+# invisible, which is the same thing the verifier split did for THM-0017.
+
+[[probe]]
+id = "M72-the-fold-reaches-the-root-or-refuses"
+unit = "http_profile.scitt_inclusion_fold"
+theorem = "THM-0041"
+conjunct = "a proof with fewer siblings than the tree requires does not reach the root and is refused"
+path = "mcp-re-http-profile/src/scitt/merkle.rs"
+note = """
+THE TWO RESIDUE CHECKS ARE THE WHOLE OF RFC 9162's POSITION BINDING. Without the `snode != 0`
+refusal a short path stops folding early and returns an intermediate node as if it were the
+root — which is exactly how a receipt for one position is restated at another, and is what
+`restating_the_log_position_at_a_different_path_length_does_not_verify` exists to catch.
+"""
+anchor = """    if snode != 0 {
+        // Fewer siblings than the tree requires: the proof does not reach the root.
+        return Err(HttpProfileError::ReceiptInclusionInvalid);
+    }
+"""
+weakening = """    if false {
+        // Fewer siblings than the tree requires: the proof does not reach the root.
+        return Err(HttpProfileError::ReceiptInclusionInvalid);
+    }
+"""
+expect_red = [
+  "lib#scitt::merkle::tests::restating_the_log_position_at_a_different_path_length_does_not_verify",
+  "lib#scitt::merkle::tests::an_empty_inclusion_path_is_only_valid_for_a_single_leaf_tree",
+]
+
+[[probe]]
+id = "M73-a-leaf-index-outside-the-tree-is-refused-before-any-fold"
+unit = "http_profile.scitt_receipt_shape"
+theorem = "THM-0041"
+conjunct = "a leaf index outside the tree is refused before any fold is attempted"
+path = "mcp-re-http-profile/src/scitt/receipt/parse.rs"
+note = """
+BEFORE ANY FOLD is the load-bearing half, and the split MEASURED where that refusal lives. The
+first draft of this probe attacked the identical guard at the top of
+`rfc9162_root_from_inclusion_proof`, and the control stayed GREEN: by then the PARSER has
+already refused, so the fold's copy is defence in depth rather than the check this conjunct
+names. The proposition is about the receipt's SHAPE — a leaf index that names a position the
+tree does not have is not a receipt — so the probe attacks the parser, where the refusal
+actually happens.
+
+That the fold carries the same guard is right and is not what this control establishes; it is
+what stops the fold from being unsafe when called from somewhere the parser has not run.
+"""
+anchor = """    if leaf_index >= tree_size {
+        return Err(HttpProfileError::MalformedEvidence(
+            "scitt inclusion proof leaf index outside tree",
+        ));
+    }
+"""
+weakening = """    if false {
+        return Err(HttpProfileError::MalformedEvidence(
+            "scitt inclusion proof leaf index outside tree",
+        ));
+    }
+"""
+expect_red = [
+  "lib#scitt::receipt::parse::tests::a_leaf_index_outside_the_tree_is_refused_before_any_fold",
+]
+
+[[probe]]
+id = "M74-a-bound-profile-refuses-a-receipt-that-commits-to-no-position"
+unit = "http_profile.scitt_position_commitment"
+theorem = "THM-0041"
+conjunct = "where the pinned profile binds a position, a receipt carrying no position commitment is refused rather than accepted on the fold alone"
+path = "mcp-re-http-profile/src/scitt/offline.rs"
+note = """
+STRIPPING THE PARAMETER IS THE ATTACK. The comment above this match says it: accepting a
+receipt with no position commitment because it did not carry one "would let an attacker strip
+the parameter and make pinning the stronger profile worth nothing". The fold still verifies —
+a true receipt at a position nobody signed is exactly what remains — so nothing else in the
+composition refuses it.
+"""
+anchor = """        (ReceiptPositionProfile::Bound, None) => {
+            return Err(HttpProfileError::ReceiptPositionUnbound)
+        }
+"""
+weakening = """        (ReceiptPositionProfile::Bound, None) => {}
+"""
+expect_red = [
+  "lib#scitt::offline::tests::a_bound_service_refuses_a_receipt_that_carries_no_position_commitment",
+]
+
+[[probe]]
+id = "M75-an-algorithm-that-disagrees-with-the-resolved-key-is-refused"
+unit = "http_profile.scitt_algorithm_agreement"
+theorem = "THM-0041"
+conjunct = "the protected `alg` and the resolved key must agree; a disagreement is refused rather than resolved in the key's favour"
+path = "mcp-re-http-profile/src/scitt/cose_key/verify.rs"
+note = """
+THE PAIR IS THE CHECK, and the module says so: `(protected alg, resolved key)` is exhaustive,
+which is the point. Weakening the mismatch arm to fall through to the key's own algorithm
+would make the protected header advisory — a signer could declare one algorithm and be
+verified under another, which is the confusion this exhaustive match exists to remove.
+"""
+anchor = """        (iana::Algorithm::EdDSA | iana::Algorithm::ES256, _) => Err(
+            HttpProfileError::MalformedEvidence("scitt cose algorithm key mismatch"),
+        ),
+"""
+weakening = """        (iana::Algorithm::EdDSA | iana::Algorithm::ES256, _) => Ok(()),
+"""
+expect_red = [
+  "lib#scitt::cose_key::tests::an_algorithm_that_disagrees_with_the_resolved_key_is_refused",
+]
+
+# --- ADR-MCPRE-068 Phase 1 — the two falsifiers the last two splits need ------------------
+
+[[probe]]
+id = "M76-unknown-revocation-status-is-denied-with-no-opt-out"
+unit = "proxy.client_certificate_posture"
+theorem = "THM-0054"
+conjunct = "a client whose revocation status cannot be determined is denied, and no argument can relax it"
+path = "mcp-re-proxy/src/tls_listener_state/client_verifier.rs"
+note = """
+THM-0054 IS `critical` AND HAD NO FALSIFIER. It shared a unit with THM-0048 and THM-0103,
+whose eight probes all attack the listener state and the epoch store — one of the 22
+theorems `theorem-falsifier-coverage-2026-09-18.md` counts as covered by nothing that names
+them, and the split is what made it merge-fatal rather than invisible.
+
+The weakening is the one the builder's own doc says is not reachable:
+`allow_unknown_revocation_status()` is NOT called, and there is no parameter that could cause
+it to be. Calling it is therefore the exact counterexample the claim excludes, and rustls'
+`UnknownStatusPolicy::Deny` default is what the claim rests on.
+"""
+anchor = """    WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider)
+        .with_crls(crls)
+        .enforce_revocation_expiration()
+        .build()
+"""
+weakening = """    WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider)
+        .with_crls(crls)
+        .enforce_revocation_expiration()
+        .allow_unknown_revocation_status()
+        .build()
+"""
+# AIMED AT THE INVENTORY CONTROL, and the reason is a measurement this probe made.
+#
+# The obvious target was `tls_test::a_client_whose_revocation_status_cannot_be_determined_is_
+# denied`, and it does NOT detect this weakening. Instrumented in both worlds, the server
+# reports the same thing either way:
+#
+#     PROBE-OBSERVED: Some((InvalidData, "invalid peer certificate: BadSignature"))
+#
+# The fixture's client leaf is refused for a BAD SIGNATURE before any revocation decision is
+# reached, so the control has never exercised the property it names — its own comment says the
+# CRL is there "to switch revocation checking ON, so the second CA's leaf reaches the
+# unknown-status decision", and the leaf does not reach it. Recorded as P2-C1 in
+# `remaining-splits-2026-09-18.md`; the fixture is a product question, not an assurance one.
+#
+# `no_production_code_relaxes_the_unknown_status_policy` IS load-bearing for exactly this
+# weakening, because the weakening is the thing it scans for: a call to
+# `allow_unknown_revocation_status()` in production code. That is a source-text inventory
+# rather than a handshake, and the claim it establishes — no configuration or argument can
+# relax the policy — is a source-text claim.
+expect_red = [
+  "tests/integration#client_verifier_posture_test::no_production_code_relaxes_the_unknown_status_policy",
+]
+
+[[probe]]
+id = "M77-an-unconfigured-deployment-is-not-rendered-as-an-authorized-one"
+unit = "proxy.audit_vocabulary_import"
+theorem = "THM-0071"
+conjunct = "a deployment that configured no policy renders as `not configured`, never as an authorization the record could be read as having granted"
+path = "mcp-re-proxy/src/authorization/audit/fields.rs"
+note = """
+THE THREE OUTCOMES ARE NOT TWO. `not configured` and `authorized` are different facts about a
+deployment, and a record that renders the first as the second reports a decision nobody made —
+which is the reading an auditor would act on. The `before policy imports no vocabulary` control
+is the other half: the vocabulary is imported at the point the policy authority speaks and not
+before, so an absent policy contributes no token rather than a neutral-looking one.
+"""
+anchor = """            AuthorizationFacet::NotConfigured => {
+                vec![AuditField::token("authz", "not-configured")]
+            }
+"""
+weakening = """            AuthorizationFacet::NotConfigured => {
+                vec![AuditField::token("authz", "authorized")]
+            }
+"""
+expect_red = [
+  "lib#authorization::audit::fields::tests::the_unconfigured_line_cannot_be_read_as_an_authorization",
+]
+

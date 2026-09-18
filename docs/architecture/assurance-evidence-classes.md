@@ -471,7 +471,7 @@ as a *typed, severity-annotated* tree:
 ```
 THM-0076  client accepts only an answer to its own request        [HIGH]
   ├── unit://client.proxy_request_correspondence     tested      ⚠ no falsifier
-  ├── unit://client.response_acceptance              tested      ⚠ no falsifier
+  ├── unit://client.response_binding_disposition  tested      ⚠ no falsifier
   ├── THM-00xx  request identity injectivity         proved      verus://…
   ├── THM-00xx  response/request binding             structural  structural://…
   └── ASM-00xx  Ed25519 verification                 external-boundary  owner: ring
