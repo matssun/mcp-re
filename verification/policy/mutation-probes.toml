@@ -6737,3 +6737,60 @@ holds, which is that a caller is never handed anchors the current floor would re
 caller reads the error as "these anchors are not usable" and keeps what it had, which is the
 only safe answer when the two reads disagree.
 """
+
+[[probe]]
+id = "M245-proxy-a-response-advertises-no-validity-past-its-credential"
+unit = "proxy.response_signing"
+theorem = "THM-0091"
+conjunct = "the validity a response may advertise is bounded by the credential it is signed under, not only by the configured TTL"
+path = "mcp-re-proxy/src/http_profile_serve/signing_window.rs"
+anchor = """
+            expires: now.saturating_add(ttl_secs).min(exp),
+"""
+weakening = """
+            expires: now.saturating_add(ttl_secs),
+"""
+expect_red = [
+  "lib#http_profile_serve::signing_window::tests::the_credential_bounds_a_ttl_that_would_outlive_it",
+  "lib#http_profile_serve::signing_window::tests::an_expired_credential_advertises_no_future_validity",
+]
+note = """
+TWO BOUNDS, AND THE OTHER ONE IS THE OPERATOR'S. The configured TTL is what the deployment
+chose; `exp` is what the delegated credential actually permits. Taking the minimum is what
+makes them one window -- under the weakening a deployment with a generous TTL signs responses
+advertising validity PAST the credential that signed them, so a verifier that trusts the
+advertised window accepts a response whose signing authority had already lapsed.
+
+`saturating_add` is not a second carrier of this conjunct: it stops the TTL arithmetic from
+wrapping, which is why the expired-credential control goes red too -- a wrapped sum would have
+compared as a small number and the `.min` would have hidden it. The two defects are adjacent
+and distinct, and this anchor holds only the bound.
+"""
+
+[[probe]]
+id = "M246-proxy-the-outstanding-id-is-not-read-a-second-time"
+unit = "proxy.outstanding_id_provenance"
+theorem = "THM-0091"
+conjunct = "the serving path never reads the outstanding id from the body a second time, carrying the decided value to its terminal instead"
+path = "mcp-re-proxy/src/http_profile_serve/mod.rs"
+anchor = """
+        let outstanding = &admitted.outstanding;
+"""
+weakening = """
+        let reread = mcp_re_http_profile::outstanding_id(&http_req.body)
+            .unwrap_or(mcp_re_http_profile::OutstandingId::Notification);
+        let outstanding = &reread;
+"""
+expect_red = [
+  "tests/integration#outstanding_id_provenance_test::no_production_serving_code_reads_the_outstanding_id_a_second_time",
+]
+note = """
+THE RULE IS THE CONTROL, and that is what makes this probe worth registering rather than
+awkward. The proposition is an ABSENCE -- nothing reads the body for this answer again -- and
+an absence has no branch to delete, so the weakening ADDS the second read the rule forbids.
+Only a source-scanning control can see it; no behavioural test would, because on a well-formed
+body the two reads AGREE.
+
+They disagree exactly where it matters: a body dispatched as a request and acknowledged as a
+notification means the tool ran and the caller was told nothing ran.
+"""

@@ -5362,7 +5362,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://proxy/serving/outstanding_id_provenance"]
+evidence = [
+  "test://proxy/serving/outstanding_id_provenance",
+  "mutation://proxy/serving/outstanding_id_provenance",
+]
 # `outstanding_id` is a published API with legitimate callers on the client side and in the
 # response validator, so it cannot be deleted to make a second read unavailable. What is
 # measured is that the SERVING PATH does not ask the same document twice — and the third
@@ -5542,7 +5545,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://proxy/signing/response_window_and_receipt"]
+evidence = [
+  "test://proxy/signing/response_window_and_receipt",
+  "mutation://proxy/signing/response_window_and_receipt",
+]
 # The window controls are the seal: `expires` is private and no constructor takes one, so
 # the four cases below are the whole derivation rather than four call sites that remembered
 # to clamp. The last-resort controls are the other half — what an UNSIGNED receipt may still

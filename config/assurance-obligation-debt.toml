@@ -304,15 +304,6 @@ root_reachable = false
 status = "unreviewed"
 
 [[obligation]]
-unit = "proxy.outstanding_id_provenance"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "high"
-inherited_severity = "critical"
-root_reachable = true
-status = "unreviewed"
-
-[[obligation]]
 unit = "proxy.pkcs11_adapter"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "critical"
@@ -359,15 +350,6 @@ status = "unreviewed"
 
 [[obligation]]
 unit = "proxy.replay_materialization"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "critical"
-inherited_severity = "critical"
-root_reachable = true
-status = "unreviewed"
-
-[[obligation]]
-unit = "proxy.response_signing"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "critical"
 direct_consequence_severity = "critical"
