@@ -563,6 +563,39 @@ still refused while any one of them is private, so the boundary was still closed
 construction. A probe written per field would have gone red there and reported a breach that
 had not happened.
 
+### The third: `Ed25519PublicKeyValue`, where the seal is not a refusal
+
+**Landed 2026-09-18, ADR-MCPRE-068 Phase 0D-5.** The first two splits made a *refusal*
+unavoidable. There is no refusal to make unavoidable here, and saying why is the point.
+
+Every `[u8; 32]` is a legal Ed25519 point, so this owner's second constructor, `for_point`,
+is **total** — it cannot fail. That is not a hole in the seal. The invariant is the canonical
+RFC 8410 **encoding**, not a predicate over the bytes, so `for_point` admits no inhabitant
+`interpret_rfc8410_spki` would reject; its totality is `the_two_directions_are_inverse` read
+as a constructor. A probe asserting *"there is one way in"* would state something false.
+
+What is true is the other half of the same fact: **both ways in are the owner's.** Open the
+field and a sibling module writes thirty-two bytes directly — still a legal point, and no
+longer a value whose provenance this owner can speak for, which is exactly what the
+correspondence relation compares and what `spki_der_for_point` round-trips.
+
+| proposition | unit | class | falsifier |
+|---|---|---|---|
+| which bytes are a key, and what each refusal says | `proxy.ed25519_public_key` | `tested` | M32, M35 |
+| only this owner can place bytes in the representation | `proxy.ed25519_public_key_sole_producer` | `structural` | S07 — `E0451` on the field |
+
+```text
+cargo test -p mcp-re-proxy --lib -- communication_assurance::ed25519_public_key::
+    test result: ok. 7 passed; 0 failed        # with raw_point opened to pub(crate)
+
+verify-structural --probe S07
+    FAIL S07: the hostile construction COMPILED.
+```
+
+So the claim is worded to the **boundary**, not to a constructor count, and S07's hostile
+value is a perfectly legal key. The probe attacks where the bytes may be *placed*, which is
+the only thing that can be false here.
+
 The remaining unit-backed sealed owners follow the same split, one owner per change.
 
 ## Open

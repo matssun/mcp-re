@@ -106,6 +106,7 @@ attestations this view cannot see.
 | unit://proxy.delegated_signing_credential | source, contracts or evidence | THM-0062, THM-0063 | _no consumer_ |
 | unit://proxy.dispatch_commitment | source, contracts or evidence | THM-0045, THM-0051, THM-0052, THM-0074 | _no consumer_ |
 | unit://proxy.ed25519_public_key | source, contracts or evidence | THM-0025 | proxy.credential_key_correspondence (COMPILE_DEPENDENCY) |
+| unit://proxy.ed25519_public_key_sole_producer | source, contracts or evidence | THM-0025 | _no consumer_ |
 | unit://proxy.etcd_replay_adapter | source, contracts or evidence | THM-0107 | _no consumer_ |
 | unit://proxy.evidence_attestation | source, contracts or evidence | THM-0113 | _no consumer_ |
 | unit://proxy.exchange_lifecycle | source, contracts or evidence | THM-0043, THM-0044, THM-0074, THM-0078, THM-0101 | _no consumer_ |
