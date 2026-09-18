@@ -203,7 +203,7 @@ def declared_battery(
     if gate_only:
         # Run only what the probe NAMES. The adjudicator reads nothing but `expect_red`, so a
         # cargo battery here would be measured and discarded — and on a unit whose symbols are
-        # `pytest#` or `vitest#` it cannot be run at all, because `target_argv` speaks cargo.
+        # `pytest#` or `vitest#` it cannot be run at all, because the argv spoke cargo.
         grouped = {}
     return package, grouped, features, gates, eco
 
@@ -224,12 +224,6 @@ def adjudicate(probe: dict, observed: dict[str, str]) -> tuple[list[str], list[s
     missing = [name for name in probe["expect_red"] if name not in observed]
     red = [name for name in probe["expect_red"] if observed.get(name) == "FAILED"]
     return missing, red
-
-
-def target_argv(target: str) -> list[str]:
-    if target == "lib":
-        return ["--lib"]
-    return ["--test", target[6:]]
 
 
 #: What each ecosystem's runner says when the WEAKENED TREE DOES NOT BUILD, as opposed to
@@ -462,17 +456,15 @@ def run_battery(
     results: dict[str, str] = {}
     for target in sorted(grouped):
         if eco is CARGO:
-            argv = [
-                "cargo",
-                "test",
-                "-p",
-                package,
-                *(["--features", ",".join(features)] if features else []),
-                *target_argv(target),
-                "--",
-                "--exact",
-                *grouped[target],
-            ]
+            # THROUGH THE SEAM, like every other ecosystem below. This branch used to build
+            # the argv itself, and its own `target_argv` knew only `lib` and `tests/<name>`
+            # -- so a `bin/<name>` battery became `--test -re-client`, which cargo refuses
+            # with a message that is not a build failure. The lane then reported a
+            # MEASUREMENT FAILURE for a probe whose weakening works, blaming the probe for
+            # the lane's blind spot. `_ecosystems.test_argv` is where the four Cargo target
+            # shapes are declared, and a second implementation of them is how the two lanes
+            # come to disagree about one declared symbol.
+            argv = test_argv(eco, package, target, grouped[target], features, runtime)
             cwd = tree
             env = {**_env(), "CARGO_TARGET_DIR": str(target_dir)}
         else:

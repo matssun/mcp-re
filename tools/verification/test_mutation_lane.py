@@ -566,6 +566,32 @@ def test_an_unreadable_report_is_not_red():
     assert body.index("except ReportUnreadable") < body.index("return True, results")
 
 
+def test_every_declared_cargo_target_shape_is_runnable():
+    """Four shapes, one declaration of them, and this lane must not hold a second.
+
+    `_ecosystems` declares `lib`, `doc`, `tests/<name>` and `bin/<name>`, and this lane
+    used to build its own Cargo argv from `lib` and `tests/<name>` alone. A `bin/<name>`
+    battery became `--test -re-client`: cargo refuses that with a message which is not a
+    build failure, so the lane reported a MEASUREMENT FAILURE and blamed a probe whose
+    weakening works. The registry can name any of the four, so all four must run.
+    """
+    from _ecosystems import CARGO, test_argv
+
+    shapes = {
+        "lib": ["--lib"],
+        "doc": ["--doc"],
+        "tests/full_profile_test": ["--test", "full_profile_test"],
+        "bin/mcp-re-client": ["--bin", "mcp-re-client"],
+    }
+    for target, expected in shapes.items():
+        argv = test_argv(CARGO, "p", target, ["sym"], [], None)
+        assert expected[0] in argv, (target, argv)
+        for token in expected:
+            assert token in argv, (target, argv)
+    # And the lane asks the seam rather than answering for itself.
+    assert "target_argv(" not in inspect.getsource(lane.run_battery)
+
+
 def test_the_battery_runs_through_the_same_seam_as_the_test_lane():
     """A control green in the test lane and unrunnable in this one would be two answers
     about one declared symbol. Both resolve the command and the report through
