@@ -851,7 +851,60 @@ re-export it, and the lane reported `saw ['E0432']` — an unresolved import is 
 Between this and S13's `E0599`, the declared-error-code rule has now caught two probe defects
 that the weak *"does not compile"* form would have recorded as evidence.
 
-The remaining unit-backed sealed owners follow the same split, one owner per change.
+### The eleventh, and the last unit-backed one: `AdmissionState` and its projection
+
+**Landed 2026-09-18, ADR-MCPRE-068 Phase 0D-13.** The same state/projection pair as the
+continuation owner, with six fields at stake rather than one — and the projection is again
+the sharper half.
+
+`EnforcedAdmission` is the borrow view a consumer reads when admission is enforced: the
+posture, the authority kid, the authority key itself, the record store, the availability rule
+and the currentness rule. Each could individually be a legal value. What makes them mean
+anything is that they were projected **together from one classified state** — which is
+precisely what this owner's tested half asserts when it says an enforcing state *"carries
+every value it cannot verify without"*. A caller able to write the struct could hand a
+consumer an authority key from one deployment beside a posture from another, with the state
+they supposedly project untouched, and every test would stay green.
+
+| probe | value | what a forgery would buy |
+|---|---|---|
+| S20 | `AdmissionState` | a posture the classifier never reached |
+| S21 | `EnforcedAdmission` | admission records verified against an authority the deployment never named |
+
+```text
+cargo test -p mcp-re-proxy --lib -- config_state::admission
+    test result: ok. 8 passed; 0 failed        # with all seven fields opened to pub(crate)
+
+verify-structural --probe S20 --probe S21
+    FAIL: 2 of 2 probe(s) did not witness a closed construction boundary
+```
+
+`enforced()` returns `None` where admission is not enforced, so the view's **existence** is
+itself the enforcement fact — which is why it has to be unforgeable.
+
+**Two facts recorded rather than fixed here**, both pre-existing and both Phase 0E's:
+
+- neither this owner's `tested` half nor `proxy.custody_exposure`'s carries `mutation://`
+  evidence — two high/critical propositions with no registered falsifier;
+- no theorem owns `proxy.admission_configuration_state`, so it and its new structural unit
+  are **`NOT-ROOT-REACHABLE`**. Per the ratification that means only that no currently
+  declared root transitively depends on them. It is not low importance, not complete
+  assurance, and not permission to omit evidence.
+
+## The campaign, finished
+
+All **11** unit-backed sealed owners are split: each `tested` unit now states what its code
+*decides*, and a `structural` unit beside it states what the compiler *refuses*, with a probe
+that goes red when the boundary opens. **21 structural probes** are live where 0B registered
+five.
+
+Every split was measured the same way — open the boundary, run the battery, run the probe —
+and the battery stayed green **every single time**: 8, 6, 7, 5, 22, 26, 4, 15, 13, 15 and 8
+tests, 129 in total, none of which can see a boundary being deleted. That is the record's
+thesis, measured eleven times rather than argued once.
+
+The **9** sealed owners with no unit at all remain coverage gaps, not reclassification
+candidates, and are Phase 1's.
 
 ## Open
 

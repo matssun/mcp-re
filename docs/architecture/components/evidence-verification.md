@@ -402,6 +402,8 @@ is indistinguishable from an unconsidered one. Private fields alone are not a se
 | S17 | in-crate | no code outside `config_state::custody` can assemble a `CustodyState` | `E0451` |
 | S18 | in-crate | no code outside `config_state::continuation_control` can assemble a `ContinuationControlState` | `E0451` |
 | S19 | in-crate | no code outside `config_state::continuation_control` can assemble a `ContinuationControlPlan` | `E0451` |
+| S20 | in-crate | no code outside `config_state::admission` can assemble an `AdmissionState` | `E0451` |
+| S21 | in-crate | no code outside `config_state::admission` can assemble an `EnforcedAdmission` | `E0451` |
 
 S04 is the one ADR-MCPRE-068 §12.1 split out of a composite unit, and 0D-3 completed the
 split in the registry: M113/M114/M115 falsify the constructor's runtime refusal of an illegal

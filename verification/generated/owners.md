@@ -67,6 +67,7 @@ not an omission to hide.
 | http_profile.verifier_results | V0 | THM-0014, THM-0015, THM-0016, THM-0017, THM-0018, THM-0019, THM-0020, THM-0021, THM-0022 | 3 |
 | policy.authorization_taxonomy | V0 | _none_ | 0 |
 | proxy.admission_configuration_state | V0 | _none_ | 0 |
+| proxy.admission_configuration_state_sole_producer | V0 | _none_ | 0 |
 | proxy.admission_currency_gate | V0 | _none_ | 0 |
 | proxy.admission_state_source | V0 | _none_ | 0 |
 | proxy.async_replay_retention | V0 | THM-0105 | 0 |

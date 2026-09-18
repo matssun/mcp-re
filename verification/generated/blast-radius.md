@@ -71,6 +71,7 @@ attestations this view cannot see.
 | unit://http_profile.verifier_results | source, contracts or evidence | THM-0014, THM-0015, THM-0016, THM-0017, THM-0018, THM-0019, THM-0020, THM-0021, THM-0022, THM-0065 | proxy.request_peer_binding (COMPILE_DEPENDENCY) |
 | unit://policy.authorization_taxonomy | source, contracts or evidence | THM-0111 | _no consumer_ |
 | unit://proxy.admission_configuration_state | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://proxy.admission_configuration_state_sole_producer | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.admission_currency_gate | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.admission_state_source | source, contracts or evidence | THM-0129 | _no consumer_ |
 | unit://proxy.async_replay_retention | source, contracts or evidence | THM-0105 | _no consumer_ |
