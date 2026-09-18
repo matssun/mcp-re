@@ -2876,32 +2876,100 @@ tested_symbols = [
   "lib#authorization::pdp::authority::tests::the_name_and_the_key_are_one_value",
 ]
 
+# ---------------------------------------------------------------------------------------
+# ADR-MCPRE-068 Phase 1 — RFC 9943/9942 offline receipt verification, as six owners.
+#
+# WHAT WAS HERE. `http_profile.scitt_receipt_offline`: one unit over 14 files and 24 controls,
+# whose own description named SIX propositions — "the statement's own signature and its CWT
+# attribution, the receipt's shape, the RFC 9162 inclusion fold, the transparency service's
+# signature over the root that fold DERIVED, the position commitment where the pinned profile
+# binds one, and algorithm agreement on both signatures". ADR-MCPRE-061 question 2 answered in
+# the unit's own text, and the answer is six.
+#
+# Second on the campaign ruling's scheduler after the verifier: highest semantic fan-out among
+# what remained, at `high`, inside THM-0072's closure.
+#
+# IT CARRIED TWO PROBES FOR SIX PROPOSITIONS. The split made the other four merge-fatal rather
+# than invisible — the same thing the verifier split did for THM-0017 — and M72 through M75
+# are those falsifiers, each attacking the check its own proposition names.
+#
+# THM-0072 is `supported_by` all six. No intermediate theorem is invented: each unit's
+# description states its proposition, and a `THM-` is for a claim that is a reusable premise
+# across a theorem boundary or needs owner specification review, which none of these is.
+# ---------------------------------------------------------------------------------------
+
+# M79 attacks this one. Its conjunct — the statement's own Sig_structure verified under a key
+# resolved for its issuer kid — was already labelled with the theorem; the split gives it an
+# owner whose battery is the two controls that establish it and no others.
 [[unit]]
-id = "http_profile.scitt_receipt_offline"
+id = "http_profile.scitt_statement_attribution"
 class = "V0"
-description = "RFC 9943 / RFC 9942 offline receipt verification: the statement's own signature and its CWT attribution, the receipt's shape, the RFC 9162 inclusion fold, the transparency service's signature over the root that fold DERIVED, the position commitment where the pinned profile binds one, and algorithm agreement on both signatures. No network."
+description = "A Signed Statement is attributed by its own COSE signature and its CWT claims, not by what it says about itself: the `Sig_structure` verified under a key resolved for the issuer the statement names, and a critical header this profile does not understand is refused rather than ignored."
 paths = [
-  "mcp-re-http-profile/src/scitt/offline.rs",
-  "mcp-re-http-profile/src/scitt/merkle.rs",
-  "mcp-re-http-profile/src/scitt/receipt/mod.rs",
-  "mcp-re-http-profile/src/scitt/receipt/parse.rs",
+  "mcp-re-http-profile/src/scitt/mod.rs",
+  "mcp-re-http-profile/src/scitt/wire.rs",
   "mcp-re-http-profile/src/scitt/statement/mod.rs",
-  # MCPRE-180 moved `from_cose` — the statement's shape-and-attribution check, which is half
-  # of what this unit's first conjunct is about — into its own child. A path list that did not
-  # follow it would leave the unit measuring a file the code had left, and the fingerprint
-  # would stay FRESH across an edit to the very check being attested.
   "mcp-re-http-profile/src/scitt/statement/parse.rs",
   "mcp-re-http-profile/src/scitt/statement/issuance.rs",
   "mcp-re-http-profile/src/scitt/cose_key/mod.rs",
   "mcp-re-http-profile/src/scitt/cose_key/verify.rs",
-  "mcp-re-http-profile/src/scitt/service.rs",
-  "mcp-re-http-profile/src/scitt/wire.rs",
+  "mcp-re-http-profile/src/scitt/offline.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://http_profile/scitt/statement_attribution",
+  "mutation://http_profile/scitt/statement_attribution",
+]
+tested_symbols = [
+  "lib#scitt::offline::tests::a_tampered_statement_fails_the_receipt",
+  "lib#scitt::statement::tests::a_critical_header_on_a_signed_statement_is_refused",
+]
+
+# M73 is this unit's, and BEFORE ANY FOLD is the load-bearing half of its conjunct: a leaf
+# index at or past the tree size cannot name a position, and folding one anyway walks the
+# combine sequence off the end of the tree.
+[[unit]]
+id = "http_profile.scitt_receipt_shape"
+class = "V0"
+description = "What a receipt IS before anything is folded: the RFC 9942 header labels and their nesting, both the attached and the detached form, a payload that is a tree hash, an unknown critical header refused, and a leaf index that names a position the tree has."
+paths = [
   "mcp-re-http-profile/src/scitt/mod.rs",
-  # The prototype transparency service and its tree builder. Not a running service, and its
-  # own header says so — but its builder is ONE OF THE TWO independent RFC 6962
-  # implementations this unit's controls cross-check against `merkle`'s fold, so a change to
-  # it changes what "two implementations agree" measures. A retained public API under #657
-  # ruling 4 and #841's classification, in no unit until now.
+  "mcp-re-http-profile/src/scitt/wire.rs",
+  "mcp-re-http-profile/src/scitt/receipt/mod.rs",
+  "mcp-re-http-profile/src/scitt/receipt/parse.rs",
+  "mcp-re-http-profile/src/scitt/merkle.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://http_profile/scitt/receipt_shape",
+  "mutation://http_profile/scitt/receipt_shape",
+]
+tested_symbols = [
+  "lib#scitt::receipt::tests::a_receipt_carries_the_rfc9942_header_labels_and_nesting",
+  "lib#scitt::receipt::tests::the_rfc9942_figure_6_shape_parses_in_both_attached_and_detached_form",
+  "lib#scitt::receipt::parse::tests::a_payload_that_is_not_a_tree_hash_is_neither_receipt_form",
+  "lib#scitt::receipt::tests::an_unknown_critical_header_is_refused",
+  "lib#scitt::receipt::parse::tests::a_leaf_index_outside_the_tree_is_refused_before_any_fold",
+]
+
+# PURE RFC 9162 TREE MATHEMATICS, and the one proposition here a prover could take. M72
+# attacks the residue check that makes a short path refuse rather than return an intermediate
+# node as a root — which is what restating a receipt at another position means.
+#
+# The right-edge control is the anti-vacuity one: a fold that refused every restatement would
+# satisfy the others and break every honest receipt on a log's right edge.
+[[unit]]
+id = "http_profile.scitt_inclusion_fold"
+class = "V0"
+description = "The RFC 9162 inclusion fold itself: the tree hash is the RFC 9162 split rather than a duplicated last node, every leaf of a log verifies under its own path, a path of the wrong length does not reach the root, an empty path is valid only for a single-leaf tree, and a forged path fails."
+paths = [
+  "mcp-re-http-profile/src/scitt/mod.rs",
+  "mcp-re-http-profile/src/scitt/wire.rs",
+  "mcp-re-http-profile/src/scitt/merkle.rs",
   "mcp-re-http-profile/src/scitt/prototype/mod.rs",
   "mcp-re-http-profile/src/scitt/prototype/tree.rs",
 ]
@@ -2909,39 +2977,109 @@ exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
 evidence = [
-  "test://http_profile/scitt/offline_receipt_battery",
-  "mutation://http_profile/scitt/offline_receipt",
+  "test://http_profile/scitt/inclusion_fold",
+  "mutation://http_profile/scitt/inclusion_fold",
 ]
-# The fold's own arithmetic is separately controlled, because "the inclusion algorithm was
-# run" and "the inclusion algorithm is RFC 9162's" are two claims and only the second makes
-# a restated position fail. `prototype` is NOT in the closure: it builds a tree where these
-# verify a path, and keeping them apart is what makes it an independent cross-check rather
-# than the same code agreeing with itself.
 tested_symbols = [
-  "lib#scitt::offline::tests::one_calls_evidence_registers_and_the_receipt_verifies_offline",
-  "lib#scitt::offline::tests::inclusion_holds_across_many_registered_statements",
-  "lib#scitt::offline::tests::an_incomplete_chain_record_is_distinguishable_in_the_receipt",
-  "lib#scitt::offline::tests::a_tampered_statement_fails_the_receipt",
-  "lib#scitt::offline::tests::a_forged_inclusion_path_fails",
-  "lib#scitt::offline::tests::an_unbound_receipt_still_refuses_a_forged_path_on_the_derived_root_alone",
-  "lib#scitt::offline::tests::an_untrusted_issuer_or_ts_is_rejected",
-  "lib#scitt::offline::tests::a_receipt_restated_at_another_position_is_refused_only_when_the_position_is_bound",
-  "lib#scitt::offline::tests::a_bound_service_refuses_a_receipt_that_carries_no_position_commitment",
   "lib#scitt::merkle::tests::the_tree_hash_is_the_rfc_9162_split_not_a_duplicated_last_node",
   "lib#scitt::merkle::tests::every_leaf_of_a_three_leaf_log_verifies",
   "lib#scitt::merkle::tests::restating_the_log_position_at_a_different_path_length_does_not_verify",
   "lib#scitt::merkle::tests::a_right_edge_restatement_is_indistinguishable_and_still_verifies",
   "lib#scitt::merkle::tests::an_empty_inclusion_path_is_only_valid_for_a_single_leaf_tree",
-  "lib#scitt::receipt::parse::tests::a_leaf_index_outside_the_tree_is_refused_before_any_fold",
+  "lib#scitt::offline::tests::a_forged_inclusion_path_fails",
+]
+
+# M78 attacks this one — the fold's output compared against the root the receipt commits to.
+# DERIVED rather than supplied is the whole proposition: the root is computed from the statement
+# under verification and never read from the caller, on either payload form.
+[[unit]]
+id = "http_profile.scitt_derived_root"
+class = "V0"
+description = "What a verified receipt establishes about registration: the root the fold DERIVED from the presented statement is the root the transparency service signed, under a key resolved for the service the deployment pinned — so a receipt cannot be made to verify by handing in a convenient root, and an untrusted issuer or service resolves nothing."
+paths = [
+  "mcp-re-http-profile/src/scitt/mod.rs",
+  "mcp-re-http-profile/src/scitt/wire.rs",
+  "mcp-re-http-profile/src/scitt/offline.rs",
+  "mcp-re-http-profile/src/scitt/service.rs",
+  "mcp-re-http-profile/src/scitt/cose_key/mod.rs",
+  "mcp-re-http-profile/src/scitt/cose_key/verify.rs",
+  "mcp-re-http-profile/src/scitt/merkle.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://http_profile/scitt/derived_root",
+  "mutation://http_profile/scitt/derived_root",
+]
+tested_symbols = [
+  "lib#scitt::offline::tests::one_calls_evidence_registers_and_the_receipt_verifies_offline",
+  "lib#scitt::offline::tests::inclusion_holds_across_many_registered_statements",
+  "lib#scitt::offline::tests::an_incomplete_chain_record_is_distinguishable_in_the_receipt",
+  "lib#scitt::offline::tests::an_untrusted_issuer_or_ts_is_rejected",
+  # DETACHED is where "derived, never supplied" is unambiguous: there is no root in the
+  # receipt to compare against, so the fold's output IS what the service signature is checked
+  # over. M78 attacks exactly that comparison.
+  "lib#scitt::offline::tests::an_unbound_receipt_still_refuses_a_forged_path_on_the_derived_root_alone",
+]
+
+# STRIPPING THE PARAMETER IS THE ATTACK, and the production comment says so: accepting a
+# receipt that carries no commitment because it carried none "would let an attacker strip the
+# parameter and make pinning the stronger profile worth nothing". M74 is that weakening.
+#
+# Separate from `scitt_derived_root` although both live in `offline.rs`, because they fail
+# independently: a receipt can verify against a correctly derived root while its position is
+# unchecked, which is exactly the pre-v2 contract the first control contrasts.
+[[unit]]
+id = "http_profile.scitt_position_commitment"
+class = "V0"
+description = "Where the pinned profile binds a position, the receipt's position commitment is checked against the one recomputed from the service kid, the verifiable-data-structure identifier, the tree size, the leaf index and the derived root — and a receipt carrying no commitment at all is refused rather than accepted on the fold alone."
+paths = [
+  "mcp-re-http-profile/src/scitt/mod.rs",
+  "mcp-re-http-profile/src/scitt/wire.rs",
+  "mcp-re-http-profile/src/scitt/offline.rs",
+  "mcp-re-http-profile/src/scitt/wire.rs",
+  "mcp-re-http-profile/src/scitt/receipt/mod.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://http_profile/scitt/position_commitment",
+  "mutation://http_profile/scitt/position_commitment",
+]
+tested_symbols = [
+  "lib#scitt::offline::tests::a_receipt_restated_at_another_position_is_refused_only_when_the_position_is_bound",
+  "lib#scitt::offline::tests::a_bound_service_refuses_a_receipt_that_carries_no_position_commitment",
+]
+
+# THE PAIR IS THE CHECK, and the module's own doc says `(protected alg, resolved key)` is
+# exhaustive, which is the point. M75 weakens the mismatch arm to accept, which makes the
+# protected header advisory — a signer declaring one algorithm and being verified under
+# another. The foreign-service control is the anti-vacuity mirror: a check that refused every
+# ES256 receipt would satisfy the other three.
+[[unit]]
+id = "http_profile.scitt_algorithm_agreement"
+class = "V0"
+description = "The protected `alg` and the resolved verification key must agree, exhaustively: an unsupported algorithm is refused rather than guessed at, a disagreement between the header and the key is refused rather than resolved in the key's favour, and an ES256 signature must be the RFC 9053 fixed-width pair rather than the DER SEQUENCE most tooling emits."
+paths = [
+  "mcp-re-http-profile/src/scitt/mod.rs",
+  "mcp-re-http-profile/src/scitt/wire.rs",
+  "mcp-re-http-profile/src/scitt/cose_key/mod.rs",
+  "mcp-re-http-profile/src/scitt/cose_key/verify.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://http_profile/scitt/algorithm_agreement",
+  "mutation://http_profile/scitt/algorithm_agreement",
+]
+tested_symbols = [
   "lib#scitt::cose_key::tests::an_unsupported_algorithm_is_refused",
   "lib#scitt::cose_key::tests::an_algorithm_that_disagrees_with_the_resolved_key_is_refused",
   "lib#scitt::cose_key::tests::a_der_encoded_es256_signature_is_refused",
   "lib#scitt::cose_key::tests::an_es256_receipt_from_a_foreign_service_verifies",
-  "lib#scitt::statement::tests::a_critical_header_on_a_signed_statement_is_refused",
-  "lib#scitt::receipt::tests::a_receipt_carries_the_rfc9942_header_labels_and_nesting",
-  "lib#scitt::receipt::tests::the_rfc9942_figure_6_shape_parses_in_both_attached_and_detached_form",
-  "lib#scitt::receipt::parse::tests::a_payload_that_is_not_a_tree_hash_is_neither_receipt_form",
-  "lib#scitt::receipt::tests::an_unknown_critical_header_is_refused",
 ]
 
 [[unit]]
