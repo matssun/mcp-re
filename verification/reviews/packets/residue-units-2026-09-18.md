@@ -123,3 +123,35 @@ obligation the base did not hold — when the seam split tried it.
 So: one evidence form for a self-tested source-text gate, and the three residue units and the
 two orphaned gates close together. It is its own slice, sequenced after the in-flight Phase-1
 PRs land.
+
+---
+
+## A split must not touch another theorem's prose — four held corrections
+
+`claim_surface_gate.py` failed this branch with `STALE_DEPENDENCY_CLAIM` on THM-0074 and
+THM-0076, and the cause was a reflex: after renaming a unit, its old id was replaced
+everywhere it appeared, including inside four other theorems' `scope` text.
+
+`theorem_claim = statement + security_consequence + scope`. **Scope is inside the claim
+digest**, so editing a sentence of prose in a theorem's scope moves that theorem's claim
+fingerprint, and with it the `theorem_dependencies` closure of every theorem that depends on
+it — here two published system roots, neither of which the split was about. `owner` and
+`supported_by` are NOT in the fingerprint, which is why retargeting those was free and only
+the prose was fatal.
+
+The four edits are reverted, so these sentences name unit ids that no longer exist:
+
+| theorem | sentence names | should name |
+|---|---|---|
+| THM-0126 | `client.response_acceptance` | `client.response_binding_disposition` |
+| THM-0084 | `client.response_acceptance` | `client.response_binding_disposition` |
+| THM-0074 | `proxy.trust_plane_runtime` | `proxy.trust_resolution_window` and `proxy.trust_reload_cadence` |
+| (trust-document premise) | `proxy.trust_configuration_state` | `proxy.trust_document_locator` |
+
+They are held, not dropped: each is an ADR-MCPRE-068 Phase-1 claim correction and goes in the
+correction register once PR #990 puts it on main, alongside THM-0091's C1-C3 and THM-0095's
+C1-C8. Applying them here would need the register the branch does not have.
+
+**The rule the campaign takes from this:** a unit split retargets `owner`, `supported_by` and
+probe `unit` fields, and stops there. Prose in a theorem's `statement`, `security_consequence`
+or `scope` is claim surface, and moving it is a correction with a record, never a rename.
