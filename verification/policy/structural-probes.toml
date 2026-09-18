@@ -664,3 +664,98 @@ module-tree-visibility = "all six fields are bare-private to `config_state::admi
 alternate-constructors = "the view is produced only by `AdmissionState::enforced()`, which reads the classified kind and returns `Option<EnforcedAdmission<'_>>` \u2014 `None` where admission is not enforced, so the view's very existence is the enforcement fact. There is no `new`, `From`, `Default` or builder"
 generated-or-deserialization = "no derives that construct, and nothing decodes the view \u2014 it borrows out of a classified state, so it cannot outlive the state it projects, and no decoder could produce one that does"
 test-only-construction = "the owner's `#[cfg(test)] mod tests` obtains views through `enforced()`; no test-gated constructor and no test-gated field visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"
+
+# --- ADR-MCPRE-068 Phase 1 — THM-0091's two seals ---------------------------------------
+#
+# The theorem's own STATEMENT asserted both of these before any control established either:
+# *possession of the scope IS that permission — there is no other constructor*, and *the
+# authority set is derived from that scope and never from the flag*. ADR-MCPRE-068 §2 named
+# THM-0091 the sharpest illustration of that record's thesis for exactly this reason. These
+# two probes are the compile refusals those sentences always needed.
+#
+# Both are injected as SIBLING modules inside the owning crate, because both types are
+# `pub use`d from a private module: a probe placed outside the crate would earn E0603 about
+# the module's privacy, which is a boundary neither unit claims. The FIELD's privacy is the
+# claim, and E0451 is what reports it.
+
+[[probe]]
+id = "S22"
+unit = "client.bind_scope_sole_producer"
+kind = "in-crate-source-injection"
+package = "mcp-re-client"
+invariant = "no code outside `config::bind_scope` can assemble a BindScope, so every scope in existence came from `decide` and an off-host listener address cannot be held by anything that did not pass the operator's declaration"
+insertion_path = "mcp-re-client/src/config/structural_probe_s22.rs"
+insertion_parent = "mcp-re-client/src/config/mod.rs"
+insertion_declaration = "mod structural_probe_s22;"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+note = """
+THE HOSTILE VALUE IS THE ONE `decide` REFUSES: an off-host address with `exposed` set, which
+is what an operator who never wrote `allow_non_loopback` must not be able to obtain. A probe
+using a loopback address would witness the same privacy and say nothing about the refusal it
+protects.
+
+What this probe does NOT establish is that `decide` refuses the right addresses. That is
+`client.bind_scope`'s, attacked by M86, and the pair is the split: the seal says an illegal
+inhabitant cannot be BUILT, the battery says the decision is RIGHT.
+"""
+construction = """
+// ADR-MCPRE-068 structural probe S22. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::config::BindScope;
+
+pub fn hostile() -> BindScope {
+    BindScope {
+        address: "198.51.100.7:8640".parse().expect("an address"), // STRUCTURAL-PROBE-SITE
+        exposed: true,
+    }
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "both fields are bare-private to `config::bind_scope`, and the module itself is private to `config`, which re-exports the TYPE only (`pub use bind_scope::BindScope`). The probe is a sibling module inside `config`, which is the widest position from which the field privacy — rather than the module privacy — is what refuses"
+alternate-constructors = "`decide` is the only associated function returning `Self`. The two projections `exposed_authority` and `listen_address` return an `Option<SocketAddr>` and a `SocketAddr`, never the representation, and deliberately not `address()` plus `is_exposed()` — handing out both would let a caller recombine them into the inference this type removes. There is no `new`, `From`, `Default`, builder, or setter"
+generated-or-deserialization = "the derives are Debug/Clone/Copy/PartialEq/Eq. No Serialize, no Deserialize — the scope is DECIDED from `LocalConfig`, which is the type serde fills, so no decoder can mint a scope from a document"
+test-only-construction = "the owner's `#[cfg(test)] mod tests` constructs only through `decide`; no test-gated constructor and no test-gated field visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"
+
+[[probe]]
+id = "S23"
+unit = "client.accepted_authority_sole_producer"
+kind = "in-crate-source-injection"
+package = "mcp-re-client"
+invariant = "an AcceptedHttpAuthority is obtainable only from a BindScope, so the conflation of `where the listener is exposed` with `who may reach it` cannot be rebuilt by a caller"
+insertion_path = "mcp-re-client/src/serve/structural_probe_s23.rs"
+insertion_parent = "mcp-re-client/src/serve/mod.rs"
+insertion_declaration = "mod structural_probe_s23;"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+note = """
+THIS IS THE PROBE THAT CARRIES THE CONFLATION FIX. The defect THM-0091 closes was one
+operator boolean governing two independent facts, and the fix is that
+`AcceptedHttpAuthority::for_listener` takes a `BindScope` rather than the flag. A type whose
+`exposed` field could be set directly would let any caller write
+`AcceptedHttpAuthority { exposed: Some(anything) }` and put the old behaviour back — with no
+check anywhere to delete, which is why a mutation probe cannot reach this proposition.
+
+The hostile value is a legal one: `Some(addr)` is exactly what `for_listener` produces for a
+declared off-host bind. What is illegal is CONSTRUCTING it without a scope, which is the
+whole content of the claim.
+"""
+construction = """
+// ADR-MCPRE-068 structural probe S23. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::serve::AcceptedHttpAuthority;
+
+pub fn hostile() -> AcceptedHttpAuthority {
+    AcceptedHttpAuthority {
+        exposed: Some("198.51.100.7:8640".parse().expect("an address")), // STRUCTURAL-PROBE-SITE
+    }
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "`exposed` is bare-private to `serve::accepted_authority`, and that module is private to `serve`, which re-exports the TYPE only. The probe is a sibling module inside `serve`, the widest position from which the field's privacy is what refuses rather than the module's"
+alternate-constructors = "`for_listener(&BindScope)` is the only associated function returning `Self`, and its single parameter is the whole security content of the signature: there is no constructor taking a `bool`, a `SocketAddr`, or an `Option<SocketAddr>`. `admits(&self, &str) -> bool` is the one projection and returns an answer, never the representation"
+generated-or-deserialization = "the derives are Debug/Clone/Copy/PartialEq/Eq. No Serialize, no Deserialize — the authority set is derived from a scope at startup, never decoded from a document"
+test-only-construction = "the owner's `#[cfg(test)] mod tests` builds every authority through `for_listener` over a real `BindScope::decide`; no test-gated constructor and no test-gated field visibility exists"
+

@@ -21,12 +21,18 @@ attestations this view cannot see.
 
 | object | a change to | re-establishes theorems | propagates to units |
 |---|---|---|---|
+| unit://client.accepted_authority | source, contracts or evidence | THM-0091 | _no consumer_ |
+| unit://client.accepted_authority_sole_producer | source, contracts or evidence | THM-0091 | _no consumer_ |
 | unit://client.anchor_refresh | source, contracts or evidence | THM-0120 | _no consumer_ |
+| unit://client.bind_scope | source, contracts or evidence | THM-0091 | _no consumer_ |
+| unit://client.bind_scope_sole_producer | source, contracts or evidence | THM-0091 | _no consumer_ |
 | unit://client.binding_spec_refusal | source, contracts or evidence | THM-0111 | _no consumer_ |
+| unit://client.caller_shape_admission | source, contracts or evidence | THM-0091 | _no consumer_ |
 | unit://client.delegation_policy_seal | source, contracts or evidence | THM-0060 | _no consumer_ |
 | unit://client.deployment_config | source, contracts or evidence | THM-0124 | _no consumer_ |
 | unit://client.execution_contract | source, contracts or evidence | THM-0061 | _no consumer_ |
-| unit://client.local_ingress_authority | source, contracts or evidence | THM-0091 | _no consumer_ |
+| unit://client.local_leg_declaration | source, contracts or evidence | THM-0091 | _no consumer_ |
+| unit://client.local_request_surface | source, contracts or evidence | THM-0091 | _no consumer_ |
 | unit://client.local_serving_pipeline | source, contracts or evidence | THM-0123 | _no consumer_ |
 | unit://client.manifest_floor | source, contracts or evidence | THM-0121 | _no consumer_ |
 | unit://client.proxy_request_correspondence | source, contracts or evidence | THM-0084 | _no consumer_ |
