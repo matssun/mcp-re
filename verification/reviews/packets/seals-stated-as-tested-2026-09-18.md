@@ -25,13 +25,22 @@ live theorem whose **statement** asserts that something cannot be constructed, a
 
 | | count |
 |---|---|
-| theorems stating a seal with no structural support | **6** (THM-0091 now closed → **5**) |
-| units classed `tested` whose description states a seal | **5** |
-| of those theorems at `critical` | 5 of 6 |
+| theorems stating a seal with no structural support | **7** (THM-0091 now closed → **6**) |
+| units classed `tested` whose description states a seal | **6** |
+| of those theorems at `critical` | 5 of 7 |
 
 The vocabulary the census matches is the estate's own: *unconstructible*, *no other
 constructor*, *possession is the proof*, *the representation is private/closed*, *no code
-outside*, *cannot be assembled*, *no caller can*, *the only mutator*.
+outside*, *cannot be assembled*, *no caller can*, *the only mutator*, *is the ONLY way*.
+
+**The first run of this census under-counted, and the reason is worth recording** because it
+is the failure class this repository names elsewhere. The registries store prose in TOML
+multi-line strings, hard-wrapped at 90 columns, so `apply is the only\nmutator` does not match
+`the only mutator` and THM-0012 was reported as clean. The corrected census normalises
+whitespace before matching and finds **two more**: THM-0012 and
+`proxy.delegated_resolver_materialization`. A regular expression over wrapped prose measures
+the wrapping, and a censor that cannot see a whole population reports a clean sweep over the
+wrong one — which is §2.1 of ADR-MCPRE-069's own correction, arriving in a different tool.
 
 **The eleven units ADR-MCPRE-068 Phase 0D split are correctly excluded** — they now carry a
 `structural` sibling, so the filter passes over them. That is the control on the census: it
@@ -75,6 +84,25 @@ THM-0031's statement goes further and says what a behavioural control could not 
 this excludes is precisely two honest products of two DIFFERENT connections.* A test
 constructs one pair; the seal quantifies over every pair.
 
+### THM-0012 — `proxy.runtime_lifecycle`, `medium`
+
+> Every state has a unique predecessor under the transition relation and **apply is the only
+> mutator**, leaving the state unchanged on an illegal event.
+
+The smallest and clearest of the seven, and the one the wrapped-prose defect hid. *Apply is
+the only mutator* is the whole argument for the conclusion that follows it — *a recorded
+terminal `Stopped` implies every event of the path was applied, in order* — and it is a claim
+about what no other code can do to the value. The unit is one file with eight controls; a
+compile refusal is cheap here and the proposition is exactly the kind a battery cannot reach,
+because a test exercises the mutators that exist.
+
+Its scope already records two other Phase-1 facts without needing this census:
+`RuntimeState::admits_requests` is *a DESCRIPTIVE value, not a control: no production path
+consumes it* — a produced-but-not-consumed value correctly classified as a witness rather
+than left ambiguous — and `FailedToStart` is currently unreachable from `Materialized`, an
+unreachable branch recorded rather than defended. Both are ADR-MCPRE-061 questions 9 and 11
+answered in the claim itself.
+
 ### THM-0062 — `proxy.delegated_signing_credential`, `critical`
 
 > The snapshot is whole-value state — one `Option<Arc<..>>` swapped **entire** — so no
@@ -91,11 +119,18 @@ about a representation.
 
 | unit | severity | the phrase |
 |---|---|---|
+| `proxy.delegated_resolver_materialization` | critical | *is the ONLY way* |
 | `proxy.dispatch_commitment` | critical | *cannot be assembled* |
 | `proxy.kms_ed25519_seam` | critical | *unconstructible* |
 | `proxy.operator_facing_redaction` | high | *the representation is private* |
 | `http_profile.submitted_hop_identity` | high | *the representation is closed* |
 | `proxy.trust_plan` | medium | *no caller can* |
+
+`proxy.delegated_resolver_materialization` already has a structural sibling
+(`proxy.delegated_resolver_materialization_sole_producer`, S06, Phase 0D-4) — so the phrase
+matched here is a SECOND seal in the same unit's description, and the census is right to
+report it separately rather than treat the unit as settled. The 0D split closed one
+proposition; whether this sentence states another is its own question.
 
 `proxy.trust_plan` already has a structural sibling (`proxy.trust_plan_co_provenance`, S14)
 for the co-provenance fact; the phrase matched here is a **second** seal in the same unit's
@@ -150,9 +185,11 @@ that survived reading. A repository that writes down why a value cannot be forge
 repository whose structural propositions can be enumerated mechanically — which is what makes
 the Phase-2 discharge a finite, orderable job rather than an audit of everything.
 
-**P2-S1** — investigate the five theorems in severity order (THM-0108 first, then the peer
-family, then THM-0062), each under the Phase-0D procedure and ADR-MCPRE-068 §12.1's
-producer-path accounting. THM-0108 needs three probes, not one.
-**P2-S2** — the five units, same procedure.
-**P2-S3** — add this census to `tools/verification/evidence-class-census` so the population
-is re-measured rather than re-found by hand.
+**P2-S1** — investigate the six theorems in severity order (THM-0108 first, then the peer
+family, then THM-0062, then THM-0012), each under the Phase-0D procedure and
+ADR-MCPRE-068 §12.1's producer-path accounting. THM-0108 needs three probes, not one.
+**P2-S2** — the six units, same procedure; two of them already carry a structural sibling for
+a DIFFERENT seal, which is its own question rather than a settled one.
+**P2-S3** — add this census to `tools/verification/evidence-class-census` so the population is
+re-measured rather than re-found by hand — **and normalise whitespace in it**, because the
+first run of this one did not and reported two units clean that are not.
