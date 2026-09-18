@@ -6566,3 +6566,81 @@ carrying no valid decision -- which reads as a policy working correctly and deny
 everything, not as a deployment that was never able to decide. Refusing at STARTUP is the
 only point at which the two are distinguishable, because afterwards the evidence is identical.
 """
+
+[[probe]]
+id = "M240-proxy-a-selected-store-that-cannot-be-established-refuses-startup"
+unit = "proxy.continuation_materialization_shared"
+theorem = "THM-0091"
+conjunct = "in a build that carries the backend, a selected continuation store that cannot be established refuses startup rather than announcing OFF"
+path = "mcp-re-proxy/src/serving_capabilities/continuation.rs"
+anchor = """
+    let store = handle
+        .block_on(crate::redis_continuation_store::RedisContinuationStore::connect(url))
+        .map_err(|e| format!("connect redis continuation store: {e}"))?;
+"""
+weakening = """
+    let Ok(store) =
+        handle.block_on(crate::redis_continuation_store::RedisContinuationStore::connect(url))
+    else {
+        return Ok(Established::off(CONTINUATION_STORE_OFF));
+    };
+"""
+expect_red = [
+  "lib#serving_capabilities::continuation::tests::a_selected_store_that_cannot_be_reached_refuses_startup",
+]
+note = """
+THE WEAKENING IS THE DEFECT THIS SEAM REPLACED, and the module says so: an ignored selection
+is indistinguishable in the transcript from an operator who never set the flag. A deployment
+that asked for shared continuation correlation and got OFF reports the same startup line as
+one that asked for nothing, so nothing downstream -- no log, no readiness probe, no audit --
+can tell that a selected security capability was silently downgraded.
+
+The feature-gated sibling arm is not a second carrier: it refuses a selection a build without
+the backend cannot establish, which is a different fact about a different binary. This arm's
+proposition is about the build that CAN establish one and failed to.
+
+THIS PROBE FAILED FIRST, and the reason is that the declared control reached the refusal by
+WITHHOLDING THE CONTROL RUNTIME -- it measured the seam's own precondition and never the
+backend. The realistic failure is the other one: the runtime is there, the operator selected a
+store, and the store cannot be reached. That path has its own `?`, and nothing held it. The
+written control points the establishment at a port nothing can listen on without privilege, so
+the connect refuses rather than hanging.
+"""
+
+[[probe]]
+id = "M241-http-profile-the-response-carries-the-handle-over-this-request"
+unit = "http_profile.response_emission_binding"
+theorem = "THM-0091"
+conjunct = "the response evidence block's request-evidence handle is over the request being answered"
+path = "mcp-re-http-profile/src/sign.rs"
+anchor = """
+        request_evidence: RequestEvidenceDigest {
+            digest_alg: request_evidence.digest_alg.clone(),
+            digest_value: request_evidence.digest_value.clone(),
+        },
+    };
+    response.body = insert_meta_block(&response.body, RESPONSE_EVIDENCE_BLOCK_KEY, &block)?;
+    sign_response(response, request, key, key_id, created, expires)
+"""
+weakening = """
+        request_evidence: RequestEvidenceDigest {
+            digest_alg: request_evidence.digest_alg.clone(),
+            digest_value: format!("{}x", request_evidence.digest_value),
+        },
+    };
+    response.body = insert_meta_block(&response.body, RESPONSE_EVIDENCE_BLOCK_KEY, &block)?;
+    sign_response(response, request, key, key_id, created, expires)
+"""
+expect_red = [
+  "tests/full_profile_test#full_response_roundtrip_binds_request_evidence",
+]
+note = """
+TWO BINDINGS, AND THE SIGNATURE CARRIES ONLY ONE OF THEM. The `;req` components bind this
+response to the request's SIGNATURE BASE; the evidence block's handle binds it to the
+request's evidence. The weakening corrupts the handle and leaves `;req` untouched, so the
+response still verifies as the answer to this transmission while the handle it carries names
+a request that does not exist -- which is what makes these two conjuncts rather than one.
+
+An audit reconciling a response against the request it answers reads the HANDLE, not the
+signature base, so a wrong handle is a record that cannot be checked against anything.
+"""
