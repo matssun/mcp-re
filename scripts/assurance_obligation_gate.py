@@ -676,9 +676,16 @@ def main() -> int:
     for row in registry.values():
         states[row["status"]] += 1
     reachable = sum(1 for row in registry.values() if row.get("root_reachable"))
+    succeeded = sum(1 for row in registry.values() if row.get("succeeds"))
+    origin = (
+        "all pre-existing at the baseline"
+        if not succeeded
+        else f"{len(registry) - succeeded} pre-existing at the baseline and {succeeded} "
+        f"admitted by SUCCESSION from a row the base held"
+    )
     print(
         f"assurance-obligation gate: OK — {len(registry)} open N1 obligation(s), all "
-        f"measured and all pre-existing at the baseline "
+        f"measured and {origin} "
         f"({states['unreviewed']} unreviewed, {states['reviewed-action-required']} "
         f"reviewed-action-required, {states['reviewed-exception']} reviewed-exception; "
         f"{reachable} root-reachable). Registry did not grow, no status returned to "

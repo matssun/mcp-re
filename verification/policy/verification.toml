@@ -3335,136 +3335,439 @@ tested_symbols = [
 # this process at all; and whether the emitted signature binds the request it answers.
 # ---------------------------------------------------------------------------------------
 
-# ADR-MCPRE-059 §28 / issue #746. The two SDK exchange paths, as TWO units.
+# ADR-MCPRE-059 §28 / issue #746, as decomposed by ADR-MCPRE-068 Phase 1. The two SDK
+# exchange paths, kept apart because the boundary is implemented independently per language
+# and the Rust proof establishes nothing about either — the byte-level parity fixtures are
+# green while the implementations diverge behaviourally, which is the measured evidence that
+# a single claim would be a claim about no shipped artefact.
 #
-# Not one "SDK" unit, and not a Rust unit widened to cover them. The boundary is implemented
-# independently per language and the Rust proof establishes nothing about either — the
-# byte-level parity fixtures are green while the implementations diverge behaviourally,
-# which is the measured evidence that a single claim would be a claim about no shipped
-# artefact.
+# Each language's path is now SEVERAL units rather than one. What a single unit owned was
+# the whole security-root surface at once: correlation, signer and trust acceptance, bound
+# versus unbound evidence, execution-status interpretation and retry interpretation. Those
+# are independently describable authorities, which is ADR-MCPRE-061 question 2, and the
+# decomposition below answers it.
+
+# ---------------------------------------------------------------------------------------
+# ADR-MCPRE-068 Phase 1 — THM-0094's consequence-first decomposition.
 #
-# What each unit owns is the SECURITY-ROOT surface the issue enumerates: response/request
-# correlation, signer and trust acceptance, bound vs unbound evidence, execution-status
-# interpretation, and safe-retry interpretation. What each deliberately does NOT own is the
-# concurrency bound and the throughput behaviour — those are resource ceilings, and a
-# difference between the two SDKs there changes nothing about authenticity, correlation or
-# execution. Deadline behaviour enters only where a timeout changes the client's conclusion
-# about whether the remote side may have executed.
+# WHAT WAS HERE, and why one unit was the wrong shape. `sdk_python.exchange_path` was ONE
+# class-V0 unit over five source files and thirty-nine controls, carrying a declared system
+# ROOT, with no theorem premises beneath it. ADR-MCPRE-068 §2 measured it as one of the
+# three roots whose entire transitive closure reaches no falsifier at all, and named the
+# shape: undecomposed is structural, not small.
+#
+# The decomposition record is
+# `verification/reviews/packets/thm-0094-consequence-decomposition-2026-09-18.md`. Four of
+# its findings are load-bearing on what these units say:
+#
+#   * The root's headline correlation sentence was STRONGER than production. The id handed
+#     to `CorrelationStore.take()` is the one `record()` returned three statements earlier
+#     in the same loop iteration, so "binds to nothing outstanding" and "repeats one already
+#     answered" are unreachable from `_exchange`. What binds a reply to its request is the
+#     audited core over the bytes this exchange signed — which is C1 plus a dependency, not
+#     a store lookup. `sdk_python.correlation_lifecycle` carries the corrected claim.
+#   * `depends_on = []` was false. The chain rests on THM-0058/0059/0060/0061.
+#   * `sdk/python/src/lib.rs` — the PyO3 binding that builds the trust anchor and projects
+#     the core's verdict — is in NO unit's paths, so it is outside every fingerprint. No
+#     unit is invented for it here: a proposition with no authority that can honestly own it
+#     is an architecture gap, not a manifest inconvenience. It is the packet's P2-A.
+#   * Twenty-six controls in these files established root conjuncts and were registered by
+#     nothing (ADR-MCPRE-069). `sdk_python.nonce_floor` is the sharpest: a conjunct of the
+#     root with SEVEN controls and no declared evidence at all.
+#
+# Each unit below owns ONE proposition, ONE carrier, ONE class. Three of the thirteen are
+# deliberately NOT in THM-0094's `supported_by`: the Phase-1 inverse falsifier — is there a
+# child whose failure does not affect the root consequence? — returned the read bound, the
+# signer/route policy, and the authorization binding. They stay registered at their own
+# direct severity; NOT-ROOT-REACHABLE is a graph fact and not a lower obligation.
+#
+# EVERY ONE IS `tested`, and §4 of the packet says why none is `proved`, `structural` or
+# `measured`: Python refuses no construction at compile time, so every seal-shaped sentence
+# here is a runtime discipline. The one place a structural witness is available in this
+# root's composition is the PyO3 binding, which is Rust — and which is not a unit.
+# ---------------------------------------------------------------------------------------
+
+# C1. The composition proposition, and the reason the core's binding theorem is usable here
+# at all: the core is only correct about the request it is GIVEN. One `signed` value is both
+# POSTed and handed to the verifier; a re-serialized body would verify cleanly against bytes
+# the peer never saw.
 [[unit]]
-id = "sdk_python.exchange_path"
+id = "sdk_python.exchange_binding"
 class = "V0"
-description = "The shipped Python SDK's exchange path: every reply is correlated to the request that earned it, an unverifiable one never reaches the application as a result, and what the SDK says about execution is what the receipt said."
-paths = [
-  "sdk/python/python/mcp_re_sdk/transport.py",
-  "sdk/python/python/mcp_re_sdk/correlation.py",
-  "sdk/python/python/mcp_re_sdk/authorization.py",
-  "sdk/python/python/mcp_re_sdk/custody.py",
-  "sdk/python/python/mcp_re_sdk/mtls.py",
-]
+description = "The verdict the Python SDK acts on was computed over the exact request bytes this exchange signed and transmitted: the value returned by `sign_request` is the one POSTed and the one passed to the verifier, and nothing is re-derived, re-serialized or reconstructed for it."
+paths = ["sdk/python/python/mcp_re_sdk/transport.py"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://sdk_python/exchange_path/root_battery"]
-# MEASURED ON EVERY SUPPORTED INTERPRETER, not on whichever one the runner offers. The
-# battery is selected by node id and run once per version in `toolchains.lock.toml`
-# `[python].interpreters` — CPython 3.14 alone since the 2026-09-05 narrowing — in environments
-# `scripts/prepare_python_matrix.sh` prepares from a single abi3 wheel. The runtime identity
-# is ecosystem-scoped into this unit's fingerprint, so an interpreter bump drops the standing
-# attestation rather than being inherited by it. The `downloader — Python maturin wheel` CI
-# job remains INDEPENDENT evidence over the installed artifact on a second OS; it selects by
-# directory, so it is not this battery and cannot answer for a control dropped from here.
-# The replay battery is the substance: a RECORDED delegated session, verified by the shipped
-# adapter, with one appended byte, an untrusted root, a wrong epoch, a wrong audience and a
-# revoked key each refused against the same recording. A battery of constructed positives
-# would not distinguish an adapter that verifies from one that returns what it was handed.
+evidence = ["test://sdk_python/exchange_binding/the_verifier_sees_this_transmission"]
 tested_symbols = [
-  # Correlation: the reply reaches the request that earned it, and a failed exchange leaves
-  # nothing outstanding for a later reply to bind to.
-  "pytest#tests/test_transport.py::test_a_failed_exchange_does_not_leave_its_correlation_entry_outstanding",
-  "pytest#tests/test_transport.py::test_one_exchanges_network_error_does_not_take_down_the_session",
-  "pytest#tests/test_transport.py::test_close_clears_abandoned_correlation_state",
-  "pytest#tests/test_correlation.py::TestFailsClosed::test_a_response_binding_to_nothing_outstanding_is_rejected",
-  "pytest#tests/test_correlation.py::TestFailsClosed::test_a_late_response_is_rejected",
-  "pytest#tests/test_correlation.py::TestFailsClosed::test_a_duplicate_response_is_a_replay_not_a_mismatch",
-  # Signer and trust acceptance, against a recorded session rather than a constructed one.
+  "pytest#tests/test_transport.py::test_the_signed_body_is_the_request_the_caller_described",
+  # The anti-vacuity control for the stubbed verdicts: a duck-typed stub cannot track the
+  # core's shape, so a renamed member would leave the adapter reading `None` in production.
+  "pytest#tests/test_transport.py::test_the_stubbed_verdict_shape_is_the_cores_own",
+  # ADR-MCPRE-069 `register`: the bindings reach the core, which digests the real bytes.
+  "pytest#tests/test_transport.py::test_authorization_bindings_reach_the_core_which_digests_the_real_bytes",
+  #
+  # `tests/test_transport_e2e.py` holds the strongest controls for this proposition — a
+  # tampered response and an unsigned one, failing closed against the real proxy — and NONE
+  # of them is registered. They do not run: the file's `pytest.importorskip("httpx")` names a
+  # package the locked resolution no longer provides (`mcp` 2.0 brought `httpx2`), so the
+  # whole file skips in the authoritative lane, and it would skip again without a built
+  # `http_profile_proxy` example. A declared symbol that does not run is a lane FAILURE, and
+  # a test property includes the lane the test actually exists in. Recorded as the packet's
+  # P2-E rather than registered.
+]
+
+# C2. A verified REJECTION receipt is genuine evidence and is not an acceptance. The six
+# replay controls are the substance: one RECORDED delegated session, refused six ways. A
+# battery of constructed positives would not distinguish an adapter that verifies from one
+# that returns what it was handed.
+[[unit]]
+id = "sdk_python.verdict_delivery"
+class = "V0"
+description = "A verdict whose outcome is not `success` reaches the application as a correlated JSON-RPC error and never as a result, and the receipt's request-binding fact travels beside the frozen wire token rather than inside it."
+paths = ["sdk/python/python/mcp_re_sdk/transport.py"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = ["test://sdk_python/verdict_delivery/a_refusal_is_never_a_result"]
+tested_symbols = [
   "pytest#tests/test_transport_replay.py::test_a_recorded_delegated_session_verifies_and_reaches_the_app_as_plain_mcp",
   "pytest#tests/test_transport_replay.py::test_one_appended_byte_of_the_recorded_body_fails_closed",
   "pytest#tests/test_transport_replay.py::test_an_untrusted_root_anchor_refuses_the_same_recorded_response",
   "pytest#tests/test_transport_replay.py::test_a_response_outside_the_accepted_trust_epoch_is_refused",
   "pytest#tests/test_transport_replay.py::test_a_response_for_a_different_audience_is_refused",
   "pytest#tests/test_transport_replay.py::test_a_revoked_delegated_key_is_refused",
-  # An acknowledgement is evidence or it is nothing.
-  "pytest#tests/test_transport.py::test_an_unsigned_acknowledgement_fails_the_transport_closed",
-  "pytest#tests/test_transport.py::test_a_non_202_answer_to_a_notification_fails_closed",
-  # A pause is not a result. An elicitation that cannot be answered must not reach the
-  # application as though the call completed.
+  "pytest#tests/test_transport_replay.py::test_a_verified_rejection_receipt_is_delivered_as_an_error_not_a_result",
+  # One signed PREFLIGHT receipt answers any request from any client of that issuer for the
+  # credential's whole validity window, so the caller must be able to tell "the boundary
+  # rejected MY request" from "a generic rejection arrived".
+  "pytest#tests/test_transport.py::test_an_unbound_rejection_receipt_is_reported_as_not_request_bound",
+]
+
+# C3. The leaf the whole root FAMILY exists for. A byte-level parity fixture pins what the
+# SDK emits; this is about what it reports upward, and it is where the two SDKs have
+# actually diverged. Inventing `not_executed` collapses "unknown whether it ran" into "it
+# did not run" at the one place that decides whether a caller repeats a side effect.
+[[unit]]
+id = "sdk_python.execution_report"
+class = "V0"
+description = "The application is told exactly the execution and retry members the verified receipt carried, and a member the receipt did not carry is not invented for it."
+paths = ["sdk/python/python/mcp_re_sdk/transport.py"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = ["test://sdk_python/execution_report/only_what_the_receipt_said"]
+tested_symbols = [
+  "pytest#tests/test_transport.py::test_a_post_dispatch_rejection_reports_its_execution_and_retry_contract",
+  # The transport deadline is the condition under which this SDK knows LEAST about whether
+  # the call ran, which is exactly where a synthesized verdict does the damage.
+  "pytest#tests/test_transport.py::test_a_transport_deadline_does_not_synthesize_what_the_peer_never_said",
+]
+
+# C4. Separate from C3 deliberately, and the separation is the authority boundary: C3 is
+# about what a PEER verdict may be reported as, C4 about what a LOCAL condition may be
+# reported as. C3's failure invents a peer fact; C4's borrows the peer's vocabulary.
+[[unit]]
+id = "sdk_python.local_failure_provenance"
+class = "V0"
+description = "A condition this SDK originated — a transport deadline, a cancellation, a local signing or I/O failure — is reported under the SDK's own prefix, never as a frozen `mcp-re.*` token the peer did not send and never as an execution or retry verdict."
+paths = ["sdk/python/python/mcp_re_sdk/transport.py"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = ["test://sdk_python/local_failure/no_borrowed_vocabulary"]
+tested_symbols = [
+  "pytest#tests/test_transport.py::test_a_wire_failure_is_delivered_as_a_correlated_json_rpc_error",
+  "pytest#tests/test_transport.py::test_a_local_signer_failure_is_delivered_without_claiming_a_wire_code",
+  "pytest#tests/test_transport.py::test_an_unexpected_exception_is_delivered_without_claiming_a_wire_code",
+  # Letting an exchange's exception escape would cancel every OTHER in-flight exchange, so
+  # one flaky connection ends the session — a remotely triggerable session kill.
+  "pytest#tests/test_transport.py::test_one_exchanges_network_error_does_not_take_down_the_session",
+  # ADR-MCPRE-069 `register`: the binding spells a core failure `"mcp-re: mcp-re.<token>"`,
+  # and what the taxonomy pins is the TOKEN. Four controls over that translation, claimed
+  # by nothing.
+  "pytest#tests/test_transport.py::test_the_bindings_prefixed_spelling_is_delivered_as_the_bare_token",
+  "pytest#tests/test_transport.py::test_a_value_error_that_is_not_a_token_is_labelled_a_local_condition",
+  "pytest#tests/test_transport.py::test_a_notifications_wire_code_is_the_bare_token_too",
+  "pytest#tests/test_transport.py::test_the_cores_own_fail_closed_error_is_delivered_rather_than_hanging",
+]
+
+# C5. REBUILDING rather than editing is the proposition. Editing left every other top-level
+# key in place, and a body carrying both a legal `result` and a `method` then re-parsed as a
+# server->client REQUEST. The rebuild removes the whole class.
+[[unit]]
+id = "sdk_python.reply_envelope"
+class = "V0"
+description = "What reaches the MCP session is rebuilt from the one member the verified reply carried plus the session's own id; a verified reply that is not a JSON-RPC response — one carrying a `method`, one with neither `result` nor `error` — is refused rather than dispatched."
+paths = ["sdk/python/python/mcp_re_sdk/transport.py"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = ["test://sdk_python/reply_envelope/rebuilt_never_edited"]
+tested_symbols = [
+  "pytest#tests/test_transport.py::test_a_verified_reply_carrying_a_method_is_refused_not_dispatched",
+  "pytest#tests/test_transport.py::test_a_verified_reply_with_neither_result_nor_error_is_refused",
+]
+
+# C6. A pause is not a result. The CLASSIFICATION of a reply as terminal — and the refusal of
+# a `resultType` outside the set MCP 2026-07-28 defines — belongs to the core (THM-0061);
+# what this unit owns is what the adapter DOES with that classification.
+[[unit]]
+id = "sdk_python.continuation_drive"
+class = "V0"
+description = "Only a terminal verified reply resolves the call: a non-terminal one pauses it and its answer leg signs over the verified handles of the leg before it, and an elicitation with no handler, a declined one, a non-object answer, or one past the continuation budget fails the call closed rather than resolving it."
+paths = [
+  "sdk/python/python/mcp_re_sdk/transport.py",
+  "sdk/python/python/mcp_re_sdk/correlation.py",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = ["test://sdk_python/continuation_drive/a_pause_is_not_a_result"]
+tested_symbols = [
   "pytest#tests/test_transport_replay.py::test_the_adapter_drives_the_answer_leg_to_a_terminal_result",
   "pytest#tests/test_transport_replay.py::test_an_unanswerable_elicitation_is_refused_not_delivered_as_a_result",
   "pytest#tests/test_transport_replay.py::test_a_declined_elicitation_is_refused",
   "pytest#tests/test_malformed_elicitation.py::test_a_non_terminal_reply_without_a_usable_state_is_refused",
   "pytest#tests/test_unrecognized_result_type.py::test_an_unrecognized_result_type_is_refused_not_read_as_terminal",
-  # Bound vs unbound evidence: one signed preflight receipt answers any request from any
-  # client of that issuer, so the caller has to be able to tell "the boundary rejected MY
-  # request" from "a generic rejection arrived".
-  "pytest#tests/test_transport.py::test_an_unbound_rejection_receipt_is_reported_as_not_request_bound",
-  # Execution status, in both directions: the contract a post-dispatch rejection stated
-  # reaches the application, and a member the receipt did not carry is not invented —
-  # inventing `not_executed` collapses "unknown whether it ran" into "it did not run" at
-  # the one place that decides whether a caller repeats a side effect.
-  "pytest#tests/test_transport.py::test_a_post_dispatch_rejection_reports_its_execution_and_retry_contract",
-  # A verified reply that is not an answer to this request is refused rather than
-  # dispatched — the Python twin of the TypeScript verified-reply-shape controls.
-  "pytest#tests/test_transport.py::test_a_verified_reply_carrying_a_method_is_refused_not_dispatched",
-  "pytest#tests/test_transport.py::test_a_verified_reply_with_neither_result_nor_error_is_refused",
-  # Execution status: a verified rejection is delivered as an error carrying what the
-  # receipt said, and a local failure does not borrow a wire code it was never given.
-  "pytest#tests/test_transport_replay.py::test_a_verified_rejection_receipt_is_delivered_as_an_error_not_a_result",
-  "pytest#tests/test_transport.py::test_a_wire_failure_is_delivered_as_a_correlated_json_rpc_error",
-  "pytest#tests/test_transport.py::test_a_local_signer_failure_is_delivered_without_claiming_a_wire_code",
-  "pytest#tests/test_transport.py::test_an_unexpected_exception_is_delivered_without_claiming_a_wire_code",
-  # The positive controls the refusals need: without them the battery is satisfied by an
-  # adapter that refuses everything.
-  "pytest#tests/test_transport.py::test_a_satisfied_policy_opens_the_transport",
-  "pytest#tests/test_transport.py::test_the_signed_body_is_the_request_the_caller_described",
+  # The anti-vacuity controls: without them the battery is satisfied by an adapter that
+  # refuses every fixture for the wrong reason.
   "pytest#tests/test_malformed_elicitation.py::test_the_fixture_is_otherwise_genuine_evidence",
   "pytest#tests/test_unrecognized_result_type.py::test_the_fixture_is_otherwise_genuine_evidence",
-  # THE AGGREGATE RESPONSE DEADLINE, measured against a REAL peer. The previous control
-  # for this property drove `_read_bounded` with a fake whose `read(n)` returned one byte
-  # per call, which production `http.client.HTTPResponse` never does — so it could not
-  # fail (R9-C094) over a property that was false (R9-C010). These read a real
-  # `HTTPResponse` fed by a real socket that trickles under any per-recv bound, and the
-  # per-recv bound is set far wider than the aggregate one so nothing here can pass
-  # because the socket went idle. Both halves of the mechanism are load-bearing and were
-  # measured so: removing the deadline, and restoring `read` in place of `read1`, each
-  # take the first control red.
+  # ADR-MCPRE-069 `register`: the budget is checked BEFORE the handler runs, so a call that
+  # has spent its continuation budget is not prompted for an answer it cannot send.
+  "pytest#tests/test_transport_replay.py::test_the_continuation_round_ceiling_is_enforced_before_the_caller_is_asked",
+]
+
+# C7. THE CORRECTED CLAIM. The predecessor root said "a reply binding to nothing outstanding,
+# arriving late, or repeating one already answered is refused rather than delivered". Two of
+# those three are unreachable from `_exchange`: the correlation id passed to `take()` is the
+# one `record()` returned in the same loop iteration, and MCP-RE is one signed POST per
+# request, so there is no inbox and no lookup by anything a peer controls.
+#
+# They are real properties of `CorrelationStore` AS A VALUE — it is exported, and an embedder
+# can drive it — and `tests/test_correlation.py::TestFailsClosed::*` exercises them at its
+# own API. That is a different proposition at a different altitude, and it is stated here as
+# the store's rather than as the shipped path's. What the shipped path enforces is the
+# window, and that nothing a peer can trigger leaves an entry outstanding.
+[[unit]]
+id = "sdk_python.correlation_lifecycle"
+class = "V0"
+description = "A request is answerable only inside the window it declared — a response arriving past it is refused rather than delivered — and no remotely triggerable outcome leaves a correlation entry outstanding. `CorrelationStore`'s unbound and duplicate refusals are properties of the store at its own API; the shipped exchange path reaches neither, because the id it consumes is the one it just recorded."
+paths = [
+  "sdk/python/python/mcp_re_sdk/correlation.py",
+  "sdk/python/python/mcp_re_sdk/transport.py",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = ["test://sdk_python/correlation_lifecycle/the_window_and_the_bound"]
+tested_symbols = [
+  "pytest#tests/test_transport.py::test_a_failed_exchange_does_not_leave_its_correlation_entry_outstanding",
+  "pytest#tests/test_transport.py::test_close_clears_abandoned_correlation_state",
+  "pytest#tests/test_correlation.py::TestFailsClosed::test_a_late_response_is_rejected",
+  # The store's own API, stated as the store's: see the description.
+  "pytest#tests/test_correlation.py::TestFailsClosed::test_a_response_binding_to_nothing_outstanding_is_rejected",
+  "pytest#tests/test_correlation.py::TestFailsClosed::test_a_duplicate_response_is_a_replay_not_a_mismatch",
+  # ADR-MCPRE-069 `register`. The first is the root's own headline property under real
+  # concurrency and was claimed by nothing; the next two close the continuation paths, where
+  # an open leg stays outstanding while its answer leg runs.
+  "pytest#tests/test_transport.py::test_every_concurrent_reply_is_correlated_to_its_own_request",
+  "pytest#tests/test_transport_replay.py::test_a_completed_chain_leaves_no_correlation_entry_outstanding",
+  "pytest#tests/test_transport_replay.py::test_an_unanswered_elicitation_leaves_no_correlation_entry_outstanding",
+  "pytest#tests/test_transport.py::test_correlation_state_belongs_to_the_transport_not_the_config",
+  "pytest#tests/test_transport.py::test_an_injected_clock_and_ttl_are_honoured",
+]
+
+# C8. IN THE ROOT'S CHAIN, and the reason is not freshness hygiene: a guessable nonce makes a
+# captured response replayable against a NEW request, and the application is then handed an
+# answer that is not to its own request — the root consequence exactly.
+#
+# The predecessor unit declared NO control for this conjunct. All seven below come from the
+# ADR-MCPRE-069 census, and that is the sharpest single result of it here: a stated conjunct
+# of a declared system root, with seven passing controls, claimed by nothing.
+[[unit]]
+id = "sdk_python.nonce_floor"
+class = "V0"
+description = "No request and no notification is signed under a nonce below the 128-bit floor — a sub-floor or non-string factory result fails closed at sign time, under the SDK's own prefix rather than an invented wire token — and the freshness triple is generated per leg rather than taken from the caller."
+paths = ["sdk/python/python/mcp_re_sdk/transport.py"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = ["test://sdk_python/nonce_floor/nothing_is_signed_under_a_weak_nonce"]
+tested_symbols = [
+  "pytest#tests/test_nonce_floor.py::test_the_default_generator_clears_the_floor",
+  "pytest#tests/test_nonce_floor.py::test_the_default_generator_is_accepted",
+  # PARAMETRIZED, and declared as the ids the runner REPORTS. The lane compares names
+  # verbatim and a declared name that does not report success is a failure, so naming the
+  # bare function here would read as four controls that never ran.
+  "pytest#tests/test_nonce_floor.py::test_a_sub_floor_override_is_refused_at_sign_time[]",
+  "pytest#tests/test_nonce_floor.py::test_a_sub_floor_override_is_refused_at_sign_time[1]",
+  "pytest#tests/test_nonce_floor.py::test_a_sub_floor_override_is_refused_at_sign_time[counter-1]",
+  "pytest#tests/test_nonce_floor.py::test_a_sub_floor_override_is_refused_at_sign_time[nonce-parity-0001]",
+  "pytest#tests/test_nonce_floor.py::test_a_non_string_override_is_refused_without_raising_typeerror",
+  "pytest#tests/test_nonce_floor.py::test_a_factory_at_exactly_the_floor_is_accepted",
+  "pytest#tests/test_transport.py::test_a_sub_floor_nonce_override_is_refused_before_a_notification_is_signed",
+  "pytest#tests/test_transport.py::test_freshness_is_generated_here_so_a_caller_cannot_repeat_a_nonce",
+]
+
+# C11. In the chain because telling an application its `notifications/cancelled` reached the
+# enforcement boundary when nothing acknowledged it is the same failure shape as reporting an
+# execution fact the peer never stated. The containment half is not availability: an
+# unverifiable 202 for a routine notification once cancelled every other in-flight tool call,
+# and the peer controls the trigger.
+[[unit]]
+id = "sdk_python.notification_delivery"
+class = "V0"
+description = "A notification is treated as delivered only against an acknowledgement that verified as bound to THAT transmission; a failure to verify one leaves the message undelivered, reports it on the diagnostic channel, and touches no other exchange. A client->server response, which MCP-RE profiles no carrier for, is refused rather than signed as a fabricated notification."
+paths = ["sdk/python/python/mcp_re_sdk/transport.py"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = ["test://sdk_python/notification_delivery/acknowledged_or_undelivered"]
+tested_symbols = [
+  "pytest#tests/test_transport.py::test_an_unsigned_acknowledgement_fails_the_transport_closed",
+  "pytest#tests/test_transport.py::test_a_non_202_answer_to_a_notification_fails_closed",
+  # ADR-MCPRE-069 `register`.
+  "pytest#tests/test_transport.py::test_a_notification_is_transmitted_as_a_signed_post",
+  "pytest#tests/test_transport.py::test_send_notification_verified_raises_when_the_202_does_not_verify",
+  "pytest#tests/test_transport.py::test_send_notification_verified_posts_the_signed_notification",
+  "pytest#tests/test_transport.py::test_the_config_hook_takes_precedence_over_the_process_global_sink",
+  "pytest#tests/test_transport.py::test_a_client_side_response_is_refused_rather_than_carried_as_a_notification",
+  "pytest#tests/test_transport.py::test_a_refused_client_side_response_does_not_cancel_other_exchanges",
+]
+
+# C13. A NEW PROPOSITION, from the ADR-MCPRE-069 census: four controls exist, none was
+# registered, and the proposition they establish is stated by the TypeScript member of this
+# root family (THM-0095) and by no Python claim. The asymmetry was in the claims, not in the
+# implementations.
+[[unit]]
+id = "sdk_python.trust_anchor_completeness"
+class = "V0"
+description = "The trust picture the whole acceptance chain is evaluated against is complete or the transport is refused at construction — an incomplete anchor is not defaulted — and the revocation denylist's SHAPE is checked, so a bare string cannot spread into a per-character list."
+paths = ["sdk/python/python/mcp_re_sdk/transport.py"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = ["test://sdk_python/trust_anchor/complete_or_refused"]
+tested_symbols = [
+  # One per anchor member: the claim is that NONE of the seven is defaulted, and a single
+  # id would establish it for whichever one the parametrization happened to run first.
+  "pytest#tests/test_transport.py::test_an_incomplete_trust_anchor_fails_at_construction[issuer_key_id]",
+  "pytest#tests/test_transport.py::test_an_incomplete_trust_anchor_fails_at_construction[issuer_pubkey_b64url]",
+  "pytest#tests/test_transport.py::test_an_incomplete_trust_anchor_fails_at_construction[issuer_trust_domain]",
+  "pytest#tests/test_transport.py::test_an_incomplete_trust_anchor_fails_at_construction[issuer_subject]",
+  "pytest#tests/test_transport.py::test_an_incomplete_trust_anchor_fails_at_construction[expected_audience_hash]",
+  "pytest#tests/test_transport.py::test_an_incomplete_trust_anchor_fails_at_construction[verifier_audiences]",
+  "pytest#tests/test_transport.py::test_an_incomplete_trust_anchor_fails_at_construction[accepted_epochs]",
+  "pytest#tests/test_transport.py::test_a_bare_string_denylist_is_refused_rather_than_expanded_per_character",
+  "pytest#tests/test_transport.py::test_a_denylist_entry_that_cannot_match_an_identifier_is_refused[bad0]",
+  "pytest#tests/test_transport.py::test_a_denylist_entry_that_cannot_match_an_identifier_is_refused[bad1]",
+  "pytest#tests/test_transport.py::test_a_denylist_entry_that_cannot_match_an_identifier_is_refused[bad2]",
+  "pytest#tests/test_transport.py::test_a_well_formed_denylist_and_the_empty_ttl_only_posture_are_accepted",
+]
+
+# ---------------------------------------------------------------------------------------
+# Registered BESIDE THM-0094's chain, not inside it.
+#
+# The Phase-1 inverse falsifier: is there a child whose failure does not affect the root
+# consequence? Three returned yes. Remove the read bound and a trickling peer holds a worker
+# — availability, not a wrong answer. Remove the signer policy and the SDK signs under an
+# unexpected identity — the answer still binds to the request that was sent. Remove the
+# authorization binding and the request is bound to different artefacts — which is a
+# request-side fact.
+#
+# NOT-ROOT-REACHABLE is a graph fact and NOT a lower obligation: each keeps its own direct
+# consequence severity and owes what that severity obligates.
+# ---------------------------------------------------------------------------------------
+
+# C9. Request-side attribution: which identity, under which custody, may sign at all.
+[[unit]]
+id = "sdk_python.signer_policy"
+class = "V0"
+description = "The transport does not open unless the signer satisfies the route's policy — the expected signer identity, and non-exporting custody where the hardening profile demands it — checked before anything is signed, and key material is never rendered."
+paths = [
+  "sdk/python/python/mcp_re_sdk/custody.py",
+  "sdk/python/python/mcp_re_sdk/transport.py",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = ["test://sdk_python/signer_policy/checked_before_anything_is_signed"]
+tested_symbols = [
+  "pytest#tests/test_transport.py::test_a_satisfied_policy_opens_the_transport",
+  # ADR-MCPRE-069 `register`.
+  "pytest#tests/test_transport.py::test_the_signer_is_checked_before_anything_is_signed",
+  "pytest#tests/test_transport.py::test_a_hardened_policy_opens_with_a_non_exporting_signer",
+  # `test_transport_e2e.py::test_the_hardening_profile_refuses_a_software_key_before_connecting`
+  # belongs here and is NOT registered: that file does not run in the measured lane. See
+  # `sdk_python.exchange_binding` and the packet's P2-E.
+]
+
+# C10. THE BOUND IS AVAILABILITY; the honesty of what a timeout is REPORTED as is C4's. The
+# previous control for this property drove `_read_bounded` with a fake whose `read(n)`
+# returned one byte per call, which production `http.client.HTTPResponse` never does — so it
+# could not fail over a property that was false. These read a real `HTTPResponse` fed by a
+# real socket, with the per-recv bound set far wider than the aggregate one so nothing here
+# can pass because the socket went idle.
+[[unit]]
+id = "sdk_python.bounded_read"
+class = "V0"
+description = "The response read is bounded by the aggregate deadline plus at most one per-recv timeout and by a byte ceiling, and the verifying channel it runs over is constructed against the configured CA with the hostname proved; exceeding either bound, or a channel that cannot be constructed, fails the exchange."
+paths = ["sdk/python/python/mcp_re_sdk/mtls.py"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = ["test://sdk_python/bounded_read/both_bounds_against_a_real_peer"]
+tested_symbols = [
   "pytest#tests/test_mtls.py::test_the_aggregate_read_deadline_holds_against_a_real_trickling_peer",
-  # The same property through the shipped poster over real TLS — the only path that
-  # reaches `_read_bounded` in production, with the single `timeout` a deployment sets.
   "pytest#tests/test_mtls.py::test_the_full_mtls_path_bounds_a_trickling_peer",
-  # The composed bound's other half. `read1` returns control to the deadline check after
-  # every byte a peer SENDS, so a peer that sends nothing is the one case the loop cannot
-  # observe; the per-recv timeout owns it, and unmeasured that case is where "the read is
-  # bounded" quietly becomes "bounded while the peer keeps talking".
+  # `read1` returns control to the deadline check after every byte a peer SENDS, so a peer
+  # that sends nothing is the one case the loop cannot observe; the per-recv timeout owns it.
   "pytest#tests/test_mtls.py::test_a_peer_that_goes_silent_is_ended_by_the_per_recv_bound",
-  # The positive mirrors. A bound that refuses ordinary responses is not a bound, and the
-  # byte ceiling and the `timeout=None` knob are independent of the clock.
   "pytest#tests/test_mtls.py::test_a_response_inside_both_bounds_still_reads_whole",
   "pytest#tests/test_mtls.py::test_the_byte_ceiling_still_fails_closed_one_byte_past_it",
   "pytest#tests/test_mtls.py::test_no_timeout_means_no_aggregate_bound_either",
-  # WHERE THE TRANSPORT MEETS EXECUTION HONESTY, and the control a `_read_bounded` test
-  # cannot be. A deadline can be enforced correctly and still lie about the remote side:
-  # the timeout is the condition under which the SDK knows LEAST about whether the call
-  # ran, so a synthesized `not_executed` or `retry_safe` there is what makes a caller
-  # repeat a tool call that already executed.
-  "pytest#tests/test_transport.py::test_a_transport_deadline_does_not_synthesize_what_the_peer_never_said",
-  # THE ANTI-VACUITY CONTROL FOR THE STUBBED VERDICTS. Four controls above stub
-  # `_core.verify_response`, which is the right seam — the property is what the ADAPTER
-  # does with a verdict, and against a recorded receipt nothing distinguishes reading
-  # `verified.bound` from hard-coding it. What a duck-typed stub cannot do is track the
-  # core's shape: a renamed member would leave all four green while the adapter read
-  # `None` in production. The shape is declared once and checked against
-  # `_core.PyVerifyResult` itself, which is the R9-C094 hazard one level over.
-  "pytest#tests/test_transport.py::test_the_stubbed_verdict_shape_is_the_cores_own",
+  # ADR-MCPRE-069 `register`: the channel-construction half, claimed by nothing.
+  "pytest#tests/test_mtls.py::test_a_signed_request_round_trips_over_a_verified_channel",
+  "pytest#tests/test_mtls.py::test_a_certificate_from_an_untrusted_root_is_refused",
+  "pytest#tests/test_mtls.py::test_a_certificate_for_a_different_name_is_refused",
+  "pytest#tests/test_mtls.py::test_an_oversized_response_is_refused",
+  "pytest#tests/test_mtls.py::test_a_repeated_response_header_is_not_folded",
+  "pytest#tests/test_mtls.py::test_a_transport_owned_header_is_refused",
+  "pytest#tests/test_mtls.py::test_a_plaintext_target_is_refused",
+  "pytest#tests/test_mtls.py::test_a_relative_target_is_refused",
+  "pytest#tests/test_mtls.py::test_an_empty_ca_bundle_is_refused",
+  "pytest#tests/test_mtls.py::test_a_ca_bundle_may_be_supplied_as_pem_bytes",
+  "pytest#tests/test_mtls.py::test_a_bound_that_would_refuse_everything_is_refused[over0-max_response_bytes]",
+  "pytest#tests/test_mtls.py::test_a_bound_that_would_refuse_everything_is_refused[over1-timeout]",
+  "pytest#tests/test_mtls.py::test_connect_mtls_http_opens_a_session_transport_over_the_channel",
+]
+
+# C14. Bind-not-interpret. The retained digest identifies WHICH artefacts a request was bound
+# to, for reconciliation against another client's record of the same call; the wire is
+# unaffected either way, because the core re-parses the specs structurally and digests the
+# decoded material rather than this text.
+[[unit]]
+id = "sdk_python.authorization_binding"
+class = "V0"
+description = "The authorization binding specs a request carries are the ones the configured policy permits, serialized canonically and byte-identically to the TypeScript twin, and the digest retained per outstanding request identifies which artefacts the request was bound to without ever being re-interpreted."
+paths = [
+  "sdk/python/python/mcp_re_sdk/authorization.py",
+  "sdk/python/python/mcp_re_sdk/transport.py",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = ["test://sdk_python/authorization_binding/permitted_and_canonical"]
+tested_symbols = [
+  # ADR-MCPRE-069 `register`: `authorization.py` was in the predecessor unit's paths and no
+  # control in its battery named it.
+  "pytest#tests/test_transport.py::test_the_authorization_policy_is_checked_at_open_too",
+  "pytest#tests/test_transport.py::test_the_canonical_bindings_json_emits_raw_utf8_like_json_stringify",
+  "pytest#tests/test_transport.py::test_the_correlation_entry_records_the_authorization_binding_digest",
+  "pytest#tests/test_transport.py::test_a_request_with_no_bindings_records_no_digest",
 ]
 
 [[unit]]

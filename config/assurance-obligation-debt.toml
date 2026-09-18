@@ -605,15 +605,6 @@ root_reachable = true
 status = "unreviewed"
 
 [[obligation]]
-unit = "sdk_python.exchange_path"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "critical"
-inherited_severity = "critical"
-root_reachable = true
-status = "unreviewed"
-
-[[obligation]]
 unit = "sdk_typescript.exchange_path"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "critical"
@@ -621,3 +612,161 @@ direct_consequence_severity = "critical"
 inherited_severity = "critical"
 root_reachable = true
 status = "unreviewed"
+
+# ---------------------------------------------------------------------------------------
+# ADR-MCPRE-068 Phase 1 — THM-0094's decomposition, registered by SUCCESSION.
+#
+# `sdk_python.exchange_path` owed one falsifier as one wide proposition over five files and
+# thirty-nine controls. The decomposition replaces it with thirteen narrow propositions over
+# the SAME production code, each owing one — no new code, no raised severity, and the
+# predecessor's row removed. The gate checks all of that against `origin/main`; the
+# authorization is spent by the merge that uses it.
+#
+# NONE of the thirteen can be discharged today, and that is a measured fact rather than a
+# plan: `tools/verification/verify-mutations` runs `cargo test` and has no Python or
+# TypeScript ecosystem, so no `mutation://` probe can attack a pytest battery at all. That
+# lane is the packet's P2-B and it blocks every SDK leaf in both members of this root family.
+# ---------------------------------------------------------------------------------------
+
+[[obligation]]
+unit = "sdk_python.authorization_binding"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "medium"
+direct_consequence_severity = "medium"
+inherited_severity = "none"
+root_reachable = false
+status = "unreviewed"
+succeeds = "sdk_python.exchange_path"
+decomposition_ref = "verification/reviews/packets/thm-0094-consequence-decomposition-2026-09-18.md"
+
+[[obligation]]
+unit = "sdk_python.bounded_read"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "medium"
+direct_consequence_severity = "medium"
+inherited_severity = "none"
+root_reachable = false
+status = "unreviewed"
+succeeds = "sdk_python.exchange_path"
+decomposition_ref = "verification/reviews/packets/thm-0094-consequence-decomposition-2026-09-18.md"
+
+[[obligation]]
+unit = "sdk_python.continuation_drive"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "critical"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+succeeds = "sdk_python.exchange_path"
+decomposition_ref = "verification/reviews/packets/thm-0094-consequence-decomposition-2026-09-18.md"
+
+[[obligation]]
+unit = "sdk_python.correlation_lifecycle"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "high"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+succeeds = "sdk_python.exchange_path"
+decomposition_ref = "verification/reviews/packets/thm-0094-consequence-decomposition-2026-09-18.md"
+
+[[obligation]]
+unit = "sdk_python.exchange_binding"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "critical"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+succeeds = "sdk_python.exchange_path"
+decomposition_ref = "verification/reviews/packets/thm-0094-consequence-decomposition-2026-09-18.md"
+
+[[obligation]]
+unit = "sdk_python.execution_report"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "critical"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+succeeds = "sdk_python.exchange_path"
+decomposition_ref = "verification/reviews/packets/thm-0094-consequence-decomposition-2026-09-18.md"
+
+[[obligation]]
+unit = "sdk_python.local_failure_provenance"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "critical"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+succeeds = "sdk_python.exchange_path"
+decomposition_ref = "verification/reviews/packets/thm-0094-consequence-decomposition-2026-09-18.md"
+
+[[obligation]]
+unit = "sdk_python.nonce_floor"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "high"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+succeeds = "sdk_python.exchange_path"
+decomposition_ref = "verification/reviews/packets/thm-0094-consequence-decomposition-2026-09-18.md"
+
+[[obligation]]
+unit = "sdk_python.notification_delivery"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "high"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+succeeds = "sdk_python.exchange_path"
+decomposition_ref = "verification/reviews/packets/thm-0094-consequence-decomposition-2026-09-18.md"
+
+[[obligation]]
+unit = "sdk_python.reply_envelope"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "critical"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+succeeds = "sdk_python.exchange_path"
+decomposition_ref = "verification/reviews/packets/thm-0094-consequence-decomposition-2026-09-18.md"
+
+[[obligation]]
+unit = "sdk_python.signer_policy"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "high"
+direct_consequence_severity = "high"
+inherited_severity = "none"
+root_reachable = false
+status = "unreviewed"
+succeeds = "sdk_python.exchange_path"
+decomposition_ref = "verification/reviews/packets/thm-0094-consequence-decomposition-2026-09-18.md"
+
+[[obligation]]
+unit = "sdk_python.trust_anchor_completeness"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "critical"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+succeeds = "sdk_python.exchange_path"
+decomposition_ref = "verification/reviews/packets/thm-0094-consequence-decomposition-2026-09-18.md"
+
+[[obligation]]
+unit = "sdk_python.verdict_delivery"
+obligation = "a registered mutation:// falsifier attacking this proposition's production property"
+effective_severity = "critical"
+direct_consequence_severity = "critical"
+inherited_severity = "critical"
+root_reachable = true
+status = "unreviewed"
+succeeds = "sdk_python.exchange_path"
+decomposition_ref = "verification/reviews/packets/thm-0094-consequence-decomposition-2026-09-18.md"

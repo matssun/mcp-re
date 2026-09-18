@@ -4487,10 +4487,50 @@ cycle collector CPython reverted in 3.14.5, so they are outside the claim as sur
 It says nothing about the transport below it, nothing about the proxy's own guarantees, and
 nothing about an application that bypasses this adapter.
 """
-owner = "sdk_python.exchange_path"
+owner = "sdk_python.exchange_binding"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://sdk_python.exchange_path"]
+# ADR-MCPRE-068 Phase 1. Ten leaves, each one proposition with one owner and one carrier,
+# and the decomposition's own falsifier is recorded in the packet: removing any one of the
+# ten makes the root's consequence reachable, and the inverse question returned the three
+# units deliberately left outside this closure.
+supported_by = [
+  "unit://sdk_python.exchange_binding",
+  "unit://sdk_python.verdict_delivery",
+  "unit://sdk_python.execution_report",
+  "unit://sdk_python.local_failure_provenance",
+  "unit://sdk_python.reply_envelope",
+  "unit://sdk_python.continuation_drive",
+  "unit://sdk_python.correlation_lifecycle",
+  "unit://sdk_python.nonce_floor",
+  "unit://sdk_python.notification_delivery",
+  "unit://sdk_python.trust_anchor_completeness",
+]
+# `depends_on` was EMPTY, and that was false. The Python SDK's whole cryptographic argument
+# is the audited core's: `verify_delegated_response` decides binding, trust, revocation,
+# epoch and audience; `DelegationPolicy` clamps the skew; `ExecutionContract` and
+# `continuation_state` decide what a receipt stated and whether a reply is terminal. Those
+# are MCP-RE's own registered units, not an external boundary, and a root that did not name
+# them read as a self-contained claim over five Python files.
+#
+# THM-0126 is deliberately NOT here. It is `mcp-re-client-proxy`'s own outcome resolution,
+# and the PyO3 binding derives the same fact independently rather than consuming it — which
+# is a duplicated representation recorded as Phase-2 work, not an edge this argument uses.
+# THE PROSE AND `depends_on` ARE THE OWNER'S, AND THIS COMMIT DOES NOT TOUCH THEM.
+#
+# ADR-MCPRE-068 Phase 1 decomposed this root: `supported_by` is now ten leaves, each one
+# proposition with one owner and one carrier. That is mechanically checkable and lands here.
+#
+# The packet proposes three CLAIM CORRECTIONS this decomposition supports and this commit
+# does not make — narrowing the correlation sentence to what `_exchange` reaches, naming the
+# core verdict as what binds a reply to its request, and recording the PyO3 binding as an
+# uncovered carrier — plus the `depends_on` edges to THM-0058/0059/0060/0061 that the
+# argument actually uses. Each moves `theorem_claim` or `theorem_dependencies`, and
+# `scripts/claim_surface_gate.py` refuses a published claim whose statement has moved since
+# the owner read it. That refusal is correct and is not worked around: the corrections are
+# batched for owner specification review with the other two members of this root family, in
+# `verification/reviews/packets/thm-0094-consequence-decomposition-2026-09-18.md` §10.
 depends_on = []
+
 
 [[theorem]]
 id = "THM-0095"
