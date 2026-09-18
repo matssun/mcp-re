@@ -66,15 +66,6 @@ baseline_sha = "2256cd74d66dcc0ede4590e2351c69bf595357a8"
 baseline_rule = "ADR-MCPRE-068 N1, activated in Phase 0E"
 
 [[obligation]]
-unit = "client.binding_spec_refusal"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "medium"
-direct_consequence_severity = "medium"
-inherited_severity = "medium"
-root_reachable = false
-status = "unreviewed"
-
-[[obligation]]
 unit = "client.local_serving_pipeline"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "medium"
@@ -90,24 +81,6 @@ effective_severity = "high"
 direct_consequence_severity = "medium"
 inherited_severity = "high"
 root_reachable = true
-status = "unreviewed"
-
-[[obligation]]
-unit = "core.audit_vocabulary"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "medium"
-direct_consequence_severity = "medium"
-inherited_severity = "medium"
-root_reachable = false
-status = "unreviewed"
-
-[[obligation]]
-unit = "policy.authorization_taxonomy"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "medium"
-direct_consequence_severity = "medium"
-inherited_severity = "medium"
-root_reachable = false
 status = "unreviewed"
 
 [[obligation]]

@@ -7885,7 +7885,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://policy/authorization_taxonomy/frozen_tokens"]
+evidence = [
+  "test://policy/authorization_taxonomy/frozen_tokens",
+  "mutation://policy/authorization_taxonomy/frozen_tokens",
+]
 tested_symbols = [
   "lib#error::tests::every_variant_renders_its_exact_wire_token",
   "lib#error::tests::revoked_and_unavailable_are_distinct_tokens",
@@ -7909,7 +7912,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://client/binding_spec/refusal_projection"]
+evidence = [
+  "test://client/binding_spec/refusal_projection",
+  "mutation://client/binding_spec/refusal_projection",
+]
 tested_symbols = [
   "lib#binding_spec::refusal::tests::the_narrowing_reports_the_type_as_unsupported_in_this_form",
   "lib#binding_spec::refusal::tests::shape_refusals_report_a_malformed_binding",
@@ -8605,7 +8611,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://core/audit_vocabulary/frozen_reasons"]
+evidence = [
+  "test://core/audit_vocabulary/frozen_reasons",
+  "mutation://core/audit_vocabulary/frozen_reasons",
+]
 # The in-crate controls state the type property. The conformance guard is what makes it a
 # property of the TREE rather than of this file: it reads both sources from disk and fails on
 # any drift, including a producer elsewhere minting a token of its own.

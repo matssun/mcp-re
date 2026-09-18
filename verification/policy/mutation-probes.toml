@@ -7509,3 +7509,92 @@ not covered arriving as though it were makes a valid hop unreproducible in one d
 over-claims coverage in the other. The unit's own sentence is "exactly the headers its own
 signature base names", and exactly is the whole of it.
 """
+
+[[probe]]
+id = "M270-policy-revoked-and-unavailable-are-distinct-tokens"
+unit = "policy.authorization_taxonomy"
+theorem = "THM-0091"
+conjunct = "the split that keeps an unavailable revocation backend from being served as a revocation"
+path = "mcp-re-policy/src/error.rs"
+anchor = """
+            PolicyError::AuthorizationRevocationUnavailable => {
+                "mcp-re.authorization_revocation_unavailable"
+            }
+"""
+weakening = """
+            PolicyError::AuthorizationRevocationUnavailable => "mcp-re.authorization_revoked",
+"""
+expect_red = [
+  "lib#error::tests::revoked_and_unavailable_are_distinct_tokens",
+]
+note = """
+BOTH REFUSE THE CALL, WHICH IS WHY ONE TOKEN FOR BOTH LOOKS HARMLESS. `revoked` says an
+authority made a decision about this credential; `revocation_unavailable` says nobody could
+ask. Serving the first for the second tells an operator their credential was revoked when what
+actually happened is that their revocation backend is down -- and the two have opposite
+remediations: rotate the credential, or restore the service.
+
+The variant survives the weakening, so nothing internal collapses. Only the frozen vocabulary
+the caller branches on does, which is the whole of what this unit owns: ADR-MCPS-013's tokens
+and the sole authority over the mapping onto them.
+"""
+
+[[probe]]
+id = "M271-core-a-label-is-never-a-wire-token"
+unit = "core.audit_vocabulary"
+theorem = "THM-0091"
+conjunct = "the non-normative reason label is prose and never a wire token"
+path = "mcp-re-core/src/audit/reason_label.rs"
+anchor = """
+        McpReError::ReplayDetected => "Replay detected",
+"""
+weakening = """
+        McpReError::ReplayDetected => "mcp-re.replay_detected",
+"""
+expect_red = [
+  "lib#audit::reason_label::tests::a_label_is_never_a_wire_token",
+]
+note = """
+TWO VOCABULARIES OVER ONE VERDICT, and the record carries both on purpose: the frozen
+`mcp-re.*` token a caller branches on, and a human sentence for an operator reading the audit
+trail. A label that IS a token makes the record self-describing in the wrong direction -- a
+reader cannot tell which field they are looking at, and a pipeline keyed on the prose field
+starts matching wire vocabulary that was never promised to be stable there.
+
+The control quantifies over every variant rather than checking this one, which is why a single
+substituted arm takes it red: the rule is about the shape of the whole mapping.
+"""
+
+[[probe]]
+id = "M272-client-the-narrowing-is-not-a-shape-refusal"
+unit = "client.binding_spec_refusal"
+theorem = "THM-0091"
+conjunct = "the narrowing — an opaque provider asked to mint a pdp-decision binding — is refused as the type not being supported IN THIS FORM, not as a malformed spec"
+path = "mcp-re-client-core/src/core_projection.rs"
+anchor = """
+            | BindingSpecRefusal::DecisionFormIsNotThisArtifactType => {
+                McpReError::AuthorizationBindingTypeUnsupported
+            }
+"""
+weakening = """
+            | BindingSpecRefusal::DecisionFormIsNotThisArtifactType => {
+                McpReError::AuthorizationBindingMalformed
+            }
+"""
+expect_red = [
+  "lib#core_projection::tests::every_refusal_names_a_core_verdict",
+]
+note = """
+THE PROJECTION IS LOSSY ON PURPOSE, AND THIS IS WHERE IT MUST NOT BE. Five shape refusals all
+mean "the spec is not a legal authorization binding" and share one verdict; the narrowing means
+something else -- the artifact type is not supported IN THIS FORM -- and an opaque provider
+asked to mint a `pdp-decision` binding is half of a Mode-2 pair, not a malformed document. The
+weakening folds it into the shape bucket, so a caller is told their spec is broken when what is
+broken is the pairing they asked for.
+
+WHY THERE IS NO TABLE OF STRINGS BESIDE THIS. `wire_code` asks this projection which verdict a
+refusal IS and takes that verdict's token, because two statements of one mapping is how a
+renamed Core token leaves a carrier emitting the old spelling (ADR-MCPRE-066 Slice 2). So this
+match is the sole carrier of both facts, and the weakening reaches the wire token without
+touching any string.
+"""
