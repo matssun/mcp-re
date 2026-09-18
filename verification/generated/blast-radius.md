@@ -175,13 +175,14 @@ attestations this view cannot see.
 | unit://proxy.signing_credential_provenance | source, contracts or evidence | THM-0082 | _no consumer_ |
 | unit://proxy.signing_role_separation | source, contracts or evidence | THM-0073 | _no consumer_ |
 | unit://proxy.trust_composition_root | source, contracts or evidence | THM-0038, THM-0067, THM-0077 | _no consumer_ |
-| unit://proxy.trust_configuration_state | source, contracts or evidence | THM-0035, THM-0036 | _no consumer_ |
 | unit://proxy.trust_configuration_state_sole_producer | source, contracts or evidence | THM-0035, THM-0036 | _no consumer_ |
 | unit://proxy.trust_document_interpretation | source, contracts or evidence | THM-0098 | _no consumer_ |
+| unit://proxy.trust_document_locator | source, contracts or evidence | THM-0036 | _no consumer_ |
 | unit://proxy.trust_epoch_source | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.trust_plan | source, contracts or evidence | THM-0037, THM-0066 | _no consumer_ |
 | unit://proxy.trust_plan_co_provenance | source, contracts or evidence | THM-0037 | _no consumer_ |
 | unit://proxy.trust_plane_runtime | source, contracts or evidence | THM-0097, THM-0098, THM-0100 | _no consumer_ |
+| unit://proxy.trust_revocation_classification | source, contracts or evidence | THM-0035 | _no consumer_ |
 | unit://sdk_python.authorization_binding | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://sdk_python.bounded_read | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://sdk_python.continuation_drive | source, contracts or evidence | THM-0094 | _no consumer_ |

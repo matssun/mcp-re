@@ -1983,14 +1983,14 @@ It is not a claim about revocation REACHING a peer. A cadence bounds how stale t
 document may be; it says nothing about propagation to other replicas, which is the epoch
 mechanism's concern (THM-0036) and is separately unproved end to end.
 """
-owner = "proxy.trust_configuration_state"
+owner = "proxy.trust_revocation_classification"
 review_requirement = "Owner security-specification review"
-# TWO units. `proxy.trust_configuration_state` establishes what the classifier and the
+# TWO units. The classifier/locator unit establishes what the classifier and the
 # locator DECIDE. `proxy.trust_configuration_state_sole_producer` establishes that neither
 # decision can be bypassed — that no posture exists whose declared witnesses nobody decided,
 # and no locator exists that `new` did not accept.
 supported_by = [
-  "unit://proxy.trust_configuration_state",
+  "unit://proxy.trust_revocation_classification",
   "unit://proxy.trust_configuration_state_sole_producer",
 ]
 depends_on = []
@@ -2032,14 +2032,14 @@ build without the `redis_replay` feature is refused at planning by
 It says nothing about propagation LATENCY, nor that an operator's increment reaches every
 replica within any bound.
 """
-owner = "proxy.trust_configuration_state"
+owner = "proxy.trust_document_locator"
 review_requirement = "Owner security-specification review"
-# TWO units. `proxy.trust_configuration_state` establishes what the classifier and the
+# TWO units. The classifier/locator unit establishes what the classifier and the
 # locator DECIDE. `proxy.trust_configuration_state_sole_producer` establishes that neither
 # decision can be bypassed — that no posture exists whose declared witnesses nobody decided,
 # and no locator exists that `new` did not accept.
 supported_by = [
-  "unit://proxy.trust_configuration_state",
+  "unit://proxy.trust_document_locator",
   "unit://proxy.trust_configuration_state_sole_producer",
 ]
 depends_on = ["THM-0035"]
@@ -5312,7 +5312,7 @@ direct_consequence_severity = "critical"
 scope = """
 ONE replica. The BYTES are the input authority: nothing here says which path was read, who
 wrote the file, or that its contents are the operator's intent — the locator belongs to
-`proxy.trust_configuration_state`, and reading the file is the caller's. Nothing about WHEN a
+`proxy.trust_document_locator`, and reading the file is the caller's. Nothing about WHEN a
 change to the bytes reaches the snapshot, or what is served meanwhile: that is the reload
 cadence and THM-0097.
 

@@ -2553,84 +2553,64 @@ pilot = "verus-candidate"
 # structurally — by sealed construction, by a paired projection, and by the absence of a
 # field — and by test batteries. Nothing above them may say otherwise.
 
+# ---------------------------------------------------------------------------------------
+# ADR-MCPRE-068 Phase 1 — the classifier and the locator are two authorities.
+#
+# `proxy.trust_configuration_state` was the semantic authority for THM-0035 and THM-0036, and
+# its own description named both: "which revocation posture a deployment requests, which
+# witnesses each state requires" AND "which locators name a trust document at all". Its three
+# probes already partitioned — M63 and M64 to THM-0035, M65 to THM-0036 — so the split is a
+# re-partition of labelled evidence.
+#
+# `proxy.trust_configuration_state_sole_producer` (Phase 0D-10, S15/S16) is UNCHANGED and
+# still supports both: the seal is over the state value, which both propositions are about.
+# ---------------------------------------------------------------------------------------
+
+# THM-0035's owner.
 [[unit]]
-id = "proxy.trust_configuration_state"
+id = "proxy.trust_revocation_classification"
 class = "V0"
-description = "WHAT THE CLASSIFIER AND THE LOCATOR DECIDE: which revocation posture a deployment requests, which witnesses each state requires, and which locators name a trust document at all. Claims nothing about the document's existence, readability, contents, or the keys it holds — those are materialization's, not layer A's — and nothing about whether either decision can be bypassed, which is a compile-time fact and belongs to `proxy.trust_configuration_state_sole_producer`."
+description = "Which revocation posture a deployment requests and which witnesses each state form requires: every legal state form is classified and accepted, a bounded cache needs no cadence, each state holds its cadence to the window it claims, and a zero cadence — a spinning reloader — is refused in every state and from a programmatic config as well as a document."
+paths = ["mcp-re-proxy/src/config_state/trust_revocation.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/trust_revocation/classified_with_its_witnesses",
+  "mutation://proxy/trust_revocation/classified_with_its_witnesses",
+]
+tested_symbols = [
+  "lib#config_state::trust_revocation::tests::every_legal_state_form_is_classified_and_accepted",
+  "lib#config_state::trust_revocation::tests::bounded_cache_does_not_require_a_cadence",
+  "lib#config_state::trust_revocation::tests::each_state_holds_the_cadence_to_the_window_it_claims",
+  "lib#config_state::trust_revocation::tests::a_zero_cadence_is_a_spinning_reloader_in_every_state",
+  "lib#config_state::trust_revocation::tests::a_programmatic_config_cannot_spin_the_trust_reloader",
+]
+
+# THM-0036's owner. A PAIRED locator and key, or not at all — the epoch source is what splits
+# the push posture in two, and a locator that names nothing resolves no source.
+[[unit]]
+id = "proxy.trust_document_locator"
+class = "V0"
+description = "Which locators name a trust document at all, and on what terms: a networked epoch source is handed over as a paired locator and key or not at all, a URL-shaped posture requires its URL to be one, a locator that names nothing resolves no source, and the stored path is the operator's string verbatim rather than a normalization of it."
 paths = [
-  "mcp-re-proxy/src/config_state/trust_revocation.rs",
   "mcp-re-proxy/src/config_state/trust_document.rs",
+  "mcp-re-proxy/src/config_state/trust_revocation.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
-direct_consequence_severity = "high"
+direct_consequence_severity = "critical"
 evidence = [
-  "test://proxy/trust/revocation_state_witnesses",
-  "test://proxy/trust/epoch_source_pairing",
-  # A cadence ceiling, a zero-cadence refusal and a two-way push split are all conjuncts a
-  # green battery can hold while none of them is load-bearing. M63-M65 ask.
-  "mutation://proxy/trust/revocation_state_witnesses",
+  "test://proxy/trust_document/paired_or_not_at_all",
+  "mutation://proxy/trust_document/paired_or_not_at_all",
 ]
-# Both directions of each witness rule: the states that REQUIRE a cadence carry one and are
-# refused without it, and the one state whose cadence is OPTIONAL keeps both postures — so
-# a green lane cannot mean the witness rule was over-applied.
-#
-# THREE witnesses left this unit rather than this list, and each left because its
-# proposition became stronger than a test of this classifier could state:
-#
-#   * the epoch KEY beside no epoch store (CF-04) — ADR-MCPRE-067 Phase 4 moved the
-#     coordinate inside `TrustEpochSource`, so a key with no store cannot be constructed;
-#   * an epoch SOURCE under a tier that consumes none (X8) — Phase 6 gave only the pushing
-#     posture a field for one;
-#   * `live|push` given no re-read cadence — Phase 6 made the cadence a member of the two
-#     tiers that need one.
-#
-# None is restated here. Their evidence lives with the types that made them unbuildable, in
-# `deployment_request::request_signer_currency` and
-# `deployment_request::storage::trust_epoch_storage`, and with the CLI adapter that still
-# sees the argv forms — all outside this unit's paths, which is why this list shrank rather
-# than being repointed.
 tested_symbols = [
-  "lib#config_state::trust_revocation::tests::bounded_cache_does_not_require_a_cadence",
-  "lib#config_state::trust_revocation::tests::each_state_holds_the_cadence_to_the_window_it_claims",
-  "lib#config_state::trust_revocation::tests::every_legal_state_form_is_classified_and_accepted",
-  "lib#config_state::trust_revocation::tests::a_zero_cadence_is_a_spinning_reloader_in_every_state",
-  "lib#config_state::trust_revocation::tests::a_programmatic_config_cannot_spin_the_trust_reloader",
   "lib#config_state::trust_revocation::tests::the_epoch_source_is_what_splits_push_in_two",
   "lib#config_state::trust_revocation::tests::push_networked_requires_its_url_to_be_a_url",
   "lib#config_state::trust_document::tests::a_locator_that_names_nothing_resolves_no_source",
   "lib#config_state::trust_document::tests::the_stored_path_is_the_operators_string_verbatim",
   "lib#config_state::trust_document::tests::the_public_constructor_validates_too",
 ]
-
-# ---------------------------------------------------------------------------
-# The connection credential window — MCPRE-145 / #581 row 2, 2026-09-06
-# ---------------------------------------------------------------------------
-#
-# `ClientCredentialWindow` is sealed for the relation *a connection may not outlive the
-# credential that authenticated it*, and belonged to no unit, so the relation it owns was
-# evidence for nothing. The currency-bound projection travels with it: the two files answer
-# one question — what actually bounds a compromised credential's usefulness — and separating
-# them would leave the posture name in one fingerprint and the durations it names in another.
-
-
-# ---------------------------------------------------------------------------
-#
-# ONE PROPOSITION, TWO OWNERS — the same two files the tested unit covers, because they are
-# the same decision seen twice: which trust configuration a deployment is IN.
-#
-# `TrustRevocationState` carries a bare-private `kind` whose TYPE is also private, so a
-# sibling can reach neither the field nor a variant to put in it. S15 attacks the field's
-# privacy (the boundary this unit claims) and supplies `todo!()` rather than naming a variant,
-# because naming one would be refused by E0603 for the type's privacy and the lane would then
-# be measuring the wrong boundary. The enum's privacy is recorded as a second producer path
-# rather than conflated with the first.
-#
-# `TrustDocumentSource` is the ordinary refusal shape, and S16's hostile value is the EXACT
-# inhabitant `new` excludes — the empty locator. The owner's doc comment states what the
-# boundary is for: "construction itself validates, so a `TrustDocumentSource` means the same
-# thing whichever crate built it". That sentence is about every crate, which is a claim over
-# the type; the battery ranges over `new`.
 
 [[unit]]
 id = "proxy.trust_configuration_state_sole_producer"

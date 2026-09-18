@@ -1947,7 +1947,7 @@ expect_red = [
 
 [[probe]]
 id = "M63-a-zero-cadence-is-a-spinning-reloader"
-unit = "proxy.trust_configuration_state"
+unit = "proxy.trust_revocation_classification"
 theorem = "THM-0035"
 conjunct = "a successfully classified state carries the witnesses its own state form requires"
 # A zero cadence names no legal state: `Halt::sleep(0)` sets a deadline already in the past,
@@ -1967,7 +1967,7 @@ expect_red = [
 
 [[probe]]
 id = "M64-the-cadence-is-held-to-the-window-the-state-claims"
-unit = "proxy.trust_configuration_state"
+unit = "proxy.trust_revocation_classification"
 theorem = "THM-0035"
 conjunct = "each state holds its cadence to the revocation window it claims"
 # The witness that makes a tier's claim true rather than advertised: a key removed from
@@ -1986,7 +1986,7 @@ expect_red = [
 
 [[probe]]
 id = "M65-an-epoch-source-is-what-makes-a-push-state-networked"
-unit = "proxy.trust_configuration_state"
+unit = "proxy.trust_document_locator"
 theorem = "THM-0036"
 conjunct = "a networked trust-epoch source is handed over as a paired locator and key, or not at all"
 # Classifying every push deployment as networked is the "or not at all" half deleted: a
