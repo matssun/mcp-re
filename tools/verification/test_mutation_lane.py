@@ -24,6 +24,7 @@ from __future__ import annotations
 import importlib.util
 import inspect
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -565,6 +566,32 @@ def test_an_unreadable_report_is_not_red():
     assert body.index("except ReportUnreadable") < body.index("return True, results")
 
 
+def test_every_declared_cargo_target_shape_is_runnable():
+    """Four shapes, one declaration of them, and this lane must not hold a second.
+
+    `_ecosystems` declares `lib`, `doc`, `tests/<name>` and `bin/<name>`, and this lane
+    used to build its own Cargo argv from `lib` and `tests/<name>` alone. A `bin/<name>`
+    battery became `--test -re-client`: cargo refuses that with a message which is not a
+    build failure, so the lane reported a MEASUREMENT FAILURE and blamed a probe whose
+    weakening works. The registry can name any of the four, so all four must run.
+    """
+    from _ecosystems import CARGO, test_argv
+
+    shapes = {
+        "lib": ["--lib"],
+        "doc": ["--doc"],
+        "tests/full_profile_test": ["--test", "full_profile_test"],
+        "bin/mcp-re-client": ["--bin", "mcp-re-client"],
+    }
+    for target, expected in shapes.items():
+        argv = test_argv(CARGO, "p", target, ["sym"], [], None)
+        assert expected[0] in argv, (target, argv)
+        for token in expected:
+            assert token in argv, (target, argv)
+    # And the lane asks the seam rather than answering for itself.
+    assert "target_argv(" not in inspect.getsource(lane.run_battery)
+
+
 def test_the_battery_runs_through_the_same_seam_as_the_test_lane():
     """A control green in the test lane and unrunnable in this one would be two answers
     about one declared symbol. Both resolve the command and the report through
@@ -599,6 +626,45 @@ def test_an_absent_matrix_and_a_stale_artefact_are_different_refusals():
     assert "args.skip_unprepared" in body
     guard = body[body.index("args.skip_unprepared") - 120 : body.index("args.skip_unprepared")]
     assert "UNPREPARED" in guard
+
+
+def test_a_needed_artefact_is_looked_for_where_each_preparation_leaves_it():
+    """The Python native module has TWO spellings, and the lane refused CI over knowing one.
+
+    `maturin develop` leaves `_core.abi3.so` beside the package in the source tree;
+    `prepare_python_matrix.sh` -- the form the verification workflow runs, and the one that
+    pins an environment per supported interpreter -- builds a WHEEL and installs it, so the
+    tree has no `.so` at all. A lane that knew only the first spelling reported a correctly
+    prepared runner as an unbuilt environment and failed every Python probe on it.
+
+    Asked over a CONSTRUCTED workspace rather than this one, because the two layouts are the
+    point and no single environment has both -- and the fast job that runs these self-tests
+    builds no SDK matrix at all, so a control needing either spelling present would fail
+    there for the environment rather than for the rule.
+    """
+    wanted = "python/mcp_re_sdk/_core.abi3.so"
+    candidates = lane._SCRATCH_NEEDS[lane.PYTHON][wanted]
+    assert candidates[0] == wanted, candidates
+    assert any("site-packages" in spelling for spelling in candidates[1:]), candidates
+
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        assert lane._first_present(root, wanted, candidates) == [], "an empty workspace"
+
+        # The installed spelling ALONE resolves -- the shape a prepared runner has.
+        installed = root / ".venv-cp314/lib/python3.14/site-packages/mcp_re_sdk"
+        installed.mkdir(parents=True)
+        (installed / "_core.abi3.so").write_bytes(b"")
+        from_wheel = lane._first_present(root, wanted, candidates)
+        assert [relative for _s, relative in from_wheel] == [wanted], from_wheel
+
+        # And with both present the source tree wins, so a developer's own build is what a
+        # probe measures against their own edits.
+        tree = root / "python/mcp_re_sdk"
+        tree.mkdir(parents=True)
+        (tree / "_core.abi3.so").write_bytes(b"")
+        from_tree = lane._first_present(root, wanted, candidates)
+        assert [source for source, _r in from_tree] == [tree / "_core.abi3.so"], from_tree
 
 
 def test_an_unavailable_probe_is_named_in_the_verdict_line():
