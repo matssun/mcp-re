@@ -19,6 +19,14 @@
 #     added here — `scripts/assurance_obligation_gate.py` refuses a row this file did not
 #     already hold at the baseline.
 #   * ONE-WAY. A row closes and never reopens; nothing returns to `unreviewed`.
+#   * SUCCESSION is the ONE exception to "closed to new work", and it adds nothing: a row
+#     may carry `succeeds` and `decomposition_ref` when an ADR-MCPRE-068 Phase 1
+#     decomposition has replaced one wide proposition with the narrower ones it was the
+#     conjunction of. The gate requires the predecessor to be a BASE row that no longer
+#     owes, every successor's effective severity to be at most the predecessor's, and every
+#     successor unit's `paths` to be a SUBSET of the predecessor's at the base — so new
+#     production code cannot ride one, nothing at stake rises, and the authorization is
+#     spent by the merge that uses it. A successor row is an ordinary open obligation.
 #   * Each row names its EXACT owning proposition and the obligation it owes, because a
 #     registry that cannot say what closing a row would mean is a list, not a ratchet.
 #

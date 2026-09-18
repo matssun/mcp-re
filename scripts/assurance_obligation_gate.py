@@ -21,10 +21,45 @@ mechanical consequences the ratification attached to the registry:
                                                    row records, so the row does not cover
                                                    it. Raising severity is "materially
                                                    changed" and may not buy a new entry.
-    the registry GREW against origin/main       -> FAIL. It may only shrink.
+    the registry GREW against origin/main      -> FAIL. It may only shrink, except by
+                                                   SUCCESSION (below), the one way a
+                                                   row count may rise.
     a status returning to `unreviewed`          -> FAIL. The lifecycle is one-way.
     a reviewed row with no live `review_ref`    -> FAIL. A completed review points at a
                                                    record, not at a memory of one.
+
+SUCCESSION — the one way a row count may rise, and why it is not a loophole.
+
+ADR-MCPRE-068 Phase 1 decomposes a root's one wide proposition into the several narrow
+propositions it was always the conjunction of. A wide `tested` unit that OWED a falsifier
+becomes several narrow `tested` units that owe one each. Under the rules above that is
+indistinguishable from new work: the predecessor's row goes dead and every successor is an
+unregistered owing unit. Phase 1 could then land no decomposition of an obligated
+proposition at all — the ratchet built to stop obligations APPEARING would be stopping them
+from being stated more precisely, which is the opposite of its purpose.
+
+So a row may carry `succeeds` and `decomposition_ref`, and five things must hold together:
+
+    the predecessor is a row in the BASE registry      succession refines an obligation that
+                                                       already existed; it cannot invent one
+    the predecessor is gone from the registry AND      the wide proposition no longer exists
+    from the measured population                       or no longer owes. One that still
+                                                       owes keeps its own row and succeeds
+                                                       nothing
+    every successor's effective severity is at most    a decomposition may not RAISE what is
+    the predecessor's                                  at stake
+    every successor unit's `paths` are a SUBSET of     the obligation is refined over the
+    the predecessor's paths at the base                 same production code. New code cannot
+                                                       ride a succession
+    `decomposition_ref` names a file this tree holds   the decomposition points at its record
+                                                       rather than at a memory of one
+
+ONE AUTHORIZATION BUYS ONE TRANSITION, by the mechanism the module-size registry's
+`growth_ref` uses: after merge the predecessor is no longer in the base registry, so a later
+row naming it fails the first clause. A spent succession matches nothing.
+
+Succession discharges NOTHING. Successor rows are ordinary open obligations, INCOMPLETE like
+every other row, bounding the same production code measured more finely.
 
 WHAT IT DELIBERATELY DOES NOT DO. It does not make a registered obligation satisfied. Rows
 stay INCOMPLETE, `review` prints them as open obligations, and an incomplete proposition
@@ -62,8 +97,17 @@ _KEYS = {
     "root_reachable",
     "status",
     "review_ref",
+    "succeeds",
+    "decomposition_ref",
 }
-_OPTIONAL = {"review_ref"}
+_OPTIONAL = {"review_ref", "succeeds", "decomposition_ref"}
+
+#: The registry whose `paths` decide whether a successor refines the SAME production code.
+#:
+#: Read at the base revision rather than here, because that is the tree the predecessor's
+#: obligation was measured over. A successor could otherwise be given the predecessor's
+#: paths in the same commit that widens them.
+UNITS_REL = "verification/policy/verification.toml"
 
 
 def owing() -> dict[str, dict]:
@@ -80,6 +124,16 @@ def owing() -> dict[str, dict]:
     units = _manifest.load_verification()
     theorems = _theorems.load_theorems({unit["id"] for unit in units["unit"]})
     return graph.unmet_obligations(theorems, units)
+
+
+def current_unit_paths() -> dict[str, set[str]]:
+    """Each unit's declared `paths` as this tree has them."""
+    import _manifest
+
+    return {
+        unit["id"]: set(unit.get("paths", []))
+        for unit in _manifest.load_verification().get("unit", [])
+    }
 
 
 def load_registry(path: Path = REGISTRY) -> dict[str, dict]:
@@ -132,14 +186,143 @@ def base_registry(base: str, repo: Path = REPO) -> dict[str, dict] | None:
     return {row["unit"]: row for row in doc.get("obligation", [])}
 
 
+def _severity_rank(name: str) -> int:
+    """The severity's rank in the one declared vocabulary.
+
+    Imported rather than restated: `_evidence_class` is the single authority on the closed
+    vocabulary and its order, and a second copy here would let the gate compare severities
+    the graph does not recognise.
+    """
+    from _evidence_class import SEVERITY_ORDER
+
+    return SEVERITY_ORDER[name]
+
+
+def base_unit_paths(base: str, repo: Path = REPO) -> dict[str, set[str]] | None:
+    """Each unit's declared `paths` at `base`, or None when that revision is unavailable.
+
+    UNAVAILABLE IS NOT EMPTY, the same rule `base_registry` follows: an empty mapping would
+    read as "the predecessor declared no paths", under which every successor's paths are
+    trivially NOT a subset and a legitimate succession fails — or, with the test inverted,
+    every one passes. Neither is a fact about the tree.
+    """
+    proc = subprocess.run(
+        ["git", "show", f"{base}:{UNITS_REL}"], cwd=repo, capture_output=True
+    )
+    if proc.returncode != 0:
+        return None
+    doc = tomllib.loads(proc.stdout.decode("utf-8"))
+    return {unit["id"]: set(unit.get("paths", [])) for unit in doc.get("unit", [])}
+
+
+def succession_defects(
+    registry: dict[str, dict],
+    measured: dict[str, dict],
+    before: dict[str, dict] | None,
+    base_paths: dict[str, set[str]] | None,
+    now_paths: dict[str, set[str]],
+    repo: Path = REPO,
+) -> tuple[list[str], set[str]]:
+    """Validate every row claiming succession; return its defects and the rows it excuses.
+
+    A row is EXCUSED from the shrink-only rule only if it survives every clause here, so a
+    malformed succession does not both fail and buy growth.
+    """
+    found: list[str] = []
+    excused: set[str] = set()
+    for unit in sorted(registry):
+        row = registry[unit]
+        predecessor = str(row.get("succeeds") or "").strip()
+        reference = str(row.get("decomposition_ref") or "").strip()
+        if not predecessor and not reference:
+            continue
+        if not predecessor or not reference:
+            found.append(
+                f"registry row for {unit!r} declares only one half of a succession "
+                f"(succeeds={predecessor!r}, decomposition_ref={reference!r}). A succession "
+                f"is an obligation refined over recorded reasoning: both halves, or neither."
+            )
+            continue
+        if not (repo / reference).is_file():
+            found.append(
+                f"registry row for {unit!r} names decomposition_ref {reference!r}, which "
+                f"this tree does not hold. A decomposition points at its record rather than "
+                f"at a memory of one."
+            )
+            continue
+        if predecessor == unit:
+            found.append(
+                f"registry row for {unit!r} succeeds itself. A succession replaces one "
+                f"proposition with narrower ones; a row that is its own predecessor records "
+                f"no decomposition and would renew its own authorization every merge."
+            )
+            continue
+        if predecessor in registry or predecessor in measured:
+            found.append(
+                f"registry row for {unit!r} succeeds {predecessor!r}, which still owes: it "
+                f"is {'in the registry' if predecessor in registry else 'measured as owing'}."
+                f" A predecessor that still exists keeps its own row and is succeeded by "
+                f"nothing — otherwise one obligation would be registered twice."
+            )
+            continue
+        if before is None:
+            found.append(
+                f"registry row for {unit!r} claims succession from {predecessor!r}, and the "
+                f"base revision is unavailable, so it cannot be checked. A succession is an "
+                f"authorization against the base; an uncheckable one is refused rather than "
+                f"assumed."
+            )
+            continue
+        if predecessor not in before:
+            found.append(
+                f"registry row for {unit!r} succeeds {predecessor!r}, which the base "
+                f"registry does not hold. Succession refines an obligation that already "
+                f"existed — it cannot invent one, and an authorization spent by an earlier "
+                f"merge names nothing here."
+            )
+            continue
+        ceiling = before[predecessor].get("effective_severity")
+        mine = row.get("effective_severity")
+        if _severity_rank(str(mine)) > _severity_rank(str(ceiling)):
+            found.append(
+                f"registry row for {unit!r} succeeds {predecessor!r} at effective severity "
+                f"{mine!r}, above the predecessor's {ceiling!r}. A decomposition may state "
+                f"an obligation more precisely; it may not raise what is at stake."
+            )
+            continue
+        if base_paths is None:
+            found.append(
+                f"registry row for {unit!r} claims succession from {predecessor!r}, and "
+                f"{UNITS_REL} is unavailable at the base, so the production code the "
+                f"obligation covers cannot be compared."
+            )
+            continue
+        widened = sorted(now_paths.get(unit, set()) - base_paths.get(predecessor, set()))
+        if widened:
+            found.append(
+                f"registry row for {unit!r} succeeds {predecessor!r} but declares path(s) "
+                f"{widened} the predecessor did not cover. A succession refines an "
+                f"obligation over the SAME production code; new code does not ride one."
+            )
+            continue
+        excused.add(unit)
+    return found, excused
+
+
 def defects(
     measured: dict[str, dict],
     registry: dict[str, dict],
     before: dict[str, dict] | None,
     repo: Path = REPO,
+    base_paths: dict[str, set[str]] | None = None,
+    now_paths: dict[str, set[str]] | None = None,
 ) -> list[str]:
     """Every way the registry and the measured obligations disagree."""
     found: list[str] = []
+    succession, excused = succession_defects(
+        registry, measured, before, base_paths, now_paths or {}, repo
+    )
+    found.extend(succession)
 
     for unit in sorted(set(measured) - set(registry)):
         found.append(
@@ -195,12 +378,14 @@ def defects(
     if before is None:
         return found
 
-    added = sorted(set(registry) - set(before))
+    added = sorted(set(registry) - set(before) - excused)
     if added:
         found.append(
             f"the registry GREW against the base: {added}. It may only shrink — the "
             f"population it bounds was fixed at the baseline, and a registry that can grow "
-            f"is a waiver with extra steps."
+            f"is a waiver with extra steps. The one exception is SUCCESSION, and these rows "
+            f"do not carry a valid one: a decomposition of an obligation the base registry "
+            f"held names it in `succeeds` beside the `decomposition_ref` that records it."
         )
     for unit in sorted(set(registry) & set(before)):
         was, now = before[unit].get("status"), registry[unit].get("status")
@@ -288,7 +473,133 @@ def selftest() -> int:
         ),
     ]
     for label, measured, registry, before, expect in cases:
-        found = defects(measured, registry, before)
+        found = defects(measured, registry, before, REPO, {}, {})
+        ok = (not found) if expect is None else any(expect in entry for entry in found)
+        print(f"  {'ok  ' if ok else 'FAIL'}  {label}")
+        if not ok:
+            failed = True
+            print(f"        got {found}")
+
+    # SUCCESSION, in both directions. Every clause is a way a decomposition could smuggle in
+    # an obligation the base registry never held, so every clause is tested for refusing it
+    # AND the whole mechanism is tested for admitting the legitimate case — a gate that only
+    # ever refuses would make Phase 1 impossible in exactly the way the rule exists to avoid.
+    wide = {**base_row, "unit": "wide", "effective_severity": "critical"}
+    def narrow(unit, **over):
+        row = {
+            **base_row,
+            "unit": unit,
+            "effective_severity": "high",
+            "succeeds": "wide",
+            "decomposition_ref": "README.md",
+        }
+        row.update(over)
+        return row
+
+    split = {"a": narrow("a"), "b": narrow("b")}
+    split_measured = {
+        "a": {**now["u"], "effective_severity": "high"},
+        "b": {**now["u"], "effective_severity": "high"},
+    }
+    was = {"wide": wide}
+    base_p = {"wide": {"src/one.py", "src/two.py"}}
+    now_p = {"a": {"src/one.py"}, "b": {"src/two.py"}}
+
+    succession_cases = [
+        ("a valid succession is admitted", split_measured, split, was, base_p, now_p, None),
+        (
+            "half a succession is refused",
+            split_measured,
+            {**split, "b": {k: v for k, v in split["b"].items() if k != "succeeds"}},
+            was,
+            base_p,
+            now_p,
+            "only one half",
+        ),
+        (
+            "a decomposition_ref this tree lacks is refused",
+            split_measured,
+            {**split, "a": narrow("a", decomposition_ref="docs/nope-not-here.md")},
+            was,
+            base_p,
+            now_p,
+            "does not hold",
+        ),
+        (
+            "succeeding oneself is refused",
+            split_measured,
+            {**split, "a": narrow("a", succeeds="a")},
+            was,
+            base_p,
+            now_p,
+            "succeeds itself",
+        ),
+        (
+            "a predecessor the base did not hold is refused",
+            split_measured,
+            split,
+            {},
+            base_p,
+            now_p,
+            "does not hold",
+        ),
+        (
+            "a predecessor that still owes is refused",
+            {**split_measured, "wide": {**now["u"], "effective_severity": "critical"}},
+            split,
+            was,
+            base_p,
+            now_p,
+            "still owes",
+        ),
+        (
+            "a successor above the predecessor's severity is refused",
+            {**split_measured, "a": {**now["u"], "effective_severity": "critical"}},
+            {**split, "a": narrow("a", effective_severity="critical")},
+            {"wide": {**wide, "effective_severity": "high"}},
+            base_p,
+            now_p,
+            "above the predecessor",
+        ),
+        (
+            "a successor covering code the predecessor did not is refused",
+            split_measured,
+            split,
+            was,
+            base_p,
+            {**now_p, "b": {"src/two.py", "src/brand-new.py"}},
+            "did not cover",
+        ),
+        (
+            "an unavailable base refuses the succession rather than assuming it",
+            split_measured,
+            split,
+            None,
+            base_p,
+            now_p,
+            "cannot be checked",
+        ),
+        (
+            "an unavailable unit registry refuses it rather than assuming it",
+            split_measured,
+            split,
+            was,
+            None,
+            now_p,
+            "cannot be compared",
+        ),
+        (
+            "a malformed succession does not also buy growth",
+            split_measured,
+            {**split, "a": narrow("a", decomposition_ref="docs/nope-not-here.md")},
+            was,
+            base_p,
+            now_p,
+            "GREW against the base",
+        ),
+    ]
+    for label, measured, registry, before, bpaths, npaths, expect in succession_cases:
+        found = defects(measured, registry, before, REPO, bpaths, npaths)
         ok = (not found) if expect is None else any(expect in entry for entry in found)
         print(f"  {'ok  ' if ok else 'FAIL'}  {label}")
         if not ok:
@@ -342,7 +653,13 @@ def main() -> int:
     registry = load_registry()
     measured = owing()
     before = base_registry(args.base)
-    found = defects(measured, registry, before)
+    found = defects(
+        measured,
+        registry,
+        before,
+        base_paths=base_unit_paths(args.base),
+        now_paths=current_unit_paths(),
+    )
     if found:
         for entry in found:
             print(f"FAIL: {entry}", file=sys.stderr)
