@@ -5572,7 +5572,10 @@ paths = ["mcp-re-proxy/src/config_state/custody.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://proxy/config_state/custody_exposure"]
+evidence = [
+  "test://proxy/config_state/custody_exposure",
+  "mutation://proxy/config_state/custody_exposure",
+]
 # The first two controls are the claim; the third is what makes it ADR-067-shaped. A
 # consumer asks *may the key be read here*, never *is this AWS* — so a mechanism that does
 # not exist yet drives the same consumer without editing it, which is the property a
@@ -6217,6 +6220,7 @@ evidence_class = "tested"
 direct_consequence_severity = "critical"
 evidence = [
   "test://proxy/replay_materialization/selected_tier_is_established",
+  "mutation://proxy/replay_materialization/selected_tier_is_established",
 ]
 # `startup_plan` is deliberately ABSENT from this closure. That the plan is a projection of
 # the validated configuration is the planner's fact, not this plane's, and folding it in
@@ -8258,7 +8262,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://proxy/pkcs11_adapter/token_custody_and_sessions"]
+evidence = [
+  "test://proxy/pkcs11_adapter/token_custody_and_sessions",
+  "mutation://proxy/pkcs11_adapter/token_custody_and_sessions",
+]
 test_features = ["pkcs11_keysource"]
 tested_symbols = [
   "lib#pkcs11_keysource::tests::tls_spki_is_well_formed_rfc8410_and_round_trips",

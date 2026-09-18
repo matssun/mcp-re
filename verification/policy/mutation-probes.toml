@@ -6794,3 +6794,94 @@ body the two reads AGREE.
 They disagree exactly where it matters: a body dispatched as a request and acknowledged as a
 notification means the tool ran and the caller was told nothing ran.
 """
+
+[[probe]]
+id = "M247-proxy-a-volatile-replay-tier-is-never-handed-over"
+unit = "proxy.replay_materialization"
+theorem = "THM-0091"
+conjunct = "a tier that self-declares the volatile single-process posture is never handed to the serving path"
+path = "mcp-re-proxy/src/replay_plane/materialized.rs"
+anchor = """
+    if tier.durability_class() == mcp_re_core::ReplayDurabilityClass::SingleProcessReference {
+"""
+weakening = """
+    if false {
+"""
+expect_red = [
+  "lib#replay_plane::materialized::tests::a_volatile_tier_is_never_handed_over",
+  "lib#replay_plane::materialized::tests::a_volatile_tier_under_a_linearizable_posture_cannot_be_built",
+]
+note = """
+THE MODULE CALLS THIS DEFENCE IN DEPTH, AND THE MEASUREMENT SAYS OTHERWISE. `--replay-cache
+memory` never reaches here because validation refuses it outright, so for THAT selection the
+statement is a backstop -- but it is the SOLE carrier for two other populations: a store
+reached by some other selection path, and an UNDECLARED backend, because
+`mcp_re_core::durability_class()` defaults to the single-process reference. The weakening
+takes both declared controls red, which is what a sole carrier does; a redundant one would
+have left them green.
+
+So this is not a second instance of the compound-falsifier shape. The post-close-emission
+count stays at one: there, each of two sites independently enforces the WHOLE proposition.
+Here the sibling refusal covers a strictly smaller set of selections.
+
+What it costs is durability the operator believes they have: admitted nonces lost on restart
+and invisible to peer verifiers, under a posture that advertises replay protection.
+"""
+
+[[probe]]
+id = "M248-proxy-a-pkcs11-signature-is-verified-before-emission"
+unit = "proxy.pkcs11_adapter"
+theorem = "THM-0091"
+conjunct = "a 64-byte signature that does not verify under the token's advertised public key is refused before emission"
+path = "mcp-re-proxy/src/pkcs11_keysource/mod.rs"
+anchor = """
+    verify_ed25519(preimage, &signature_b64url, verify_key).map_err(|e| {
+"""
+weakening = """
+    Ok::<(), KeyError>(()).map_err(|e: KeyError| {
+"""
+expect_red = [
+  "lib#pkcs11_keysource::tests::unverifiable_64byte_signature_is_rejected_before_emit",
+]
+note = """
+THE LENGTH IS NOT THE CHECK. A token configured with a prehash or over-hashing CKM mechanism
+returns a perfectly well-formed 64 BYTES that verifies under nothing, and so does a
+mis-bound key -- the shape is right and the signature is wrong. Only verifying it locally
+against the SPKI the token itself advertised separates the two, and nothing between here and
+the wire asks again: the signature goes into a response the peer verifies against that same
+advertised key, so the failure surfaces on somebody else's machine.
+
+The same conjunct and the same weakening shape as M219 on the AWS KMS adapter. Two adapters,
+two units, one rule -- and each needs its own falsifier, because a third provider could
+implement the rule in neither.
+"""
+
+[[probe]]
+id = "M249-proxy-only-the-device-states-hold-the-key-off-this-process"
+unit = "proxy.custody_exposure"
+theorem = "THM-0091"
+conjunct = "the ADR-MCPRE-067 exposure fact read off a custody state — only the device states hold the key off this process"
+path = "mcp-re-proxy/src/config_state/custody.rs"
+anchor = """
+            CustodyKind::FileSeed { .. } | CustodyKind::EnvSeed { .. } => {
+                PrivateKeyExposure::ProcessReadable
+            }
+"""
+weakening = """
+            CustodyKind::FileSeed { .. } | CustodyKind::EnvSeed { .. } => {
+                PrivateKeyExposure::NonExporting
+            }
+"""
+expect_red = [
+  "lib#config_state::custody::tests::only_the_device_states_hold_the_key_off_this_process",
+]
+note = """
+THE WEAKENING IS A LIE ABOUT A DEPLOYMENT, not a broken mechanism. Nothing stops working: a
+file-seed deployment keeps signing exactly as before, and the only thing that changes is what
+it SAYS about itself. `PrivateKeyExposure` is the semantic answer ADR-MCPRE-067 consumers read
+-- it names no mechanism, deliberately -- so a consumer asking whether the private key can be
+read out of this process is told no while the seed sits in the process's own memory.
+
+That is why the classifier and the projection are one unit: a posture nobody can act on
+wrongly is worth nothing, and a posture that misreports is worse than none.
+"""
