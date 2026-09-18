@@ -40,6 +40,10 @@ from being stated more precisely, which is the opposite of its purpose.
 
 So a row may carry `succeeds` and `decomposition_ref`, and five things must hold together:
 
+    the row is NOT already in the base registry        succession authorizes an ADDITION;
+                                                       once the row is in the base it is an
+                                                       ordinary row and the fields are
+                                                       provenance
     the predecessor is a row in the BASE registry      succession refines an obligation that
                                                        already existed; it cannot invent one
     the predecessor is gone from the registry AND      the wide proposition no longer exists
@@ -57,6 +61,14 @@ So a row may carry `succeeds` and `decomposition_ref`, and five things must hold
 ONE AUTHORIZATION BUYS ONE TRANSITION, by the mechanism the module-size registry's
 `growth_ref` uses: after merge the predecessor is no longer in the base registry, so a later
 row naming it fails the first clause. A spent succession matches nothing.
+
+AND THE MERGE IS WHAT SPENDS IT, which is why succession is validated only for rows the base
+does NOT already hold. Once a successor row is in the base registry it is an ordinary
+pre-existing row; its `succeeds` and `decomposition_ref` stay as PROVENANCE — a reader of the
+registry can still see where the obligation came from — but they authorize nothing, because
+there is nothing left to authorize. Validating them again would fail every merged
+decomposition forever, on the strength of a predecessor its own merge removed. That is not
+the ratchet working; it is the ratchet refusing the state it just created.
 
 Succession discharges NOTHING. Successor rows are ordinary open obligations, INCOMPLETE like
 every other row, bounding the same production code measured more finely.
@@ -235,6 +247,12 @@ def succession_defects(
         predecessor = str(row.get("succeeds") or "").strip()
         reference = str(row.get("decomposition_ref") or "").strip()
         if not predecessor and not reference:
+            continue
+        if before is not None and unit in before:
+            # SPENT BY ITS OWN MERGE. The row is in the base, so it is an ordinary
+            # pre-existing obligation and these fields are provenance rather than authority.
+            # Re-validating them would fail every merged decomposition forever, against a
+            # predecessor its own merge removed.
             continue
         if not predecessor or not reference:
             found.append(
@@ -589,6 +607,15 @@ def selftest() -> int:
             "cannot be compared",
         ),
         (
+            "a row ALREADY IN THE BASE is not re-validated — the merge spent it",
+            split_measured,
+            split,
+            {**was, **split},
+            base_p,
+            now_p,
+            None,
+        ),
+        (
             "a malformed succession does not also buy growth",
             split_measured,
             {**split, "a": narrow("a", decomposition_ref="docs/nope-not-here.md")},
@@ -676,11 +703,15 @@ def main() -> int:
     for row in registry.values():
         states[row["status"]] += 1
     reachable = sum(1 for row in registry.values() if row.get("root_reachable"))
-    succeeded = sum(1 for row in registry.values() if row.get("succeeds"))
+    # Counted against the BASE, not against the presence of a `succeeds` field: once a
+    # successor row is in the base it is pre-existing, and its succession fields are
+    # provenance. A summary that counted the field would keep reporting an authorization
+    # that was spent merges ago.
+    admitted = sum(1 for unit, row in registry.items() if row.get("succeeds") and unit not in before)
     origin = (
         "all pre-existing at the baseline"
-        if not succeeded
-        else f"{len(registry) - succeeded} pre-existing at the baseline and {succeeded} "
+        if not admitted
+        else f"{len(registry) - admitted} pre-existing at the baseline and {admitted} "
         f"admitted by SUCCESSION from a row the base held"
     )
     print(
