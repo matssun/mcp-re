@@ -1276,7 +1276,15 @@ nothing here depends on the export being an honest report of what the device can
 """
 owner = "proxy.credential_key_correspondence"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.credential_key_correspondence"]
+# TWO units. `proxy.credential_key_correspondence` establishes what the relation decides and
+# how it attributes a refusal. `proxy.credential_key_correspondence_sole_producer`
+# establishes that the two operands are INDEPENDENTLY OBTAINED — that neither evidence value
+# nor the resulting fact can be assembled by a caller — which is what makes this a relation
+# between two parties rather than an equality between two values somebody supplied.
+supported_by = [
+  "unit://proxy.credential_key_correspondence",
+  "unit://proxy.credential_key_correspondence_sole_producer",
+]
 depends_on = ["THM-0025"]
 
 [[theorem]]

@@ -267,3 +267,86 @@ module-tree-visibility = "`value` is bare-private to `communication_assurance::p
 alternate-constructors = "`interpret` is the only associated function returning Self, and it is fallible. There is no `From<String>`, no `FromStr`, no `Default` and no builder; `as_str` is the only projection and returns `&str`, never `&mut String` or the field"
 generated-or-deserialization = "the derives are Debug/Clone/PartialEq/Eq. No Serialize, no Deserialize \u2014 which matters more here than for a fixed-width value, because a derived `Deserialize` over a one-field newtype would fill the String positionally and admit exactly the inhabitants `interpret` refuses"
 test-only-construction = "the owner's `#[cfg(test)] mod tests` constructs only through `interpret`; no test-gated constructor and no test-gated field visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"
+
+[[probe]]
+id = "S09"
+unit = "proxy.credential_key_correspondence_sole_producer"
+kind = "in-crate-source-injection"
+package = "mcp-re-proxy"
+invariant = "no code outside `communication_assurance::credential_key_correspondence` can assemble CredentialKeyCorrespondenceFacts, so possessing one means the private relation `correspond` found two independently interpreted keys equal"
+insertion_path = "mcp-re-proxy/src/communication_assurance/structural_probe_s09.rs"
+insertion_parent = "mcp-re-proxy/src/communication_assurance/mod.rs"
+insertion_declaration = "mod structural_probe_s09;"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+note = """
+THE FACT VALUE ITSELF. `CredentialKeyCorrespondenceFacts` is what possession is supposed
+to prove, and it is the value `DelegatedCertResolver` holds as its `_correspondence` witness
+(S06). If a sibling could assemble one, the resolver's witness would be a witness to nothing
+and S06's boundary would be closed around a forgeable token.
+
+The owner's own reason for keeping `correspond` private says the same thing in prose — "a
+published relation would let a caller pair two keys it fabricated" — and this is what refuses
+it.
+"""
+construction = "// ADR-MCPRE-068 structural probe S09. Injected into a scratch copy by verify-structural;\n// this file cannot exist in the working tree, because it would not build \u2014 which is the\n// proposition it witnesses.\nuse crate::communication_assurance::CredentialKeyCorrespondenceFacts;\nuse crate::communication_assurance::Ed25519PublicKeyValue;\n\npub fn hostile() -> CredentialKeyCorrespondenceFacts {\n    CredentialKeyCorrespondenceFacts {\n        corresponding_key: Ed25519PublicKeyValue::for_point([0u8; 32]), // STRUCTURAL-PROBE-SITE\n    }\n}\n"
+
+[probe.producer_paths]
+module-tree-visibility = "`corresponding_key` is bare-private to `communication_assurance::credential_key_correspondence`. The parent is `pub mod` and re-exports the type, never the field"
+alternate-constructors = "`correspond` is a PRIVATE free function and is the only code that builds this value; `establish_credential_key_correspondence` is the public entrance and returns what `correspond` produced. There is no `new`, `From`, `Default` or builder, and `corresponding_key()` is the only projection \u2014 deliberately one accessor rather than two, so no consumer can compare the sides again"
+generated-or-deserialization = "the derives are Debug/Clone/Copy/PartialEq/Eq. No Serialize, no Deserialize, and nothing decodes any of the three values \u2014 DER and exported SPKI bytes arrive as `&[u8]` and are adjudicated by the adapters, so no decoder fills a field positionally"
+test-only-construction = "the owner's `#[cfg(test)] mod tests` constructs only through `establish_credential_key_correspondence`; no test-gated constructor and no test-gated field visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"
+
+
+[[probe]]
+id = "S10"
+unit = "proxy.credential_key_correspondence_sole_producer"
+kind = "in-crate-source-injection"
+package = "mcp-re-proxy"
+invariant = "no code outside `communication_assurance::credential_public_key_evidence` can assemble CredentialPublicKeyEvidence, so the key it carries came from a credential's leaf SPKI rather than from a caller"
+insertion_path = "mcp-re-proxy/src/communication_assurance/structural_probe_s10.rs"
+insertion_parent = "mcp-re-proxy/src/communication_assurance/mod.rs"
+insertion_declaration = "mod structural_probe_s10;"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+note = """
+ONE OF THE TWO OPERANDS, and the reason correspondence is not merely key equality.
+`CredentialPublicKeyEvidence` and `CryptographicSigningKeyEvidence` hold the SAME field, an
+`Ed25519PublicKeyValue`, and are two types precisely so that a caller cannot pair one party's
+key with another party's provenance — which is what the owner's doc comment says and what
+this probe refuses. Fabricate this operand and `correspond` compares a credential key nobody
+read out of a credential.
+"""
+construction = "// ADR-MCPRE-068 structural probe S10. Injected into a scratch copy by verify-structural;\n// this file cannot exist in the working tree, because it would not build \u2014 which is the\n// proposition it witnesses.\nuse crate::communication_assurance::CredentialPublicKeyEvidence;\nuse crate::communication_assurance::Ed25519PublicKeyValue;\n\npub fn hostile() -> CredentialPublicKeyEvidence {\n    CredentialPublicKeyEvidence {\n        key: Ed25519PublicKeyValue::for_point([0u8; 32]), // STRUCTURAL-PROBE-SITE\n    }\n}\n"
+
+[probe.producer_paths]
+module-tree-visibility = "`key` is bare-private to `communication_assurance::credential_public_key_evidence`. The parent is `pub mod` and re-exports the type and its refusal enum, never the field"
+alternate-constructors = "`interpret_credential_public_key`, on `CertificateChainEvidence`, is the only code that builds this value, and it is fallible. There is no `new`, `From`, `Default` or builder; `key()` is the only projection and returns a copy of the value, not the field"
+generated-or-deserialization = "the derives are Debug/Clone/Copy/PartialEq/Eq. No Serialize, no Deserialize, and nothing decodes any of the three values \u2014 DER and exported SPKI bytes arrive as `&[u8]` and are adjudicated by the adapters, so no decoder fills a field positionally"
+test-only-construction = "the owner's `#[cfg(test)] mod tests` constructs only through `interpret_credential_public_key`; no test-gated constructor and no test-gated field visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"
+
+
+[[probe]]
+id = "S11"
+unit = "proxy.credential_key_correspondence_sole_producer"
+kind = "in-crate-source-injection"
+package = "mcp-re-proxy"
+invariant = "no code outside `communication_assurance::signing_key_evidence` can assemble CryptographicSigningKeyEvidence, so the key it carries was exported by a signer rather than supplied by a caller"
+insertion_path = "mcp-re-proxy/src/communication_assurance/structural_probe_s11.rs"
+insertion_parent = "mcp-re-proxy/src/communication_assurance/mod.rs"
+insertion_declaration = "mod structural_probe_s11;"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+note = """
+THE OTHER OPERAND. Its twin is S10, and the pair is what makes the relation a relation
+between two PARTIES rather than between two values: both types hold one
+`Ed25519PublicKeyValue` and differ only in which side may produce them. Fabricate this one
+and `correspond` compares a signer key no signer exported.
+"""
+construction = "// ADR-MCPRE-068 structural probe S11. Injected into a scratch copy by verify-structural;\n// this file cannot exist in the working tree, because it would not build \u2014 which is the\n// proposition it witnesses.\nuse crate::communication_assurance::CryptographicSigningKeyEvidence;\nuse crate::communication_assurance::Ed25519PublicKeyValue;\n\npub fn hostile() -> CryptographicSigningKeyEvidence {\n    CryptographicSigningKeyEvidence {\n        key: Ed25519PublicKeyValue::for_point([0u8; 32]), // STRUCTURAL-PROBE-SITE\n    }\n}\n"
+
+[probe.producer_paths]
+module-tree-visibility = "`key` is bare-private to `communication_assurance::signing_key_evidence`. The parent is `pub mod` and re-exports the type and its refusal enum, never the field"
+alternate-constructors = "`interpret_signing_key`, on `SigningKeyExportEvidence`, is the only code that builds this value, and it is fallible. `SigningKeyExportEvidence::exported` and `::unavailable` are total constructors of the INPUT wrapper over borrowed bytes, not of this value \u2014 they say what the signer offered, and the profile rule is applied afterwards. There is no `new`, `From`, `Default` or builder here, and `key()` is the only projection"
+generated-or-deserialization = "the derives are Debug/Clone/Copy/PartialEq/Eq. No Serialize, no Deserialize, and nothing decodes any of the three values \u2014 DER and exported SPKI bytes arrive as `&[u8]` and are adjudicated by the adapters, so no decoder fills a field positionally"
+test-only-construction = "the owner's `#[cfg(test)] mod tests` constructs only through `SigningKeyExportEvidence::interpret_signing_key`; no test-gated constructor and no test-gated field visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"
