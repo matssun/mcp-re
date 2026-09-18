@@ -206,12 +206,25 @@ stage_static() {
     `# It also pins the root-to-premise composition against the empty join that reads as a` \
     `# clean tree.` \
     && python3 tools/verification/test_premise_class.py \
+    `# ADR-MCPRE-068 N3, Phase 0E. effective_severity is DERIVED, so the derivation is the` \
+    `# thing that must be checked: root-only inheritance (the reading the ratification` \
+    `# REJECTED), one-hop propagation, a minimum instead of a maximum, an absent label read` \
+    `# as none, and a cycle producing an order-dependent answer are each a way to compute a` \
+    `# number that is wrong. The live registries are asserted NON-EMPTY, because an empty` \
+    `# derivation would make every fixture control vacuous.` \
+    && python3 tools/verification/test_assurance_graph.py \
     `# ADR-MCPRE-068 §9.4. Registry adequacy is a property of ONE record read alone, so a` \
     `# unit that drops its prover and rewrites itself as a tested one is internally` \
     `# consistent and says nothing about what it used to be. Only a comparison against` \
     `# origin/main sees the CHANGE.` \
     && python3 scripts/evidence_class_ratchet.py --selftest \
     && python3 scripts/evidence_class_ratchet.py \
+    `# ADR-MCPRE-068 N1, Phase 0E. The migration ratchet over the 63 pre-existing falsifier` \
+    `# obligations: it may only shrink, a row may not be added for new work, a dead row is` \
+    `# a defect, and nothing returns to unreviewed. It does NOT discharge anything — every` \
+    `# registered row stays INCOMPLETE and the review tool prints it as an open obligation.` \
+    && python3 scripts/assurance_obligation_gate.py --selftest \
+    && python3 scripts/assurance_obligation_gate.py \
     && python3 tools/verification/test_r9_linkage.py \
     && python3 tools/verification/test_evidence_class.py \
     `# The published claim surface and the declared root set are one fact written twice.` \

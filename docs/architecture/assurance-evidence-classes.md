@@ -289,6 +289,20 @@ has three legitimate exits: add the falsifier, reclassify to another class and s
 class's obligation, or record an owner-approved review obligation that stays visible as debt.
 That spread is the whole argument for doing the architecture first.
 
+> **MEASURED AT 0E: 63, not 42 — and the difference is the ratification working, not an
+> error in the estimate.** The table above counts the ROOT-REACHABLE estate, because that is
+> what Ruling 1's literal text obligates. N3 as ratified rejects root-only severity (§14 item
+> 1), so a proposition's own `direct` label obligates it whether or not a declared root
+> reaches it — which adds the 28 non-root-reachable units the estimate deliberately set
+> aside on the line below. The last row already said they are **not** exempt; 0E is where
+> that stopped being a note and became a count.
+>
+> The measured population, from `tools/verification/_assurance_graph.py` over the live
+> registries: **63 open obligations — 34 critical, 19 high, 10 medium; 35 of them
+> root-reachable, 28 not.** Also measured, and worth its own line because it is what N3 buys:
+> **36 propositions owe more than their own label says**, because something that depends on
+> them declares more.
+
 **Under Ruling 1 the 42 unreachable units are not a second exempt population.** Their
 `effective_severity` is their `direct_consequence_severity`, and whichever of them is
 declared Medium or above joins the obligated set. §11's transition (0A's debt baseline)
@@ -918,6 +932,7 @@ evidence establishes at the moment it is read.
 | | *0D-12 landed:* the tenth split, `proxy.continuation_materialization` — where sealing the STATE does not seal the PLAN. **S18** attacks `ContinuationControlState`; **S19** attacks `ContinuationControlPlan`, the value consumers actually read, whose `store: None` a caller could use to assert single-replica resolution WITHOUT touching the state it projects. `proxy.continuation_materialization_sole_producer` added (`structural`, high); the theorem's `supported_by` gains it beside its three existing units. Measured: both fields opened, 15/15 tests green, both probes FAIL. The lane refused S19's first draft as a MEASUREMENT FAILURE (`saw ['E0432']`, an unresolved import) — the second probe defect the error-code rule has caught. Classes now: 118 tested, 7 proved, 11 structural, 1 measured, of 137 units | |
 | | *0D-13 landed — the campaign COMPLETE:* the eleventh and last unit-backed split, `proxy.admission_configuration_state`. **S20** the state, **S21** the six-field `EnforcedAdmission` view whose EXISTENCE is the enforcement fact (`enforced()` returns `None` otherwise). `proxy.admission_configuration_state_sole_producer` added (`structural`, high); no theorem owns either half, so both are `NOT-ROOT-REACHABLE` — which per Ruling 4 means only that no declared root depends on them. Measured: all seven fields opened, 8/8 tests green, both probes FAIL. **All 11 unit-backed sealed owners are now split, 21 structural probes live against 0B's five, and across the eleven the batteries stayed green 129 times out of 129 with the boundary open.** Classes now: 118 tested, 7 proved, 12 structural, 1 measured, of 138 units | |
 | **0E** | `tools/verification/_assurance_graph.py`; `inherited_severity` and `effective_severity` derived (N3); N1's severity-gated obligation ACTIVATES; `config/assurance-obligation-debt.toml` baselined as a migration ratchet; `NOT-ROOT-REACHABLE` units reported (S5) | `review` prints a typed, severity-annotated root tree; the debt registry holds the real residue and may only shrink |
+| | *0E landed:* `tools/verification/_assurance_graph.py` — N3's derivation, pure, read by BOTH the loader path and `review` so the two can never disagree. N1's severity-gated clause ACTIVE: `verify --manifests` fails on a `tested` proposition at effective Medium+ with no `mutation://` falsifier that is not a pre-existing row, and `scripts/assurance_obligation_gate.py` holds `config/assurance-obligation-debt.toml` (63 rows, baseline 2256cd74) as a shrink-only, closed-to-new-work migration ratchet. `review` prints the derived severities, the open obligations by severity, and the 43 `NOT-ROOT-REACHABLE` units — 28 of which owe. **No encoding bump:** the derivation decides OBLIGATION, not evidence, so no unit's fingerprint changes and no attestation is invalidated. Both defects proven by mutation: removing one debt row makes the loader and the ratchet fail independently | |
 | **1** | examine the 12 roots **consequence-first**, decomposing downward — THM-0094, THM-0095, THM-0091 first, since each is one undecomposed unit | each root has a typed decomposition; each leaf has a named class and a stated obligation |
 | **2** | discharge: formalize, structurally redesign, falsify, or measure, per leaf, as Phase 1 assigns | no Medium-or-higher root reads INCOMPLETE without a recorded, owner-approved obligation |
 

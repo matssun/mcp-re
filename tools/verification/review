@@ -32,6 +32,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import tomllib  # noqa: E402
+
+from _assurance_graph import (  # noqa: E402
+    UNIT,
+    key as graph_key,
+    root_reachable,
+    severities,
+    unmet_obligations,
+)
+from _evidence_class import SEVERITIES  # noqa: E402
 from _fingerprint import fingerprint_theorem, fingerprint_unit  # noqa: E402
 from _graph import evaluate, load_attestations  # noqa: E402
 from _manifest import (  # noqa: E402
@@ -119,6 +129,81 @@ def _print_premises(theorems: dict, doc: dict, assumptions: dict) -> None:
             else " ".join(f"{k}={v}" for k, v in sorted(event.items()) if k != "kind")
         )
         print(f"    {entry['id']}  [{event['kind']}] {detail}")
+
+
+#: The pre-existing N1 obligations, as unit ids. See `tools/verification/verify` for why
+#: this is read here rather than imported from the ratchet that governs the file.
+OBLIGATION_DEBT = Path(__file__).resolve().parents[2] / "config" / "assurance-obligation-debt.toml"
+
+
+def registered_obligations() -> set[str]:
+    """Unit ids with a pre-existing, still-open N1 obligation row; empty when absent."""
+    if not OBLIGATION_DEBT.is_file():
+        return set()
+    with OBLIGATION_DEBT.open("rb") as handle:
+        doc = tomllib.load(handle)
+    return {str(row["unit"]) for row in doc.get("obligation", [])}
+
+
+def print_assurance_graph(theorems: dict, doc: dict) -> None:
+    """N3's derived severities, N1's open obligations, and S5's reachability fact.
+
+    THREE FACTS THAT ARE OFTEN CONFUSED, printed apart so a reader cannot merge them:
+
+      * `effective_severity` is DERIVED, never stored, and is a maximum — so a proposition
+        can owe more than its own label says, and never less;
+      * an open N1 obligation is INCOMPLETE. A row in the migration registry bounds the
+        population and records what closing it would mean; it never subtracts from the
+        obligation and never adds to the assurance;
+      * NOT-ROOT-REACHABLE means ONLY that no currently declared system root transitively
+        depends on the proposition. The ratification is explicit that it is not low
+        importance, not complete assurance, and not permission to omit evidence — which is
+        why these propositions appear in the obligation counts exactly like the rest.
+    """
+    units = doc.get("unit", [])
+    derived = severities(theorems, doc)
+    reachable = root_reachable(theorems, doc, theorems.get("root_theorems", []))
+    unmet = unmet_obligations(theorems, doc)
+    registered = registered_obligations()
+
+    print("\nDERIVED SEVERITY AND OPEN OBLIGATIONS (ADR-MCPRE-068 N1, N3, S5)")
+    raised = [
+        unit["id"]
+        for unit in units
+        if (row := derived[graph_key(UNIT, unit["id"])])["direct"] != row["effective"]
+    ]
+    print(
+        f"  {len(units)} unit(s), {len(theorems.get('theorem', []))} theorem(s); "
+        f"{len(raised)} proposition(s) owe MORE than their own label because a dependent "
+        f"declares more (N3 — inherited severity is derived, never stored)"
+    )
+
+    unreached = sorted(
+        unit["id"] for unit in units if graph_key(UNIT, unit["id"]) not in reachable
+    )
+    print(
+        f"  {len(unreached)} unit(s) NOT-ROOT-REACHABLE — no declared root transitively "
+        f"depends on them. That is a graph fact and NOT a lower obligation: "
+        f"{sum(1 for uid in unreached if uid in unmet)} of them owe a falsifier."
+    )
+
+    new_debt = sorted(set(unmet) - registered)
+    print(
+        f"  {len(unmet)} open N1 obligation(s) — `tested`, effective Medium or higher, no "
+        f"registered falsifier. Each is INCOMPLETE and does not satisfy a root assurance "
+        f"dependency."
+    )
+    by_severity: dict[str, int] = {}
+    for row in unmet.values():
+        by_severity[row["effective_severity"]] = by_severity.get(row["effective_severity"], 0) + 1
+    for name in reversed(SEVERITIES):
+        if by_severity.get(name):
+            print(f"    {name:<9} {by_severity[name]}")
+    if new_debt:
+        print(
+            f"    {len(new_debt)} of them are NOT in the migration registry, which is closed "
+            f"to new work: {new_debt}"
+        )
 
 
 def _root_ok(roots: dict, require: bool) -> bool:
@@ -248,6 +333,7 @@ def main() -> int:
     print(f"\n  {established} of {len(entries)} theorem(s) established")
     _print_roots(roots)
     _print_premises(theorems, doc, assumptions)
+    print_assurance_graph(theorems, doc)
     return 0 if _root_ok(roots, args.require_root_complete) else 1
 
 
