@@ -3634,7 +3634,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://proxy/authorization/posture_selection"]
+evidence = [
+  "test://proxy/authorization/posture_selection",
+  "mutation://proxy/authorization/posture_selection",
+]
 # The two directions of the selection, and the two projections that must not collapse it.
 # `Off` is not `Allow`: an unconfigured deployment claims nothing, and a record that reported
 # it as an allow would manufacture a permission nobody granted.
@@ -6534,7 +6537,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://proxy/authorization_capability/installed_decision"]
+evidence = [
+  "test://proxy/authorization_capability/installed_decision",
+  "mutation://proxy/authorization_capability/installed_decision",
+]
 tested_symbols = [
   "lib#authorization::capability::tests::a_deployment_installing_nothing_says_so_without_reading_any_trust_material",
   "lib#authorization::capability::tests::a_configured_profile_installs_an_evaluator_over_the_enrolled_authorities",

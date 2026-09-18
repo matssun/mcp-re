@@ -6486,3 +6486,83 @@ keeps the first and discards the second.
 The entry ceiling below is a sibling conjunct on the same rule, not a second carrier: it
 refuses when the cache is full, and says nothing about a cache whose lock is poisoned.
 """
+
+[[probe]]
+id = "M237-proxy-no-policy-deployed-is-not-a-grant"
+unit = "proxy.authorization_posture"
+theorem = "THM-0091"
+conjunct = "the two facts a posture keeps apart — no policy is deployed, and a policy permitted this"
+path = "mcp-re-proxy/src/authorization/decide.rs"
+anchor = """
+        Err(e) => Err(AuthorizationRefusal::PolicyRefused(e)),
+"""
+weakening = """
+        Err(_e) => Ok(AuthorizationPosture::NoPolicyConfigured),
+"""
+expect_red = [
+  "lib#authorization::decide::tests::a_denying_evaluator_refuses_with_its_own_token",
+]
+note = """
+THE TWO FACTS, CONFLATED IN THE DIRECTION THAT MATTERS. "No policy is deployed" and "a policy
+refused this" are both non-grants, so a reader that only asks *was this authorized?* cannot
+tell them apart -- and the weakening exploits exactly that: a DENY becomes the posture a
+deployment with no policy at all reports. An operator auditing why a request was not
+authorized is then told the deployment has no policy, which is false, and the evaluator's own
+refusal token -- the thing that says WHICH policy refused and why -- is discarded.
+
+The first attempt at this probe weakened the no-evaluator branch into a fabricated grant and
+DID NOT COMPILE, because the decision type has no default; the lane refused it as a
+measurement failure rather than reporting anything about the conjunct, which is the correct
+answer to a tree that does not build.
+"""
+
+[[probe]]
+id = "M238-proxy-an-unreadable-action-is-refused-before-any-policy"
+unit = "proxy.authorization_posture"
+theorem = "THM-0091"
+conjunct = "a request with no readable action is refused before any policy is consulted"
+path = "mcp-re-proxy/src/authorization/decide.rs"
+anchor = """
+    let request = authorization_request(verified, body, binding)
+        .map_err(AuthorizationRefusal::ActionNotVerifiable)?;
+"""
+weakening = """
+    let Ok(request) = authorization_request(verified, body, binding) else {
+        return Ok(AuthorizationPosture::NoPolicyConfigured);
+    };
+"""
+expect_red = [
+  "lib#authorization::decide::tests::a_request_with_no_readable_action_is_refused_before_any_policy_is_consulted",
+  "lib#authorization::decide::tests::a_denial_and_a_missing_coordinate_project_to_different_authorities",
+]
+note = """
+THE COORDINATE IS READ WHETHER OR NOT A POLICY IS CONFIGURED, which is what makes this a
+refusal rather than a lookup failure: a request whose ACTION cannot be established is not a
+request a policy could have been asked about, so answering `NoPolicyConfigured` for it would
+report the deployment's posture as the reason a specific request was unverifiable. The
+weakening collapses two authorities -- the action reader's and the policy's -- into one token,
+which is exactly what the sibling control about projecting to different authorities measures.
+"""
+
+[[probe]]
+id = "M239-proxy-a-configured-profile-with-no-authority-refuses-startup"
+unit = "proxy.authorization_capability"
+theorem = "THM-0091"
+conjunct = "a deployment that configures an authorization profile with no enrolled authority refuses to start rather than serving a profile that can decide nothing"
+path = "mcp-re-proxy/src/authorization/capability.rs"
+anchor = """
+    if issuers.is_empty() {
+"""
+weakening = """
+    if false {
+"""
+expect_red = [
+  "lib#authorization::capability::tests::a_configured_profile_with_no_enrolled_authority_refuses_startup",
+]
+note = """
+THE FAILURE MODE IS A DEPLOYMENT THAT LOOKS CONFIGURED. With no key enrolled for the
+`authorization-issuer` slot no decision can ever verify, so every request is refused for
+carrying no valid decision -- which reads as a policy working correctly and denying
+everything, not as a deployment that was never able to decide. Refusing at STARTUP is the
+only point at which the two are distinguishable, because afterwards the evidence is identical.
+"""

@@ -255,30 +255,12 @@ root_reachable = false
 status = "unreviewed"
 
 [[obligation]]
-unit = "proxy.authorization_capability"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "critical"
-inherited_severity = "none"
-root_reachable = false
-status = "unreviewed"
-
-[[obligation]]
 unit = "proxy.authorization_configuration_state"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "high"
 direct_consequence_severity = "high"
 inherited_severity = "none"
 root_reachable = false
-status = "unreviewed"
-
-[[obligation]]
-unit = "proxy.authorization_posture"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "high"
-inherited_severity = "critical"
-root_reachable = true
 status = "unreviewed"
 
 [[obligation]]
