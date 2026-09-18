@@ -5235,3 +5235,76 @@ there in production -- `verified.wire_code or ...` -- and nothing in the declara
 battery said so, which is the same defect in the other direction. Both halves are repaired
 here: the description states the conjunct and the battery covers it.
 """
+
+[[probe]]
+id = "M190-python-sign-time-nonce-floor"
+unit = "sdk_python.nonce_floor"
+theorem = "THM-0094"
+conjunct = "no request and no notification is signed under a nonce below the 128-bit floor, and a sub-floor or non-string factory result fails closed at sign time"
+path = "sdk/python/python/mcp_re_sdk/transport.py"
+anchor = """
+    if not isinstance(nonce, str) or len(nonce) < MIN_NONCE_CHARS:
+"""
+weakening = """
+    if False:
+"""
+expect_red = [
+  "pytest#tests/test_nonce_floor.py::test_a_sub_floor_override_is_refused_at_sign_time[]",
+  "pytest#tests/test_nonce_floor.py::test_a_non_string_override_is_refused_without_raising_typeerror",
+  "pytest#tests/test_transport.py::test_a_sub_floor_nonce_override_is_refused_before_a_notification_is_signed",
+]
+note = """
+THE TWIN OF M179, and sole for the same reason: `_checked_nonce` is the one place a nonce
+is drawn for signing, and both the request path and the notification path go through it.
+The floor constrains an OVERRIDE -- `_default_nonce` clears it by construction -- so the
+weakening is the whole refusal rather than one of two redundant ones.
+"""
+
+[[probe]]
+id = "M191-python-verified-reply-is-rebuilt"
+unit = "sdk_python.reply_envelope"
+theorem = "THM-0094"
+conjunct = "what reaches the session is rebuilt from the one member the verified reply carried, and a verified reply that is not a JSON-RPC response is refused rather than dispatched"
+path = "sdk/python/python/mcp_re_sdk/transport.py"
+anchor = """
+    response = _plain_response_object(json.loads(body))
+"""
+weakening = """
+    response = json.loads(body)
+"""
+expect_red = [
+  "pytest#tests/test_transport.py::test_a_verified_reply_carrying_a_method_is_refused_not_dispatched",
+  "pytest#tests/test_transport.py::test_a_verified_reply_with_neither_result_nor_error_is_refused",
+]
+note = """
+THE REBUILD IS THE CARRIER, which is why the weakening is an in-place edit rather than a
+deleted predicate. Editing the parsed document leaves every other top-level key the server
+sent, so a body carrying both a legal `result` and a `method` re-parses as a
+server-to-client REQUEST and `ClientSession` dispatches it -- driving sampling, elicitation
+or roots on peer-chosen params while the awaiting call never resolves, its id having been
+consumed as an inbound request id. `_plain_response_object` is also where the
+neither-result-nor-error refusal lives, so one anchor weakens both of the unit's conjuncts;
+they are not independent carriers of one proposition but one carrier of two.
+"""
+
+[[probe]]
+id = "M192-typescript-verified-reply-is-rebuilt"
+unit = "sdk_typescript.reply_envelope"
+theorem = "THM-0095"
+conjunct = "what reaches the client is rebuilt from the one member the verified reply carried, and a verified reply that is not a JSON-RPC response is refused rather than dispatched"
+path = "sdk/typescript/src/transport.ts"
+anchor = """
+  const response = plainResponseObject(JSON.parse(body.toString("utf8")));
+"""
+weakening = """
+  const response = JSON.parse(body.toString("utf8")) as Record<string, unknown>;
+"""
+expect_red = [
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > refuses a verified reply carrying a top-level method instead of dispatching it",
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > refuses a verified reply that is not a JSON-RPC response at all",
+]
+note = """
+The TypeScript instance of M191. `JSONRPCMessageSchema` is a UNION that accepts a request,
+so the parser downstream is not a second carrier: it validates the method-bearing body
+happily, as a request.
+"""

@@ -4249,7 +4249,10 @@ paths = ["sdk/python/python/mcp_re_sdk/transport.py"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://sdk_python/reply_envelope/rebuilt_never_edited"]
+evidence = [
+  "test://sdk_python/reply_envelope/rebuilt_never_edited",
+  "mutation://sdk_python/reply_envelope/rebuilt_never_edited",
+]
 tested_symbols = [
   "pytest#tests/test_transport.py::test_a_verified_reply_carrying_a_method_is_refused_not_dispatched",
   "pytest#tests/test_transport.py::test_a_verified_reply_with_neither_result_nor_error_is_refused",
@@ -4340,7 +4343,10 @@ paths = ["sdk/python/python/mcp_re_sdk/transport.py"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://sdk_python/nonce_floor/nothing_is_signed_under_a_weak_nonce"]
+evidence = [
+  "test://sdk_python/nonce_floor/nothing_is_signed_under_a_weak_nonce",
+  "mutation://sdk_python/nonce_floor/nothing_is_signed_under_a_weak_nonce",
+]
 tested_symbols = [
   "pytest#tests/test_nonce_floor.py::test_the_default_generator_clears_the_floor",
   "pytest#tests/test_nonce_floor.py::test_the_default_generator_is_accepted",
@@ -4641,7 +4647,10 @@ paths = ["sdk/typescript/src/transport.ts"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://sdk_typescript/reply_envelope/rebuilt_never_edited"]
+evidence = [
+  "test://sdk_typescript/reply_envelope/rebuilt_never_edited",
+  "mutation://sdk_typescript/reply_envelope/rebuilt_never_edited",
+]
 tested_symbols = [
   "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > refuses a verified reply carrying a top-level method instead of dispatching it",
   "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > refuses a verified reply that is not a JSON-RPC response at all",
