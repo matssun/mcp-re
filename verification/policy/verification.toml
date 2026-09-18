@@ -2315,7 +2315,7 @@ evidence = [
 [[unit]]
 id = "proxy.trust_plan"
 class = "V0"
-description = "The trust subtree's projection of its own validated state: the classified revocation posture, the document locator, the excluded response issuer, and the shared epoch mechanism it is HANDED. Its reload cadence is derived from the posture rather than stored, so no second reload value exists to disagree with the first."
+description = "WHAT THE PLAN PROJECTS AND WHAT IT REFUSES TO RE-DERIVE: the classified revocation posture, the document locator, the excluded response issuer, and the shared epoch mechanism it is HANDED rather than computes; its reload cadence is derived from the posture rather than stored, so no second reload value exists to disagree with the first. That the posture and the locator necessarily describe ONE deployment — because the sole constructor takes one `ValidatedDeployment` and no caller can pair them itself — is a compile-time fact and belongs to `proxy.trust_plan_co_provenance`."
 paths = ["mcp-re-proxy/src/trust_plan.rs"]
 exported_contracts = []
 evidence_class = "tested"
@@ -2334,6 +2334,35 @@ tested_symbols = [
   "lib#trust_plan::tests::the_shared_values_are_inputs_the_trust_plan_cannot_re_derive",
 ]
 
+# ---------------------------------------------------------------------------
+#
+# CO-PROVENANCE, NOT LEGALITY — and it is the owner's own stated reason for the constructor's
+# shape: "the one producer, and it takes a `ValidatedDeployment` — so both owned facts come
+# from one deployment, and no caller can supply them separately."
+#
+# That sentence is about who may PAIR the fields. It is not about whether any one of them is
+# valid, and no behavioural test can reach it: in the hostile construction every field could
+# be a perfectly good value, and what would be false is that they describe the same
+# deployment. `from_validated` is TOTAL for the same reason — there is nothing to refuse,
+# because the legality of each part belongs to its own owner — so the entire security content
+# of the signature is its single `&ValidatedDeployment` parameter, and a struct literal
+# restores exactly the hand-pairing that parameter removes.
+
+[[unit]]
+id = "proxy.trust_plan_co_provenance"
+class = "V0"
+description = "A TrustPlan's revocation posture and document locator necessarily describe ONE deployment: all four fields are bare-private to `trust_plan`, `from_validated` is the only associated function returning Self and reads both from a single `&ValidatedDeployment`, nothing decodes a plan, and no test-gated construction route exists — so no caller can pair a posture from one validated deployment with a locator from another. Not a claim that any field is legal, which is each field owner's, and not a claim about what the plan projects, which is `proxy.trust_plan`'s."
+paths = [
+  "mcp-re-proxy/src/trust_plan.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+# A posture paired with the wrong document is a deployment enforcing one trust configuration
+# while reporting another, with every part individually valid.
+direct_consequence_severity = "medium"
+evidence = [
+  "structural://proxy/trust_plan/co_provenance",
+]
 [[unit]]
 id = "proxy.trust_composition_root"
 class = "V0"

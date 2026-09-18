@@ -2056,7 +2056,15 @@ invent it.
 """
 owner = "proxy.trust_plan"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.trust_plan"]
+# TWO units. `proxy.trust_plan` establishes what the plan projects and what it refuses to
+# re-derive. `proxy.trust_plan_co_provenance` establishes that the posture and the locator
+# describe ONE deployment — a property of who may pair the fields, not of whether any field
+# is legal, and one no behavioural test can reach because every field in the pairing could be
+# a perfectly good value.
+supported_by = [
+  "unit://proxy.trust_plan",
+  "unit://proxy.trust_plan_co_provenance",
+]
 depends_on = ["THM-0035"]
 
 [[theorem]]

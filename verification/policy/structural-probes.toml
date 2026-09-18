@@ -426,3 +426,33 @@ module-tree-visibility = "both fields are BARE-PRIVATE to `communication_assuran
 alternate-constructors = "`new` is the only associated function returning Self. There is no `From`, `Default` or builder, and `value()`/`source()` return a `&PeerIdentityValue` and a `Copy` source \u2014 never `&mut` or the representation"
 generated-or-deserialization = "the derives are Debug/Clone/PartialEq/Eq. No Serialize, no Deserialize; the value arrives as an interpreted `PeerIdentityValue` and the source from the policy the interpreter was given, so nothing fills the pair positionally"
 test-only-construction = "no test-gated constructor and no test-gated visibility widening exists. The authority's own tests call `new` because they ARE inside the boundary the claim names, which is what the claim permits and not a hole in it"
+
+[[probe]]
+id = "S14"
+unit = "proxy.trust_plan_co_provenance"
+kind = "in-crate-source-injection"
+package = "mcp-re-proxy"
+invariant = "no code outside `trust_plan` can assemble a TrustPlan field by field, so its revocation posture and its document locator always come from ONE ValidatedDeployment rather than from two a caller paired"
+insertion_path = "mcp-re-proxy/src/structural_probe_s14.rs"
+insertion_parent = "mcp-re-proxy/src/lib.rs"
+insertion_declaration = "mod structural_probe_s14;"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+note = """
+CO-PROVENANCE, NOT LEGALITY, and it is the owner's own stated reason for the constructor's
+shape: "the one producer, and it takes a `ValidatedDeployment` — so both owned facts come
+from one deployment, and no caller can supply them separately."
+
+That sentence is about who may PAIR the fields, not about whether any one of them is valid,
+and no behavioural test can reach it: every field in the hostile construction could be a
+perfectly good value. What would be false is that they describe the same deployment. A struct
+literal restores exactly the hand-pairing the signature removes, which is why the probe is a
+literal rather than a bad argument.
+"""
+construction = "// ADR-MCPRE-068 structural probe S14. Injected into a scratch copy by verify-structural;\n// this file cannot exist in the working tree, because it would not build \u2014 which is the\n// proposition it witnesses.\n//\n// The hostile act is not an illegal FIELD \u2014 each of these could be a perfectly good value.\n// It is assembling them SEPARATELY, which is exactly what `from_validated` taking one\n// `ValidatedDeployment` prevents and what a struct literal would restore.\nuse crate::trust_plan::TrustPlan;\n\npub fn hostile() -> TrustPlan {\n    TrustPlan {\n        revocation: todo!(), // STRUCTURAL-PROBE-SITE\n        document: todo!(),\n        response_kid: String::new(),\n        epoch: todo!(),\n    }\n}\n"
+
+[probe.producer_paths]
+module-tree-visibility = "all four fields are bare-private to `trust_plan`, which is a crate-root module. The probe is injected at the crate root, a sibling, so it is outside the defining module and every descendant of it"
+alternate-constructors = "`from_validated` is the only associated function returning Self. It is TOTAL \u2014 there is nothing to refuse, because the legality of each part is its own owner's \u2014 and its single `&ValidatedDeployment` parameter is the entire mechanism: it is what makes the two owned facts co-provenant. `response_kid` and `epoch` are passed in deliberately, being shared with the signing plane, and the five projections return borrows or a computed `TrustReloadPlan`, never the representation"
+generated-or-deserialization = "no derives that construct: no Serialize, no Deserialize, no Default. Nothing decodes a TrustPlan \u2014 it is projected from validated configuration, never parsed"
+test-only-construction = "the crate's tests build plans through `from_validated` against a `ValidatedDeployment`; no test-gated constructor and no test-gated field visibility exists. A `#[cfg(test)]` constructor would be a producer even though it never runs in production, because the compiler would admit the construction"

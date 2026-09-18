@@ -151,6 +151,7 @@ attestations this view cannot see.
 | unit://proxy.trust_document_interpretation | source, contracts or evidence | THM-0098 | _no consumer_ |
 | unit://proxy.trust_epoch_source | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.trust_plan | source, contracts or evidence | THM-0037, THM-0066 | _no consumer_ |
+| unit://proxy.trust_plan_co_provenance | source, contracts or evidence | THM-0037 | _no consumer_ |
 | unit://proxy.trust_plane_runtime | source, contracts or evidence | THM-0097, THM-0098, THM-0100 | _no consumer_ |
 | unit://sdk_python.exchange_path | source, contracts or evidence | THM-0094 | _no consumer_ |
 | unit://sdk_typescript.exchange_path | source, contracts or evidence | THM-0095 | _no consumer_ |
