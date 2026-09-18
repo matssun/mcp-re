@@ -596,6 +596,41 @@ So the claim is worded to the **boundary**, not to a constructor count, and S07'
 value is a perfectly legal key. The probe attacks where the bytes may be *placed*, which is
 the only thing that can be false here.
 
+### The fourth: `PeerIdentityValue`, where the theorem statement said it
+
+**Landed 2026-09-18, ADR-MCPRE-068 Phase 0D-6.** The quantifier was written down three times
+before anything attacked it:
+
+- the struct's doc comment — *"there is no public constructor other than `interpret`, which
+  is fallible. Every inhabitant therefore satisfies the invariant"*;
+- the unit's description — *"every inhabitant is non-empty after trimming, length-bounded,
+  and free of control characters"*;
+- **THM-0023's statement** — *"the type's representation is private and its only constructor
+  is fallible, so this is a property of the type rather than of any call site: no sequence of
+  operations available to a caller produces an inhabitant that violates it."*
+
+All three quantify over the **type**, which is the right thing to want — it is exactly
+R-SEAL's distinction between *this constructor checks X* and *every inhabitant satisfies X*,
+and only the second is a theorem. The five tests quantify over `interpret`. They are correct,
+M29 falsifies one of them, and none of them can reach the sentence, because the inhabitants
+it ranges over are the ones nobody wrote.
+
+| proposition | unit | class | falsifier |
+|---|---|---|---|
+| what `interpret` accepts and refuses: trim before judging, `Empty`, inclusive length bound, every control-character shape, first-failing-rule precedence | `proxy.peer_identity_value` | `tested` | M29 |
+| every inhabitant is a string `interpret` accepted | `proxy.peer_identity_value_sole_producer` | `structural` | S08 — `E0451` on the field |
+
+```text
+cargo test -p mcp-re-proxy --lib -- communication_assurance::peer_identity_value::
+    test result: ok. 5 passed; 0 failed        # with value opened to pub(crate)
+
+verify-structural --probe S08
+    FAIL S08: the hostile construction COMPILED.
+```
+
+S08's hostile value is illegal on all three of the owner's rules at once. `interpret` refuses
+it; the probe asks whether refusing it is avoidable.
+
 The remaining unit-backed sealed owners follow the same split, one owner per change.
 
 ## Open

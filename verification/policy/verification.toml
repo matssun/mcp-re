@@ -1339,7 +1339,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.peer_identity_value"
 class = "V0"
-description = "The generic peer-identity value invariant: every inhabitant is non-empty after trimming, length-bounded, and free of control characters, whatever evidence produced it."
+description = "WHAT `interpret` ACCEPTS AND REFUSES: the value is trimmed before it is judged, empty-after-trimming is refused as Empty, the length bound is inclusive and one byte past it is TooLong, every shape of control character is refused for the one reason, and when several rules fail the first failing rule is the one reported. That the invariant then holds of EVERY INHABITANT rather than of everything `interpret` returned is a compile-time fact about the boundary, and belongs to `proxy.peer_identity_value_sole_producer`."
 paths = ["mcp-re-proxy/src/communication_assurance/peer_identity_value.rs"]
 exported_contracts = []
 evidence_class = "tested"
@@ -1369,6 +1369,41 @@ tested_symbols = [
   "lib#communication_assurance::peer_identity_value::tests::refusal_precedence_reports_the_first_failing_rule",
 ]
 pilot = "verus-candidate"
+
+# ---------------------------------------------------------------------------
+#
+# THE QUANTIFIER, AND IT WAS ALREADY WRITTEN DOWN TWICE. This unit's description said "every
+# inhabitant is non-empty after trimming, length-bounded, and free of control characters",
+# and the struct's doc comment says "there is no public constructor other than `interpret`,
+# which is fallible — every inhabitant therefore satisfies the invariant". Both quantify over
+# the TYPE, and that is the right thing to want: CLAUDE.md's R-SEAL is the difference between
+# "this constructor checks X" and "every inhabitant satisfies X", and only the second is a
+# theorem.
+#
+# The five tests quantify over `interpret`. They are correct, M29 falsifies one of them, and
+# they cannot reach the sentence above — no behavioural test can, because the inhabitants
+# they would have to range over are the ones nobody wrote.
+#
+# S08 is what makes the quantifier true rather than intended, and its hostile value is
+# illegal on all three rules at once: `interpret` refuses it, and the probe asks whether
+# refusing it is avoidable.
+
+[[unit]]
+id = "proxy.peer_identity_value_sole_producer"
+class = "V0"
+description = "Only `communication_assurance::peer_identity_value` can put a string in a PeerIdentityValue: `value` is bare-private, `interpret` is the single fallible constructor, there is no `From`, `FromStr`, `Default` or derived `Deserialize` that would fill it positionally, and no test-gated construction route exists — so every inhabitant is a string `interpret` accepted, which is what lets the invariant be stated over the type instead of over one function. States nothing about WHICH strings `interpret` accepts, which is `proxy.peer_identity_value`'s."
+paths = [
+  "mcp-re-proxy/src/communication_assurance/peer_identity_value.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+# The value is what the transport binding compares. An inhabitant nobody trimmed makes two
+# spellings of one identity unequal there, which is the defect `interpret`'s trim exists for
+# and which the boundary is what actually prevents.
+direct_consequence_severity = "medium"
+evidence = [
+  "structural://proxy/communication_assurance/peer_identity_value_sole_producer",
+]
 
 [[unit]]
 id = "proxy.certificate_identity"

@@ -1105,7 +1105,17 @@ rather than reimplementing is part of this unit's battery.
 """
 owner = "proxy.peer_identity_value"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.peer_identity_value"]
+# TWO units, and this theorem is the clearest case of why. Its STATEMENT says "the type's
+# representation is private and its only constructor is fallible, so this is a property of
+# the type rather than of any call site: no sequence of operations available to a caller
+# produces an inhabitant that violates it" — a compile-time claim, written in the statement,
+# supported until now by a battery that ranges over `interpret`.
+# `proxy.peer_identity_value` establishes what `interpret` accepts and refuses;
+# `proxy.peer_identity_value_sole_producer` establishes the sentence above.
+supported_by = [
+  "unit://proxy.peer_identity_value",
+  "unit://proxy.peer_identity_value_sole_producer",
+]
 depends_on = []
 
 [[theorem]]

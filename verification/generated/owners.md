@@ -117,6 +117,7 @@ not an omission to hide.
 | proxy.outstanding_id_provenance | V0 | _none_ | 0 |
 | proxy.pdp_decision_relation | V0 | THM-0040 | 0 |
 | proxy.peer_identity_value | V0 | THM-0023 | 0 |
+| proxy.peer_identity_value_sole_producer | V0 | _none_ | 0 |
 | proxy.pkcs11_adapter | V0 | _none_ | 0 |
 | proxy.redis_replay_adapter | V0 | THM-0106 | 0 |
 | proxy.refusal_audit_emission | V0 | THM-0085 | 0 |
