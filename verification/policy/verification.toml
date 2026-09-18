@@ -4390,7 +4390,10 @@ paths = ["sdk/python/python/mcp_re_sdk/transport.py"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://sdk_python/trust_anchor/complete_or_refused"]
+evidence = [
+  "test://sdk_python/trust_anchor/complete_or_refused",
+  "mutation://sdk_python/trust_anchor/complete_or_refused",
+]
 tested_symbols = [
   # One per anchor member: the claim is that NONE of the seven is defaulted, and a single
   # id would establish it for whichever one the parametrization happened to run first.
@@ -4817,7 +4820,10 @@ paths = ["sdk/typescript/src/transport.ts"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://sdk_typescript/trust_anchor/complete_or_refused"]
+evidence = [
+  "test://sdk_typescript/trust_anchor/complete_or_refused",
+  "mutation://sdk_typescript/trust_anchor/complete_or_refused",
+]
 tested_symbols = [
   "vitest#test/transport.test.ts > McpReHttpTransport delegated-verification anchor > refuses a config with an empty issuerKeyId",
   "vitest#test/transport.test.ts > McpReHttpTransport delegated-verification anchor > refuses a config with an empty issuerPubkeyB64Url",

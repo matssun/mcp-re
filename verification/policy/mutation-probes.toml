@@ -4998,3 +4998,144 @@ removing either alone leaves the declared control green. That is a finding about
 depth, not a probe to force, and the one-anchor schema cannot express the weakening that
 would falsify it.
 """
+
+[[probe]]
+id = "M180-python-trust-anchor-completeness"
+unit = "sdk_python.trust_anchor_completeness"
+theorem = "THM-0094"
+conjunct = "an incomplete delegated-verification anchor is refused at construction rather than defaulted"
+path = "sdk/python/python/mcp_re_sdk/transport.py"
+anchor = """
+        if missing:
+"""
+weakening = """
+        if False:
+"""
+expect_red = [
+  "pytest#tests/test_transport.py::test_an_incomplete_trust_anchor_fails_at_construction[issuer_key_id]",
+  "pytest#tests/test_transport.py::test_an_incomplete_trust_anchor_fails_at_construction[verifier_audiences]",
+  "pytest#tests/test_transport.py::test_an_incomplete_trust_anchor_fails_at_construction[accepted_epochs]",
+]
+note = """
+THE SITE IS SOLE: `missing` is assembled once, over the five string members and the two
+sequence members, and this is the only statement that acts on it. Nothing downstream
+re-checks the anchor, because every later comparison treats an empty value as a value --
+which is the defect the check exists to prevent reaching the wire. Under the weakening the
+transport constructs with a blank issuer key and discovers it as a server fault.
+"""
+
+[[probe]]
+id = "M181-python-denylist-bare-string"
+unit = "sdk_python.trust_anchor_completeness"
+theorem = "THM-0094"
+conjunct = "a bare-string denylist is refused rather than expanded one entry per character"
+path = "sdk/python/python/mcp_re_sdk/transport.py"
+anchor = """
+        if isinstance(self.revoked_identifiers, (str, bytes, bytearray)):
+"""
+weakening = """
+        if False:
+"""
+expect_red = [
+  "pytest#tests/test_transport.py::test_a_bare_string_denylist_is_refused_rather_than_expanded_per_character",
+]
+note = """
+THIS CONJUNCT FAILS OPEN, which is why it is probed separately from the completeness one.
+The sibling entry-shape check does NOT catch a bare string: iterating `"kid-1"` yields
+single characters, every one of them a non-empty `str`, so the entry loop is satisfied and
+the denylist reports as configured while matching no identifier that can exist. The two
+checks COMPOSE -- each refuses a shape the other admits -- they are not two carriers of one
+proposition, so each needs its own falsifier.
+"""
+
+[[probe]]
+id = "M182-python-denylist-entry-shape"
+unit = "sdk_python.trust_anchor_completeness"
+theorem = "THM-0094"
+conjunct = "a denylist entry that cannot match an identifier is refused rather than silently revoking nothing"
+path = "sdk/python/python/mcp_re_sdk/transport.py"
+anchor = """
+        if bad:
+"""
+weakening = """
+        if False:
+"""
+expect_red = [
+  "pytest#tests/test_transport.py::test_a_denylist_entry_that_cannot_match_an_identifier_is_refused[bad0]",
+  "pytest#tests/test_transport.py::test_a_denylist_entry_that_cannot_match_an_identifier_is_refused[bad1]",
+  "pytest#tests/test_transport.py::test_a_denylist_entry_that_cannot_match_an_identifier_is_refused[bad2]",
+]
+note = """
+The other half of the composition M181 describes: the bare-string check admits a list, and
+this one is what refuses a `None`, an integer or an empty string sitting inside it. Neither
+check is redundant with the other, and neither is re-performed at match time -- the
+revocation comparison asks whether an identifier is IN the list, and an entry that cannot
+equal any identifier makes that question always false.
+"""
+
+[[probe]]
+id = "M183-typescript-trust-anchor-completeness"
+unit = "sdk_typescript.trust_anchor_completeness"
+theorem = "THM-0095"
+conjunct = "an incomplete delegated-verification anchor is refused at construction rather than defaulted"
+path = "sdk/typescript/src/transport.ts"
+anchor = """
+    if (missing.length > 0) {
+"""
+weakening = """
+    if (false) {
+"""
+expect_red = [
+  "vitest#test/transport.test.ts > McpReHttpTransport delegated-verification anchor > refuses a config with an empty issuerKeyId",
+  "vitest#test/transport.test.ts > McpReHttpTransport delegated-verification anchor > refuses a config with an empty verifierAudiences",
+  "vitest#test/transport.test.ts > McpReHttpTransport delegated-verification anchor > refuses a config with an empty acceptedEpochs",
+]
+note = """
+THE TYPE SYSTEM IS NOT THE CARRIER. `issuerKeyId: string` makes the field required and
+says nothing about it being non-empty, and `acceptedEpochs` is checked through
+`?.length ? "set" : ""` precisely because an empty array satisfies the declared type. So
+the compiler refuses none of the shapes this statement refuses, and it is the sole site.
+"""
+
+[[probe]]
+id = "M184-typescript-denylist-bare-string"
+unit = "sdk_typescript.trust_anchor_completeness"
+theorem = "THM-0095"
+conjunct = "a bare-string denylist is refused rather than spread one entry per character"
+path = "sdk/typescript/src/transport.ts"
+anchor = """
+      if (!Array.isArray(revoked)) {
+"""
+weakening = """
+      if (false) {
+"""
+expect_red = [
+  "vitest#test/transport.test.ts > McpReHttpTransport revocation denylist shape > refuses a bare string, which would spread into a per-character denylist",
+]
+note = """
+The TypeScript instance of the composition recorded on M181: `for (const id of "kid-1")`
+iterates characters, each a non-empty string, so the entry-shape loop below admits exactly
+what this check refuses. `readonly string[]` is erased at runtime and refuses nothing.
+"""
+
+[[probe]]
+id = "M185-typescript-denylist-entry-shape"
+unit = "sdk_typescript.trust_anchor_completeness"
+theorem = "THM-0095"
+conjunct = "a denylist entry that is not a non-empty string is refused rather than silently revoking nothing"
+path = "sdk/typescript/src/transport.ts"
+anchor = """
+        if (typeof id !== "string" || id.length === 0) {
+"""
+weakening = """
+        if (false) {
+"""
+expect_red = [
+  "vitest#test/transport.test.ts > McpReHttpTransport revocation denylist shape > refuses an entry that is not a non-empty string",
+]
+note = """
+The other half of M184. An array satisfies `Array.isArray`, so nothing above this loop
+looks at what is IN the array, and the revocation comparison downstream only asks for
+membership -- an entry that cannot equal any delegated kid, issuer kid or `jti` makes the
+denylist non-empty and inert at the same time.
+"""
