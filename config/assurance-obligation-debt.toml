@@ -604,15 +604,6 @@ root_reachable = false
 status = "unreviewed"
 
 [[obligation]]
-unit = "proxy.serving_identity_provenance"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "critical"
-inherited_severity = "critical"
-root_reachable = true
-status = "unreviewed"
-
-[[obligation]]
 unit = "proxy.signing_credential_provenance"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "critical"
@@ -624,21 +615,6 @@ status = "unreviewed"
 [[obligation]]
 unit = "proxy.signing_role_separation"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "high"
-inherited_severity = "critical"
-root_reachable = true
-status = "unreviewed"
-
-[[obligation]]
-unit = "proxy.trust_composition_root"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-# DERIVATION CORRECTION, ADR-MCPRE-068 Phase 1, 2026-09-18. THM-0074's decomposition named
-# THM-0077 as the premise its antecedent quantifies over, so a `critical` root now reaches
-# this proposition and N3 derives `critical` where the row recorded `high`. The proposition,
-# its production carrier and the obligation are unchanged; the graph simply no longer
-# understates what depends on it. `direct_consequence_severity` is untouched, which is what
-# says this is a derivation and not a reclassification.
 effective_severity = "critical"
 direct_consequence_severity = "high"
 inherited_severity = "critical"
