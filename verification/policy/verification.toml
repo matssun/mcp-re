@@ -4037,7 +4037,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://client/execution_contract/disposition_battery"]
+evidence = [
+  "test://client/execution_contract/disposition_battery",
+  "mutation://client/execution_contract/disposition_battery",
+]
 # The one distinction the whole module exists for is the second control: silence is not a
 # did-not-run verdict, and reading it as one is how a side effect gets repeated.
 tested_symbols = [
@@ -8218,7 +8221,10 @@ paths = ["mcp-re-proxy/src/gcp_kms_keysource.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://proxy/gcp_kms_adapter/construction_and_emission"]
+evidence = [
+  "test://proxy/gcp_kms_adapter/construction_and_emission",
+  "mutation://proxy/gcp_kms_adapter/construction_and_emission",
+]
 test_features = ["gcp_kms_keysource"]
 tested_symbols = [
   "lib#gcp_kms_keysource::tests::non_ed25519_algorithm_fails_closed",
@@ -8471,7 +8477,10 @@ paths = ["mcp-re-client/src/startup.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://client/serving_lifetime/refresher_started_and_held"]
+evidence = [
+  "test://client/serving_lifetime/refresher_started_and_held",
+  "mutation://client/serving_lifetime/refresher_started_and_held",
+]
 # One control, and it observes the EFFECT rather than the call: the anchors in force become
 # the empty set while `serve_until_shutdown` runs. The question is asked at the load-time
 # instant, before the manifest's own expiry, so a false pass cannot be manufactured by the

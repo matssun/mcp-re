@@ -84,15 +84,6 @@ root_reachable = false
 status = "unreviewed"
 
 [[obligation]]
-unit = "client.execution_contract"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "high"
-inherited_severity = "critical"
-root_reachable = true
-status = "unreviewed"
-
-[[obligation]]
 unit = "client.local_serving_pipeline"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "medium"
@@ -117,15 +108,6 @@ effective_severity = "high"
 direct_consequence_severity = "high"
 inherited_severity = "medium"
 root_reachable = false
-status = "unreviewed"
-
-[[obligation]]
-unit = "client.serving_lifetime"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "high"
-inherited_severity = "critical"
-root_reachable = true
 status = "unreviewed"
 
 [[obligation]]
@@ -274,15 +256,6 @@ effective_severity = "high"
 direct_consequence_severity = "high"
 inherited_severity = "high"
 root_reachable = false
-status = "unreviewed"
-
-[[obligation]]
-unit = "proxy.gcp_kms_adapter"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "critical"
-inherited_severity = "critical"
-root_reachable = true
 status = "unreviewed"
 
 [[obligation]]

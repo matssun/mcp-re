@@ -6885,3 +6885,94 @@ read out of this process is told no while the seed sits in the process's own mem
 That is why the classifier and the projection are one unit: a posture nobody can act on
 wrongly is worth nothing, and a posture that misreports is worse than none.
 """
+
+[[probe]]
+id = "M250-client-silence-is-not-a-statement-that-nothing-ran"
+unit = "client.execution_contract"
+theorem = "THM-0091"
+conjunct = "a receipt that says nothing about execution is distinguished from one that says nothing ran"
+path = "mcp-re-client-core/src/execution_contract.rs"
+anchor = """
+            None => ExecutionStatus::Unstated,
+"""
+weakening = """
+            None => ExecutionStatus::NotExecuted,
+"""
+expect_red = [
+  "lib#execution_contract::tests::a_receipt_that_says_nothing_is_not_a_receipt_that_says_it_did_not_run",
+]
+note = """
+THE DEFAULT IS THE DECISION. Nothing here validates or refuses; the whole proposition is which
+of two answers an ABSENCE maps to, and the weakening is a one-token edit that no reader would
+flag. `Unstated` leaves the question open, so a caller must reconcile before retrying;
+`NotExecuted` closes it, so a caller retries -- and if the work did run, it runs twice under a
+fresh nonce that passes replay admission.
+
+The `Unrecognized` arm is not a second carrier: it covers a value the server DID send that this
+client does not know, which is a third fact again. Three answers, one match, and collapsing any
+two of them is a silent change of meaning rather than a broken mechanism.
+"""
+
+[[probe]]
+id = "M251-proxy-a-gcp-signature-is-verified-before-it-is-returned"
+unit = "proxy.gcp_kms_adapter"
+theorem = "THM-0091"
+conjunct = "every signature is verified locally against the advertised public key before it is returned, and a pre-hashed signature is refused"
+path = "mcp-re-proxy/src/gcp_kms_keysource.rs"
+anchor = """
+        verify_ed25519(
+            preimage,
+            &b64url_encode(signature.bytes()),
+            &self.verify_key,
+        )
+        .map_err(|e| {
+"""
+weakening = """
+        Ok::<(), KeyError>(())
+        .map_err(|e: KeyError| {
+"""
+expect_red = [
+  "lib#gcp_kms_keysource::tests::prehash_signature_is_rejected_before_return",
+]
+note = """
+THE THIRD PROVIDER, AND THE THIRD FALSIFIER FOR ONE RULE -- after M219 (AWS) and M248 (PKCS#11).
+That the same conjunct needs a probe in each adapter is the point rather than a duplication:
+the rule is not carried anywhere shared, so a fourth provider could implement it in none of
+them and no existing probe would notice.
+
+Worth recording as a Phase-2 observation: three adapters implementing one proposition
+independently is a candidate for a shared owner. That is an architectural question for
+ADR-MCPRE-061 question 2, not a falsifier question, and it is NOT acted on here.
+"""
+
+[[probe]]
+id = "M252-client-the-refresher-is-started-before-the-listener-is-served"
+unit = "client.serving_lifetime"
+theorem = "THM-0091"
+conjunct = "the anchor refresher is started unconditionally before the local listener is served and held for as long as it serves"
+path = "mcp-re-client/src/startup.rs"
+anchor = """
+    let _refresher = AnchorRefresher::start(
+"""
+weakening = """
+    let _ = AnchorRefresher::start(
+"""
+expect_red = [
+  "bin/mcp-re-client#startup::tests::the_serving_path_starts_the_anchor_refresher_and_anchors_are_withdrawn_on_expiry",
+]
+note = """
+`let _ = ` RATHER THAN A DELETION, and the difference is the proposition: the refresher is
+still STARTED, and it is dropped at the end of the statement instead of being held for the
+serving lifetime. So the weakening attacks "held for as long as it serves" precisely, and
+leaves "started" alone -- which is what makes the control's 31-second wait meaningful rather
+than incidental.
+
+Nothing on the request path withdraws anchors. A client without a running refresher keeps
+verifying against the anchors it loaded at startup for as long as it runs, including after the
+manifest in force has passed its own `expires_at`, and every unit test of the refresher would
+still pass while it did.
+
+THIS PROBE EXPOSED A LANE DEFECT before it measured anything: `bin/<name>` is one of the four
+declared Cargo target shapes and the lane held a second, smaller idea of them, so the battery
+never ran and the probe was blamed. Fixed in the lane, not here.
+"""
