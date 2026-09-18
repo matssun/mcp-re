@@ -2475,7 +2475,8 @@ expect_red = [
 
 [[probe]]
 id = "M81-an-illegal-advance-is-latched-not-ignored"
-unit = "proxy.exchange_lifecycle"
+unit = "proxy.exchange_relation"
+theorem = "THM-0043"
 conjunct = "an advance the relation does not admit latches an anomaly, in every build"
 # The latch is the whole enforcement. `advance` cannot refuse — the serving path is
 # straight-line code and a refused step would silently under-report — so the disagreement
@@ -2490,14 +2491,19 @@ anchor = """
 """
 weakening = """
 """
+# TRIMMED by the ADR-MCPRE-068 Phase-1 split. The second control —
+# `an_illegal_advance_never_reports_the_exchange_as_retry_safe` — is a CONSEQUENCE
+# proposition and is `proxy.exchange_retry_consequence`'s: it says an illegal advance cannot
+# make the exchange look retry-safe, which is about what may be REPORTED rather than about
+# whether the relation latched. A probe may only expect a control its own unit declares.
 expect_red = [
   "lib#exchange_state::tests::an_illegal_advance_is_refused_and_latched_in_every_build",
-  "lib#exchange_state::tests::an_illegal_advance_never_reports_the_exchange_as_retry_safe",
 ]
 
 [[probe]]
 id = "M90-a-success-the-machine-cannot-vouch-for-is-not-published"
-unit = "proxy.exchange_lifecycle"
+unit = "proxy.exchange_publication"
+theorem = "THM-0101"
 conjunct = "an exchange whose prospective terminal does not satisfy the model publishes no success"
 # THE LOAD-BEARING NEGATIVE for the enforcement that replaced two `debug_assert!`s. Those
 # assertions were the reason this probe is necessary: the machine detected the violation and
@@ -2535,7 +2541,8 @@ expect_red = [
 
 [[probe]]
 id = "M91-a-refused-publication-is-remembered-not-re-derived"
-unit = "proxy.exchange_lifecycle"
+unit = "proxy.exchange_publication"
+theorem = "THM-0101"
 conjunct = "a refused publication latches on the live machine, so a later attempt cannot succeed"
 # THE PROPOSITION, stated so it cannot drift back:
 #
@@ -2567,7 +2574,8 @@ expect_red = [
 
 [[probe]]
 id = "M93-the-202-is-not-minted-before-its-terminal-is-authorized"
-unit = "proxy.exchange_lifecycle"
+unit = "proxy.exchange_publication"
+theorem = "THM-0101"
 conjunct = "the notification terminal is decided before the 202 is signed, and the refusal exits"
 # The notification half of the same proposition M92 covers for the bodied path, and the one
 # the unit could not state until `notification.rs` entered its `paths`.
@@ -2621,7 +2629,8 @@ expect_red = [
 
 [[probe]]
 id = "M82-the-backend-projection-is-derived-not-asserted"
-unit = "proxy.exchange_lifecycle"
+unit = "proxy.exchange_retry_consequence"
+theorem = "THM-0044"
 conjunct = "the backend projection is derived from the request state, so the two cannot disagree"
 # The second-source-of-truth failure this module exists to avoid. Freeze the projection and
 # `BackendState` becomes a value someone must remember to set, which is the shape that let a
@@ -2643,7 +2652,8 @@ expect_red = [
 
 [[probe]]
 id = "M83-a-spent-approval-stays-spent"
-unit = "proxy.exchange_lifecycle"
+unit = "proxy.exchange_retry_consequence"
+theorem = "THM-0044"
 conjunct = "Consumed latches: no later observation may report a spent approval as unspent"
 # The defect the module was built around. Once a human's approval is destroyed it is
 # destroyed for the rest of the exchange; a later `Peeked` observation overwriting it makes
