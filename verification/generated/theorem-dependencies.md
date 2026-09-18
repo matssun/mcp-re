@@ -105,7 +105,6 @@ graph BT
     THM_0090["THM-0090<br/>A credential leaves this proxy only to the endpoint its rule admitted"]
     THM_0092["THM-0092<br/>A request whose replay state was not established does not dispatch"]
     THM_0093["THM-0093<br/>An answer leg that needs a continuation does not proceed unbound"]
-    THM_0094["ROOT — THM-0094<br/>The shipped Python SDK accepts only an answer to its own request"]
     THM_0096["THM-0096<br/>The runtime installs exactly the continuation capability its plan names"]
     THM_0097["THM-0097<br/>A replica serves no request-signer binding outside its snapshot's authority window"]
     THM_0098["THM-0098<br/>A replica's trust snapshot is the slot-wise interpretation of one accepted trust document"]
@@ -265,10 +264,6 @@ graph BT
     THM_0106 --> THM_0092
     THM_0107 --> THM_0092
     THM_0087 --> THM_0093
-    THM_0058 --> THM_0094
-    THM_0059 --> THM_0094
-    THM_0060 --> THM_0094
-    THM_0061 --> THM_0094
     THM_0066 --> THM_0099
     THM_0097 --> THM_0099
     THM_0098 --> THM_0099
@@ -286,7 +281,7 @@ graph BT
     THM_0069 --> THM_0130
     THM_0054 --> THM_0131
     classDef root stroke-width:3px;
-    class THM_0071,THM_0074,THM_0075,THM_0076,THM_0077,THM_0078,THM_0094 root;
+    class THM_0071,THM_0074,THM_0075,THM_0076,THM_0077,THM_0078 root;
 ```
 
 ## Component 2
@@ -340,110 +335,119 @@ graph BT
 
 ```mermaid
 graph BT
-    THM_0095["ROOT — THM-0095<br/>The shipped TypeScript SDK accepts only an answer to its own request"]
+    THM_0094["ROOT — THM-0094<br/>The shipped Python SDK accepts only an answer to its own request"]
     classDef root stroke-width:3px;
-    class THM_0095 root;
+    class THM_0094 root;
 ```
 
 ## Component 8
 
 ```mermaid
 graph BT
-    THM_0104["THM-0104<br/>Shutdown stops admission and bounds the wait on admitted work; what the drain leaves behind it never resumes"]
+    THM_0095["ROOT — THM-0095<br/>The shipped TypeScript SDK accepts only an answer to its own request"]
+    classDef root stroke-width:3px;
+    class THM_0095 root;
 ```
 
 ## Component 9
 
 ```mermaid
 graph BT
-    THM_0105["THM-0105<br/>Replay retention is a bounded per-replica account, charged before the store is touched and handed back only by an answer that proves nothing was retained"]
+    THM_0104["THM-0104<br/>Shutdown stops admission and bounds the wait on admitted work; what the drain leaves behind it never resumes"]
 ```
 
 ## Component 10
 
 ```mermaid
 graph BT
-    THM_0109["THM-0109<br/>The client transport verifies the proxy's server certificate against the configured CA, and a request body is never sent to a server it did not authenticate"]
+    THM_0105["THM-0105<br/>Replay retention is a bounded per-replica account, charged before the store is touched and handed back only by an answer that proves nothing was retained"]
 ```
 
 ## Component 11
 
 ```mermaid
 graph BT
-    THM_0110["THM-0110<br/>The client transport refuses an ambiguous message rather than repairing it, and reads nothing unbounded"]
+    THM_0109["THM-0109<br/>The client transport verifies the proxy's server certificate against the configured CA, and a request body is never sent to a server it did not authenticate"]
 ```
 
 ## Component 12
 
 ```mermaid
 graph BT
-    THM_0112["THM-0112<br/>A retained hop is exactly what re-verifies it, and nothing a sender could widen it to"]
+    THM_0110["THM-0110<br/>The client transport refuses an ambiguous message rather than repairing it, and reads nothing unbounded"]
 ```
 
 ## Component 13
 
 ```mermaid
 graph BT
-    THM_0114["THM-0114<br/>A signed request's freshness inputs are real, and the deterministic ones cannot reach a production build"]
+    THM_0112["THM-0112<br/>A retained hop is exactly what re-verifies it, and nothing a sender could widen it to"]
 ```
 
 ## Component 14
 
 ```mermaid
 graph BT
-    THM_0115["THM-0115<br/>The quota window is armed by a typed wire fact, and a failure that states no quota arms nothing"]
+    THM_0114["THM-0114<br/>A signed request's freshness inputs are real, and the deterministic ones cannot reach a production build"]
 ```
 
 ## Component 15
 
 ```mermaid
 graph BT
-    THM_0117["THM-0117<br/>An acquired credential is never used past the lifetime its issuer stated, and a lifetime that cannot be read is not a long one"]
+    THM_0115["THM-0115<br/>The quota window is armed by a typed wire fact, and a failure that states no quota arms nothing"]
 ```
 
 ## Component 16
 
 ```mermaid
 graph BT
-    THM_0118["THM-0118<br/>A replay verdict and a replay-tier outage are different answers, and neither is an allow"]
+    THM_0117["THM-0117<br/>An acquired credential is never used past the lifetime its issuer stated, and a lifetime that cannot be read is not a long one"]
 ```
 
 ## Component 17
 
 ```mermaid
 graph BT
-    THM_0119["THM-0119<br/>A trust binding that does not exist and a resolver that cannot answer are different refusals, and the key that names one binding names no other"]
+    THM_0118["THM-0118<br/>A replay verdict and a replay-tier outage are different answers, and neither is an allow"]
 ```
 
 ## Component 18
 
 ```mermaid
 graph BT
-    THM_0122["THM-0122<br/>A security record says what a Core verdict says, and its display text is never a verdict"]
+    THM_0119["THM-0119<br/>A trust binding that does not exist and a resolver that cannot answer are different refusals, and the key that names one binding names no other"]
 ```
 
 ## Component 19
 
 ```mermaid
 graph BT
-    THM_0123["THM-0123<br/>An admitted local request cannot leak its slot, cannot be guessed onto a route, and a pause is never rendered as a finished call"]
+    THM_0122["THM-0122<br/>A security record says what a Core verdict says, and its display text is never a verdict"]
 ```
 
 ## Component 20
 
 ```mermaid
 graph BT
-    THM_0124["THM-0124<br/>A declared binding commits to what the verifier will digest, or the deployment does not start"]
+    THM_0123["THM-0123<br/>An admitted local request cannot leak its slot, cannot be guessed onto a route, and a pause is never rendered as a finished call"]
 ```
 
 ## Component 21
 
 ```mermaid
 graph BT
-    THM_0125["THM-0125<br/>A request a verifier could not bind is refused before it is sent, and a notification is not a request with no id"]
+    THM_0124["THM-0124<br/>A declared binding commits to what the verifier will digest, or the deployment does not start"]
 ```
 
 ## Component 22
+
+```mermaid
+graph BT
+    THM_0125["THM-0125<br/>A request a verifier could not bind is refused before it is sent, and a notification is not a request with no id"]
+```
+
+## Component 23
 
 ```mermaid
 graph BT

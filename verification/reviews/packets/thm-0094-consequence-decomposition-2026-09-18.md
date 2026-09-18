@@ -10,6 +10,13 @@ Its predecessors are `thm-0094-python-sdk-root-2026-09-03.md` (the ratification 
 a question none of those asked: *is the obligation attached to the right propositions at
 all?* The answer is no in four measurable ways, and this packet is the correction.
 
+**The statement itself is NOT changed by the commit that lands this decomposition.**
+`scripts/claim_surface_gate.py` refuses a published root claim whose `theorem_claim` has
+moved since the owner's specification review, and that refusal is correct: a claim nobody has
+approved in its present form must not be published. So the decomposition lands — units,
+owners, carriers, classes, batteries, and this root's `supported_by` — and the CLAIM
+CORRECTIONS §2 establishes are batched for owner review. §10 states them as exact edits.
+
 ---
 
 ## 1. The root consequence, stated before anything is decomposed
@@ -506,3 +513,44 @@ beside the chain and not inside it (§2 F4).
 | **P2-E** | `sdk/python/tests/test_transport_e2e.py` skips entirely — `importorskip("httpx")` against a resolution that provides `httpx2` — so five live controls over this root's own claim run nowhere. Port it, and decide whether the e2e lane is a registered battery (which needs the example built in the measured lane) or independent evidence that says so. §6.1. | high |
 
 None is discharged here. Phase 1 states the graph; Phase 2 discharges it.
+
+---
+
+## 10. The claim corrections requested, and not taken
+
+`theorem_claim` is `statement + security_consequence + scope`, and `theorem_dependencies` is
+the transitive `depends_on` closure. Each edit below moves one of them, so each is the
+owner's. **None weakens or withdraws the promise**; §2 argues that C1 strengthens its support.
+
+**C1 — narrow the correlation sentence to what the shipped path reaches** (§2 F1). Replace
+*"Every reply is taken from the correlation entry the request created, and a reply binding to
+nothing outstanding, arriving late, or repeating one already answered is refused rather than
+delivered"* with a sentence that says the verdict was computed by the audited core over the
+exact bytes this exchange signed, that a request is answerable only inside the window it
+declared, and that `CorrelationStore`'s unbound and duplicate refusals are the store's own at
+its own API. The promise — *not handed another exchange's answer* — is unchanged and better
+supported, because the corrected text names the cryptographic binding instead of a store
+lookup that cannot fail.
+
+**C2 — add `depends_on = ["THM-0058", "THM-0059", "THM-0060", "THM-0061"]`** (§2 F2). The
+present `[]` is false: the SDK's whole cryptographic argument is `mcp_re_client_core`'s.
+THM-0126 is deliberately excluded — the PyO3 binding derives that fact independently rather
+than consuming it, which is P2-D.
+
+**C3 — a scope paragraph recording the PyO3 binding as uncovered** (§2 F3): that this claim
+assumes the binding's projection is faithful rather than establishing it, and that the
+assumption is a recorded review obligation.
+
+**C4 — move the read bound from the claim to a stated non-claim** (§2 F4). The bound is
+availability; what the root takes from the deadline is the honesty of the local outcome,
+which is `sdk_python.local_failure_provenance`'s. The existing worst-case paragraph stays, as
+a statement about a proposition registered beside the chain.
+
+**C5 — a scope sentence excluding request-side attribution**, naming
+`sdk_python.signer_policy` and `sdk_python.authorization_binding` as the units that hold it.
+
+**C6 — state the trust-anchor completeness conjunct** (§2 F5), which the TypeScript member
+states and this one does not, and which `sdk_python.trust_anchor_completeness` now carries.
+
+Proposed text for all six is drafted; applying it is one edit to the entry followed by
+`tools/verification/review --fingerprint THM-0094` for the record the review names.
