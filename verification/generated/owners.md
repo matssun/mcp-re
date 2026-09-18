@@ -17,17 +17,24 @@ not an omission to hide.
 
 | unit | class | owns theorems | assumptions |
 |---|---|---|---|
+| client.accepted_authority | V0 | _none_ | 0 |
+| client.accepted_authority_sole_producer | V0 | _none_ | 0 |
 | client.anchor_refresh | V0 | THM-0120 | 0 |
+| client.bind_scope | V0 | _none_ | 0 |
+| client.bind_scope_sole_producer | V0 | _none_ | 0 |
 | client.binding_spec_refusal | V0 | _none_ | 0 |
+| client.caller_shape_admission | V0 | THM-0091 | 0 |
 | client.delegation_policy_seal | V0 | THM-0060 | 0 |
 | client.deployment_config | V0 | THM-0124 | 0 |
 | client.execution_contract | V0 | THM-0061 | 0 |
-| client.local_ingress_authority | V0 | THM-0091 | 0 |
+| client.local_leg_declaration | V0 | _none_ | 0 |
+| client.local_request_surface | V0 | _none_ | 0 |
 | client.local_serving_pipeline | V0 | THM-0123 | 0 |
 | client.manifest_floor | V0 | THM-0121 | 0 |
 | client.proxy_request_correspondence | V0 | THM-0084 | 0 |
 | client.request_construction | V0 | THM-0125 | 0 |
-| client.response_acceptance | V0 | THM-0058, THM-0059, THM-0076 | 0 |
+| client.response_binding_disposition | V0 | THM-0059, THM-0076 | 0 |
+| client.response_signer_authorization | V0 | THM-0058 | 0 |
 | client.serving_lifetime | V0 | THM-0127 | 0 |
 | client.transport_message_hygiene | V0 | THM-0110 | 0 |
 | client.transport_server_identity | V0 | THM-0109 | 0 |
@@ -48,32 +55,47 @@ not an omission to hide.
 | http_profile.artifact_typing | V1 | THM-0007 | 8 |
 | http_profile.artifact_verification_boundary | V0 | THM-0008 | 0 |
 | http_profile.bodyless_acknowledgement | V0 | _none_ | 0 |
+| http_profile.bound_response_full_result | V0 | THM-0018 | 1 |
+| http_profile.bound_response_seam_result | V0 | THM-0016 | 2 |
+| http_profile.bound_response_shared_facts | V0 | THM-0021 | 2 |
 | http_profile.continuation_binding | V1 | THM-0010 | 6 |
 | http_profile.continuation_unbypassability | V1 | THM-0009 | 6 |
+| http_profile.delegated_bound_result | V0 | THM-0019 | 2 |
+| http_profile.delegated_credential_chain | V0 | _none_ | 2 |
 | http_profile.delegated_signing_custody | V0 | _none_ | 0 |
+| http_profile.delegated_unbound_result | V0 | THM-0020 | 1 |
 | http_profile.freshness_window | V1 | THM-0001 | 11 |
 | http_profile.keyid | V0 | THM-0055 | 0 |
 | http_profile.keyid_selector | V0 | THM-0050 | 1 |
 | http_profile.pdp_decision_authentication | V0 | THM-0039 | 0 |
 | http_profile.replay_key | V0 | THM-0079 | 0 |
 | http_profile.request_envelope | V0 | THM-0083 | 0 |
+| http_profile.request_floor_result | V0 | THM-0014 | 3 |
+| http_profile.request_full_result | V0 | THM-0015 | 1 |
 | http_profile.response_emission_binding | V0 | THM-0065 | 0 |
 | http_profile.retained_chain_record | V0 | _none_ | 0 |
-| http_profile.scitt_receipt_offline | V0 | THM-0041, THM-0072 | 0 |
+| http_profile.scitt_algorithm_agreement | V0 | _none_ | 0 |
+| http_profile.scitt_derived_root | V0 | THM-0041 | 0 |
+| http_profile.scitt_inclusion_fold | V0 | _none_ | 0 |
+| http_profile.scitt_position_commitment | V0 | _none_ | 0 |
+| http_profile.scitt_receipt_shape | V0 | _none_ | 0 |
 | http_profile.scitt_retained_correspondence | V0 | THM-0042 | 0 |
-| http_profile.scitt_service_pin | V0 | THM-0068 | 0 |
+| http_profile.scitt_service_pin | V0 | THM-0068, THM-0072 | 0 |
+| http_profile.scitt_statement_attribution | V0 | _none_ | 0 |
 | http_profile.submitted_hop_identity | V0 | _none_ | 0 |
+| http_profile.unbound_response_seam_result | V0 | THM-0017 | 2 |
+| http_profile.unbound_response_shared_facts | V0 | THM-0022 | 2 |
 | http_profile.verifier_result_separation | V0 | THM-0047 | 0 |
-| http_profile.verifier_results | V0 | THM-0014, THM-0015, THM-0016, THM-0017, THM-0018, THM-0019, THM-0020, THM-0021, THM-0022 | 3 |
 | policy.authorization_taxonomy | V0 | _none_ | 0 |
 | proxy.admission_configuration_state | V0 | _none_ | 0 |
 | proxy.admission_configuration_state_sole_producer | V0 | _none_ | 0 |
 | proxy.admission_currency_gate | V0 | _none_ | 0 |
 | proxy.admission_state_source | V0 | _none_ | 0 |
 | proxy.async_replay_retention | V0 | THM-0105 | 0 |
+| proxy.audit_authority_coordinates | V0 | THM-0069 | 0 |
 | proxy.audit_delivery | V0 | THM-0070 | 0 |
-| proxy.audit_record_coordinates | V0 | THM-0069, THM-0071 | 0 |
 | proxy.audit_text_rendering | V0 | THM-0130 | 0 |
+| proxy.audit_vocabulary_import | V0 | THM-0071 | 0 |
 | proxy.authenticated_relationship_peer | V0 | THM-0031 | 1 |
 | proxy.authorization_capability | V0 | _none_ | 0 |
 | proxy.authorization_configuration_state | V0 | _none_ | 0 |
@@ -85,6 +107,7 @@ not an omission to hide.
 | proxy.certificate_identity_authority_boundary | V0 | _none_ | 0 |
 | proxy.channel_associated_credential | V0 | THM-0028 | 1 |
 | proxy.channel_associated_identity | V0 | THM-0029 | 1 |
+| proxy.client_certificate_posture | V0 | THM-0054 | 0 |
 | proxy.client_credential_window | V0 | THM-0102 | 0 |
 | proxy.client_credential_window_sole_producer | V0 | _none_ | 0 |
 | proxy.client_revocation_currency | V0 | THM-0131 | 0 |
@@ -108,13 +131,17 @@ not an omission to hide.
 | proxy.dispatch_commitment | V0 | THM-0045, THM-0051, THM-0052, THM-0074 | 0 |
 | proxy.ed25519_public_key | V0 | THM-0025 | 1 |
 | proxy.ed25519_public_key_sole_producer | V0 | _none_ | 0 |
+| proxy.epoch_bound_session_store | V0 | THM-0103 | 1 |
 | proxy.etcd_replay_adapter | V0 | THM-0107 | 0 |
 | proxy.evidence_attestation | V0 | THM-0113 | 0 |
-| proxy.exchange_lifecycle | V0 | THM-0043, THM-0044, THM-0078 | 0 |
+| proxy.exchange_publication | V0 | _none_ | 0 |
+| proxy.exchange_relation | V0 | THM-0043, THM-0078 | 0 |
+| proxy.exchange_retry_consequence | V0 | THM-0044 | 0 |
 | proxy.exchange_transition_ownership | V0 | THM-0101 | 0 |
 | proxy.gcp_kms_adapter | V0 | _none_ | 0 |
 | proxy.kms_ed25519_seam | V0 | THM-0108 | 0 |
 | proxy.kms_endpoint_authority | V0 | THM-0089 | 0 |
+| proxy.listener_state_assembly | V0 | THM-0048 | 1 |
 | proxy.mechanism_verified_credential | V0 | THM-0030 | 1 |
 | proxy.online_ocsp_reachability | V0 | THM-0013 | 0 |
 | proxy.operator_facing_redaction | V0 | _none_ | 0 |
@@ -145,15 +172,16 @@ not an omission to hide.
 | proxy.serving_trust_seam | V0 | THM-0066, THM-0099 | 0 |
 | proxy.signing_credential_provenance | V0 | THM-0082 | 0 |
 | proxy.signing_role_separation | V0 | THM-0073 | 0 |
-| proxy.tls_listener_state | V0 | THM-0048, THM-0054, THM-0103 | 1 |
 | proxy.trust_composition_root | V0 | THM-0038, THM-0067, THM-0077 | 0 |
-| proxy.trust_configuration_state | V0 | THM-0035, THM-0036 | 0 |
 | proxy.trust_configuration_state_sole_producer | V0 | _none_ | 0 |
 | proxy.trust_document_interpretation | V0 | THM-0098 | 0 |
+| proxy.trust_document_locator | V0 | THM-0036 | 0 |
 | proxy.trust_epoch_source | V0 | _none_ | 1 |
 | proxy.trust_plan | V0 | THM-0037 | 0 |
 | proxy.trust_plan_co_provenance | V0 | _none_ | 0 |
-| proxy.trust_plane_runtime | V0 | THM-0097, THM-0100 | 0 |
+| proxy.trust_reload_cadence | V0 | THM-0100 | 0 |
+| proxy.trust_resolution_window | V0 | THM-0097 | 0 |
+| proxy.trust_revocation_classification | V0 | THM-0035 | 0 |
 | sdk_python.authorization_binding | V0 | _none_ | 0 |
 | sdk_python.bounded_read | V0 | _none_ | 0 |
 | sdk_python.continuation_drive | V0 | _none_ | 0 |
@@ -167,4 +195,17 @@ not an omission to hide.
 | sdk_python.signer_policy | V0 | _none_ | 0 |
 | sdk_python.trust_anchor_completeness | V0 | _none_ | 0 |
 | sdk_python.verdict_delivery | V0 | _none_ | 0 |
-| sdk_typescript.exchange_path | V0 | THM-0095 | 0 |
+| sdk_typescript.authorization_binding | V0 | _none_ | 0 |
+| sdk_typescript.bounded_read | V0 | _none_ | 0 |
+| sdk_typescript.continuation_drive | V0 | _none_ | 0 |
+| sdk_typescript.correlation_lifecycle | V0 | _none_ | 0 |
+| sdk_typescript.exchange_binding | V0 | THM-0095 | 0 |
+| sdk_typescript.execution_report | V0 | _none_ | 0 |
+| sdk_typescript.local_failure_provenance | V0 | _none_ | 0 |
+| sdk_typescript.nonce_floor | V0 | _none_ | 0 |
+| sdk_typescript.notification_delivery | V0 | _none_ | 0 |
+| sdk_typescript.post_close_emission | V0 | _none_ | 0 |
+| sdk_typescript.reply_envelope | V0 | _none_ | 0 |
+| sdk_typescript.signer_policy | V0 | _none_ | 0 |
+| sdk_typescript.trust_anchor_completeness | V0 | _none_ | 0 |
+| sdk_typescript.verdict_delivery | V0 | _none_ | 0 |

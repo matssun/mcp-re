@@ -1,0 +1,26 @@
+{
+  "authority": "adr-068-phase1",
+  "changed_components": [
+    "theorem_dependencies"
+  ],
+  "corrections": [
+    {
+      "field": "depends_on",
+      "id": "D1",
+      "new": "THM-0082: [\"THM-0062\", \"THM-0064\", \"THM-0073\", \"THM-0116\"]",
+      "old": "THM-0082: [\"THM-0062\", \"THM-0064\", \"THM-0073\"]",
+      "reason": "Without it, `signs under the materialized source` is satisfied by holding an object that may sign under a key the deployment never advertised \u2014 THM-0108's own stated consequence, a signature relying parties are told to check against a key it was not made with. THM-0117 (credential lifetime) and THM-0115 (quota window) are deliberately NOT edges: a stale credential changes nothing a signature attributes, and throttling is not attribution. Adding either would claim support this argument does not use."
+    }
+  ],
+  "dependency_correction": "THM-0082 depends_on += THM-0116. THM-0116 already depends on THM-0108 and THM-0089, so the whole remote-signing correspondence sub-graph enters this root's closure by one edge. Five units become root-reachable: proxy.aws_kms_adapter, proxy.gcp_kms_adapter, proxy.pkcs11_adapter, proxy.kms_ed25519_seam, proxy.kms_endpoint_authority. THM-0116's effective severity rises high -> critical by inheritance, which is N3 deriving rather than a declared change; no unit's N1 obligation moves, because the adapter units already carry critical direct labels.",
+  "from_fingerprint": "sha256:a06fc2e1bc060247ea1f7b7f94188019175111e8dec1cabf7a9e7c191e5a239d",
+  "packet": "verification/reviews/packets/not-root-reachable-census-2026-09-18.md",
+  "product_behavior_unchanged": true,
+  "reason": "Phase 1 measured nine units and four theorems establishing remote-signing custody with NO declared root above them, and proposed a new root for it. The ruling declined that reading: the signing family already owns the system consequence, so the finding is the missing EDGE rather than a missing promise. THM-0082 \u2014 the serving path signs under the credential source materialization produced \u2014 now depends on THM-0116, because for a non-exporting source that sentence means something only if the source established the key it advertises before signing anything. THM-0082 is already in this root's closure, so the correspondence propositions (THM-0116, and THM-0108 beneath it) now sit under the signing root at the altitude where the composition consumes them. No statement, consequence or scope text moves on THM-0075 or on THM-0082; only the dependency closure.",
+  "root_consequence_unchanged": true,
+  "ruling": "ADR-MCPRE-068 Phase-1 campaign ruling, 2026-09-18: the remote-signing finding is a composition/dependency gap, not a missing independent root. Place the remote-signing correspondence propositions at their correct altitude beneath the existing signing root.",
+  "severity_after": "critical",
+  "severity_before": "critical",
+  "subject": "THM-0075",
+  "to_fingerprint": "sha256:064357e3645ce8272ba6bf3dfda8f02d69e69d5aba79da92324535547f5c5ca0"
+}

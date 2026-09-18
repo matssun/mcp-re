@@ -36,9 +36,15 @@ WHAT IT PROVES, from SOURCE alone:
   * UNIQUE      no root is claimed twice — two rows for one root are two authorities.
   * DISJOINT    no theorem is both claimed (§2) and disclaimed (§4). A document cannot
                 make and withhold the same claim.
-  * NOT STALE   every claimed root's specification review covers its CURRENT fingerprint.
-                A published claim whose statement has moved since the owner read it is a
-                claim nobody has approved in its present form.
+  * NOT STALE   every claimed root's specification review covers its CURRENT fingerprint,
+                OR a RECORDED ADR-MCPRE-068 Phase-1 claim correction carries it there from
+                the fingerprint the owner did review. A published claim whose statement has
+                moved for no recorded reason is a claim nobody has approved in its present
+                form. See `tools/verification/_claim_corrections.py` for what a record must
+                assert and why the chain starts at the owner's review; in short, a
+                correction is a recorded DELTA on a reviewed claim, it is one-shot, and it
+                does NOT make the specification-review axis fresh — release-mode
+                establishment still asks for the human.
   * §4 SHAPE    the open-gap table names no declared root, and no area twice. A root that
                 is a system promise is not simultaneously an unclosed gap, and a duplicated
                 area row gives a reader a different answer depending which one they reach.
@@ -66,6 +72,12 @@ sys.path.insert(0, str(REPO / "tools" / "verification"))
 
 from _fingerprint import fingerprint_theorem  # noqa: E402
 from _manifest import ManifestError, load_verification  # noqa: E402
+from _claim_corrections import (  # noqa: E402
+    CorrectionError,
+    chain,
+    corrections_root,
+    load_corrections,
+)
 from _review import REVIEWED, derive_review_state, load_reviews, review_root  # noqa: E402
 from _theorems import load_theorems  # noqa: E402
 
@@ -208,6 +220,7 @@ def mapping_defects(
     review_states: dict[str, tuple[str, str]],
     settled: list[tuple[str, list[str]]] | None = None,
     unknown_tables: list[str] | None = None,
+    corrected: dict[str, tuple[bool, str]] | None = None,
 ) -> list[str]:
     """Every way the two surfaces can disagree. One function so the rules are one place."""
     defects: list[str] = []
@@ -272,13 +285,17 @@ def mapping_defects(
         if theorem not in declared:
             continue
         state, reason = review_states.get(theorem, ("MISSING", "no review record"))
-        if state != REVIEWED:
-            defects.append(
-                f"§2 claims {theorem}, whose specification review is {state}: {reason}. A "
-                f"published claim must be one the owner reviewed in its present form; a "
-                f"statement that moved since the record was written has been approved in "
-                f"no form that is now on the tree."
-            )
+        if state == REVIEWED:
+            continue
+        accepted, why = (corrected or {}).get(theorem, (False, "no correction record"))
+        if accepted:
+            continue
+        defects.append(
+            f"§2 claims {theorem}, whose specification review is {state}: {reason}. A "
+            f"published claim must be one the owner reviewed in its present form, or one a "
+            f"RECORDED ADR-MCPRE-068 Phase-1 correction carries there from the fingerprint "
+            f"they did review — and neither holds: {why}."
+        )
 
     # A SETTLED row is the one place this gate cannot judge the prose: whether an area was
     # really closed is a review act. What it can judge is whether the row's own references
@@ -491,6 +508,62 @@ def main() -> int:
         for theorem in fingerprints
     }
 
+    try:
+        corrections = load_corrections(corrections_root(REPO), REPO)
+    except CorrectionError as exc:
+        # UNPARSABLE IS A FAILURE. A dropped record would make the staleness defect below
+        # report a reason that is not the real one.
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 1
+    reviewed_at = {
+        theorem: (reviews.get(("specification", theorem)) or {}).get("reviewed_fingerprint")
+        for theorem in fingerprints
+    }
+    corrected = {
+        theorem: chain(
+            corrections.get(theorem, []),
+            reviewed_at.get(theorem),
+            fingerprints[theorem]["fingerprint"],
+        )
+        for theorem in fingerprints
+    }
+    # A DEAD RECORD IS REFUSED WHEREVER IT SITS. The §2 check below only consults
+    # `corrected` for theorems the boundary publishes, so a record for any other theorem —
+    # or one whose chain stopped closing — would sit unread. The honest exception is a
+    # correction the owner has since REVIEWED at the new fingerprint: the chain then no
+    # longer closes because its `from` is the superseded review, and the record is history
+    # rather than authority. Deleting it to satisfy a gate would destroy the audit trail
+    # this register exists to keep.
+    dead = sorted(
+        subject
+        for subject in corrections
+        if subject in fingerprints
+        and not corrected[subject][0]
+        and review_states[subject][0] != REVIEWED
+    )
+    if dead:
+        for subject in dead:
+            print(
+                f"FAIL: claim-correction record(s) for {subject} authorize no live "
+                f"transition and the claim is not reviewed as it stands: "
+                f"{corrected[subject][1]}. A record that carries nothing is a row nothing "
+                f"can retire.",
+                file=sys.stderr,
+            )
+        return 1
+
+    # A record for a theorem the registry does not declare authorizes a transition of
+    # nothing, and would sit unread forever.
+    orphaned = sorted(set(corrections) - set(fingerprints))
+    if orphaned:
+        print(
+            f"FAIL: claim-correction record(s) name {orphaned}, which the registry does not "
+            f"declare. A correction to a theorem that does not exist is a row nothing can "
+            f"ever retire.",
+            file=sys.stderr,
+        )
+        return 1
+
     claims, gaps, settled, unknown = read_surfaces()
     if not claims:
         print(
@@ -500,7 +573,7 @@ def main() -> int:
         )
         return 1
 
-    found = mapping_defects(roots, claims, gaps, review_states, settled, unknown)
+    found = mapping_defects(roots, claims, gaps, review_states, settled, unknown, corrected)
     if found:
         print("claim-surface gate: FAIL", file=sys.stderr)
         for defect in found:
@@ -509,7 +582,16 @@ def main() -> int:
     print(
         f"claim-surface gate: OK — {len(roots)} declared root(s), {len(claims)} published "
         f"claim(s), {len(gaps)} open §4 area(s), {len(settled)} settled, every claimed root "
-        f"reviewed at its current fingerprint."
+        f"reviewed at its current fingerprint"
+        + (
+            f" or carried there by a recorded Phase-1 correction "
+            f"({sum(1 for t in roots if corrected.get(t, (False, ''))[0] and review_states[t][0] != REVIEWED)} of them)."
+            if any(
+                corrected.get(t, (False, ""))[0] and review_states[t][0] != REVIEWED
+                for t in roots
+            )
+            else "."
+        )
     )
     return 0
 

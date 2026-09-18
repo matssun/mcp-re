@@ -245,19 +245,15 @@ pub fn serve(
 /// an address that is not loopback, and an operator who wants that address can spell it
 /// `127.0.0.1`.
 pub fn bind(local: &LocalConfig) -> std::io::Result<TcpListener> {
-    if !local.allow_non_loopback && !local.bind.ip().is_loopback() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!(
-                "local.bind {} is not a loopback address. The local leg is \
-                 unauthenticated, so binding it off-host offers this client's signing \
-                 key as a service to the network. Set local.allow_non_loopback if that \
-                 is genuinely intended.",
-                local.bind
-            ),
-        ));
-    }
-    TcpListener::bind(local.bind)
+    // THE SCOPE IS WHAT ADMITS THE BIND, and this function obtains one rather than
+    // deciding for itself. It used to re-implement `BindScope::decide`'s condition and
+    // copy its message verbatim, which meant the seam that opens the socket never held a
+    // scope at all — so `BindScope`'s own refusal could be deleted and this path would go
+    // on refusing, which is what a mutation probe measured on 2026-09-18. Two
+    // representations of one security fact, kept in agreement by remembering.
+    let scope = BindScope::decide(local.bind, local.allow_non_loopback)
+        .map_err(|refusal| std::io::Error::new(std::io::ErrorKind::InvalidInput, refusal.0))?;
+    TcpListener::bind(scope.listen_address())
 }
 
 #[cfg(test)]

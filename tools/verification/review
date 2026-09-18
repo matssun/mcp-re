@@ -204,6 +204,89 @@ def print_assurance_graph(theorems: dict, doc: dict) -> None:
             f"    {len(new_debt)} of them are NOT in the migration registry, which is closed "
             f"to new work: {new_debt}"
         )
+    _owner_granularity(theorems)
+
+
+def _owner_granularity(theorems: dict) -> None:
+    """ADR-MCPRE-068 Phase 1's completion criterion, measured: ONE SEMANTIC OWNER PER LEAF.
+
+    `owner` is "the review unit that is the semantic authority for it", so a unit that is the
+    owner of two live claims is answering for two propositions. That is the criterion stated
+    as something a tool can count, and it is STRICTER than the test Phase 1 started with —
+    which was "the unit's own description names several propositions". The description test
+    found five units; this one finds `http_profile.admission_currency`, whose description
+    names one proposition and which is the semantic authority for four claims.
+
+    THREE POPULATIONS, and only one is a defect.
+
+    A ROOT's owner is necessarily also a leaf's owner where the root rests on a unit that
+    carries a claim of its own, because `owner` is one field and a root's authority spans its
+    leaves. That is a consequence of the schema rather than an undifferentiated unit.
+
+    A `proved` unit naming ONE proved symbol is the other exclusion, and it is the more
+    interesting one. `http_profile.admission_currency` is the worked case: one prover run over
+    one function, one `ensures` with four conjuncts, four different attacker stories. The
+    claims are separated so a consumer can rest on one conjunct alone — ADR-MCPRE-068 §"the
+    registry" says exactly that — but the EVIDENCE is one measurement. Splitting the unit would
+    give four units the same `verus://` URI and the same proved symbol, which is four copies of
+    one prover run rather than four owners. The separation already exists where it can: at the
+    theorem layer.
+
+    Both are reported separately so neither inflates the number that matters.
+    """
+    import collections
+
+    roots = set(theorems.get("root_theorems", []))
+    owned: dict[str, list[str]] = collections.defaultdict(list)
+    for entry in theorems.get("theorem", []):
+        if entry.get("replaced_by"):
+            continue
+        owned[entry["owner"]].append(entry["id"])
+    by_id = {unit["id"]: unit for unit in _units_for_granularity()}
+
+    schema, one_proof, residue = [], [], []
+    for unit_id, claims in owned.items():
+        if len(claims) < 2:
+            continue
+        non_root = [c for c in claims if c not in roots]
+        unit = by_id.get(unit_id, {})
+        if len(non_root) <= 1 < len(claims):
+            schema.append((unit_id, non_root))
+        elif unit.get("evidence_class") == "proved" and len(unit.get("proved_symbols", [])) == 1:
+            one_proof.append((unit_id, non_root))
+        else:
+            residue.append((unit_id, non_root))
+
+    print(
+        f"\n  ONE SEMANTIC OWNER PER LEAF (ADR-MCPRE-068 Phase 1): {len(residue)} unit(s) "
+        f"are the semantic authority for several non-root claims."
+    )
+    for unit_id, claims in sorted(residue, key=lambda row: -len(row[1])):
+        print(f"    {len(claims)}  {unit_id:44} {claims}")
+    if one_proof:
+        print(
+            f"  {len(one_proof)} further unit(s) are `proved` from ONE symbol and carry "
+            f"several conjuncts of one `ensures` — splitting would copy one prover run, not "
+            f"separate two owners: {sorted(unit for unit, _ in one_proof)}"
+        )
+    if schema:
+        print(
+            f"  {len(schema)} further unit(s) own a root AND one leaf claim — a consequence "
+            f"of `owner` being one field, not an undifferentiated unit: "
+            f"{sorted(unit for unit, _ in schema)}"
+        )
+
+
+def _units_for_granularity() -> list[dict]:
+    """The unit records, for the one place this module needs a unit's CLASS.
+
+    Loaded here rather than threaded through `_report`'s signature: the granularity report is
+    the only consumer, and a loader failure at this point would already have failed the run.
+    """
+    try:
+        return load_verification().get("unit", [])
+    except ManifestError:
+        return []
 
 
 def _root_ok(roots: dict, require: bool) -> bool:

@@ -187,7 +187,7 @@ guarantees. Which of them are *claims* is decided by §2 of
   two-replica e2e proves a nonce accepted by one replica is rejected by a sibling
   (MCPS-79/80/81).
 - **Cross-replica trust revocation — measured, not proved.** Owned since v0.17 by
-  `unit://proxy.trust_plane_runtime`, and the claim it can carry is one replica wide:
+  `unit://proxy.trust_resolution_window`, and the claim it can carry is one replica wide:
   on observing a change of the shared Redis trust epoch, a replica strips every cached
   request-signer binding of its authority before the next lookup, so the next answer
   is its own `--trust` snapshot's; a read outage flushes nothing and the deadline the
