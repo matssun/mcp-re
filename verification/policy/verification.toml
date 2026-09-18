@@ -3120,7 +3120,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://http_profile/chain/retained_record_completeness"]
+evidence = [
+  "test://http_profile/chain/retained_record_completeness",
+  "mutation://http_profile/chain/retained_record_completeness",
+]
 # `submitted_identity.rs` is deliberately NOT here: `http_profile.submitted_hop_identity`
 # owns what identifies a submission, which is a different proposition from whether a set of
 # submissions is a whole record, and its own battery establishes it.
@@ -3181,7 +3184,10 @@ paths = ["mcp-re-http-profile/src/chain/submitted_identity.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://http_profile/submitted_hop_identity/closed_representation"]
+evidence = [
+  "test://http_profile/submitted_hop_identity/closed_representation",
+  "mutation://http_profile/submitted_hop_identity/closed_representation",
+]
 # The battery is entirely negative, and that is the shape the claim needs: an identity is
 # established by what it REFUSES to conflate. Each control alters one retained fact and
 # requires the commitment to move. The header cases are the ones the curated fold failed —
@@ -5729,7 +5735,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://http_profile/scitt/service_pin"]
+evidence = [
+  "test://http_profile/scitt/service_pin",
+  "mutation://http_profile/scitt/service_pin",
+]
 # The refusals are the claim: a malformed document never becomes a pin, and an illegal one
 # is refused at deserialization rather than carried into a resolver that would then answer
 # from it.

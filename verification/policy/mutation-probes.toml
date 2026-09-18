@@ -7250,3 +7250,103 @@ The first `expect_red` named the core-producer control instead, and it stayed gr
 because the weakening touches only the Authorization arm. A probe is adjudicated against the
 control that measures the arm it weakens.
 """
+
+[[probe]]
+id = "M262-http-profile-the-response-status-is-inside-the-submitted-identity"
+unit = "http_profile.submitted_hop_identity"
+theorem = "THM-0091"
+conjunct = "two retained submitted hops that differ in any retained fact are two submissions — the representation is closed"
+path = "mcp-re-http-profile/src/chain/submitted_identity.rs"
+anchor = """
+        h.update(u64::from(*status).to_be_bytes());
+"""
+weakening = """
+        let _ = status;
+"""
+expect_red = [
+  "lib#chain::submitted_identity::tests::the_response_status_is_inside_the_submitted_identity",
+]
+note = """
+A CURATED FIELD LIST IS HOW AN IDENTITY COMES TO OMIT SOMETHING, and the weakening is exactly
+that edit: one field dropped from the digest, everything else unchanged. The hop is still
+retained whole; only its IDENTITY stops depending on the status.
+
+What that admits is two submissions that are not the same submission answering to one
+commitment -- a 200 and a 409 over identical bytes become indistinguishable to anything that
+identifies a submission by this value. The destructuring in this function is what makes the
+closure checkable: adding a field to `RetainedHop` breaks the pattern rather than silently
+leaving the new field outside the identity.
+
+The other three controls stay green, correctly. Each names a different retained fact, and this
+weakening drops one.
+"""
+
+[[probe]]
+id = "M263-http-profile-a-chain-with-a-hole-is-not-a-complete-record"
+unit = "http_profile.retained_chain_record"
+theorem = "THM-0091"
+conjunct = "per-hop validity does not imply a complete chain — a set with a missing middle hop is Incomplete, not a complete terminal"
+path = "mcp-re-http-profile/src/chain/record.rs"
+anchor = """
+            let links = c.previous_request_evidence.digest_value
+                == prev.request_evidence.digest_value
+                && c.previous_request_evidence.digest_alg == prev.request_evidence.digest_alg
+                && c.input_required_response_evidence.digest_value
+                    == prev.response_evidence.digest_value
+                && c.input_required_response_evidence.digest_alg
+                    == prev.response_evidence.digest_alg;
+"""
+weakening = """
+            let links = true;
+            let _ = (c, prev);
+"""
+expect_red = [
+  "tests/chain_reconstruction_test#missing_middle_hop_is_incomplete_not_a_complete_terminal",
+  "tests/chain_reconstruction_test#per_hop_validity_does_not_imply_a_complete_chain",
+]
+note = """
+PER-TURN BINDING PROVES ONE ANSWER BELONGS TO ONE QUESTION; IT DOES NOT PROVE A CHAIN IS WHOLE.
+That is the whole reason this unit exists, and the weakening is the exact shape it was written
+against: given hops R0->S0 and R2->S2 with R1->S1 missing, every retained message still
+verifies on its own, every signature is genuine, and every per-hop check passes. Only this
+comparison -- each continuation's carried predecessor digests against the hop actually before
+it -- refuses the set as a record.
+
+Under the weakening a chain with a hole reconstructs as COMPLETE, so an auditor reading the
+label is told the call record is whole while the turn that authorized the work is absent from
+it. The signature verification the hops already passed is not a second carrier: it is what
+makes each surviving message trustworthy, which is exactly what makes the gap invisible.
+
+The first weakening for this probe attacked the EMPTY-CHAIN arm instead, and every declared
+control stayed green -- correctly, because no control names that arm. The battery covers the
+holes an attacker can make, not the degenerate input, and the probe moved to where the battery
+actually reaches.
+"""
+
+[[probe]]
+id = "M264-http-profile-an-eddsa-pin-carrying-an-ec2-y-is-not-a-pin"
+unit = "http_profile.scitt_service_pin"
+theorem = "THM-0091"
+conjunct = "an illegal pin document is refused rather than becoming a resolvable service"
+path = "mcp-re-http-profile/src/scitt/trust_pin/document.rs"
+anchor = """
+            if document.public_key.y.is_some() {
+"""
+weakening = """
+            if false {
+"""
+expect_red = [
+  "lib#scitt::trust_pin::tests::an_illegal_pin_document_is_refused_at_deserialization",
+]
+note = """
+AN `EdDSA` PIN CARRYING A `y` IS NOT AN Ed25519 KEY WITH A HARMLESS EXTRA FIELD. It is an ES256
+key mislabelled, or a pin built by something that did not know which curve it had -- and the
+document is what the operator RECORDED AND REVIEWED, so a pin that means two things is a pin
+nobody reviewed.
+
+The algorithm comes from the DOCUMENT and never from a receipt, which is the confusion this
+whole seam avoids: letting an incoming receipt nominate the algorithm it is verified under is
+how a transparency pin stops pinning anything. This refusal is what keeps the document's own
+answer unambiguous, so the key parse below it is not a second carrier -- `from_b64url` accepts
+the `x` coordinate either way and says nothing about the `y` beside it.
+"""
