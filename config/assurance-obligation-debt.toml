@@ -210,30 +210,12 @@ root_reachable = false
 status = "unreviewed"
 
 [[obligation]]
-unit = "http_profile.admission_assertion"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "critical"
-inherited_severity = "critical"
-root_reachable = true
-status = "unreviewed"
-
-[[obligation]]
 unit = "http_profile.bodyless_acknowledgement"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "high"
 direct_consequence_severity = "high"
 inherited_severity = "none"
 root_reachable = false
-status = "unreviewed"
-
-[[obligation]]
-unit = "http_profile.request_envelope"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "high"
-inherited_severity = "critical"
-root_reachable = true
 status = "unreviewed"
 
 [[obligation]]

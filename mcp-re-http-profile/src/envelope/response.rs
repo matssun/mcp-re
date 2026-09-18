@@ -349,6 +349,21 @@ mod tests {
             &OutstandingId::Id(json!(0)),
         )
         .is_ok());
+        // The half the docstring names and the positive cases cannot witness: a lenient
+        // comparison -- rendering both ids as text, say -- makes `1` and `"1"` one id, so a
+        // reply to a DIFFERENT outstanding request correlates to this one. On this profile
+        // every outstanding id is a signed request's identity, so that is an answer to
+        // somebody else's call, delivered as an answer to this one.
+        assert!(validate(
+            r#"{"jsonrpc":"2.0","id":"1","result":{}}"#,
+            &OutstandingId::Id(json!(1)),
+        )
+        .is_err());
+        assert!(validate(
+            r#"{"jsonrpc":"2.0","id":1,"result":{}}"#,
+            &OutstandingId::Id(json!("1")),
+        )
+        .is_err());
     }
 
     #[test]

@@ -6300,3 +6300,91 @@ of its own, and SHA-256 must introduce none either. Only the first half is ours,
 half this weakening breaks -- two distinct enrolled keys reach one canonical form and therefore
 one keyid, so a signature from either verifies under a lookup for the other.
 """
+
+[[probe]]
+id = "M231-http-profile-a-reply-correlates-by-value-and-by-type"
+unit = "http_profile.request_envelope"
+theorem = "THM-0091"
+conjunct = "a reply correlates to the outstanding id by value AND by type, with no null-id correlation"
+path = "mcp-re-http-profile/src/envelope/response.rs"
+anchor = """
+        Some(id) if id == expected => {}
+"""
+weakening = """
+        Some(id) if id.to_string().trim_matches('"') == expected.to_string().trim_matches('"') => {}
+"""
+expect_red = [
+  "lib#envelope::response::tests::ids_correlate_by_value_and_by_type",
+]
+note = """
+THE WEAKENING IS A TYPE COERCION, NOT A DELETED CHECK, because the proposition is "by value
+AND by type". Comparing the rendered text makes the JSON number `1` and the JSON string `"1"`
+one id, so a reply to a DIFFERENT outstanding request correlates to this one -- and on this
+profile every outstanding id is a signed request's identity, so the answer a caller receives
+is an answer to somebody else's call.
+
+`serde_json::Value`'s `PartialEq` is what carries the type half, which is why the weakening
+has to go around it rather than through a comparison operator.
+
+THIS PROBE FAILED FIRST, against a control whose own docstring named the missing half: "`1`
+and `\"1\"` are different ids, which is exactly what a lenient comparison would get wrong."
+It then asserted only the two POSITIVE cases. A control that states the adversarial case in
+prose and tests the agreeable one is the shape this lane exists to find; the two negative
+assertions were added and the probe takes it red.
+"""
+
+[[probe]]
+id = "M232-http-profile-a-reply-that-is-also-a-request-is-refused"
+unit = "http_profile.request_envelope"
+theorem = "THM-0091"
+conjunct = "no reply that is also a request — a response body carrying a method member is refused"
+path = "mcp-re-http-profile/src/envelope/response.rs"
+anchor = """
+    if object.contains_key("method") {
+"""
+weakening = """
+    if false {
+"""
+expect_red = [
+  "lib#envelope::response::tests::a_reply_that_is_also_a_request_is_refused",
+]
+note = """
+THE UNION IS WHY THIS IS A REFUSAL AND NOT A PARSE. A body carrying both a legal `result` and
+a `method` satisfies the JSON-RPC message schema -- as a REQUEST -- so nothing downstream
+refuses it; it gets DISPATCHED, driving sampling, elicitation or roots on peer-chosen params
+while the awaiting call never resolves, its id having been consumed as an inbound request id.
+
+The SDKs stop the same shape from the other end, by rebuilding the reply from the one member
+it carried (M191/M192). Two independent refusals of one attacker move at two boundaries --
+composition across layers, not defence in depth within one.
+"""
+
+[[probe]]
+id = "M233-http-profile-an-assertion-older-than-the-budget-is-refused"
+unit = "http_profile.admission_assertion"
+theorem = "THM-0091"
+conjunct = "an assertion outside the verifier's own independent staleness budget, or dated ahead of the verifier, is refused"
+path = "mcp-re-http-profile/src/admission/mod.rs"
+anchor = """
+    if now.saturating_sub(claims.iat) > policy.max_assertion_age.saturating_add(skew)
+        || claims.iat > now.saturating_add(skew)
+    {
+"""
+weakening = """
+    if false {
+"""
+expect_red = [
+  "lib#admission::tests::an_assertion_older_than_the_verifiers_own_budget_is_rejected",
+  "lib#admission::tests::an_assertion_dated_ahead_of_the_verifier_is_rejected",
+]
+note = """
+THE ISSUER'S TTL IS NOT A SECOND CARRIER, and §5.2 says why: `[nbf, exp]` is the ISSUER's
+choice about how long its snapshot may be acted on, and N is the VERIFIER's own cap. An
+authority that issues year-long assertions is not misbehaving; an enforcement point that acts
+on a year-old snapshot of an authorization decision is. The window check above therefore
+passes on exactly the assertions this one exists to refuse.
+
+The `iat`-ahead half travels with it because a future issuance floors BOTH age computations
+-- this N cap and the §5.2 degraded P window -- at zero under saturation, and so passes them
+for the assertion's whole TTL. Two halves of one refusal, one anchor.
+"""

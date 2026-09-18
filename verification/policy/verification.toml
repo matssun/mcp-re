@@ -1142,7 +1142,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://http_profile/admission/assertion_authenticity"]
+evidence = [
+  "test://http_profile/admission/assertion_authenticity",
+  "mutation://http_profile/admission/assertion_authenticity",
+]
 # The battery is negative on purpose. Each member removes one way an assertion could be
 # believed without being this enforcement point's to believe: another issuer's key, another
 # credential profile, another audience, another profile id, or a window that has passed in
@@ -5319,7 +5322,10 @@ paths = ["mcp-re-http-profile/src/envelope/request.rs",
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://http_profile/envelope/request_and_correlation"]
+evidence = [
+  "test://http_profile/envelope/request_and_correlation",
+  "mutation://http_profile/envelope/request_and_correlation",
+]
 # The vocabulary half of THM-0083. The battery is largely negative: which bodies are NOT
 # messages, which bodies this profile cannot carry unchanged, and the two ways a correlation
 # could be faked — a null id, and a reply that is also a request.
