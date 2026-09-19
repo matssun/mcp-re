@@ -326,6 +326,26 @@ async def test_a_hardened_policy_opens_with_a_non_exporting_signer():
         assert read is not None and write is not None
 
 
+@pytest.mark.anyio
+async def test_a_hardened_policy_refuses_software_custody():
+    """The hardening profile's REFUSAL, which the positive case above cannot witness.
+
+    A route that demands non-exporting custody and opens against an exportable software
+    key has granted exactly what the profile exists to deny: the private key is a value
+    in this process's memory, so the actor binding it signs proves possession of
+    something that can be copied out of the host. The TypeScript twin declares the same
+    refusal; this is the Python half.
+    """
+    config = _config(
+        signer=Signer.software(CLIENT_SEED, "did:example:host-a", "client-key-1"),
+        policy=SignerPolicy.hardened("did:example:host-a"),
+    )
+    with pytest.raises(McpReError) as ei:
+        async with mcp_re_http_transport(config, _capturing_poster([])):
+            pass
+    assert ei.value.wire_code == "mcp-re.actor_binding_failed"
+
+
 # --- failure delivery ------------------------------------------------------------
 
 
@@ -671,6 +691,39 @@ async def test_the_signed_body_is_the_request_the_caller_described():
     body = json.loads(calls[0]["body"])
     assert body["method"] == "tools/list"
     assert body["id"] == 7
+
+
+@pytest.mark.anyio
+async def test_the_verifier_is_shown_the_bytes_that_were_transmitted(monkeypatch):
+    """The verdict is about the transmission, not about a body that resembles it.
+
+    `test_the_signed_body_is_the_request_the_caller_described` reads the posted body as
+    JSON, so it cannot tell `signed.body()` from a re-serialization of it: both decode to
+    the same document, and an implementation that re-derived the bytes for either leg
+    would keep it green. What the exchange must establish is BYTE identity — the value
+    `sign_request` produced is the one that went on the wire and the one the verifier
+    judged — because the signature covers bytes, and a verdict computed over anything
+    else answers a question nobody asked.
+    """
+    import mcp_re_sdk.transport as t
+
+    seen: dict = {}
+
+    async def poster(method, target_uri, headers, body) -> HttpReply:
+        seen["posted"] = body
+        return HttpReply(status=200, headers=[], body=b"{}")
+
+    def capturing_verify(*args, **kwargs):
+        seen["verified"] = args[6]
+        raise McpReError("mcp-re.replay_detected")
+
+    monkeypatch.setattr(t._core, "verify_response", capturing_verify)
+    await _send(_config(), poster, _request(method="tools/list", id=7))
+
+    assert seen["posted"] == seen["verified"], (
+        "the verifier judged bytes other than the ones transmitted"
+    )
+    assert json.loads(seen["posted"])["method"] == "tools/list"
 
 
 @pytest.mark.anyio

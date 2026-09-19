@@ -5235,3 +5235,624 @@ there in production -- `verified.wire_code or ...` -- and nothing in the declara
 battery said so, which is the same defect in the other direction. Both halves are repaired
 here: the description states the conjunct and the battery covers it.
 """
+
+[[probe]]
+id = "M190-python-sign-time-nonce-floor"
+unit = "sdk_python.nonce_floor"
+theorem = "THM-0094"
+conjunct = "no request and no notification is signed under a nonce below the 128-bit floor, and a sub-floor or non-string factory result fails closed at sign time"
+path = "sdk/python/python/mcp_re_sdk/transport.py"
+anchor = """
+    if not isinstance(nonce, str) or len(nonce) < MIN_NONCE_CHARS:
+"""
+weakening = """
+    if False:
+"""
+expect_red = [
+  "pytest#tests/test_nonce_floor.py::test_a_sub_floor_override_is_refused_at_sign_time[]",
+  "pytest#tests/test_nonce_floor.py::test_a_non_string_override_is_refused_without_raising_typeerror",
+  "pytest#tests/test_transport.py::test_a_sub_floor_nonce_override_is_refused_before_a_notification_is_signed",
+]
+note = """
+THE TWIN OF M179, and sole for the same reason: `_checked_nonce` is the one place a nonce
+is drawn for signing, and both the request path and the notification path go through it.
+The floor constrains an OVERRIDE -- `_default_nonce` clears it by construction -- so the
+weakening is the whole refusal rather than one of two redundant ones.
+"""
+
+[[probe]]
+id = "M191-python-verified-reply-is-rebuilt"
+unit = "sdk_python.reply_envelope"
+theorem = "THM-0094"
+conjunct = "what reaches the session is rebuilt from the one member the verified reply carried, and a verified reply that is not a JSON-RPC response is refused rather than dispatched"
+path = "sdk/python/python/mcp_re_sdk/transport.py"
+anchor = """
+    response = _plain_response_object(json.loads(body))
+"""
+weakening = """
+    response = json.loads(body)
+"""
+expect_red = [
+  "pytest#tests/test_transport.py::test_a_verified_reply_carrying_a_method_is_refused_not_dispatched",
+  "pytest#tests/test_transport.py::test_a_verified_reply_with_neither_result_nor_error_is_refused",
+]
+note = """
+THE REBUILD IS THE CARRIER, which is why the weakening is an in-place edit rather than a
+deleted predicate. Editing the parsed document leaves every other top-level key the server
+sent, so a body carrying both a legal `result` and a `method` re-parses as a
+server-to-client REQUEST and `ClientSession` dispatches it -- driving sampling, elicitation
+or roots on peer-chosen params while the awaiting call never resolves, its id having been
+consumed as an inbound request id. `_plain_response_object` is also where the
+neither-result-nor-error refusal lives, so one anchor weakens both of the unit's conjuncts;
+they are not independent carriers of one proposition but one carrier of two.
+"""
+
+[[probe]]
+id = "M192-typescript-verified-reply-is-rebuilt"
+unit = "sdk_typescript.reply_envelope"
+theorem = "THM-0095"
+conjunct = "what reaches the client is rebuilt from the one member the verified reply carried, and a verified reply that is not a JSON-RPC response is refused rather than dispatched"
+path = "sdk/typescript/src/transport.ts"
+anchor = """
+  const response = plainResponseObject(JSON.parse(body.toString("utf8")));
+"""
+weakening = """
+  const response = JSON.parse(body.toString("utf8")) as Record<string, unknown>;
+"""
+expect_red = [
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > refuses a verified reply carrying a top-level method instead of dispatching it",
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > refuses a verified reply that is not a JSON-RPC response at all",
+]
+note = """
+The TypeScript instance of M191. `JSONRPCMessageSchema` is a UNION that accepts a request,
+so the parser downstream is not a second carrier: it validates the method-bearing body
+happily, as a request.
+"""
+
+[[probe]]
+id = "M193-python-a-late-response-is-refused"
+unit = "sdk_python.correlation_lifecycle"
+theorem = "THM-0094"
+conjunct = "a request is answerable only inside the window it declared — a response arriving past it is refused rather than delivered"
+path = "sdk/python/python/mcp_re_sdk/correlation.py"
+anchor = """
+        return now > self.expires
+"""
+weakening = """
+        return False
+"""
+expect_red = [
+  "pytest#tests/test_correlation.py::TestFailsClosed::test_a_late_response_is_rejected",
+]
+note = """
+THE PREDICATE IS THE WINDOW. `is_expired` is consulted by `take`, by the input-required
+association and by reaping, so it is one carrier of several conjuncts rather than one of
+several carriers of one. Under the weakening a response is answerable forever: the entry
+never retires on lateness, and reaping -- the thing that BOUNDS the store -- drops nothing,
+so a session of unanswered requests grows without limit. The `_consumed` grace map is not a
+second carrier: it distinguishes a duplicate from an unbound response among ids that were
+already consumed, and says nothing about an id that never expires.
+"""
+
+[[probe]]
+id = "M194-typescript-a-late-response-is-refused"
+unit = "sdk_typescript.correlation_lifecycle"
+theorem = "THM-0095"
+conjunct = "a request is answerable only inside the window it declared — a response arriving past it is refused rather than delivered"
+path = "sdk/typescript/src/correlation.ts"
+anchor = """
+const isExpired = (p: PendingRequest, now: number): boolean => now > p.expires;
+"""
+weakening = """
+const isExpired = (p: PendingRequest, now: number): boolean => false && now > p.expires;
+"""
+expect_red = [
+  "vitest#test/correlation.test.ts > fails closed > rejects a late response",
+  "vitest#test/correlation.test.ts > fails closed > retires the entry when a response is late",
+  "vitest#test/correlation.test.ts > reaping > drops only the dead",
+]
+note = """
+The TypeScript instance of M193. The weakening keeps both parameters read so the
+substitution is a semantic change and not a compile error -- the lane treats a tree that
+does not build as a measurement failure, which would say nothing about the conjunct.
+"""
+
+[[probe]]
+id = "M195-python-a-client-side-response-is-refused"
+unit = "sdk_python.notification_delivery"
+theorem = "THM-0094"
+conjunct = "a client->server response, which MCP-RE profiles no carrier for, is refused rather than signed as a fabricated notification"
+path = "sdk/python/python/mcp_re_sdk/transport.py"
+anchor = """
+                if not isinstance(message, JSONRPCRequest):
+"""
+weakening = """
+                if False:
+"""
+expect_red = [
+  "pytest#tests/test_transport.py::test_a_client_side_response_is_refused_rather_than_carried_as_a_notification",
+]
+note = """
+THE TRIGGER IS PEER-INFLUENCEABLE, which is what makes this a security conjunct rather than
+a type-hygiene one: a verified reply body carrying a `method` parses as a server->client
+request, `ClientSession` answers it with a RESPONSE, and that answer arrives here. Under the
+weakening the response falls through to the request path and is signed as a message the
+application never composed.
+"""
+
+[[probe]]
+id = "M196-typescript-a-client-side-response-is-refused"
+unit = "sdk_typescript.notification_delivery"
+theorem = "THM-0095"
+conjunct = "a client->server response, which MCP-RE profiles no carrier for, is refused rather than signed as a fabricated notification"
+path = "sdk/typescript/src/transport.ts"
+anchor = """
+    if (!("method" in message)) {
+"""
+weakening = """
+    if (false) {
+"""
+expect_red = [
+  "vitest#test/transport.test.ts > McpReHttpTransport notification handling > refuses a client-side RESPONSE rather than carrying it as a notification",
+]
+note = """
+The TypeScript instance of M195. The two SDKs differ in BLAST RADIUS and not in the
+refusal: Python reports it on the diagnostic channel because the refusal happens in the
+parent task of the group running every concurrent exchange, so raising would end an entire
+session over one peer-influenced reply; TypeScript throws from the one `send()`. Both are
+probed for the same conjunct.
+"""
+
+[[probe]]
+id = "M197-python-no-member-the-receipt-did-not-carry"
+unit = "sdk_python.execution_report"
+theorem = "THM-0094"
+conjunct = "a member the verified receipt did not carry is not invented for the application"
+path = "sdk/python/python/mcp_re_sdk/transport.py"
+anchor = """
+        if value is not None:
+"""
+weakening = """
+        if True:
+"""
+expect_red = [
+  "pytest#tests/test_transport.py::test_a_post_dispatch_rejection_reports_its_execution_and_retry_contract",
+]
+note = """
+AN EXPLICIT NULL IS AN INVENTED MEMBER. Under the weakening every key is emitted whatever
+the receipt said, so `executionStatus: null` reaches an application that branches on the
+member's PRESENCE. ADR-MCPRE-058 SL-10 is what makes that a security conjunct rather than a
+tidiness one: an absent `executionStatus` means the server stated nothing, and a caller that
+reads the key as stated collapses "unknown whether it ran" into an answer at the one place
+that decides whether a retry re-executes a tool call that already ran.
+"""
+
+[[probe]]
+id = "M198-typescript-no-member-the-receipt-did-not-carry"
+unit = "sdk_typescript.execution_report"
+theorem = "THM-0095"
+conjunct = "a member the verified receipt did not carry is not invented for the application"
+path = "sdk/typescript/src/transport.ts"
+anchor = """
+    if (value !== undefined && value !== null) data[key] = value;
+"""
+weakening = """
+    data[key] = value;
+"""
+expect_red = [
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > reports the execution and retry contract a post-dispatch rejection carried",
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > invents no disposition for a receipt that stated none",
+]
+note = """
+The TypeScript instance of M197, and it found a CONTROL DEFECT on the way. Its second
+control -- a receipt that stated NO disposition must produce `{ requestBound }` and nothing
+else -- stayed GREEN under the weakening, because `toEqual` ignores an undefined-valued key
+and so cannot tell `{ requestBound }` from `{ requestBound, executionStatus: undefined }`.
+An emitted-but-undefined member is exactly what that control exists to refuse, so it could
+not fail for the reason it exists for (R9-C094's shape). It now asserts the KEY SET first
+and compares with `toStrictEqual`.
+"""
+
+[[probe]]
+id = "M199-python-no-borrowed-wire-vocabulary"
+unit = "sdk_python.local_failure_provenance"
+theorem = "THM-0094"
+conjunct = "a condition this SDK originated is reported under the SDK's own prefix, never as a frozen mcp-re.* token the peer did not send"
+path = "sdk/python/python/mcp_re_sdk/transport.py"
+anchor = """
+    return token if _WIRE_CODE.match(token) else None
+"""
+weakening = """
+    return token
+"""
+expect_red = [
+  "pytest#tests/test_transport.py::test_a_value_error_that_is_not_a_token_is_labelled_a_local_condition",
+]
+note = """
+THE `None` RETURN IS THE CARRIER, not a null-guard. Every caller spells the delivery as
+`_peer_wire_code(...) or "mcp-re-sdk: ..."`, so the ONLY thing separating a local condition
+from a peer verdict is this predicate refusing to call a reset connection, a TLS error or a
+caller-raised timeout a token. Under the weakening the SDK's own failures occupy the field
+that otherwise only ever holds something the peer said, and a caller branching on the frozen
+taxonomy (REQ-14/POL-6) acts on a verdict no peer issued.
+"""
+
+[[probe]]
+id = "M200-typescript-no-borrowed-wire-vocabulary"
+unit = "sdk_typescript.local_failure_provenance"
+theorem = "THM-0095"
+conjunct = "a condition this SDK originated is reported under the SDK's own prefix, never as a frozen mcp-re.* token the peer did not send"
+path = "sdk/typescript/src/transport.ts"
+anchor = """
+  return /^mcp-re\\.[a-z0-9_]+$/.test(token) ? token : null;
+"""
+weakening = """
+  return token;
+"""
+expect_red = [
+  "vitest#test/transport.test.ts > McpReHttpTransport peer wire codes > still labels a genuine local failure as one",
+  "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > delivers a network error under the local prefix, not as something the peer said",
+]
+note = """
+The TypeScript instance of M199, with the same `?? \"mcp-re-sdk: ...\"` spelling at both of
+its call sites. The sibling control -- delivering a CORE failure as its frozen token -- is
+deliberately NOT expected red: it stays green under the weakening, because the weakening
+only widens what counts as a token. A probe that expected it would be measuring the wrong
+direction.
+"""
+
+[[probe]]
+id = "M201-python-the-transport-does-not-open-unchecked"
+unit = "sdk_python.signer_policy"
+theorem = "THM-0094"
+conjunct = "the transport does not open unless the signer satisfies the route's policy, checked before anything is signed"
+path = "sdk/python/python/mcp_re_sdk/transport.py"
+anchor = """
+    if config.policy is not None:
+        config.policy.check(config.signer)
+"""
+weakening = """
+    if False:
+        config.policy.check(config.signer)
+"""
+expect_red = [
+  "pytest#tests/test_transport.py::test_the_signer_is_checked_before_anything_is_signed",
+]
+note = """
+THE CALL SITE IS THE ORDERING, which is the half of this proposition a `SignerPolicy` unit
+test cannot reach. `check` refusing a wrong signer is a property of the policy object;
+"before anything is signed" is a property of WHERE it is called, and the only thing that
+establishes it is this statement standing ahead of the stream setup and every exchange.
+Under the weakening a route with an expected signer opens against any signer at all and the
+first thing that reveals it is a signed request already on the wire.
+"""
+
+[[probe]]
+id = "M202-python-hardening-refuses-exportable-custody"
+unit = "sdk_python.signer_policy"
+theorem = "THM-0094"
+conjunct = "non-exporting custody is required where the hardening profile demands it"
+path = "sdk/python/python/mcp_re_sdk/custody.py"
+anchor = """
+        if self.require_non_exporting and signer.custody is not CustodyClass.NON_EXPORTING:
+"""
+weakening = """
+        if False:
+"""
+expect_red = [
+  "pytest#tests/test_transport.py::test_a_hardened_policy_refuses_software_custody",
+]
+note = """
+THIS PROBE FAILED FIRST. The Python battery declared the hardening profile's POSITIVE case
+-- a hardened policy opens with a non-exporting signer -- and nothing about its refusal, so
+removing the check left every expected control green. A control that only witnesses the
+accepting direction cannot see a check that stopped rejecting.
+
+TypeScript already declared the refusal, so this is the second measured instance of the same
+asymmetry slice 3 found on the wire code: the two SDKs implement one proposition and their
+batteries cover DIFFERENT halves of it. The written control is the Python half, and what it
+refuses is the whole point of the profile -- an exportable software key means the private
+key is a value in this process's memory, so the actor binding it signs proves possession of
+something that can be copied out of the host.
+"""
+
+[[probe]]
+id = "M203-typescript-the-transport-does-not-open-unchecked"
+unit = "sdk_typescript.signer_policy"
+theorem = "THM-0095"
+conjunct = "the transport does not open unless the signer satisfies the route's policy, checked before anything is signed"
+path = "sdk/typescript/src/transport.ts"
+anchor = """
+    this.#config.policy?.check(this.#config.signer);
+"""
+weakening = """
+    void this.#config.policy;
+"""
+expect_red = [
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > checks the signer against the route policy in start(), before anything is signed",
+]
+note = """
+The TypeScript instance of M201, at `start()`. The weakening keeps the member read so the
+substitution is semantic rather than a compile error.
+"""
+
+[[probe]]
+id = "M204-typescript-hardening-refuses-exportable-custody"
+unit = "sdk_typescript.signer_policy"
+theorem = "THM-0095"
+conjunct = "non-exporting custody is required where the hardening profile demands it"
+path = "sdk/typescript/src/custody.ts"
+anchor = """
+    if (this.requireNonExporting && signer.custody !== CustodyClass.NonExporting) {
+"""
+weakening = """
+    if (false) {
+"""
+expect_red = [
+  "vitest#test/custody.test.ts > SignerPolicy fails closed > hardening rejects software custody with mcp-re.actor_binding_failed",
+]
+note = """
+The TypeScript instance of M202, and the SDK whose battery names the refusal directly.
+"""
+
+[[probe]]
+id = "M205-python-the-continuation-ceiling-is-enforced"
+unit = "sdk_python.continuation_drive"
+theorem = "THM-0094"
+conjunct = "an elicitation past the continuation budget fails the call closed rather than resolving it"
+path = "sdk/python/python/mcp_re_sdk/transport.py"
+anchor = """
+            if round_index > config.max_continuation_rounds:
+"""
+weakening = """
+            if False:
+"""
+expect_red = [
+  "pytest#tests/test_transport_replay.py::test_the_continuation_round_ceiling_is_enforced_before_the_caller_is_asked",
+]
+note = """
+THE BUDGET IS WHAT MAKES A PAUSE TERMINATE. Without it a server that keeps eliciting keeps
+the call alive indefinitely, each round costing a signing operation and a correlated entry
+that stays outstanding -- and each round is an opportunity to prompt the caller again. The
+check stands BEFORE the handler runs, deliberately: a call that has used up its budget must
+not prompt for an answer it cannot send, so the weakening is measured against the control
+that names that ordering.
+"""
+
+[[probe]]
+id = "M206-python-an-unanswerable-elicitation-is-refused"
+unit = "sdk_python.continuation_drive"
+theorem = "THM-0094"
+conjunct = "an elicitation with no handler fails the call closed rather than resolving it"
+path = "sdk/python/python/mcp_re_sdk/transport.py"
+anchor = """
+            if config.answer_input_required is None:
+"""
+weakening = """
+            if False:
+"""
+expect_red = [
+  "pytest#tests/test_transport_replay.py::test_an_unanswerable_elicitation_is_refused_not_delivered_as_a_result",
+]
+note = """
+A PAUSE IS NOT A RESULT, which is the unit's whole claim. With no handler installed there is
+no answer leg to sign, so the only honest outcome is a closed failure; falling through would
+hand the application the elicitation body as though the call had completed -- an
+`InputRequiredResult` read as a terminal answer.
+"""
+
+[[probe]]
+id = "M207-typescript-the-continuation-ceiling-is-enforced"
+unit = "sdk_typescript.continuation_drive"
+theorem = "THM-0095"
+conjunct = "an elicitation past the continuation ceiling fails the call closed rather than resolving it"
+path = "sdk/typescript/src/transport.ts"
+anchor = """
+        if (round > (config.maxContinuationRounds ?? 4)) {
+"""
+weakening = """
+        if (false) {
+"""
+expect_red = [
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > enforces the continuation ceiling before asking the caller",
+]
+note = """
+The TypeScript instance of M205.
+"""
+
+[[probe]]
+id = "M208-typescript-an-unanswerable-elicitation-is-refused"
+unit = "sdk_typescript.continuation_drive"
+theorem = "THM-0095"
+conjunct = "an elicitation with no handler fails the call closed rather than resolving it"
+path = "sdk/typescript/src/transport.ts"
+anchor = """
+        if (!config.answerInputRequired) {
+"""
+weakening = """
+        if (false) {
+"""
+expect_red = [
+  "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > refuses an unanswerable elicitation rather than delivering it as a result",
+]
+note = """
+The TypeScript instance of M206.
+"""
+
+[[probe]]
+id = "M209-python-the-verifier-sees-the-transmitted-bytes"
+unit = "sdk_python.exchange_binding"
+theorem = "THM-0094"
+conjunct = "the value returned by sign_request is the one POSTed and the one passed to the verifier, and nothing is re-derived or re-serialized for it"
+path = "sdk/python/python/mcp_re_sdk/transport.py"
+anchor = """
+            reply = await poster(signed.method, signed.target_uri, signed.headers, signed.body())
+"""
+weakening = """
+            reply = await poster(
+                signed.method,
+                signed.target_uri,
+                signed.headers,
+                json.dumps(json.loads(signed.body())).encode(),
+            )
+"""
+expect_red = [
+  "pytest#tests/test_transport.py::test_the_verifier_is_shown_the_bytes_that_were_transmitted",
+]
+note = """
+THIS PROBE FAILED FIRST, and the reason is instructive: the declared control read the posted
+body as JSON, so it could not tell `signed.body()` from a re-serialization of it. Both decode
+to the same document, and an implementation that re-derived the bytes for either leg kept it
+green.
+
+THE PROPOSITION IS AN ABSENCE -- "nothing is re-derived, re-serialized or reconstructed" --
+so the weakening ADDS a step rather than deleting one, and the control it needs asserts BYTE
+identity rather than document equality. The new control captures what the poster received and
+what the verifier was handed and compares the two: the signature covers bytes, and a verdict
+computed over anything else answers a question nobody asked.
+"""
+
+[[probe]]
+id = "M210-typescript-the-verifier-sees-the-transmitted-bytes"
+unit = "sdk_typescript.exchange_binding"
+theorem = "THM-0095"
+conjunct = "the value returned by signRequest is the one POSTed and the one passed to the verifier, and nothing is re-derived or re-serialized for it"
+path = "sdk/typescript/src/transport.ts"
+anchor = """
+        const httpReply = await this.#poster(
+          signed.method,
+          signed.targetUri,
+          signed.headers,
+          signed.body,
+        );
+"""
+weakening = """
+        const httpReply = await this.#poster(
+          signed.method,
+          signed.targetUri,
+          signed.headers,
+          Buffer.from(
+            JSON.stringify(
+              Object.fromEntries(
+                Object.entries(JSON.parse(signed.body.toString("utf8")) as object).reverse(),
+              ),
+            ),
+          ),
+        );
+"""
+expect_red = [
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > shows the verifier the bytes that were transmitted",
+]
+note = """
+The TypeScript instance of M209, with the same gap and the same repair: the declared control
+read the posted body as JSON and could not see a re-serialization. The new control records
+what the poster received and what the core was handed, and compares the buffers.
+
+THE FIRST WEAKENING HERE WAS NOT ONE. `JSON.stringify(JSON.parse(x))` round-trips the core's
+compact output to the SAME BYTES, so the probe changed nothing and the control stayed green
+truthfully. Python's twin differs only by accident of its library: `json.dumps` defaults to
+`", "` / `": "` separators, so the same round-trip there does change the bytes. The weakening
+now REORDERS the members, which preserves the document and changes the serialization -- which
+is what "re-derived" means here. A probe whose mutation is a no-op measures nothing, and the
+lane reporting FAIL for it was correct both times.
+"""
+
+[[probe]]
+id = "M211-python-only-permitted-binding-types"
+unit = "sdk_python.authorization_binding"
+theorem = "THM-0094"
+conjunct = "the authorization binding specs a request carries are the ones the configured policy permits"
+path = "sdk/python/python/mcp_re_sdk/authorization.py"
+anchor = """
+            if p.binding_type() not in self.permitted_types:
+"""
+weakening = """
+            if False:
+"""
+expect_red = [
+  "pytest#tests/test_transport.py::test_the_authorization_policy_is_checked_at_open_too",
+]
+note = """
+THE PERMITTED-TYPE REFUSAL IS SOLE, and the control that measures it is about the OPENING,
+not about a request: the policy is checked at `start()` alongside the signer policy, so a
+route configured to permit only a decision binding refuses a transport carrying an opaque
+one before anything is signed. Under the weakening a provider of any registered type rides
+along on every request the route makes.
+"""
+
+[[probe]]
+id = "M212-python-the-binding-serialization-is-canonical"
+unit = "sdk_python.authorization_binding"
+theorem = "THM-0094"
+conjunct = "the binding specs are serialized canonically and byte-identically to the TypeScript twin"
+path = "sdk/python/python/mcp_re_sdk/transport.py"
+anchor = """
+        ensure_ascii=False,
+"""
+weakening = """
+        ensure_ascii=True,
+"""
+expect_red = [
+  "pytest#tests/test_transport.py::test_the_canonical_bindings_json_emits_raw_utf8_like_json_stringify",
+]
+note = """
+THE DEFAULT IS THE DEFECT. `json.dumps` escapes every non-ASCII character as `\\uXXXX` and
+`JSON.stringify` emits raw UTF-8, so a tenant name or grant handle carrying one non-ASCII
+character digests to two different values in the two SDKs. SDK-1/SDK-4 require the same
+digest for the same bindings, and an audit pipeline reconciling a Python client's record
+against a TypeScript client's would read a difference in SERIALIZER as "the artifact binding
+changed". The weakening is the library default, which is what makes it worth a falsifier:
+nothing about the code LOOKS wrong once the keyword is gone.
+"""
+
+[[probe]]
+id = "M213-typescript-the-aggregate-read-is-bounded"
+unit = "sdk_typescript.bounded_read"
+theorem = "THM-0095"
+conjunct = "the response read is bounded by the aggregate wall clock rather than by socket inactivity alone"
+path = "sdk/typescript/src/mtls.ts"
+anchor = """
+              }, timeoutMs);
+"""
+weakening = """
+              }, 24 * 60 * 60 * 1000);
+"""
+expect_red = [
+  "vitest#test/mtls.test.ts > the mTLS connect helper > bounds the TOTAL response read, not only socket inactivity",
+]
+note = """
+THE WEAKENING KEEPS THE TIMER AND MOVES THE BOUND, which is the honest shape here: deleting
+the deadline would also delete the `settled()` bookkeeping and measure a different change.
+The per-socket `timeout` above is NOT a second carrier -- it is re-armed by every byte that
+arrives, so a peer trickling just under it holds the exchange and the transport semaphore
+slot it occupies open for as long as it cares to, and `maxConcurrentExchanges` such responses
+wedge the session with no error and no timeout. This is the TypeScript twin of M178, whose
+Python instance recorded the same defect from the `read1`/`read` direction.
+"""
+
+[[probe]]
+id = "M214-typescript-the-binding-serialization-is-canonical"
+unit = "sdk_typescript.authorization_binding"
+theorem = "THM-0095"
+conjunct = "the binding specs are serialized canonically and byte-identically to the Python twin"
+path = "sdk/typescript/src/authorization.ts"
+anchor = """
+    for (const key of Object.keys(spec).sort()) sorted[key] = spec[key];
+"""
+weakening = """
+    for (const key of Object.keys(spec)) sorted[key] = spec[key];
+"""
+expect_red = [
+  "vitest#test/authorization.test.ts > canonical bindingsJson is byte-identical across SDKs > emits raw UTF-8 for a non-ASCII binding field, and the same digest Python records",
+]
+note = """
+THE TWIN OF M212, weakening the other half of the same canonicalization. Python's default
+escapes non-ASCII and TypeScript's does not, so M212 attacks `ensure_ascii`; JavaScript's
+object key order is insertion order and Python's `sort_keys` is a keyword, so this one
+attacks the sort. Both weakenings preserve the DOCUMENT and change the bytes, and the digest
+SDK-1/SDK-4 reconcile across the two clients is taken over the bytes.
+
+The control names the cross-SDK digest directly, which is why one probe suffices for both
+halves of the sentence: a serialization that stops being canonical stops matching the pinned
+digest whichever way it drifts.
+"""

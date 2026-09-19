@@ -4139,9 +4139,13 @@ paths = ["sdk/python/python/mcp_re_sdk/transport.py"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://sdk_python/exchange_binding/the_verifier_sees_this_transmission"]
+evidence = [
+  "test://sdk_python/exchange_binding/the_verifier_sees_this_transmission",
+  "mutation://sdk_python/exchange_binding/the_verifier_sees_this_transmission",
+]
 tested_symbols = [
   "pytest#tests/test_transport.py::test_the_signed_body_is_the_request_the_caller_described",
+  "pytest#tests/test_transport.py::test_the_verifier_is_shown_the_bytes_that_were_transmitted",
   # The anti-vacuity control for the stubbed verdicts: a duck-typed stub cannot track the
   # core's shape, so a renamed member would leave the adapter reading `None` in production.
   "pytest#tests/test_transport.py::test_the_stubbed_verdict_shape_is_the_cores_own",
@@ -4202,7 +4206,10 @@ paths = ["sdk/python/python/mcp_re_sdk/transport.py"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://sdk_python/execution_report/only_what_the_receipt_said"]
+evidence = [
+  "test://sdk_python/execution_report/only_what_the_receipt_said",
+  "mutation://sdk_python/execution_report/only_what_the_receipt_said",
+]
 tested_symbols = [
   "pytest#tests/test_transport.py::test_a_post_dispatch_rejection_reports_its_execution_and_retry_contract",
   # The transport deadline is the condition under which this SDK knows LEAST about whether
@@ -4221,7 +4228,10 @@ paths = ["sdk/python/python/mcp_re_sdk/transport.py"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://sdk_python/local_failure/no_borrowed_vocabulary"]
+evidence = [
+  "test://sdk_python/local_failure/no_borrowed_vocabulary",
+  "mutation://sdk_python/local_failure/no_borrowed_vocabulary",
+]
 tested_symbols = [
   "pytest#tests/test_transport.py::test_a_wire_failure_is_delivered_as_a_correlated_json_rpc_error",
   "pytest#tests/test_transport.py::test_a_local_signer_failure_is_delivered_without_claiming_a_wire_code",
@@ -4249,7 +4259,10 @@ paths = ["sdk/python/python/mcp_re_sdk/transport.py"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://sdk_python/reply_envelope/rebuilt_never_edited"]
+evidence = [
+  "test://sdk_python/reply_envelope/rebuilt_never_edited",
+  "mutation://sdk_python/reply_envelope/rebuilt_never_edited",
+]
 tested_symbols = [
   "pytest#tests/test_transport.py::test_a_verified_reply_carrying_a_method_is_refused_not_dispatched",
   "pytest#tests/test_transport.py::test_a_verified_reply_with_neither_result_nor_error_is_refused",
@@ -4269,7 +4282,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://sdk_python/continuation_drive/a_pause_is_not_a_result"]
+evidence = [
+  "test://sdk_python/continuation_drive/a_pause_is_not_a_result",
+  "mutation://sdk_python/continuation_drive/a_pause_is_not_a_result",
+]
 tested_symbols = [
   "pytest#tests/test_transport_replay.py::test_the_adapter_drives_the_answer_leg_to_a_terminal_result",
   "pytest#tests/test_transport_replay.py::test_an_unanswerable_elicitation_is_refused_not_delivered_as_a_result",
@@ -4307,7 +4323,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://sdk_python/correlation_lifecycle/the_window_and_the_bound"]
+evidence = [
+  "test://sdk_python/correlation_lifecycle/the_window_and_the_bound",
+  "mutation://sdk_python/correlation_lifecycle/the_window_and_the_bound",
+]
 tested_symbols = [
   "pytest#tests/test_transport.py::test_a_failed_exchange_does_not_leave_its_correlation_entry_outstanding",
   "pytest#tests/test_transport.py::test_close_clears_abandoned_correlation_state",
@@ -4340,7 +4359,10 @@ paths = ["sdk/python/python/mcp_re_sdk/transport.py"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://sdk_python/nonce_floor/nothing_is_signed_under_a_weak_nonce"]
+evidence = [
+  "test://sdk_python/nonce_floor/nothing_is_signed_under_a_weak_nonce",
+  "mutation://sdk_python/nonce_floor/nothing_is_signed_under_a_weak_nonce",
+]
 tested_symbols = [
   "pytest#tests/test_nonce_floor.py::test_the_default_generator_clears_the_floor",
   "pytest#tests/test_nonce_floor.py::test_the_default_generator_is_accepted",
@@ -4370,7 +4392,10 @@ paths = ["sdk/python/python/mcp_re_sdk/transport.py"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://sdk_python/notification_delivery/acknowledged_or_undelivered"]
+evidence = [
+  "test://sdk_python/notification_delivery/acknowledged_or_undelivered",
+  "mutation://sdk_python/notification_delivery/acknowledged_or_undelivered",
+]
 tested_symbols = [
   "pytest#tests/test_transport.py::test_an_unsigned_acknowledgement_fails_the_transport_closed",
   "pytest#tests/test_transport.py::test_a_non_202_answer_to_a_notification_fails_closed",
@@ -4442,12 +4467,16 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://sdk_python/signer_policy/checked_before_anything_is_signed"]
+evidence = [
+  "test://sdk_python/signer_policy/checked_before_anything_is_signed",
+  "mutation://sdk_python/signer_policy/checked_before_anything_is_signed",
+]
 tested_symbols = [
   "pytest#tests/test_transport.py::test_a_satisfied_policy_opens_the_transport",
   # ADR-MCPRE-069 `register`.
   "pytest#tests/test_transport.py::test_the_signer_is_checked_before_anything_is_signed",
   "pytest#tests/test_transport.py::test_a_hardened_policy_opens_with_a_non_exporting_signer",
+  "pytest#tests/test_transport.py::test_a_hardened_policy_refuses_software_custody",
   # `test_transport_e2e.py::test_the_hardening_profile_refuses_a_software_key_before_connecting`
   # belongs here and is NOT registered: that file does not run in the measured lane. See
   # `sdk_python.exchange_binding` and the packet's P2-E.
@@ -4511,7 +4540,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://sdk_python/authorization_binding/permitted_and_canonical"]
+evidence = [
+  "test://sdk_python/authorization_binding/permitted_and_canonical",
+  "mutation://sdk_python/authorization_binding/permitted_and_canonical",
+]
 tested_symbols = [
   # ADR-MCPRE-069 `register`: `authorization.py` was in the predecessor unit's paths and no
   # control in its battery named it.
@@ -4532,9 +4564,13 @@ paths = ["sdk/typescript/src/transport.ts"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://sdk_typescript/exchange_binding/the_verifier_sees_this_transmission"]
+evidence = [
+  "test://sdk_typescript/exchange_binding/the_verifier_sees_this_transmission",
+  "mutation://sdk_typescript/exchange_binding/the_verifier_sees_this_transmission",
+]
 tested_symbols = [
   "vitest#test/transport.test.ts > McpReHttpTransport signing inputs > signs the request body the caller's message described",
+  "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > shows the verifier the bytes that were transmitted",
   # ADR-MCPRE-069 `register`
   "vitest#test/transport.test.ts > McpReHttpTransport signing inputs > signs a request with no params",
   "vitest#test/transport.test.ts > the forced verdicts are the core's own shape > declares no member the binding does not",
@@ -4593,7 +4629,10 @@ paths = ["sdk/typescript/src/transport.ts"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://sdk_typescript/execution_report/only_what_the_receipt_said"]
+evidence = [
+  "test://sdk_typescript/execution_report/only_what_the_receipt_said",
+  "mutation://sdk_typescript/execution_report/only_what_the_receipt_said",
+]
 tested_symbols = [
   "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > reports the execution and retry contract a post-dispatch rejection carried",
   "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > invents no disposition for a receipt that stated none",
@@ -4611,7 +4650,10 @@ paths = ["sdk/typescript/src/transport.ts"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://sdk_typescript/local_failure/no_borrowed_vocabulary"]
+evidence = [
+  "test://sdk_typescript/local_failure/no_borrowed_vocabulary",
+  "mutation://sdk_typescript/local_failure/no_borrowed_vocabulary",
+]
 tested_symbols = [
   "vitest#test/transport.test.ts > McpReHttpTransport peer wire codes > delivers a core failure as its frozen token, not as a local SDK error",
   "vitest#test/transport.test.ts > McpReHttpTransport peer wire codes > still labels a genuine local failure as one",
@@ -4641,7 +4683,10 @@ paths = ["sdk/typescript/src/transport.ts"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://sdk_typescript/reply_envelope/rebuilt_never_edited"]
+evidence = [
+  "test://sdk_typescript/reply_envelope/rebuilt_never_edited",
+  "mutation://sdk_typescript/reply_envelope/rebuilt_never_edited",
+]
 tested_symbols = [
   "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > refuses a verified reply carrying a top-level method instead of dispatching it",
   "vitest#test/transport.test.ts > McpReHttpTransport verified-reply shape > refuses a verified reply that is not a JSON-RPC response at all",
@@ -4661,7 +4706,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://sdk_typescript/continuation_drive/a_pause_is_not_a_result"]
+evidence = [
+  "test://sdk_typescript/continuation_drive/a_pause_is_not_a_result",
+  "mutation://sdk_typescript/continuation_drive/a_pause_is_not_a_result",
+]
 tested_symbols = [
   # ADR-MCPRE-069 `register`
   "vitest#test/transport_replay.test.ts > McpReHttpTransport replaying a recorded delegated session > drives the answer leg to a terminal result",
@@ -4697,7 +4745,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://sdk_typescript/correlation_lifecycle/the_window_and_the_bound"]
+evidence = [
+  "test://sdk_typescript/correlation_lifecycle/the_window_and_the_bound",
+  "mutation://sdk_typescript/correlation_lifecycle/the_window_and_the_bound",
+]
 tested_symbols = [
   "vitest#test/correlation.test.ts > fails closed > rejects a response binding to nothing outstanding",
   "vitest#test/correlation.test.ts > fails closed > rejects a late response",
@@ -4807,7 +4858,10 @@ paths = ["sdk/typescript/src/transport.ts"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://sdk_typescript/notification_delivery/acknowledged_or_undelivered"]
+evidence = [
+  "test://sdk_typescript/notification_delivery/acknowledged_or_undelivered",
+  "mutation://sdk_typescript/notification_delivery/acknowledged_or_undelivered",
+]
 tested_symbols = [
   "vitest#test/transport.test.ts > McpReHttpTransport notification handling > fails closed on an unsigned acknowledgement",
   "vitest#test/transport.test.ts > McpReHttpTransport notification handling > fails closed on a bodied 200 in place of an acknowledgement",
@@ -4908,7 +4962,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://sdk_typescript/signer_policy/checked_before_anything_is_signed"]
+evidence = [
+  "test://sdk_typescript/signer_policy/checked_before_anything_is_signed",
+  "mutation://sdk_typescript/signer_policy/checked_before_anything_is_signed",
+]
 tested_symbols = [
   "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > checks the signer against the route policy in start(), before anything is signed",
   "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > accepts a signer that satisfies the policy",
@@ -4968,7 +5025,10 @@ paths = ["sdk/typescript/src/mtls.ts"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://sdk_typescript/bounded_read/both_bounds_and_the_channel"]
+evidence = [
+  "test://sdk_typescript/bounded_read/both_bounds_and_the_channel",
+  "mutation://sdk_typescript/bounded_read/both_bounds_and_the_channel",
+]
 tested_symbols = [
   "vitest#test/mtls.test.ts > the mTLS connect helper > bounds the TOTAL response read, not only socket inactivity",
   "vitest#test/mtls.test.ts > the mTLS connect helper > refuses an oversized response",
@@ -5011,7 +5071,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://sdk_typescript/authorization_binding/permitted_and_canonical"]
+evidence = [
+  "test://sdk_typescript/authorization_binding/permitted_and_canonical",
+  "mutation://sdk_typescript/authorization_binding/permitted_and_canonical",
+]
 tested_symbols = [
   # ADR-MCPRE-069 `register`
   "vitest#test/authorization.test.ts > opaque bytes > has the core digest the real artifact",
