@@ -800,6 +800,40 @@ above them makes no claim they support. A twin promise held by one root and not 
 is not a bookkeeping gap; it is the two system roots promising different things.
 **Severity:** `critical`, matching its TypeScript twin.
 
+**Referred whole, ADR-MCPRE-069 S-07/SDK-S1.** All four rows stay. The blocker is
+SUBSUMPTION, and it is not the one the slice's cluster analysis named — that analysis argued
+that adding `sdk_python.post_close_emission` to THM-0094's `supported_by` republishes the
+root, and `tools/verification/_fingerprint.py::fingerprint_theorem` refutes it: its
+components are `encoding_version`, `theorem_id`, `theorem_claim` (`statement` +
+`security_consequence` + `scope`), `theorem_dependencies` and `theorem_review_requirement`,
+and `supported_by` is not among them. Adding the edge moves nothing.
+
+What blocks it is that there is no edge to add. A new unit must be attached, and an
+attachment asserts that the unit DECOMPOSES a proposition the ratified theorem already
+contains. THM-0094 contains none: across its `statement`, `security_consequence` and `scope`
+the only occurrence of *close* is *"fails the call closed"*, and the nearest clause — *"A
+LOCAL failure — a transport deadline, a cancellation, a local I/O or signing failure — is
+reported as a local and ambiguous failure under the SDK's own prefix"* — is about how an
+aborted exchange is REPORTED, not about whether one is signed and transmitted. No unit in
+its closure states it either: `sdk_python.correlation_lifecycle` already declares
+`test_close_clears_abandoned_correlation_state`, and its claim is that no entry is left
+outstanding, not that nothing is emitted.
+
+THM-0095 does contain it, in scope, verbatim: *"The guard that stops a request still queued
+at the concurrency semaphore from being signed and sent after `close()` reads this
+transport's own state — assigned synchronously by `close()` before anything is aborted —
+rather than `AbortSignal.aborted`."* So the asymmetry this record found at the unit layer is
+also at the THEOREM layer, and closing it means amending THM-0094's `statement` or `scope`.
+Both are `theorem_claim` components, so that is a ratification event and an owner decision
+about what the Python root promises — R6, not a registration. Packet at
+`verification/reviews/packets/adr069-np-014-ratification-2026-09-20.md`.
+
+**Lane.** The four controls are in `sdk/python/tests/test_transport.py`, which opens with
+`pytest.importorskip("mcp")`. They are selected and PASS in the authoritative lane — the
+prepared `.venv-cp314` that `scripts/prepare_python_matrix.sh` builds, where the `dev` extra
+supplies `mcp` — and select to ZERO in an environment without it. Whoever ratifies this
+inherits that: the lane is the prepared interpreter, never a bare `pytest`.
+
 ## NP-015 — a device that cannot sign emits no evidence (Python)
 
 **Controls:** `sdk/python/tests/test_custody.py::TestDeviceFailsClosed` (7).
@@ -882,27 +916,6 @@ propositions, which are about the record the proxy writes rather than the one th
 keeps.
 **Severity:** `high`.
 
-## NP-019 — the correlation store's peek and take split
-
-**Controls:** `sdk/python/tests/test_correlation.py::TestRecordAndTake::test_peek_does_not_consume`,
-`::test_take_consumes_the_outstanding_request`.
-**Carrier:** `correlation.py`'s `peek` and `take`.
-**Statement.** *Peeking an outstanding request never retires it, and taking it retires it
-exactly once.*
-**If false.** Either a peek retires an entry — so a legitimate answer that arrives
-afterwards is refused as unbound — or a take does not, so one reply can be answered twice.
-Both are reachable by a peer that controls when replies arrive.
-**Likely owner:** `sdk_python.correlation_lifecycle`. It was tempting to register
-`test_take_consumes_the_outstanding_request` there alone, as the mechanism of its
-outstanding-entry clause, and that is exactly the half-registration ADR-069 D2 is about: the
-proposition is the SPLIT, and half of it is not a weaker version of it but a different claim.
-The proxy side holds the same proposition whole —
-`proxy.continuation_correlation_store` registers
-`peek_does_not_consume_and_consume_is_one_shot` as one control — which is the form this
-should take.
-**Root relationship.** Under THM-0094.
-**Severity:** `high`.
-
 ---
 
 ## The Python authorization-binding asymmetry — NP-020 through NP-024
@@ -923,6 +936,24 @@ in the measured lane, and the unit above them makes no claim they support.
 The clause is not one proposition. It is decomposed here the way the controls decompose,
 rather than registered as one, because question 1 of ADR-MCPRE-061 §8 applies: an answer
 that needs an "and" is a shallow boundary.
+
+**`sdk_python.authorization_binding` IS AND STAYS THEOREM-LESS, and this is settled here
+rather than inherited.** Two registries appeared to disagree about it: it is in no theorem's
+`supported_by`, while `mutation-probes.toml` had `M211` and `M212` carrying
+`theorem = "THM-0094"`. THM-0094's ratified `scope` decides it, in its own words:
+
+> REQUEST-SIDE ATTRIBUTION IS OUTSIDE IT. Which identity may sign, and under which custody
+> class, is `sdk_python.signer_policy`; which authorization artefacts a request is bound to
+> is `sdk_python.authorization_binding`. Remove either and the answer the application
+> receives still binds to the request that was sent, which is why neither is in this
+> closure.
+
+So the unit is theorem-less BY DECISION, and attaching it would contradict a ratified
+sentence rather than decompose one — `scope` is a `theorem_claim` component, so changing that
+sentence is a ratification event. The probes are the side that was wrong, and `M178`, `M201`,
+`M202`, `M211` and `M212` — every probe on a Python unit that same scope excludes by name —
+no longer carry a `theorem`. They are reported under their unit, which is what they evidence.
+The key is optional and the lane reads it only to print it, so nothing else moves.
 
 ## NP-020 — the core digests the real artifact, and the caller supplies no digest
 
@@ -959,6 +990,19 @@ so anything placed there is in every retained copy of the base.
 **Likely owner:** `sdk_python.authorization_binding`.
 **Severity:** `critical`.
 
+**Referred whole, ADR-MCPRE-069 S-07/SDK-S1.** Both rows stay. `sdk_python.authorization_binding`
+states, in full: *"The authorization binding specs a request carries are the ones the
+configured policy permits, serialized canonically and byte-identically to the TypeScript
+twin, and the digest retained per outstanding request identifies which artefacts the request
+was bound to without ever being re-interpreted."* It claims what a request carries is the
+PERMITTED set and that the retained digest is not re-interpreted. It does not claim that the
+artifact bytes never travel, and it says nothing whatever about secret material a reference
+form was given. Registering these two there means writing that clause into the unit — which
+is minting a proposition at the unit layer, the same edit that puts NP-020, NP-023 and
+NP-024 out of this slice, and the severity gap says the same thing from the other side: this
+proposition is `critical` and the unit is `medium`. Packet at
+`verification/reviews/packets/adr069-np-021-ratification-2026-09-20.md`.
+
 ## NP-022 — the generic provider cannot mint half a binding pair
 
 **Controls:** `test_authorization.py::TestTheGenericProviderCannotMintHalfAPair` (3) — the
@@ -975,6 +1019,14 @@ legitimate form would satisfy the first two and break the feature.
 **Likely owner:** `sdk_python.authorization_binding`. Its TypeScript twin states this clause
 verbatim.
 **Severity:** `high`.
+
+**Referred whole, ADR-MCPRE-069 S-07/SDK-S1.** All three rows stay, and *the TypeScript twin
+states it verbatim* is the reason rather than the remedy. `sdk_typescript.authorization_binding`
+carries *"a caller is given no way to supply a precomputed digest or to mint half a binding
+pair"*; the Python twin's description carries everything after that clause's semicolon and
+not the clause. Registering these three under the Python statement asserts a promise it does
+not make, which is the unit-layer minting this slice forbids. Packet at
+`verification/reviews/packets/adr069-np-022-ratification-2026-09-20.md`.
 
 ## NP-023 — a binding provider refuses illegal material at construction
 
@@ -1986,8 +2038,9 @@ shipped composition measured as a conformance claim.
 **Statement.** *An external credential verifies under the MCP-RE verifier, and the MCP-RE
 issuer reproduces the external bytes.*
 **If false.** MCP-RE's delegation is compatible in one direction only, which is not
-compatibility. Both directions are one proposition for the same reason NP-019's peek/take
-split is: half of it is a different claim, not a weaker one.
+compatibility. Both directions are one proposition for the same reason the peek/take split
+in `unit://sdk_python.correlation_lifecycle` is: half of it is a different claim, not a
+weaker one.
 **Severity:** `high`.
 
 ## NP-083 — the audit vocabulary is frozen and minted in one place

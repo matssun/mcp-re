@@ -1546,15 +1546,6 @@ consequence = "high"
 root_relationship = "under THM-0094, adjacent to the proxy-side audit-record propositions"
 record = "docs/architecture/control-dispositions.md#np-018"
 
-[[proposition]]
-id = "NP-019"
-title = "The correlation store's peek and take split"
-carrier = "correlation.py's peek and take"
-likely_owner = "sdk_python.correlation_lifecycle; half of the split is a different claim, not a weaker one"
-consequence = "high"
-root_relationship = "under THM-0094; the proxy side holds the same proposition whole"
-record = "docs/architecture/control-dispositions.md#np-019"
-
 [[disposition]]
 id = "CD-3001"
 project = "sdk/python"
@@ -1569,22 +1560,6 @@ project = "sdk/python"
 control = "pytest#tests/test_correlation.py::TestRecordAndTake::test_the_store_carries_the_audit_fields_the_adr_enumerates"
 decision = "new-proposition"
 proposition = "NP-018"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-3003"
-project = "sdk/python"
-control = "pytest#tests/test_correlation.py::TestRecordAndTake::test_peek_does_not_consume"
-decision = "new-proposition"
-proposition = "NP-019"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-3004"
-project = "sdk/python"
-control = "pytest#tests/test_correlation.py::TestRecordAndTake::test_take_consumes_the_outstanding_request"
-decision = "new-proposition"
-proposition = "NP-019"
 recorded = "2026-09-19"
 
 [[disposition]]
