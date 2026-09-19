@@ -44,10 +44,12 @@ not an omission to hide.
 | conformance.verdict_vocabulary_scope | V0 | THM-0111 | 0 |
 | core.audit_vocabulary | V0 | THM-0122 | 0 |
 | core.content_address | V0 | _none_ | 0 |
+| core.ed25519_primitive | V0 | _none_ | 0 |
 | core.replay_seam | V0 | THM-0118 | 0 |
 | core.time_civil_from_days | V2 | THM-0128 | 0 |
 | core.time_rfc3339 | V1 | THM-0002 | 4 |
 | core.trust_resolver_seam | V0 | THM-0119 | 0 |
+| core.verification_taxonomy | V0 | _none_ | 0 |
 | host.request_freshness_inputs | V0 | THM-0114 | 0 |
 | http_profile.admission_assertion | V0 | THM-0053 | 0 |
 | http_profile.admission_currency | V1 | THM-0003, THM-0004, THM-0005, THM-0006 | 9 |

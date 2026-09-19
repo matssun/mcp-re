@@ -8236,3 +8236,69 @@ that is not its own name is the precondition for the move forgery a signature ca
 subject comparison still runs, but it is no longer comparing against the workload the reader
 asked about.
 """
+
+# ---------------------------------------------------------------------------
+# The Core's own premises — ADR-MCPRE-069 NP-106, NP-108
+# ---------------------------------------------------------------------------
+#
+# Both weakenings leave a tree that BUILDS and a system that keeps running. The first makes
+# every signature verify; the second makes two distinct failures render one token. Neither
+# errors anywhere, and both are invisible above the Core.
+
+[[probe]]
+id = "M312-core-a-failed-ed25519-verification-is-a-failure"
+unit = "core.ed25519_primitive"
+theorem = "THM-0014"
+conjunct = "a wrong key and a tampered preimage each FAIL — `verify_strict`'s refusal is the primitive's answer, not a value the wrapper may reinterpret"
+path = "mcp-re-core/src/crypto.rs"
+anchor = "        Err(_) => Err(on_error),\n    }\n}\n\n/// Request-path Ed25519 verification"
+weakening = "        Err(_) => Ok(()),\n    }\n}\n\n/// Request-path Ed25519 verification"
+expect_red = [
+  "lib#crypto::tests::wrong_key_fails",
+  "lib#crypto::tests::tamper_preimage_fails",
+]
+note = """
+THIS IS THE ONE PRIMITIVE EVERY SIGNATURE IN THE SYSTEM RESTS ON, and the weakening is the
+smallest possible: the verifier still runs, still decodes, still checks the length, and still
+calls `verify_strict` — it simply does not act on the answer. Every layer above reads a
+`Result` and every one of them gets `Ok`, so `verify_request_floor` returns a
+`CryptographicFloorVerifiedRequest` for a request signed by nobody. THM-0014's statement says
+"the RFC 9421 signature verified over the reconstructed signature base"; under the weakening
+that sentence is false while nothing in the tree says so.
+
+The three earlier-returning arms stay green, correctly. `malformed_signature_base64_fails`
+refuses at the decode, and `wrong_length_signature_fails` at the `try_into` — both before the
+line this probe touches. That they do NOT move is what locates the conjunct: the cryptographic
+answer is the only thing being falsified here, and the two structural refusals are a different
+clause with their own arms.
+"""
+
+[[probe]]
+id = "M313-core-a-verdict-token-names-one-variant"
+unit = "core.verification_taxonomy"
+theorem = "THM-0111"
+conjunct = "the Core taxonomy owns its mapping TOTALLY — one variant per token, and the http-profile codes are distinct from the folds they replace"
+path = "mcp-re-core/src/error.rs"
+anchor = "            McpReError::DigestMismatch => \"mcp-re.digest_mismatch\",\n"
+weakening = "            McpReError::DigestMismatch => \"mcp-re.invalid_signature\",\n"
+expect_red = [
+  "lib#error::all_errors_tests::all_errors_is_duplicate_free",
+  "lib#error::tests::http_profile_codes_are_distinct_from_the_folds_they_replace",
+  "lib#error::tests::http_profile_signed_rejection_wire_strings",
+]
+note = """
+THE WEAKENING RE-CREATES THE HISTORICAL FOLD ADR-MCPRE-050 SPLIT. Before the RFC 9530 carrier
+had its own codes, a `Content-Digest` mismatch WAS reported as `invalid_signature`; the split
+is why an operator can tell a tampered body from a bad key. Under the weakening the two are one
+token again, every peer and every audit record sees `mcp-re.invalid_signature`, and the system
+refuses exactly what it refused before — which is why no runtime symptom exists to notice.
+
+It is a duplicate rather than an unknown token deliberately: an invented string would be caught
+by any guard that checks the `mcp-re.` prefix, and would falsify a weaker proposition than the
+one THM-0111 states. A COLLISION between two owned variants is the thing "one variant per
+token" forbids and the thing nothing but this battery can see.
+
+`all_wire_codes_is_exhaustive` stays green, correctly: it compares the `wire_code` arms against
+`ALL_ERRORS` by VARIANT NAME, and the weakening renames no variant. Exhaustiveness and
+injectivity are two clauses, and this probe falsifies the second.
+"""

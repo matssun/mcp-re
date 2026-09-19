@@ -253,7 +253,9 @@ allowlisted as a permanent exemption, and had never existed at all.
 
 ## ND-007 — architecture shape rules
 
-**Covers:** `semantic_altitude_gate.py`, `lifecycle_purity_gate.py`.
+**Covers:** `semantic_altitude_gate.py`, `lifecycle_purity_gate.py`, and
+`mcp-re-core` `tests/firewall_test#mcp_re_core_stays_pure_no_networking_async_fs_or_upstack_dependencies`
+(added 2026-09-19, ADR-MCPRE-069 RM-S1).
 **Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 2.
 
 ADR-MCPRE-067 §16.3's rule that a new provider adds a typed mechanism payload and never a
@@ -274,10 +276,34 @@ purity rule is what makes the transition relation's argument a local one.
 
 That is a property of the EVIDENCE, not of the system, which is this register's boundary.
 
+**The purity firewall is the same rule one layer up, and was admitted by the same test.**
+`lifecycle_purity_gate.py` holds that two state machines that are VALUES depend on no
+production module; the firewall test holds that `mcp-re-core` — the crate those and every
+other verdict are computed in — declares no networking, no async-runtime, no filesystem and
+no up-stack dependency. It reads `mcp-re-core`'s own `Cargo.toml` and `BUILD.bazel`, both
+baked in with `include_str!`, and compares the declared dependency names against a forbidden
+set. Apply the secondary test and the answer is the same: **adding `tokio` to
+`mcp-re-core`'s dependency list admits, emits and signs exactly what it did before.** No
+verdict changes, no timestamp is read differently, no signature is accepted that was not.
+What the violation costs is the LOCALITY of every argument made about the Core — that a
+Core verdict is a function of its inputs is reviewable because there is nothing else for it
+to be a function of — and *that is a property of the EVIDENCE, not of the system, which is
+this register's boundary.*
+
+Note precisely what is and is not being said, because the forbidden-crate list names async
+runtimes. The proposition is about the SHAPE of the dependency graph, not about how the Core
+schedules, how fast it runs, how much it holds or what it does concurrently; none of those
+is a fact this family admits, and a reading of the firewall that reached for one would be
+widening the family rather than applying it. `mcp-re-proxy` is deliberately not guarded —
+ADR-MCPRE-051 admits the async stack into the serving path, which is why the firewall is a
+statement about where an argument is local and not a statement about async being unsafe.
+
 **What would move a control out.** A demonstration that a violation admits, emits or signs
-something the system does not today. `semantic_altitude_gate` is the likelier of the two:
+something the system does not today. `semantic_altitude_gate` is the likelier of the three:
 if a sibling field is ever READ on a path that decides anything, the proposition stops being
-about shape and the disposition becomes `new-proposition`.
+about shape and the disposition becomes `new-proposition`. For the firewall the exit is
+sharper still — a Core verdict that depends on something the Core reads from outside its
+inputs. On that day purity is a runtime property and this is the wrong family.
 
 ## ND-009 — data-structure API robustness with no security proposition
 
@@ -2277,14 +2303,6 @@ certificate.
 The rest are eight propositions, and three of them are premises of everything above
 them.
 
-## NP-106 — the Core's Ed25519 primitive is exact and total
-
-**Controls:** `mcp-re-core/src/crypto.rs`.
-**Statement.** *`ensure_ed25519_alg` accepts the supported algorithm and rejects an unknown one with the caller's supplied error; sign-then-verify round-trips and the signature is deterministic for a fixed seed; a wrong key, a wrong-length signature, a tampered preimage and a malformed base64 signature each fail; a malformed key — in b64url or in bytes — maps to actor-binding-failed and the response variant maps to response-sig-invalid; a verification key round-trips through bytes and b64url; and the raw primitive verifies with no algorithm plumbing at all.*
-**If false.** The one primitive every signature in the system rests on accepts something it should not, or reports a key problem as a signature problem. The error-mapping clauses are why they are enumerated: a malformed key and a bad signature are different facts, and an alarm that cannot tell them apart sends the operator to the wrong place. `ensure_ed25519_alg_rejects_unknown_alg_with_supplied_error` is also NP-002's other half — the refusal that keeps ES256 out of MCP-RE's own signing.
-**Likely owner:** none.
-**Severity:** `critical`.
-
 ## NP-107 — base64url is the exact encoding, in both directions
 
 **Controls:** `mcp-re-core/src/encoding.rs`.
@@ -2292,30 +2310,26 @@ them.
 **If false.** Two spellings of one value both decode, so a comparison over the encoded form does not mean what a comparison over the bytes would. Rejecting padding is the clause that makes the encoded form canonical rather than merely decodable.
 **Likely owner:** none.
 **Severity:** `high`.
+**Referred whole, ADR-MCPRE-069 RM-S1.** THM-0014 was the candidate and it was read strictly rather than assumed. It contains the Ed25519 primitive by its own verb — "the RFC 9421 signature VERIFIED" is false if the primitive is inexact — but it does not contain the codec. Swap base64url for hex everywhere and every clause of THM-0014 still holds; the codec is a premise it USES, not a proposition it promises, which is exactly the distinction ADR-069 §5 clause 2 turns on. Two of the seven controls fail clause 3 outright: `encode_has_no_padding` and `encode_uses_url_safe_alphabet` state MCP_RE_SPEC §3's wire promise — *"All MCP-RE signature and hash values are Base64URL WITHOUT padding"* — which is an independently, externally meaningful product promise to a peer and belongs to no theorem here. THM-0055 was checked as the second candidate and declines it too: it claims only that *"The keyid's base64url-no-pad encoding is injective over the fixed 32-byte width of a SHA-256 output"*, a narrower proposition over a different carrier, and its unit `http_profile.keyid` would need a `paths` widening to reach `mcp-re-core/src/encoding.rs`. Its seven rows and this record stay. Packet at `verification/reviews/packets/adr069-np-107-ratification-2026-09-19.md`.
 
-## NP-108 — the error taxonomy is frozen, exhaustive and duplicate-free
+## NP-108 — the profile-agnostic constants the RFC 9421 carrier stands on are frozen
 
-**Controls:** `mcp-re-core/src/error.rs`, `mcp-re-core/src/ids.rs`.
-**Statement.** *`ALL_ERRORS` is duplicate-free and the wire-code list is EXHAUSTIVE; errors compare by value; every frozen wire string renders exactly — the full taxonomy, the delegation strings, the draft-02 strings, the http-profile signed-rejection strings, and renamed-and-kept variants; the http-profile codes are distinct from the folds they replace; a draft-02 missing binding is distinct from a draft-01 missing hash; and the profile-agnostic constants are frozen.*
-**If false.** A wire token means one thing to MCP-RE and another to a peer, or two distinct failures render the same string. Exhaustiveness is what makes the taxonomy a contract: a variant nobody listed renders nothing, and nothing is what a reader cannot distinguish from a token they do not know.
-**Likely owner:** none.
+**Controls:** `mcp-re-core/src/ids.rs`.
+**Statement.** *`EXTENSION_ID`, `SIG_ALG_ED25519` and `DIGEST_ALG_SHA256` hold exactly `se.syncom/mcp-re`, `Ed25519` and `sha256`.*
+**If false.** The carrier advertises an extension identifier, an algorithm token or a digest token a peer does not recognise — or recognises as something else. These are defined once and referenced everywhere precisely so no site can re-spell them; the control is what makes "once" a measured fact.
+**Likely owner:** none. `mcp-re-core/src/ids.rs` is in no unit's `paths`, so no existing battery can take the selector and giving it one means a `paths` widening.
 **Severity:** `critical`.
+**Narrowed from the frozen error taxonomy, ADR-MCPRE-069 RM-S1.** This record used to cover eleven controls spanning two propositions, and ADR-069 RR-002 C5 forbids filing a heterogeneous record whole. The ten `mcp-re-core/src/error.rs` controls are the VERDICT TAXONOMY and are now `unit://core.verification_taxonomy` under THM-0111, whose statement names that file and says of it *"Each owns its own mapping totally — one variant per token, rendered by `wire_code()` and by `Display` alike"*. This one is not a verdict token: an extension identifier, an algorithm name and a digest algorithm name are carrier vocabulary, and THM-0111's *"A **verdict token** is `mcp-re.<name>` with no further dot"* excludes all three by construction. ND-005 (*mirrored and documented values*) was tested and declines it: a mirrored value fails by changing what a READER is told, while re-spelling `SIG_ALG_ED25519` changes the `alg` token the system emits and admits. It stays an unratified proposition with one control.
 
-## NP-109 — the admitted time era is bounded and its formatter is total
+## NP-109 — the formatter inverts the parser across the admitted era, and the fixed-width helper is total beyond the widths it is called with
 
 **Controls:** `mcp-re-core/src/time/mod.rs`.
-**Statement.** *The admitted era round-trips through the formatter; the lowest and highest admitted instants are the boundaries; a five-digit year is REFUSED; and the fixed-digit fields are total outside the parser's widths.*
-**If false.** An instant outside the era formats to something a peer parses as a different time — the five-digit year is the concrete case — or the formatter is partial and a legal instant has no representation.
-**Likely owner:** none.
+**Statement.** *`unix_to_rfc3339_utc` round-trips every end of the admitted era back through `parse_rfc3339_utc`; and `parse_fixed_digits` returns `None` for a start past the end, a width past the end, and a width wide enough that an unchecked accumulator would leave `i64` — widths `parse_rfc3339_utc` never calls it with.*
+**If false.** A legal instant has no representation, or formats to something a peer parses as a different time; or the parser's one `external_body` helper is partial at a width some future caller uses.
+**Likely owner:** `core.time_rfc3339` is the unit over this file, and THM-0002 is its theorem. Neither half above is inside that theorem.
 **Severity:** `high`.
-
-## NP-110 — the Core stays pure
-
-**Controls:** `mcp-re-core/tests/firewall_test.rs`.
-**Statement.** *`mcp-re-core` depends on no networking, no async runtime, no filesystem and nothing up-stack.*
-**If false.** The layer every signature rests on acquires a dependency that can read a file, open a socket or block — and the argument that a Core verdict is a function of its inputs stops being true. This is the crate's whole architectural premise, measured as one control and claimed by nothing.
-**Likely owner:** none.
-**Severity:** `critical`.
+**Split and partly registered, ADR-MCPRE-069 RM-S1.** The record covered five controls over two propositions and RR-002 C5 forbids one disposition over the set. THM-0002 SPLITS it in its own words. It CONTAINS the boundary half — *"The two endpoints specifically are reachable, and are pinned by boundary controls at their exact Unix seconds, but the claim is containment."* — so `boundary_lowest_admitted_instant`, `boundary_highest_admitted_instant` and `boundary_a_five_digit_year_is_refused` joined `unit://core.time_rfc3339`'s existing battery, with no new unit, no `paths` change and no new obligation: that unit is `proved`, and these are the controls its own theorem's scope cites. It EXCLUDES the formatter half in terms — *"It says nothing about the inverse direction: that unix_to_rfc3339_utc round-trips a value in this range is a different proposition with its own evidence."*
+**Why the helper control is here and not in the battery.** `fixed_digit_fields_are_total_outside_the_parser_widths` is not about the formatter at all, and the grouping it inherited from the scheduling analysis was imprecise. It was judged on its own. Three of its six assertions are inside THM-0002's reach and three — start 100, width 10, width 35 — are widths `parse_rfc3339_utc` never issues, so the control as a whole states a proposition about `parse_fixed_digits` as a standalone total function, strictly WIDER than THM-0002's claim about `parse_rfc3339_utc`. Clause 2 asks for a strict decomposition of a contained proposition; a wider one is not that, and a control cannot be split. Both rows stay. Packet at `verification/reviews/packets/adr069-np-109-ratification-2026-09-19.md`.
 
 ## NP-111 — a verified reply's disposition is the one the receipt states
 

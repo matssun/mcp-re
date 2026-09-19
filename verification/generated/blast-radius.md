@@ -48,10 +48,12 @@ attestations this view cannot see.
 | unit://conformance.verdict_vocabulary_scope | source, contracts or evidence | THM-0111 | _no consumer_ |
 | unit://core.audit_vocabulary | source, contracts or evidence | THM-0122 | _no consumer_ |
 | unit://core.content_address | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://core.ed25519_primitive | source, contracts or evidence | THM-0014 | _no consumer_ |
 | unit://core.replay_seam | source, contracts or evidence | THM-0118 | _no consumer_ |
 | unit://core.time_civil_from_days | source, contracts or evidence | THM-0128 | _no consumer_ |
 | unit://core.time_rfc3339 | source, contracts or evidence | THM-0002 | _no consumer_ |
 | unit://core.trust_resolver_seam | source, contracts or evidence | THM-0119 | _no consumer_ |
+| unit://core.verification_taxonomy | source, contracts or evidence | THM-0111 | _no consumer_ |
 | unit://host.request_freshness_inputs | source, contracts or evidence | THM-0114 | _no consumer_ |
 | unit://http_profile.admission_assertion | source, contracts or evidence | THM-0053 | _no consumer_ |
 | unit://http_profile.admission_currency | source, contracts or evidence | THM-0003, THM-0004, THM-0005, THM-0006 | _no consumer_ |
