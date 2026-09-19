@@ -9064,3 +9064,157 @@ extracted_symbols = ["mcp_re_core::time::format::civil_from_days"]
 lean_theorems = ["MCPRE.Time.civil_from_days_total"]
 pilot = "lean-pilot"
 
+
+# ---------------------------------------------------------------------------
+# ADR-MCPRE-069 S1 — five `new-proposition` records registered under the
+# theorems whose own claims already contain them. Each unit below states ONE
+# proposition, and its battery is exactly the controls that establish it: a
+# control the theorem's text does not reach stays in the census rather than
+# riding into a claim on a neighbour's back.
+# ---------------------------------------------------------------------------
+
+[[unit]]
+id = "proxy.pre_dispatch_refusal_precedence"
+class = "V0"
+description = "An inbound exchange that cannot establish a pre-dispatch obligation reaches its declared refusal terminal BEFORE the backend is dispatched and before anything is spent on the request's behalf: a body that is not an MCP message and a body the profile cannot carry unchanged are refused at the envelope, an unrepresentable body is refused before any reserialization, and a saturated inner plane refuses before a byte is transmitted."
+# The three carriers the four controls execute in. Not the `http_profile_serve/**`
+# glob `proxy.refusal_site_totality` owns: that unit's subject is WHERE a served
+# request may be answered from, and this one's is WHEN the refusal is reached
+# relative to the spend. A glob here would absorb the next serving file into a
+# precedence claim nobody made about it.
+paths = [
+  "mcp-re-proxy/src/http_profile_serve/request_admission.rs",
+  "mcp-re-proxy/src/http_profile_serve/body_boundary.rs",
+  "mcp-re-proxy/src/http_profile_serve/inner_plane.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/serving/pre_dispatch_refusal_precedence",
+  "mutation://proxy/serving/pre_dispatch_refusal_precedence",
+]
+tested_symbols = [
+  "lib#http_profile_serve::request_admission::tests::a_document_that_is_not_an_mcp_message_is_refused_at_400",
+  "lib#http_profile_serve::request_admission::tests::a_body_the_profile_cannot_carry_unchanged_is_refused_before_anything_is_spent",
+  "lib#http_profile_serve::body_boundary::tests::an_unrepresentable_body_is_refused_before_any_reserialization",
+  "lib#http_profile_serve::inner_plane::tests::a_saturated_plane_refuses_before_a_byte_is_transmitted",
+]
+
+[[unit]]
+id = "proxy.authorization_coordinate_provenance"
+class = "V0"
+description = "The operands an authorization decision is compared against come from ONE signed request: the action coordinate is read from the body the request verification covered and from no other, the evidence binding that carries the decision is the single binding over those exact bytes — none, two, or a reference-form binding produce no candidate at all — and the actor the comparison uses is the identity owner's join of trust domain and subject, so the same subject in two trust domains is two actors and a rotated key is the same subject under a different canonical actor."
+paths = [
+  "mcp-re-proxy/src/authorization/pdp/evidence.rs",
+  "mcp-re-proxy/src/authorization/request.rs",
+  "mcp-re-proxy/src/authorization/verified_action.rs",
+  "mcp-re-proxy/src/authorization/verified_actor.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/authorization/coordinate_provenance",
+  "mutation://proxy/authorization/coordinate_provenance",
+]
+# Deliberately NOT added to `proxy.pdp_decision_relation`'s battery. That unit's
+# proposition is the decision RELATION — whether an authenticated decision is about
+# this request — measured through the serving path. This one is the PROVENANCE of the
+# operands the relation compares, measured at each owner. Widening the relation unit to
+# swallow it is what ADR-MCPRE-069 §5 forbids.
+tested_symbols = [
+  "lib#authorization::pdp::evidence::tests::a_decision_with_no_binding_at_all_is_refused",
+  "lib#authorization::pdp::evidence::tests::a_document_from_another_request_cannot_be_paired_with_this_binding",
+  "lib#authorization::pdp::evidence::tests::a_reference_binding_never_becomes_evidence_even_with_the_same_digest",
+  "lib#authorization::pdp::evidence::tests::one_binding_over_these_exact_bytes_corresponds",
+  "lib#authorization::pdp::evidence::tests::two_evidence_bindings_leave_the_pairing_ambiguous_and_are_refused",
+  "lib#authorization::request::tests::a_body_from_another_request_cannot_be_paired_with_this_actor",
+  "lib#authorization::request::tests::the_actor_and_the_action_come_from_one_request",
+  "lib#authorization::request::tests::the_binding_reaches_the_policy_whole_and_is_not_reopened",
+  "lib#authorization::verified_action::tests::a_body_that_is_not_the_signed_body_cannot_produce_a_coordinate",
+  "lib#authorization::verified_action::tests::resources_read_names_its_target_under_a_different_key",
+  "lib#authorization::verified_action::tests::the_coordinate_is_read_from_the_signed_body",
+  "lib#authorization::verified_actor::tests::a_rotated_key_is_the_same_subject_and_a_different_canonical_actor",
+  "lib#authorization::verified_actor::tests::distinct_trust_domains_are_distinct_actors_under_the_same_subject",
+  "lib#authorization::verified_actor::tests::the_canonical_id_is_the_identity_owner_s_join_not_a_second_one",
+]
+
+[[unit]]
+id = "proxy.certificate_identity_refusal_vocabulary"
+class = "V0"
+description = "A certificate-identity refusal reports what was actually read: a leaf that was presented and refused is never reported as an absent one, an optional leaf that is None is the same evidence as an absent leaf, a refusal names the CONFIGURED field rather than whichever field happened to be present, and the evidence projections report the value and source that were constructed."
+paths = [
+  "mcp-re-proxy/src/communication_assurance/certificate_chain_evidence.rs",
+  "mcp-re-proxy/src/communication_assurance/certificate_identity_refusal.rs",
+  "mcp-re-proxy/src/communication_assurance/certificate_peer_identity_evidence.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/certificate_identity/refusal_vocabulary",
+  "mutation://proxy/certificate_identity/refusal_vocabulary",
+]
+# `proxy.certificate_identity` measures WHICH identity interpretation returns and that
+# it is the first value of the configured field. This measures what the REFUSAL side
+# reports. The path surfaces overlap and the batteries are disjoint.
+tested_symbols = [
+  "lib#communication_assurance::certificate_chain_evidence::tests::an_optional_leaf_that_is_none_is_the_same_evidence_as_absent",
+  "lib#communication_assurance::certificate_identity_refusal::tests::a_presented_leaf_that_refuses_is_never_reported_as_an_absent_one",
+  "lib#communication_assurance::certificate_identity_refusal::tests::a_refusal_names_the_configured_field_not_the_field_that_was_present",
+  "lib#communication_assurance::certificate_peer_identity_evidence::tests::the_projections_report_what_was_constructed",
+]
+
+[[unit]]
+id = "proxy.credential_currency_evidence_reporting"
+class = "V0"
+description = "A credential-currency outcome names the controls that actually ran and keeps the adapter's facts apart: only the unevaluated policy applies no controls, a span inside the ceiling is Current AND names the control that ran, a self-issued certificate in the chain is exempt from the issuer window, and the X.509 adapter answers orderability, containment and unreadability as three separate questions rather than one."
+paths = [
+  "mcp-re-proxy/src/communication_assurance/credential_currency/evaluation.rs",
+  "mcp-re-proxy/src/communication_assurance/credential_currency/policy.rs",
+  "mcp-re-proxy/src/communication_assurance/credential_currency/x509_adapter.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/credential_currency/evidence_reporting",
+  "mutation://proxy/credential_currency/evidence_reporting",
+]
+# `proxy.credential_currency` measures the ADMITTED SET — which credential is still
+# acceptable. This measures the REPORT: which controls the outcome says ran, and that
+# the adapter's three questions stay three. Same files, disjoint batteries.
+tested_symbols = [
+  "lib#communication_assurance::credential_currency::evaluation::tests::a_self_issued_certificate_in_the_chain_is_exempt_from_the_window",
+  "lib#communication_assurance::credential_currency::evaluation::tests::a_span_within_the_ceiling_is_current_and_names_the_control_that_ran",
+  "lib#communication_assurance::credential_currency::policy::tests::only_the_unevaluated_policy_applies_no_controls",
+  "lib#communication_assurance::credential_currency::x509_adapter::tests::an_inverted_window_is_not_orderable_and_contains_nothing",
+  "lib#communication_assurance::credential_currency::x509_adapter::tests::an_orderable_window_is_not_the_same_question_as_containing_now",
+  "lib#communication_assurance::credential_currency::x509_adapter::tests::rubbish_der_reads_no_facts",
+]
+
+[[unit]]
+id = "proxy.admission_record_addressing"
+class = "V0"
+description = "An authoritative admission record is addressed by the workload it is about — the store key an operator reads is that workload's own name — and the bytes-to-state step admits nothing a store writer without the signing authority can produce, including a genuine ADMITTED record restored after its supersession, which does not outlive the authorized currentness window."
+paths = [
+  "mcp-re-proxy/src/admission_source/mod.rs",
+  "mcp-re-proxy/src/redis_admission_source/mod.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/admission/record_addressing",
+  "mutation://proxy/admission/record_addressing",
+]
+# The Redis half does not exist in the default crate, and a lane that compiled it to
+# zero tests would report this battery green having measured nothing.
+test_features = ["redis_replay"]
+tested_symbols = [
+  "lib#admission_source::tests::a_key_is_readable_by_an_operator",
+  "lib#redis_admission_source::tests::the_record_is_addressed_by_the_workloads_own_name",
+  "lib#redis_admission_source::tests::a_restored_admitted_record_does_not_outlive_the_authorized_window",
+  "lib#redis_admission_source::tests::a_store_writer_without_the_signing_authority_produces_nothing_admitted",
+]
