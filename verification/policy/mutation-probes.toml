@@ -8111,3 +8111,128 @@ public fields, so a caller building one in code reaches the serving path without
 parser. The emptiness arm above stays green under this weakening, correctly — it refuses a
 different spelling of the same defect.
 """
+
+# ---------------------------------------------------------------------------
+# ADR-MCPRE-069 S1 — the falsifiers the five new units arrive with. N1 is live
+# and `config/assurance-obligation-debt.toml` is closed to new work, so each
+# `tested` unit at effective severity Medium or above brings its own probe.
+# ---------------------------------------------------------------------------
+
+[[probe]]
+id = "M283-pre-dispatch-envelope"
+unit = "proxy.pre_dispatch_refusal_precedence"
+theorem = "THM-0078"
+conjunct = "an inbound exchange that fails to establish a required pre-dispatch obligation reaches a declared refusal terminal before backend dispatch, and cannot fall through into a success-path dispatch"
+path = "mcp-re-proxy/src/http_profile_serve/request_admission.rs"
+anchor = """
+        mcp_re_http_profile::validate_request_envelope(&http_req.body)
+            .map_err(|e| Refusal::before_admission(e, 400))
+"""
+weakening = """
+        Ok(mcp_re_http_profile::validate_request_envelope(&http_req.body)
+            .unwrap_or(OutstandingId::Notification))
+"""
+expect_red = [
+  "lib#http_profile_serve::request_admission::tests::a_document_that_is_not_an_mcp_message_is_refused_at_400",
+  "lib#http_profile_serve::request_admission::tests::a_body_the_profile_cannot_carry_unchanged_is_refused_before_anything_is_spent",
+]
+note = """
+The weakening is the exact fall-through the conjunct forbids: a document that is not an MCP
+message, and one the profile cannot carry unchanged, are admitted as an ordinary notification
+instead of reaching the 400 terminal — after which the nonce is burned, the approval retired
+and the retention marker written on behalf of a body MCP-RE will not forward.
+"""
+
+[[probe]]
+id = "M284-authorization-coordinate-provenance"
+unit = "proxy.authorization_coordinate_provenance"
+theorem = "THM-0040"
+conjunct = "the decided operation equals the operation the SIGNED BODY named"
+path = "mcp-re-proxy/src/authorization/verified_action.rs"
+anchor = """
+    if !verified.covers_body(body) {
+"""
+weakening = """
+    if false && !verified.covers_body(body) {
+"""
+expect_red = [
+  "lib#authorization::verified_action::tests::a_body_that_is_not_the_signed_body_cannot_produce_a_coordinate",
+]
+note = """
+`false &&` rather than deleting the arm, so the parameter stays used and the only thing the
+mutation changes is whether the pairing is load-bearing. With it gone, any body a caller
+transmits produces an action coordinate — the operand THM-0040 compares the decision against
+is no longer the one the request verification covered.
+"""
+
+[[probe]]
+id = "M285-certificate-identity-refusal-vocabulary"
+unit = "proxy.certificate_identity_refusal_vocabulary"
+theorem = "THM-0024"
+conjunct = "Present-but-uninterpretable is never reported as absent"
+path = "mcp-re-proxy/src/communication_assurance/certificate_identity_refusal.rs"
+anchor = """
+    fn from(refusal: LeafIdentityRefusal) -> Self {
+        CertificateIdentityRefusal::Leaf(refusal)
+    }
+"""
+weakening = """
+    fn from(refusal: LeafIdentityRefusal) -> Self {
+        let _ = refusal;
+        CertificateIdentityRefusal::NoLeaf
+    }
+"""
+expect_red = [
+  "lib#communication_assurance::certificate_identity_refusal::tests::a_presented_leaf_that_refuses_is_never_reported_as_an_absent_one",
+]
+note = """
+The lift from the leaf algebra into the evidence algebra is the one place the distinction can
+be lost. Collapsing it reports a peer whose issuer minted a broken SAN as a peer that presented
+no certificate at all — the two incidents THM-0024's refusal clause exists to keep apart.
+"""
+
+[[probe]]
+id = "M286-credential-currency-evidence-reporting"
+unit = "proxy.credential_currency_evidence_reporting"
+theorem = "THM-0032"
+conjunct = "carries that acceptance, that instant, and the controls the policy actually applied"
+path = "mcp-re-proxy/src/communication_assurance/credential_currency/policy.rs"
+anchor = """
+            CredentialCurrencyPolicy::NotEvaluated => None,
+            CredentialCurrencyPolicy::Ceiling(_) => Some(CurrencyControls::Lifetime),
+"""
+weakening = """
+            CredentialCurrencyPolicy::NotEvaluated => None,
+            CredentialCurrencyPolicy::Ceiling(_) => None,
+"""
+expect_red = [
+  "lib#communication_assurance::credential_currency::policy::tests::only_the_unevaluated_policy_applies_no_controls",
+]
+note = """
+`controls()` returning `None` is what the evaluator reads as *nobody asked*. A ceiling-only
+deployment answering `None` skips every check while reporting the credential as unexamined —
+the two-state answer THM-0032 says the three states exist to prevent.
+"""
+
+[[probe]]
+id = "M287-admission-record-addressing"
+unit = "proxy.admission_record_addressing"
+theorem = "THM-0129"
+conjunct = "The SUBJECT comparison, against the id the record was read under, refuses a genuine record MOVED onto another workload's key"
+path = "mcp-re-proxy/src/admission_source/mod.rs"
+anchor = """
+    format!("{ADMISSION_KEY_PREFIX}{admission_id}")
+"""
+weakening = """
+    format!("{ADMISSION_KEY_PREFIX}shared-{}", admission_id.len())
+"""
+expect_red = [
+  "lib#admission_source::tests::a_key_is_readable_by_an_operator",
+  "lib#redis_admission_source::tests::the_record_is_addressed_by_the_workloads_own_name",
+]
+note = """
+The key IS the id the record is read under. Addressing every workload's record under a key
+that is not its own name is the precondition for the move forgery a signature cannot see: the
+subject comparison still runs, but it is no longer comparing against the workload the reader
+asked about.
+"""

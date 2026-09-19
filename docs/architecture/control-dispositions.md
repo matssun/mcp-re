@@ -2495,6 +2495,7 @@ is called*, and the trust plane separates *the cache* from *the posture*.
 **If false.** The proxy spends a budget, transmits bytes, or signs a reply for a request it was going to refuse — and 'never signed' is the clause that matters most: an unrecognized result type that gets signed is MCP-RE attesting to something it could not classify.
 **Likely owner:** none.
 **Severity:** `critical`.
+**Registered in part, ADR-MCPRE-069 S1.** The refuse-before-the-spend clauses — a non-MCP document at 400, a body the profile cannot carry unchanged, an unrepresentable body before any reserialization, a saturated plane before a byte is transmitted — are now `unit://proxy.pre_dispatch_refusal_precedence` under THM-0078, falsified by `M283-pre-dispatch-envelope`. The thirteen rows that remain are the clauses THM-0078's statement and scope do NOT contain: the never-signed pair (THM-0075 is about attribution, not protocol legality), reply classification, the single-decision and audience clauses, the pre-admission carrier and the PEP-owned strip. They need a theorem stated, not a wider unit — packet at `verification/reviews/packets/adr069-np-129-ratification-2026-09-19.md`.
 
 ## NP-130 — an acknowledgement asserts only what actually happened
 
@@ -2503,14 +2504,7 @@ is called*, and the trust plane separates *the cache* from *the posture*.
 **If false.** The proxy tells a caller something happened that may not have. Every clause is the same refusal to collapse execution certainty onto the convenient side — the rule this repository has ruled on and measured before — and the last of them is its opposite arm: reaching the backend IS a fact, and an unusable answer must not erase it.
 **Likely owner:** none.
 **Severity:** `critical`.
-
-## NP-131 — the actor and the action come from one signed request
-
-**Controls:** `mcp-re-proxy/src/authorization`.
-**Statement.** *The coordinate is read FROM THE SIGNED BODY and a body that is not the signed body cannot produce one; a body or a document FROM ANOTHER REQUEST cannot be paired with this actor or this binding; one binding over these exact bytes corresponds, two evidence bindings leave the pairing AMBIGUOUS and are refused, and a decision with no binding at all is refused; a reference binding never becomes evidence even with the same digest; the binding reaches the policy WHOLE and is not reopened; the actor and the action come from ONE request; a rotated key is the same subject and a different canonical actor, distinct trust domains are distinct actors under the same subject, and the canonical id is the identity owner's join rather than a second one; and `resources/read` names its target under a different key, so a method naming no target is not the same as one missing its target.*
-**If false.** An authorization decision is made about one request's actor and another request's action. 'Two evidence bindings leave the pairing ambiguous and are REFUSED' is the clause that keeps a choice from being made silently, and the canonical-id clause is the identity-not-locator rule inside the authorization plane.
-**Likely owner:** none.
-**Severity:** `critical`.
+**Referred, ADR-MCPRE-069 S1.** No ratified theorem's statement or scope contains *an acknowledgement asserts only what actually happened*. THM-0101 is the nearest and EXCLUDES it in its own words — `TerminalResponseServed` and `OpenLegResponseServed` are two of the six assembly-owned transitions the correspondence claim does not cover. Ratification packet at `verification/reviews/packets/adr069-np-130-ratification-2026-09-19.md`.
 
 ## NP-132 — each authorization refusal is its own token
 
@@ -2559,6 +2553,7 @@ is called*, and the trust plane separates *the cache* from *the posture*.
 **If false.** A refusal says a credential was absent when it was present and refused — different facts with different operator responses — or an authentication that never happened is reported as current. 'Names the control that ran' is what makes currency a measurement rather than a verdict.
 **Likely owner:** none.
 **Severity:** `critical`.
+**Registered in part, ADR-MCPRE-069 S1.** The certificate refusal vocabulary is `unit://proxy.certificate_identity_refusal_vocabulary` under THM-0024 (`M285`); the currency reporting clauses are `unit://proxy.credential_currency_evidence_reporting` under THM-0032 (`M286`). Three rows remain: the two DEFAULT-value clauses (which field, which provenance) are a choice between product behaviours no theorem states, and `peer_identity_provenance.rs` is in no unit's paths and no theorem's source closure. Packet at `verification/reviews/packets/adr069-np-137-ratification-2026-09-19.md`.
 
 ## NP-138 — the blocking harness parses HTTP/1 strictly and bounds its reads
 
@@ -2615,6 +2610,7 @@ is called*, and the trust plane separates *the cache* from *the posture*.
 **If false.** An admission record is read for the wrong workload, or a restored record admits past the window it was authorized for. The per-class latches are the diagnosis argument: one noisy failure class must not silence a different one that starts later.
 **Likely owner:** none.
 **Severity:** `high`.
+**Registered in part, ADR-MCPRE-069 S1.** The addressing and non-mintability clauses are `unit://proxy.admission_record_addressing` under THM-0129 (`M287`). The three per-class refusal-latch rows remain: report-once-per-class is diagnosis hygiene, and THM-0129 says nothing about how often a class is reported. Packet at `verification/reviews/packets/adr069-np-144-ratification-2026-09-19.md`.
 
 ## NP-145 — the operator-facing vocabularies agree and render distinctly
 

@@ -61,7 +61,7 @@ any of them is closed.
 | THM-0021 | A successful bound-response verification establishes the shared cryptographic and request-binding facts | http_profile.bound_response_shared_facts | unit://http_profile.bound_response_shared_facts, unit://http_profile.freshness_window | live |
 | THM-0022 | A successful unbound-response verification establishes the shared facts and no request binding at all | http_profile.unbound_response_shared_facts | unit://http_profile.freshness_window, unit://http_profile.unbound_response_shared_facts | live |
 | THM-0023 | Every peer identity value is well-formed, whatever evidence produced it | proxy.peer_identity_value | unit://proxy.peer_identity_value, unit://proxy.peer_identity_value_sole_producer | live |
-| THM-0024 | Certificate identity interpretation reads the configured field and refuses rather than falling back | proxy.certificate_identity | unit://proxy.certificate_identity, unit://proxy.certificate_identity_authority_boundary | live |
+| THM-0024 | Certificate identity interpretation reads the configured field and refuses rather than falling back | proxy.certificate_identity | unit://proxy.certificate_identity, unit://proxy.certificate_identity_authority_boundary, unit://proxy.certificate_identity_refusal_vocabulary | live |
 | THM-0025 | Every canonical Ed25519 public key value is the canonical RFC 8410 encoding of its own point | proxy.ed25519_public_key | unit://proxy.ed25519_public_key, unit://proxy.ed25519_public_key_sole_producer | live |
 | THM-0026 | Credential/key correspondence relates two independently interpreted keys and attributes every refusal to the side that failed | proxy.credential_key_correspondence | unit://proxy.credential_key_correspondence, unit://proxy.credential_key_correspondence_sole_producer | live |
 | THM-0027 | A delegated resolver's existence proves its credential and signer corresponded | proxy.delegated_resolver_materialization | unit://proxy.delegated_resolver_materialization, unit://proxy.delegated_resolver_materialization_sole_producer | live |
@@ -69,7 +69,7 @@ any of them is closed.
 | THM-0029 | A channel-associated peer identity is interpreted from the leaf of that relationship's own credential | proxy.channel_associated_identity | unit://proxy.channel_associated_identity | live |
 | THM-0030 | Verified-credential evidence records the mechanism's own acceptance and the path it was reached on | proxy.mechanism_verified_credential | unit://proxy.mechanism_verified_credential | live |
 | THM-0031 | An authenticated relationship peer's identity is read from the leaf of the very credential the mechanism accepted for that relationship | proxy.authenticated_relationship_peer | unit://proxy.authenticated_relationship_peer | live |
-| THM-0032 | Per-request credential currency is decided from the credential the mechanism accepted, and reports which of its five facts refused | proxy.credential_currency | unit://proxy.credential_currency | live |
+| THM-0032 | Per-request credential currency is decided from the credential the mechanism accepted, and reports which of its five facts refused | proxy.credential_currency | unit://proxy.credential_currency, unit://proxy.credential_currency_evidence_reporting | live |
 | THM-0033 | A current authenticated peer's currency is evaluated against the credential that same peer authenticated with | proxy.current_authenticated_peer | unit://proxy.current_authenticated_peer | live |
 | THM-0034 | A request is bound to its relationship by relating the authenticated peer to the resolved actor's SUBJECT, never to the composite actor id | proxy.request_peer_binding | unit://proxy.request_peer_binding | live |
 | THM-0035 | A successfully classified trust-revocation state carries the witnesses its own state form requires | proxy.trust_revocation_classification | unit://proxy.trust_configuration_state_sole_producer, unit://proxy.trust_revocation_classification | live |
@@ -77,7 +77,7 @@ any of them is closed.
 | THM-0037 | A trust plan's reload cadence is a projection of the revocation posture, never a second value | proxy.trust_plan | unit://proxy.trust_plan, unit://proxy.trust_plan_co_provenance | live |
 | THM-0038 | The composition root consumes trust as owner projections and re-reads no trust field from the request | proxy.trust_composition_root | unit://proxy.trust_composition_root | live |
 | THM-0039 | An accepted PDP decision was authenticated under a key the trust seam resolved | http_profile.pdp_decision_authentication | unit://http_profile.pdp_decision_authentication | live |
-| THM-0040 | An authorized request was permitted by a decision about that very request | proxy.pdp_decision_relation | unit://proxy.pdp_decision_relation | live |
+| THM-0040 | An authorized request was permitted by a decision about that very request | proxy.pdp_decision_relation | unit://proxy.authorization_coordinate_provenance, unit://proxy.pdp_decision_relation | live |
 | THM-0041 | An offline-verified receipt proves registration, and its root was never supplied | http_profile.scitt_derived_root | unit://http_profile.scitt_algorithm_agreement, unit://http_profile.scitt_derived_root, unit://http_profile.scitt_inclusion_fold, unit://http_profile.scitt_position_commitment, unit://http_profile.scitt_receipt_shape, unit://http_profile.scitt_statement_attribution | live |
 | THM-0042 | Retained evidence is the evidence the statement was made about | http_profile.scitt_retained_correspondence | unit://conformance.retained_corpus, unit://http_profile.scitt_retained_correspondence, unit://http_profile.submitted_hop_identity | live |
 | THM-0043 | The exchange relation is decided everywhere and the execution threshold partitions it | proxy.exchange_relation | unit://proxy.exchange_relation | live |
@@ -115,7 +115,7 @@ any of them is closed.
 | THM-0075 | No unearned response attribution | proxy.response_signing | unit://http_profile.response_emission_binding, unit://proxy.response_signing | live |
 | THM-0076 | A client accepts only an answer to its own request, under a signer it trusts | client.response_binding_disposition | unit://client.response_binding_disposition, unit://client.response_signer_authorization | live |
 | THM-0077 | No deployment serves a posture nobody selected | proxy.trust_composition_root | unit://proxy.channel_credential_custody_state, unit://proxy.cross_machine_legality, unit://proxy.delegated_signing_configuration_state, unit://proxy.freshness_window_state, unit://proxy.legality_boundary_totality, unit://proxy.replay_configuration_state, unit://proxy.server_identity_facts, unit://proxy.transport_binding_and_crl_state, unit://proxy.trust_composition_root | live |
-| THM-0078 | Refusal is terminal, and no refusal-side effect reads as success | proxy.exchange_relation | unit://proxy.exchange_relation, unit://proxy.refusal_provenance | live |
+| THM-0078 | Refusal is terminal, and no refusal-side effect reads as success | proxy.exchange_relation | unit://proxy.exchange_relation, unit://proxy.pre_dispatch_refusal_precedence, unit://proxy.refusal_provenance | live |
 | THM-0079 | Distinct signed exchanges have distinct replay keys | http_profile.replay_key | unit://http_profile.replay_key | live |
 | THM-0080 | Serving derives peer identity only from the credential the mechanism accepted | proxy.serving_identity_provenance | unit://proxy.serving_identity_provenance | live |
 | THM-0081 | Every production refusal is inside the exchange lifecycle | proxy.refusal_site_totality | unit://proxy.refusal_site_totality | live |
@@ -166,7 +166,7 @@ any of them is closed.
 | THM-0126 | A verified reply is not a completed call | client.verified_outcome | unit://client.verified_outcome | live |
 | THM-0127 | The deployable's serving path always runs an anchor refresher | client.serving_lifetime | unit://client.serving_lifetime | live |
 | THM-0128 | The civil-date conversion is total on the domain its caller can supply | core.time_civil_from_days | unit://core.time_civil_from_days | live |
-| THM-0129 | Authoritative admission state is authenticated and bounded-current | http_profile.admission_state_provenance | unit://http_profile.admission_state_provenance, unit://proxy.admission_state_source | live |
+| THM-0129 | Authoritative admission state is authenticated and bounded-current | http_profile.admission_state_provenance | unit://http_profile.admission_state_provenance, unit://proxy.admission_record_addressing, unit://proxy.admission_state_source | live |
 | THM-0130 | One logical audit record renders to exactly one physical record, recoverably | proxy.audit_text_rendering | unit://proxy.audit_text_rendering | live |
 | THM-0131 | The client-revocation posture states what this replica is enforcing now | proxy.client_revocation_currency | unit://proxy.client_revocation_currency | live |
 

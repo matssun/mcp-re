@@ -10481,15 +10481,6 @@ root_relationship = "a premise of the proxy units above it"
 record = "docs/architecture/control-dispositions.md#np-130"
 
 [[proposition]]
-id = "NP-131"
-title = "The actor and the action come from one signed request"
-carrier = "mcp-re-proxy/src/authorization"
-likely_owner = ""
-consequence = "critical"
-root_relationship = "a premise of the proxy units above it"
-record = "docs/architecture/control-dispositions.md#np-131"
-
-[[proposition]]
 id = "NP-132"
 title = "Each authorization refusal is its own token"
 carrier = "mcp-re-proxy/src/authorization"
@@ -10641,14 +10632,6 @@ likely_owner = ""
 consequence = "critical"
 root_relationship = "a premise of the proxy units above it"
 record = "docs/architecture/control-dispositions.md#np-148"
-
-[[disposition]]
-id = "CD-18001"
-project = "mcp-re-proxy"
-control = "lib#admission_source::tests::a_key_is_readable_by_an_operator"
-decision = "new-proposition"
-proposition = "NP-144"
-recorded = "2026-09-19"
 
 [[disposition]]
 id = "CD-18002"
@@ -10811,51 +10794,11 @@ proposition = "NP-141"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-18022"
-project = "mcp-re-proxy"
-control = "lib#authorization::pdp::evidence::tests::a_decision_with_no_binding_at_all_is_refused"
-decision = "new-proposition"
-proposition = "NP-131"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18023"
-project = "mcp-re-proxy"
-control = "lib#authorization::pdp::evidence::tests::a_document_from_another_request_cannot_be_paired_with_this_binding"
-decision = "new-proposition"
-proposition = "NP-131"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18024"
-project = "mcp-re-proxy"
-control = "lib#authorization::pdp::evidence::tests::a_reference_binding_never_becomes_evidence_even_with_the_same_digest"
-decision = "new-proposition"
-proposition = "NP-131"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-18025"
 project = "mcp-re-proxy"
 control = "lib#authorization::pdp::evidence::tests::a_request_carrying_no_decision_is_not_a_refusal"
 decision = "new-proposition"
 proposition = "NP-132"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18026"
-project = "mcp-re-proxy"
-control = "lib#authorization::pdp::evidence::tests::one_binding_over_these_exact_bytes_corresponds"
-decision = "new-proposition"
-proposition = "NP-131"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18027"
-project = "mcp-re-proxy"
-control = "lib#authorization::pdp::evidence::tests::two_evidence_bindings_leave_the_pairing_ambiguous_and_are_refused"
-decision = "new-proposition"
-proposition = "NP-131"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -10915,43 +10858,11 @@ proposition = "NP-132"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-18035"
-project = "mcp-re-proxy"
-control = "lib#authorization::request::tests::a_body_from_another_request_cannot_be_paired_with_this_actor"
-decision = "new-proposition"
-proposition = "NP-131"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-18036"
 project = "mcp-re-proxy"
 control = "lib#authorization::request::tests::an_unbound_deployment_says_not_claimed_rather_than_asserting_a_binding"
 decision = "new-proposition"
 proposition = "NP-132"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18037"
-project = "mcp-re-proxy"
-control = "lib#authorization::request::tests::the_actor_and_the_action_come_from_one_request"
-decision = "new-proposition"
-proposition = "NP-131"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18038"
-project = "mcp-re-proxy"
-control = "lib#authorization::request::tests::the_binding_reaches_the_policy_whole_and_is_not_reopened"
-decision = "new-proposition"
-proposition = "NP-131"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18039"
-project = "mcp-re-proxy"
-control = "lib#authorization::verified_action::tests::a_body_that_is_not_the_signed_body_cannot_produce_a_coordinate"
-decision = "new-proposition"
-proposition = "NP-131"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -10979,51 +10890,11 @@ proposition = "NP-132"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-18043"
-project = "mcp-re-proxy"
-control = "lib#authorization::verified_action::tests::resources_read_names_its_target_under_a_different_key"
-decision = "new-proposition"
-proposition = "NP-131"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18044"
-project = "mcp-re-proxy"
-control = "lib#authorization::verified_action::tests::the_coordinate_is_read_from_the_signed_body"
-decision = "new-proposition"
-proposition = "NP-131"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18045"
-project = "mcp-re-proxy"
-control = "lib#authorization::verified_actor::tests::a_rotated_key_is_the_same_subject_and_a_different_canonical_actor"
-decision = "new-proposition"
-proposition = "NP-131"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18046"
-project = "mcp-re-proxy"
-control = "lib#authorization::verified_actor::tests::distinct_trust_domains_are_distinct_actors_under_the_same_subject"
-decision = "new-proposition"
-proposition = "NP-131"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-18047"
 project = "mcp-re-proxy"
 control = "lib#authorization::verified_actor::tests::every_verified_dimension_is_projected_separately"
 decision = "new-proposition"
 proposition = "NP-132"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18048"
-project = "mcp-re-proxy"
-control = "lib#authorization::verified_actor::tests::the_canonical_id_is_the_identity_owner_s_join_not_a_second_one"
-decision = "new-proposition"
-proposition = "NP-131"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -11179,89 +11050,9 @@ proposition = "NP-143"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-18068"
-project = "mcp-re-proxy"
-control = "lib#communication_assurance::certificate_chain_evidence::tests::an_optional_leaf_that_is_none_is_the_same_evidence_as_absent"
-decision = "new-proposition"
-proposition = "NP-137"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-18069"
 project = "mcp-re-proxy"
 control = "lib#communication_assurance::certificate_identity_policy::tests::the_default_policy_is_the_uri_san"
-decision = "new-proposition"
-proposition = "NP-137"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18070"
-project = "mcp-re-proxy"
-control = "lib#communication_assurance::certificate_identity_refusal::tests::a_presented_leaf_that_refuses_is_never_reported_as_an_absent_one"
-decision = "new-proposition"
-proposition = "NP-137"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18071"
-project = "mcp-re-proxy"
-control = "lib#communication_assurance::certificate_identity_refusal::tests::a_refusal_names_the_configured_field_not_the_field_that_was_present"
-decision = "new-proposition"
-proposition = "NP-137"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18072"
-project = "mcp-re-proxy"
-control = "lib#communication_assurance::certificate_peer_identity_evidence::tests::the_projections_report_what_was_constructed"
-decision = "new-proposition"
-proposition = "NP-137"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18073"
-project = "mcp-re-proxy"
-control = "lib#communication_assurance::credential_currency::evaluation::tests::a_self_issued_certificate_in_the_chain_is_exempt_from_the_window"
-decision = "new-proposition"
-proposition = "NP-137"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18074"
-project = "mcp-re-proxy"
-control = "lib#communication_assurance::credential_currency::evaluation::tests::a_span_within_the_ceiling_is_current_and_names_the_control_that_ran"
-decision = "new-proposition"
-proposition = "NP-137"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18075"
-project = "mcp-re-proxy"
-control = "lib#communication_assurance::credential_currency::policy::tests::only_the_unevaluated_policy_applies_no_controls"
-decision = "new-proposition"
-proposition = "NP-137"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18076"
-project = "mcp-re-proxy"
-control = "lib#communication_assurance::credential_currency::x509_adapter::tests::an_inverted_window_is_not_orderable_and_contains_nothing"
-decision = "new-proposition"
-proposition = "NP-137"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18077"
-project = "mcp-re-proxy"
-control = "lib#communication_assurance::credential_currency::x509_adapter::tests::an_orderable_window_is_not_the_same_question_as_containing_now"
-decision = "new-proposition"
-proposition = "NP-137"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18078"
-project = "mcp-re-proxy"
-control = "lib#communication_assurance::credential_currency::x509_adapter::tests::rubbish_der_reads_no_facts"
 decision = "new-proposition"
 proposition = "NP-137"
 recorded = "2026-09-19"
@@ -11627,14 +11418,6 @@ proposition = "NP-130"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-18124"
-project = "mcp-re-proxy"
-control = "lib#http_profile_serve::body_boundary::tests::an_unrepresentable_body_is_refused_before_any_reserialization"
-decision = "new-proposition"
-proposition = "NP-129"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-18125"
 project = "mcp-re-proxy"
 control = "lib#http_profile_serve::body_boundary::tests::application_meta_survives_the_pep_owned_strip"
@@ -11680,14 +11463,6 @@ project = "mcp-re-proxy"
 control = "lib#http_profile_serve::inner_plane::tests::a_notification_the_backend_may_not_have_received_is_not_acknowledged"
 decision = "new-proposition"
 proposition = "NP-130"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18131"
-project = "mcp-re-proxy"
-control = "lib#http_profile_serve::inner_plane::tests::a_saturated_plane_refuses_before_a_byte_is_transmitted"
-decision = "new-proposition"
-proposition = "NP-129"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -11798,22 +11573,6 @@ recorded = "2026-09-19"
 id = "CD-18145"
 project = "mcp-re-proxy"
 control = "lib#http_profile_serve::reply_assembly::tests::the_reply_carries_the_class_the_classifier_read"
-decision = "new-proposition"
-proposition = "NP-129"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18146"
-project = "mcp-re-proxy"
-control = "lib#http_profile_serve::request_admission::tests::a_body_the_profile_cannot_carry_unchanged_is_refused_before_anything_is_spent"
-decision = "new-proposition"
-proposition = "NP-129"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18147"
-project = "mcp-re-proxy"
-control = "lib#http_profile_serve::request_admission::tests::a_document_that_is_not_an_mcp_message_is_refused_at_400"
 decision = "new-proposition"
 proposition = "NP-129"
 recorded = "2026-09-19"
@@ -11982,30 +11741,6 @@ recorded = "2026-09-19"
 id = "CD-18168"
 project = "mcp-re-proxy"
 control = "lib#redis_admission_source::refusal_report::tests::one_class_being_reported_does_not_suppress_another"
-decision = "new-proposition"
-proposition = "NP-144"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18169"
-project = "mcp-re-proxy"
-control = "lib#redis_admission_source::tests::a_restored_admitted_record_does_not_outlive_the_authorized_window"
-decision = "new-proposition"
-proposition = "NP-144"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18170"
-project = "mcp-re-proxy"
-control = "lib#redis_admission_source::tests::a_store_writer_without_the_signing_authority_produces_nothing_admitted"
-decision = "new-proposition"
-proposition = "NP-144"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18171"
-project = "mcp-re-proxy"
-control = "lib#redis_admission_source::tests::the_record_is_addressed_by_the_workloads_own_name"
 decision = "new-proposition"
 proposition = "NP-144"
 recorded = "2026-09-19"

@@ -380,6 +380,7 @@ review_requirement = "Owner security-specification review"
 supported_by = [
   "unit://http_profile.admission_state_provenance",
   "unit://proxy.admission_state_source",
+  "unit://proxy.admission_record_addressing",
 ]
 depends_on = ["THM-0004"]
 
@@ -1205,6 +1206,7 @@ review_requirement = "Owner security-specification review"
 supported_by = [
   "unit://proxy.certificate_identity",
   "unit://proxy.certificate_identity_authority_boundary",
+  "unit://proxy.certificate_identity_refusal_vocabulary",
 ]
 depends_on = ["THM-0023"]
 
@@ -1786,7 +1788,7 @@ under THM-0028 and THM-0030. This claim consumes their conclusions and restates 
 """
 owner = "proxy.credential_currency"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.credential_currency"]
+supported_by = ["unit://proxy.credential_currency", "unit://proxy.credential_currency_evidence_reporting"]
 depends_on = ["THM-0028", "THM-0030"]
 
 [[theorem]]
@@ -2246,7 +2248,7 @@ never a candidate, so it cannot be selected and then rejected.
 """
 owner = "proxy.pdp_decision_relation"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.pdp_decision_relation"]
+supported_by = ["unit://proxy.pdp_decision_relation", "unit://proxy.authorization_coordinate_provenance"]
 depends_on = ["THM-0039"]
 
 [[theorem]]
@@ -4002,6 +4004,7 @@ review_requirement = "Owner security-specification review"
 supported_by = [
   "unit://proxy.exchange_relation",
   "unit://proxy.refusal_provenance",
+  "unit://proxy.pre_dispatch_refusal_precedence",
 ]
 depends_on = [
   "THM-0043",
