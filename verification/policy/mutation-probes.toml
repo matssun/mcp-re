@@ -8848,3 +8848,226 @@ here drive a request-BOUND receipt, so reddening the bound arm alone is what att
 failure to the lift rather than to `rejection_receipt`'s parse — which is client-core's
 vocabulary owner next door and has its own battery under `client.execution_contract`.
 """
+
+# The proxy's trust-plane premises — ADR-MCPRE-069 NP-117, NP-118, NP-126,
+# NP-134, NP-135, NP-140
+# ---------------------------------------------------------------------------
+#
+# All six weakenings leave a tree that BUILDS and a replica that keeps serving. One
+# collapses a four-variant total selector onto three, one publishes half a trust snapshot,
+# one reads a CRL with no expiry as fresh, one deletes the reload floor from the startup
+# tier line, one replaces an injective cache key with the naive join it was hardened away
+# from, and one stops a retiring TLS plane from retracting the cadence it advertised. None
+# errors, none panics, and none is visible above the file it is in.
+
+[[probe]]
+id = "M330-proxy-currency-policy-is-a-total-selector"
+unit = "proxy.currency_policy_classification"
+theorem = "THM-0032"
+conjunct = "The policy is a TOTAL classification of deployment state with no `Option` and four variants, so *evaluating with nothing configured* cannot be written"
+path = "mcp-re-proxy/src/tls.rs"
+anchor = """
+        (Some(ceiling), Some(index)) => {
+            CredentialCurrencyPolicy::CeilingAndRevocation(ceiling, index)
+        }
+"""
+weakening = """
+        (Some(ceiling), Some(_index)) => CredentialCurrencyPolicy::Ceiling(ceiling),
+"""
+expect_red = [
+  "lib#tls::currency_policy_tests::every_deployment_classifies_to_exactly_one_policy",
+]
+note = """
+THE TOTALITY IS THE CLAIM, AND A MATCH ARM IS WHERE IT IS SPENT. Under the weakening a
+deployment that configured BOTH a lifetime ceiling and a client-revocation index resolves
+to `Ceiling` — the revocation half is dropped on the floor, silently, at the one site that
+decides which controls run. Every handshake still completes, every ceiling is still
+enforced, and the transcript still reports both mechanisms as configured; the per-request
+revocation check simply never runs for the deployment that asked for the most.
+
+Nothing else goes red, and that is what locates the conjunct.
+`currency_policy_reads_the_index_in_force_at_the_time_of_the_call` drives the
+`(None, Some(index))` arm, which this probe does not touch — so a battery holding only the
+freshness control would report this weakening as no change at all. A three-arm selector is
+still total over its own type; what it is not is a classification of the deployment.
+"""
+
+[[probe]]
+id = "M331-proxy-one-read-is-one-publication-unit"
+unit = "proxy.trust_snapshot_swap"
+theorem = "THM-0100"
+conjunct = "A successful cycle swaps the snapshot the resolver and the signer directory answer from, atomically and together, before the next request is resolved"
+path = "mcp-re-proxy/src/reloading_trust.rs"
+anchor = """
+        let next = Arc::new(TrustSnapshot { resolver, signers });
+        match self.current.write() {
+"""
+weakening = """
+        let carried = self.snapshot().signers.clone();
+        let _ = signers;
+        let next = Arc::new(TrustSnapshot {
+            resolver,
+            signers: carried,
+        });
+        match self.current.write() {
+"""
+expect_red = [
+  "lib#reloading_trust::tests::a_swapped_store_revokes_without_a_restart",
+  "lib#reloading_trust::tests::every_edit_moves_the_resolver_and_the_signer_set_together",
+]
+note = """
+THE HALF-SWAP IS THE DEFECT THE TYPE EXISTS TO REMOVE, and the weakening reintroduces it as
+a permanent state rather than a transient one. `store` still publishes one value under one
+lock — nothing about the atomicity mechanism is touched — but the value it publishes carries
+the NEW resolver beside the PREVIOUS read's signer coordinate. A key the operator removed
+from `--trust` stops resolving and stays in the request-signer set forever.
+
+That happens to fail closed at the actor seam, because resolution consumes the composite
+pair and a kid with no key does not resolve. Safe-by-consequence is exactly the argument the
+module's own documentation rejects: the guarantee would then rest on a downstream property
+in another crate rather than on the publication. The two controls that go red assert the
+signer half in both directions — removal and reassignment — and the two that stay green
+(`a_reader_never_observes_a_snapshot_built_from_two_different_reads`,
+`a_snapshot_a_reader_already_holds_is_unaffected_by_later_swaps`) are about tearing and
+about value semantics, neither of which this weakening breaks. Publishing ATOMICALLY and
+publishing BOTH HALVES are two clauses, and this probe falsifies the second.
+"""
+
+[[probe]]
+id = "M326-proxy-a-crl-with-no-expiry-is-not-fresh"
+unit = "proxy.client_crl_next_update_gate"
+theorem = "THM-0131"
+conjunct = "A set of client CRLs is installable only when every one of them is inside its own `nextUpdate` window and states one at all"
+path = "mcp-re-proxy/src/client_crl_publication.rs"
+anchor = """
+        None => return Ok(CrlFreshness::NoNextUpdate),
+"""
+weakening = """
+        None => return Ok(CrlFreshness::Fresh),
+"""
+expect_red = [
+  "lib#client_crl_publication::crl_next_update_tests::a_crl_that_never_falls_out_of_force_is_refused",
+]
+note = """
+THE STATE THAT CARRIES THE REFUSAL IS ONE ENUM VARIANT, WHICH IS WHY IT NEEDS A FALSIFIER.
+Deleting the `nextUpdate`-absent branch changes no signature, no error type and no control
+flow a reader would notice: a CRL that never expires simply reports `Fresh`, which is the
+answer a reader would expect a CRL with no expiry to produce. It is also the one answer that
+cannot be recovered from. Nothing downstream can age such a CRL out — rustls' expiration
+enforcement has no field to compare and the per-request index answers `Good` for that issuer
+at any instant — so a replica that booted on one goes on admitting certificates revoked
+afterwards for the rest of its process lifetime, with a startup transcript that says
+revocation is enforced.
+
+`a_crl_that_states_its_next_update_is_accepted` stays green, correctly: the weakening
+touches only the absent branch, and a battery holding the positive case alone would see no
+change. Accepting a CRL that states a window and refusing one that states none are two
+clauses, and this probe falsifies the second.
+"""
+
+[[probe]]
+id = "M327-proxy-the-tier-line-names-its-reload-floor"
+unit = "proxy.trust_posture_declaration"
+theorem = "THM-0100"
+conjunct = "The interval the startup transcript prints as the delivered revocation window is exactly this arithmetic: `R + T` for the caching tiers, `R` for the live tier, and `UNBOUNDED` when no cadence is configured — in which case the snapshot is the startup read for the process's lifetime"
+path = "mcp-re-proxy/src/trust_plane/mod.rs"
+anchor = """
+    let reload_floor = match plan.reload().cadence_secs() {
+        Some(secs) => format!("--trust re-read every {secs}s"),
+        None => "--trust read once at startup (no --trust-reload-secs), so the store itself \\
+                 changes only on a restart"
+            .to_string(),
+    };
+"""
+weakening = """
+    let reload_floor = String::new();
+"""
+expect_red = [
+  "lib#trust_plane::store_cadence_tests::a_bounded_cache_with_no_cadence_names_the_frozen_store",
+  "lib#trust_plane::store_cadence_tests::every_posture_names_the_reload_floor_under_its_number",
+]
+note = """
+THE DEFECT THIS LINE EXISTS TO CLOSE IS AN OPERATOR SIZING A REVOCATION SLO FROM A TIER
+NUMBER THAT IS NOT THE WHOLE BOUND. Under the weakening every tier still prints its own
+window — `bounded 60s`, `per-request live re-resolution`, the push tier's poll interval —
+and the floor underneath simply vanishes. The proxy serves identically; the deployment that
+set `--revocation-tier bounded-cache` with no `--trust-reload-secs` is told `bounded 60s`
+and is not told that the store itself never changes until a restart, which is the difference
+between a 60-second exposure and an unbounded one.
+
+That is the harder of the two cases and it is why the frozen-store control is named beside
+the floor control: the cadence-less posture is the one a deployment reaches BY OMISSION, so
+the qualifier has to be on the tier line rather than further down.
+`a_configured_cadence_is_named_on_the_tier_line` and
+`a_tier_with_no_reload_cadence_says_the_store_cannot_change` stay green, correctly — they
+measure `store_change_cadence`, a different producer this weakening does not touch, and a
+battery holding only those two would report this as no change.
+"""
+
+[[probe]]
+id = "M328-proxy-the-cache-key-is-injective"
+unit = "proxy.trust_cache_entry_addressing"
+theorem = "THM-0097"
+conjunct = "for every Request-slot `(signer, key_id)` its trust plane's resolver is asked about"
+path = "mcp-re-proxy/src/trust_plane/trust_cache.rs"
+anchor = """
+    fn compose_key(signer: &str, key_id: &str) -> String {
+        format!("{}:{}|{}:{}", signer.len(), signer, key_id.len(), key_id)
+    }
+"""
+weakening = """
+    fn compose_key(signer: &str, key_id: &str) -> String {
+        format!("{signer}#{key_id}")
+    }
+"""
+expect_red = [
+  "lib#trust_plane::trust_cache::tests::compose_key_is_injective_across_delimiter_containing_pairs",
+]
+note = """
+THE NAIVE JOIN IS THE IMPLEMENTATION THIS ONE REPLACED, and it is invisible in every
+deployment whose signer names contain no `#`. Signer strings are DIDs and URIs, which
+legitimately do: under the weakening `("a#b", "c")` and `("a", "b#c")` occupy ONE entry, so
+a lookup for one pair is answered from the other pair's cached binding and an eviction for
+one silently evicts — or fails to evict — the other. That is a key confusion at the point
+the pipeline decides who signed, and the serving path reports nothing unusual at any stage.
+
+Every other control in this unit's battery and in `proxy.trust_resolution_window`'s stays
+green: they all use `did:host` signers with no delimiter, so the collision class is
+unreachable from them. A battery of ordinary cache behaviour is exactly the battery this
+weakening survives, which is why the injectivity control is written with the colliding pair
+and why it is registered rather than assumed.
+`push_for_a_different_key_does_not_evict_the_active_entry` is the same proposition at the
+push tier over non-colliding keys, so it holds under the weakening; the two together are the
+claim that an entry is addressed by its own pair and by nothing else.
+"""
+
+[[probe]]
+id = "M329-proxy-a-retired-plane-retracts-its-cadence"
+unit = "proxy.retired_plane_cadence_retraction"
+theorem = "THM-0131"
+conjunct = "a replica whose reload worker has died, or whose plane has retired, retracts the cadence it advertised: the maintenance verdict is latched, and no later reload can clear it"
+path = "mcp-re-proxy/src/tls_plane/mod.rs"
+anchor = """
+        self.currency.mark_stopped();
+        self.workers.halt_and_reclaim();
+"""
+weakening = """
+        self.workers.halt_and_reclaim();
+"""
+expect_red = [
+  "lib#tls_plane::handle_lifetime_tests::a_retired_plane_stops_claiming_a_cadence",
+]
+note = """
+THE RETRACTION IS ONE LINE IN A `Drop`, AND DELETING IT BREAKS NOTHING THAT RUNS. The
+workers are still halted and reclaimed, the serving snapshot still answers, and every
+handshake behaves exactly as before. What changes is what the deployment SAYS: the shared
+`ClientRevocationCurrency` goes on reporting `Maintained`, so a replica whose TLS plane has
+retired keeps advertising `hot-reload enabled (every Ns)` while nothing re-reads the CRL
+files — the third of the three misreadings THM-0131's consequence enumerates, in the one
+arm `proxy.client_revocation_currency`'s battery cannot reach, because that unit's source
+closure is `crl_reload_worker/supervision.rs` and the retirement happens here.
+
+The currency is SHARED, which is why the control asserts through a handle taken before the
+drop rather than through the dropped value: a retraction that reached only the value going
+away would retract nothing an operator can read.
+"""
