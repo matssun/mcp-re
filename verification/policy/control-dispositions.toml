@@ -6552,3 +6552,838 @@ decision = "new-proposition"
 proposition = "NP-075"
 recorded = "2026-09-19"
 
+
+# ---------------------------------------------------------------------------
+# Batch 15 — the conformance claim surface, 2026-09-19
+# ---------------------------------------------------------------------------
+#
+# 97 unclaimed controls across seventeen files, and TWO units. Conformance is what MCP-RE
+# tells an auditor it implements, so these are the evidence behind a product-facing claim
+# surface — the subject NP-008 approaches from the gate side, arriving here as the claims.
+#
+# Five of the 97 are not controls at all: fixture and report GENERATORS (ND-012).
+
+[[proposition]]
+id = "NP-079"
+title = "A third party's receipt verifies offline, and only for its own statement"
+carrier = "mcp-re-conformance SCITT interop corpora"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "the published conformance claim surface"
+record = "docs/architecture/control-dispositions.md#np-079"
+
+[[proposition]]
+id = "NP-080"
+title = "Every published corpus is pinned, and regenerates to the committed bytes"
+carrier = "mcp-re-conformance vector corpora and their manifests"
+likely_owner = ""
+consequence = "high"
+root_relationship = "the published conformance claim surface"
+record = "docs/architecture/control-dispositions.md#np-080"
+
+[[proposition]]
+id = "NP-081"
+title = "The shipped profile has the security properties it advertises"
+carrier = "mcp-re-conformance RFC 9421 and full-profile parity suites"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "the published conformance claim surface"
+record = "docs/architecture/control-dispositions.md#np-081"
+
+[[proposition]]
+id = "NP-082"
+title = "Delegation interoperates in both directions"
+carrier = "mcp-re-conformance delegation cross-verification"
+likely_owner = ""
+consequence = "high"
+root_relationship = "the published conformance claim surface"
+record = "docs/architecture/control-dispositions.md#np-082"
+
+[[proposition]]
+id = "NP-083"
+title = "The audit vocabulary is frozen and minted in one place"
+carrier = "mcp-re-conformance/tests/audit_vocabulary_guard_test.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "the published conformance claim surface"
+record = "docs/architecture/control-dispositions.md#np-083"
+
+[[proposition]]
+id = "NP-084"
+title = "The security traceability manifest is derived, not remembered"
+carrier = "mcp-re-conformance/tests/security_traceability_guard_test.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "the published conformance claim surface"
+record = "docs/architecture/control-dispositions.md#np-084"
+
+[[proposition]]
+id = "NP-085"
+title = "The shipped codes and names are the ones the MCP revision defines"
+carrier = "mcp-re-conformance MCP alignment suites"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "the published conformance claim surface"
+record = "docs/architecture/control-dispositions.md#np-085"
+
+[[proposition]]
+id = "NP-086"
+title = "No forbidden claim is asserted anywhere in the published surface"
+carrier = "mcp-re-conformance/tests/forbidden_claim_guard_test.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "the published conformance claim surface"
+record = "docs/architecture/control-dispositions.md#np-086"
+
+[[disposition]]
+id = "CD-13001"
+project = "mcp-re-conformance"
+control = "tests/audit_vocabulary_guard_test#event_types_do_not_collide_with_frozen_wire_codes"
+decision = "new-proposition"
+proposition = "NP-083"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13002"
+project = "mcp-re-conformance"
+control = "tests/audit_vocabulary_guard_test#every_audit_token_is_a_wire_code_or_a_fixed_event_type"
+decision = "new-proposition"
+proposition = "NP-083"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13003"
+project = "mcp-re-conformance"
+control = "tests/audit_vocabulary_guard_test#guard_inputs_are_non_empty"
+decision = "new-proposition"
+proposition = "NP-083"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13004"
+project = "mcp-re-conformance"
+control = "tests/audit_vocabulary_guard_test#key_lifecycle_event_set_is_exactly_the_three_item_allowlist"
+decision = "new-proposition"
+proposition = "NP-083"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13005"
+project = "mcp-re-conformance"
+control = "tests/audit_vocabulary_guard_test#no_authorization_hash_mismatch_audit_reason"
+decision = "new-proposition"
+proposition = "NP-083"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13006"
+project = "mcp-re-conformance"
+control = "tests/audit_vocabulary_guard_test#no_producer_outside_core_mints_a_wire_token"
+decision = "new-proposition"
+proposition = "NP-083"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13007"
+project = "mcp-re-conformance"
+control = "tests/audit_vocabulary_guard_test#success_event_set_is_exactly_the_two_item_allowlist"
+decision = "new-proposition"
+proposition = "NP-083"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13008"
+project = "mcp-re-conformance"
+control = "tests/corpus_pinning_test#a_tampered_fixture_fails_its_hash"
+decision = "new-proposition"
+proposition = "NP-080"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13009"
+project = "mcp-re-conformance"
+control = "tests/corpus_pinning_test#adding_or_removing_a_vector_changes_the_corpus_digest"
+decision = "new-proposition"
+proposition = "NP-080"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13010"
+project = "mcp-re-conformance"
+control = "tests/corpus_pinning_test#corpus_digest_commits_to_the_manifest_entries"
+decision = "new-proposition"
+proposition = "NP-080"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13011"
+project = "mcp-re-conformance"
+control = "tests/corpus_pinning_test#corpus_digest_is_order_independent"
+decision = "new-proposition"
+proposition = "NP-080"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13012"
+project = "mcp-re-conformance"
+control = "tests/corpus_pinning_test#every_committed_fixture_matches_its_published_hash"
+decision = "new-proposition"
+proposition = "NP-080"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13013"
+project = "mcp-re-conformance"
+control = "tests/delegation_cross_verification_test#external_credential_verifies_under_our_verifier"
+decision = "new-proposition"
+proposition = "NP-082"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13014"
+project = "mcp-re-conformance"
+control = "tests/delegation_cross_verification_test#our_issuer_reproduces_the_external_bytes"
+decision = "new-proposition"
+proposition = "NP-082"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13015"
+project = "mcp-re-conformance"
+control = "tests/delegation_vectors_test#corpus_covers_the_full_taxonomy"
+decision = "new-proposition"
+proposition = "NP-080"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13016"
+project = "mcp-re-conformance"
+control = "tests/delegation_vectors_test#frozen_delegation_corpus_verifies"
+decision = "new-proposition"
+proposition = "NP-080"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13017"
+project = "mcp-re-conformance"
+control = "tests/delegation_vectors_test#regenerated_delegation_fixtures_match_committed_bytes"
+decision = "new-proposition"
+proposition = "NP-080"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13018"
+project = "mcp-re-conformance"
+control = "tests/delegation_vectors_test#write_delegation_fixtures"
+decision = "not-evidence"
+reason_family = "ND-012"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13019"
+project = "mcp-re-conformance"
+control = "tests/forbidden_claim_guard_test#detector_catches_asserted_claim_but_allows_repudiation"
+decision = "new-proposition"
+proposition = "NP-086"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13020"
+project = "mcp-re-conformance"
+control = "tests/forbidden_claim_guard_test#guard_inputs_are_non_empty"
+decision = "new-proposition"
+proposition = "NP-086"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13021"
+project = "mcp-re-conformance"
+control = "tests/forbidden_claim_guard_test#legacy_security_boundary_is_a_stub_with_no_live_claim"
+decision = "new-proposition"
+proposition = "NP-086"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13022"
+project = "mcp-re-conformance"
+control = "tests/forbidden_claim_guard_test#no_forbidden_phrase_is_an_asserted_claim"
+decision = "new-proposition"
+proposition = "NP-086"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13023"
+project = "mcp-re-conformance"
+control = "tests/full_profile_parity_test#artifact_mismatch_fails_in_integrated_path"
+decision = "new-proposition"
+proposition = "NP-081"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13024"
+project = "mcp-re-conformance"
+control = "tests/full_profile_parity_test#body_tamper_fails_in_integrated_path"
+decision = "new-proposition"
+proposition = "NP-081"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13025"
+project = "mcp-re-conformance"
+control = "tests/full_profile_parity_test#continuation_mismatch_fails_in_integrated_path"
+decision = "new-proposition"
+proposition = "NP-081"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13026"
+project = "mcp-re-conformance"
+control = "tests/full_profile_parity_test#full_exchange_activates_all_blocks"
+decision = "new-proposition"
+proposition = "NP-081"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13027"
+project = "mcp-re-conformance"
+control = "tests/full_profile_parity_test#replay_fails_in_integrated_path"
+decision = "new-proposition"
+proposition = "NP-081"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13028"
+project = "mcp-re-conformance"
+control = "tests/full_profile_parity_test#response_evidence_mismatch_emits_request_binding_mismatch"
+decision = "new-proposition"
+proposition = "NP-081"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13029"
+project = "mcp-re-conformance"
+control = "tests/full_profile_parity_test#response_splice_fails_in_integrated_path"
+decision = "new-proposition"
+proposition = "NP-081"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13030"
+project = "mcp-re-conformance"
+control = "tests/full_profile_parity_test#third_party_cross_verification_is_a_separate_gate"
+decision = "new-proposition"
+proposition = "NP-081"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13031"
+project = "mcp-re-conformance"
+control = "tests/http_profile_vectors_test#frozen_http_profile_corpus_verifies"
+decision = "new-proposition"
+proposition = "NP-080"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13032"
+project = "mcp-re-conformance"
+control = "tests/http_profile_vectors_test#regenerated_fixtures_match_committed_bytes"
+decision = "new-proposition"
+proposition = "NP-080"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13033"
+project = "mcp-re-conformance"
+control = "tests/http_profile_vectors_test#write_http_profile_fixtures"
+decision = "not-evidence"
+reason_family = "ND-012"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13034"
+project = "mcp-re-conformance"
+control = "tests/mcp_2026_07_28_alignment_test#mrtr_input_required_discriminator_matches_sep_2322"
+decision = "new-proposition"
+proposition = "NP-085"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13035"
+project = "mcp-re-conformance"
+control = "tests/mcp_2026_07_28_alignment_test#rejection_code_is_in_neither_mcp_sub_range"
+decision = "new-proposition"
+proposition = "NP-085"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13036"
+project = "mcp-re-conformance"
+control = "tests/mcp_2026_07_28_alignment_test#rejection_code_is_outside_the_json_rpc_reserved_range"
+decision = "new-proposition"
+proposition = "NP-085"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13037"
+project = "mcp-re-conformance"
+control = "tests/mcp_2026_07_28_alignment_test#the_core_and_http_profile_codes_are_the_same_integer"
+decision = "new-proposition"
+proposition = "NP-085"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13038"
+project = "mcp-re-conformance"
+control = "tests/mcp_2026_07_28_alignment_test#the_recognized_result_types_are_the_two_the_core_protocol_defines"
+decision = "new-proposition"
+proposition = "NP-085"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13039"
+project = "mcp-re-conformance"
+control = "tests/method_name_drift_guard_test#no_banned_method_literal_in_non_test_core_src"
+decision = "new-proposition"
+proposition = "NP-085"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13040"
+project = "mcp-re-conformance"
+control = "tests/method_name_drift_guard_test#the_region_scan_looks_below_a_test_module"
+decision = "new-proposition"
+proposition = "NP-085"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13041"
+project = "mcp-re-conformance"
+control = "tests/method_transparency_test#accepted_verdict_is_identical_across_all_methods"
+decision = "new-proposition"
+proposition = "NP-085"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13042"
+project = "mcp-re-conformance"
+control = "tests/rfc9421_cross_verification_test#key_and_signature_agree_byte_for_byte_across_implementations"
+decision = "new-proposition"
+proposition = "NP-081"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13043"
+project = "mcp-re-conformance"
+control = "tests/rfc9421_cross_verification_test#mcp_re_verifier_accepts_an_externally_produced_signature"
+decision = "new-proposition"
+proposition = "NP-081"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13044"
+project = "mcp-re-conformance"
+control = "tests/rfc9421_security_properties_test#authorization_artifact_binding_is_bound_and_verified"
+decision = "new-proposition"
+proposition = "NP-081"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13045"
+project = "mcp-re-conformance"
+control = "tests/rfc9421_security_properties_test#caller_supplied_proxy_meta_is_not_the_signed_authority"
+decision = "new-proposition"
+proposition = "NP-081"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13046"
+project = "mcp-re-conformance"
+control = "tests/rfc9421_security_properties_test#expired_request_is_rejected"
+decision = "new-proposition"
+proposition = "NP-081"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13047"
+project = "mcp-re-conformance"
+control = "tests/rfc9421_security_properties_test#future_dated_request_within_the_skew_bound_is_accepted"
+decision = "new-proposition"
+proposition = "NP-081"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13048"
+project = "mcp-re-conformance"
+control = "tests/rfc9421_security_properties_test#mutated_payload_is_rejected"
+decision = "new-proposition"
+proposition = "NP-081"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13049"
+project = "mcp-re-conformance"
+control = "tests/rfc9421_security_properties_test#replayed_request_is_rejected_by_the_replay_tier"
+decision = "new-proposition"
+proposition = "NP-081"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13050"
+project = "mcp-re-conformance"
+control = "tests/rfc9421_security_properties_test#request_within_the_skew_bound_is_accepted_but_beyond_it_is_not"
+decision = "new-proposition"
+proposition = "NP-081"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13051"
+project = "mcp-re-conformance"
+control = "tests/rfc9421_security_properties_test#response_bound_to_the_wrong_request_is_rejected"
+decision = "new-proposition"
+proposition = "NP-081"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13052"
+project = "mcp-re-conformance"
+control = "tests/rfc9421_security_properties_test#strict_tier_policy_restores_exact_freshness"
+decision = "new-proposition"
+proposition = "NP-081"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13053"
+project = "mcp-re-conformance"
+control = "tests/rfc9421_security_properties_test#tampered_request_body_is_rejected"
+decision = "new-proposition"
+proposition = "NP-081"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13054"
+project = "mcp-re-conformance"
+control = "tests/rfc9421_security_properties_test#transport_identity_binds_to_the_request_actor"
+decision = "new-proposition"
+proposition = "NP-081"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13055"
+project = "mcp-re-conformance"
+control = "tests/rfc9421_security_properties_test#unauthorized_key_id_is_rejected"
+decision = "new-proposition"
+proposition = "NP-081"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13056"
+project = "mcp-re-conformance"
+control = "tests/rfc9421_security_properties_test#untrusted_signer_key_is_rejected"
+decision = "new-proposition"
+proposition = "NP-081"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13057"
+project = "mcp-re-conformance"
+control = "tests/rfc9421_security_properties_test#wrong_audience_is_rejected"
+decision = "new-proposition"
+proposition = "NP-081"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13058"
+project = "mcp-re-conformance"
+control = "tests/scitt_cross_verification_test#a_receipt_with_the_draft_era_labels_is_refused"
+decision = "new-proposition"
+proposition = "NP-079"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13059"
+project = "mcp-re-conformance"
+control = "tests/scitt_cross_verification_test#externally_built_negatives_are_refused"
+decision = "new-proposition"
+proposition = "NP-079"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13060"
+project = "mcp-re-conformance"
+control = "tests/scitt_cross_verification_test#externally_built_receipts_verify_under_the_mcp_re_verifier"
+decision = "new-proposition"
+proposition = "NP-079"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13061"
+project = "mcp-re-conformance"
+control = "tests/scitt_cross_verification_test#the_external_corpus_is_the_expected_shape"
+decision = "new-proposition"
+proposition = "NP-079"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13062"
+project = "mcp-re-conformance"
+control = "tests/scitt_interop_test#a_real_transparency_services_receipt_verifies_offline"
+decision = "new-proposition"
+proposition = "NP-079"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13063"
+project = "mcp-re-conformance"
+control = "tests/scitt_interop_test#a_statement_identifying_no_submission_binds_no_retained_record"
+decision = "new-proposition"
+proposition = "NP-079"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13064"
+project = "mcp-re-conformance"
+control = "tests/scitt_interop_test#a_third_party_receipt_verifies_offline_under_mcp_re"
+decision = "new-proposition"
+proposition = "NP-079"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13065"
+project = "mcp-re-conformance"
+control = "tests/scitt_interop_test#a_wrong_pinned_service_key_is_refused"
+decision = "new-proposition"
+proposition = "NP-079"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13066"
+project = "mcp-re-conformance"
+control = "tests/scitt_interop_test#an_operated_transparency_services_receipt_verifies_offline"
+decision = "new-proposition"
+proposition = "NP-079"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13067"
+project = "mcp-re-conformance"
+control = "tests/scitt_interop_test#mutations_of_the_third_party_receipt_are_refused"
+decision = "new-proposition"
+proposition = "NP-079"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13068"
+project = "mcp-re-conformance"
+control = "tests/scitt_interop_test#neither_older_leaf_profile_verifies_the_operated_services_receipt"
+decision = "new-proposition"
+proposition = "NP-079"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13069"
+project = "mcp-re-conformance"
+control = "tests/scitt_interop_test#the_capsule_anchor_corpus_records_the_exchange_and_its_limits"
+decision = "new-proposition"
+proposition = "NP-079"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13070"
+project = "mcp-re-conformance"
+control = "tests/scitt_interop_test#the_committed_verification_reports_match_a_fresh_run"
+decision = "new-proposition"
+proposition = "NP-079"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13071"
+project = "mcp-re-conformance"
+control = "tests/scitt_interop_test#the_corpus_records_the_limits_of_the_exchange"
+decision = "new-proposition"
+proposition = "NP-079"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13072"
+project = "mcp-re-conformance"
+control = "tests/scitt_interop_test#the_operated_corpus_records_the_exchange_its_limits_and_what_it_supersedes"
+decision = "new-proposition"
+proposition = "NP-079"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13073"
+project = "mcp-re-conformance"
+control = "tests/scitt_interop_test#the_pre_revision_corpus_cannot_bind_a_submission"
+decision = "new-proposition"
+proposition = "NP-079"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13074"
+project = "mcp-re-conformance"
+control = "tests/scitt_interop_test#the_third_party_receipt_does_not_verify_another_statement"
+decision = "new-proposition"
+proposition = "NP-079"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13075"
+project = "mcp-re-conformance"
+control = "tests/scitt_interop_test#the_two_capsule_anchor_deployments_do_not_verify_for_each_other"
+decision = "new-proposition"
+proposition = "NP-079"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13076"
+project = "mcp-re-conformance"
+control = "tests/scitt_interop_test#the_wrong_leaf_profile_refuses_rather_than_falling_back"
+decision = "new-proposition"
+proposition = "NP-079"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13077"
+project = "mcp-re-conformance"
+control = "tests/scitt_interop_test#write_verification_reports"
+decision = "not-evidence"
+reason_family = "ND-012"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13078"
+project = "mcp-re-conformance"
+control = "tests/scitt_retained_corpus_test#write_retained_corpus"
+decision = "not-evidence"
+reason_family = "ND-012"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13079"
+project = "mcp-re-conformance"
+control = "tests/scitt_vectors_test#every_committed_vector_reaches_its_expected_verdict"
+decision = "new-proposition"
+proposition = "NP-080"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13080"
+project = "mcp-re-conformance"
+control = "tests/scitt_vectors_test#regenerated_fixtures_match_the_committed_bytes"
+decision = "new-proposition"
+proposition = "NP-080"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13081"
+project = "mcp-re-conformance"
+control = "tests/scitt_vectors_test#the_corpus_digest_pins_the_whole_set"
+decision = "new-proposition"
+proposition = "NP-080"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13082"
+project = "mcp-re-conformance"
+control = "tests/scitt_vectors_test#the_corpus_directory_holds_no_unpinned_vector"
+decision = "new-proposition"
+proposition = "NP-080"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13083"
+project = "mcp-re-conformance"
+control = "tests/scitt_vectors_test#the_wire_form_is_a_tagged_cose_sign1"
+decision = "new-proposition"
+proposition = "NP-080"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13084"
+project = "mcp-re-conformance"
+control = "tests/scitt_vectors_test#write_scitt_fixtures"
+decision = "not-evidence"
+reason_family = "ND-012"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13085"
+project = "mcp-re-conformance"
+control = "tests/security_traceability_guard_test#drift_detector_rejects_renamed_target_and_fn"
+decision = "new-proposition"
+proposition = "NP-084"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13086"
+project = "mcp-re-conformance"
+control = "tests/security_traceability_guard_test#entry_source_matches_target_package"
+decision = "new-proposition"
+proposition = "NP-084"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13087"
+project = "mcp-re-conformance"
+control = "tests/security_traceability_guard_test#every_bazel_target_is_declared_in_a_build_file"
+decision = "new-proposition"
+proposition = "NP-084"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13088"
+project = "mcp-re-conformance"
+control = "tests/security_traceability_guard_test#every_section_a_claim_maps_to_a_manifest_entry"
+decision = "new-proposition"
+proposition = "NP-084"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13089"
+project = "mcp-re-conformance"
+control = "tests/security_traceability_guard_test#every_test_fn_appears_in_its_source"
+decision = "new-proposition"
+proposition = "NP-084"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13090"
+project = "mcp-re-conformance"
+control = "tests/security_traceability_guard_test#four_server_auth_cases_are_present"
+decision = "new-proposition"
+proposition = "NP-084"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13091"
+project = "mcp-re-conformance"
+control = "tests/security_traceability_guard_test#guard_inputs_are_non_empty"
+decision = "new-proposition"
+proposition = "NP-084"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13092"
+project = "mcp-re-conformance"
+control = "tests/security_traceability_guard_test#recorded_count_is_derived_not_stale"
+decision = "new-proposition"
+proposition = "NP-084"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13093"
+project = "mcp-re-conformance"
+control = "tests/security_traceability_guard_test#required_gate_guards_are_mapped"
+decision = "new-proposition"
+proposition = "NP-084"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-13094"
+project = "mcp-re-conformance"
+control = "tests/security_traceability_guard_test#the_source_table_names_exactly_the_manifest_sources"
+decision = "new-proposition"
+proposition = "NP-084"
+recorded = "2026-09-19"
+

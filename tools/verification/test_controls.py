@@ -107,6 +107,23 @@ def test_a_gate_a_unit_declares_is_claimed():
     assert len(claimed_gates) >= 4, sorted(claimed_gates)
 
 
+def test_a_measurements_own_argv_claims_its_controls():
+    """A `measured` unit declares no battery, and its protocol still selects controls.
+
+    ADR-MCPRE-068 §4.1 gives a measured unit a protocol and an apparatus control instead of
+    `tested_symbols`. A census reading only `tested_symbols` reports the controls the
+    measurement RUNS as claimed by nothing — and would invite a `not-evidence` reason to be
+    written about a measurement's own apparatus.
+    """
+    selected = {
+        claim.control.identity
+        for claim in REPORT.claims
+        if claim.selector.startswith("measured-argv:")
+    }
+    assert selected, "no measurement argv resolved to a control; the join went dark"
+    assert any("the_measurement_moves_when_the_scanned_set_shrinks" in s for s in selected)
+
+
 def test_every_control_kind_is_non_empty():
     """A kind declared in `KINDS` and enumerated as zero is a discovery path that broke.
 

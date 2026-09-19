@@ -367,6 +367,34 @@ evidence for a proposition that must then exist, and the disposition is `registe
 `new-proposition` — never this family. The exit condition is mechanical: that unit's battery
 goes red.
 
+## ND-012 — a fixture or report GENERATOR
+
+**Covers:** `mcp-re-conformance/tests/delegation_vectors_test.rs::write_delegation_fixtures`,
+`http_profile_vectors_test.rs::write_http_profile_fixtures`,
+`scitt_vectors_test.rs::write_scitt_fixtures`,
+`scitt_interop_test.rs::write_verification_reports`,
+`scitt_retained_corpus_test.rs::write_retained_corpus`.
+**Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 15.
+
+Five `#[test]` functions that do not test anything: each regenerates a committed corpus or
+verification report when run deliberately. They are the write half of the
+regenerate-and-compare pattern whose READ half — *regenerated fixtures match the committed
+bytes* — is a control and is dispositioned with its corpus.
+
+**Why they are not evidence.** A generator cannot fail in a way that says a proposition is
+false; it can only fail to produce a file. The proposition is carried entirely by the
+comparison, and registering the generator beside it would put a control in a battery that,
+if it went red, would mean the fixtures could not be rewritten — which is not a security
+fact about anything.
+
+**Why they are enumerated at all.** Because the census enumerates every `#[test]`, and a
+kind of function that is not a control is exactly the kind of thing a person filters out of
+a list and a machine must be told about. The alternative — teaching the enumerator to skip
+`write_*` — would be a name-shaped rule that goes stale silently.
+
+**What would move a control out.** A generator that also compares. Then it is a control and
+belongs with its corpus.
+
 ## ND-008 — not a control: drivers, runners, reports and demos
 
 **Covers:** `bump_version.sh`, `coverage.sh`, `demo-gcp-kms.sh`, `demo-local.sh`,
@@ -1861,4 +1889,145 @@ claim these controls: both units' `paths` are `communication_assurance/*` files,
 `transport/identity.rs` is in neither. The fifth mechanically impossible reattribution this
 campaign has measured.
 **Severity:** `critical`.
+
+---
+
+## The conformance claim surface — NP-079 through NP-086
+
+`mcp-re-conformance/` holds 97 unclaimed controls across seventeen test files, and **two
+units**. Conformance is what MCP-RE tells an auditor it implements, so these controls are
+the evidence behind a product-facing claim surface — the same subject NP-008 approaches
+from the gate side, arriving here as the claims themselves.
+
+## NP-079 — a third party's receipt verifies offline, and only for its own statement
+
+**Controls:** `scitt_interop_test.rs` (15), `scitt_cross_verification_test.rs` (4).
+**Statement.** *A real transparency service's receipt, an operated service's receipt and a
+third party's receipt each verify OFFLINE under the MCP-RE verifier; a wrong pinned service
+key, a mutated receipt, a draft-era label set, an externally built negative, and a receipt
+about another statement are each refused; the wrong leaf profile REFUSES RATHER THAN FALLING
+BACK and neither older leaf profile verifies the operated service's receipt; the two
+capsule-anchor deployments do not verify for each other; a statement identifying no
+submission binds no retained record and the pre-revision corpus cannot bind one; and the
+committed verification reports match a fresh run.*
+**If false.** MCP-RE accepts a transparency receipt that does not attest what it is read as
+attesting — by falling back to an older leaf profile, by verifying under another
+deployment's anchor, or by binding a statement that identifies no submission.
+**Likely owner:** none. `http_profile.scitt_retained_correspondence` owns the commitment
+relation inside the profile crate; this is the interop claim over real services' output.
+**Root relationship.** Under the transparency roots.
+**Severity:** `critical`.
+
+## NP-080 — every published corpus is pinned, and regenerates to the committed bytes
+
+**Controls:** `scitt_vectors_test.rs` (5), `corpus_pinning_test.rs` (5),
+`http_profile_vectors_test.rs` (2), `delegation_vectors_test.rs` (3).
+**Statement.** *Every committed fixture matches its published hash and a tampered one fails
+it; the corpus digest commits to the manifest entries, is order-independent, and CHANGES
+when a vector is added or removed; the corpus directory holds no unpinned vector;
+regenerating the fixtures reproduces the committed bytes; each committed vector reaches its
+expected verdict; the wire form is a tagged `COSE_Sign1`; and the delegation corpus covers
+the full taxonomy.*
+**If false.** An advertised conformance corpus is not the corpus that was verified — a
+vector quietly added, removed or edited, with the digest still agreeing. "Adding or removing
+a vector CHANGES the digest" and "order-independent" are the two halves that make the digest
+an identity rather than a checksum of whatever order the walk produced.
+**Likely owner:** `conformance.retained_corpus` is one corpus; this is the pinning
+discipline over all of them.
+**Severity:** `high`.
+
+## NP-081 — the shipped profile has the security properties it advertises
+
+**Controls:** `rfc9421_security_properties_test.rs` (14),
+`full_profile_parity_test.rs` (8), `rfc9421_cross_verification_test.rs` (2).
+**Statement.** *Over the shipped profile end to end: an expired request, a replayed one, a
+mutated payload, a tampered body, an untrusted signer key, an unauthorized key id and a
+wrong audience are each rejected; a request within the skew bound is accepted and one beyond
+it is not, a future-dated request inside the bound is accepted, and the strict tier restores
+exact freshness; the transport identity binds to the request actor; caller-supplied proxy
+meta is NOT the signed authority; a response bound to the wrong request is rejected, and in
+the integrated path a body tamper, a response splice, an artifact mismatch, a continuation
+mismatch and a replay each fail, with a response-evidence mismatch emitting request-binding
+mismatch; a full exchange activates ALL blocks; and an externally produced signature is
+accepted by the MCP-RE verifier, with key and signature agreeing byte for byte across
+implementations.*
+**If false.** The profile MCP-RE publishes does not have the properties published for it.
+`full_exchange_activates_all_blocks` is the anti-vacuity clause for the whole file: without
+it every rejection above could be produced by a path that never assembled the evidence.
+**Likely owner:** none. The `http_profile.*` units own the profile's internals; this is the
+shipped composition measured as a conformance claim.
+**Severity:** `critical`.
+
+## NP-082 — delegation interoperates in both directions
+
+**Controls:** `delegation_cross_verification_test.rs` (2).
+**Statement.** *An external credential verifies under the MCP-RE verifier, and the MCP-RE
+issuer reproduces the external bytes.*
+**If false.** MCP-RE's delegation is compatible in one direction only, which is not
+compatibility. Both directions are one proposition for the same reason NP-019's peek/take
+split is: half of it is a different claim, not a weaker one.
+**Severity:** `high`.
+
+## NP-083 — the audit vocabulary is frozen and minted in one place
+
+**Controls:** `audit_vocabulary_guard_test.rs` (7).
+**Statement.** *Every audit token is a wire code or a fixed event type; event types do not
+collide with frozen wire codes; the success and key-lifecycle event sets are EXACTLY their
+allowlists; no producer outside the Core mints a wire token; there is no authorization
+hash-mismatch audit reason; and the guard's inputs are non-empty.*
+**If false.** An audit record carries a token that means one thing to its producer and
+another to its reader, or a producer outside the frozen taxonomy mints one — which makes the
+vocabulary a convention rather than a contract.
+**Likely owner:** `conformance.verdict_vocabulary_scope` measures HOW MANY files decide what
+a verdict token says, and its argv claims three of this file's ten controls. The other seven
+are about what the tokens ARE, which that measurement does not say. A `measured` unit has no
+battery to hold them, which is NP-036's finding arriving from the other side.
+**Severity:** `high`.
+**`guard_inputs_are_non_empty` is registered here rather than dispositioned as apparatus**,
+because it is this proposition's anti-vacuity arm: a guard over an empty input set reports a
+clean vocabulary.
+
+## NP-084 — the security traceability manifest is derived, not remembered
+
+**Controls:** `security_traceability_guard_test.rs` (10).
+**Statement.** *Every section-A claim maps to a manifest entry and the source table names
+exactly the manifest sources; every named test function appears in its source and every
+Bazel target is declared in a BUILD file; each entry's source matches its target package;
+the recorded count is DERIVED rather than stale; the required gate guards are mapped; the
+four server-auth cases are present; the drift detector rejects a renamed target and function;
+and the guard's inputs are non-empty.*
+**If false.** The traceability manifest names evidence that does not exist — a test function
+that was renamed, a Bazel target nobody declares — and a claim reads as traced to something
+unrunnable. "The recorded count is derived not stale" is the clause that keeps the manifest
+from agreeing with itself.
+**Severity:** `high`.
+
+## NP-085 — the shipped codes and names are the ones the MCP revision defines
+
+**Controls:** `mcp_2026_07_28_alignment_test.rs` (5),
+`method_name_drift_guard_test.rs` (2), `method_transparency_test.rs` (1).
+**Statement.** *The MRTR `input_required` discriminator matches SEP-2322; the rejection code
+is outside the JSON-RPC reserved range and in neither MCP sub-range; the Core and
+http-profile codes are the SAME INTEGER; the recognised result types are the two the core
+protocol defines; no banned method literal appears in non-test Core source, with the region
+scan looking BELOW a test module; and the accepted verdict is identical across all methods.*
+**If false.** MCP-RE emits a code another implementation reads as something else, or two of
+its own crates disagree about the same integer. NP-005 is this proposition's structural
+precondition — the discriminator open-coded in one place — and they were found from opposite
+ends: one from a gate with no unit, one from a conformance file with no unit.
+**Severity:** `critical`.
+
+## NP-086 — no forbidden claim is asserted anywhere in the published surface
+
+**Controls:** `forbidden_claim_guard_test.rs` (4).
+**Statement.** *No forbidden phrase appears as an ASSERTED claim; the detector catches an
+asserted claim while allowing a repudiation; the legacy security boundary is a stub with no
+live claim; and the guard's inputs are non-empty.*
+**If false.** The published surface asserts a security property the implementation does not
+have — the exact failure the deprecation vocabulary exists to prevent, and the one whose
+consequence is entirely borne by a reader.
+**Likely owner:** none. `scripts/jcs_vocabulary_gate.py` is ND-005 because it holds a
+documented value equal to its source; this is a claim about what the surface ASSERTS, which
+is not a mirror.
+**Severity:** `high`.
 
