@@ -8238,6 +8238,212 @@ asked about.
 """
 
 # ---------------------------------------------------------------------------
+# The startup planner, and the last of the layer-A classifiers
+# ADR-MCPRE-069 NP-056…NP-059, NP-061, NP-068…NP-070
+# ---------------------------------------------------------------------------
+#
+# Every weakening below leaves a deployment that STARTS and describes itself exactly as the
+# operator configured it, while the thing that description names is not what the runtime
+# holds. That gap — between the posture announced and the posture in force — is what
+# THM-0077's second sentence forbids.
+
+[[probe]]
+id = "M312-proxy-the-credential-is-minted-under-the-planned-issuer"
+unit = "proxy.startup_plan_provenance"
+theorem = "THM-0077"
+conjunct = "the issuer kid in the minted credential is the one that was PLANNED, not one the signing plan re-derived from configuration"
+path = "mcp-re-proxy/src/startup_plan.rs"
+anchor = "                issuer_kid: response_kid,\n"
+weakening = "                issuer_kid: {\n                    let _ = &response_kid;\n                    response_issuer_kid(config)\n                },\n"
+expect_red = [
+  "lib#startup_plan::tests::the_issuer_kid_in_the_credential_is_the_one_that_was_planned",
+]
+note = """
+THE WEAKENING RESTORES THE DEFECT VERBATIM, which is why it is the falsifier for this unit.
+The kid was once derived twice — by `response_issuer_kid`, whose value the startup transcript
+prints and which the trust plane excludes from the request-signer set, and again inside the
+delegated wiring, which is the one that reached the credential. Both spelled
+`--delegated-issuer-kid` falling back to `--server-key-id`, so they agreed; nothing made them.
+
+Under the weakening nothing errors and nothing looks different: both readings coincide for
+every command line, so the whole battery except this control stays green. That is precisely
+the shape the control exists for — it asserts the plan carries a kid the configuration does
+NOT name, which is only possible if nothing inside re-derives it. A deployment could
+otherwise be told it chains to one root issuer while minting under another.
+"""
+
+[[probe]]
+id = "M313-proxy-the-trust-epoch-build-refusal-is-stated-once"
+unit = "proxy.startup_plan_legality"
+theorem = "THM-0077"
+conjunct = "a networked trust-epoch source in a build that cannot carry one REFUSES, once, naming both consequences"
+path = "mcp-re-proxy/src/startup_plan.rs"
+anchor = "            TrustEpochPlan::Redis { .. } if cfg!(feature = \"redis_replay\") => None,\n"
+weakening = "            TrustEpochPlan::Redis { .. } if true => None,\n"
+expect_red = [
+  "lib#startup_plan::tests::the_build_refusal_is_stated_once_and_names_both_consequences",
+]
+note = """
+THE OPERATOR'S KILL SWITCH IS WHAT GOES MISSING. `--trust-epoch-redis-url` buys two things:
+the trust cache's networked invalidation channel, and a label delegated credentials are
+minted under so an `INCR` revokes fleet-wide. In a build without `redis_replay` neither
+exists. Under the weakening the plan reports itself supported, the deployment starts, and
+credentials are minted under the bare `--delegated-trust-epoch` label — so the revocation
+mechanism the operator configured silently is not there, and nothing on the startup path
+says so. Fail closed is the whole posture (ADR-MCPRE-052 §7).
+
+The refusal's CONTENT matters as much as its existence, which is why the control asserts both
+named consequences: each plane once stated only its own, and which one an operator met was
+decided by materialization order.
+"""
+
+[[probe]]
+id = "M314-proxy-the-inner-pool-ceiling-saturates"
+unit = "proxy.startup_plan_pool_ceiling"
+theorem = "THM-0077"
+conjunct = "a per-core ceiling that would overflow SATURATES rather than wrapping"
+path = "mcp-re-proxy/src/startup_plan.rs"
+anchor = "        .map(|n| n.saturating_mul(cores.max(1)))\n"
+weakening = "        .map(|n| n.wrapping_mul(cores.max(1)))\n"
+expect_red = [
+  "lib#startup_plan::tests::a_ceiling_that_would_overflow_saturates_rather_than_wrapping",
+]
+note = """
+A WRAPPED CEILING IS SMALLER THAN THE DEFAULT, NOT LARGER, which is what makes this a silent
+weakening rather than a crash. The product is taken over an operator-supplied number and the
+host's core count; wrapping turns a very large requested bound into a small one, and
+`inner_plane_raise` then declines to raise the pool at all — so the deployment runs at the
+default bound while every flag and every startup line says otherwise, and requests that
+passed every security gate meet a capacity cliff at the inner pool instead of at the
+admission gate where shedding is deliberate and measured.
+
+In a release build the wrap is silent; in a debug build it panics. Either way the
+`saturating_mul` is the only thing that makes the semantics stated rather than build-mode
+dependent, which is ADR-MCPRE-061's arithmetic rule in one line.
+"""
+
+[[probe]]
+id = "M315-proxy-only-the-trusted-context-asserts-inner-channel-isolation"
+unit = "proxy.evidence_retention_state"
+theorem = "THM-0077"
+conjunct = "the TRUSTED verified-context state asserts the inner-channel property no configuration check can confirm, and says so"
+path = "mcp-re-proxy/src/config_state/evidence.rs"
+anchor = "        matches!(self, Self::Trusted)\n"
+weakening = "        false\n"
+expect_red = [
+  "lib#config_state::evidence::tests::only_the_trusted_context_asserts_something_configuration_cannot_check",
+]
+note = """
+THE PROJECTION IS THE ONLY PLACE THE ASSERTION IS VISIBLE. Selecting the trusted verified
+context writes the PEP's verified caller context into the forwarded body over an UNSIGNED
+carrier — the channel is the only thing making it trustworthy, and no configuration check can
+establish that nothing but this PEP can reach the inner server. Under the weakening the state
+is still `Trusted` and the context is still injected, but the projection every consumer reads
+reports that the deployment asserts nothing — so an operator-facing posture statement, or any
+later check conditioned on the assertion, sees an ordinary deployment.
+
+That is the collapse the record names: what configuration CAN check and what only a trusted
+context can ASSERT become the same answer, and an assurance claim is quietly made out of a
+configuration one.
+"""
+
+[[probe]]
+id = "M316-proxy-saying-nothing-resolves-to-the-bounded-default"
+unit = "proxy.in_flight_limit_basis"
+theorem = "THM-0077"
+conjunct = "an unspecified admission limit resolves to the fail-safe BOUNDED per-core default, not to an effectively absent ceiling"
+path = "mcp-re-proxy/src/config_state/in_flight_limit.rs"
+anchor = "        InFlightLimitRequest::Unspecified => InFlightLimitBasis::PerCore {\n            requests: DEFAULT_PER_CORE_CEILING,\n        },\n"
+weakening = "        InFlightLimitRequest::Unspecified => InFlightLimitBasis::PerCore {\n            requests: NonZeroUsize::MAX,\n        },\n"
+expect_red = [
+  "lib#config_state::in_flight_limit::tests::saying_nothing_resolves_to_the_bounded_default",
+]
+note = """
+UNBOUNDED IN-FLIGHT IS ATTACKER-CONTROLLED BUFFERING AHEAD OF THE VERIFY GATE. The weakening
+does not remove a check or produce an error; it keeps the type total, keeps every projection
+answering, and keeps `NonZeroUsize`'s non-zeroness — it only changes what SILENCE means. A
+deployment that names no admission limit then admits concurrent work without a practical
+ceiling, and the configuration reads exactly as it does today, because the absence of a flag
+is what it always was.
+
+The other two `InFlightLimitRequest` arms are untouched and stay green, correctly: an operator
+who stated a limit still gets it. The conjunct is about the third arm, which is the one no
+command line writes down.
+"""
+
+[[probe]]
+id = "M317-proxy-the-enforced-contract-carries-the-set-that-selected-it"
+unit = "proxy.mcp_transport_contract_state"
+theorem = "THM-0077"
+conjunct = "a deployment that named accepted protocol versions holds the ENFORCING state, and the state carries the set that selected it"
+path = "mcp-re-proxy/src/config_state/mcp_transport_contract.rs"
+anchor = "        (!self.versions.is_empty()).then_some(&self.versions)\n"
+weakening = "        None\n"
+expect_red = [
+  "lib#config_state::mcp_transport_contract::tests::every_legal_state_form_is_classified",
+]
+note = """
+THE CONTRACT IS WHAT MAKES `Mcp-Name` AGREE WITH THE PROTECTED BODY. Under `Enforced`,
+`Mcp-Method` and `MCP-Protocol-Version` are mandatory on every POST, `Mcp-Name` is mandatory
+for `tools/call` and `resources/read` and must match the body, and a version outside the
+accepted set is refused. Under `Unconstrained` none of that is asserted — so a signed request
+may name one tool in its header and invoke another in its body.
+
+The weakening makes the enforcing projection answer `None` for every deployment. The state is
+still built, the versions are still carried, and nothing errors: the seam simply reads the
+posture as unconstrained and stops asserting the contract the operator selected. That is a
+posture nobody chose, reached without a single refusal being deleted.
+"""
+
+[[probe]]
+id = "M318-proxy-the-fleet-topology-is-the-one-the-deployment-declared"
+unit = "proxy.deployment_topology_state"
+theorem = "THM-0077"
+conjunct = "the semantic topology is the one the deployment declared — `--fleet` names the Fleet state"
+path = "mcp-re-proxy/src/config_state/topology.rs"
+anchor = "    let topology = if config.fleet {\n"
+weakening = "    let topology = if false {\n"
+expect_red = [
+  "lib#config_state::topology::tests::the_default_deployment_is_a_single_node",
+]
+note = """
+`Fleet` IS NOT A RESOURCE SETTING. It states that a request may reach a different verifier
+than the one that saw it first, which is what makes the cross-replica revocation-lag bound a
+fact the operator has to be told at startup. Under the weakening every deployment classifies
+as `SingleNode`: the replicas still run, still serve, and still share a trust domain, but the
+one place that says so answers `false`, so every consumer reading the posture — the startup
+transcript included — reports a single-verifier deployment that does not exist.
+
+The shard axis is deliberately untouched and stays green. The two facts do not constrain each
+other, and weakening both at once would report one discharge for two propositions.
+"""
+
+[[probe]]
+id = "M319-proxy-the-replay-tier-does-not-reach-the-continuation-machine"
+unit = "proxy.continuation_control_subject_boundary"
+theorem = "THM-0077"
+conjunct = "the continuation-control machine decides only its own subject — the replay store does not switch it on"
+path = "mcp-re-proxy/src/config_state/continuation_control.rs"
+anchor = "            None => ContinuationKind::Disabled,\n"
+weakening = "            None => match &config.replay.store {\n                Some(store) => ContinuationKind::Shared {\n                    endpoint: store.locator().to_string(),\n                },\n                None => ContinuationKind::Disabled,\n            },\n"
+expect_red = [
+  "lib#config_state::continuation_control::tests::the_replay_tier_does_not_reach_this_machine",
+]
+note = """
+THE WEAKENING RESTORES THE ALIAS CF-12 REMOVED. One field, `replay_redis_url`, once carried
+two different facts — where admitted nonces live, and where a retained continuation base lives
+— and sharing a backend technology with `Replay` was read as a semantic edge. Under it, a
+deployment that configured replay and deliberately left MRTR continuation correlation OFF
+acquires a shared correlation store it never asked for, pointed at the replay store's
+endpoint, and the startup line announces the capability as selected.
+
+Two owners then answer one question and can disagree, which is the defect
+`proxy.cross_machine_legality` states for relations, arriving one layer down at the machine
+itself. That the endpoints MAY name the same Redis is an operator's deployment choice; this
+weakening makes it a decision the configuration layer takes on the operator's behalf.
+"""
+
+# ---------------------------------------------------------------------------
 # The Core's own premises — ADR-MCPRE-069 NP-106, NP-108
 # ---------------------------------------------------------------------------
 #
