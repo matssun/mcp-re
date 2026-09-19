@@ -8508,3 +8508,99 @@ token" forbids and the thing nothing but this battery can see.
 `ALL_ERRORS` by VARIANT NAME, and the weakening renames no variant. Exhaustiveness and
 injectivity are two clauses, and this probe falsifies the second.
 """
+
+# ---------------------------------------------------------------------------
+# The measurement apparatus THM-0111's walk rests on — ADR-MCPRE-069 NP-036, NP-037
+# ---------------------------------------------------------------------------
+#
+# Both weakenings leave a tree that BUILDS, a workspace whose every other test stays green,
+# and a guard that keeps reporting a clean pass. One makes the brace scan forget what it was
+# inside at every newline; one makes an unresolvable key resolve to an empty path instead of
+# to nothing. Neither errors, and neither is visible above the file it is in — which is the
+# whole reason the apparatus needed an owner rather than a mention in a measured unit's
+# `paths`.
+
+[[probe]]
+id = "M324-testpaths-the-brace-scan-forgets-at-every-newline"
+unit = "conformance.production_half_definition"
+theorem = "THM-0111"
+conjunct = "the control walks every crate's source tree and TAKES EACH FILE'S PRODUCTION HALF — which requires that a `{` inside a literal spanning more than one line is not a brace"
+path = "mcp-re-test-paths/src/rust_source/brace_scan.rs"
+anchor = """    pub(super) fn feed(&mut self, line: &str) -> String {
+        let chars: Vec<char> = line.chars().collect();
+"""
+weakening = """    pub(super) fn feed(&mut self, line: &str) -> String {
+        self.mode = Mode::Code;
+        let chars: Vec<char> = line.chars().collect();
+"""
+expect_red = [
+  "lib#rust_source::brace_scan::tests::a_nested_block_comment_is_carried_across_lines",
+  "lib#rust_source::brace_scan::tests::a_raw_string_is_carried_across_lines",
+  "lib#rust_source::tests::a_multi_line_raw_string_does_not_close_a_region",
+]
+note = """
+THIS IS THE DEFECT THE FILE WAS REWRITTEN FOR, RESTORED IN ONE LINE. The scanner's own
+documentation names it — *"Per-line state was the second defect in this file"* — and records
+what it cost: `execution_contract.rs` writes a raw byte string holding JSON over five lines,
+a forgetful scan closed the `#[cfg(test)]` region three lines early, and twenty-seven lines of
+test code were measured as PRODUCTION by every guard built on this primitive.
+
+The weakening does not delete the scan, and that is what makes it the right falsifier. Every
+literal form is still recognised, every brace inside one is still blanked, and a file whose
+literals all fit on one line measures identically — so the tree builds, `cargo test
+--workspace` is green everywhere except this crate, and the module-size ratchet and the
+verdict-vocabulary walk both keep reporting a number. They report a DIFFERENT number, about a
+corpus neither of them says it measured.
+
+The four single-line lexical controls stay green, correctly, and that is what locates the
+conjunct rather than merely touching it: `only_code_braces_survive`,
+`an_escaped_quote_does_not_end_a_string`, `a_lifetime_is_not_a_char_literal` and
+`an_identifier_tail_does_not_open_a_raw_string` each feed ONE line, so a scan that resets at
+every newline resets between things they never compare. A battery holding only those would
+report this weakening as no change at all — which is exactly the battery this file used to
+have.
+
+`a_raw_string_closes_only_on_its_own_hash_count` also stays green, and for the same reason:
+its `r##"a "# b {"##` opens and closes inside a single line. Carrying state across lines and
+counting hashes correctly are two clauses, and this probe falsifies the first.
+"""
+
+[[probe]]
+id = "M325-testpaths-an-unknown-key-resolves-to-an-empty-path"
+unit = "conformance.scanned_tree_declaration"
+theorem = "THM-0111"
+conjunct = "the control WALKS EVERY CRATE'S SOURCE TREE — which requires that the key naming each tree resolves to that tree, and that a key naming no tree resolves to nothing rather than to a path"
+path = "mcp-re-test-paths/src/source_trees.rs"
+anchor = """    SOURCE_TREES
+        .iter()
+        .find(|(key, _)| *key == env_key)
+        .map(|(_, crate_dir)| format!("{crate_dir}/src/lib.rs"))
+"""
+weakening = """    Some(
+        SOURCE_TREES
+            .iter()
+            .find(|(key, _)| *key == env_key)
+            .map(|(_, crate_dir)| format!("{crate_dir}/src/lib.rs"))
+            .unwrap_or_default(),
+    )
+"""
+expect_red = ["lib#source_trees::tests::an_unknown_key_names_no_tree"]
+note = """
+THE REFUSAL BECOMES A TOTAL FUNCTION, AND THE GUARD GOES QUIET. `sentinel_for` is the only
+thing standing between an unrecognised env key and a resolved path: under the weakening it
+answers every key, and the key it does not know answers with the empty string. `cargo_fallback`
+then joins that onto the workspace root, the caller takes the sentinel's PARENT, and the walk
+begins somewhere nobody named — or, with the loud `panic!` in `cargo_fallback` now unreachable
+for a tree key, never begins at all while the caller believes it did.
+
+That is the failure class this repository has measured twice and named in its own memory: a
+`tests/` glob that silently exempted a crate from the srcs gate for a whole campaign, and an
+empty join that read as a clean tree. The weakening reproduces it exactly — nothing throws,
+nothing logs, and the guard's assertion holds over an empty set.
+
+The other two controls stay green, correctly, which locates the conjunct: neither
+`every_sentinel_exists_in_the_source_tree` nor `no_tree_is_declared_twice` calls
+`sentinel_for` at all — they read `SOURCE_TREES` directly, and the table is untouched. A
+battery holding only those two would report a resolver that answers every key in the universe
+as no change, because the table it reads would still be exactly right.
+"""
