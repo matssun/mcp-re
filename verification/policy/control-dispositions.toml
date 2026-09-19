@@ -3420,3 +3420,642 @@ decision = "new-proposition"
 proposition = "NP-037"
 recorded = "2026-09-19"
 
+
+# ---------------------------------------------------------------------------
+# Batch 9 — the transparency plane, 2026-09-19
+# ---------------------------------------------------------------------------
+#
+# Seventy-seven controls. Eight REGISTER and four REATTRIBUTE land in verification.toml.
+# The rest are below: the whole external auditor — a shipped binary with its own parser,
+# trust profile, registration client and artifact format — is in NO unit's paths, and four
+# controls in the retention files say things the retention statement does not.
+#
+# NP-045 is the first reattribution this campaign has found MECHANICALLY IMPOSSIBLE: the
+# owning unit states the proposition and its lane runs in another project.
+
+[[proposition]]
+id = "NP-039"
+title = "The auditor's invocation is total"
+carrier = "mcp-re-proxy/src/transparency/auditor/invocation"
+likely_owner = ""
+consequence = "high"
+root_relationship = "the auditor product claim the graph does not hold" 
+record = "docs/architecture/control-dispositions.md#np-039"
+
+[[proposition]]
+id = "NP-040"
+title = "The auditor trusts exactly what its profile enrolls"
+carrier = "mcp-re-proxy/src/transparency/auditor/profile and trust_view"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "the auditor product claim the graph does not hold" 
+record = "docs/architecture/control-dispositions.md#np-040"
+
+[[proposition]]
+id = "NP-041"
+title = "A registration target is admissible before anything is submitted"
+carrier = "mcp-re-proxy/src/transparency/auditor/registration endpoint, policy and protocol"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "the auditor product claim the graph does not hold" 
+record = "docs/architecture/control-dispositions.md#np-041"
+
+[[proposition]]
+id = "NP-042"
+title = "A statement is registered only against a receipt about itself"
+carrier = "mcp-re-proxy/src/transparency/auditor/registration capability and exchange"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "the auditor product claim the graph does not hold" 
+record = "docs/architecture/control-dispositions.md#np-042"
+
+[[proposition]]
+id = "NP-043"
+title = "The auditor's artifact is its own schema and round-trips its verdicts"
+carrier = "mcp-re-proxy/src/transparency/auditor/artifact"
+likely_owner = ""
+consequence = "high"
+root_relationship = "the auditor product claim the graph does not hold" 
+record = "docs/architecture/control-dispositions.md#np-043"
+
+[[proposition]]
+id = "NP-044"
+title = "The retention read side distinguishes absent from error"
+carrier = "mcp-re-proxy/src/transparency/retained_archive.rs"
+likely_owner = "proxy.retention_commitment is the WRITE authority; EX-012 already found the read side separable"
+consequence = "high"
+root_relationship = "beside the retention propositions the proxy already states"
+record = "docs/architecture/control-dispositions.md#np-044"
+
+[[proposition]]
+id = "NP-045"
+title = "The proxy's own store refuses an incomplete chain"
+carrier = "mcp-re-proxy/src/transparency/durability.rs"
+likely_owner = "http_profile.retained_chain_record states it and CANNOT claim it: its lane runs in another project"
+consequence = "high"
+root_relationship = "beside the retention propositions the proxy already states"
+record = "docs/architecture/control-dispositions.md#np-045"
+
+[[proposition]]
+id = "NP-046"
+title = "No durable write blocks a runtime worker"
+carrier = "mcp-re-proxy/src/transparency/durability.rs"
+likely_owner = "proxy.retention_commitment says nothing about what recording costs the runtime"
+consequence = "medium"
+root_relationship = "beside the retention propositions the proxy already states"
+record = "docs/architecture/control-dispositions.md#np-046"
+
+[[proposition]]
+id = "NP-047"
+title = "Retaining one exchange twice yields one object"
+carrier = "mcp-re-proxy/src/transparency/durability.rs"
+likely_owner = "proxy.retained_record_content says WHAT a record contains, not how many there are"
+consequence = "medium"
+root_relationship = "beside the retention propositions the proxy already states"
+record = "docs/architecture/control-dispositions.md#np-047"
+
+[[disposition]]
+id = "CD-7001"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::artifact::tests::a_foreign_schema_is_refused"
+decision = "new-proposition"
+proposition = "NP-043"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7002"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::artifact::tests::a_statement_that_is_not_base64url_is_refused_on_the_way_in"
+decision = "new-proposition"
+proposition = "NP-043"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7003"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::artifact::tests::an_artifact_round_trips_its_verdicts"
+decision = "new-proposition"
+proposition = "NP-043"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7004"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::artifact::verdict::tests::every_incomplete_reason_has_its_own_token"
+decision = "new-proposition"
+proposition = "NP-043"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7005"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::invocation::flag::tests::a_value_given_once_is_the_value"
+decision = "new-proposition"
+proposition = "NP-039"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7006"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::invocation::flag::tests::a_value_given_twice_is_refused_rather_than_resolved"
+decision = "new-proposition"
+proposition = "NP-039"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7007"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::invocation::flag::tests::a_value_never_given_is_refused_by_name"
+decision = "new-proposition"
+proposition = "NP-039"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7008"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::invocation::instant::tests::a_stated_instant_is_the_instant"
+decision = "new-proposition"
+proposition = "NP-039"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7009"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::invocation::instant::tests::a_value_that_is_not_a_timestamp_is_refused"
+decision = "new-proposition"
+proposition = "NP-039"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7010"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::invocation::instant::tests::an_instant_at_or_before_the_epoch_is_refused"
+decision = "new-proposition"
+proposition = "NP-039"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7011"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::invocation::instant::tests::the_default_is_the_system_clock"
+decision = "new-proposition"
+proposition = "NP-039"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7012"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::invocation::tests::a_complete_invocation_parses_and_keeps_the_hop_order"
+decision = "new-proposition"
+proposition = "NP-039"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7013"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::invocation::tests::a_flag_with_no_value_is_refused"
+decision = "new-proposition"
+proposition = "NP-039"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7014"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::invocation::tests::a_hop_that_is_not_a_digest_is_refused"
+decision = "new-proposition"
+proposition = "NP-039"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7015"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::invocation::tests::a_non_positive_audit_instant_is_refused"
+decision = "new-proposition"
+proposition = "NP-039"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7016"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::invocation::tests::a_registration_budget_without_a_target_is_refused"
+decision = "new-proposition"
+proposition = "NP-039"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7017"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::invocation::tests::a_registration_target_carries_the_service_and_its_budget"
+decision = "new-proposition"
+proposition = "NP-039"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7018"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::invocation::tests::a_repeated_single_valued_flag_is_refused"
+decision = "new-proposition"
+proposition = "NP-039"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7019"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::invocation::tests::an_inadmissible_registration_target_is_refused_at_parse_time"
+decision = "new-proposition"
+proposition = "NP-039"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7020"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::invocation::tests::an_invocation_without_a_registration_target_registers_nowhere"
+decision = "new-proposition"
+proposition = "NP-039"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7021"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::invocation::tests::an_unknown_flag_is_refused_with_the_usage"
+decision = "new-proposition"
+proposition = "NP-039"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7022"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::invocation::tests::every_required_flag_is_required"
+decision = "new-proposition"
+proposition = "NP-039"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7023"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::invocation::tests::help_and_a_bare_invocation_are_the_same_question"
+decision = "new-proposition"
+proposition = "NP-039"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7024"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::invocation::tests::no_hop_at_all_is_refused"
+decision = "new-proposition"
+proposition = "NP-039"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7025"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::invocation::tests::the_default_audit_instant_is_the_system_clock"
+decision = "new-proposition"
+proposition = "NP-039"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7026"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::profile::tests::a_coherent_document_becomes_a_profile"
+decision = "new-proposition"
+proposition = "NP-040"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7027"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::profile::tests::a_negative_clock_skew_is_refused"
+decision = "new-proposition"
+proposition = "NP-040"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7028"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::profile::tests::an_incoherent_document_never_becomes_a_profile"
+decision = "new-proposition"
+proposition = "NP-040"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7029"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::profile::tests::an_unknown_member_is_refused"
+decision = "new-proposition"
+proposition = "NP-040"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7030"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::profile::tests::the_revoked_set_answers_for_the_keys_it_names"
+decision = "new-proposition"
+proposition = "NP-040"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7031"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::registration::capability::tests::a_mechanism_refusal_is_carried_through_with_its_certainty"
+decision = "new-proposition"
+proposition = "NP-042"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7032"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::registration::capability::tests::a_receipt_about_another_statement_is_refused"
+decision = "new-proposition"
+proposition = "NP-042"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7033"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::registration::capability::tests::a_receipt_from_an_unpinned_log_is_refused"
+decision = "new-proposition"
+proposition = "NP-042"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7034"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::registration::capability::tests::a_verifying_receipt_produces_a_registered_statement"
+decision = "new-proposition"
+proposition = "NP-042"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7035"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::registration::capability::tests::an_answer_that_is_not_a_receipt_is_refused"
+decision = "new-proposition"
+proposition = "NP-042"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7036"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::registration::endpoint::flags::tests::a_budget_that_is_not_a_number_names_its_flag"
+decision = "new-proposition"
+proposition = "NP-041"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7037"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::registration::endpoint::flags::tests::a_term_without_a_service_is_refused_rather_than_ignored"
+decision = "new-proposition"
+proposition = "NP-041"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7038"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::registration::endpoint::flags::tests::an_invocation_that_names_no_service_registers_nothing"
+decision = "new-proposition"
+proposition = "NP-041"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7039"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::registration::endpoint::flags::tests::an_unknown_protocol_refuses_before_anything_is_submitted"
+decision = "new-proposition"
+proposition = "NP-041"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7040"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::registration::endpoint::flags::tests::each_named_protocol_produces_a_target_and_the_default_is_scrapi"
+decision = "new-proposition"
+proposition = "NP-041"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7041"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::registration::endpoint::tests::a_scheme_the_network_policy_refuses_is_not_a_target"
+decision = "new-proposition"
+proposition = "NP-041"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7042"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::registration::endpoint::tests::an_https_endpoint_is_a_target_and_loses_its_trailing_separator"
+decision = "new-proposition"
+proposition = "NP-041"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7043"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::registration::endpoint::tests::an_unterminating_budget_is_not_a_target"
+decision = "new-proposition"
+proposition = "NP-041"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7044"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::registration::endpoint::tests::plaintext_is_refused_off_the_loopback_interface"
+decision = "new-proposition"
+proposition = "NP-041"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7045"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::registration::exchange::tests::a_header_lookup_ignores_case_and_takes_the_first"
+decision = "new-proposition"
+proposition = "NP-042"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7046"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::registration::policy::tests::a_bounded_budget_is_a_policy"
+decision = "new-proposition"
+proposition = "NP-041"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7047"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::registration::policy::tests::a_budget_that_cannot_poll_is_refused"
+decision = "new-proposition"
+proposition = "NP-041"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7048"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::registration::policy::tests::a_sub_second_interval_is_legal"
+decision = "new-proposition"
+proposition = "NP-041"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7049"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::registration::policy::tests::an_unbounded_wait_is_refused"
+decision = "new-proposition"
+proposition = "NP-041"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7050"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::registration::protocol::tests::each_token_names_its_mechanism_and_nothing_else_parses"
+decision = "new-proposition"
+proposition = "NP-041"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7051"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::registration::protocol::tests::the_default_is_the_protocol_that_was_the_only_one"
+decision = "new-proposition"
+proposition = "NP-041"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7052"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::registration::ureq_exchange::tests::a_body_survives_the_socket_verbatim"
+decision = "new-proposition"
+proposition = "NP-042"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7053"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::registration::ureq_exchange::tests::a_disallowed_scheme_yields_no_transport"
+decision = "new-proposition"
+proposition = "NP-042"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7054"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::registration::ureq_exchange::tests::a_status_answer_survives_the_socket_as_a_response"
+decision = "new-proposition"
+proposition = "NP-042"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7055"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::trust_view::tests::a_revoked_key_resolves_in_no_slot"
+decision = "new-proposition"
+proposition = "NP-040"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7056"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::trust_view::tests::an_enrolled_request_signer_resolves_with_the_auditors_labels"
+decision = "new-proposition"
+proposition = "NP-040"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7057"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::trust_view::tests::an_unenrolled_key_id_resolves_to_nothing"
+decision = "new-proposition"
+proposition = "NP-040"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7058"
+project = "mcp-re-proxy"
+control = "lib#transparency::auditor::trust_view::tests::the_response_anchor_resolves_only_in_the_response_slot"
+decision = "new-proposition"
+proposition = "NP-040"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7059"
+project = "mcp-re-proxy"
+control = "lib#transparency::durability::tests::a_chain_with_a_missing_hop_is_refused_rather_than_reconstructed"
+decision = "new-proposition"
+proposition = "NP-045"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7060"
+project = "mcp-re-proxy"
+control = "lib#transparency::durability::tests::retaining_the_same_exchange_twice_yields_one_object"
+decision = "new-proposition"
+proposition = "NP-047"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7061"
+project = "mcp-re-proxy"
+control = "lib#transparency::durability::tests::the_fsync_does_not_run_on_the_runtime_worker"
+decision = "new-proposition"
+proposition = "NP-046"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7062"
+project = "mcp-re-proxy"
+control = "lib#transparency::retained_archive::tests::a_missing_hop_is_absent_rather_than_an_error"
+decision = "new-proposition"
+proposition = "NP-044"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7063"
+project = "mcp-re-proxy"
+control = "lib#transparency::retained_archive::tests::a_read_only_archive_opens_where_the_retention_authority_refuses"
+decision = "new-proposition"
+proposition = "NP-044"
+recorded = "2026-09-19"
+
+
+[[proposition]]
+id = "NP-048"
+title = "The retention store enforces the record contract at the storage boundary"
+carrier = "mcp-re-proxy/src/transparency/durability.rs and retained_archive.rs"
+likely_owner = "proxy.retained_record_content states the contract and cannot claim controls outside its measured source"
+consequence = "high"
+root_relationship = "the storage-boundary twin of proxy.retained_record_content; the second mechanically impossible reattribution"
+record = "docs/architecture/control-dispositions.md#np-048"
+
+[[disposition]]
+id = "CD-7101"
+project = "mcp-re-proxy"
+control = "lib#transparency::durability::tests::only_the_signed_headers_are_retained"
+decision = "new-proposition"
+proposition = "NP-048"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7102"
+project = "mcp-re-proxy"
+control = "lib#transparency::durability::tests::a_record_without_the_schema_token_is_refused"
+decision = "new-proposition"
+proposition = "NP-048"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7103"
+project = "mcp-re-proxy"
+control = "lib#transparency::durability::tests::a_retained_exchange_comes_back_byte_identical"
+decision = "new-proposition"
+proposition = "NP-048"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-7104"
+project = "mcp-re-proxy"
+control = "lib#transparency::retained_archive::tests::an_object_that_is_not_a_retained_record_is_refused"
+decision = "new-proposition"
+proposition = "NP-048"
+recorded = "2026-09-19"

@@ -1170,3 +1170,185 @@ boundary earns — `E0599` for the withdrawn resolver and `E0624` for the `pub(c
 lifecycle lookup — rather than a `test://` URI over an example that passes on any
 compile error at all.
 
+---
+
+## The external transparency auditor — NP-039 through NP-043
+
+`mcp-re-proxy/src/transparency/auditor/**` holds **58 controls and is in no unit's
+`paths`.** It is the v0.18-C auditor: a shipped binary (`mcp-re-auditor`) with its own
+invocation parser, its own trust profile, its own registration client and its own artifact
+format. The whole feature is outside the assurance graph.
+
+It is the same shape as the command line (NP-025 … NP-035) one product step later: a
+deployable whose controls are careful and whose propositions are unstated. Five
+propositions, one per authority the subtree actually separates — the directories are the
+seams here, and they were drawn by the implementation rather than by this campaign.
+
+## NP-039 — the auditor's invocation is total
+
+**Controls:** `auditor/invocation/mod.rs` (14), `invocation/flag.rs` (3),
+`invocation/instant.rs` (4).
+**Statement.** *Every auditor invocation is answered: a single-valued flag given twice is
+refused rather than resolved, a value never given is refused BY NAME, an unknown flag is
+refused with the usage, a flag with no value is refused, every required flag is required, a
+hop that is not a digest is refused, hop order is kept, a registration budget without a
+target and an inadmissible target are refused at parse, an audit instant that is not a
+timestamp or is at or before the epoch is refused, and the default instant is the system
+clock.*
+**If false.** An auditor runs against a different set of hops, at a different instant, or
+against a registration target nobody named — and it emits an artifact that says it audited
+something. "A value given twice is refused rather than RESOLVED" is the sharp one: silently
+taking the last occurrence is how an operator's first, correct argument disappears.
+**Likely owner:** none.
+**Root relationship.** The auditor's product claim, which the graph does not hold.
+**Severity:** `high`.
+
+## NP-040 — the auditor trusts exactly what its profile enrolls
+
+**Controls:** `auditor/profile/mod.rs` (5), `auditor/trust_view.rs` (4).
+**Statement.** *A coherent trust document becomes a profile and an incoherent one never
+does; an unknown member and a negative clock skew are refused; the revoked set answers for
+the keys it names; and in the resulting view an enrolled request signer resolves with the
+auditor's labels, the response anchor resolves ONLY in the response slot, an unenrolled key
+id resolves to nothing, and a revoked key resolves in no slot.*
+**If false.** The auditor attributes evidence to a key it was never told to trust, or in a
+slot that key was not enrolled for, or one that has been revoked — and an audit verdict is
+exactly as good as the trust picture it was computed under.
+**Likely owner:** none. The proxy's own trust-plane units are about the SERVING path's
+trust; this is the auditor's, and the two are deliberately different pictures.
+**Severity:** `critical`.
+
+## NP-041 — a registration target is admissible before anything is submitted
+
+**Controls:** `auditor/registration/endpoint/mod.rs` (4), `endpoint/flags.rs` (5),
+`registration/policy.rs` (4), `registration/protocol.rs` (2).
+**Statement.** *A registration target is an endpoint the network policy admits — plaintext
+only off no interface but loopback — carrying a bounded, pollable budget and a named
+protocol; an unknown protocol refuses BEFORE anything is submitted; a term without a
+service, an unterminating budget, an unbounded wait and a budget that cannot poll are each
+refused; an invocation that names no service registers nothing; and the default protocol is
+the one that was the only one.*
+**If false.** The auditor submits a statement to an endpoint over plaintext, or waits
+forever on a service that never answers, or registers nowhere while reporting that it
+registered. The plaintext arm is the one with a peer: the same refusal the CLI makes about
+a KMS endpoint (NP-027), one product step out.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-042 — a statement is registered only against a receipt about itself
+
+**Controls:** `auditor/registration/capability.rs` (5),
+`registration/ureq_exchange.rs` (3), `registration/exchange.rs` (1).
+**Statement.** *A verifying receipt about THIS statement, from a pinned log, produces a
+registered statement; an answer that is not a receipt, a receipt about another statement,
+and a receipt from an unpinned log are each refused; a mechanism refusal is carried through
+with its certainty rather than flattened; and the exchange carries the body verbatim across
+the socket, refuses a disallowed scheme with no transport at all, and reads a header
+case-insensitively taking the first.*
+**If false.** The auditor records a registration that a transparency service never made, or
+made about something else — which is the whole of what a transparency claim is worth. The
+"carried through with its certainty" clause is the one this repository has ruled on before:
+a refusal must not be flattened into the safe side, because *did not run* and *unknown
+whether it ran* are different facts.
+**Likely owner:** none. `http_profile.scitt_retained_correspondence` is about the
+commitment a Signed Statement carries, not about what the auditor will accept as a receipt
+for it.
+**Severity:** `critical`.
+
+## NP-043 — the auditor's artifact is its own schema and round-trips its verdicts
+
+**Controls:** `auditor/artifact/mod.rs` (3), `artifact/verdict.rs` (1).
+**Statement.** *An artifact round-trips its verdicts; a foreign schema is refused; a
+statement that is not base64url is refused on the way IN; and every incomplete reason has
+its own token.*
+**If false.** An audit artifact is read as this schema when it is another's, or an
+incomplete audit reports a reason indistinguishable from a different one — which is the
+bare-boolean failure `http_profile.retained_chain_record` exists to prevent, arriving in the
+artifact instead of in the chain label.
+**Likely owner:** none.
+**Severity:** `high`.
+
+---
+
+## NP-044 — the retention read side distinguishes absent from error
+
+**Controls:** `mcp-re-proxy/src/transparency/retained_archive.rs::a_missing_hop_is_absent_rather_than_an_error`,
+`::a_read_only_archive_opens_where_the_retention_authority_refuses`.
+**Carrier:** `transparency/retained_archive.rs`.
+**Statement.** *Reading a retained archive distinguishes a hop that is absent from a read
+that failed, and a read-only archive opens in exactly the places the retention WRITE
+authority refuses to.*
+**If false.** An auditor reading the archive cannot tell "this hop was never retained" from
+"this read did not work" — the execution-certainty collapse this repository has ruled on —
+and a read is refused wherever a write is, so evidence that exists cannot be examined.
+**Likely owner:** `proxy.retention_commitment` is the WRITE authority and says so. The read
+side is a separable authority, which ADR-MCPRE-061 §14's `EX-012` census already found and
+recorded when it decomposed `retained_evidence.rs`.
+**Severity:** `high`.
+
+## NP-045 — the proxy's own store refuses an incomplete chain
+
+**Control:** `mcp-re-proxy/src/transparency/durability.rs::a_chain_with_a_missing_hop_is_refused_rather_than_reconstructed`.
+**Carrier:** `transparency/durability.rs`.
+**Statement.** *A chain presented to the proxy's retention store with a hop missing is
+refused rather than reconstructed into a shorter chain that would read as complete.*
+**If false.** The store itself manufactures the complete-looking truncated record that
+`http_profile.retained_chain_record` exists to make impossible downstream.
+**Likely owner:** `http_profile.retained_chain_record` states exactly this proposition —
+**and it cannot claim this control.** That unit's battery runs in `mcp-re-http-profile`, the
+control lives in `mcp-re-proxy`, and a unit's lane is project-scoped, so no selector in that
+unit can name it. This is the first REATTRIBUTION this campaign has found to be
+mechanically impossible, and it is recorded in the unit itself as well as here.
+**Root relationship.** The proxy-side twin of an http-profile proposition; the same shape as
+NP-014 and NP-015 one crate over.
+**Severity:** `high`.
+
+## NP-048 — the retention store enforces the record contract at the storage boundary
+
+**Controls:** `mcp-re-proxy/src/transparency/durability.rs::only_the_signed_headers_are_retained`,
+`::a_record_without_the_schema_token_is_refused`,
+`::a_retained_exchange_comes_back_byte_identical`,
+`mcp-re-proxy/src/transparency/retained_archive.rs::an_object_that_is_not_a_retained_record_is_refused`.
+**Carrier:** `transparency/durability.rs` and `transparency/retained_archive.rs`.
+**Statement.** *What the store writes and what the archive accepts obey the retained-record
+contract: only the headers the signature base names are retained, a record without the
+schema token is refused, a retained exchange comes back byte-identical, and an object that
+is not a retained record is refused at the archive.*
+**If false.** The record contract holds where a record is ENCODED and not where it is
+STORED — so a live credential reaches the store, or a record the encoder would refuse is
+read back as one.
+**Likely owner:** `proxy.retained_record_content` states this contract, **and it cannot
+claim these controls.** `verify --manifests` refuses a `lib#` selector whose module is not
+under that unit's `paths`, for a reason this campaign agrees with: *an in-crate test whose
+source the unit does not measure can be rewritten under the same name without moving the
+fingerprint.* Widening its `paths` to reach `durability.rs` would pull the whole
+retention-commitment machinery into a unit about record CONTENT.
+**Root relationship.** The storage-boundary twin of `proxy.retained_record_content`, the
+same shape as NP-045 one unit over — and the second mechanically impossible reattribution
+this campaign has measured. Both come from the same place: **a unit's battery can only
+select controls inside the source it measures, in the project it measures it in.**
+**Severity:** `high`.
+
+## NP-046 — no durable write blocks a runtime worker
+
+**Control:** `mcp-re-proxy/src/transparency/durability.rs::the_fsync_does_not_run_on_the_runtime_worker`.
+**Statement.** *The fsync that makes a retention record durable does not run on a runtime
+worker.*
+**If false.** A durable write stalls the async runtime, and the proxy stops serving while it
+is being answerable — a liveness failure produced by the very mechanism that records
+answerability.
+**Likely owner:** `proxy.retention_commitment` is about WHEN the deployment became
+answerable and says nothing about what the recording costs the runtime. The nearest stated
+neighbour is NP-003, which is about worker LIFETIME rather than worker occupancy.
+**Severity:** `medium`.
+
+## NP-047 — retaining one exchange twice yields one object
+
+**Control:** `mcp-re-proxy/src/transparency/durability.rs::retaining_the_same_exchange_twice_yields_one_object`.
+**Statement.** *Retaining the same exchange twice yields one object, not two.*
+**If false.** The archive holds two records of one exchange, and an auditor counting
+exchanges, or reconstructing a chain from what is stored, sees a call that happened twice.
+**Likely owner:** `proxy.retained_record_content` says WHAT a record contains, not how many
+there are of it.
+**Severity:** `medium`.
+
