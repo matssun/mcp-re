@@ -2825,6 +2825,13 @@ tested_symbols = [
   "tests/integration#composition_raw_read_test::the_composition_root_reads_only_ordinary_validated_parameters",
   "tests/integration#composition_raw_read_test::the_rule_would_catch_a_new_raw_read",
   "tests/integration#composition_raw_read_test::every_ordinary_field_states_why_it_is_ordinary",
+  # ADR-MCPRE-069 batch 12. The three above are the source-text inventory — which raw reads
+  # EXIST. This one is the same statement measured behaviourally at the root: the channel
+  # binding's effects are a function of the RECOGNISED state, so what the root does with the
+  # channel is decided by the classifier's answer rather than reassembled from the fields
+  # the inventory permits it to read. Without it the inventory is satisfied by a root that
+  # reads only ordinary parameters and then derives a posture from them anyway.
+  "lib#app::tests::the_channel_binding_effects_are_a_function_of_the_recognised_state",
 ]
 
 [[unit]]

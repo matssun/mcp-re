@@ -5073,3 +5073,539 @@ decision = "new-proposition"
 proposition = "NP-063"
 recorded = "2026-09-19"
 
+
+# ---------------------------------------------------------------------------
+# Batch 12 — the startup plane, 2026-09-19
+# ---------------------------------------------------------------------------
+#
+# `app.rs` is in four units' paths and `startup_plan.rs` and `materialized_runtime.rs` are
+# in none. One control REGISTERS (verification.toml); ten join NP-054, which is the key-file
+# policy this root APPLIES; the rest are seven propositions the startup layer does not state.
+
+[[proposition]]
+id = "NP-064"
+title = "The root resolves exactly one bind, and refuses an unresolvable one"
+carrier = "mcp-re-proxy/src/app.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "under THM-0012 and THM-0077 — the lifecycle and posture roots above startup"
+record = "docs/architecture/control-dispositions.md#np-064"
+
+[[proposition]]
+id = "NP-065"
+title = "A faulted deployment clock refuses exactly where it would disable a refusal"
+carrier = "mcp-re-proxy/src/app.rs and startup_plan.rs"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "under THM-0012 and THM-0077 — the lifecycle and posture roots above startup"
+record = "docs/architecture/control-dispositions.md#np-065"
+
+[[proposition]]
+id = "NP-066"
+title = "No record enqueued before teardown is lost"
+carrier = "mcp-re-proxy/src/app.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "under THM-0012 and THM-0077 — the lifecycle and posture roots above startup"
+record = "docs/architecture/control-dispositions.md#np-066"
+
+[[proposition]]
+id = "NP-067"
+title = "Every plane transitions and the substrate is reclaimed, on every path"
+carrier = "mcp-re-proxy/src/materialized_runtime.rs"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "under THM-0012 and THM-0077 — the lifecycle and posture roots above startup"
+record = "docs/architecture/control-dispositions.md#np-067"
+
+[[proposition]]
+id = "NP-068"
+title = "A plan carries what it was given, not what it found"
+carrier = "mcp-re-proxy/src/startup_plan.rs"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "under THM-0012 and THM-0077 — the lifecycle and posture roots above startup"
+record = "docs/architecture/control-dispositions.md#np-068"
+
+[[proposition]]
+id = "NP-069"
+title = "Planning refuses a state that skipped the parser, and contacts nothing"
+carrier = "mcp-re-proxy/src/startup_plan.rs"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "under THM-0012 and THM-0077 — the lifecycle and posture roots above startup"
+record = "docs/architecture/control-dispositions.md#np-069"
+
+[[proposition]]
+id = "NP-070"
+title = "The per-core pool ceiling saturates and is raised only when it must be"
+carrier = "mcp-re-proxy/src/startup_plan.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "under THM-0012 and THM-0077 — the lifecycle and posture roots above startup"
+record = "docs/architecture/control-dispositions.md#np-070"
+
+[[disposition]]
+id = "CD-10001"
+project = "mcp-re-proxy"
+control = "lib#app::tests::a_delegated_tls_key_contributes_no_file_to_check"
+decision = "new-proposition"
+proposition = "NP-054"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10002"
+project = "mcp-re-proxy"
+control = "lib#app::tests::a_faulted_clock_refuses_only_when_it_disables_the_crl_refusal"
+decision = "new-proposition"
+proposition = "NP-065"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10003"
+project = "mcp-re-proxy"
+control = "lib#app::tests::a_group_readable_key_file_is_refused_without_the_opt_in"
+decision = "new-proposition"
+proposition = "NP-054"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10004"
+project = "mcp-re-proxy"
+control = "lib#app::tests::a_group_readable_key_file_owned_by_our_group_is_accepted_with_the_opt_in"
+decision = "new-proposition"
+proposition = "NP-054"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10005"
+project = "mcp-re-proxy"
+control = "lib#app::tests::a_key_file_whose_posture_cannot_be_established_is_refused"
+decision = "new-proposition"
+proposition = "NP-054"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10006"
+project = "mcp-re-proxy"
+control = "lib#app::tests::a_record_enqueued_immediately_before_teardown_still_reaches_stderr"
+decision = "new-proposition"
+proposition = "NP-066"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10007"
+project = "mcp-re-proxy"
+control = "lib#app::tests::a_world_readable_key_file_is_refused"
+decision = "new-proposition"
+proposition = "NP-054"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10008"
+project = "mcp-re-proxy"
+control = "lib#app::tests::an_absent_key_file_is_not_an_error"
+decision = "new-proposition"
+proposition = "NP-054"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10009"
+project = "mcp-re-proxy"
+control = "lib#app::tests::an_owner_only_key_file_is_accepted"
+decision = "new-proposition"
+proposition = "NP-054"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10010"
+project = "mcp-re-proxy"
+control = "lib#app::tests::an_unresolvable_bind_is_refused_and_names_the_flag"
+decision = "new-proposition"
+proposition = "NP-064"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10011"
+project = "mcp-re-proxy"
+control = "lib#app::tests::group_write_is_refused_even_with_the_opt_in"
+decision = "new-proposition"
+proposition = "NP-054"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10012"
+project = "mcp-re-proxy"
+control = "lib#app::tests::the_fleet_config_carries_the_topology_and_resolves_the_bind"
+decision = "new-proposition"
+proposition = "NP-064"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10013"
+project = "mcp-re-proxy"
+control = "lib#app::tests::the_pkcs11_pin_file_is_permission_checked"
+decision = "new-proposition"
+proposition = "NP-054"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10014"
+project = "mcp-re-proxy"
+control = "lib#app::tests::the_tls_key_is_checked_under_every_custody_mode"
+decision = "new-proposition"
+proposition = "NP-054"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10015"
+project = "mcp-re-proxy"
+control = "lib#materialized_runtime::tests::a_panicked_worker_still_leaves_its_plane_transitioned_and_the_substrate_reclaimable"
+decision = "new-proposition"
+proposition = "NP-067"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10016"
+project = "mcp-re-proxy"
+control = "lib#materialized_runtime::tests::a_populated_runtime_transitions_every_plane_and_then_reclaims_the_substrate"
+decision = "new-proposition"
+proposition = "NP-067"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10017"
+project = "mcp-re-proxy"
+control = "lib#materialized_runtime::tests::a_runtime_dropped_without_serving_reclaims_its_substrate"
+decision = "new-proposition"
+proposition = "NP-067"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10018"
+project = "mcp-re-proxy"
+control = "lib#materialized_runtime::tests::a_runtime_that_reaches_stopped_leaves_no_plane_holding_authority"
+decision = "new-proposition"
+proposition = "NP-067"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10019"
+project = "mcp-re-proxy"
+control = "lib#materialized_runtime::tests::a_serve_that_never_bound_justifies_no_lifecycle_event"
+decision = "new-proposition"
+proposition = "NP-067"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10020"
+project = "mcp-re-proxy"
+control = "lib#materialized_runtime::tests::a_served_shutdown_records_serving_and_the_drain"
+decision = "new-proposition"
+proposition = "NP-067"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10021"
+project = "mcp-re-proxy"
+control = "lib#materialized_runtime::tests::a_worker_that_never_stops_bounds_teardown_without_skipping_the_other_planes"
+decision = "new-proposition"
+proposition = "NP-067"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10022"
+project = "mcp-re-proxy"
+control = "lib#materialized_runtime::tests::shutdown_is_idempotent"
+decision = "new-proposition"
+proposition = "NP-067"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10023"
+project = "mcp-re-proxy"
+control = "lib#materialized_runtime::tests::the_post_drain_sequence_is_refused_before_the_drain_is_proven"
+decision = "new-proposition"
+proposition = "NP-067"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10024"
+project = "mcp-re-proxy"
+control = "lib#materialized_runtime::tests::the_post_drain_sequence_is_unreachable_from_a_serve_that_never_started"
+decision = "new-proposition"
+proposition = "NP-067"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10025"
+project = "mcp-re-proxy"
+control = "lib#materialized_runtime::tests::the_transition_phase_leaves_the_substrate_intact"
+decision = "new-proposition"
+proposition = "NP-067"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10026"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::a_ceiling_that_would_overflow_saturates_rather_than_wrapping"
+decision = "new-proposition"
+proposition = "NP-070"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10027"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::a_deployable_configuration_reads_the_verified_peer_certificate"
+decision = "new-proposition"
+proposition = "NP-069"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10028"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::a_linearizable_tier_that_skipped_the_parser_is_refused_without_an_endpoint"
+decision = "new-proposition"
+proposition = "NP-069"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10029"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::a_plausible_deployment_clock_is_not_a_fault"
+decision = "new-proposition"
+proposition = "NP-065"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10030"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::a_redis_tier_carries_its_url_and_its_wait_parameters"
+decision = "new-proposition"
+proposition = "NP-069"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10031"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::a_request_with_no_durable_replay_configuration_fails_closed"
+decision = "new-proposition"
+proposition = "NP-069"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10032"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::a_shared_redis_tier_that_skipped_the_parser_is_refused_without_a_url"
+decision = "new-proposition"
+proposition = "NP-069"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10033"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::a_shared_tier_that_skipped_the_parser_is_refused_without_a_durability_tier"
+decision = "new-proposition"
+proposition = "NP-069"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10034"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::a_total_that_does_not_divide_evenly_yields_the_aggregate_the_gate_admits"
+decision = "new-proposition"
+proposition = "NP-070"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10035"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::admission_declares_independently_of_replay"
+decision = "new-proposition"
+proposition = "NP-069"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10036"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::an_epoch_or_pre_epoch_clock_reading_is_a_fault"
+decision = "new-proposition"
+proposition = "NP-065"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10037"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::both_bounds_reach_the_pool_through_the_gates_per_core_ceiling"
+decision = "new-proposition"
+proposition = "NP-070"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10038"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::both_consumers_of_the_epoch_hold_one_decision"
+decision = "new-proposition"
+proposition = "NP-068"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10039"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::continuation_declares_on_its_own_locator_not_the_replay_tier"
+decision = "new-proposition"
+proposition = "NP-069"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10040"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::each_crl_posture_is_projected_as_its_own_variant"
+decision = "new-proposition"
+proposition = "NP-068"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10041"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::linearizable_plans_etcd_at_the_declared_endpoint"
+decision = "new-proposition"
+proposition = "NP-069"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10042"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::only_the_networked_push_state_plans_an_epoch_source"
+decision = "new-proposition"
+proposition = "NP-069"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10043"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::only_the_redis_replay_tier_declares_a_need"
+decision = "new-proposition"
+proposition = "NP-069"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10044"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::planning_reaches_a_networked_tier_without_contacting_anything"
+decision = "new-proposition"
+proposition = "NP-069"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10045"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::the_assertion_arm_is_refused_at_the_boundary"
+decision = "new-proposition"
+proposition = "NP-069"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10046"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::the_audience_scope_defaults_to_the_response_audience_and_is_overridable"
+decision = "new-proposition"
+proposition = "NP-068"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10047"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::the_both_set_arm_agrees_with_the_gate_on_an_unreachable_input"
+decision = "new-proposition"
+proposition = "NP-069"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10048"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::the_build_refusal_is_stated_once_and_names_both_consequences"
+decision = "new-proposition"
+proposition = "NP-069"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10049"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::the_channel_plan_carries_the_classified_custody_and_the_credential_window"
+decision = "new-proposition"
+proposition = "NP-068"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10050"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::the_continuation_plan_carries_its_own_endpoint_verbatim"
+decision = "new-proposition"
+proposition = "NP-068"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10051"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::the_epoch_plan_normalizes_the_key_once"
+decision = "new-proposition"
+proposition = "NP-068"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10052"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::the_issuer_kid_falls_back_to_the_server_key_id"
+decision = "new-proposition"
+proposition = "NP-068"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10053"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::the_issuer_kid_in_the_credential_is_the_one_that_was_planned"
+decision = "new-proposition"
+proposition = "NP-068"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10054"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::the_old_alias_is_refused_rather_than_reinterpreted"
+decision = "new-proposition"
+proposition = "NP-069"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10055"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::the_paths_accessor_answers_which_files_not_which_posture"
+decision = "new-proposition"
+proposition = "NP-068"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10056"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::the_pool_is_raised_only_when_the_fleet_ceiling_exceeds_its_default"
+decision = "new-proposition"
+proposition = "NP-070"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10057"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::the_requirement_is_the_or_of_every_contributor"
+decision = "new-proposition"
+proposition = "NP-069"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-10058"
+project = "mcp-re-proxy"
+control = "lib#startup_plan::tests::the_signing_plan_carries_the_epoch_it_was_given_not_one_it_found"
+decision = "new-proposition"
+proposition = "NP-068"
+recorded = "2026-09-19"
+

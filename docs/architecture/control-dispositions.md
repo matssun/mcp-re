@@ -1451,7 +1451,20 @@ modules are indistinguishable in shape is the finding.
 
 ## NP-054 — key-file access policy
 
-**Controls:** `config_state/key_file_access.rs`.
+**Controls:** `config_state/key_file_access.rs` (5), and — added in batch 12 —
+`mcp-re-proxy/src/app.rs` (10): the composition root applying the policy to every key file
+it actually opens. A world-readable key file is refused; a group-readable one is refused
+without the opt-in and accepted with it only when the process is in that group; group write
+is refused even with the opt-in; an owner-only file is accepted; an absent file is not an
+error; a file whose posture cannot be established is refused; the PKCS#11 PIN file is
+permission-checked; the TLS key is checked under EVERY custody mode; and a delegated TLS key
+contributes no file to check.
+
+**Two halves of one proposition, and both are needed.** The classifier half says the policy
+is right; the root half says it is applied to every file, which is the half a correct policy
+nobody calls would satisfy. They are recorded together rather than as two propositions
+because neither is a claim on its own: *no policy accepts world access* and *this file was
+checked* are the same sentence about different objects.
 **Statement.** *Owner-only accepts 0600 and 0400 and nothing else; no policy accepts world access or group write; group read is accepted only for a group this process is IN; the mode predicate flags group and world bits; and the default deployment is owner-only.*
 **If false.** A signing key sits on disk readable by another account on the host. This is the one proposition in the configuration layer whose violation needs no protocol at all to exploit.
 **Likely owner:** none. Its five sibling classifiers are units; this one is not.
@@ -1575,4 +1588,123 @@ itself.
 **The audit-line clause belongs here rather than with the redaction unit.**
 `proxy.operator_facing_redaction` owns the two fields that carry credentials; this control is
 about a line whose subject is the tier, and what it must contain as much as what it must not.
+
+## NP-064 — the root resolves exactly one bind, and refuses an unresolvable one
+
+**Controls:** `mcp-re-proxy/src/app.rs::an_unresolvable_bind_is_refused_and_names_the_flag`,
+`::the_fleet_config_carries_the_topology_and_resolves_the_bind`.
+**Statement.** *A bind address that cannot be resolved is refused, and the refusal NAMES THE
+FLAG; and the fleet configuration carries the topology and resolves the bind, so one place
+decides what the process listens on.*
+**If false.** The process listens somewhere the operator did not name, or fails with a
+diagnostic that does not say which flag to change. The client side of this repository holds
+the sharper form of the same claim — `client.bind_scope` is `critical` and sealed — and the
+proxy's root has no statement at all.
+**Likely owner:** none. `proxy.trust_composition_root` is about which fields the root reads
+raw; this is about what it does with the one that decides the listener.
+**Severity:** `high`.
+
+## NP-065 — a faulted deployment clock refuses exactly where it would disable a refusal
+
+**Controls:** `mcp-re-proxy/src/app.rs::a_faulted_clock_refuses_only_when_it_disables_the_crl_refusal`,
+`mcp-re-proxy/src/startup_plan.rs::an_epoch_or_pre_epoch_clock_reading_is_a_fault`,
+`::a_plausible_deployment_clock_is_not_a_fault`.
+**Statement.** *An epoch or pre-epoch clock reading is a fault and a plausible one is not;
+and a faulted clock refuses startup exactly where the fault would otherwise disable a
+refusal — the CRL expiry check — and not elsewhere.*
+**If false.** A replica starts with a clock that makes every CRL look current, so expiry
+stops refusing anything — or, in the other direction, a plausible clock is treated as a
+fault and a healthy deployment will not start. The precision is the proposition: *refuses
+ONLY when it disables the CRL refusal*.
+**Likely owner:** none. `proxy.client_revocation_currency` is about the CRLs' own windows,
+not about the clock those windows are read against.
+**Severity:** `critical`.
+
+## NP-066 — no record enqueued before teardown is lost
+
+**Control:** `mcp-re-proxy/src/app.rs::a_record_enqueued_immediately_before_teardown_still_reaches_stderr`.
+**Statement.** *A record enqueued immediately before teardown still reaches its sink.*
+**If false.** The last records before shutdown — the ones describing why the process is
+shutting down — are the ones dropped.
+**Likely owner:** none, and the estate has already said so in a different register:
+ADR-MCPRE-061 §14 records `app.rs` as `reviewed-action-required` precisely because *the
+audit-drain teardown authority is separable and has an owner next door.* This control is
+that authority's only evidence, sitting in the file the census says should not keep it.
+**Severity:** `high`.
+
+## NP-067 — every plane transitions and the substrate is reclaimed, on every path
+
+**Controls:** `mcp-re-proxy/src/materialized_runtime.rs` (11).
+**Statement.** *A populated runtime transitions every plane and then reclaims the substrate;
+a runtime dropped without serving reclaims it; one that reaches Stopped leaves no plane
+holding authority; a PANICKED worker still leaves its plane transitioned and the substrate
+reclaimable; a worker that never stops bounds teardown without skipping the other planes;
+the transition phase leaves the substrate intact; shutdown is idempotent; a serve that never
+bound justifies no lifecycle event; the post-drain sequence is refused before the drain is
+PROVEN and is unreachable from a serve that never started; and a served shutdown records
+serving and the drain.*
+**If false.** A plane keeps authority after the runtime reports Stopped — which is exactly
+the conclusion THM-0012's lifecycle record is relied on for — or the post-drain sequence runs
+on a drain nobody proved. The panicked-worker clause is the one that makes it a claim about
+teardown rather than about the happy path.
+**Likely owner:** none. `proxy.runtime_lifecycle` owns the RELATION — eleven states, ten
+events, one closed transition relation — and `proxy.runtime_lifecycle_sole_mutator` owns the
+seal. Neither says what MATERIALIZING that lifecycle does to the planes, and
+`materialized_runtime.rs` is in neither's `paths`.
+**Root relationship.** THM-0012 — *the lifecycle record cannot claim a shutdown that did not
+happen* — is the root above it, and this is the half about what the shutdown DID.
+**Severity:** `critical`.
+
+## NP-068 — a plan carries what it was given, not what it found
+
+**Controls:** `mcp-re-proxy/src/startup_plan.rs` (10).
+**Statement.** *Each startup plan carries the decision it was handed: the signing plan
+carries the epoch it was GIVEN and not one it found; the continuation plan carries its own
+endpoint verbatim; the channel plan carries the classified custody and the credential window;
+the epoch plan normalises the key ONCE; the issuer kid in the credential is the one that was
+planned, falling back to the server key id only where the resolution reads it; the audience
+scope defaults to the response audience and is overridable; both consumers of the epoch hold
+ONE decision; each CRL posture is projected as its own variant; and the paths accessor
+answers which FILES, not which posture.*
+**If false.** The plan re-derives a decision an owner already made, so two answers to one
+question exist and can diverge — which is the defect `proxy.cross_machine_legality` states
+for relations, arriving one layer later in the planner. "Normalises the key once" and "both
+consumers hold one decision" are the same rule stated twice because the planner has two ways
+to break it.
+**Likely owner:** none. `startup_plan.rs` is in no unit's `paths`.
+**Severity:** `critical`.
+
+## NP-069 — planning refuses a state that skipped the parser, and contacts nothing
+
+**Controls:** `mcp-re-proxy/src/startup_plan.rs` (17).
+**Statement.** *A tier that reached the planner without passing the parser is refused for
+whatever it is missing — a linearizable tier without an endpoint, a shared Redis tier
+without a URL, a shared tier without a durability tier — and a request with no durable replay
+configuration fails closed; the withdrawn alias is refused rather than reinterpreted; each
+declaration is made by its own owner (continuation on its own locator and not the replay
+tier, admission independently of replay, only the Redis tier declaring a need, only the
+networked push state planning an epoch source), the requirement being the OR of every
+contributor; the build refusal is stated once and names both consequences; the assertion arm
+is refused at the boundary and the both-set arm agrees with the gate on an unreachable
+input; a deployable configuration reads the verified peer certificate; and PLANNING A
+NETWORKED TIER CONTACTS NOTHING.*
+**If false.** A deployment is planned around a state no classifier ever accepted — the
+"skipped the parser" route is the one a programmatic configuration takes — or planning
+reaches the network, so a startup that should have failed on configuration instead hangs on
+a socket.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-070 — the per-core pool ceiling saturates and is raised only when it must be
+
+**Controls:** `mcp-re-proxy/src/startup_plan.rs` (4).
+**Statement.** *A ceiling that would overflow SATURATES rather than wrapping; both bounds
+reach the pool through the gate's per-core ceiling; the pool is raised only when the fleet
+ceiling exceeds its default; and a total that does not divide evenly yields the aggregate the
+gate admits.*
+**If false.** A wrapping ceiling is an unbounded pool — the arithmetic-semantics failure this
+repository has a lint for — reached from an operator-supplied number.
+**Likely owner:** none. `proxy.admission_configuration_state` classifies the ceilings; this
+is what the planner does with them.
+**Severity:** `high`.
 

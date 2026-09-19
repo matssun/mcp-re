@@ -14,10 +14,6 @@ path = "mcp-re-proxy/tests/integration_async/mrt_continuation_serving_test.rs"
 baseline = 36
 
 [[file]]
-path = "mcp-re-proxy/src/startup_plan.rs"
-baseline = 33
-
-[[file]]
 path = "mcp-re-proxy/tests/integration/tls_test.rs"
 baseline = 28
 
@@ -52,10 +48,6 @@ baseline = 16
 [[file]]
 path = "mcp-re-proxy/tests/integration_async/delegated_client_server_e2e_test.rs"
 baseline = 16
-
-[[file]]
-path = "mcp-re-proxy/src/app.rs"
-baseline = 15
 
 [[file]]
 path = "mcp-re-proxy/src/transport/ingress/v2.rs"
@@ -103,10 +95,6 @@ baseline = 11
 
 [[file]]
 path = "mcp-re-proxy/src/http_inner/mod.rs"
-baseline = 11
-
-[[file]]
-path = "mcp-re-proxy/src/materialized_runtime.rs"
 baseline = 11
 
 [[file]]
