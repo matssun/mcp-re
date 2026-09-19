@@ -517,7 +517,7 @@ nowhere.
 
 ## NP-003 — every long-lived worker's lifetime is an owned value
 
-**Control:** `scripts/owned_worker_gate.py`.
+**Controls:** `scripts/owned_worker_gate.py` (1), `mcp-re-proxy/src/managed_worker` (8).
 **Carrier:** `managed_worker/mod.rs` and every library source in the workspace, the
 `sdk/python` and `sdk/typescript` native bindings included.
 **Statement.** *No production source outside `managed_worker` starts an OS thread except at
@@ -629,7 +629,7 @@ which is `claim_surface_gate.py`'s shape applied to conformance rather than to t
 and unlike that gate, its subject is what the product tells an auditor.
 **Severity:** `high`.
 
-## NP-009 — the shipped adapter's end-to-end composition, and the lane that does not run it
+## NP-009 — the shipped adapter's end-to-end composition
 
 **Controls:** `sdk/typescript/test/transport_e2e.test.ts` (5),
 `sdk/python/tests/test_transport_e2e.py` (5).
@@ -694,7 +694,8 @@ BEHAVE the same. The fixtures pin emitted bytes for the cases they name and noth
 
 ## NP-011 — custody class does not change the bytes
 
-**Controls:** `sdk/typescript/test/parity.test.ts` (3), `sdk/python/tests/test_parity.py` (3).
+**Controls:** `sdk/typescript/test/parity.test.ts` (3), `sdk/python/tests/test_parity.py` (3),
+`sdk/python/tests/test_custody.py` (1).
 **Carrier:** each SDK's signer abstraction over software and non-exporting custody.
 **Statement.** *Non-exporting custody produces byte-identical output to software custody; a
 notification envelope carries no id in either custody class; and a signed continuation leg
@@ -971,12 +972,24 @@ to disagree about what it says.
 
 ## The command line is an authority nothing owns — NP-025 through NP-035
 
-`mcp-re-proxy/src/cli.rs` holds **142 controls and is in no unit's `paths`.** It is the
+`mcp-re-proxy/src/cli.rs` holds **142 controls and is in no unit's `paths`** — and the `cli`
+module tree it declares (the fourteen `mcp-re-proxy/src/cli/*_flags*` files) holds **59 more,
+also unclaimed, for 201 across 15 files.** It is the
 single largest unclaimed carrier in the repository, and its controls are not incidental:
 *a zero timeout is refused because it disables the slow-loris defense*, *attested ingress
 without pinned mTLS fails closed*, *the default build rejects the AWS KMS key source*, *a
 plaintext KMS endpoint to a remote host is refused*, *an argv PKCS#11 PIN is refused with
 the replacement named*.
+
+**A constraint on whoever registers NP-026, recorded here because it is invisible from the
+registry.** Four of NP-026's `cli.rs` controls sit behind NEGATIVE feature gates —
+`default_build_rejects_pkcs11_key_source` under `#[cfg(not(feature = "pkcs11_keysource"))]`,
+and the same shape for `dev_env_key_source`, `aws_kms_keysource` and `gcp_kms_keysource`. They
+exist only in the DEFAULT-feature lane. A unit declaring
+`test_features = ["aws_kms_keysource", "gcp_kms_keysource"]` — which the neighbouring
+`proxy.kms_endpoint_authority` already declares — compiles all four to zero tests and reports
+green, which is this repository's standing false-green shape. **The argv key-source unit must
+declare no `test_features`.**
 
 **It is invisible to the adjacent authority as well.** `scripts/unit_closure_gate.py`
 registers files the module tree REACHES from a measured unit; `cli.rs` is declared by a
@@ -987,7 +1000,7 @@ can see this file.
 
 **Why these are propositions and not registrations.** The `config_state::*` units are
 carefully scoped to a CLASSIFIER at its own API — `proxy.cross_machine_legality` says so in
-terms: *"Every relation reads classified owner states rather than RAW REQUEST FIELDS."* The
+terms: *"Every relation reads classified owner states rather than raw request fields"*. The
 CLI is the authority one layer up: it decides what an operator can SAY, and it refuses
 things no classifier ever sees. `default_build_rejects_aws_kms_key_source` is a fact about
 a Cargo feature, `unknown_flag_errors` is a fact about the parser, and
@@ -1017,7 +1030,7 @@ follows the estate's own seams rather than the file's headings.
 
 ## NP-025 — the parser is total and diagnoses completely
 
-**Controls:** `mcp-re-proxy/src/cli.rs` (11).
+**Controls:** `mcp-re-proxy/src/cli.rs` (11), `mcp-re-proxy/src/cli/protocol_flags` (1).
 **Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
 **Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
 **Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
@@ -1031,7 +1044,8 @@ misspelling reads as an absent declaration rather than as an error.
 
 ## NP-026 — a key source is admitted only in a build that carries it
 
-**Controls:** `mcp-re-proxy/src/cli.rs` (30).
+**Controls:** `mcp-re-proxy/src/cli.rs` (30), `mcp-re-proxy/src/cli/channel_flags` (2),
+`mcp-re-proxy/src/cli/signing_source_flags` (5).
 **Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
 **Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
 **Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
@@ -1079,7 +1093,8 @@ resolve.
 
 ## NP-028 — admission is off unless an argv names a complete enforcing configuration
 
-**Controls:** `mcp-re-proxy/src/cli.rs` (12).
+**Controls:** `mcp-re-proxy/src/cli.rs` (12), `mcp-re-proxy/src/cli/admission_flags` (13),
+`mcp-re-proxy/src/cli/runtime_flags` (3).
 **Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
 **Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
 **Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
@@ -1110,7 +1125,7 @@ and the operator learns the shape of the guard rather than the shape of the prob
 
 ## NP-030 — the client-certificate posture an argv can express fails closed by default
 
-**Controls:** `mcp-re-proxy/src/cli.rs` (20).
+**Controls:** `mcp-re-proxy/src/cli.rs` (20), `mcp-re-proxy/src/cli/revocation_flags` (2).
 **Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
 **Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
 **Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
@@ -1127,7 +1142,7 @@ says it was configured to check.
 
 ## NP-031 — a replay tier is named exactly once and carries what it cannot run without
 
-**Controls:** `mcp-re-proxy/src/cli.rs` (11).
+**Controls:** `mcp-re-proxy/src/cli.rs` (11), `mcp-re-proxy/src/cli/storage_flags` (3).
 **Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
 **Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
 **Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
@@ -1142,7 +1157,8 @@ deployment the shipped Helm chart's own guard refuses (NP-007).
 
 ## NP-032 — the trust-refresh posture holds its cadence to its window
 
-**Controls:** `mcp-re-proxy/src/cli.rs` (14).
+**Controls:** `mcp-re-proxy/src/cli.rs` (14), `mcp-re-proxy/src/cli/currency_flags` (4),
+`mcp-re-proxy/src/cli/delegated_signing_flags` (2).
 **Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
 **Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
 **Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
@@ -1158,7 +1174,7 @@ claims to hold — a posture that states a currency it does not have.
 
 ## NP-033 — attested ingress is configured whole or not at all
 
-**Controls:** `mcp-re-proxy/src/cli.rs` (9).
+**Controls:** `mcp-re-proxy/src/cli.rs` (9), `mcp-re-proxy/src/cli/peer_identity_flags` (4).
 **Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
 **Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
 **Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
@@ -1173,7 +1189,8 @@ a hop it never verified.
 
 ## NP-034 — no command line disables a liveness bound
 
-**Controls:** `mcp-re-proxy/src/cli.rs` (4).
+**Controls:** `mcp-re-proxy/src/cli.rs` (4), `mcp-re-proxy/src/cli/runtime_flags` (2),
+`mcp-re-proxy/src/inner_plane_bound.rs` (1).
 **Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
 **Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
 **Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
@@ -1187,7 +1204,8 @@ class of denial of service, and the default configuration is the one that exerci
 
 ## NP-035 — the serving target an argv names binds something
 
-**Controls:** `mcp-re-proxy/src/cli.rs` (6).
+**Controls:** `mcp-re-proxy/src/cli.rs` (6), `mcp-re-proxy/src/cli/protocol_flags` (1),
+`mcp-re-proxy/src/cli/serving_flags` (3).
 **Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
 **Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
 **Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
@@ -1718,7 +1736,8 @@ that authority's only evidence, sitting in the file the census says should not k
 
 ## NP-067 — every plane transitions and the substrate is reclaimed, on every path
 
-**Controls:** `mcp-re-proxy/src/materialized_runtime.rs` (11).
+**Controls:** `mcp-re-proxy/src/materialized_runtime.rs` (11),
+`mcp-re-proxy/src/materializing_runtime` (6).
 **Statement.** *A populated runtime transitions every plane and then reclaims the substrate;
 a runtime dropped without serving reclaims it; one that reaches Stopped leaves no plane
 holding authority; a PANICKED worker still leaves its plane transitioned and the substrate
@@ -1809,7 +1828,7 @@ about what the deployment may say.
 
 ## NP-073 — an ingress assertion binds to the request in hand
 
-**Controls:** `transport/ingress/v1.rs` (10), `transport/ingress/v2.rs` (14),
+**Controls:** `transport/ingress/v1.rs` (11), `transport/ingress/v2.rs` (14),
 `transport/ingress/mod.rs` (1), across both frozen formats.
 **Statement.** *An accepted ingress assertion carries a signature that verifies under a
 KNOWN key id, over a length-prefixed and unambiguous preimage, binds to the hash of the
@@ -1877,7 +1896,7 @@ record or a comparison — and an unbounded one is a memory cost a peer chooses.
 
 ## NP-077 — a routing header is well-formed and singular, or the request fails closed
 
-**Controls:** `transport/mod.rs` (6).
+**Controls:** `transport/mod.rs` (6), `mcp-re-proxy/src/tls.rs` (1).
 **Statement.** *An absent routing header passes and a well-formed one passes; a duplicate, an
 empty and a malformed one each FAIL CLOSED; and request-header parsing skips the request
 line and is case-insensitive.*
@@ -2850,3 +2869,88 @@ refuses.
 nothing else — which is what "one `test_features` set per battery" makes the only shape
 available.
 
+
+## NP-170 — every inner-process log event renders under the brief's own tag
+
+**Control:** `mcp-re-proxy/src/log_sink.rs::log_event_tags_match_the_brief`.
+**Carrier:** `mcp-re-proxy/src/log_sink.rs` — `InnerLogEvent::tag`.
+**Statement.** *Each `InnerLogEvent` variant's `tag()` is the brief's string name for it:
+`inner_spawned`, `inner_spawn_failed`, `inner_exited`, `inner_killed`,
+`inner_stderr_truncated`, `inner_protocol_error`, `inner_request_forwarded`,
+`inner_response_signed`.*
+**If false.** The inner-process event stream renames a fact, so an operator's filter or an
+alert keyed on a tag silently stops matching the event it was written for.
+**Likely owner:** none. `log_sink.rs` is in no unit's `paths`.
+**Root relationship.** None — no theorem reaches the inner-event log vocabulary.
+**Severity:** `medium`.
+**Why this record exists at all.** The control was filed under NP-066, *no record enqueued
+before teardown is lost*, and it touches no queue, no drain and no teardown path: delete the
+entire drain and it stays green. A control filed under a proposition it cannot falsify is a
+registry saying a proposition has evidence it does not have, and no gate over this registry
+reads a control's body — every existing check is about shape. This one was found by a human
+reading the test.
+
+## NP-171 — the client posture line reports the floor the deployment actually has
+
+**Controls:** `mcp-re-client/src/main.rs` (2).
+**Carrier:** `mcp-re-client/src/main.rs` — the startup posture line.
+**Statement.** *The startup posture line reports the bootstrap the floor actually has, and
+reports whether the floor is bounded upward.*
+**If false.** An operator reads a posture line describing a floor the process is not running
+under, so the transcript and the deployment disagree about the one fact the line exists to
+state.
+**Likely owner:** none. `mcp-re-client/src/main.rs` is in no unit's `paths` and is listed in
+`config/unit-closure-exclusions.toml`.
+**Root relationship.** A premise of the units above it.
+**Severity:** `high`.
+
+## NP-172 — a client nonce clears the 128-bit emission floor
+
+**Controls:** `mcp-re-client/src/lib.rs` (1).
+**Carrier:** `mcp-re-client/src/lib.rs` — the client's nonce emission.
+**Statement.** *A nonce the client emits clears the 128-bit emission floor.*
+**If false.** The client emits a nonce with less entropy than the freshness argument assumes,
+so replay protection is weaker than every consumer of it believes.
+**Likely owner:** none. `mcp-re-client/src/lib.rs` is in no unit's `paths` and is listed in
+`config/unit-closure-exclusions.toml`.
+**Root relationship.** A premise of the units above it.
+**Severity:** `high`.
+
+## NP-173 — the startup posture state answers enabled without reparsing the line
+
+**Controls:** `mcp-re-proxy/src/startup_posture.rs` (2) —
+`one_startups_declarations_do_not_satisfy_another`,
+`state_answers_enabled_without_parsing_the_line`.
+**Carrier:** `mcp-re-proxy/src/startup_posture.rs` — the posture state itself.
+**Statement.** *One startup's declarations do not satisfy another's completeness check, and
+the posture state answers whether a seam is enabled from its own representation rather than
+by parsing the rendered transcript line.*
+**If false.** A reader asking "is this seam on" gets its answer by re-deriving it from the
+text a different authority produced, so the state and the transcript are two representations
+of one fact that can disagree — and a completeness check satisfied by another startup's
+declarations would pass for a run that declared nothing.
+**Likely owner:** `proxy.continuation_materialization`. The file is already in that unit's
+`paths` and five of its `startup_posture` symbols are already in its battery, so this is an
+R1 candidate needing no `paths` widening.
+**Root relationship.** Under THM-0096 — *but THM-0096's scope narrows the conjunct these two
+controls sit beside, in its own words*:
+
+> THE DECLARATION CONJUNCT IS CLAIMED AT THE STRENGTH ITS EVIDENCE HAS, which is less than
+> it first appears. `PostureLog::assert_complete` proves that every executed startup states
+> each seam exactly once, and it is NEVER REACHED hermetically — the posture phase sits after
+> the replay tier is established, and every tier validation accepts needs a live Redis or etcd.
+> What the registered evidence establishes is therefore two weaker facts: that the completeness
+> check refuses an undeclared or doubly-declared seam when it is run, and that the continuation
+> seam is declared exactly once in the composition root's SOURCE. "The path actually taken
+> reached exactly one declaration" is not claimed by this theorem in any hermetic lane.
+
+If the owner reads either control as outside that narrowed conjunct, this record stays
+unregistered rather than being absorbed. That reading is the owner's and this record does not
+take it.
+**Severity:** `medium`.
+**Why this record exists at all.** These two controls were filed under NP-004, *every optional
+capability states ON or OFF, in every lane*, whose remaining control is
+`scripts/seam_posture_gate.py` — a repo-wide backstop carrying the quantifier over all eight
+seams, in no unit's `paths`, and genuinely referred. One record cannot be both landable and
+referred: NP-004's own `likely_owner` field said its owner "owns ONE seam's conjunct and says
+so", which is the record documenting its own split.

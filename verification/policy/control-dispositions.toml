@@ -4407,7 +4407,7 @@ record = "docs/architecture/control-dispositions.md#np-066"
 [[proposition]]
 id = "NP-067"
 title = "Every plane transitions and the substrate is reclaimed, on every path"
-carrier = "mcp-re-proxy/src/materialized_runtime.rs"
+carrier = "mcp-re-proxy/src/materialized_runtime.rs and mcp-re-proxy/src/materializing_runtime"
 likely_owner = ""
 consequence = "critical"
 root_relationship = "under THM-0012 and THM-0077 — the lifecycle and posture roots above startup"
@@ -8028,7 +8028,7 @@ record = "docs/architecture/control-dispositions.md#np-111"
 
 [[proposition]]
 id = "NP-112"
-title = "A host or client signer signs under its own identity and renders no key"
+title = "A host signer signs under its own identity and renders no key"
 carrier = "mcp-re-host/src/signer.rs"
 likely_owner = ""
 consequence = "high"
@@ -8049,7 +8049,7 @@ id = "CD-16001"
 project = "mcp-re-client"
 control = "bin/mcp-re-client#tests::the_posture_line_reports_the_bootstrap_the_floor_actually_has"
 decision = "new-proposition"
-proposition = "NP-112"
+proposition = "NP-171"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -8057,7 +8057,7 @@ id = "CD-16002"
 project = "mcp-re-client"
 control = "bin/mcp-re-client#tests::the_posture_line_reports_whether_the_floor_is_bounded_upward"
 decision = "new-proposition"
-proposition = "NP-112"
+proposition = "NP-171"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -8489,7 +8489,7 @@ id = "CD-16056"
 project = "mcp-re-client"
 control = "lib#tests::the_nonce_clears_the_128_bit_emission_floor"
 decision = "new-proposition"
-proposition = "NP-112"
+proposition = "NP-172"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -9226,7 +9226,7 @@ id = "CD-17063"
 project = "mcp-re-proxy"
 control = "lib#log_sink::tests::log_event_tags_match_the_brief"
 decision = "new-proposition"
-proposition = "NP-066"
+proposition = "NP-170"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -9538,7 +9538,7 @@ id = "CD-17102"
 project = "mcp-re-proxy"
 control = "lib#startup_posture::tests::one_startups_declarations_do_not_satisfy_another"
 decision = "new-proposition"
-proposition = "NP-004"
+proposition = "NP-173"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -9546,7 +9546,7 @@ id = "CD-17103"
 project = "mcp-re-proxy"
 control = "lib#startup_posture::tests::state_answers_enabled_without_parsing_the_line"
 decision = "new-proposition"
-proposition = "NP-004"
+proposition = "NP-173"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -14221,3 +14221,39 @@ control = "tests/fault_injection_test#fault_accept_any_server_makes_wrong_identi
 decision = "new-proposition"
 proposition = "NP-169"
 recorded = "2026-09-19"
+
+[[proposition]]
+id = "NP-170"
+title = "Every inner-process log event renders under the brief's own tag"
+carrier = "mcp-re-proxy/src/log_sink.rs"
+likely_owner = ""
+consequence = "medium"
+root_relationship = "none — no theorem reaches the inner-event log vocabulary"
+record = "docs/architecture/control-dispositions.md#np-170"
+
+[[proposition]]
+id = "NP-171"
+title = "The client posture line reports the floor the deployment actually has"
+carrier = "mcp-re-client/src/main.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "a premise of the units above it"
+record = "docs/architecture/control-dispositions.md#np-171"
+
+[[proposition]]
+id = "NP-172"
+title = "A client nonce clears the 128-bit emission floor"
+carrier = "mcp-re-client/src/lib.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "a premise of the units above it"
+record = "docs/architecture/control-dispositions.md#np-172"
+
+[[proposition]]
+id = "NP-173"
+title = "The startup posture state answers enabled without reparsing the line"
+carrier = "mcp-re-proxy/src/startup_posture.rs"
+likely_owner = "proxy.continuation_materialization — the file is already in its paths and five of its startup_posture symbols are already in its battery"
+consequence = "medium"
+root_relationship = "under THM-0096, whose scope narrows the declaration conjunct"
+record = "docs/architecture/control-dispositions.md#np-173"
