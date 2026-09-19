@@ -38,10 +38,6 @@ path = "mcp-re-proxy/tests/integration_async/http_inner_test.rs"
 baseline = 15
 
 [[file]]
-path = "mcp-re-core/src/crypto.rs"
-baseline = 13
-
-[[file]]
 path = "mcp-re-proxy/src/shared_replay.rs"
 baseline = 13
 
@@ -54,20 +50,12 @@ path = "mcp-re-proxy/tests/aws_irsa_web_identity_test.rs"
 baseline = 12
 
 [[file]]
-path = "mcp-re-client-proxy/src/proxy.rs"
-baseline = 11
-
-[[file]]
 path = "mcp-re-proxy/src/http_inner/mod.rs"
 baseline = 11
 
 [[file]]
 path = "mcp-re-proxy/src/replay_tier.rs"
 baseline = 11
-
-[[file]]
-path = "mcp-re-core/src/error.rs"
-baseline = 10
 
 [[file]]
 path = "mcp-re-proxy/src/blocking_mtls_harness/http1.rs"
@@ -108,14 +96,6 @@ baseline = 8
 [[file]]
 path = "mcp-re-proxy/tests/integration/plane_config_reachback_test.rs"
 baseline = 8
-
-[[file]]
-path = "mcp-re-client-core/src/binding_spec/mod.rs"
-baseline = 7
-
-[[file]]
-path = "mcp-re-core/src/encoding.rs"
-baseline = 7
 
 [[file]]
 path = "mcp-re-proxy/src/async_serve/mod.rs"
@@ -164,14 +144,6 @@ baseline = 6
 [[file]]
 path = "mcp-re-proxy/tests/pkcs11_keysource_e2e_test.rs"
 baseline = 6
-
-[[file]]
-path = "mcp-re-core/src/time/mod.rs"
-baseline = 5
-
-[[file]]
-path = "mcp-re-demo/tests/demo_fixtures_test.rs"
-baseline = 5
 
 [[file]]
 path = "mcp-re-proxy/src/continuation_store/mod.rs"
@@ -228,14 +200,6 @@ baseline = 5
 [[file]]
 path = "mcp-re-proxy/tests/tls_load_harness_bench.rs"
 baseline = 5
-
-[[file]]
-path = "mcp-re-client-core/src/response.rs"
-baseline = 4
-
-[[file]]
-path = "mcp-re-policy/src/revocation.rs"
-baseline = 4
 
 [[file]]
 path = "mcp-re-proxy/src/authorization/request.rs"
@@ -300,10 +264,6 @@ baseline = 4
 [[file]]
 path = "mcp-re-proxy/tests/integration_live/gcp_kms_http_profile_live_test.rs"
 baseline = 4
-
-[[file]]
-path = "mcp-re-host/src/signer.rs"
-baseline = 3
 
 [[file]]
 path = "mcp-re-proxy/src/async_fleet/mod.rs"
@@ -392,10 +352,6 @@ baseline = 3
 [[file]]
 path = "mcp-re-proxy/tests/integration_live/gcp_kms_delegated_tls_live_test.rs"
 baseline = 3
-
-[[file]]
-path = "mcp-re-client/src/main.rs"
-baseline = 2
 
 [[file]]
 path = "mcp-re-proxy/src/async_inner/mod.rs"
@@ -508,22 +464,6 @@ baseline = 2
 [[file]]
 path = "mcp-re-proxy/tests/integration_live/gcp_kms_delegated_signing_live_test.rs"
 baseline = 2
-
-[[file]]
-path = "mcp-re-transport/tests/fault_injection_test.rs"
-baseline = 2
-
-[[file]]
-path = "mcp-re-client/src/lib.rs"
-baseline = 1
-
-[[file]]
-path = "mcp-re-core/src/ids.rs"
-baseline = 1
-
-[[file]]
-path = "mcp-re-core/tests/firewall_test.rs"
-baseline = 1
 
 [[file]]
 path = "mcp-re-proxy/src/admission_source/mod.rs"

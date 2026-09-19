@@ -7995,7 +7995,15 @@ tested_symbols = [
   "tests/mtls_client_test#wrong_server_identity_is_rejected",
   "tests/mtls_client_test#expired_server_cert_is_rejected",
   "tests/mtls_client_test#empty_server_ca_is_rejected_fail_closed",
-  "tests/mtls_client_test#trusted_server_and_client_round_trip_succeeds",
+  "tests/mtls_client_test#trusted_server_and_client_round_trip_succeeds",  # ADR-MCPRE-069 batch 18. The ANTI-VACUITY arm of this statement, and the reason it is
+  # registered rather than dispositioned as apparatus: this unit says an untrusted or
+  # wrong-identity server certificate is rejected during the handshake. These two controls
+  # show that the DECLARED FAULT INJECTOR is what makes either one accepted — so the
+  # rejections above are the real verifier's and not an artefact of a test that never
+  # presented a bad certificate. `client_verifier_posture_test` names this injector as the
+  # only other verifier in the tree; these are what make that naming mean something.
+  "tests/fault_injection_test#fault_accept_any_server_makes_untrusted_server_cert_accepted",
+  "tests/fault_injection_test#fault_accept_any_server_makes_wrong_identity_server_cert_accepted",
 ]
 
 [[unit]]
@@ -8108,7 +8116,23 @@ tested_symbols = [
   "lib#core_projection::tests::every_refusal_names_a_core_verdict",
   "lib#core_projection::tests::a_carrier_refusal_keeps_the_carriers_own_verdict",
   "lib#binding_spec::tests::the_opaque_form_refuses_pdp_decision_because_that_is_half_of_a_pair",
-  "lib#binding_spec::tests::the_reference_form_still_accepts_pdp_decision",
+  "lib#binding_spec::tests::the_reference_form_still_accepts_pdp_decision",  # ADR-MCPRE-069 batch 18. Seven controls in this unit's own `binding_spec/mod.rs`, none of
+  # them previously any unit's evidence, each answering a clause this statement makes.
+  #
+  # "WHICH PROVIDER LISTS are a legal contribution": a list that is not spec JSON is refused,
+  # and a request acts under at most one decision.
+  "lib#binding_spec::tests::a_provider_list_that_is_not_spec_json_is_refused",
+  "lib#binding_spec::tests::a_request_acts_under_at_most_one_decision",
+  # "the NARROWING — an opaque provider asked to mint a `pdp-decision` binding — is half of a
+  # Mode-2 pair and is REFUSED RATHER THAN CONSTRUCTED". These are that narrowing, in both
+  # directions: what the decision form is, what it yields, what it may not also name, and
+  # that every other artifact type keeps the generic opaque form rather than being narrowed
+  # with it.
+  "lib#binding_spec::tests::the_decision_form_is_only_about_a_decision",
+  "lib#binding_spec::tests::the_decision_form_yields_the_document_and_no_binding",
+  "lib#binding_spec::tests::a_decision_does_not_also_name_an_external_grant_handle",
+  "lib#binding_spec::tests::a_decision_is_text_or_it_is_not_a_compact_jws",
+  "lib#binding_spec::tests::other_artifact_types_keep_the_generic_opaque_form",
 ]
 
 # The measurement that replaced the producer list. `no_producer_outside_core_mints_a_wire_token`

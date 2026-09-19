@@ -395,6 +395,27 @@ a list and a machine must be told about. The alternative — teaching the enumer
 **What would move a control out.** A generator that also compares. Then it is a control and
 belongs with its corpus.
 
+## ND-013 — demo fixture material
+
+**Covers:** `mcp-re-demo/tests/demo_fixtures_test.rs` (5).
+**Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 18.
+**Scope:** `carrier-scope: admitted`.
+
+Controls over the demo's own generated material: that the matching client identity
+round-trips and equals the signer, that the mismatched client chains to the same CA but
+differs from the signer, that the server leaf does not chain to the client CA, that the
+trust JSON carries the signer's public key, and that writing the files materialises every
+input and cleans up on drop.
+
+**Why they are not evidence.** Their subject is the DEMO's fixtures — they establish that
+the demo presents the situations it means to present. A violation makes a demonstration
+misleading, not a deployment insecure, and no proposition MCP-RE makes is true or false
+depending on them. `scripts/merge_path_gate.py` already rules on the demo runner in the same
+words: *a demo runner, not a control*.
+
+**What would move a control out.** A fixture that becomes a conformance vector. Then its
+pinning is NP-080's subject and it is claimed there.
+
 ## ND-008 — not a control: drivers, runners, reports and demos
 
 **Covers:** `bump_version.sh`, `coverage.sh`, `demo-gcp-kms.sh`, `demo-local.sh`,
@@ -2242,4 +2263,82 @@ establish rather than what any unit above them promises.
 **If false.** A request is admitted against a binding identifier other than the one it named.
 **Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
 **Severity:** `critical`.
+
+---
+
+## The small crates — NP-106 through NP-113
+
+Seventy-six controls outside `mcp-re-proxy`. Nine REGISTER — seven into
+`client.binding_spec_refusal`'s own file, and two that are the ANTI-VACUITY arm of
+`client.transport_server_identity`: they show that the declared fault injector is what makes
+an untrusted or wrong-identity server certificate accepted, so the rejections that unit
+claims are the real verifier's and not an artefact of a test that never presented a bad
+certificate.
+
+The rest are eight propositions, and three of them are premises of everything above
+them.
+
+## NP-106 — the Core's Ed25519 primitive is exact and total
+
+**Controls:** `mcp-re-core/src/crypto.rs`.
+**Statement.** *`ensure_ed25519_alg` accepts the supported algorithm and rejects an unknown one with the caller's supplied error; sign-then-verify round-trips and the signature is deterministic for a fixed seed; a wrong key, a wrong-length signature, a tampered preimage and a malformed base64 signature each fail; a malformed key — in b64url or in bytes — maps to actor-binding-failed and the response variant maps to response-sig-invalid; a verification key round-trips through bytes and b64url; and the raw primitive verifies with no algorithm plumbing at all.*
+**If false.** The one primitive every signature in the system rests on accepts something it should not, or reports a key problem as a signature problem. The error-mapping clauses are why they are enumerated: a malformed key and a bad signature are different facts, and an alarm that cannot tell them apart sends the operator to the wrong place. `ensure_ed25519_alg_rejects_unknown_alg_with_supplied_error` is also NP-002's other half — the refusal that keeps ES256 out of MCP-RE's own signing.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-107 — base64url is the exact encoding, in both directions
+
+**Controls:** `mcp-re-core/src/encoding.rs`.
+**Statement.** *Encoding uses the URL-safe alphabet and emits NO padding; decoding rejects a non-alphabet character and rejects padding; an empty input decodes to empty; arbitrary bytes round-trip; and a known answer is reproduced.*
+**If false.** Two spellings of one value both decode, so a comparison over the encoded form does not mean what a comparison over the bytes would. Rejecting padding is the clause that makes the encoded form canonical rather than merely decodable.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-108 — the error taxonomy is frozen, exhaustive and duplicate-free
+
+**Controls:** `mcp-re-core/src/error.rs`, `mcp-re-core/src/ids.rs`.
+**Statement.** *`ALL_ERRORS` is duplicate-free and the wire-code list is EXHAUSTIVE; errors compare by value; every frozen wire string renders exactly — the full taxonomy, the delegation strings, the draft-02 strings, the http-profile signed-rejection strings, and renamed-and-kept variants; the http-profile codes are distinct from the folds they replace; a draft-02 missing binding is distinct from a draft-01 missing hash; and the profile-agnostic constants are frozen.*
+**If false.** A wire token means one thing to MCP-RE and another to a peer, or two distinct failures render the same string. Exhaustiveness is what makes the taxonomy a contract: a variant nobody listed renders nothing, and nothing is what a reader cannot distinguish from a token they do not know.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-109 — the admitted time era is bounded and its formatter is total
+
+**Controls:** `mcp-re-core/src/time/mod.rs`.
+**Statement.** *The admitted era round-trips through the formatter; the lowest and highest admitted instants are the boundaries; a five-digit year is REFUSED; and the fixed-digit fields are total outside the parser's widths.*
+**If false.** An instant outside the era formats to something a peer parses as a different time — the five-digit year is the concrete case — or the formatter is partial and a legal instant has no representation.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-110 — the Core stays pure
+
+**Controls:** `mcp-re-core/tests/firewall_test.rs`.
+**Statement.** *`mcp-re-core` depends on no networking, no async runtime, no filesystem and nothing up-stack.*
+**If false.** The layer every signature rests on acquires a dependency that can read a file, open a socket or block — and the argument that a Core verdict is a function of its inputs stops being true. This is the crate's whole architectural premise, measured as one control and claimed by nothing.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-111 — a verified reply's disposition is the one the receipt states
+
+**Controls:** `mcp-re-client-proxy/src/proxy.rs`, `mcp-re-client-core/src/response.rs`.
+**Statement.** *A JSON-RPC error reply is carried through and NOT flattened to a null result; a verified error reply is classified as a failed call and not a success; a reply that is not a JSON-RPC response fails closed and an unparseable verified reply is a VERIFICATION failure rather than a bad request; an input-required reply and an unrecognized result type are never terminal; a verified rejection carries its execution contract to the local client and an UNSTATED contract produces no invented disposition; a post-dispatch rejection carries its execution and retry contract; a retention failure is readable as such; an out-of-range skew cannot widen the credential window; an ordinary result still rebuilds; the proxy-owned meta is stripped from the plain reply; and the reply carries the id THE PROXY SIGNED rather than the one the server echoed.*
+**If false.** The application is told the call succeeded, or failed, or did not run, on the strength of something the receipt did not say. `an_unstated_contract_is_not_a_did_not_run_verdict` and `an_unstated_contract_produces_no_invented_disposition` are the same rule in two crates: silence is not a verdict.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-112 — a host signer signs under its own identity and renders no key
+
+**Controls:** `mcp-re-host/src/signer.rs`.
+**Statement.** *A signed request names the signer's OWN key id; the identity is readable and the key is not; and the tool-call convenience signs under the same identity.*
+**If false.** A host signs under an identity that is not the one it advertises, or the convenience path signs under a different one from the explicit path — two identities for one signer.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-113 — a revocation source reports availability honestly
+
+**Controls:** `mcp-re-policy/src/revocation.rs`.
+**Statement.** *An empty source revokes nothing; an in-memory source is always available; a revoked id is reported revoked; and an unavailable source carries its details for diagnostics.*
+**If false.** An unavailable revocation source is read as an empty one, so nothing is revoked and the deployment cannot tell the difference. That is the execution-certainty collapse this repository has ruled on, in the one place where 'we could not check' and 'nothing is revoked' must never be the same answer.
+**Likely owner:** none.
+**Severity:** `high`.
 

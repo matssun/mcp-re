@@ -9328,3 +9328,620 @@ decision = "new-proposition"
 proposition = "NP-102"
 recorded = "2026-09-19"
 
+
+# ---------------------------------------------------------------------------
+# Batch 18 — the small crates, 2026-09-19
+# ---------------------------------------------------------------------------
+#
+# 76 controls outside mcp-re-proxy. Nine REGISTER (verification.toml); five are demo fixture
+# material (ND-013); the rest are eight propositions, three of them premises of everything
+# above them: the Ed25519 primitive, the encoding, and the Core staying pure.
+
+[[proposition]]
+id = "NP-106"
+title = "The Core's Ed25519 primitive is exact and total"
+carrier = "mcp-re-core/src/crypto.rs"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the units above it"
+record = "docs/architecture/control-dispositions.md#np-106"
+
+[[proposition]]
+id = "NP-107"
+title = "base64url is the exact encoding, in both directions"
+carrier = "mcp-re-core/src/encoding.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "a premise of the units above it"
+record = "docs/architecture/control-dispositions.md#np-107"
+
+[[proposition]]
+id = "NP-108"
+title = "The error taxonomy is frozen, exhaustive and duplicate-free"
+carrier = "mcp-re-core/src/error.rs"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the units above it"
+record = "docs/architecture/control-dispositions.md#np-108"
+
+[[proposition]]
+id = "NP-109"
+title = "The admitted time era is bounded and its formatter is total"
+carrier = "mcp-re-core/src/time/mod.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "a premise of the units above it"
+record = "docs/architecture/control-dispositions.md#np-109"
+
+[[proposition]]
+id = "NP-110"
+title = "The Core stays pure"
+carrier = "mcp-re-core/tests/firewall_test.rs"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the units above it"
+record = "docs/architecture/control-dispositions.md#np-110"
+
+[[proposition]]
+id = "NP-111"
+title = "A verified reply's disposition is the one the receipt states"
+carrier = "mcp-re-client-proxy/src/proxy.rs"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the units above it"
+record = "docs/architecture/control-dispositions.md#np-111"
+
+[[proposition]]
+id = "NP-112"
+title = "A host or client signer signs under its own identity and renders no key"
+carrier = "mcp-re-host/src/signer.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "a premise of the units above it"
+record = "docs/architecture/control-dispositions.md#np-112"
+
+[[proposition]]
+id = "NP-113"
+title = "A revocation source reports availability honestly"
+carrier = "mcp-re-policy/src/revocation.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "a premise of the units above it"
+record = "docs/architecture/control-dispositions.md#np-113"
+
+[[disposition]]
+id = "CD-16001"
+project = "mcp-re-client"
+control = "bin/mcp-re-client#tests::the_posture_line_reports_the_bootstrap_the_floor_actually_has"
+decision = "new-proposition"
+proposition = "NP-112"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16002"
+project = "mcp-re-client"
+control = "bin/mcp-re-client#tests::the_posture_line_reports_whether_the_floor_is_bounded_upward"
+decision = "new-proposition"
+proposition = "NP-112"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16003"
+project = "mcp-re-core"
+control = "lib#crypto::tests::ensure_ed25519_alg_accepts_the_supported_alg"
+decision = "new-proposition"
+proposition = "NP-106"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16004"
+project = "mcp-re-core"
+control = "lib#crypto::tests::ensure_ed25519_alg_rejects_unknown_alg_with_supplied_error"
+decision = "new-proposition"
+proposition = "NP-106"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16005"
+project = "mcp-re-core"
+control = "lib#crypto::tests::malformed_key_b64url_maps_to_actor_binding_failed"
+decision = "new-proposition"
+proposition = "NP-106"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16006"
+project = "mcp-re-core"
+control = "lib#crypto::tests::malformed_key_bytes_map_to_actor_binding_failed"
+decision = "new-proposition"
+proposition = "NP-106"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16007"
+project = "mcp-re-core"
+control = "lib#crypto::tests::malformed_signature_base64_fails"
+decision = "new-proposition"
+proposition = "NP-106"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16008"
+project = "mcp-re-core"
+control = "lib#crypto::tests::raw_primitive_verifies_without_any_alg_plumbing"
+decision = "new-proposition"
+proposition = "NP-106"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16009"
+project = "mcp-re-core"
+control = "lib#crypto::tests::response_variant_maps_to_response_sig_invalid"
+decision = "new-proposition"
+proposition = "NP-106"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16010"
+project = "mcp-re-core"
+control = "lib#crypto::tests::sign_then_verify_round_trip"
+decision = "new-proposition"
+proposition = "NP-106"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16011"
+project = "mcp-re-core"
+control = "lib#crypto::tests::signature_is_deterministic_for_fixed_seed"
+decision = "new-proposition"
+proposition = "NP-106"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16012"
+project = "mcp-re-core"
+control = "lib#crypto::tests::tamper_preimage_fails"
+decision = "new-proposition"
+proposition = "NP-106"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16013"
+project = "mcp-re-core"
+control = "lib#crypto::tests::verification_key_round_trips_bytes_and_b64url"
+decision = "new-proposition"
+proposition = "NP-106"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16014"
+project = "mcp-re-core"
+control = "lib#crypto::tests::wrong_key_fails"
+decision = "new-proposition"
+proposition = "NP-106"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16015"
+project = "mcp-re-core"
+control = "lib#crypto::tests::wrong_length_signature_fails"
+decision = "new-proposition"
+proposition = "NP-106"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16016"
+project = "mcp-re-core"
+control = "lib#encoding::tests::decode_empty_is_empty"
+decision = "new-proposition"
+proposition = "NP-107"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16017"
+project = "mcp-re-core"
+control = "lib#encoding::tests::decode_rejects_non_alphabet"
+decision = "new-proposition"
+proposition = "NP-107"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16018"
+project = "mcp-re-core"
+control = "lib#encoding::tests::decode_rejects_padding"
+decision = "new-proposition"
+proposition = "NP-107"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16019"
+project = "mcp-re-core"
+control = "lib#encoding::tests::encode_has_no_padding"
+decision = "new-proposition"
+proposition = "NP-107"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16020"
+project = "mcp-re-core"
+control = "lib#encoding::tests::encode_known_answer"
+decision = "new-proposition"
+proposition = "NP-107"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16021"
+project = "mcp-re-core"
+control = "lib#encoding::tests::encode_uses_url_safe_alphabet"
+decision = "new-proposition"
+proposition = "NP-107"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16022"
+project = "mcp-re-core"
+control = "lib#encoding::tests::round_trip_arbitrary_bytes"
+decision = "new-proposition"
+proposition = "NP-107"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16023"
+project = "mcp-re-core"
+control = "lib#error::all_errors_tests::all_errors_is_duplicate_free"
+decision = "new-proposition"
+proposition = "NP-108"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16024"
+project = "mcp-re-core"
+control = "lib#error::all_errors_tests::all_wire_codes_is_exhaustive"
+decision = "new-proposition"
+proposition = "NP-108"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16025"
+project = "mcp-re-core"
+control = "lib#error::tests::delegation_wire_strings"
+decision = "new-proposition"
+proposition = "NP-108"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16026"
+project = "mcp-re-core"
+control = "lib#error::tests::draft02_binding_missing_is_distinct_from_draft01_hash_missing"
+decision = "new-proposition"
+proposition = "NP-108"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16027"
+project = "mcp-re-core"
+control = "lib#error::tests::draft02_wire_strings"
+decision = "new-proposition"
+proposition = "NP-108"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16028"
+project = "mcp-re-core"
+control = "lib#error::tests::errors_compare_by_value"
+decision = "new-proposition"
+proposition = "NP-108"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16029"
+project = "mcp-re-core"
+control = "lib#error::tests::full_taxonomy_wire_strings"
+decision = "new-proposition"
+proposition = "NP-108"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16030"
+project = "mcp-re-core"
+control = "lib#error::tests::http_profile_codes_are_distinct_from_the_folds_they_replace"
+decision = "new-proposition"
+proposition = "NP-108"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16031"
+project = "mcp-re-core"
+control = "lib#error::tests::http_profile_signed_rejection_wire_strings"
+decision = "new-proposition"
+proposition = "NP-108"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16032"
+project = "mcp-re-core"
+control = "lib#error::tests::renamed_and_kept_variants_render_exact_wire_strings"
+decision = "new-proposition"
+proposition = "NP-108"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16033"
+project = "mcp-re-core"
+control = "lib#ids::tests::frozen_profile_agnostic_constants"
+decision = "new-proposition"
+proposition = "NP-108"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16034"
+project = "mcp-re-client-proxy"
+control = "lib#proxy::tests::a_json_rpc_error_reply_is_carried_through_not_flattened_to_a_null_result"
+decision = "new-proposition"
+proposition = "NP-111"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16035"
+project = "mcp-re-client-proxy"
+control = "lib#proxy::tests::a_reply_that_is_not_a_json_rpc_response_fails_closed"
+decision = "new-proposition"
+proposition = "NP-111"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16036"
+project = "mcp-re-client-proxy"
+control = "lib#proxy::tests::a_verified_error_reply_is_classified_as_a_failed_call_not_a_success"
+decision = "new-proposition"
+proposition = "NP-111"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16037"
+project = "mcp-re-client-proxy"
+control = "lib#proxy::tests::a_verified_rejection_carries_its_execution_contract_to_the_local_client"
+decision = "new-proposition"
+proposition = "NP-111"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16038"
+project = "mcp-re-client-proxy"
+control = "lib#proxy::tests::an_input_required_reply_does_not_classify_as_terminal"
+decision = "new-proposition"
+proposition = "NP-111"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16039"
+project = "mcp-re-client-proxy"
+control = "lib#proxy::tests::an_ordinary_result_still_rebuilds"
+decision = "new-proposition"
+proposition = "NP-111"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16040"
+project = "mcp-re-client-proxy"
+control = "lib#proxy::tests::an_unparseable_verified_reply_is_a_verification_failure_not_a_bad_request"
+decision = "new-proposition"
+proposition = "NP-111"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16041"
+project = "mcp-re-client-proxy"
+control = "lib#proxy::tests::an_unrecognized_result_type_is_never_terminal"
+decision = "new-proposition"
+proposition = "NP-111"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16042"
+project = "mcp-re-client-proxy"
+control = "lib#proxy::tests::an_unstated_contract_produces_no_invented_disposition"
+decision = "new-proposition"
+proposition = "NP-111"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16043"
+project = "mcp-re-client-proxy"
+control = "lib#proxy::tests::the_proxy_owned_meta_is_stripped_from_the_plain_reply"
+decision = "new-proposition"
+proposition = "NP-111"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16044"
+project = "mcp-re-client-proxy"
+control = "lib#proxy::tests::the_reply_carries_the_id_the_proxy_signed_not_the_one_the_server_echoed"
+decision = "new-proposition"
+proposition = "NP-111"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16045"
+project = "mcp-re-client-core"
+control = "lib#response::delegated_tests::a_post_dispatch_rejection_carries_its_execution_and_retry_contract"
+decision = "new-proposition"
+proposition = "NP-111"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16046"
+project = "mcp-re-client-core"
+control = "lib#response::delegated_tests::a_retention_failure_is_readable_as_such"
+decision = "new-proposition"
+proposition = "NP-111"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16047"
+project = "mcp-re-client-core"
+control = "lib#response::delegated_tests::an_out_of_range_skew_cannot_widen_the_credential_window"
+decision = "new-proposition"
+proposition = "NP-111"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16048"
+project = "mcp-re-client-core"
+control = "lib#response::delegated_tests::an_unstated_contract_is_not_a_did_not_run_verdict"
+decision = "new-proposition"
+proposition = "NP-111"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16049"
+project = "mcp-re-policy"
+control = "lib#revocation::tests::empty_source_revokes_nothing"
+decision = "new-proposition"
+proposition = "NP-113"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16050"
+project = "mcp-re-policy"
+control = "lib#revocation::tests::in_memory_source_is_always_available"
+decision = "new-proposition"
+proposition = "NP-113"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16051"
+project = "mcp-re-policy"
+control = "lib#revocation::tests::revoked_id_is_reported_revoked"
+decision = "new-proposition"
+proposition = "NP-113"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16052"
+project = "mcp-re-policy"
+control = "lib#revocation::tests::unavailable_carries_details_for_diagnostics"
+decision = "new-proposition"
+proposition = "NP-113"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16053"
+project = "mcp-re-host"
+control = "lib#signer::tests::a_signed_request_names_the_signers_own_key_id"
+decision = "new-proposition"
+proposition = "NP-112"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16054"
+project = "mcp-re-host"
+control = "lib#signer::tests::the_identity_is_readable_and_the_key_is_not"
+decision = "new-proposition"
+proposition = "NP-112"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16055"
+project = "mcp-re-host"
+control = "lib#signer::tests::the_tool_call_convenience_signs_under_the_same_identity"
+decision = "new-proposition"
+proposition = "NP-112"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16056"
+project = "mcp-re-client"
+control = "lib#tests::the_nonce_clears_the_128_bit_emission_floor"
+decision = "new-proposition"
+proposition = "NP-112"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16057"
+project = "mcp-re-core"
+control = "lib#time::tests::admitted_era_round_trips_through_the_formatter"
+decision = "new-proposition"
+proposition = "NP-109"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16058"
+project = "mcp-re-core"
+control = "lib#time::tests::boundary_a_five_digit_year_is_refused"
+decision = "new-proposition"
+proposition = "NP-109"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16059"
+project = "mcp-re-core"
+control = "lib#time::tests::boundary_highest_admitted_instant"
+decision = "new-proposition"
+proposition = "NP-109"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16060"
+project = "mcp-re-core"
+control = "lib#time::tests::boundary_lowest_admitted_instant"
+decision = "new-proposition"
+proposition = "NP-109"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16061"
+project = "mcp-re-core"
+control = "lib#time::tests::fixed_digit_fields_are_total_outside_the_parser_widths"
+decision = "new-proposition"
+proposition = "NP-109"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16062"
+project = "mcp-re-demo"
+control = "tests/demo_fixtures_test#matching_client_identity_round_trips_and_equals_signer"
+decision = "not-evidence"
+reason_family = "ND-013"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16063"
+project = "mcp-re-demo"
+control = "tests/demo_fixtures_test#mismatched_client_chains_to_the_same_ca_but_differs_from_signer"
+decision = "not-evidence"
+reason_family = "ND-013"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16064"
+project = "mcp-re-demo"
+control = "tests/demo_fixtures_test#server_leaf_does_not_chain_to_the_client_ca"
+decision = "not-evidence"
+reason_family = "ND-013"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16065"
+project = "mcp-re-demo"
+control = "tests/demo_fixtures_test#trust_json_carries_the_signer_public_key"
+decision = "not-evidence"
+reason_family = "ND-013"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16066"
+project = "mcp-re-demo"
+control = "tests/demo_fixtures_test#write_files_materializes_every_input_and_cleans_up_on_drop"
+decision = "not-evidence"
+reason_family = "ND-013"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16067"
+project = "mcp-re-core"
+control = "tests/firewall_test#mcp_re_core_stays_pure_no_networking_async_fs_or_upstack_dependencies"
+decision = "new-proposition"
+proposition = "NP-110"
+recorded = "2026-09-19"
+
