@@ -1528,3 +1528,86 @@ decision = "new-proposition"
 proposition = "NP-011"
 recorded = "2026-09-19"
 
+
+# ---------------------------------------------------------------------------
+# Batch 5 — the Python correlation store, 2026-09-19
+# ---------------------------------------------------------------------------
+#
+# Twenty-one controls. Eleven REGISTER and three REATTRIBUTE land in verification.toml.
+# The seven rows below are the rest: two propositions the window statement does not make,
+# and three API-robustness controls with no proposition at all.
+
+[[proposition]]
+id = "NP-018"
+title = "The correlation entry is the request's audit record"
+carrier = "sdk/python/python/mcp_re_sdk/correlation.py's entry"
+likely_owner = "sdk_python.correlation_lifecycle is a window claim plus the store's refusals"
+consequence = "high"
+root_relationship = "under THM-0094, adjacent to the proxy-side audit-record propositions"
+record = "docs/architecture/control-dispositions.md#np-018"
+
+[[proposition]]
+id = "NP-019"
+title = "The correlation store's peek and take split"
+carrier = "correlation.py's peek and take"
+likely_owner = "sdk_python.correlation_lifecycle; half of the split is a different claim, not a weaker one"
+consequence = "high"
+root_relationship = "under THM-0094; the proxy side holds the same proposition whole"
+record = "docs/architecture/control-dispositions.md#np-019"
+
+[[disposition]]
+id = "CD-3001"
+project = "sdk/python"
+control = "pytest#tests/test_correlation.py::TestRecordAndTake::test_the_correlation_id_is_the_request_evidence_handle"
+decision = "new-proposition"
+proposition = "NP-018"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-3002"
+project = "sdk/python"
+control = "pytest#tests/test_correlation.py::TestRecordAndTake::test_the_store_carries_the_audit_fields_the_adr_enumerates"
+decision = "new-proposition"
+proposition = "NP-018"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-3003"
+project = "sdk/python"
+control = "pytest#tests/test_correlation.py::TestRecordAndTake::test_peek_does_not_consume"
+decision = "new-proposition"
+proposition = "NP-019"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-3004"
+project = "sdk/python"
+control = "pytest#tests/test_correlation.py::TestRecordAndTake::test_take_consumes_the_outstanding_request"
+decision = "new-proposition"
+proposition = "NP-019"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-3005"
+project = "sdk/python"
+control = "pytest#tests/test_correlation.py::TestRecordAndTake::test_iterating_yields_the_outstanding_requests"
+decision = "not-evidence"
+reason_family = "ND-009"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-3006"
+project = "sdk/python"
+control = "pytest#tests/test_correlation.py::TestReaping::test_reaping_an_empty_store_is_a_no_op"
+decision = "not-evidence"
+reason_family = "ND-009"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-3007"
+project = "sdk/python"
+control = "pytest#tests/test_correlation.py::TestTheStoreIsBounded::test_abandon_is_idempotent_and_never_raises"
+decision = "not-evidence"
+reason_family = "ND-009"
+recorded = "2026-09-19"
+

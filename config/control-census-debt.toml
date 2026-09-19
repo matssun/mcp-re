@@ -42,10 +42,6 @@ path = "mcp-re-proxy/tests/integration/app_startup_characterization_test.rs"
 baseline = 21
 
 [[file]]
-path = "sdk/python/tests/test_correlation.py"
-baseline = 21
-
-[[file]]
 path = "mcp-re-http-profile/tests/mcp_transport_headers_test.rs"
 baseline = 17
 

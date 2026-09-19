@@ -265,6 +265,34 @@ something the system does not today. `semantic_altitude_gate` is the likelier of
 if a sibling field is ever READ on a path that decides anything, the proposition stops being
 about shape and the disposition becomes `new-proposition`.
 
+## ND-009 — data-structure API robustness with no security proposition
+
+**Covers:** `sdk/python/tests/test_correlation.py::TestRecordAndTake::test_iterating_yields_the_outstanding_requests`,
+`::TestReaping::test_reaping_an_empty_store_is_a_no_op`,
+`::TestTheStoreIsBounded::test_abandon_is_idempotent_and_never_raises`.
+**Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 5.
+
+Three controls over the correlation store's API surface: that iterating yields the
+outstanding entries, that reaping an empty store does nothing, and that abandoning twice
+does not raise.
+
+**Why they are not evidence.** Each asserts a TOTAL or IDEMPOTENT API behaviour. A violation
+is a crash or a wrong iteration inside the adapter — not something the system admits, emits
+or attributes, and not a clause of any proposition the graph holds. They are the reason the
+adapter does not fall over, which is a different kind of good from the reason it cannot be
+made to lie.
+
+**Stated because `abandon` is the close call.** If `abandon` raised, an error path could
+fail to retire an entry — which WOULD bear on `sdk_python.correlation_lifecycle`'s clause
+that no remotely triggerable outcome leaves an entry outstanding. It is not registered
+there because the control does not measure that: it measures that a second call does not
+raise, over a store that the first call already emptied. The outstanding claim is measured
+by the three boundedness controls registered in that unit, and those are the controls whose
+failure would make it false.
+
+**What would move a control out.** A control here that exercises the store on a path a
+remote peer can drive. These three are driven by the test, not by a reply.
+
 ## ND-008 — not a control: drivers, runners, reports and demos
 
 **Covers:** `bump_version.sh`, `coverage.sh`, `demo-gcp-kms.sh`, `demo-local.sh`,
@@ -665,6 +693,47 @@ signing time, as something else.
 this is about what the VALUE admits at construction. The repository's own rule is the
 distinction: *the invariant belongs to the value, not to the code that builds it*, and a
 policy check is the code that builds it.
+**Root relationship.** Under THM-0094.
+**Severity:** `high`.
+
+## NP-018 — the correlation entry is the request's audit record
+
+**Controls:** `sdk/python/tests/test_correlation.py::TestRecordAndTake::test_the_correlation_id_is_the_request_evidence_handle`,
+`::test_the_store_carries_the_audit_fields_the_adr_enumerates`.
+**Carrier:** `sdk/python/python/mcp_re_sdk/correlation.py`'s entry.
+**Statement.** *A request's correlation id IS its evidence handle — not a separate local
+key that happens to accompany one — and the entry carries every audit field ADR-MCPS-044
+enumerates.*
+**If false.** The adapter holds a local bookkeeping key beside the evidence handle, and the
+two can diverge: an entry retired under one identity while a reply arrives under the other,
+and an audit record that names fewer facts than the ADR says it must. The first is the
+`identity, not locator` failure this repository has ruled on before; the second is an audit
+record that reads as complete.
+**Likely owner:** `sdk_python.correlation_lifecycle` is a WINDOW claim plus the store's
+refusals. It says nothing about what the entry IS or what it carries.
+**Root relationship.** Under THM-0094, and adjacent to the proxy-side audit-record
+propositions, which are about the record the proxy writes rather than the one the client
+keeps.
+**Severity:** `high`.
+
+## NP-019 — the correlation store's peek and take split
+
+**Controls:** `sdk/python/tests/test_correlation.py::TestRecordAndTake::test_peek_does_not_consume`,
+`::test_take_consumes_the_outstanding_request`.
+**Carrier:** `correlation.py`'s `peek` and `take`.
+**Statement.** *Peeking an outstanding request never retires it, and taking it retires it
+exactly once.*
+**If false.** Either a peek retires an entry — so a legitimate answer that arrives
+afterwards is refused as unbound — or a take does not, so one reply can be answered twice.
+Both are reachable by a peer that controls when replies arrive.
+**Likely owner:** `sdk_python.correlation_lifecycle`. It was tempting to register
+`test_take_consumes_the_outstanding_request` there alone, as the mechanism of its
+outstanding-entry clause, and that is exactly the half-registration ADR-069 D2 is about: the
+proposition is the SPLIT, and half of it is not a weaker version of it but a different claim.
+The proxy side holds the same proposition whole —
+`proxy.continuation_correlation_store` registers
+`peek_does_not_consume_and_consume_is_one_shot` as one control — which is the form this
+should take.
 **Root relationship.** Under THM-0094.
 **Severity:** `high`.
 

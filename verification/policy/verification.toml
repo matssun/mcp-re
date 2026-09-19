@@ -4348,6 +4348,19 @@ tested_symbols = [
   # ADR-MCPRE-069 `register`: the budget is checked BEFORE the handler runs, so a call that
   # has spent its continuation budget is not prompted for an answer it cannot send.
   "pytest#tests/test_transport_replay.py::test_the_continuation_round_ceiling_is_enforced_before_the_caller_is_asked",
+  # ADR-MCPRE-069 batch 5, `reattribute`. These three sit in `test_correlation.py` and are
+  # about the STORE's API, which is why nothing had claimed them and why the obvious home
+  # looked like `sdk_python.correlation_lifecycle`. It is not: that unit's statement is a
+  # WINDOW claim plus the store's unbound and duplicate refusals, and says nothing about a
+  # non-terminal reply. Each of these three answers a clause of THIS statement, verbatim.
+  #
+  # "a non-terminal one PAUSES it" — the open leg survives the elicitation.
+  "pytest#tests/test_correlation.py::TestInputRequiredAssociatesWithoutConsuming::test_an_elicitation_leaves_the_open_leg_outstanding",
+  # "ONLY a terminal verified reply resolves the call" — and it still can, afterwards.
+  "pytest#tests/test_correlation.py::TestInputRequiredAssociatesWithoutConsuming::test_the_open_leg_can_still_be_taken_by_the_terminal_answer",
+  # "its answer leg signs over the VERIFIED HANDLES of the leg before it" — the handles the
+  # store associated are the ones the answer leg receives, with nothing re-derived between.
+  "pytest#tests/test_correlation.py::TestInputRequiredAssociatesWithoutConsuming::test_the_handles_feed_straight_into_the_answer_leg",
 ]
 
 # C7. THE CORRECTED CLAIM. The predecessor root said "a reply binding to nothing outstanding,
@@ -4391,6 +4404,40 @@ tested_symbols = [
   "pytest#tests/test_transport_replay.py::test_an_unanswered_elicitation_leaves_no_correlation_entry_outstanding",
   "pytest#tests/test_transport.py::test_correlation_state_belongs_to_the_transport_not_the_config",
   "pytest#tests/test_transport.py::test_an_injected_clock_and_ttl_are_honoured",
+  # ADR-MCPRE-069 batch 5. `correlation.py` is in this unit's `paths` and its own test file
+  # was in no unit's battery: the ten above are all reached through `transport.py`, so the
+  # store's own API — where two of this statement's three clauses explicitly live — had no
+  # declared evidence at all.
+  #
+  # "answerable only inside the window it declared", at the owner. The inclusive boundary is
+  # registered beside the late refusal because a window that excluded its own deadline would
+  # satisfy the late half and refuse an answer that is in time.
+  "pytest#tests/test_correlation.py::TestFailsClosed::test_a_response_at_exactly_the_deadline_is_still_in_window",
+  # ... and the late refusal RETIRES the entry, which is this statement's second clause and
+  # not its first: a refusal that left the entry outstanding would satisfy the window claim
+  # and break the outstanding one.
+  "pytest#tests/test_correlation.py::TestFailsClosed::test_a_late_response_also_retires_the_entry",
+  "pytest#tests/test_correlation.py::TestReaping::test_a_reaped_request_cannot_later_be_answered",
+  # The window's PRECISION, in the other direction: reaping that dropped a live entry would
+  # make a request unanswerable inside the window it declared.
+  "pytest#tests/test_correlation.py::TestReaping::test_expire_before_drops_only_the_dead",
+  # "`CorrelationStore`'s unbound and duplicate refusals are properties of the store at its
+  # own API" — the clause that names the store's API as its subject, and the one the
+  # transport-only battery could not reach.
+  "pytest#tests/test_correlation.py::TestFailsClosed::test_recording_the_same_request_twice_is_rejected",
+  "pytest#tests/test_correlation.py::TestInputRequiredAssociatesWithoutConsuming::test_an_unbound_elicitation_is_rejected",
+  "pytest#tests/test_correlation.py::TestInputRequiredAssociatesWithoutConsuming::test_an_elicitation_for_an_answered_request_is_a_replay",
+  "pytest#tests/test_correlation.py::TestInputRequiredAssociatesWithoutConsuming::test_a_late_elicitation_is_rejected",
+  # "no remotely triggerable outcome leaves a correlation entry outstanding" is a
+  # BOUNDEDNESS claim; these are it, measured as boundedness rather than case by case, and
+  # in both directions so that pruning everything would fail the second.
+  "pytest#tests/test_correlation.py::TestTheStoreIsBounded::test_a_long_session_of_failed_exchanges_does_not_grow_the_store",
+  "pytest#tests/test_correlation.py::TestTheStoreIsBounded::test_consumed_ids_are_dropped_once_they_can_no_longer_answer_anything",
+  "pytest#tests/test_correlation.py::TestTheStoreIsBounded::test_pruning_keeps_ids_that_can_still_be_answered",
+  # NOT registered here, and each is recorded as a proposition instead: the peek/take split
+  # (NP-019), the entry as the request's audit record (NP-018), and three store-API
+  # robustness controls (ND-009). Three more are `sdk_python.continuation_drive`'s and are
+  # reattributed there rather than claimed by this window statement.
 ]
 
 # C8. IN THE ROOT'S CHAIN, and the reason is not freshness hygiene: a guessable nonce makes a
