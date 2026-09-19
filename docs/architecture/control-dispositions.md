@@ -1755,3 +1755,110 @@ posture into an unchosen one on the axis whose whole subject is what gets record
 **Likely owner:** none.
 **Severity:** `high`.
 
+---
+
+## The ingress and transport-binding plane — NP-073 through NP-078
+
+`mcp-re-proxy/src/transport/` holds 47 controls and no unit's `paths` name any of it. It is
+the hop in front of the proxy: the load-balancer assertion in two frozen formats, the
+transport binding between a channel peer and a request actor, the asserted-identity value,
+and the routing headers. Six propositions, split along what each one is ABOUT rather than by
+file — v1 and v2 share a proposition because they are two encodings of one claim, and the
+guarantee each format PUBLISHES is separated from the verification because it is a statement
+about what the deployment may say.
+
+## NP-073 — an ingress assertion binds to the request in hand
+
+**Controls:** `transport/ingress/v1.rs` (10), `transport/ingress/v2.rs` (14),
+`transport/ingress/mod.rs` (1), across both frozen formats.
+**Statement.** *An accepted ingress assertion carries a signature that verifies under a
+KNOWN key id, over a length-prefixed and unambiguous preimage, binds to the hash of the
+request in hand, is inside its window — stale and implausibly-future rejected, a future
+expiry accepted — and, on v2, names this audience and a trusted ingress identity; a
+tampered field, a malformed framing, a malformed identity shape, a malformed enum
+discriminant and a cross-request binding are each rejected; recorded-facts admission fails
+closed; the wire form round-trips through parse; and the two frozen formats have DISJOINT
+PREIMAGES.*
+**If false.** A peer replays one request's ingress assertion onto another — the
+cross-request arm — or an assertion signed for one audience is accepted by another
+deployment, and the proxy believes a hop it never verified. The disjoint-preimages clause is
+the cross-format version of the same attack: one format's signature must not verify as the
+other's.
+**Likely owner:** none. NP-033 is the CONFIGURATION side — attested ingress configured whole
+or not at all; this is the verification the configuration turns on.
+**Root relationship.** Under the peer-identity roots.
+**Severity:** `critical`.
+**"Length-prefixed and unambiguous" is a proposition about the preimage and not about the
+signature**, and it is registered here because it is what makes every other clause mean
+what it says: a preimage two different messages can produce makes a valid signature evidence
+for the wrong one.
+
+## NP-074 — each ingress format publishes the guarantee it actually gives
+
+**Controls:** `transport/ingress/v1.rs::lb_assertion_guarantee_is_not_end_to_end_mtls`,
+`transport/ingress/v2.rs::v2_guarantee_is_attested_delegation_not_end_to_end`.
+**Statement.** *The guarantee each ingress format publishes is what it gives: v1's LB
+assertion is not end-to-end mTLS, and v2's is attested delegation and not end-to-end.*
+**If false.** A deployment reads an ingress assertion as end-to-end channel evidence and
+stops requiring the thing that would have been end-to-end. This is NP-063's shape at a
+different layer — a mechanism publishing a guarantee it does not have — and it is separated
+from NP-073 because verification and publication are different authorities: an assertion can
+verify perfectly and still be described as more than it is.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-075 — the transport binding is exact match, and no policy can manufacture it
+
+**Controls:** `transport/mod.rs` (7).
+**Statement.** *The installable binding is EXACT MATCH; it binds a channel peer and a
+request actor that name ONE principal and refuses two different ones; an absent channel peer
+fails closed; a permissive policy cannot manufacture the binding fact; the composite actor
+id is NOT the binding coordinate; and a static provider yields its identity ignoring the
+request.*
+**If false.** The proxy treats a request as bound to the channel it arrived on when the two
+name different principals — the substitution the binding exists to prevent — or a permissive
+policy produces the binding fact without any correspondence being checked. "A permissive
+policy cannot MANUFACTURE the fact" is the seal clause: the fact is produced by the
+correspondence, not by the policy that decides whether it is required.
+**Likely owner:** none. `proxy.certificate_identity` owns what the INTERPRETER decides about
+a certificate field; this is what the binding does with the identity once interpreted, in
+`transport/`, which that unit does not measure.
+**Severity:** `critical`.
+
+## NP-076 — an asserted identity is a bounded, printable, non-empty value
+
+**Controls:** `transport/mod.rs` (4).
+**Statement.** *An asserted identity accepts a well-formed value and trims it, and rejects
+an empty one, an oversized one, and one carrying control characters.*
+**If false.** A peer-supplied identity carrying control characters reaches a log, an audit
+record or a comparison — and an unbounded one is a memory cost a peer chooses.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-077 — a routing header is well-formed and singular, or the request fails closed
+
+**Controls:** `transport/mod.rs` (6).
+**Statement.** *An absent routing header passes and a well-formed one passes; a duplicate, an
+empty and a malformed one each FAIL CLOSED; and request-header parsing skips the request
+line and is case-insensitive.*
+**If false.** Two routing headers disagree and the proxy picks one — the header-smuggling
+shape — or a malformed header is ignored rather than refused. The absent/present pair is what
+keeps "fails closed" from meaning "refuses everything".
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-078 — a certificate identity is readable only through its projections
+
+**Controls:** `transport/identity.rs` (2).
+**Statement.** *A certificate that does not carry the configured field yields NOTHING, and
+the projections are the only way to read an identity from one.*
+**If false.** A consumer reads a certificate field directly and gets an identity the
+interpreter would have refused — the fallback `proxy.certificate_identity` exists to make
+impossible, arriving through a second reader instead of through the interpreter.
+**Likely owner:** `proxy.certificate_identity` states exactly this (*no fallback to another
+field*) and `proxy.certificate_identity_authority_boundary` seals the pairing. Neither can
+claim these controls: both units' `paths` are `communication_assurance/*` files, and
+`transport/identity.rs` is in neither. The fifth mechanically impossible reattribution this
+campaign has measured.
+**Severity:** `critical`.
+

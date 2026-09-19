@@ -6112,3 +6112,443 @@ decision = "new-proposition"
 proposition = "NP-031"
 recorded = "2026-09-19"
 
+
+# ---------------------------------------------------------------------------
+# Batch 14 — the ingress and transport-binding plane, 2026-09-19
+# ---------------------------------------------------------------------------
+#
+# 47 controls, no unit's paths name any of `src/transport/`. Split by what each proposition
+# is ABOUT rather than by file: v1 and v2 share one, because they are two encodings of one
+# claim, and the guarantee each format PUBLISHES is separated from the verification because
+# an assertion can verify perfectly and still be described as more than it is.
+
+[[proposition]]
+id = "NP-073"
+title = "An ingress assertion binds to the request in hand"
+carrier = "mcp-re-proxy/src/transport/ingress"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "under the peer-identity roots"
+record = "docs/architecture/control-dispositions.md#np-073"
+
+[[proposition]]
+id = "NP-074"
+title = "Each ingress format publishes the guarantee it actually gives"
+carrier = "mcp-re-proxy/src/transport/ingress"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "under the peer-identity roots"
+record = "docs/architecture/control-dispositions.md#np-074"
+
+[[proposition]]
+id = "NP-075"
+title = "The transport binding is exact match, and no policy can manufacture it"
+carrier = "mcp-re-proxy/src/transport/mod.rs"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "under the peer-identity roots"
+record = "docs/architecture/control-dispositions.md#np-075"
+
+[[proposition]]
+id = "NP-076"
+title = "An asserted identity is a bounded, printable, non-empty value"
+carrier = "mcp-re-proxy/src/transport/mod.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "under the peer-identity roots"
+record = "docs/architecture/control-dispositions.md#np-076"
+
+[[proposition]]
+id = "NP-077"
+title = "A routing header is well-formed and singular, or the request fails closed"
+carrier = "mcp-re-proxy/src/transport/mod.rs"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "under the peer-identity roots"
+record = "docs/architecture/control-dispositions.md#np-077"
+
+[[proposition]]
+id = "NP-078"
+title = "A certificate identity is readable only through its projections"
+carrier = "mcp-re-proxy/src/transport/identity.rs"
+likely_owner = "proxy.certificate_identity states it and cannot claim controls outside communication_assurance"
+consequence = "critical"
+root_relationship = "under the peer-identity roots"
+record = "docs/architecture/control-dispositions.md#np-078"
+
+[[disposition]]
+id = "CD-12001"
+project = "mcp-re-proxy"
+control = "lib#transport::identity::tests::a_certificate_that_does_not_carry_the_configured_field_yields_nothing"
+decision = "new-proposition"
+proposition = "NP-078"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12002"
+project = "mcp-re-proxy"
+control = "lib#transport::identity::tests::the_projections_are_the_only_way_to_read_one"
+decision = "new-proposition"
+proposition = "NP-078"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12003"
+project = "mcp-re-proxy"
+control = "lib#transport::ingress::tests::the_two_frozen_formats_have_disjoint_preimages"
+decision = "new-proposition"
+proposition = "NP-073"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12004"
+project = "mcp-re-proxy"
+control = "lib#transport::ingress::v1::tests::lb_assertion_bad_signature_is_rejected"
+decision = "new-proposition"
+proposition = "NP-073"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12005"
+project = "mcp-re-proxy"
+control = "lib#transport::ingress::v1::tests::lb_assertion_bound_to_in_hand_request_is_accepted"
+decision = "new-proposition"
+proposition = "NP-073"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12006"
+project = "mcp-re-proxy"
+control = "lib#transport::ingress::v1::tests::lb_assertion_cross_request_is_rejected"
+decision = "new-proposition"
+proposition = "NP-073"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12007"
+project = "mcp-re-proxy"
+control = "lib#transport::ingress::v1::tests::lb_assertion_guarantee_is_not_end_to_end_mtls"
+decision = "new-proposition"
+proposition = "NP-074"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12008"
+project = "mcp-re-proxy"
+control = "lib#transport::ingress::v1::tests::lb_assertion_implausibly_future_is_rejected"
+decision = "new-proposition"
+proposition = "NP-073"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12009"
+project = "mcp-re-proxy"
+control = "lib#transport::ingress::v1::tests::lb_assertion_malformed_framing_is_rejected"
+decision = "new-proposition"
+proposition = "NP-073"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12010"
+project = "mcp-re-proxy"
+control = "lib#transport::ingress::v1::tests::lb_assertion_malformed_identity_shape_is_rejected"
+decision = "new-proposition"
+proposition = "NP-073"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12011"
+project = "mcp-re-proxy"
+control = "lib#transport::ingress::v1::tests::lb_assertion_signing_preimage_is_length_prefixed_and_unambiguous"
+decision = "new-proposition"
+proposition = "NP-073"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12012"
+project = "mcp-re-proxy"
+control = "lib#transport::ingress::v1::tests::lb_assertion_stale_is_rejected"
+decision = "new-proposition"
+proposition = "NP-073"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12013"
+project = "mcp-re-proxy"
+control = "lib#transport::ingress::v1::tests::lb_assertion_tampered_identity_breaks_signature"
+decision = "new-proposition"
+proposition = "NP-073"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12014"
+project = "mcp-re-proxy"
+control = "lib#transport::ingress::v1::tests::lb_assertion_unknown_key_id_is_rejected"
+decision = "new-proposition"
+proposition = "NP-073"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12015"
+project = "mcp-re-proxy"
+control = "lib#transport::ingress::v1::tests::lb_assertion_wrong_in_hand_hash_is_rejected"
+decision = "new-proposition"
+proposition = "NP-073"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12016"
+project = "mcp-re-proxy"
+control = "lib#transport::ingress::v2::tests::v2_audience_mismatch_is_rejected"
+decision = "new-proposition"
+proposition = "NP-073"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12017"
+project = "mcp-re-proxy"
+control = "lib#transport::ingress::v2::tests::v2_bad_signature_is_rejected"
+decision = "new-proposition"
+proposition = "NP-073"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12018"
+project = "mcp-re-proxy"
+control = "lib#transport::ingress::v2::tests::v2_cross_request_is_rejected"
+decision = "new-proposition"
+proposition = "NP-073"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12019"
+project = "mcp-re-proxy"
+control = "lib#transport::ingress::v2::tests::v2_expiry_is_enforced_but_future_expiry_is_accepted"
+decision = "new-proposition"
+proposition = "NP-073"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12020"
+project = "mcp-re-proxy"
+control = "lib#transport::ingress::v2::tests::v2_guarantee_is_attested_delegation_not_end_to_end"
+decision = "new-proposition"
+proposition = "NP-074"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12021"
+project = "mcp-re-proxy"
+control = "lib#transport::ingress::v2::tests::v2_malformed_enum_discriminant_is_rejected"
+decision = "new-proposition"
+proposition = "NP-073"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12022"
+project = "mcp-re-proxy"
+control = "lib#transport::ingress::v2::tests::v2_malformed_framing_is_rejected"
+decision = "new-proposition"
+proposition = "NP-073"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12023"
+project = "mcp-re-proxy"
+control = "lib#transport::ingress::v2::tests::v2_recorded_facts_admission_fails_closed"
+decision = "new-proposition"
+proposition = "NP-073"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12024"
+project = "mcp-re-proxy"
+control = "lib#transport::ingress::v2::tests::v2_signing_preimage_is_length_prefixed_and_unambiguous"
+decision = "new-proposition"
+proposition = "NP-073"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12025"
+project = "mcp-re-proxy"
+control = "lib#transport::ingress::v2::tests::v2_stale_and_future_are_rejected"
+decision = "new-proposition"
+proposition = "NP-073"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12026"
+project = "mcp-re-proxy"
+control = "lib#transport::ingress::v2::tests::v2_tampered_field_breaks_signature"
+decision = "new-proposition"
+proposition = "NP-073"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12027"
+project = "mcp-re-proxy"
+control = "lib#transport::ingress::v2::tests::v2_to_wire_round_trips_through_parse"
+decision = "new-proposition"
+proposition = "NP-073"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12028"
+project = "mcp-re-proxy"
+control = "lib#transport::ingress::v2::tests::v2_unknown_key_id_is_rejected"
+decision = "new-proposition"
+proposition = "NP-073"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12029"
+project = "mcp-re-proxy"
+control = "lib#transport::ingress::v2::tests::v2_untrusted_ingress_identity_is_rejected"
+decision = "new-proposition"
+proposition = "NP-073"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12030"
+project = "mcp-re-proxy"
+control = "lib#transport::ingress::v2::tests::v2_valid_assertion_is_accepted_and_records_facts"
+decision = "new-proposition"
+proposition = "NP-073"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12031"
+project = "mcp-re-proxy"
+control = "lib#transport::tests::a_permissive_policy_cannot_manufacture_the_binding_fact"
+decision = "new-proposition"
+proposition = "NP-075"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12032"
+project = "mcp-re-proxy"
+control = "lib#transport::tests::an_absent_channel_peer_fails_closed"
+decision = "new-proposition"
+proposition = "NP-075"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12033"
+project = "mcp-re-proxy"
+control = "lib#transport::tests::asserted_identity_accepts_a_well_formed_value_and_trims"
+decision = "new-proposition"
+proposition = "NP-076"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12034"
+project = "mcp-re-proxy"
+control = "lib#transport::tests::asserted_identity_rejects_control_characters"
+decision = "new-proposition"
+proposition = "NP-076"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12035"
+project = "mcp-re-proxy"
+control = "lib#transport::tests::asserted_identity_rejects_empty"
+decision = "new-proposition"
+proposition = "NP-076"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12036"
+project = "mcp-re-proxy"
+control = "lib#transport::tests::asserted_identity_rejects_oversized"
+decision = "new-proposition"
+proposition = "NP-076"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12037"
+project = "mcp-re-proxy"
+control = "lib#transport::tests::duplicate_routing_header_fails_closed"
+decision = "new-proposition"
+proposition = "NP-077"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12038"
+project = "mcp-re-proxy"
+control = "lib#transport::tests::empty_routing_header_fails_closed"
+decision = "new-proposition"
+proposition = "NP-077"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12039"
+project = "mcp-re-proxy"
+control = "lib#transport::tests::exact_match_binds_a_peer_and_a_request_actor_that_name_one_principal"
+decision = "new-proposition"
+proposition = "NP-075"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12040"
+project = "mcp-re-proxy"
+control = "lib#transport::tests::exact_match_refuses_two_different_principals"
+decision = "new-proposition"
+proposition = "NP-075"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12041"
+project = "mcp-re-proxy"
+control = "lib#transport::tests::malformed_routing_header_fails_closed"
+decision = "new-proposition"
+proposition = "NP-077"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12042"
+project = "mcp-re-proxy"
+control = "lib#transport::tests::request_headers_parse_skips_request_line_and_is_case_insensitive"
+decision = "new-proposition"
+proposition = "NP-077"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12043"
+project = "mcp-re-proxy"
+control = "lib#transport::tests::routing_headers_absent_pass"
+decision = "new-proposition"
+proposition = "NP-077"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12044"
+project = "mcp-re-proxy"
+control = "lib#transport::tests::routing_headers_well_formed_pass"
+decision = "new-proposition"
+proposition = "NP-077"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12045"
+project = "mcp-re-proxy"
+control = "lib#transport::tests::static_provider_yields_its_identity_ignoring_request"
+decision = "new-proposition"
+proposition = "NP-075"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12046"
+project = "mcp-re-proxy"
+control = "lib#transport::tests::the_composite_actor_id_is_not_the_binding_coordinate"
+decision = "new-proposition"
+proposition = "NP-075"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-12047"
+project = "mcp-re-proxy"
+control = "lib#transport::tests::the_installable_binding_is_exact_match"
+decision = "new-proposition"
+proposition = "NP-075"
+recorded = "2026-09-19"
+
