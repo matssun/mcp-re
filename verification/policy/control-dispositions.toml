@@ -7968,18 +7968,51 @@ recorded = "2026-09-19"
 # Batch 18 — the small crates, 2026-09-19
 # ---------------------------------------------------------------------------
 #
-# 76 controls outside mcp-re-proxy. Nine REGISTER (verification.toml); five are demo fixture
-# material (ND-013); the rest are eight propositions, three of them premises of everything
-# above them: the Ed25519 primitive, the encoding, and the Core staying pure.
+# 76 controls outside mcp-re-proxy. Fourteen REGISTER (verification.toml); five are demo
+# fixture material (ND-013); the Core's purity firewall is ND-007; the rest are the
+# propositions below, among them three premises of everything above them: the encoding, the
+# inverse of the time parser, and the accepting direction of the Ed25519 primitive.
+#
+# NP-106 is the split RR-002 C5 required. THM-0014 is a soundness conditional and contains
+# the FIVE refusals of `mcp-re-core/src/crypto.rs`; the other eight controls of the original
+# record state four further propositions, and each carries its own entry and packet rather
+# than riding into a theorem that does not claim it.
 
 [[proposition]]
 id = "NP-106"
-title = "The Core's Ed25519 primitive is exact and total"
+title = "The Ed25519 floor accepts the material it is supposed to accept"
 carrier = "mcp-re-core/src/crypto.rs"
 likely_owner = ""
 consequence = "critical"
 root_relationship = "a premise of the units above it"
 record = "docs/architecture/control-dispositions.md#np-106"
+
+[[proposition]]
+id = "NP-170"
+title = "Ed25519 signing is a deterministic function of seed and message"
+carrier = "mcp-re-core/src/crypto.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "a premise of the units above it"
+record = "docs/architecture/control-dispositions.md#np-170"
+
+[[proposition]]
+id = "NP-171"
+title = "The crypto primitive never invents an error variant: each failure renders as the one its own layer owns"
+carrier = "mcp-re-core/src/crypto.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "a premise of the units above it"
+record = "docs/architecture/control-dispositions.md#np-171"
+
+[[proposition]]
+id = "NP-172"
+title = "A verification key round-trips through its raw bytes and its Base64URL spelling"
+carrier = "mcp-re-core/src/crypto.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "a premise of the units above it"
+record = "docs/architecture/control-dispositions.md#np-172"
 
 [[proposition]]
 id = "NP-107"
@@ -7992,8 +8025,8 @@ record = "docs/architecture/control-dispositions.md#np-107"
 
 [[proposition]]
 id = "NP-108"
-title = "The error taxonomy is frozen, exhaustive and duplicate-free"
-carrier = "mcp-re-core/src/error.rs"
+title = "The profile-agnostic constants the RFC 9421 carrier stands on are frozen"
+carrier = "mcp-re-core/src/ids.rs"
 likely_owner = ""
 consequence = "critical"
 root_relationship = "a premise of the units above it"
@@ -8001,21 +8034,12 @@ record = "docs/architecture/control-dispositions.md#np-108"
 
 [[proposition]]
 id = "NP-109"
-title = "The admitted time era is bounded and its formatter is total"
+title = "The formatter inverts the parser across the admitted era, and the parser's fixed-width helper is total beyond the widths it is called with"
 carrier = "mcp-re-core/src/time/mod.rs"
 likely_owner = ""
 consequence = "high"
 root_relationship = "a premise of the units above it"
 record = "docs/architecture/control-dispositions.md#np-109"
-
-[[proposition]]
-id = "NP-110"
-title = "The Core stays pure"
-carrier = "mcp-re-core/tests/firewall_test.rs"
-likely_owner = ""
-consequence = "critical"
-root_relationship = "a premise of the units above it"
-record = "docs/architecture/control-dispositions.md#np-110"
 
 [[proposition]]
 id = "NP-111"
@@ -8049,7 +8073,7 @@ id = "CD-16001"
 project = "mcp-re-client"
 control = "bin/mcp-re-client#tests::the_posture_line_reports_the_bootstrap_the_floor_actually_has"
 decision = "new-proposition"
-proposition = "NP-171"
+proposition = "NP-174"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -8057,7 +8081,7 @@ id = "CD-16002"
 project = "mcp-re-client"
 control = "bin/mcp-re-client#tests::the_posture_line_reports_whether_the_floor_is_bounded_upward"
 decision = "new-proposition"
-proposition = "NP-171"
+proposition = "NP-174"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -8069,19 +8093,11 @@ proposition = "NP-106"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-16004"
-project = "mcp-re-core"
-control = "lib#crypto::tests::ensure_ed25519_alg_rejects_unknown_alg_with_supplied_error"
-decision = "new-proposition"
-proposition = "NP-106"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-16005"
 project = "mcp-re-core"
 control = "lib#crypto::tests::malformed_key_b64url_maps_to_actor_binding_failed"
 decision = "new-proposition"
-proposition = "NP-106"
+proposition = "NP-171"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -8089,15 +8105,7 @@ id = "CD-16006"
 project = "mcp-re-core"
 control = "lib#crypto::tests::malformed_key_bytes_map_to_actor_binding_failed"
 decision = "new-proposition"
-proposition = "NP-106"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-16007"
-project = "mcp-re-core"
-control = "lib#crypto::tests::malformed_signature_base64_fails"
-decision = "new-proposition"
-proposition = "NP-106"
+proposition = "NP-171"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -8113,7 +8121,7 @@ id = "CD-16009"
 project = "mcp-re-core"
 control = "lib#crypto::tests::response_variant_maps_to_response_sig_invalid"
 decision = "new-proposition"
-proposition = "NP-106"
+proposition = "NP-171"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -8129,15 +8137,7 @@ id = "CD-16011"
 project = "mcp-re-core"
 control = "lib#crypto::tests::signature_is_deterministic_for_fixed_seed"
 decision = "new-proposition"
-proposition = "NP-106"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-16012"
-project = "mcp-re-core"
-control = "lib#crypto::tests::tamper_preimage_fails"
-decision = "new-proposition"
-proposition = "NP-106"
+proposition = "NP-170"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -8145,23 +8145,7 @@ id = "CD-16013"
 project = "mcp-re-core"
 control = "lib#crypto::tests::verification_key_round_trips_bytes_and_b64url"
 decision = "new-proposition"
-proposition = "NP-106"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-16014"
-project = "mcp-re-core"
-control = "lib#crypto::tests::wrong_key_fails"
-decision = "new-proposition"
-proposition = "NP-106"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-16015"
-project = "mcp-re-core"
-control = "lib#crypto::tests::wrong_length_signature_fails"
-decision = "new-proposition"
-proposition = "NP-106"
+proposition = "NP-172"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -8218,86 +8202,6 @@ project = "mcp-re-core"
 control = "lib#encoding::tests::round_trip_arbitrary_bytes"
 decision = "new-proposition"
 proposition = "NP-107"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-16023"
-project = "mcp-re-core"
-control = "lib#error::all_errors_tests::all_errors_is_duplicate_free"
-decision = "new-proposition"
-proposition = "NP-108"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-16024"
-project = "mcp-re-core"
-control = "lib#error::all_errors_tests::all_wire_codes_is_exhaustive"
-decision = "new-proposition"
-proposition = "NP-108"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-16025"
-project = "mcp-re-core"
-control = "lib#error::tests::delegation_wire_strings"
-decision = "new-proposition"
-proposition = "NP-108"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-16026"
-project = "mcp-re-core"
-control = "lib#error::tests::draft02_binding_missing_is_distinct_from_draft01_hash_missing"
-decision = "new-proposition"
-proposition = "NP-108"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-16027"
-project = "mcp-re-core"
-control = "lib#error::tests::draft02_wire_strings"
-decision = "new-proposition"
-proposition = "NP-108"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-16028"
-project = "mcp-re-core"
-control = "lib#error::tests::errors_compare_by_value"
-decision = "new-proposition"
-proposition = "NP-108"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-16029"
-project = "mcp-re-core"
-control = "lib#error::tests::full_taxonomy_wire_strings"
-decision = "new-proposition"
-proposition = "NP-108"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-16030"
-project = "mcp-re-core"
-control = "lib#error::tests::http_profile_codes_are_distinct_from_the_folds_they_replace"
-decision = "new-proposition"
-proposition = "NP-108"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-16031"
-project = "mcp-re-core"
-control = "lib#error::tests::http_profile_signed_rejection_wire_strings"
-decision = "new-proposition"
-proposition = "NP-108"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-16032"
-project = "mcp-re-core"
-control = "lib#error::tests::renamed_and_kept_variants_render_exact_wire_strings"
-decision = "new-proposition"
-proposition = "NP-108"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -8489,37 +8393,13 @@ id = "CD-16056"
 project = "mcp-re-client"
 control = "lib#tests::the_nonce_clears_the_128_bit_emission_floor"
 decision = "new-proposition"
-proposition = "NP-172"
+proposition = "NP-175"
 recorded = "2026-09-19"
 
 [[disposition]]
 id = "CD-16057"
 project = "mcp-re-core"
 control = "lib#time::tests::admitted_era_round_trips_through_the_formatter"
-decision = "new-proposition"
-proposition = "NP-109"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-16058"
-project = "mcp-re-core"
-control = "lib#time::tests::boundary_a_five_digit_year_is_refused"
-decision = "new-proposition"
-proposition = "NP-109"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-16059"
-project = "mcp-re-core"
-control = "lib#time::tests::boundary_highest_admitted_instant"
-decision = "new-proposition"
-proposition = "NP-109"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-16060"
-project = "mcp-re-core"
-control = "lib#time::tests::boundary_lowest_admitted_instant"
 decision = "new-proposition"
 proposition = "NP-109"
 recorded = "2026-09-19"
@@ -8576,8 +8456,8 @@ recorded = "2026-09-19"
 id = "CD-16067"
 project = "mcp-re-core"
 control = "tests/firewall_test#mcp_re_core_stays_pure_no_networking_async_fs_or_upstack_dependencies"
-decision = "new-proposition"
-proposition = "NP-110"
+decision = "not-evidence"
+reason_family = "ND-007"
 recorded = "2026-09-19"
 
 
@@ -9226,7 +9106,7 @@ id = "CD-17063"
 project = "mcp-re-proxy"
 control = "lib#log_sink::tests::log_event_tags_match_the_brief"
 decision = "new-proposition"
-proposition = "NP-170"
+proposition = "NP-173"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -9538,7 +9418,7 @@ id = "CD-17102"
 project = "mcp-re-proxy"
 control = "lib#startup_posture::tests::one_startups_declarations_do_not_satisfy_another"
 decision = "new-proposition"
-proposition = "NP-173"
+proposition = "NP-176"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -9546,7 +9426,7 @@ id = "CD-17103"
 project = "mcp-re-proxy"
 control = "lib#startup_posture::tests::state_answers_enabled_without_parsing_the_line"
 decision = "new-proposition"
-proposition = "NP-173"
+proposition = "NP-176"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -14223,37 +14103,37 @@ proposition = "NP-169"
 recorded = "2026-09-19"
 
 [[proposition]]
-id = "NP-170"
+id = "NP-173"
 title = "Every inner-process log event renders under the brief's own tag"
 carrier = "mcp-re-proxy/src/log_sink.rs"
 likely_owner = ""
 consequence = "medium"
 root_relationship = "none — no theorem reaches the inner-event log vocabulary"
-record = "docs/architecture/control-dispositions.md#np-170"
+record = "docs/architecture/control-dispositions.md#np-173"
 
 [[proposition]]
-id = "NP-171"
+id = "NP-174"
 title = "The client posture line reports the floor the deployment actually has"
 carrier = "mcp-re-client/src/main.rs"
 likely_owner = ""
 consequence = "high"
 root_relationship = "a premise of the units above it"
-record = "docs/architecture/control-dispositions.md#np-171"
+record = "docs/architecture/control-dispositions.md#np-174"
 
 [[proposition]]
-id = "NP-172"
+id = "NP-175"
 title = "A client nonce clears the 128-bit emission floor"
 carrier = "mcp-re-client/src/lib.rs"
 likely_owner = ""
 consequence = "high"
 root_relationship = "a premise of the units above it"
-record = "docs/architecture/control-dispositions.md#np-172"
+record = "docs/architecture/control-dispositions.md#np-175"
 
 [[proposition]]
-id = "NP-173"
+id = "NP-176"
 title = "The startup posture state answers enabled without reparsing the line"
 carrier = "mcp-re-proxy/src/startup_posture.rs"
 likely_owner = "proxy.continuation_materialization — the file is already in its paths and five of its startup_posture symbols are already in its battery"
 consequence = "medium"
 root_relationship = "under THM-0096, whose scope narrows the declaration conjunct"
-record = "docs/architecture/control-dispositions.md#np-173"
+record = "docs/architecture/control-dispositions.md#np-176"

@@ -60,6 +60,20 @@ end to end, from authorities that already govern the campaign:
                            which job runs that script, or the umbrella `verify` that
                            contains it. The job's `name:` IS the check name GitHub reports.
 
+WHICH OF THOSE STEPS IS BOUND TO THE CANDIDATE, stated because a reader who assumes "all of
+them" would be wrong. The ESTATE is: `manifest_at(sha)` reads
+`verification/policy/verification.toml` out of the candidate commit, so which units a change
+affects and which lanes they require are the candidate's own facts. The LANE-TO-CHECK
+MAPPING is not: `verify.LANES` and `.github/workflows/*.yml` are read from the WORKING TREE,
+so a candidate that renames a lane, moves a lane's script, or renames the job that runs it is
+mapped through the tree's spelling of those names rather than its own. That gap is known and
+not closed here. Most of its shapes are conservative — a lane the tree cannot name, or whose
+script no workflow job invokes, raises `Undecidable` rather than resolving to nothing, and a
+job the tree names differently from the candidate reads as a MISSING check, which is
+NOT_READY. The shape that is not conservative is a disagreement about WHICH job runs a lane:
+where the tree maps a lane to the umbrella `verify` and the candidate has moved that lane
+out to a job of its own, a green umbrella satisfies a lane that job never measured.
+
 THE FOUR CONDITIONS, per required check. All four, or the check is not satisfied:
 
     the check EXISTS for this SHA
@@ -84,8 +98,10 @@ Both paths answer the same four conditions and the same three states. What diffe
 which checks are required, and the report says which authority it used.
 
 WHAT THIS DOES NOT PROVE: that the required lanes are the right ones (that is the manifest's
-claim), or that a passing lane measured what it says (that is the lane's). It proves that
-what the governing authority asks for has completed successfully at this exact commit.
+claim), that a passing lane measured what it says (that is the lane's), or that the lane
+names and job names it resolves through are the candidate's rather than the tree's. It
+proves that the checks the governing authority asks for, named as the working tree names
+them, have completed successfully at this exact commit.
 
 Run:  python3 scripts/merge_readiness_gate.py --sha <candidate>
       python3 scripts/merge_readiness_gate.py --pr 946
@@ -380,7 +396,11 @@ def manifest_at(sha: str) -> dict:
 
       * `git show` failing (no such commit, or a candidate carrying no registry at all)
         and unparsable TOML both raise `Undecidable` — the brief's fallback (b), which
-        costs nothing once every input comes from one commit;
+        costs nothing once the ESTATE comes from the candidate rather than the tree. Note
+        the scope: this binds which units and which lanes to the candidate. The
+        lane-to-check mapping (`verify.LANES`, `.github/workflows`) is still read from the
+        working tree, so "every input comes from one commit" is not yet true of the whole
+        verdict;
       * a `schema_version` this tooling does not implement is `Undecidable` for the same
         reason `load_verification` refuses it: the lane names would be read under a schema
         nobody here implements.
