@@ -3505,7 +3505,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://proxy/audit/refusal_emission"]
+evidence = [
+  "test://proxy/audit/refusal_emission",
+  "mutation://proxy/audit/refusal_emission",
+]
 # Measured at the ONE boundary rather than reason by reason: a battery enumerating refusal
 # causes would have to learn about the next one, and the failure mode of a stale enumeration
 # is a clean pass over an unrecorded refusal. The ordering member is the one that is easy to
@@ -4967,7 +4970,10 @@ paths = ["sdk/typescript/src/transport.ts"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://sdk_typescript/post_close_emission/nothing_is_signed_after_close"]
+evidence = [
+  "test://sdk_typescript/post_close_emission/nothing_is_signed_after_close",
+  "mutation://sdk_typescript/post_close_emission/nothing_is_signed_after_close",
+]
 tested_symbols = [
   "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > does not sign or POST a request still queued at the semaphore when close() lands",
   "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > says nothing about execution when close() aborts an in-flight exchange",
@@ -5834,7 +5840,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://proxy/audit/text_rendering"]
+evidence = [
+  "test://proxy/audit/text_rendering",
+  "mutation://proxy/audit/text_rendering",
+]
 # The anti-collision control is the one that carries the claim rather than a symptom of it:
 # an escape that mapped LF and the two characters `\n` to one image would pass every
 # "no newline in the output" assertion and still be non-injective, which is the difference
@@ -5877,7 +5886,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://proxy/transparency/capsule_anchor_registration_certainty"]
+evidence = [
+  "test://proxy/transparency/capsule_anchor_registration_certainty",
+  "mutation://proxy/transparency/capsule_anchor_registration_certainty",
+]
 # `wire.rs` carries no controls of its own — its vocabulary is exercised through the two
 # modules above, whose fixtures drive real request and response shapes. It is in `paths`
 # because a change to it changes what those controls measure; it is not cited, because
@@ -5908,7 +5920,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://proxy/transparency/scrapi_registration_certainty"]
+evidence = [
+  "test://proxy/transparency/scrapi_registration_certainty",
+  "mutation://proxy/transparency/scrapi_registration_certainty",
+]
 # The capsule-anchor leaf is deliberately NOT here. Two registration mechanisms with
 # different wire vocabularies and different fault algebras are two units: a union would
 # invent an exclusion the deployment does not have, and a peer differing on a leaf's own
@@ -7155,7 +7170,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://conformance/scitt/retained_corpus"]
+evidence = [
+  "test://conformance/scitt/retained_corpus",
+  "mutation://conformance/scitt/retained_corpus",
+]
 # The first control is the one #740 exists for. The other three are what keep it from being
 # a happy-path demonstration: a tampered byte and a truncation must stop corresponding, and
 # the committed bytes must be what this implementation emits TODAY rather than what it
@@ -7885,7 +7903,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://policy/authorization_taxonomy/frozen_tokens"]
+evidence = [
+  "test://policy/authorization_taxonomy/frozen_tokens",
+  "mutation://policy/authorization_taxonomy/frozen_tokens",
+]
 tested_symbols = [
   "lib#error::tests::every_variant_renders_its_exact_wire_token",
   "lib#error::tests::revoked_and_unavailable_are_distinct_tokens",
@@ -7909,7 +7930,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://client/binding_spec/refusal_projection"]
+evidence = [
+  "test://client/binding_spec/refusal_projection",
+  "mutation://client/binding_spec/refusal_projection",
+]
 tested_symbols = [
   "lib#binding_spec::refusal::tests::the_narrowing_reports_the_type_as_unsupported_in_this_form",
   "lib#binding_spec::refusal::tests::shape_refusals_report_a_malformed_binding",
@@ -8041,7 +8065,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://proxy/transparency/retained_record_content"]
+evidence = [
+  "test://proxy/transparency/retained_record_content",
+  "mutation://proxy/transparency/retained_record_content",
+]
 # The covered-set controls are the three ways a sender can make `signature-input` LOOK like
 # it names more than it does — a signature PARAMETER, a decoy dictionary MEMBER, and a
 # component's own PARAMETERS. The third was named in the module's own documentation and was
@@ -8081,7 +8108,10 @@ paths = ["mcp-re-proxy/src/transparency/attestation.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://proxy/transparency/evidence_attestation"]
+evidence = [
+  "test://proxy/transparency/evidence_attestation",
+  "mutation://proxy/transparency/evidence_attestation",
+]
 # The third member is the one R9-C103/C128 exist for. The self-check used to be SKIPPED for a
 # reconstruction that broke at hop 0, on the reasoning that such a record names no call. That
 # reasoning is right about the identity fields and wrong about the submission, which is
@@ -8115,7 +8145,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://proxy/remote_signer_call/quota_verdict_aws"]
+evidence = [
+  "test://proxy/remote_signer_call/quota_verdict_aws",
+  "mutation://proxy/remote_signer_call/quota_verdict_aws",
+]
 # The lane this arm is compiled by. Named rather than left to another lane: the module does
 # not exist in the default crate at all, so a plain `cargo test --workspace` compiles it to
 # ZERO tests and would report a green that measured nothing.
@@ -8196,7 +8229,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://proxy/remote_signer_call/quota_verdict_gcp"]
+evidence = [
+  "test://proxy/remote_signer_call/quota_verdict_gcp",
+  "mutation://proxy/remote_signer_call/quota_verdict_gcp",
+]
 test_features = ["gcp_kms_keysource"]
 # ONE control beyond the shared ones, deliberately. Everything the two arms share is measured
 # by the AWS unit with controls that are not `cfg`-gated and therefore run in this lane too;
@@ -8602,7 +8638,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://core/audit_vocabulary/frozen_reasons"]
+evidence = [
+  "test://core/audit_vocabulary/frozen_reasons",
+  "mutation://core/audit_vocabulary/frozen_reasons",
+]
 # The in-crate controls state the type property. The conformance guard is what makes it a
 # property of the TREE rather than of this file: it reads both sources from disk and fails on
 # any drift, including a producer elsewhere minting a token of its own.
@@ -8646,7 +8685,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://client/local_serving_pipeline/admitted_request"]
+evidence = [
+  "test://client/local_serving_pipeline/admitted_request",
+  "mutation://client/local_serving_pipeline/admitted_request",
+]
 # The panicking-worker control is the one an ordinary battery does not reach: a slot that a
 # panic leaks is a ceiling that ratchets down to zero over a process's life, which is a local
 # denial of service nothing reports.
@@ -8683,7 +8725,10 @@ paths = ["mcp-re-client/src/config/mod.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://client/deployment_config/declared_document"]
+evidence = [
+  "test://client/deployment_config/declared_document",
+  "mutation://client/deployment_config/declared_document",
+]
 # The binding controls are the sharp ones. A binding over a header the client never sends
 # commits the request to a digest of nothing; a DPoP binding that digests the value verbatim
 # rather than what the verifier digests produces evidence no verifier can reproduce; and a

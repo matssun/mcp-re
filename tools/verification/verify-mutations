@@ -73,7 +73,7 @@ EVIDENCE_STORE = evidence_store()
 
 REGISTRY = REPO_ROOT / "verification" / "policy" / "mutation-probes.toml"
 
-_OPTIONAL_PROBE_KEYS = {"note", "theorem"}
+_OPTIONAL_PROBE_KEYS = {"note", "theorem", "also"}
 
 _PROBE_KEYS = {
     "id",
@@ -85,7 +85,26 @@ _PROBE_KEYS = {
     "weakening",
     "expect_red",
     "note",
+    "also",
 }
+
+#: The keys an `also` entry carries: one further site of the SAME proposition.
+#:
+#: DEFENCE IN DEPTH IS WHY THIS EXISTS, and it is deliberately narrow. Where two or more
+#: independent sites each enforce the WHOLE proposition, removing any one of them leaves every
+#: declared control green -- so a one-anchor probe measures nothing and the lane reports the
+#: conjunct as unprotected, which is false. The weakening that falsifies such a proposition has
+#: to remove the COMPLETE carrying set, atomically.
+#:
+#: This is NOT a mutation language. There is no ordering, no conditional, no expression over
+#: sites: an `also` entry is another `(path, anchor, weakening)` triple held to exactly the same
+#: single-site rule as the primary one, and every site is applied before the battery runs and
+#: reverted after it. A probe using it states that these sites TOGETHER carry one conjunct.
+#:
+#: COMPOSITION MUST NOT USE IT. Where two checks each refuse a shape the other admits, they are
+#: two conjuncts and each takes its own probe -- weakening both at once would report one
+#: discharge for two propositions and hide which of them a battery covers.
+_ALSO_KEYS = {"path", "anchor", "weakening"}
 
 
 def load_probes() -> list[dict]:
@@ -115,6 +134,23 @@ def load_probes() -> list[dict]:
             raise ManifestError(
                 f"{where}: `expect_red` is empty. A probe that expects no control to fail "
                 f"asserts nothing; it would pass over an unprotected conjunct."
+            )
+        for position, also in enumerate(probe.get("also", [])):
+            at = f"{where} `also` #{position + 1}"
+            unknown = set(also) - _ALSO_KEYS
+            if unknown:
+                raise ManifestError(f"{at}: unknown key(s) {sorted(unknown)}")
+            absent = _ALSO_KEYS - set(also)
+            if absent:
+                raise ManifestError(f"{at}: missing required key(s) {sorted(absent)}")
+        sites = [(probe["path"], probe["anchor"])] + [
+            (also["path"], also["anchor"]) for also in probe.get("also", [])
+        ]
+        if len(set(sites)) != len(sites):
+            raise ManifestError(
+                f"{where}: two sites name the same (path, anchor). A probe that weakens one "
+                f"site twice weakens one site, and would report a compound falsifier over a "
+                f"carrying set it never removed."
             )
     return probes
 
@@ -584,26 +620,45 @@ def _env() -> dict:
     return dict(os.environ)
 
 
-def apply(tree: Path, probe: dict, where: str) -> str:
-    """Write the weakened file into the COPY, returning the original text.
+def apply(tree: Path, probe: dict, where: str) -> dict[str, str]:
+    """Write every weakened file into the COPY, returning each original text.
 
-    The anchor must identify exactly one site. Two matches is as much a failure as none:
+    Each anchor must identify exactly one site. Two matches is as much a failure as none:
     the lane could not say which check it broke, so whatever went red proves nothing about
     the conjunct named.
+
+    ALL OR NOTHING. A probe carrying `also` sites names a proposition that several sites each
+    enforce completely, so a partial application would leave a surviving carrier holding the
+    property and the battery would stay green over a weakening that was never finished. Every
+    site is validated BEFORE any file is written, and the caller reverts whatever this returns.
     """
-    target = tree / probe["path"]
-    if not target.is_file():
-        raise ManifestError(f"{where}: STALE — {probe['path']} does not exist")
-    text = target.read_text()
-    hits = text.count(probe["anchor"])
-    if hits != 1:
-        raise ManifestError(
-            f"{where}: STALE — the anchor matches {hits} site(s) in {probe['path']}, "
-            f"expected exactly 1. Re-adjudicate this probe against the current "
-            f"implementation; do NOT restore the old code to make it match."
-        )
-    target.write_text(text.replace(probe["anchor"], probe["weakening"], 1))
-    return text
+    sites = [(probe["path"], probe["anchor"], probe["weakening"])] + [
+        (also["path"], also["anchor"], also["weakening"]) for also in probe.get("also", [])
+    ]
+    originals: dict[str, str] = {}
+    weakened: dict[str, str] = {}
+    for path, anchor, weakening in sites:
+        target = tree / path
+        if not target.is_file():
+            raise ManifestError(f"{where}: STALE — {path} does not exist")
+        if path not in originals:
+            originals[path] = target.read_text()
+            weakened[path] = originals[path]
+        # AGAINST THE TEXT AS ALREADY WEAKENED, not against the original: two sites of one
+        # carrying set routinely live in ONE file, and applying each to a fresh copy of the
+        # original would keep only the last -- a compound probe that silently weakened one
+        # site while reporting that it had removed the set.
+        hits = weakened[path].count(anchor)
+        if hits != 1:
+            raise ManifestError(
+                f"{where}: STALE — an anchor matches {hits} site(s) in {path}, "
+                f"expected exactly 1. Re-adjudicate this probe against the current "
+                f"implementation; do NOT restore the old code to make it match."
+            )
+        weakened[path] = weakened[path].replace(anchor, weakening, 1)
+    for path, text in weakened.items():
+        (tree / path).write_text(text)
+    return originals
 
 
 #: The blueprint section that reproduces this registry's result for a reviewer.
@@ -788,7 +843,8 @@ def main() -> int:
                     ran, results = True, {}
                 results.update(run_gates(tree, gates))
             finally:
-                (tree / probe["path"]).write_text(original)
+                for path, text in original.items():
+                    (tree / path).write_text(text)
             if not ran:
                 print(
                     f"  FAIL {probe['id']}: the weakened tree did not COMPILE, so nothing "

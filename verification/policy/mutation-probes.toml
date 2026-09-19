@@ -7450,3 +7450,496 @@ must never degrade into the posture of a deployment that selected nothing. Recor
 pattern rather than a mechanism -- the three refusals live in three owners and each is
 separately falsifiable, which is the correct arrangement.
 """
+
+[[probe]]
+id = "M268-client-a-dpop-binding-digests-what-the-verifier-digests"
+unit = "client.deployment_config"
+theorem = "THM-0091"
+conjunct = "a DPoP binding digests what the verifier digests — the bearer token, not the whole header value"
+path = "mcp-re-client/src/config/mod.rs"
+anchor = """
+                        if binding.artifact_type == ArtifactType::OauthDpop {
+"""
+weakening = """
+                        if false {
+"""
+expect_red = [
+  "lib#config::tests::a_dpop_binding_digests_what_the_verifier_digests",
+]
+note = """
+TWO ENDS DIGESTING TWO DIFFERENT STRINGS IS A BINDING TO NOTHING, and the weakening produces
+exactly that: the client digests `"Bearer abc..."` while the verifier digests `abc...`, so
+every request carries an artifact binding that can never match. No signature breaks and no
+check fails locally -- the exchange is refused at the boundary as a binding mismatch, and the
+operator reads it as the peer disagreeing about their credential.
+
+THE OTHER ARM IS NOT A SECOND CARRIER, and the sibling control says which is which: a
+non-DPoP header binding digests the value VERBATIM, deliberately, because for those the whole
+header value is the artifact. One `if`, two artifact classes, and the weakening collapses the
+first into the second.
+"""
+
+[[probe]]
+id = "M269-proxy-the-covered-set-is-read-from-this-labels-member-only"
+unit = "proxy.retained_record_content"
+theorem = "THM-0091"
+conjunct = "a retained exchange contains exactly the headers its own signature base names — nothing can widen the covered set"
+path = "mcp-re-proxy/src/transparency/covered_set.rs"
+anchor = """
+        if name.trim() != label {
+            continue;
+        }
+"""
+weakening = """
+        let _ = label;
+"""
+expect_red = [
+  "lib#transparency::covered_set::tests::the_covered_set_is_read_from_this_labels_member_only",
+  "lib#transparency::covered_set::tests::a_decoy_dictionary_member_cannot_widen_the_covered_set",
+]
+note = """
+A DECOY LABEL VERIFIES EXACTLY AS IT WOULD WITHOUT IT, which is what makes this a retention
+proposition rather than a verification one. A peer can add a dictionary member under a label
+nothing verifies against; the signature over THIS label's components is unaffected, so the
+exchange is genuine either way. What changes is what gets RETAINED -- and a record built from
+the union of every member's component list retains headers the signature base never named.
+
+Retaining MORE is not harmless: a reconstruction re-verifies the record, and a header that was
+not covered arriving as though it were makes a valid hop unreproducible in one direction and
+over-claims coverage in the other. The unit's own sentence is "exactly the headers its own
+signature base names", and exactly is the whole of it.
+"""
+
+[[probe]]
+id = "M270-policy-revoked-and-unavailable-are-distinct-tokens"
+unit = "policy.authorization_taxonomy"
+theorem = "THM-0091"
+conjunct = "the split that keeps an unavailable revocation backend from being served as a revocation"
+path = "mcp-re-policy/src/error.rs"
+anchor = """
+            PolicyError::AuthorizationRevocationUnavailable => {
+                "mcp-re.authorization_revocation_unavailable"
+            }
+"""
+weakening = """
+            PolicyError::AuthorizationRevocationUnavailable => "mcp-re.authorization_revoked",
+"""
+expect_red = [
+  "lib#error::tests::revoked_and_unavailable_are_distinct_tokens",
+]
+note = """
+BOTH REFUSE THE CALL, WHICH IS WHY ONE TOKEN FOR BOTH LOOKS HARMLESS. `revoked` says an
+authority made a decision about this credential; `revocation_unavailable` says nobody could
+ask. Serving the first for the second tells an operator their credential was revoked when what
+actually happened is that their revocation backend is down -- and the two have opposite
+remediations: rotate the credential, or restore the service.
+
+The variant survives the weakening, so nothing internal collapses. Only the frozen vocabulary
+the caller branches on does, which is the whole of what this unit owns: ADR-MCPS-013's tokens
+and the sole authority over the mapping onto them.
+"""
+
+[[probe]]
+id = "M271-core-a-label-is-never-a-wire-token"
+unit = "core.audit_vocabulary"
+theorem = "THM-0091"
+conjunct = "the non-normative reason label is prose and never a wire token"
+path = "mcp-re-core/src/audit/reason_label.rs"
+anchor = """
+        McpReError::ReplayDetected => "Replay detected",
+"""
+weakening = """
+        McpReError::ReplayDetected => "mcp-re.replay_detected",
+"""
+expect_red = [
+  "lib#audit::reason_label::tests::a_label_is_never_a_wire_token",
+]
+note = """
+TWO VOCABULARIES OVER ONE VERDICT, and the record carries both on purpose: the frozen
+`mcp-re.*` token a caller branches on, and a human sentence for an operator reading the audit
+trail. A label that IS a token makes the record self-describing in the wrong direction -- a
+reader cannot tell which field they are looking at, and a pipeline keyed on the prose field
+starts matching wire vocabulary that was never promised to be stable there.
+
+The control quantifies over every variant rather than checking this one, which is why a single
+substituted arm takes it red: the rule is about the shape of the whole mapping.
+"""
+
+[[probe]]
+id = "M272-client-the-narrowing-is-not-a-shape-refusal"
+unit = "client.binding_spec_refusal"
+theorem = "THM-0091"
+conjunct = "the narrowing — an opaque provider asked to mint a pdp-decision binding — is refused as the type not being supported IN THIS FORM, not as a malformed spec"
+path = "mcp-re-client-core/src/core_projection.rs"
+anchor = """
+            | BindingSpecRefusal::DecisionFormIsNotThisArtifactType => {
+                McpReError::AuthorizationBindingTypeUnsupported
+            }
+"""
+weakening = """
+            | BindingSpecRefusal::DecisionFormIsNotThisArtifactType => {
+                McpReError::AuthorizationBindingMalformed
+            }
+"""
+expect_red = [
+  "lib#core_projection::tests::every_refusal_names_a_core_verdict",
+]
+note = """
+THE PROJECTION IS LOSSY ON PURPOSE, AND THIS IS WHERE IT MUST NOT BE. Five shape refusals all
+mean "the spec is not a legal authorization binding" and share one verdict; the narrowing means
+something else -- the artifact type is not supported IN THIS FORM -- and an opaque provider
+asked to mint a `pdp-decision` binding is half of a Mode-2 pair, not a malformed document. The
+weakening folds it into the shape bucket, so a caller is told their spec is broken when what is
+broken is the pairing they asked for.
+
+WHY THERE IS NO TABLE OF STRINGS BESIDE THIS. `wire_code` asks this projection which verdict a
+refusal IS and takes that verdict's token, because two statements of one mapping is how a
+renamed Core token leaves a carrier emitting the old spelling (ADR-MCPRE-066 Slice 2). So this
+match is the sole carrier of both facts, and the weakening reaches the wire token without
+touching any string.
+"""
+
+[[probe]]
+id = "M273-proxy-one-logical-audit-record-is-one-physical-record"
+unit = "proxy.audit_text_rendering"
+theorem = "THM-0091"
+conjunct = "every scalar is escaped into an image free of the record grammar's separators, and the escape is injective"
+path = "mcp-re-proxy/src/audit_record/scalar.rs"
+anchor = """
+            ' ' => out.push_str("\\\\s"),
+"""
+weakening = """
+            ' ' => out.push(' '),
+"""
+expect_red = [
+  "lib#audit_record::scalar::tests::every_scalar_round_trips",
+]
+note = """
+ONE LOGICAL RECORD MUST BE ONE PHYSICAL RECORD, and a space is a separator in this grammar. A
+scalar that renders a bare space splits its own line: a field value becomes two fields, or the
+record becomes two records, and a pipeline reading them gets a well-formed record that says
+something nobody wrote. Nothing later can undo it, because by then the bytes are the same bytes
+a legitimate two-field record would have produced.
+
+THE INJECTIVITY IS THE PROPERTY, not the escaping, which is why the round-trip control is what
+goes red: the inverse must recover exactly the value, and a scalar that passes a separator
+through has an image the inverse cannot tell from a different value's. `escape_scalar` is the
+ONE authority over this -- the module states it as an invariant, not as a convention -- and the
+verbatim control stays green under this weakening because a separator-free string still renders
+verbatim. That is the sibling conjunct, and it cannot see a separator being let through.
+"""
+
+[[probe]]
+id = "M274-proxy-a-shed-load-status-is-exhaustion-whatever-the-body-says"
+unit = "proxy.remote_signer_call_aws"
+theorem = "THM-0091"
+conjunct = "shed-load statuses are read first, ahead of the stated error name"
+path = "mcp-re-proxy/src/remote_signer_call/quota_signals.rs"
+anchor = """
+fn is_load_shedding_status(status: Option<u16>) -> bool {
+    matches!(status, Some(429) | Some(503))
+}
+"""
+weakening = """
+fn is_load_shedding_status(status: Option<u16>) -> bool {
+    matches!(status, Some(503))
+}
+"""
+expect_red = [
+  "lib#remote_signer_call::quota_signals::tests::a_shed_load_status_is_exhaustion_on_either_provider_whatever_the_body_says",
+]
+note = """
+THE STATUS IS THE ONLY FACT A SHED-LOAD ANSWER CARRIES. A 429 minted by a gateway in front of
+the service has no AWS `__type` and no Cloud KMS `error.status` -- there is no body to classify,
+because the service never saw the request. Reading the status FIRST is what lets the classifier
+answer at all; reading the body first would answer "states no quota" and arm nothing.
+
+The stated-name path is not a second carrier: it is what distinguishes one provider's
+exhaustion vocabulary from the other's, on answers the service itself produced. Two disjoint
+populations, one verdict -- composition, and the weakening drops half the status half.
+"""
+
+[[probe]]
+id = "M275-proxy-only-an-explicit-refusal-is-a-definitive-negative"
+unit = "proxy.scrapi_registration_leaf"
+theorem = "THM-0091"
+conjunct = "certainty is decided once — only an explicit client-error refusal is a definitive negative, and everything after the bytes went out is indeterminate"
+path = "mcp-re-proxy/src/transparency/auditor/registration/scrapi/fault.rs"
+anchor = """
+        Scrapi11Fault::MalformedResponse { phase, detail } => RegistrationError::Indeterminate(
+"""
+weakening = """
+        Scrapi11Fault::MalformedResponse { phase, detail } => RegistrationError::Refused(
+"""
+expect_red = [
+  "lib#transparency::auditor::registration::scrapi::tests::every_post_submission_fault_is_indeterminate",
+]
+note = """
+INDETERMINATE IS A WEAKER CLAIM THAN REFUSED, AND IT IS THE TRUE ONE. An answer this profile
+cannot read -- a receipt under a media type it does not parse, a 201 with an empty body -- says
+nothing about whether the service ACCEPTED the statement. The bytes went out; what came back was
+unreadable; the log may hold the record. The weakening asserts the convenient reading as a fact.
+
+What it costs is an operator sent to re-submit a record already registered: a transparency log
+with two entries for one call, which is a worse record than a missing one because nothing later
+can tell which is the duplicate. Only an explicit refusal and an explicit rate limit are
+definitive, because in both the service READ the submission and declined it.
+"""
+
+[[probe]]
+id = "M276-proxy-a-chained-cause-never-enters-the-body-a-classifier-reads"
+unit = "proxy.remote_signer_call_gcp"
+theorem = "THM-0091"
+conjunct = "the chained cause renders for an operator and never enters the body a classifier reads"
+path = "mcp-re-proxy/src/remote_signer_call/mod.rs"
+anchor = """
+    pub(crate) fn body(&self) -> Option<&str> {
+        match &self.outcome {
+            CallOutcome::Status(_, body) => Some(body),
+            CallOutcome::Rendered(_) | CallOutcome::Transport(_) => None,
+        }
+    }
+"""
+weakening = """
+    pub(crate) fn body(&self) -> Option<&str> {
+        match (&self.outcome, &self.after) {
+            (_, Some(cause)) => Some(cause),
+            (CallOutcome::Status(_, body), None) => Some(body),
+            (CallOutcome::Rendered(_) | CallOutcome::Transport(_), None) => None,
+        }
+    }
+"""
+expect_red = [
+  "lib#remote_signer_call::tests::a_chained_cause_renders_but_never_enters_the_body",
+]
+note = """
+PROSE WHERE A CLASSIFIER READS A SERVICE'S OWN WORDS. When a credential retry fails an operator
+needs BOTH halves -- the 401 that caused the retry, and the second failure -- and the obvious way
+to keep them is to append the cause to the body. That is exactly what this weakening does, and
+it puts an operator-facing sentence into the field `quota_signals` reads for a stated error
+name.
+
+The classifier looks for one provider's exhaustion vocabulary in the service's own answer. A
+chained cause is not that answer; a body that contains one can state a quota the service never
+stated, and the retry window arms on a sentence this process wrote about itself. So the cause
+travels ALONGSIDE, and `body` returns only what the service said.
+"""
+
+[[probe]]
+id = "M277-proxy-a-capsule-anchor-submission-that-never-went-out-is-indeterminate"
+unit = "proxy.capsule_anchor_registration_leaf"
+theorem = "THM-0091"
+conjunct = "what this operated service's answer MEANS — a submission that never went out is indeterminate, not a refusal"
+path = "mcp-re-proxy/src/transparency/auditor/registration/capsule_anchor/fault.rs"
+anchor = """
+        CapsuleAnchorFault::Transport { detail } => RegistrationError::Indeterminate(format!(
+"""
+weakening = """
+        CapsuleAnchorFault::Transport { detail } => RegistrationError::Refused(format!(
+"""
+expect_red = [
+  "lib#transparency::auditor::registration::capsule_anchor::tests::a_submission_that_never_went_out_is_indeterminate",
+]
+note = """
+A SECOND MECHANISM LEAF, NOT A CONFIGURATION OF THE FIRST, and this probe is why that split is
+load-bearing rather than tidy: capsule-anchor and SCRAPI answer the same question -- is this
+statement registered? -- through different contracts, and each decides certainty in its own
+code. M275 weakens SCRAPI's mapping and leaves this one green; this weakens capsule-anchor's and
+leaves SCRAPI's green. Two units, two falsifiers, because a fix to one would not reach the
+other.
+
+The conjunct itself is the conservative direction: a transport failure means the bytes may or
+may not have arrived, so reporting it as a refusal sends an operator to re-submit a record the
+service may already hold.
+"""
+
+[[probe]]
+id = "M278-client-the-in-flight-ceiling-refuses-before-a-worker-is-spawned"
+unit = "client.local_serving_pipeline"
+theorem = "THM-0091"
+conjunct = "an in-flight ceiling claimed BEFORE any worker is spawned, compared against the observed depth and nothing else"
+path = "mcp-re-client/src/serve/admission.rs"
+anchor = """
+    (claimed <= ceiling).then_some(slot)
+"""
+weakening = """
+    (claimed <= ceiling.saturating_add(1)).then_some(slot)
+"""
+expect_red = [
+  "lib#serve::admission::tests::a_zero_ceiling_admits_nothing",
+]
+note = """
+OFF BY ONE IS THE WHOLE WEAKENING, and it is chosen over deleting the comparison because the
+interesting failure is not "no ceiling" -- it is a ceiling that is not the number the operator
+set. The control that sees it is the ZERO one: a ceiling of zero must admit nothing, and under
+`ceiling + 1` it admits exactly one worker, so a deployment that turned local serving off by
+setting the ceiling to zero serves one request at a time instead.
+
+The comparison is saturating deliberately: the observed depth is compared against `ceiling` and
+nothing else, so the ceiling refuses where wrapping would admit unbounded workers at exactly
+the moment the ceiling exists to stop them. The slot's release on a refusal and on a panicking
+worker are sibling conjuncts with their own controls, and both stay green here -- this weakening
+admits one more worker, it does not leak a slot.
+"""
+
+[[probe]]
+id = "M279-proxy-each-emitter-asks-the-typed-cause-for-its-projections"
+unit = "proxy.refusal_audit_emission"
+theorem = "THM-0091"
+conjunct = "each emitter takes the typed cause and asks IT for its projections, rather than rendering one of its own"
+path = "mcp-re-proxy/src/http_profile_serve/receipt/audit_event.rs"
+anchor = """
+                cause.core_verdict().as_ref(),
+                cause.authorization_facet(authorization),
+"""
+weakening = """
+                cause.core_verdict().as_ref(),
+                cause.authorization_facet(None),
+"""
+expect_red = [
+  "tests/integration#refusal_audit_emission_test::each_emitter_records_the_typed_projections",
+]
+note = """
+THE TWO COORDINATES ARE NOT INTERCHANGEABLE, and the comment beside them says why: `None` for
+the Core verdict means Core reached NO verdict -- a policy did -- and that policy's token
+belongs in the authorization coordinate, never in Core's `reason`. The weakening passes `None` for the
+deployment's authorization facet instead of the one the exchange reached, so an authorization
+refusal reaches the record with the coordinate that names the deciding authority emptied: a
+refusal that happened, attributed to nobody.
+
+A RULE OVER SOURCE IS WHAT CAN SEE THIS, for the reason slice 20 recorded: the record is still
+written, still well-formed, and still says a refusal occurred. What it stops saying is which
+authority reached it -- and an audit record's whole job is to answer that.
+"""
+
+[[probe]]
+id = "M280-conformance-the-committed-corpus-is-what-this-implementation-emits"
+unit = "conformance.retained_corpus"
+theorem = "THM-0091"
+conjunct = "the committed bytes are compared against a fresh generation rather than trusted, and a tampered retained body no longer corresponds"
+path = "mcp-re-conformance/tests/vectors/scitt/retained/retained-hops.json"
+anchor = """
+          "sha-256=:CpSwyc8gK8crCz3K6Zp7XrzFubjZK3chS7T+rjLBlAs=:"
+"""
+weakening = """
+          "sha-256=:CpSwyc8gK8crCz3K6Zp7XrzFubjZK3chS7T+rjLBlAt=:"
+"""
+expect_red = [
+  "tests/scitt_retained_corpus_test#the_committed_bytes_are_the_ones_this_implementation_produces",
+]
+note = """
+THE CORPUS IS THE ARTIFACT, so the weakening edits a committed VECTOR rather than a source
+statement -- the only probe in this registry that does. A conformance corpus is a claim that
+these exact bytes are what the implementation emits and that they hold together as a record; a
+corpus nobody re-derives is a claim about bytes somebody once produced.
+
+One character of one Content-Digest is the whole mutation. It takes the regeneration control
+red because the committed bytes stop matching a fresh generation -- which is what makes the
+corpus a MEASUREMENT rather than a fixture, and what a reviewer of a regenerated diff is
+actually relying on.
+"""
+
+[[probe]]
+id = "M281-proxy-the-statement-is-issued-over-this-reconstruction"
+unit = "proxy.evidence_attestation"
+theorem = "THM-0091"
+conjunct = "the statement is issued over the reconstruction that is handed back with it, so an INCOMPLETE verdict cannot be discovered by decoding what was just published"
+path = "mcp-re-proxy/src/transparency/attestation.rs"
+anchor = """
+    let commitment = mcp_re_http_profile::scitt::EvidenceCommitment::from_reconstruction(
+        &reconstruction,
+        bindings_commitment.clone(),
+        verified_context_commitment.clone(),
+    );
+"""
+weakening = """
+    let commitment = mcp_re_http_profile::scitt::EvidenceCommitment::from_reconstruction(
+        &mcp_re_http_profile::reconstruct_chain(&[], verifier, expect, audit, is_revoked, now),
+        bindings_commitment.clone(),
+        verified_context_commitment.clone(),
+    );
+"""
+expect_red = [
+  "tests/integration_async#transparency_e2e_test::a_served_call_becomes_an_offline_verifiable_receipt",
+]
+note = """
+THE STATEMENT AND THE RECONSTRUCTION MUST BE ABOUT ONE CALL, and the weakening issues the
+statement over an EMPTY chain while everything downstream still holds the real one. The
+self-check catches it -- which is the point: `verify_retained_evidence` runs against the
+reconstruction that is handed back, so a statement committing to anything else cannot be
+published at all.
+
+WHY THE RECONSTRUCTION IS HANDED BACK is the other half. A caller that received only the
+statement would have to DECODE WHAT WAS JUST PUBLISHED to learn the verdict, and an INCOMPLETE
+one discovered that way is discovered after the record exists. Returning both makes the verdict
+available before anyone acts on the receipt.
+
+TWO EARLIER WEAKENINGS DID NOT MEASURE THIS. Exchanging `bindings_commitment` and
+`verified_context_commitment` is a NO-OP for this battery -- the e2e passes `None` for both --
+and restoring the old skip of the self-check did not compile. Slice 28 recorded the unit as open
+for exactly those two reasons; this probe attacks the reconstruction itself, which the declared
+controls do reach.
+"""
+
+[[probe]]
+id = "M282-typescript-nothing-is-signed-after-close"
+unit = "sdk_typescript.post_close_emission"
+theorem = "THM-0095"
+conjunct = "after close(), nothing further is signed or transmitted — a queued request is not signed or POSTed, and a continuation chain stops rather than signing a fresh answer leg"
+path = "sdk/typescript/src/transport.ts"
+anchor = """
+  #refuseIfClosed(): void {
+    if (this.#state !== TransportState.Open) {
+      throw new ConnectionClosed("the transport was closed");
+    }
+  }
+"""
+weakening = """
+  #refuseIfClosed(): void {
+    if (false) {
+      throw new ConnectionClosed("the transport was closed");
+    }
+  }
+"""
+also = [
+  { path = "sdk/typescript/src/transport.ts", anchor = """
+        if (this.#abort.signal.aborted) throw this.#abort.signal.reason;
+        const created = now();
+""", weakening = """
+        const created = now();
+""" },
+  { path = "sdk/typescript/src/transport.ts", anchor = """
+        if (this.#abort.signal.aborted) throw this.#abort.signal.reason;
+
+        const responses = await config.answerInputRequired({
+""", weakening = """
+        const responses = await config.answerInputRequired({
+""" },
+]
+expect_red = [
+  "vitest#test/transport.test.ts > McpReHttpTransport lifecycle > does not sign or POST a request still queued at the semaphore when close() lands",
+]
+note = """
+THE FIRST COMPOUND FALSIFIER IN THIS REGISTRY, and the reason it exists is a measurement rather
+than a preference. Three sites each enforce the WHOLE proposition on the paths a closed
+transport can still reach -- `#refuseIfClosed()` reading `#state`, and the two per-leg abort
+checks in the exchange -- so removing ANY ONE of them leaves every declared control green. The
+one-anchor schema reported the conjunct as unprotected, which was false: it was protected three
+times over, and the lane could not say so.
+
+DEFENCE IN DEPTH, NOT COMPOSITION, and the distinction decides which mechanism is correct. Each
+of these sites refuses the same thing -- work continuing after `close()`. Where two checks each
+refuse a shape the OTHER admits, they are two conjuncts and each takes its own probe; weakening
+both at once would report one discharge for two propositions.
+
+WHAT THE WEAKENING BUYS AN ATTACKER is what the module already documents: emitting a queued or
+continuing leg after `close()` hands the server a valid, fresh, correctly-signed request the
+caller believes it cancelled -- re-populating the correlation store and re-prompting a human
+through `answerInputRequired` after `onclose` has fired.
+
+THE ASM-0043 NOTE REMAINS. The per-leg checks read `this.#abort.signal.aborted`, the runtime
+semantic ASM-0043 was withdrawn to stop trusting; `#refuseIfClosed()` reads `#state`, an
+ordinary field this class assigns, which is the repair that let the premise be withdrawn. This
+probe measures the set as it stands. Ceasing to credit the weaker carrier is a REMEDIATION
+question about which sites should remain, not a falsifier question, and it is not answered here.
+"""

@@ -592,6 +592,57 @@ def test_every_declared_cargo_target_shape_is_runnable():
     assert "target_argv(" not in inspect.getsource(lane.run_battery)
 
 
+def test_a_compound_probe_applies_and_reverts_every_site_together():
+    """Defence in depth needs the COMPLETE carrying set removed, or it measures nothing.
+
+    Where several sites each enforce the whole proposition, weakening one leaves the others
+    holding the property and the lane reports the conjunct as unprotected -- which is false,
+    and is the one verdict this lane must never reach dishonestly.
+
+    All-or-nothing, and reverted whole: a partial application would leave a surviving carrier,
+    and a partial revert would leave the working tree's COPY weakened for every probe after it.
+    """
+    compound = [probe for probe in lane.load_probes() if probe.get("also")]
+    assert compound, "no probe uses the compound form; this control has nothing to measure"
+
+    body = inspect.getsource(lane.apply)
+    # The sites are validated BEFORE any file is written.
+    assert body.index("STALE") < body.index("write_text"), body
+    # And each further weakening is applied to the text as already weakened, so two sites in
+    # ONE file compound instead of the last one winning.
+    assert "weakened[path].count(anchor)" in body, body
+
+    with tempfile.TemporaryDirectory() as raw:
+        tree = Path(raw)
+        (tree / "src").mkdir()
+        (tree / "src/one.txt").write_text("alpha\nbeta\n")
+        probe = {
+            "path": "src/one.txt",
+            "anchor": "alpha\n",
+            "weakening": "ALPHA\n",
+            "also": [{"path": "src/one.txt", "anchor": "beta\n", "weakening": "BETA\n"}],
+        }
+        originals = lane.apply(tree, probe, "probe TEST")
+        assert (tree / "src/one.txt").read_text() == "ALPHA\nBETA\n", "both sites"
+        for path, text in originals.items():
+            (tree / path).write_text(text)
+        assert (tree / "src/one.txt").read_text() == "alpha\nbeta\n", "reverted whole"
+
+
+def test_a_compound_probe_may_not_name_one_site_twice():
+    """Weakening one site twice weakens one site.
+
+    A probe that did would report a compound falsifier over a carrying set it never removed --
+    the same dishonest green as a single-anchor probe against defence in depth, wearing the
+    mechanism built to refuse it.
+    """
+    for probe in lane.load_probes():
+        sites = [(probe["path"], probe["anchor"])] + [
+            (also["path"], also["anchor"]) for also in probe.get("also", [])
+        ]
+        assert len(set(sites)) == len(sites), probe["id"]
+
+
 def test_the_battery_runs_through_the_same_seam_as_the_test_lane():
     """A control green in the test lane and unrunnable in this one would be two answers
     about one declared symbol. Both resolve the command and the report through
