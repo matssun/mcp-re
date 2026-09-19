@@ -844,3 +844,94 @@ alternate-constructors = "not a construction route: this probe attacks mutation.
 generated-or-deserialization = "no derive or macro generates a setter; the only derive is `Debug`"
 test-only-construction = "the owner's tests mutate only through `apply`. A `#[cfg(test)] pub(crate) fn set_state` would be a mutator even though it never runs in production, because the compiler would admit the assignment"
 
+
+# --- client.delegated_trust_pairing_seal -----------------------------------------------
+#
+# ADR-MCPRE-069 §2.1's own named instance. `delegated_trust/mod.rs` documents the seal in
+# two ```compile_fail examples and says, in its own words, that "two doors had to close, not
+# one". Neither example is evidence on the pinned stable toolchain: rustdoc checks an
+# expected-error-code annotation only on nightly, so an example that fails to compile for a
+# renamed import passes exactly as one refused by the boundary does. These two probes
+# compile the identical constructions themselves and require the rustc code each door earns
+# — `E0599` for the withdrawn resolver, `E0624` for the `pub(crate)` lifecycle lookup — so
+# the documented case and the measured one are the same case.
+#
+# Both are `crate-boundary-compile-fail` and not in-crate, because the authority this seal
+# binds is a DOWNSTREAM CONSUMER: the caller who would compose a resolver beside a
+# revocation source of its own. `resolve_root` is deliberately reachable inside
+# `mcp-re-client-core` — `resolve_issuer` calls it — so an in-crate probe would witness a
+# boundary this claim does not assert.
+
+[[probe]]
+id = "S26"
+unit = "client.delegated_trust_pairing_seal"
+kind = "crate-boundary-compile-fail"
+package = "mcp-re-client-core"
+invariant = "a downstream consumer cannot obtain a response resolver from a TrustedIssuerSet, so there is no resolution half to pair with a foreign or empty revocation source"
+doc_path = "mcp-re-client-core/src/delegated_trust/mod.rs"
+doc_item = "doc#delegated_trust::DelegatedResponseTrust"
+insertion_path = "mcp-re-client-core/tests/structural_probe_s26.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0599"
+construction = """
+// ADR-MCPRE-068 structural probe S26. Injected into a scratch copy by verify-structural;
+// this file never exists in the working tree.
+use mcp_re_client_core::TrustedIssuerSet;
+
+pub fn hostile(set: &TrustedIssuerSet) {
+    let _resolver = set.response_resolver(0); // STRUCTURAL-PROBE-SITE
+}
+"""
+note = """
+THE FIRST DOOR. Before MCPRE-172 a caller derived a resolver from the set and passed it to
+the verifier beside an unrelated — or empty — revocation source, and a delegated credential
+beneath a root THAT SAME SET MARKS REVOKED verified. Nothing indicated the revocation was
+inert.
+
+`E0599` and not `E0603`: the method does not exist to be made private, and accepting either
+code would let a `response_resolver` reintroduced as `pub(crate)` pass this probe. A
+reintroduction under any visibility is the finding, and the two codes are how the lane can
+tell which one happened.
+"""
+[probe.producer_paths]
+module-tree-visibility = "the probe is an integration test, which cargo compiles as a separate crate linking the library, so it sees exactly the public surface a downstream consumer sees — the authority this seal binds"
+alternate-constructors = "there is no other route to a resolver: `TrustedIssuerSet` exposes `new`, `with_current`, `with_retired`, `revoke`, `with_manifest_expiry`, `manifest_expires_at`, `is_expired` and `trusts`, none of which returns a closure, a function pointer or a resolver value. The one public resolution entry point is the `DelegatedResponseTrust::resolve_issuer` impl, which is the PAIRED answer and consults revocation itself"
+generated-or-deserialization = "`TrustedIssuerSet` derives no Serialize or Deserialize and no macro generates an accessor; a resolver cannot be decoded out of a document or synthesised by a derive"
+test-only-construction = "a downstream crate's test code sees the same public surface as its production code, so the probe's own placement in `tests/` IS the test-only route, attacked rather than exempted. The owner's own `#[cfg(test)]` modules add no test-gated resolver accessor — a `#[cfg(test)] pub fn response_resolver` would be a producer even though it never runs in production, because the compiler would admit the call"
+
+[[probe]]
+id = "S27"
+unit = "client.delegated_trust_pairing_seal"
+kind = "crate-boundary-compile-fail"
+package = "mcp-re-client-core"
+invariant = "a downstream consumer cannot reach the raw lifecycle lookup that returns a revoked root's actor, so the withdrawn pairing cannot be rebuilt through CompositeResponseTrust"
+doc_path = "mcp-re-client-core/src/delegated_trust/mod.rs"
+doc_item = "doc#delegated_trust::DelegatedResponseTrust"
+insertion_path = "mcp-re-client-core/tests/structural_probe_s27.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0624"
+construction = """
+// ADR-MCPRE-068 structural probe S27. Injected into a scratch copy by verify-structural;
+// this file never exists in the working tree.
+use mcp_re_client_core::TrustedIssuerSet;
+
+pub fn hostile(set: &TrustedIssuerSet) {
+    let _actor = set.resolve_root("some-kid", 0); // STRUCTURAL-PROBE-SITE
+}
+"""
+note = """
+THE SECOND DOOR, and the reason the file says two had to close. Withdrawing
+`response_resolver` alone leaves `resolve_root` — which answers ROTATION, not revocation, and
+hands back the actor for a root the set marks revoked. A consumer holding it writes four
+lines of closure and has the withdrawn pairing back, composed through
+`CompositeResponseTrust` beside an empty `StaticRevocationList`, with every type checking.
+
+`E0624` and not `E0599`: the method EXISTS and is reachable inside the crate, because
+`resolve_issuer` is built on it. What this probe attacks is the visibility, and a code that
+did not distinguish the two would report a RENAMED `resolve_root` as a closed boundary.
+"""
+[probe.producer_paths]
+module-tree-visibility = "`resolve_root` is `pub(crate)` on a `pub` type in a private module re-exported by `lib.rs`. `pub(crate)` binds every consumer outside this crate and none inside it, which is exactly the authority split the claim makes — so the probe is placed outside, where the binding is real. Inside the crate the call is legal and is meant to be: `resolve_issuer` makes it"
+alternate-constructors = "the projection is attacked, not a construction. No public method of `TrustedIssuerSet` returns a `ResolvedActor` without consulting revocation: `trusts` returns a bool, `resolve_issuer` returns a `ResolverOutcome` that fails closed on a revoked issuer, and there is no `Deref`, `AsRef` or `Index` impl handing out the representation"
+generated-or-deserialization = "no derive or macro generates a public accessor for the lifecycle lookup, and the type derives no Deserialize that could rebuild the anchors a caller would otherwise read out"
+test-only-construction = "the probe's own placement in `tests/` is the downstream test-code route, which sees the same `pub(crate)` boundary as downstream production code. The owner's `#[cfg(test)]` modules add no wider re-export; a `#[cfg(test)] pub fn` forwarding to `resolve_root` would be a producer even though it never runs in production, because the compiler would admit the call"

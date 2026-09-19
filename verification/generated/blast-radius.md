@@ -28,6 +28,7 @@ attestations this view cannot see.
 | unit://client.bind_scope_sole_producer | source, contracts or evidence | THM-0091 | _no consumer_ |
 | unit://client.binding_spec_refusal | source, contracts or evidence | THM-0111 | _no consumer_ |
 | unit://client.caller_shape_admission | source, contracts or evidence | THM-0091 | _no consumer_ |
+| unit://client.delegated_trust_pairing_seal | source, contracts or evidence | THM-0057 | _no consumer_ |
 | unit://client.delegation_policy_seal | source, contracts or evidence | THM-0060 | _no consumer_ |
 | unit://client.deployment_config | source, contracts or evidence | THM-0124 | _no consumer_ |
 | unit://client.execution_contract | source, contracts or evidence | THM-0061 | _no consumer_ |
@@ -35,7 +36,9 @@ attestations this view cannot see.
 | unit://client.local_request_surface | source, contracts or evidence | THM-0091 | _no consumer_ |
 | unit://client.local_serving_pipeline | source, contracts or evidence | THM-0123 | _no consumer_ |
 | unit://client.manifest_floor | source, contracts or evidence | THM-0121 | _no consumer_ |
+| unit://client.proxy_reply_disposition | source, contracts or evidence | THM-0061 | _no consumer_ |
 | unit://client.proxy_request_correspondence | source, contracts or evidence | THM-0084 | _no consumer_ |
+| unit://client.receipt_contract_carriage | source, contracts or evidence | THM-0061 | _no consumer_ |
 | unit://client.request_construction | source, contracts or evidence | THM-0125 | _no consumer_ |
 | unit://client.response_binding_disposition | source, contracts or evidence | THM-0059, THM-0076 | _no consumer_ |
 | unit://client.response_signer_authorization | source, contracts or evidence | THM-0058, THM-0076 | _no consumer_ |

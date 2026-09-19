@@ -94,11 +94,11 @@ any of them is closed.
 | THM-0054 | Every production listener denies unknown client revocation status | proxy.client_certificate_posture | unit://proxy.client_certificate_posture | live |
 | THM-0055 | The keyid derivation introduces no collisions of its own | http_profile.keyid | unit://http_profile.keyid | live |
 | THM-0056 | The posture that claims nothing is produced only where no policy is configured | proxy.authorization_posture | unit://proxy.authorization_posture | live |
-| THM-0057 | A client's trust anchors are the ones the current signed manifest published | client.trust_manifest_lifecycle | unit://client.trust_manifest_lifecycle | live |
+| THM-0057 | A client's trust anchors are the ones the current signed manifest published | client.trust_manifest_lifecycle | unit://client.delegated_trust_pairing_seal, unit://client.trust_manifest_lifecycle | live |
 | THM-0058 | A client accepts a response only under a signer its trust configuration authorizes | client.response_signer_authorization | unit://client.response_signer_authorization, unit://client.trust_manifest_lifecycle | live |
 | THM-0059 | An unbound receipt is never a success and never another request's answer | client.response_binding_disposition | unit://client.response_binding_disposition | live |
 | THM-0060 | The client's clock skew is bounded at construction and read once | client.delegation_policy_seal | unit://client.delegation_policy_seal | live |
-| THM-0061 | A receipt that says nothing is not a receipt that says nothing ran | client.execution_contract | unit://client.execution_contract | live |
+| THM-0061 | A receipt that says nothing is not a receipt that says nothing ran | client.execution_contract | unit://client.execution_contract, unit://client.proxy_reply_disposition, unit://client.receipt_contract_carriage | live |
 | THM-0062 | A response-signing credential exists only while a valid delegated key does | proxy.delegated_signing_credential | unit://proxy.delegated_signing_credential | live |
 | THM-0063 | A signed response never advertises validity its credential does not authorize | proxy.response_signing | unit://proxy.delegated_signing_credential, unit://proxy.response_signing | live |
 | THM-0064 | A non-exporting custody selection keeps the private key off this process | proxy.custody_exposure | unit://proxy.custody_exposure, unit://proxy.custody_exposure_sole_producer | live |
