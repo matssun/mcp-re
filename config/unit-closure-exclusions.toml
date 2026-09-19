@@ -83,18 +83,6 @@ baseline_sha = "7e184961"
 status = "unreviewed"
 
 [[exclusion]]
-path = "mcp-re-proxy/src/config_state/validation/machine_violations.rs"
-rule = "UC-1"
-baseline_sha = "7e184961"
-status = "unreviewed"
-
-[[exclusion]]
-path = "mcp-re-proxy/src/config_state/validation/recognition.rs"
-rule = "UC-1"
-baseline_sha = "7e184961"
-status = "unreviewed"
-
-[[exclusion]]
 path = "mcp-re-proxy/src/config_state/validation/refusable_machines.rs"
 rule = "UC-1"
 baseline_sha = "7e184961"

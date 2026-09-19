@@ -107,6 +107,7 @@ not an omission to hide.
 | proxy.certificate_identity_authority_boundary | V0 | _none_ | 0 |
 | proxy.channel_associated_credential | V0 | THM-0028 | 1 |
 | proxy.channel_associated_identity | V0 | THM-0029 | 1 |
+| proxy.channel_credential_custody_state | V0 | _none_ | 0 |
 | proxy.client_certificate_posture | V0 | THM-0054 | 0 |
 | proxy.client_credential_window | V0 | THM-0102 | 0 |
 | proxy.client_credential_window_sole_producer | V0 | _none_ | 0 |
@@ -127,6 +128,7 @@ not an omission to hide.
 | proxy.custody_exposure_sole_producer | V0 | _none_ | 0 |
 | proxy.delegated_resolver_materialization | V0 | THM-0027 | 1 |
 | proxy.delegated_resolver_materialization_sole_producer | V0 | _none_ | 0 |
+| proxy.delegated_signing_configuration_state | V0 | _none_ | 0 |
 | proxy.delegated_signing_credential | V0 | THM-0062 | 0 |
 | proxy.dispatch_commitment | V0 | THM-0045, THM-0051, THM-0052, THM-0074 | 0 |
 | proxy.ed25519_public_key | V0 | THM-0025 | 1 |
@@ -138,9 +140,11 @@ not an omission to hide.
 | proxy.exchange_relation | V0 | THM-0043, THM-0078 | 0 |
 | proxy.exchange_retry_consequence | V0 | THM-0044 | 0 |
 | proxy.exchange_transition_ownership | V0 | THM-0101 | 0 |
+| proxy.freshness_window_state | V0 | _none_ | 0 |
 | proxy.gcp_kms_adapter | V0 | _none_ | 0 |
 | proxy.kms_ed25519_seam | V0 | THM-0108 | 0 |
 | proxy.kms_endpoint_authority | V0 | THM-0089 | 0 |
+| proxy.legality_boundary_totality | V0 | _none_ | 0 |
 | proxy.listener_state_assembly | V0 | THM-0048 | 1 |
 | proxy.mechanism_verified_credential | V0 | THM-0030 | 1 |
 | proxy.online_ocsp_reachability | V0 | THM-0013 | 0 |
@@ -159,6 +163,7 @@ not an omission to hide.
 | proxy.remote_signer_call_gcp | V0 | _none_ | 0 |
 | proxy.remote_signer_egress_bound | V0 | _none_ | 0 |
 | proxy.replay_admission_gate | V0 | THM-0092 | 2 |
+| proxy.replay_configuration_state | V0 | _none_ | 0 |
 | proxy.replay_materialization | V0 | THM-0086 | 0 |
 | proxy.request_peer_binding | V0 | THM-0034 | 0 |
 | proxy.response_signing | V0 | THM-0063, THM-0075 | 0 |
@@ -167,11 +172,13 @@ not an omission to hide.
 | proxy.runtime_lifecycle | V0 | THM-0012 | 0 |
 | proxy.runtime_lifecycle_sole_mutator | V0 | _none_ | 0 |
 | proxy.scrapi_registration_leaf | V0 | _none_ | 0 |
+| proxy.server_identity_facts | V0 | _none_ | 0 |
 | proxy.serving_drain | V0 | THM-0104 | 0 |
 | proxy.serving_identity_provenance | V0 | THM-0080 | 0 |
 | proxy.serving_trust_seam | V0 | THM-0066, THM-0099 | 0 |
 | proxy.signing_credential_provenance | V0 | THM-0082 | 0 |
 | proxy.signing_role_separation | V0 | THM-0073 | 0 |
+| proxy.transport_binding_and_crl_state | V0 | _none_ | 0 |
 | proxy.trust_composition_root | V0 | THM-0038, THM-0067, THM-0077 | 0 |
 | proxy.trust_configuration_state_sole_producer | V0 | _none_ | 0 |
 | proxy.trust_document_interpretation | V0 | THM-0098 | 0 |

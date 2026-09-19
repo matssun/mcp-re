@@ -312,6 +312,18 @@ on:
       # probe registry rather than trusting this list.
       - "mcp-re-proxy/src/config_state/mod.rs"
       - "mcp-re-proxy/src/config_state/credential_currency_bound.rs"
+      # ADR-MCPRE-069 NP-049…NP-060: the layer-A configuration classifiers, each a unit
+      # under THM-0077 with a registered `mutation://` falsifier. Their source is a
+      # ReviewFingerprint component and the probes read it, so a change here must re-measure.
+      - "mcp-re-proxy/src/config_state/replay.rs"
+      - "mcp-re-proxy/src/config_state/delegated_signing.rs"
+      - "mcp-re-proxy/src/config_state/transport.rs"
+      - "mcp-re-proxy/src/config_state/channel_credential_custody.rs"
+      - "mcp-re-proxy/src/config_state/channel_key_material.rs"
+      - "mcp-re-proxy/src/config_state/freshness.rs"
+      - "mcp-re-proxy/src/config_state/server_identity.rs"
+      - "mcp-re-proxy/src/config_state/validation/machine_violations.rs"
+      - "mcp-re-proxy/src/config_state/validation/recognition.rs"
       # ADR-MCPRE-067 Phase 5 moved the online-revocation SELECTION out of a flat
       # `DeploymentRequest` field, so `proxy.online_ocsp_reachability`'s closure now names
       # the file holding `is_required()` — the predicate THM-0013's refusal reads.
@@ -620,6 +632,18 @@ on:
       # probe registry rather than trusting this list.
       - "mcp-re-proxy/src/config_state/mod.rs"
       - "mcp-re-proxy/src/config_state/credential_currency_bound.rs"
+      # ADR-MCPRE-069 NP-049…NP-060: the layer-A configuration classifiers, each a unit
+      # under THM-0077 with a registered `mutation://` falsifier. Their source is a
+      # ReviewFingerprint component and the probes read it, so a change here must re-measure.
+      - "mcp-re-proxy/src/config_state/replay.rs"
+      - "mcp-re-proxy/src/config_state/delegated_signing.rs"
+      - "mcp-re-proxy/src/config_state/transport.rs"
+      - "mcp-re-proxy/src/config_state/channel_credential_custody.rs"
+      - "mcp-re-proxy/src/config_state/channel_key_material.rs"
+      - "mcp-re-proxy/src/config_state/freshness.rs"
+      - "mcp-re-proxy/src/config_state/server_identity.rs"
+      - "mcp-re-proxy/src/config_state/validation/machine_violations.rs"
+      - "mcp-re-proxy/src/config_state/validation/recognition.rs"
       # ADR-MCPRE-067 Phase 5 moved the online-revocation SELECTION out of a flat
       # `DeploymentRequest` field, so `proxy.online_ocsp_reachability`'s closure now names
       # the file holding `is_required()` — the predicate THM-0013's refusal reads.

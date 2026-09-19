@@ -1460,51 +1460,6 @@ how the five owned ones are units. The decomposition was not chosen — it was r
 module boundary the implementation already drew, and the fact that the owned and unowned
 modules are indistinguishable in shape is the finding.
 
-## NP-049 — the replay configuration classifier
-
-**Controls:** `config_state/replay.rs`.
-**Statement.** *Every legal replay state form is classified and accepted; each state names every locator it cannot start without and the feature that could establish it; a shared store with no declared tier, a sub-strict tier, a wait-quorum tier that waits for no acknowledgement and no declared tier at all each name NO state; a locator belonging to the other state is refused; the planned store is the validated locator; the tier is DERIVED from the state rather than stored beside it; and the withdrawn alias names its replacement rather than being reinterpreted.*
-**If false.** A fleet starts on a replay store it cannot reach, or on a durability tier weaker than the one it recorded — and the tier stored beside the state is the shape that lets the two disagree. The withdrawn-alias clause is the sharper one: an alias silently reinterpreted is an operator's old configuration meaning something new.
-**Likely owner:** none. Its five sibling classifiers are units; this one is not.
-**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
-**Severity:** `critical`.
-
-## NP-050 — the delegated-signing configuration classifier
-
-**Controls:** `config_state/delegated_signing.rs`.
-**Statement.** *Every fact a delegated-signing request resolves is present and non-empty however it was produced — a whitespace-minted fact is refused like an empty one, and a one-character fact is not refused by the emptiness guard; a TTL above the ceiling, an overlap outside the rotor range and an overlap outside the TTL are refused or resolve no window; an absent trust epoch names no posture; an explicit value overrides the fallback; the issuer-kid fallback is required only where the resolution reads it; and the two defaults are resolved by this owner.*
-**If false.** A replica signs under a delegated credential whose window, rotor range or issuer identity was defaulted into existence rather than declared — and the whitespace arm is the one that has bitten elsewhere: a value that looks present and resolves to nothing.
-**Likely owner:** none. Its five sibling classifiers are units; this one is not.
-**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
-**Severity:** `critical`.
-
-## NP-051 — the transport, crl and identity-source classifier
-
-**Controls:** `config_state/transport.rs`.
-**Statement.** *Every legal CRL state form and both binding states are classified and accepted; a cadence with no list to re-read and a CRL list holding an empty path are refused; a ZERO cadence is an unbounded reloader and not a disabled one; only an EXACT transport binding becomes a state and every other kind is refused aloud; attested ingress is refused BY NAME rather than passed over; the deprecated identity source names no state; and the identity field names the state while the form decides whether there is one.*
-**If false.** A listener runs with a revocation list it never re-reads, or with a transport binding weaker than exact that was read as acceptable, or with an attested-ingress setting silently ignored. 'Refused aloud' and 'refused by name' are the clauses: a setting passed over is indistinguishable from one honoured.
-**Likely owner:** none. Its five sibling classifiers are units; this one is not.
-**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
-**Severity:** `critical`.
-
-## NP-052 — the channel credential custody classifier
-
-**Controls:** `config_state/channel_credential_custody.rs and channel_key_material.rs`.
-**Statement.** *Both roles answer the custody question with ONE semantic fact; a file key is the exported state and carries the key it exports; the exported state cannot start without that key; the delegated state does not want it; any backend's selector names the same state and records itself; a channel mechanism that does not exist drives the same consumer; and a key object projects its own locator and no neighbours.*
-**If false.** The two roles disagree about whether the channel credential is exported, so one plane protects material the other has already written to disk. 'One semantic fact' is the whole claim: two answers to a custody question is how a key ends up somewhere nobody meant.
-**Likely owner:** none. Its five sibling classifiers are units; this one is not.
-**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
-**Severity:** `critical`.
-
-## NP-053 — the freshness-window classifier
-
-**Controls:** `config_state/freshness.rs`.
-**Statement.** *A skew outside the bound resolves no window; an overflowing expiry saturates rather than wrapping; retention never ends before the verifier stops accepting; the two projections are derived from the same skew; and the public constructor validates too.*
-**If false.** An expiry that wraps is an unbounded acceptance window, and retention ending before the verifier stops accepting is evidence discarded while it is still being relied on. 'The public constructor validates too' is the seal arm: without it the invariant is remembered at one construction site.
-**Likely owner:** none. Its five sibling classifiers are units; this one is not.
-**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
-**Severity:** `high`.
-
 ## NP-054 — key-file access policy
 
 **Controls:** `config_state/key_file_access.rs` (5), and — added in batch 12 —
@@ -1532,9 +1487,24 @@ checked* are the same sentence about different objects.
 **Controls:** `config_state/server_identity.rs`.
 **Statement.** *A legal request yields ONE canonical identity; a missing coordinate leaves no identity and NAMES ITSELF; a request missing both coordinates reports both in one pass; a whitespace coordinate is empty and names itself; and the identity keyid follows the RESOLVED ISSUER rather than the server key id.*
 **If false.** The proxy signs under an identity assembled from a coordinate nobody supplied, or advertises a keyid that is not the one the issuer resolved — which is the identity-not-locator failure at the configuration layer.
-**Likely owner:** none. Its five sibling classifiers are units; this one is not.
+**Likely owner:** `proxy.server_identity_facts` owns the classifier half. The two `cli::identity_flags` controls are the argv half and it does not own them.
 **Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
 **Severity:** `critical`.
+
+**PARTIALLY DISCHARGED, 2026-09-19 (ADR-MCPRE-069 §5).** The five
+`config_state::server_identity::tests` controls are now claimed by `[[unit]]`
+`proxy.server_identity_facts`, attached to THM-0077's `supported_by`, with falsifier
+`M310-proxy-the-identity-keyid-follows-the-resolved-issuer` demonstrated red.
+
+**WHAT REMAINS, AND WHY IT DID NOT LAND.** `lib#cli::identity_flags::tests::a_complete_set_is_accepted`
+and `lib#cli::identity_flags::tests::every_coordinate_is_required_and_named_when_absent` state a
+different proposition — what the COMMAND LINE admits as a coordinate, not what the classifier
+resolves — and `mcp-re-proxy/src/cli/identity_flags.rs` is in no unit's `paths`. Declaring it in
+this unit would make one unit answer for two authorities, and
+`_manifest.py::_validate_in_crate_selectors` refuses the selector without it, so the two are
+mechanically exclusive. The argv boundary has no ratified theorem, so registering them is an
+R6 owner decision rather than a registry edit. The prepared packet is
+[`verification/reviews/packets/adr069-np-055-ratification-2026-09-19.md`](../../verification/reviews/packets/adr069-np-055-ratification-2026-09-19.md).
 
 ## NP-056 — the evidence-retention classifier
 
@@ -1577,9 +1547,31 @@ checked* are the same sentence about different objects.
 **Controls:** `config_state/validation/* , config_state/mod.rs and config_state/trust_document.rs`.
 **Statement.** *Every required coordinate is refused when empty HOWEVER the request was built, and a whitespace coordinate is refused like an empty one; a target URI that would disable the reconstruction check is refused; the inventory IS the file rather than a list beside it; a machine with no clauses contributes nothing to the violation list; the internal error names the machine that recognised nothing; a refusal names the flag; and the state carries what the planes would otherwise re-derive.*
 **If false.** A required coordinate reaches a plane empty because the request was built the other way, or an operator gets a refusal that does not say what to change. 'The inventory IS the file' is the anti-drift clause: a hand-maintained list of what must be validated is a list that goes stale.
-**Likely owner:** none. Its five sibling classifiers are units; this one is not.
+**Likely owner:** `proxy.legality_boundary_totality` owns the boundary's own clauses. It does not own the `config_state/mod.rs` control.
 **Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
 **Severity:** `high`.
+
+**PARTIALLY DISCHARGED, 2026-09-19 (ADR-MCPRE-069 §5).** Eight of the nine controls — the
+three `validation::required_coordinate_tests`, `validation::machine_violations`,
+`validation::recognition`, the two `validation::residue` and `trust_document::the_refusal_names_the_flag`
+— are now claimed by `[[unit]]` `proxy.legality_boundary_totality`, attached to THM-0077's
+`supported_by`, with falsifier `M311-proxy-a-scheme-less-target-uri-is-refused` demonstrated
+red. Two entries left `config/unit-closure-exclusions.toml` in the same change, because
+`validation/machine_violations.rs` and `validation/recognition.rs` are now inside a unit's
+closure.
+
+**WHAT REMAINS, AND WHY IT DID NOT LAND.**
+`lib#config_state::tests::the_state_carries_what_the_planes_would_otherwise_re_derive` lives in
+`mcp-re-proxy/src/config_state/mod.rs`, and `_manifest.py::_validate_in_crate_selectors` will
+not accept the selector unless that file is in the unit's `paths`. Declaring it makes
+`config_state/mod.rs` a MEASURED file, at which point `scripts/unit_closure_gate.py` flags each
+of its nineteen `mod` children as an unanswered neighbour — the gate says so in terms: *"walking
+out of a registered file was tried and is wrong — `config_state/mod.rs` is itself outside every
+closure, so demanding that its nineteen children be measured is a demand for COVERAGE, not a
+report of DRIFT"*. Six of those children have no unit in this slice's scope, and
+`config/unit-closure-exclusions.toml` may only shrink. So this one control lands when the rest
+of the `config_state` family does, and not before; it is not an owner decision and needs no
+ratification packet.
 
 ## NP-061 — a configuration machine decides only its own subject
 

@@ -7943,3 +7943,171 @@ ordinary field this class assigns, which is the repair that let the premise be w
 probe measures the set as it stands. Ceasing to credit the weaker carrier is a REMEDIATION
 question about which sites should remain, not a falsifier question, and it is not answered here.
 """
+
+# ---------------------------------------------------------------------------
+# The layer-A configuration classifiers — ADR-MCPRE-069 NP-049…NP-060
+# ---------------------------------------------------------------------------
+#
+# Each weakening below produces a deployment that STARTS and reports the posture the
+# operator asked for, while the thing that posture names is not in force. That is the shape
+# THM-0077 forbids: a weaker posture nobody selected, reached silently.
+
+[[probe]]
+id = "M305-proxy-a-wait-quorum-that-waits-for-nothing-names-no-state"
+unit = "proxy.replay_configuration_state"
+theorem = "THM-0077"
+conjunct = "a wait-quorum tier that waits for no acknowledgement names NO state — the parameters are checked before the tier is allowed to name one"
+path = "mcp-re-proxy/src/config_state/replay.rs"
+anchor = "    if quorum == 0 {\n"
+weakening = "    if false {\n"
+expect_red = [
+  "lib#config_state::replay::tests::a_wait_quorum_tier_that_waits_for_no_acknowledgement_names_no_state",
+]
+note = """
+`WAIT 0` IS THE `REDIS_ASYNC` POSTURE WEARING THE `REDIS_WAIT_QUORUM` NAME. Under the weakening
+the state classifies, the plan is built, and the startup audit line advertises a
+quorum-acknowledged replay guarantee — while no replica is asked to acknowledge anything, so an
+admitted nonce is not durable and the fail-closed claim is false. Nothing errors and no later
+stage can tell: `meets_strict_production_minimum` reads the variant, not its parameters.
+
+The sibling `timeout_ms == 0` clause is the same rule's second instance and stays green under
+this weakening, correctly — two degenerate values, one proposition, and one arm is enough to
+falsify it.
+"""
+
+[[probe]]
+id = "M306-proxy-a-delegated-ttl-above-the-ceiling-is-refused"
+unit = "proxy.delegated_signing_configuration_state"
+theorem = "THM-0077"
+conjunct = "a TTL above the ADR-MCPRE-052 ceiling is refused — the credential's exp is the only thing that expires it"
+path = "mcp-re-proxy/src/config_state/delegated_signing.rs"
+anchor = "    } else if requested.ttl_secs > MAX_DELEGATED_TTL_SECS {\n"
+weakening = "    } else if false {\n"
+expect_red = [
+  "lib#config_state::delegated_signing::tests::a_ttl_above_the_ceiling_is_refused",
+]
+note = """
+THE TTL IS THE EXPOSURE WINDOW OF AN EXFILTRATED HOT-PATH KEY, and it is the ONLY one: advancing
+the trust epoch does not reach a credential already issued, because no verifier reads the
+counter. Under the weakening a deployment configured with a week-long TTL starts, signs, and is
+described by every document and every audit line as using the SHORT-lived delegated credential
+the specs promise. The ceiling is the only place the two are distinguishable.
+
+The positivity arm above it stays green, correctly: it refuses a value that disables signing
+rather than one that extends it.
+"""
+
+[[probe]]
+id = "M307-proxy-attested-ingress-is-refused-by-name"
+unit = "proxy.transport_binding_and_crl_state"
+theorem = "THM-0077"
+conjunct = "attested ingress is refused BY NAME rather than passed over — an unsupported mode may not be silently reinterpreted"
+path = "mcp-re-proxy/src/config_state/transport.rs"
+anchor = "    matches!(form, PeerIdentityEvidenceRequest::AttestedIngress(_)).then(|| {\n"
+weakening = "    let _ = form;\n    false.then(|| {\n"
+expect_red = [
+  "lib#config_state::transport::tests::attested_ingress_is_refused_by_name_rather_than_passed_over",
+]
+note = """
+THE PROBE MEASURES A PRODUCT DECISION, NOT A MISSING FEATURE. Mode-C attested ingress is
+REFUSED, not removed (ADR-MCPRE-050; `docs/AGENT_INSTRUCTIONS.md` item 9): the capability is the
+shape a broker-mediated deployment needs and is expected to be designed, and until what the
+attestor may ASSERT is separated from what it may AUTHORIZE, admitting it would let attestation
+become authority by implication. This control is what makes the refusal load-bearing rather than
+remembered.
+
+A REFUSAL PASSED OVER IS INDISTINGUISHABLE FROM ONE HONOURED, which is what the weakening
+produces: the operator asked for attested ingress, the proxy starts, and the binding is
+whatever the rest of the classification happens to reach — a posture nobody selected.
+"""
+
+[[probe]]
+id = "M308-proxy-the-exported-channel-state-cannot-start-without-its-key"
+unit = "proxy.channel_credential_custody_state"
+theorem = "THM-0077"
+conjunct = "a file key IS the exported state and carries the key it exports — the exported state cannot start without it"
+path = "mcp-re-proxy/src/config_state/channel_credential_custody.rs"
+anchor = "        ChannelKeyRequest::ExportedFile(exported) if !exported.key_path.is_empty() => {\n"
+weakening = "        ChannelKeyRequest::ExportedFile(exported) if exported.key_path.is_empty() || true => {\n"
+expect_red = [
+  "lib#config_state::channel_credential_custody::tests::the_exported_state_cannot_start_without_the_key_it_exports",
+]
+note = """
+AN EMPTY PATH IS A PRESENT FIELD THAT NAMES NO FILE. Under the weakening the classifier returns
+an `Exported` state carrying `""`, the refusal that says `--tls-key is required` never fires,
+and the deployment reports the ProcessReadable exposure posture for a channel key that does not
+exist — so the failure arrives later, at the materializer, as a file error rather than as the
+configuration defect it is, and the custody projection lied in between.
+
+The guard is expressed as `|| true` rather than deleted so that the following
+`ChannelKeyRequest::ExportedFile(_)` arm stays reachable and the mutated tree compiles clean.
+"""
+
+[[probe]]
+id = "M309-proxy-a-skew-outside-the-bound-resolves-no-window"
+unit = "proxy.freshness_window_state"
+theorem = "THM-0077"
+conjunct = "a skew outside the §5.1 bound resolves NO window — construction itself validates, so possessing one means the skew was bounded"
+path = "mcp-re-proxy/src/config_state/freshness.rs"
+anchor = "        (0..=mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND)\n            .contains(&max_clock_skew_secs)\n"
+weakening = "        (i64::MIN..=i64::MAX)\n            .contains(&max_clock_skew_secs)\n"
+expect_red = [
+  "lib#config_state::freshness::tests::a_skew_outside_the_bound_resolves_no_window",
+  "lib#config_state::freshness::tests::the_public_constructor_validates_too",
+]
+note = """
+THE SKEW IS TWO MECHANISMS AT ONCE, which is why an unbounded one is not an operational
+annoyance. It is the tolerance the RFC 9421 verifier applies to `created`/`expires` AND the
+replay `retain_until` horizon, so a skew of a year is an acceptance window of a year over
+requests whose replay records are kept for exactly as long — the freshness gate stops bounding
+anything while both consumers still report that it does.
+
+BOTH CONTROLS ARE NAMED because the seal and the classifier are the same clause here: `new` is
+the only constructor and it performs the check, so weakening it removes the bound from every
+producer, the classifier and an embedding binary alike.
+"""
+
+[[probe]]
+id = "M310-proxy-the-identity-keyid-follows-the-resolved-issuer"
+unit = "proxy.server_identity_facts"
+theorem = "THM-0077"
+conjunct = "the identity keyid follows the RESOLVED ISSUER rather than the server key id — the coordinate is taken from its owner, not re-derived"
+path = "mcp-re-proxy/src/config_state/server_identity.rs"
+anchor = "                keyid: delegated.issuer_kid().to_string(),\n"
+weakening = "                keyid: config.server_key_id.clone(),\n"
+expect_red = [
+  "lib#config_state::server_identity::tests::the_identity_keyid_follows_the_resolved_issuer_not_the_server_key_id",
+]
+note = """
+THE WEAKENING IS THE SECOND DERIVATION THIS OWNER EXISTS TO REMOVE, and it agrees with the first
+in every deployment that does not set `--delegated-issuer-kid`. Where one IS set, the actor
+identity carries a keyid the delegated credential is not minted under, and `actor_id()` is a
+REPLAY-KEY COMPONENT: the deployment then names itself one way to a verifier resolving the
+credential and another way to the replay store, from one validated configuration.
+
+It is `config.server_key_id` rather than a literal deliberately — the plausible wrong answer,
+which is the one that survives review.
+"""
+
+[[probe]]
+id = "M311-proxy-a-scheme-less-target-uri-is-refused"
+unit = "proxy.legality_boundary_totality"
+theorem = "THM-0077"
+conjunct = "a target URI that would disable the request-target reconstruction check is refused at the boundary, however the request was built"
+path = "mcp-re-proxy/src/config_state/validation/residue.rs"
+anchor = "    if !uri.contains(\"://\") {\n"
+weakening = "    if false {\n"
+expect_red = [
+  "lib#config_state::validation::residue::tests::a_target_uri_that_would_disable_the_reconstruction_check_is_refused",
+]
+note = """
+A SCHEME-LESS TARGET DOES NOT WEAKEN THE RECONSTRUCTION CHECK, IT DISABLES IT — for every
+request, not for an edge case. An ingress fanning several paths into one process would then have
+its signatures verified over an `@target-uri` no request ever arrived at, and the audience/target
+binding stops binding this deployment's dispatch boundary.
+
+THE BOUNDARY IS THE PLACE, which is the conjunct this unit owns: `DeploymentRequest` has 76
+public fields, so a caller building one in code reaches the serving path without meeting a
+parser. The emptiness arm above stays green under this weakening, correctly — it refuses a
+different spelling of the same defect.
+"""
