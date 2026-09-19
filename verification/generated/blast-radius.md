@@ -161,6 +161,7 @@ attestations this view cannot see.
 | unit://proxy.exchange_relation | source, contracts or evidence | THM-0043, THM-0074, THM-0078 | _no consumer_ |
 | unit://proxy.exchange_retry_consequence | source, contracts or evidence | THM-0044 | _no consumer_ |
 | unit://proxy.exchange_transition_ownership | source, contracts or evidence | THM-0101 | _no consumer_ |
+| unit://proxy.fleet_topology_provenance | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.freshness_window_state | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.gcp_kms_adapter | source, contracts or evidence | THM-0116, THM-0117 | _no consumer_ |
 | unit://proxy.in_flight_limit_basis | source, contracts or evidence | THM-0077 | _no consumer_ |
@@ -189,6 +190,7 @@ attestations this view cannot see.
 | unit://proxy.replay_admission_gate | source, contracts or evidence | THM-0092 | _no consumer_ |
 | unit://proxy.replay_configuration_state | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.replay_materialization | source, contracts or evidence | THM-0086 | _no consumer_ |
+| unit://proxy.replay_tier_production_minimum | source, contracts or evidence | THM-0092 | _no consumer_ |
 | unit://proxy.request_peer_binding | source, contracts or evidence | THM-0034 | _no consumer_ |
 | unit://proxy.response_signing | source, contracts or evidence | THM-0063, THM-0075 | _no consumer_ |
 | unit://proxy.retained_record_content | source, contracts or evidence | THM-0112 | _no consumer_ |
@@ -198,10 +200,12 @@ attestations this view cannot see.
 | unit://proxy.runtime_lifecycle_sole_mutator | source, contracts or evidence | THM-0012 | _no consumer_ |
 | unit://proxy.scrapi_registration_leaf | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.server_identity_facts | source, contracts or evidence | THM-0077 | _no consumer_ |
+| unit://proxy.serving_capability_posture | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.serving_drain | source, contracts or evidence | THM-0104 | _no consumer_ |
 | unit://proxy.serving_identity_provenance | source, contracts or evidence | THM-0080 | _no consumer_ |
 | unit://proxy.serving_trust_seam | source, contracts or evidence | THM-0066, THM-0099 | _no consumer_ |
 | unit://proxy.signing_credential_provenance | source, contracts or evidence | THM-0082 | _no consumer_ |
+| unit://proxy.signing_plane_epoch_read_refusal | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.signing_role_separation | source, contracts or evidence | THM-0073 | _no consumer_ |
 | unit://proxy.startup_plan_legality | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.startup_plan_pool_ceiling | source, contracts or evidence | THM-0077 | _no consumer_ |

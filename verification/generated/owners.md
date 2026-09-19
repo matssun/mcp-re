@@ -157,6 +157,7 @@ not an omission to hide.
 | proxy.exchange_relation | V0 | THM-0043, THM-0078 | 0 |
 | proxy.exchange_retry_consequence | V0 | THM-0044 | 0 |
 | proxy.exchange_transition_ownership | V0 | THM-0101 | 0 |
+| proxy.fleet_topology_provenance | V0 | _none_ | 0 |
 | proxy.freshness_window_state | V0 | _none_ | 0 |
 | proxy.gcp_kms_adapter | V0 | _none_ | 0 |
 | proxy.in_flight_limit_basis | V0 | _none_ | 0 |
@@ -185,6 +186,7 @@ not an omission to hide.
 | proxy.replay_admission_gate | V0 | THM-0092 | 2 |
 | proxy.replay_configuration_state | V0 | _none_ | 0 |
 | proxy.replay_materialization | V0 | THM-0086 | 0 |
+| proxy.replay_tier_production_minimum | V0 | _none_ | 0 |
 | proxy.request_peer_binding | V0 | THM-0034 | 0 |
 | proxy.response_signing | V0 | THM-0063, THM-0075 | 0 |
 | proxy.retained_record_content | V0 | THM-0112 | 0 |
@@ -194,10 +196,12 @@ not an omission to hide.
 | proxy.runtime_lifecycle_sole_mutator | V0 | _none_ | 0 |
 | proxy.scrapi_registration_leaf | V0 | _none_ | 0 |
 | proxy.server_identity_facts | V0 | _none_ | 0 |
+| proxy.serving_capability_posture | V0 | _none_ | 0 |
 | proxy.serving_drain | V0 | THM-0104 | 0 |
 | proxy.serving_identity_provenance | V0 | THM-0080 | 0 |
 | proxy.serving_trust_seam | V0 | THM-0066, THM-0099 | 0 |
 | proxy.signing_credential_provenance | V0 | THM-0082 | 0 |
+| proxy.signing_plane_epoch_read_refusal | V0 | _none_ | 0 |
 | proxy.signing_role_separation | V0 | THM-0073 | 0 |
 | proxy.startup_plan_legality | V0 | _none_ | 0 |
 | proxy.startup_plan_pool_ceiling | V0 | _none_ | 0 |

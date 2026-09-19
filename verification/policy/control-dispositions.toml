@@ -8189,7 +8189,7 @@ record = "docs/architecture/control-dispositions.md#np-122"
 
 [[proposition]]
 id = "NP-123"
-title = "A serving capability is ON with an artifact or OFF with an explanation"
+title = "Every OFF posture line tells the operator what to do about it"
 carrier = "mcp-re-proxy/src/serving_capabilities.rs"
 likely_owner = ""
 consequence = "high"
@@ -8810,14 +8810,6 @@ proposition = "NP-121"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-17079"
-project = "mcp-re-proxy"
-control = "lib#replay_tier::tests::strict_production_minimum_is_wait_quorum_or_stronger"
-decision = "new-proposition"
-proposition = "NP-121"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-17080"
 project = "mcp-re-proxy"
 control = "lib#replay_tier::tests::tier_claim_ceiling_async_is_not_linearizable"
@@ -8842,49 +8834,9 @@ proposition = "NP-121"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-17083"
-project = "mcp-re-proxy"
-control = "lib#serving_capabilities::tests::an_on_posture_always_carries_an_artifact_and_an_off_posture_never_does"
-decision = "new-proposition"
-proposition = "NP-123"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-17084"
-project = "mcp-re-proxy"
-control = "lib#serving_capabilities::tests::an_unopenable_retention_directory_refuses_startup_naming_the_flag"
-decision = "new-proposition"
-proposition = "NP-123"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-17085"
 project = "mcp-re-proxy"
 control = "lib#serving_capabilities::tests::every_off_line_tells_the_operator_what_to_do_about_it"
-decision = "new-proposition"
-proposition = "NP-123"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-17086"
-project = "mcp-re-proxy"
-control = "lib#serving_capabilities::tests::evidence_retention_attaches_a_store_only_for_a_named_directory"
-decision = "new-proposition"
-proposition = "NP-123"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-17087"
-project = "mcp-re-proxy"
-control = "lib#serving_capabilities::tests::the_security_audit_posture_follows_the_classified_audit_state"
-decision = "new-proposition"
-proposition = "NP-123"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-17088"
-project = "mcp-re-proxy"
-control = "lib#serving_capabilities::tests::the_verified_context_carrier_is_attached_only_for_a_trusted_inner_channel"
 decision = "new-proposition"
 proposition = "NP-123"
 recorded = "2026-09-19"
@@ -9202,8 +9154,8 @@ record = "docs/architecture/control-dispositions.md#np-142"
 
 [[proposition]]
 id = "NP-143"
-title = "Materialization refuses rather than defaulting, and prints no secret"
-carrier = "mcp-re-proxy/src/capability_materialization"
+title = "The retained Mode-C ingress verifier refuses rather than defaulting"
+carrier = "mcp-re-proxy/src/capability_materialization/ingress.rs"
 likely_owner = ""
 consequence = "critical"
 root_relationship = "a premise of the proxy units above it"
@@ -9238,7 +9190,7 @@ record = "docs/architecture/control-dispositions.md#np-146"
 
 [[proposition]]
 id = "NP-147"
-title = "The fleet topology is at least one shard and never overridden"
+title = "The automatic fleet topology is at least one shard of one worker"
 carrier = "mcp-re-proxy/src/async_fleet"
 likely_owner = ""
 consequence = "high"
@@ -9247,7 +9199,7 @@ record = "docs/architecture/control-dispositions.md#np-147"
 
 [[proposition]]
 id = "NP-148"
-title = "Signing-plane materialization refuses rather than starting half-built"
+title = "Signing-plane materialization publishes a usable key and owns one rotation worker"
 carrier = "mcp-re-proxy/src/signing_plane"
 likely_owner = ""
 consequence = "critical"
@@ -9266,14 +9218,6 @@ recorded = "2026-09-19"
 id = "CD-18003"
 project = "mcp-re-proxy"
 control = "lib#async_fleet::topology_tests::auto_keeps_a_shard_per_cpu_and_adds_depth"
-decision = "new-proposition"
-proposition = "NP-147"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18004"
-project = "mcp-re-proxy"
-control = "lib#async_fleet::topology_tests::explicit_topology_is_never_overridden"
 decision = "new-proposition"
 proposition = "NP-147"
 recorded = "2026-09-19"
@@ -9651,7 +9595,7 @@ id = "CD-18065"
 project = "mcp-re-proxy"
 control = "lib#capability_materialization::key_source::pin::tests::a_group_readable_pin_file_is_refused"
 decision = "new-proposition"
-proposition = "NP-143"
+proposition = "NP-184"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -9659,7 +9603,7 @@ id = "CD-18066"
 project = "mcp-re-proxy"
 control = "lib#capability_materialization::key_source::pin::tests::a_secret_string_does_not_print_its_value_or_length"
 decision = "new-proposition"
-proposition = "NP-143"
+proposition = "NP-185"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -9667,7 +9611,7 @@ id = "CD-18067"
 project = "mcp-re-proxy"
 control = "lib#capability_materialization::key_source::pin::tests::the_pin_file_reader_trims_a_trailing_newline_and_refuses_an_empty_file"
 decision = "new-proposition"
-proposition = "NP-143"
+proposition = "NP-184"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -10514,22 +10458,6 @@ recorded = "2026-09-19"
 id = "CD-18191"
 project = "mcp-re-proxy"
 control = "lib#signing_plane::rotation_owner_tests::materialize_publishes_a_usable_key_and_owns_one_rotation_worker"
-decision = "new-proposition"
-proposition = "NP-148"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18192"
-project = "mcp-re-proxy"
-control = "lib#signing_plane::rotation_owner_tests::materialize_refuses_when_the_configured_shared_epoch_cannot_be_read"
-decision = "new-proposition"
-proposition = "NP-148"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18193"
-project = "mcp-re-proxy"
-control = "lib#signing_plane::rotation_owner_tests::materialize_refuses_when_the_root_cannot_issue_the_first_key"
 decision = "new-proposition"
 proposition = "NP-148"
 recorded = "2026-09-19"
@@ -13641,3 +13569,21 @@ likely_owner = ""
 consequence = "critical"
 root_relationship = "a premise of the proxy units above it"
 record = "docs/architecture/control-dispositions.md#np-180"
+
+[[proposition]]
+id = "NP-184"
+title = "The PIN file reader refuses a group-readable file and an empty one"
+carrier = "mcp-re-proxy/src/capability_materialization/key_source/pin.rs"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-184"
+
+[[proposition]]
+id = "NP-185"
+title = "A secret string prints neither its value nor its length at the consumer"
+carrier = "mcp-re-proxy/src/capability_materialization/key_source/pin.rs"
+likely_owner = "proxy.operator_facing_redaction owns the subject, and its own closure note refuses this control"
+consequence = "critical"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-185"

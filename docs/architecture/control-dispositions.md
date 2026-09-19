@@ -2556,11 +2556,13 @@ instance**, still unclaimed on main.
 
 ## NP-121 — a replay tier's published guarantee is its own
 
-**Controls:** `mcp-re-proxy/src/replay_tier.rs`.
-**Statement.** *Every tier has a non-empty guarantee and NO TIER CLAIMS UNCONDITIONAL; a tier promising wait supplies its wait parameters and wait-quorum parsing extracts the quorum and timeout; the async tier's claim ceiling is not linearizable; the strict production minimum is wait-quorum or stronger; parsing round-trips the simple tiers and refuses unknown and malformed ones; the wire names are the semantic ADR names; and the startup audit line carries the backend, tier and guarantee and NO NONCE.*
+**Controls:** `mcp-re-proxy/src/replay_tier.rs` (10).
+**Statement.** *Every tier has a non-empty guarantee and NO TIER CLAIMS UNCONDITIONAL; a tier promising wait supplies its wait parameters and wait-quorum parsing extracts the quorum and timeout; the async tier's claim ceiling is not linearizable; parsing round-trips the simple tiers and refuses unknown and malformed ones; the wire names are the semantic ADR names; and the startup audit line carries the backend, tier and guarantee and NO NONCE.*
 **If false.** A deployment publishes a replay guarantee it does not have, or an async tier is read as linearizable. This is NP-063's proposition for the other tier vocabulary, and the two are recorded separately because they are two vocabularies with two ceilings — the audit-line clause differs too: no key material there, no NONCE here.
 **Likely owner:** none.
 **Severity:** `high`.
+**Registered in part, ADR-MCPRE-069 S-06.** One row — `strict_production_minimum_is_wait_quorum_or_stronger` — is now `unit://proxy.replay_tier_production_minimum` under **THM-0092**, falsified by `M335-proxy-the-production-minimum-excludes-the-async-tier`. THM-0092's statement quantifies over it by name: replay admission refuses when the deployment *"declares one below the strict-production minimum"*, and this row is the membership behind that threshold — without it the refusal is well formed and empty.
+**A correction, and it goes the other way.** This campaign's own referral packet (`work/campaigns/mcp-re-adr069-product-claim-closure/packets/NP-121-residue.md`) states that **seven** of these rows are R2 under **THM-0086** and are *"ordinary registration work, not an owner question"*. Re-measured against the tree, six of the seven are refused and the seventh belongs under THM-0092, not THM-0086. THM-0086 is a *"CONFIGURATION PROJECTION ONLY"* claim about which tier `MaterializedReplay::materialize` hands the serving path; its *"a backend this build does not carry is refused by name rather than substituted"* clause is about a BACKEND the build lacks, already measured by `a_backend_the_build_lacks_is_refused_and_named` inside `proxy.replay_materialization`, and not about an unknown tier NAME in operator input. The operational test settles it: rename every wire name, empty every guarantee string, and THM-0086 still holds. THM-0118 cannot take them either — its scope is *"THE SEAM, NOT A DEPLOYMENT'S TIER"* and its owner is in another crate, so no unit's `paths` can reach this carrier from there. The packet was matched on the concept rather than on the carrier, which is the same error S-04 corrected for NP-140. **Root relationship.** A premise of the proxy units above it. The ten rows that remain are two propositions — the tier vocabulary, and the published guarantee — and NP-063 asks the identical question for the revocation-tier vocabulary. Packet at `verification/reviews/packets/adr069-np-123-np-143-np-147-np-148-np-184-np-185-ratification-2026-09-19.md`.
 
 ## NP-122 — the handshake quota opens on quota failures only, and never shortens
 
@@ -2570,13 +2572,17 @@ instance**, still unclaimed on main.
 **Likely owner:** none.
 **Severity:** `high`.
 
-## NP-123 — a serving capability is ON with an artifact or OFF with an explanation
+## NP-123 — every OFF posture line tells the operator what to do about it
 
-**Controls:** `mcp-re-proxy/src/serving_capabilities.rs`.
-**Statement.** *An ON posture ALWAYS carries an artifact and an OFF posture never does; every OFF line tells the operator what to do about it; evidence retention attaches a store only for a NAMED directory and an unopenable retention directory refuses startup NAMING THE FLAG; the security-audit posture follows the classified audit state; and the verified-context carrier is attached only for a trusted inner channel.*
-**If false.** A capability reports ON while carrying nothing, so the transcript says a protection is active that is not. The OFF-line clause is NP-004's operator problem solved from the other side: not merely that a seam states its posture, but that the statement is actionable.
+**Controls:** `mcp-re-proxy/src/serving_capabilities.rs` (1) —
+`tests::every_off_line_tells_the_operator_what_to_do_about_it`.
+**Carrier:** the OFF-line prose constants, asserted over the constants themselves.
+**Statement.** *Every OFF posture line names a flag to set or the build feature that is missing, and says that the capability is off — so an operator reading a transcript can decide what to DO about the line rather than only that something is absent.*
+**If false.** A capability reports OFF and the operator has no way to tell whether it can be turned on, or how. This is NP-004's operator problem solved from the other side: not merely that a seam states its posture, but that the statement is actionable.
 **Likely owner:** none.
 **Severity:** `high`.
+**Registered in part, ADR-MCPRE-069 S-06.** The other five rows are `unit://proxy.serving_capability_posture` under **THM-0077**, falsified by `M336-proxy-an-unopenable-retention-directory-is-not-an-off-posture`. THM-0077's statement contains them: *"Every security capability held by the serving runtime is derived from validated semantic owner state. Illegal, unsupported or internally contradictory deployment postures cannot be silently reinterpreted into a weaker posture during materialization or serving."* An ON posture over no artifact, and an unopenable retention directory resolving to OFF, are that reinterpretation.
+**This row is not.** What the OFF line's PROSE tells an operator to do is an operator-facing product promise about the transcript, not a decomposition of a posture claim: the deployment's posture is identical whether or not the sentence names a flag. It is the same axis as NP-132's refusal-token vocabulary and NP-145's rendering agreement, both of which this campaign referred. **Root relationship.** A premise of the proxy units above it; no theorem states what a posture line must tell an operator. Packet at `verification/reviews/packets/adr069-np-123-np-143-np-147-np-148-np-184-np-185-ratification-2026-09-19.md`.
 
 ## NP-124 — a control-plane runtime exists only where it is needed, and outlives no owner
 
@@ -2753,13 +2759,16 @@ without_a_cadence_the_bound_is_the_crls_own_expiry, without_a_crl_the_bound_is_t
 **Likely owner:** none.
 **Severity:** `medium`.
 
-## NP-143 — materialization refuses rather than defaulting, and prints no secret
+## NP-143 — the retained Mode-C ingress verifier refuses rather than defaulting
 
-**Controls:** `mcp-re-proxy/src/capability_materialization`.
-**Statement.** *A Mode-C verifier missing its audience FAILS CLOSED RATHER THAN DEFAULTING and rejects an unusable attestor key rather than DROPPING IT; it is built only for the attested-ingress binding and the retained one still admits an assertion from its configured attestor; a group-readable PIN file is refused; the PIN reader trims a trailing newline and refuses an empty file; and a secret string does not print its value OR ITS LENGTH.*
-**If false.** A verifier is built with a defaulted audience, or with an unusable attestor key silently dropped so it verifies nothing — the two ways a Mode-C deployment can appear configured and check nothing. 'Or its length' is the clause that makes redaction a rule rather than a habit.
+**Controls:** `mcp-re-proxy/src/capability_materialization/ingress.rs` (4).
+**Carrier:** `build_attested_ingress_binding`.
+**Statement.** *A Mode-C verifier missing its audience FAILS CLOSED RATHER THAN DEFAULTING and rejects an unusable attestor key rather than DROPPING IT; it is built only for the attested-ingress binding; and the retained verifier still admits an assertion minted by its configured attestor.*
+**If false.** A verifier is built with a defaulted audience, so it admits assertions minted for another node's route — or with an unusable attestor key silently dropped, so it trusts fewer attestors than configured and fails closed later, far from the configuration that caused it.
 **Likely owner:** none.
 **Severity:** `critical`.
+**Split, ADR-MCPRE-069 S-06, under RR-002 C5.** The three `key_source::pin` rows left this record: they are two further propositions over a different carrier — NP-184 (the PIN file reader) and NP-185 (the secret string's redaction at the consumer).
+**Refused, ADR-MCPRE-069 S-06 — THE CARRIER IS DORMANT, and that is the finding.** The scheduling analysis routed these four to THM-0077 as materialization refusals. They cannot go there, because no validated deployment reaches the code at all: `config_state::transport::undeployable_transport_binding_refusal` returns a refusal for `PeerIdentityEvidenceRequest::AttestedIngress` unconditionally, with no `cfg` and no configuration that turns it off, so `build_attested_ingress_binding` is retained capability rather than a deployment posture. THM-0077 quantifies over *"Every security capability held by the serving runtime"*; a capability no deployment can hold is not one of them, and attaching these rows would make the root's evidence range over code the serving runtime never executes. Whether dormant code gets a claim at all is the question NP-146's residue already puts to the owner and this record joins it rather than answering it. **Root relationship.** A premise of the proxy units above it. Packet at `verification/reviews/packets/adr069-np-123-np-143-np-147-np-148-np-184-np-185-ratification-2026-09-19.md`.
 
 ## NP-144 — an admission record is addressed by its workload and reported once
 
@@ -2786,21 +2795,30 @@ without_a_cadence_the_bound_is_the_crls_own_expiry, without_a_crl_the_bound_is_t
 **Likely owner:** none.
 **Severity:** `high`.
 
-## NP-147 — the fleet topology is at least one shard and never overridden
+## NP-147 — the automatic fleet topology is at least one shard of one worker
 
-**Controls:** `mcp-re-proxy/src/async_fleet`.
-**Statement.** *`auto` is ALWAYS at least one shard of one worker, keeps a shard per CPU and adds depth; and an EXPLICIT topology is never overridden.*
-**If false.** A deployment starts with zero shards and serves nothing, or an operator's explicit topology is silently replaced by the automatic one — the provenance collapse `proxy.in_flight_limit_basis` names for the in-flight limit, here for the shape of the fleet.
+**Controls:** `mcp-re-proxy/src/async_fleet` (2) —
+`topology_tests::{auto_is_always_at_least_one_shard_of_one_worker, auto_keeps_a_shard_per_cpu_and_adds_depth}`.
+**Statement.** *Where the operator stated nothing, the automatic topology keeps a shard per CPU, adds depth on top up to the default maximum, and is never degenerate — at least one shard of one worker on any host the runtime reports.*
+**If false.** A deployment that configured no topology starts with zero shards and serves nothing, or trades shards away for depth on a profile where shards are what parallelise `accept`.
 **Likely owner:** none.
 **Severity:** `high`.
+**Registered in part, ADR-MCPRE-069 S-06.** `explicit_topology_is_never_overridden` is now `unit://proxy.fleet_topology_provenance` under **THM-0077**, falsified by `M337-proxy-an-explicit-worker-depth-is-not-capped`. THM-0077's security consequence is the clause: *"a serving component cannot disagree with the owner about what was configured."*
+**The lane, determined and stated.** `async_fleet` sits behind NO feature gate: `pub mod async_fleet;` at `mcp-re-proxy/src/lib.rs:214` carries no `cfg`, nothing inside `async_fleet/mod.rs` or `core_runtime.rs` is feature-gated, and `cargo test -p mcp-re-proxy --lib -- --list` selects all three controls in the DEFAULT lane. No `test_features` is needed or declared, and the scheduling analysis's open question about this record is closed.
+**Refused, ADR-MCPRE-069 S-06, for two independent reasons.** First, what the automatic path computes is a THROUGHPUT and AVAILABILITY policy — shard count against CPU count, worker depth against a measured rps envelope — and THM-0077's scope excludes exactly that: *"SECURITY POSTURE, not liveness and not permanent runtime availability."* Second, and measured rather than argued: both rows assert over `auto_for`, a helper defined INSIDE `topology_tests` that restates the policy rather than calling `resolve_topology`, so no edit to production code turns either of them red. A control that cannot be falsified by a production change is not evidence for any theorem, whichever one it is attached to. **Root relationship.** A premise of the proxy units above it. Packet at `verification/reviews/packets/adr069-np-123-np-143-np-147-np-148-np-184-np-185-ratification-2026-09-19.md`.
 
-## NP-148 — signing-plane materialization refuses rather than starting half-built
+## NP-148 — signing-plane materialization publishes a usable key and owns one rotation worker
 
-**Controls:** `mcp-re-proxy/src/signing_plane`.
-**Statement.** *`materialize` publishes a usable key AND OWNS ONE ROTATION WORKER; it refuses when the configured shared epoch cannot be read; and it refuses when the root cannot issue the first key.*
-**If false.** The plane starts with no usable key, or with a rotation worker nobody owns — NP-003's lifetime rule at the one plane whose worker mints keys.
+**Control:** `mcp-re-proxy/src/signing_plane` —
+`rotation_owner_tests::materialize_publishes_a_usable_key_and_owns_one_rotation_worker`.
+**Statement.** *A `materialize` that returns `Ok` leaves the hot path with a usable delegated key AND the plane owning EXACTLY ONE rotation worker.*
+**If false.** The plane starts with a rotation worker nobody owns, or with two — NP-003's lifetime rule at the one plane whose worker mints keys.
 **Likely owner:** none.
 **Severity:** `critical`.
+**Registered in part, ADR-MCPRE-069 S-06.** Two rows left this record. `materialize_refuses_when_the_root_cannot_issue_the_first_key` is an **R1** into `unit://proxy.delegated_signing_credential` under **THM-0062** — *"yields none before the first rotation"* — needing no `paths` widening, because `signing_plane/mod.rs` is already that unit's and the same refusal is already measured there at the wiring level by `failing_root_fails_closed_at_first_issuance`. `materialize_refuses_when_the_configured_shared_epoch_cannot_be_read` is `unit://proxy.signing_plane_epoch_read_refusal` under **THM-0077**, falsified by `M338-proxy-an-unreadable-kill-switch-is-not-a-label`; it is a unit of its own for a LANE reason, stated in full below.
+**The reading taken on the NP-124 question, and why.** The work package asks whether this record's *owns ONE rotation worker* clause is the same lifetime family as NP-124, which is R6 — and if so, whether NP-148 should follow NP-124 out of the slice. It should not, and the tree says why. NP-124's proposition is about the shared control-plane RUNTIME in `control_runtime.rs` — *"a deployment that needs no control-plane client starts NO runtime"* and *"dropping the owner stops work a surviving handle had started"* — which is the outliving question. The signing plane's own outliving question is not open at all: `a_surviving_signer_does_not_keep_the_rotation_worker_alive`, `a_signer_that_outlives_the_plane_stops_signing` and `a_mint_completing_inside_the_drop_join_window_cannot_restore_signing` are already registered under THM-0062. What is left here is a COUNT at materialization — `worker_count() == 1` — which is ADR-MCPRE-056 §9's worker-ownership rule and is stated by no theorem. So this record stays, as one row, and it is a neighbour of NP-124 rather than a member of it: both are worker- and runtime-ownership propositions with no claim above them, and an owner settling one should settle the other in the same sitting.
+**Why the whole control could not simply be registered.** Its two assertions are one symbol: a usable key published (which THM-0062 does contain, and whose twin `builds_and_first_rotate_publishes_a_snapshot` is already in that unit) and exactly one worker owned (which it does not). Registering the symbol would put the second proposition inside a battery whose theorem never states it, which ADR-MCPRE-069 §5 holds strictly worse than leaving it unregistered.
+**The lane, stated.** `materialize_refuses_when_the_configured_shared_epoch_cannot_be_read` is `#[cfg(feature = "redis_replay")]`. The default lane lists 1,498 proxy lib tests and does not contain it; the `redis_replay` lane lists 1,536 and does. `proxy.delegated_signing_credential` declares no `test_features` and its own closure note already refuses the control by name for exactly that reason, and a unit's `test_features` are ONE set for the WHOLE battery — so the row could not join it without moving that whole battery into a non-default lane. Hence a separate unit. **Root relationship.** A premise of the proxy units above it. Packet at `verification/reviews/packets/adr069-np-123-np-143-np-147-np-148-np-184-np-185-ratification-2026-09-19.md`.
 
 ---
 
@@ -3207,3 +3225,48 @@ probe naming the construction that must not compile.
 **Root relationship.** A premise of the proxy units above it. No theorem states the
 constructibility of a window rule. Packet at
 `verification/reviews/packets/adr069-np-134-np-178-np-179-np-180-ratification-2026-09-19.md`.
+
+## NP-184 — the PIN file reader refuses a group-readable file and an empty one
+
+**Controls:** `mcp-re-proxy/src/capability_materialization/key_source/pin.rs` (2) —
+`tests::{a_group_readable_pin_file_is_refused, the_pin_file_reader_trims_a_trailing_newline_and_refuses_an_empty_file}`.
+**Statement.** *A PKCS#11 User PIN read from a file is refused when the file is readable by
+anyone but its owner, and the reader trims a trailing newline and refuses an empty file rather
+than presenting the empty string as a PIN.*
+**If false.** The credential that unlocks the token holding the response-signing key sits on
+disk readable by every account in the file's group, and nothing at startup says so — or a file
+containing only a newline is presented to the token as a PIN and the refusal an operator sees
+is the token's, at a layer that cannot name the file.
+**Likely owner:** none.
+**Severity:** `critical`, carried from NP-143 rather than reassessed.
+**Root relationship.** A premise of the proxy units above it. No theorem states the file MODE a
+credential on disk must have. THM-0077 is the nearest and does not reach it: its subject is the
+deployment POSTURE an owner selected, and a PIN file's permission bits are a custody fact about
+the host rather than a posture anyone selected — nothing in the statement, the consequence or
+the scope quantifies over what the filesystem says. Split out of NP-143 under RR-002 C5 in
+ADR-MCPRE-069 S-06. Packet at
+`verification/reviews/packets/adr069-np-123-np-143-np-147-np-148-np-184-np-185-ratification-2026-09-19.md`.
+
+## NP-185 — a secret string prints neither its value nor its length at the consumer
+
+**Control:** `mcp-re-proxy/src/capability_materialization/key_source/pin.rs` —
+`tests::a_secret_string_does_not_print_its_value_or_length`.
+**Statement.** *A secret string rendered at the point it is CONSUMED discloses neither its value
+nor its length.*
+**If false.** The PIN's length reaches an operator transcript and the log pipeline behind it,
+which is a materially smaller search space for the credential that unlocks the signing token.
+'Or its length' is the clause that makes redaction a rule rather than a habit.
+**Likely owner:** `proxy.operator_facing_redaction` owns this subject — and cannot take this row.
+**Severity:** `critical`, carried from NP-143 rather than reassessed.
+**Root relationship.** A premise of the proxy units above it, and the reattribution that looks
+obvious is refused twice over. `proxy.operator_facing_redaction` states exactly this proposition,
+but over `deployment_request/secret_string.rs` and `inner_backend_display.rs`; this control's
+source is `capability_materialization/key_source/pin.rs`, which is not in that unit's `paths`, and
+a unit's `paths` may not be widened to reach a control. That unit's own closure note already says
+so, by name: `capability_materialization::key_source::pin` *"asserts the same property at the
+CONSUMER and is deliberately NOT named: its source is not in this unit's `paths`, so citing it
+would be the SF-1 defect"*. And it would close nothing if it could — `proxy.operator_facing_redaction`
+is itself one of the twenty units no theorem supports, so an R1 there is a re-filing and not a
+discharge. No theorem in the estate claims redaction. Split out of NP-143 under RR-002 C5 in
+ADR-MCPRE-069 S-06. Packet at
+`verification/reviews/packets/adr069-np-123-np-143-np-147-np-148-np-184-np-185-ratification-2026-09-19.md`.

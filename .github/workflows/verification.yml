@@ -268,6 +268,16 @@ on:
       # beside the plane rather than inside it, so the subtree pattern above does not
       # reach it.
       - "mcp-re-proxy/src/client_crl_publication.rs"
+      # ADR-MCPRE-069 S-06: three new fingerprint inputs, each also a probe site.
+      # `replay_tier.rs` carries the strict-production minimum
+      # (`proxy.replay_tier_production_minimum`, M335), `serving_capabilities.rs` the
+      # optional-capability posture (`proxy.serving_capability_posture`, M336), and
+      # `async_fleet/mod.rs` the explicit-topology provenance
+      # (`proxy.fleet_topology_provenance`, M337). None of the three is under a subtree
+      # pattern already listed here.
+      - "mcp-re-proxy/src/replay_tier.rs"
+      - "mcp-re-proxy/src/serving_capabilities.rs"
+      - "mcp-re-proxy/src/async_fleet/**"
       - "mcp-re-proxy/src/delegated_tls.rs"
       # ADR-MCPRE-063 Slice 3: the correspondence gate on delegated resolver construction.
       - "mcp-re-proxy/src/delegated_tls/**"
@@ -600,6 +610,16 @@ on:
       # beside the plane rather than inside it, so the subtree pattern above does not
       # reach it.
       - "mcp-re-proxy/src/client_crl_publication.rs"
+      # ADR-MCPRE-069 S-06: three new fingerprint inputs, each also a probe site.
+      # `replay_tier.rs` carries the strict-production minimum
+      # (`proxy.replay_tier_production_minimum`, M335), `serving_capabilities.rs` the
+      # optional-capability posture (`proxy.serving_capability_posture`, M336), and
+      # `async_fleet/mod.rs` the explicit-topology provenance
+      # (`proxy.fleet_topology_provenance`, M337). None of the three is under a subtree
+      # pattern already listed here.
+      - "mcp-re-proxy/src/replay_tier.rs"
+      - "mcp-re-proxy/src/serving_capabilities.rs"
+      - "mcp-re-proxy/src/async_fleet/**"
       - "mcp-re-proxy/src/delegated_tls.rs"
       # ADR-MCPRE-063 Slice 3: the correspondence gate on delegated resolver construction.
       - "mcp-re-proxy/src/delegated_tls/**"
