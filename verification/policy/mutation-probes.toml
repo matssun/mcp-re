@@ -8730,7 +8730,7 @@ why both directions are declared.
 # errors, none panics, and none is visible above the file it is in.
 
 [[probe]]
-id = "M324-proxy-currency-policy-is-a-total-selector"
+id = "M330-proxy-currency-policy-is-a-total-selector"
 unit = "proxy.currency_policy_classification"
 theorem = "THM-0032"
 conjunct = "The policy is a TOTAL classification of deployment state with no `Option` and four variants, so *evaluating with nothing configured* cannot be written"
@@ -8762,7 +8762,7 @@ still total over its own type; what it is not is a classification of the deploym
 """
 
 [[probe]]
-id = "M325-proxy-one-read-is-one-publication-unit"
+id = "M331-proxy-one-read-is-one-publication-unit"
 unit = "proxy.trust_snapshot_swap"
 theorem = "THM-0100"
 conjunct = "A successful cycle swaps the snapshot the resolver and the signer directory answer from, atomically and together, before the next request is resolved"
