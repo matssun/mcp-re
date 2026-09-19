@@ -2973,7 +2973,10 @@ an identifier it names cannot resolve.
 """
 owner = "client.trust_manifest_lifecycle"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://client.trust_manifest_lifecycle"]
+supported_by = [
+  "unit://client.trust_manifest_lifecycle",
+  "unit://client.delegated_trust_pairing_seal",
+]
 depends_on = []
 
 [[theorem]]
@@ -3085,7 +3088,11 @@ establishes nothing about the transport failures on which no receipt arrives at 
 """
 owner = "client.execution_contract"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://client.execution_contract"]
+supported_by = [
+  "unit://client.execution_contract",
+  "unit://client.receipt_contract_carriage",
+  "unit://client.proxy_reply_disposition",
+]
 depends_on = []
 
 [[theorem]]

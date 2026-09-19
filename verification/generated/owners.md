@@ -24,6 +24,7 @@ not an omission to hide.
 | client.bind_scope_sole_producer | V0 | _none_ | 0 |
 | client.binding_spec_refusal | V0 | _none_ | 0 |
 | client.caller_shape_admission | V0 | THM-0091 | 0 |
+| client.delegated_trust_pairing_seal | V0 | _none_ | 0 |
 | client.delegation_policy_seal | V0 | THM-0060 | 0 |
 | client.deployment_config | V0 | THM-0124 | 0 |
 | client.execution_contract | V0 | THM-0061 | 0 |
@@ -31,7 +32,9 @@ not an omission to hide.
 | client.local_request_surface | V0 | _none_ | 0 |
 | client.local_serving_pipeline | V0 | THM-0123 | 0 |
 | client.manifest_floor | V0 | THM-0121 | 0 |
+| client.proxy_reply_disposition | V0 | _none_ | 0 |
 | client.proxy_request_correspondence | V0 | THM-0084 | 0 |
+| client.receipt_contract_carriage | V0 | _none_ | 0 |
 | client.request_construction | V0 | THM-0125 | 0 |
 | client.response_binding_disposition | V0 | THM-0059, THM-0076 | 0 |
 | client.response_signer_authorization | V0 | THM-0058 | 0 |

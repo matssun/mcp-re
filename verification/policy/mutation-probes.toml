@@ -8718,6 +8718,137 @@ why both directions are declared.
 """
 
 # ---------------------------------------------------------------------------
+# What a verified reply's disposition is — ADR-MCPRE-069 NP-111
+# ---------------------------------------------------------------------------
+#
+# Three weakenings, and every one of them leaves a tree that builds, a signature that
+# verifies, a reply that is well-formed JSON-RPC and a local agent that is told something
+# the server never said. None of them touches trust, binding or the carrier: that is the
+# whole reason this proposition needed owners rather than a mention in the paths of units
+# that answer different questions.
+
+[[probe]]
+id = "M332-client-an-absent-contract-member-is-filled-in"
+unit = "client.proxy_reply_disposition"
+theorem = "THM-0061"
+conjunct = "a rejection body carrying no execution contract YIELDS THE SILENT ONE RATHER THAN A GUESS — which at the proxy's rendering boundary means only the members the receipt actually carried are emitted"
+path = "mcp-re-client-proxy/src/proxy.rs"
+anchor = """        if let Some(value) = value {
+            mcp_re_error.insert(name.into(), json!(value));
+        }
+"""
+weakening = """        mcp_re_error.insert(
+            name.into(),
+            json!(value.clone().unwrap_or_else(|| "not_executed".to_owned())),
+        );
+"""
+expect_red = [
+  "lib#proxy::tests::an_unstated_contract_produces_no_invented_disposition",
+  "lib#proxy::tests::a_verified_rejection_carries_its_execution_contract_to_the_local_client",
+]
+note = """
+SILENCE BECOMES A VERDICT, AT THE ONE PLACE THAT DECIDES. The four contract members are
+`Option`s precisely because absent and stated are different facts; the weakening makes the
+map total, so a receipt that said nothing about execution reaches the local agent as
+`execution_status: "not_executed"` — "unknown whether it ran" rendered as "it did not run",
+which is the reading under which a retry is safe.
+
+Nothing else moves. The receipt still verified, the wire code is still the server's frozen
+one, the reply is still ordinary JSON-RPC, and every other control in this crate stays green
+— including the six envelope controls over the same file, which never look inside
+`error.data`. That is the shape this record exists to report: a truthful-looking statement
+the server did not make.
+
+It reddens BOTH controls of this direction and neither of the other, which is what locates
+the conjunct. `an_unstated_contract_produces_no_invented_disposition` fails on the invented
+`execution_status`; `a_verified_rejection_carries_its_execution_contract_to_the_local_client`
+fails on the invented `retention_status` — the member that test asserts is absent BECAUSE the
+receipt did not carry it, while the three the receipt did carry still arrive correctly. A
+battery holding only the first would report the second defect as no change.
+"""
+
+[[probe]]
+id = "M333-client-the-rebuild-drops-the-reply-discriminator"
+unit = "client.proxy_reply_disposition"
+theorem = "THM-0061"
+conjunct = "an unrecognized value is CARRIED AS UNRECOGNIZED and never read as a known one — which requires that the proxy's rebuild of the plain reply leaves the discriminator the classification is taken over intact"
+path = "mcp-re-client-proxy/src/proxy.rs"
+anchor = """    if let Some(result) = object.get_mut("result").and_then(Value::as_object_mut) {
+        result.remove("_meta");
+    }
+"""
+weakening = """    if let Some(result) = object.get_mut("result").and_then(Value::as_object_mut) {
+        result.remove("_meta");
+        result.remove("resultType");
+    }
+"""
+expect_red = [
+  "lib#proxy::tests::an_input_required_reply_does_not_classify_as_terminal",
+  "lib#proxy::tests::an_unrecognized_result_type_is_never_terminal",
+]
+note = """
+THE OTHER DIRECTION: NOT AN INVENTED DISPOSITION BUT A LOST ONE, and it hides inside a line
+whose stated job is to strip the proxy's own evidence block. One more `remove` beside it and
+the rebuilt reply is still perfectly well-formed JSON-RPC — same id, same members, same
+`result` object minus one key — while an elicitation awaiting a signed answer leg classifies
+`Terminal` and is handed to an application as a finished tool result. No approval was given,
+no answer leg is ever signed, and the signature over the original bytes verified.
+
+`classify_result` is not weakened and does not need to be: it is client-core's, it is
+`client.execution_contract`'s control, and it keeps answering correctly about the object it
+is given. What changed is the object. A proposition stated only over the classifier would be
+true throughout this weakening, which is why the rebuild's preservation of the discriminator
+is a claim of its own and belongs to the crate that does the rebuilding.
+
+The envelope controls over the same function stay green, correctly, and that is what locates
+the conjunct rather than merely touching it:
+`a_json_rpc_error_reply_is_carried_through_not_flattened_to_a_null_result`,
+`a_reply_that_is_not_a_json_rpc_response_fails_closed`, `an_ordinary_result_still_rebuilds`,
+`an_unparseable_verified_reply_is_a_verification_failure_not_a_bad_request`,
+`the_proxy_owned_meta_is_stripped_from_the_plain_reply` and
+`the_reply_carries_the_id_the_proxy_signed_not_the_one_the_server_echoed` each assert the
+SHAPE of what comes back, and the shape is untouched. A unit built from those six would
+report this weakening as no change at all.
+"""
+
+[[probe]]
+id = "M334-client-the-verifier-drops-the-receipts-contract"
+unit = "client.receipt_contract_carriage"
+theorem = "THM-0061"
+conjunct = "a spent elicitation is reported as requiring a new one rather than as an ordinary failure, and A FAILED RETENTION OBLIGATION SURVIVES beside whatever the execution status says — which requires the contract to be lifted from the receipt body onto the outcome the verifier returns"
+path = "mcp-re-client-core/src/response.rs"
+anchor = """            let (wire_code, execution) = rejection_receipt(&response.body);
+            Ok(VerifiedDelegatedResponse {
+                verified: DelegatedResponseEvidence::Bound(verified),
+"""
+weakening = """            let (wire_code, _stated) = rejection_receipt(&response.body);
+            let execution = ExecutionContract::default();
+            Ok(VerifiedDelegatedResponse {
+                verified: DelegatedResponseEvidence::Bound(verified),
+"""
+expect_red = [
+  "lib#response::delegated_tests::a_post_dispatch_rejection_carries_its_execution_and_retry_contract",
+  "lib#response::delegated_tests::a_retention_failure_is_readable_as_such",
+]
+note = """
+THE STATEMENT IS LOST INSIDE THE VERIFIER, WHICH IS THE WORST PLACE FOR IT TO GO. The receipt
+still verifies, the delegated credential still chains, the binding still holds and the frozen
+wire code still arrives — so every control over trust, over binding and over the carrier stays
+green, and the caller is handed a `DelegatedOutcome::Rejection` whose contract reads
+`Unstated`. The server said `possibly_executed`; the client library says the server said
+nothing; and by THM-0061's own rule, silence is not a verdict, so the caller has no basis to
+refuse the retry that re-executes a tool call which already ran.
+
+The weakening is EXACTLY the one that reads as a simplification. `rejection_receipt` is still
+called, the wire code is still taken from it, and only the second element of the tuple is
+discarded — which in a review diff looks like tidying an unused binding.
+
+The UNBOUND arm is deliberately left alone. Both arms lift the contract, and both controls
+here drive a request-BOUND receipt, so reddening the bound arm alone is what attributes the
+failure to the lift rather than to `rejection_receipt`'s parse — which is client-core's
+vocabulary owner next door and has its own battery under `client.execution_contract`.
+"""
+
 # The proxy's trust-plane premises — ADR-MCPRE-069 NP-117, NP-118, NP-126,
 # NP-134, NP-135, NP-140
 # ---------------------------------------------------------------------------
