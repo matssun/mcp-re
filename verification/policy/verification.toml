@@ -1058,8 +1058,12 @@ evidence = [
   "test://core/time/grammar_and_truncation",
   "verus://core/time/parse_rfc3339_utc_total_and_bounded",
 ]
-# Grammar and truncation, which is the whole of what `time.rs` tests: the accepted shapes,
-# the rejected ones, and the truncating treatment of fractional seconds.
+# Grammar and truncation — the accepted shapes, the rejected ones, and the truncating
+# treatment of fractional seconds — together with the two ENDPOINTS of the admitted era at
+# their exact Unix seconds and the refusal that caps it. THM-0002 states both bounds are
+# TIGHT and says so in the scope: "The two endpoints specifically are reachable, and are
+# pinned by boundary controls at their exact Unix seconds". These are those controls; they
+# were running under no battery until ADR-MCPRE-069 NP-109.
 tested_symbols = [
   "lib#time::tests::epoch_zero_parses_to_zero",
   "lib#time::tests::one_second_past_epoch",
@@ -1071,6 +1075,9 @@ tested_symbols = [
   "lib#time::tests::out_of_range_day_and_time_rejected",
   "lib#time::tests::numeric_offset_rejected",
   "lib#time::tests::garbage_and_wrong_separators_rejected",
+  "lib#time::tests::boundary_lowest_admitted_instant",
+  "lib#time::tests::boundary_highest_admitted_instant",
+  "lib#time::tests::boundary_a_five_digit_year_is_refused",
 ]
 # The theorems this unit claims, by the name the prover reports. Deleting a specification
 # now fails the lane rather than leaving the crate's other proofs to answer for it.
@@ -9661,4 +9668,79 @@ evidence = [
 ]
 tested_symbols = [
   "lib#config_state::continuation_control::tests::the_replay_tier_does_not_reach_this_machine",
+]
+
+
+
+
+# ---------------------------------------------------------------------------
+# The Core's own premises — ADR-MCPRE-069 NP-106, NP-108
+# ---------------------------------------------------------------------------
+#
+# Ten `http_profile.*` units already name `mcp-re-core/src/crypto.rs` and
+# `mcp-re-core/src/error.rs` in their `paths`, and not one of them declares the primitive
+# that does the verifying or the taxonomy that renders the verdict. They cannot: every one
+# of them sets `test_package = "mcp-re-http-profile"`, and `_validate_in_crate_selectors`
+# resolves a `lib#crypto::tests::*` selector against THAT package's `src` tree, where the
+# module does not exist. R1 is unavailable rather than declined, so these are two new units
+# over the files the existing batteries already measure.
+#
+# `core.ed25519_primitive` carries the REFUSING direction of NP-106 and nothing else. THM-0014
+# is a soundness conditional — it constrains what a successful `verify_request_floor` return
+# means and says nothing whatsoever about what is accepted — so the five refusals below are
+# what it contains, and the eight controls that state the accepting direction, the signer's
+# determinism, the per-layer error rendering and the key's encoding round-trip stay in the
+# census under NP-106, NP-170, NP-171 and NP-172, each with a ratification packet. A unit whose
+# declared proposition reached past its theorem would be the widening ADR-069 holds to be worse
+# than leaving a control unregistered.
+#
+# `core.verification_taxonomy` is the twin of `policy.authorization_taxonomy`, which has
+# held the OTHER frozen vocabulary under THM-0111 since that theorem was written. THM-0111's
+# statement names both files and says of each that it "owns its own mapping totally — one
+# variant per token, rendered by `wire_code()` and by `Display` alike"; only the
+# authorization half had a unit.
+
+[[unit]]
+id = "core.ed25519_primitive"
+class = "V0"
+description = "WHAT THE ED25519 FLOOR REFUSES ON THE REQUEST PATH: a wrong key and a tampered preimage each fail at `verify_strict`, a wrong-length signature and a malformed Base64URL signature each fail structurally before the curve is touched at all, and the algorithm gate rejects any token other than `Ed25519` with the caller's supplied error, so an envelope declaring something else never reaches the raw primitive. This unit is the refusing direction only, because that is the direction THM-0014 claims: it says NOTHING about what the primitive accepts, nothing about signing being deterministic for a fixed seed, nothing about which variant a malformed KEY renders as, nothing about the response-path sentinel, and nothing about a verification key round-tripping through its encodings — each of those is a separate proposition carrying its own census record. It also says nothing about which keys are enrolled, which slot a key answers for, or whether a deployment was right to trust the actor."
+paths = ["mcp-re-core/src/crypto.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://core/ed25519_primitive/refuses_forged_and_malformed_material",
+  "mutation://core/ed25519_primitive/refuses_forged_and_malformed_material",
+]
+tested_symbols = [
+  "lib#crypto::tests::ensure_ed25519_alg_rejects_unknown_alg_with_supplied_error",
+  "lib#crypto::tests::malformed_signature_base64_fails",
+  "lib#crypto::tests::tamper_preimage_fails",
+  "lib#crypto::tests::wrong_key_fails",
+  "lib#crypto::tests::wrong_length_signature_fails",
+]
+
+[[unit]]
+id = "core.verification_taxonomy"
+class = "V0"
+description = "THE FROZEN ADR-MCPS-035 CORE VERIFICATION VOCABULARY, TOTALLY OWNED IN ONE PLACE: `ALL_ERRORS` names no wire code twice and names every variant `wire_code()` has an arm for, so the list every containment guard downstream quantifies over is the enum; each variant renders its exact frozen token through `wire_code()` and through `Display` alike — the full taxonomy, the delegation strings, the draft-02 strings and the http-profile signed-rejection strings; the http-profile codes are distinct from the folds they replace and a draft-02 missing binding is distinct from a draft-01 missing hash; and errors compare by value rather than by rendering. Says nothing about which failure BELONGS to which variant — that grouping is a ratified owner decision no guard can see — and nothing about whether a refusal reaches the audit boundary."
+paths = ["mcp-re-core/src/error.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://core/verification_taxonomy/frozen_tokens",
+  "mutation://core/verification_taxonomy/frozen_tokens",
+]
+tested_symbols = [
+  "lib#error::all_errors_tests::all_errors_is_duplicate_free",
+  "lib#error::all_errors_tests::all_wire_codes_is_exhaustive",
+  "lib#error::tests::delegation_wire_strings",
+  "lib#error::tests::draft02_binding_missing_is_distinct_from_draft01_hash_missing",
+  "lib#error::tests::draft02_wire_strings",
+  "lib#error::tests::errors_compare_by_value",
+  "lib#error::tests::full_taxonomy_wire_strings",
+  "lib#error::tests::http_profile_codes_are_distinct_from_the_folds_they_replace",
+  "lib#error::tests::http_profile_signed_rejection_wire_strings",
+  "lib#error::tests::renamed_and_kept_variants_render_exact_wire_strings",
 ]
