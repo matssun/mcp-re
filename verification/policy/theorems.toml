@@ -6323,6 +6323,8 @@ owner = "conformance.verdict_vocabulary_scope"
 review_requirement = "Owner security-specification review"
 supported_by = [
   "unit://conformance.verdict_vocabulary_scope",
+  "unit://conformance.production_half_definition",
+  "unit://conformance.scanned_tree_declaration",
   "unit://core.verification_taxonomy",
   "unit://policy.authorization_taxonomy",
   "unit://client.binding_spec_refusal",
