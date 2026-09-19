@@ -39,6 +39,37 @@ theorem, and the campaign may not widen an existing unit to swallow it. Until th
 ADR-MCPRE-059 §28 route registers it, it is visible unresolved assurance debt and the
 census reports it as such.
 
+
+---
+
+## The criterion this register applies to a gate
+
+A gate is a control by every test ADR-069 applies: it executes on the merge path, it can
+fail, and what it refuses is a rule somebody wrote down. The question is narrower — is it
+the **production carrier of a security proposition**? — and it is answered the same way for
+all sixty-three:
+
+> **A gate carries a proposition when a violation of it changes what the SHIPPED SYSTEM
+> admits, emits, signs or exposes.** A gate whose violation changes only what the
+> repository's own process knows, measures or enforces about itself does not.
+
+Two secondary readings, both used below and both stated because they decide the close calls:
+
+- **Can the gate go red on a weakening that leaves runtime behaviour unchanged?** If yes it
+  is a shape or a mirror rule, not a behavioural carrier — which is not a smaller thing, it
+  is a different thing, and calling it evidence would put an architecture rule inside a
+  behavioural proposition's fingerprint.
+- **Does a theorem name it, in its own text, as what establishes it?** That was ADR-068
+  Phase 1's criterion and it registered four gates. It is a sufficient condition here, not a
+  necessary one: a gate can be the carrier of a proposition the graph has simply never
+  stated, which is the whole subject of ADR-069.
+
+`scripts/merge_path_gate.py` already rules on part of this population, and its rulings are
+reused rather than re-derived: it names `module_map.py` and `startup_backedges.py` as
+"an architecture report with no verdict", `demo-local.sh` as "a demo runner, not a control",
+and `local_slo_lane.sh` as "an SLO measurement, not an admissibility control". Those are
+ADR-069 dispositions in everything but name, and ND-008 records them as such.
+
 ---
 
 ## The families
@@ -113,8 +144,329 @@ to run on a busy machine.
 or sensitivity control of a registered `measured://` record. That control is that unit's
 declared evidence and leaves the census by being named in the registry.
 
+## ND-003 — assurance-process ratchets and registries
+
+**Covers:** `assurance_obligation_gate.py`, `claim_surface_gate.py`, `clippy_ratchet_gate.py`,
+`control_census_gate.py`, `evidence_class_ratchet.py`, `merge_path_gate.py`,
+`module_size_gate.py`, `registry_approval_gate.py`, `release_assurance_gate.py`,
+`rehearsal_claim_gate.py`, `slo_invocation_gate.py`, `slo_evidence_identity.py`,
+`unit_closure_gate.py`, `verification_trigger_gate.py`, `adr051_slo_gate.py`, `slo_gate.py`.
+**Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 2.
+
+Each of these refuses a way the repository's own assurance machinery could lie about itself:
+a debt register that grew, a published claim whose statement moved since the owner read it,
+a lint count that rose, a unit whose closure is unanswered, a workflow whose trigger cannot
+see its own fingerprint, an SLO verdict quoted from a report nobody produced.
+
+**Why they are not evidence.** Same boundary as ND-001, one level out: they protect the
+process that produces and holds evidence, not the system the evidence is about. Weaken any
+of them and the shipped proxy admits, emits and signs exactly what it did before; what
+changes is what the repository can honestly say. That is the definition of an instrument.
+
+**What would move a control out.** A gate here that begins refusing a property of production
+source — as the four `*provenance*` gates do — is a carrier and belongs with them, registered
+against the unit whose proposition it establishes.
+
+## ND-004 — build-system, toolchain and runner wiring
+
+**Covers:** `bazel_gazelle_gate.py`, `bazel_srcs_gate.py`, `cargo_test_target_gate.py`,
+`workspace_lints_gate.py`, `node_matrix_state.py`, `self_hosted_docker_gate.py`,
+`heavy_lane_disk_preflight.py`, `prepare_node_matrix.sh`, `prepare_python_matrix.sh`,
+`use_pinned_toolchain.sh`, `verification_runner_preflight.sh`.
+**Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 2.
+
+These keep the machinery that RUNS the batteries able to run them: a Bazel target list that
+matches the module tree, a named `--test` lane that names a target that exists, a workspace
+lint table a member actually opts into, a prepared runtime that is present rather than
+assumed, a runner whose Docker credential and disk contracts hold.
+
+**Why they are not evidence.** Their subject is the lane, not the claim. Each one's failure
+mode is *a battery that cannot run or that runs over the wrong thing* — which is a reason a
+measurement is worthless, never a reason a proposition is false. They belong to the same
+class as ADR-MCPRE-068's fail-closed-on-zero-execution rule, from the other side: that rule
+makes an unexecuted lane refuse to report; these make the lane executable in the first place.
+
+**Note, because it is the closest call in this family.** `workspace_lints_gate.py` enforces
+that a crate opts into `[workspace.lints]`, and those lints include ADR-MCPRE-061 §6
+protections over production code. A crate that failed to opt in would compile with
+`unwrap_used` unenforced — but nothing about the shipped binary changes until somebody then
+writes an `unwrap`, and THAT is caught by the ratchet. The gate protects the enforcement, not
+the property.
+
+## ND-005 — mirrored and documented values
+
+**Covers:** `jcs_vocabulary_gate.py`, `proxy_flag_doc_gate.py`, `check_port_registry.py`.
+**Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 2.
+
+Each holds a second copy of a fact equal to its source: the deprecation vocabulary against
+the live profile decision, a guide's `--flag` against the parser that accepts it, the Helm
+chart's `bindPort` against `config/ports.toml`.
+
+**Why they are not evidence.** A violation changes what a READER is told, not what the
+system admits. The proxy binds the port the registry names whether or not the chart's mirror
+agrees; the parser accepts the flags it accepts whether or not a guide lists them; the
+carrier is RFC 9421 + RFC 9530 whatever a design document's framing says.
+
+**Stated because it is the sharpest close call in this register.**
+`check_port_registry.py` also enforces a band invariant — every registered port falls inside
+the machine-wide reservation — and that one IS about what the system binds. It is not
+separated out, because the band is a property of the REGISTRY and the registry is the single
+source the binding reads: there is no production text a weakening could touch that this gate
+would catch and the registry would not already decide. Should a binding ever be written that
+does not read the registry, this splits, and the split is a `new-proposition`, not a
+re-labelling.
+
+## ND-006 — repository and build-infrastructure security controls
+
+**Covers:** `tracked_secrets_gate.py`, `codebuild_guard_gate.py`.
+**Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 2.
+
+Two genuine security controls, and neither is about the product. One refuses operator
+credential material and personal identifiers in tracked files; the other refuses a CodeBuild
+context that carries credential material, on the premise that every path it names is a path
+`git archive HEAD` cannot produce.
+
+**Why they are not evidence.** Their subject is the repository and the build environment.
+A leak either has already happened or has not, and no proposition MCP-RE makes about
+dispatch, signing, admission or attribution is true or false depending on it. Filing them as
+evidence for a product claim would say the product's security rests on them, which is both
+untrue and a way of losing what they actually protect.
+
+**This is the family most at risk of being read as "unimportant".** It is not that. The
+disposition says where the control sits, not how much it matters, and `tracked_secrets_gate`
+exists precisely because a previous version of this guard was described in a template, was
+allowlisted as a permanent exemption, and had never existed at all.
+
+## ND-007 — architecture shape rules
+
+**Covers:** `semantic_altitude_gate.py`, `lifecycle_purity_gate.py`.
+**Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 2.
+
+ADR-MCPRE-067 §16.3's rule that a new provider adds a typed mechanism payload and never a
+provider-qualified sibling on `DeploymentRequest`; and ADR-MCPRE-056's rule that the two
+state machines that are VALUES — `runtime_state.rs`, `exchange_state.rs` — depend on no
+production module.
+
+**Why they are not evidence, and why this is the closest call in the whole gate lane.** Both
+gates read production source, and both refuse a shape whose reintroduction is a historical
+defect rather than a hypothetical: seventeen sibling fields whose meaning depended on a
+discriminator, and a lifecycle whose transition table could only be reviewed in isolation
+because nothing else reached into it. But apply the secondary test — **a weakening of either
+leaves runtime behaviour unchanged.** Adding an unused sibling field admits nothing new;
+adding a `use` of another production module to `runtime_state.rs` changes no transition.
+What each violation costs is the reviewability of a claim somebody else makes: the altitude
+rule keeps inconsistent values unconstructible by keeping the shape from existing, and the
+purity rule is what makes the transition relation's argument a local one.
+
+That is a property of the EVIDENCE, not of the system, which is this register's boundary.
+
+**What would move a control out.** A demonstration that a violation admits, emits or signs
+something the system does not today. `semantic_altitude_gate` is the likelier of the two:
+if a sibling field is ever READ on a path that decides anything, the proposition stops being
+about shape and the disposition becomes `new-proposition`.
+
+## ND-008 — not a control: drivers, runners, reports and demos
+
+**Covers:** `bump_version.sh`, `coverage.sh`, `demo-gcp-kms.sh`, `demo-local.sh`,
+`local_gate.sh`, `local_slo_lane.sh`, `merge_readiness_gate.py`, `merge_verified_pr.py`,
+`module_map.py`, `run_gate.sh`, `run_gate_selftest.sh`, `run_test_lane.sh`,
+`runtime_topology_sweep.sh`, `saturation_liveness.sh`, `saturation_rig.sh`,
+`startup_backedges.py`, `test-demos.sh`.
+**Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 2.
+
+The census enumerates every executable file under `scripts/`, deliberately: an
+under-inclusive enumeration is how a control kind goes dark, and ADR-069 §2.1 is what that
+costs. These are the files that enumeration catches which are not controls at all — they
+drive other controls, they print a report with no verdict, they run a demo, or they perform
+an operation on the repository.
+
+**Why they are not evidence.** They state no verdict, so there is nothing for a proposition
+to rest on. `module_map.py` and `startup_backedges.py` print an architecture report;
+`run_gate.sh` is the wrapper that keeps a verdict and an exit status one fact;
+`local_gate.sh` is the driver that runs the others; `merge_verified_pr.py` performs a merge.
+
+**This ruling is reused, not invented.** `scripts/merge_path_gate.py` already names four of
+these in its own exemption list, in these words — *an architecture report with no verdict*,
+*a demo runner, not a control*, *an SLO measurement, not an admissibility control*, *sourced
+toolchain shim*. A second authority reaching a different answer about the same file would be
+the defect this campaign exists to remove.
+
+**What would move a control out.** A file here that grows a verdict of its own — an exit
+status that means a property failed rather than an operation failed. `run_gate.sh --selftest`
+is deliberately NOT such a case: it proves the wrapper cannot report a false green, which is
+ND-003's subject, and it is invoked as a control from `local_gate.sh` stage 1 rather than
+being one itself.
+
+
 ---
 
 ## The propositions
 
-*(None yet.)*
+Eight, all from the gate lane, all at ADR-069 §5 **step 1: identified, not ratified**. Each
+names a control that runs today, the production carrier it is about, what would be false if
+the proposition failed, and the unit that would hold it. **None is registered against an
+existing unit**, because §5 forbids widening a unit to swallow a proposition it does not
+state — and in every one of these cases the nearby unit's proposition is about something
+else.
+
+## NP-001 — the SDK runtime support claim
+
+**Controls:** `scripts/python_runtime_gate.py`, `scripts/node_runtime_gate.py`.
+**Carrier:** `sdk/python/pyproject.toml`'s `requires-python`, `sdk/typescript/package.json`'s
+`engines.node`, the prepared runtime matrices, and the deploy Dockerfiles that install the
+shipped wheel.
+**Statement.** *The interpreters a shipped package claims to support do not exceed the ones
+its battery is measured on, and every deploy image installing that package names one of them
+exactly.*
+**If false.** A package advertises support for an interpreter no lane ever ran it on, and a
+deploy image installs the wheel on one. Every behavioural proposition either SDK root makes
+— exchange binding, verdict delivery, correlation lifecycle, nonce floor, bounded read — is
+then asserted over a runtime nothing measured.
+**Likely owner:** a new unit under each SDK; none exists. Measured over every `sdk_python.*`
+and `sdk_typescript.*` unit: each is about a behavioural proposition of the transport, and
+not one states a support claim.
+**Root relationship.** Directly under **THM-0094** and **THM-0095**, the two SDK system
+roots, both `critical`. Both theorems name these gates in their own text as what establishes
+the claim.
+**Provenance.** Identified by ADR-MCPRE-068 Phase 1 and recorded in
+`verification/reviews/packets/gate-carriers-are-unowned-2026-09-18.md`, which corrected its
+own first answer: an earlier version said REGISTER for all six unowned gate carriers, and
+four were registered while these two were not, because there is no unit to register them
+against. This record carries that disposition forward rather than restating it; what is new
+here is that it is now machine-visible in the census instead of living in a packet.
+
+## NP-002 — P-256 is confined to receipt verification
+
+**Control:** `scripts/es256_containment_gate.py`.
+**Carrier:** the `p256` dependency edge, the SCITT receipt verifier's modules, and
+`mcp-re-core`'s `ensure_ed25519_alg`.
+**Statement.** *ECDSA P-256 is reachable only from receipt verification: `p256` is a
+dependency of exactly one crate, referenced from exactly the COSE-key owner and its verifier
+inside it, absent from `mcp-re-core`, and `ES256` stays refused by name for MCP-RE's own
+request and response signatures.*
+**If false.** MCP-RE's message-signing policy widens to admit ECDSA P-256 for the signatures
+its authorization decisions rest on, without any decision being recorded — by someone
+reaching for the P-256 verifier already sitting in the workspace. An algorithm accepted for a
+third party's countersignature is not thereby accepted for MCP-RE's own.
+**Likely owner:** a new unit over the containment edge; `core.*` owns the refusal and no unit
+owns the reachability.
+**Root relationship.** Under the signing roots. THM-0072's statement already says both
+signatures are attempted "only under an algorithm the protected header names and the resolved
+key agrees with, out of EdDSA and ES256 and nothing else" — which is the VERIFICATION
+direction. The containment direction, that ES256 cannot cross into signing, is stated
+nowhere.
+**Severity:** `critical`.
+
+## NP-003 — every long-lived worker's lifetime is an owned value
+
+**Control:** `scripts/owned_worker_gate.py`.
+**Carrier:** `managed_worker/mod.rs` and every library source in the workspace, the
+`sdk/python` and `sdk/typescript` native bindings included.
+**Statement.** *No production source outside `managed_worker` starts an OS thread except at
+the reviewed sites, so every long-lived worker's lifetime is represented by an owned value.*
+**If false.** A bare `thread::spawn` whose `JoinHandle` is dropped outlives every value it
+was conceptually part of: nothing can stop it and nothing can observe that it stopped. This
+is the historical defect, not a hypothetical — startup had four, each looping on a SIGTERM
+flag no error path sets, so a `run` that failed after the first spawn returned `Err` with
+threads still reading files and minting keys. The fourth was found by accident, days after a
+survey that swept one file and concluded there were three.
+**Likely owner:** a new unit over `managed_worker`.
+**Root relationship.** ADR-MCPRE-056 §9. Bears on the lifecycle roots — a recorded terminal
+`Stopped` that leaves threads minting keys is the thing THM-0012 is about — without being
+what THM-0012 states.
+**Severity:** `high`.
+**What the control does NOT establish, and the record says so:** that no detached runtime
+worker exists. A helper that wraps the spawn, a type alias, a `tokio::spawn`, or a thread
+started inside a dependency all pass it. The real enforcement is that runtime-owned work goes
+through `WorkerSet`; the gate makes the common bypass loud. Any ratification inherits that
+limit rather than quietly dropping it.
+
+## NP-004 — every optional capability states ON or OFF, in every lane
+
+**Control:** `scripts/seam_posture_gate.py`.
+**Carrier:** `startup_posture::Seam`, `Seam::ALL`, and the `posture.declare` calls in
+`app.rs`.
+**Statement.** *Every variant of `Seam` appears in `Seam::ALL` and is declared exactly once
+at startup, so an operator reading a transcript can always distinguish "this capability is
+off in this deployment" from "this build does not have this capability".*
+**If false.** A seam ships silently unstated. Those two situations call for opposite
+responses — set a flag, or rebuild — and a silent seam is indistinguishable from either.
+**Why a runtime check does not cover it.** `PostureLog::assert_complete` refuses startup when
+a seam went unstated and is strictly stronger where it runs — and it is never reached
+hermetically, because the posture phase sits after the replay tier is established and every
+accepted tier needs a live Redis or etcd. In `cargo test --workspace` and `bazel test //...`
+the runtime check measures nothing, so a seam added without a declaration ships green.
+**Likely owner:** `proxy.continuation_installation` owns ONE seam's declaration conjunct and
+its unit comment says so in terms — *"the gate remains the repo-wide backstop for the other
+seven seams, which is not this claim's subject."* The proposition over all eight is unowned.
+**Severity:** `medium`.
+
+## NP-005 — the `input_required` discriminator is open-coded in one place
+
+**Control:** `scripts/discriminator_gate.py`.
+**Carrier:** the client core, chain reconstruction, the proxy's open-leg recorder, and both
+SDK bindings.
+**Statement.** *The SEP-2322 `input_required` discriminator literal appears in exactly one
+place, so the conformance guard that pins its VALUE protects every reader.*
+**If false.** A rename in the final SEP-2322 text fails the value guard while leaving every
+open-coded reader silently treating continuations as terminal — which is precisely the
+outcome the value guard exists to prevent. Measured, not hypothetical: the literal had been
+open-coded in five places, three of which collapsed a malformed non-terminal reply to
+"terminal".
+**Likely owner:** a new unit; the shape is exactly `conformance.verdict_vocabulary_scope`'s,
+which ADR-MCPRE-068 §12.2 made the estate's first `measured` unit — *exactly two files decide
+what a verdict token says*. This is the same proposition about a different vocabulary, and it
+is a strong candidate for the same evidence class.
+**Root relationship.** Under the client execution-contract roots; THM-0061 owns the
+three-way discriminator itself and says nothing about how many places open-code it.
+**Severity:** `high`.
+
+## NP-006 — a deployment runs the artifact that was qualified
+
+**Control:** `scripts/deploy_image_tag_gate.py`.
+**Carrier:** `VERSION`, `deploy/cloudbuild/*.yaml`, `deploy/k8s/*.yaml`, the Helm chart, and
+the runbooks and live-validation harnesses that deploy them.
+**Statement.** *Every image reference on the deploy surface names the version in `VERSION`,
+so what is built, what is referenced and what is deployed are one artifact.*
+**If false.** A deployment runs an image that is not the one the release evidence is about,
+and every assurance verdict that release carries is a statement about a different artifact.
+**Likely owner:** a new unit over the deploy surface; no unit's `paths` name `deploy/`.
+**Root relationship.** Bears on the transparency and release-evidence roots: the product's
+own subject is that a record can be tied to what produced it, and an image tag retyped by
+hand is that relation breaking one level below where the theorems look.
+**Severity:** `high`.
+
+## NP-007 — the shipped chart's fail-closed guards refuse
+
+**Control:** `scripts/helm_render_gate.py`.
+**Carrier:** `deploy/helm/mcp-re-proxy/templates/_helpers.tpl`.
+**Statement.** *Each `{{- fail … }}` guard in the shipped chart actually refuses the
+configuration it names at render time: a fleet on a node-local replay cache, a plaintext
+Redis hop carrying admitted nonces, the shipped `did:example:` / `example.com` / `epoch-1`
+placeholders, a transport binding that cannot start, an admission ceiling of zero.*
+**If false.** An operator installs a chart whose guards render without refusing, and a fleet
+starts on a node-local replay cache or a plaintext hop carrying admitted nonces — both of
+which are refusals the proxy's own units establish for the proxy, and which the chart is the
+only thing establishing for the deployment.
+**Likely owner:** a new unit over the chart; no unit's `paths` name `deploy/helm/`.
+**Root relationship.** THM-0077 — *no deployment serves a posture nobody selected* — is the
+proposition one layer up, and the chart is where an unselected posture would be installed.
+**Severity:** `critical`.
+
+## NP-008 — no advertised conformance category lacks an executable witness
+
+**Control:** `scripts/conformance_claims_gate.py`.
+**Carrier:** the category table in `docs/conformance-guide.md`, the corpora under
+`mcp-re-conformance/tests/vectors/`, and the `nt_rust_test` targets that reach them.
+**Statement.** *Every advertised conformance category names a corpus that exists with a
+manifest and at least one declared harness that reaches it; every corpus appears as a row;
+and a corpus publishing a `corpus_digest` has a reaching harness that recomputes it.*
+**If false.** A category advertised with no harness underneath it is a claim with no witness,
+and it reads to an operator — or an auditor — exactly like a category that is proven. The
+failure mode is silent in both directions.
+**Likely owner:** `conformance.retained_corpus` is the nearest unit and is about the corpus's
+retention, not about the advertised surface. A new unit, or an extension ratified as one.
+**Root relationship.** This is a CLAIM-SURFACE proposition for a product-facing document,
+which is `claim_surface_gate.py`'s shape applied to conformance rather than to theorems —
+and unlike that gate, its subject is what the product tells an auditor.
+**Severity:** `high`.

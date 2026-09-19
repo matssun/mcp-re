@@ -348,3 +348,581 @@ scope = "carrier"
 carrier = "tools/slo/test_vm_participant.py"
 reason_family = "ND-002"
 recorded = "2026-09-19"
+
+# ---------------------------------------------------------------------------
+# Batch 2 — the gate lane, 2026-09-19
+# ---------------------------------------------------------------------------
+#
+# Sixty gates, dispositioned one at a time against the criterion recorded in
+# docs/architecture/control-dispositions.md: a gate carries a proposition when a violation
+# of it changes what the SHIPPED SYSTEM admits, emits, signs or exposes. Eight propositions
+# the graph does not state; fifty-one controls whose subject is the repository's own
+# machinery, in six families. Control-scoped throughout: a gate is one file and one rule, so
+# the carrier and the control are the same thing and a carrier row would buy nothing.
+
+[[proposition]]
+id = "NP-001"
+title = "The SDK runtime support claim"
+carrier = "sdk/python/pyproject.toml, sdk/typescript/package.json, the prepared runtime matrices and the deploy Dockerfiles"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "THM-0094 and THM-0095 name these gates in their own text"
+record = "docs/architecture/control-dispositions.md#np-001"
+
+[[proposition]]
+id = "NP-002"
+title = "P-256 is confined to receipt verification"
+carrier = "the p256 dependency edge, the SCITT receipt verifier's modules, and mcp-re-core's ensure_ed25519_alg"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "THM-0072 states the verification direction; the containment direction is stated nowhere"
+record = "docs/architecture/control-dispositions.md#np-002"
+
+[[proposition]]
+id = "NP-003"
+title = "Every long-lived worker's lifetime is an owned value"
+carrier = "mcp-re-proxy/src/managed_worker/mod.rs and every library source in the workspace"
+likely_owner = ""
+consequence = "high"
+root_relationship = "bears on THM-0012 without being what it states"
+record = "docs/architecture/control-dispositions.md#np-003"
+
+[[proposition]]
+id = "NP-004"
+title = "Every optional capability states ON or OFF, in every lane"
+carrier = "mcp-re-proxy/src/startup_posture.rs and the posture.declare calls in app.rs"
+likely_owner = "proxy.continuation_installation owns ONE seam's conjunct and says so"
+consequence = "medium"
+root_relationship = "the per-seam conjunct is claimed; the proposition over all eight is not"
+record = "docs/architecture/control-dispositions.md#np-004"
+
+[[proposition]]
+id = "NP-005"
+title = "The input_required discriminator is open-coded in one place"
+carrier = "the client core, chain reconstruction, the proxy's open-leg recorder and both SDK bindings"
+likely_owner = ""
+consequence = "high"
+root_relationship = "THM-0061 owns the discriminator itself and is silent on how many places open-code it"
+record = "docs/architecture/control-dispositions.md#np-005"
+
+[[proposition]]
+id = "NP-006"
+title = "A deployment runs the artifact that was qualified"
+carrier = "VERSION, deploy/cloudbuild/*.yaml, deploy/k8s/*.yaml, the Helm chart and the deploying runbooks"
+likely_owner = ""
+consequence = "high"
+root_relationship = "bears on the transparency and release-evidence roots"
+record = "docs/architecture/control-dispositions.md#np-006"
+
+[[proposition]]
+id = "NP-007"
+title = "The shipped chart's fail-closed guards refuse"
+carrier = "deploy/helm/mcp-re-proxy/templates/_helpers.tpl"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "THM-0077 is the proposition one layer up"
+record = "docs/architecture/control-dispositions.md#np-007"
+
+[[proposition]]
+id = "NP-008"
+title = "No advertised conformance category lacks an executable witness"
+carrier = "docs/conformance-guide.md, mcp-re-conformance/tests/vectors/ and the nt_rust_test targets that reach them"
+likely_owner = "conformance.retained_corpus is nearest and is about retention"
+consequence = "high"
+root_relationship = "a claim-surface proposition for a product-facing document"
+record = "docs/architecture/control-dispositions.md#np-008"
+
+# --- new-proposition dispositions ---
+
+[[disposition]]
+id = "CD-0001"
+project = ""
+control = "gate#scripts/conformance_claims_gate.py"
+decision = "new-proposition"
+proposition = "NP-008"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0002"
+project = ""
+control = "gate#scripts/deploy_image_tag_gate.py"
+decision = "new-proposition"
+proposition = "NP-006"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0003"
+project = ""
+control = "gate#scripts/discriminator_gate.py"
+decision = "new-proposition"
+proposition = "NP-005"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0004"
+project = ""
+control = "gate#scripts/es256_containment_gate.py"
+decision = "new-proposition"
+proposition = "NP-002"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0005"
+project = ""
+control = "gate#scripts/helm_render_gate.py"
+decision = "new-proposition"
+proposition = "NP-007"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0006"
+project = ""
+control = "gate#scripts/node_runtime_gate.py"
+decision = "new-proposition"
+proposition = "NP-001"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0007"
+project = ""
+control = "gate#scripts/owned_worker_gate.py"
+decision = "new-proposition"
+proposition = "NP-003"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0008"
+project = ""
+control = "gate#scripts/python_runtime_gate.py"
+decision = "new-proposition"
+proposition = "NP-001"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0009"
+project = ""
+control = "gate#scripts/seam_posture_gate.py"
+decision = "new-proposition"
+proposition = "NP-004"
+recorded = "2026-09-19"
+
+# --- ND-003 ---
+
+[[disposition]]
+id = "CD-0010"
+project = ""
+control = "gate#scripts/adr051_slo_gate.py"
+decision = "not-evidence"
+reason_family = "ND-003"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0011"
+project = ""
+control = "gate#scripts/assurance_obligation_gate.py"
+decision = "not-evidence"
+reason_family = "ND-003"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0012"
+project = ""
+control = "gate#scripts/claim_surface_gate.py"
+decision = "not-evidence"
+reason_family = "ND-003"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0013"
+project = ""
+control = "gate#scripts/clippy_ratchet_gate.py"
+decision = "not-evidence"
+reason_family = "ND-003"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0014"
+project = ""
+control = "gate#scripts/control_census_gate.py"
+decision = "not-evidence"
+reason_family = "ND-003"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0015"
+project = ""
+control = "gate#scripts/evidence_class_ratchet.py"
+decision = "not-evidence"
+reason_family = "ND-003"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0016"
+project = ""
+control = "gate#scripts/merge_path_gate.py"
+decision = "not-evidence"
+reason_family = "ND-003"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0017"
+project = ""
+control = "gate#scripts/module_size_gate.py"
+decision = "not-evidence"
+reason_family = "ND-003"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0018"
+project = ""
+control = "gate#scripts/registry_approval_gate.py"
+decision = "not-evidence"
+reason_family = "ND-003"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0019"
+project = ""
+control = "gate#scripts/rehearsal_claim_gate.py"
+decision = "not-evidence"
+reason_family = "ND-003"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0020"
+project = ""
+control = "gate#scripts/release_assurance_gate.py"
+decision = "not-evidence"
+reason_family = "ND-003"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0021"
+project = ""
+control = "gate#scripts/slo_evidence_identity.py"
+decision = "not-evidence"
+reason_family = "ND-003"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0022"
+project = ""
+control = "gate#scripts/slo_gate.py"
+decision = "not-evidence"
+reason_family = "ND-003"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0023"
+project = ""
+control = "gate#scripts/slo_invocation_gate.py"
+decision = "not-evidence"
+reason_family = "ND-003"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0024"
+project = ""
+control = "gate#scripts/unit_closure_gate.py"
+decision = "not-evidence"
+reason_family = "ND-003"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0025"
+project = ""
+control = "gate#scripts/verification_trigger_gate.py"
+decision = "not-evidence"
+reason_family = "ND-003"
+recorded = "2026-09-19"
+
+# --- ND-004 ---
+
+[[disposition]]
+id = "CD-0026"
+project = ""
+control = "gate#scripts/bazel_gazelle_gate.py"
+decision = "not-evidence"
+reason_family = "ND-004"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0027"
+project = ""
+control = "gate#scripts/bazel_srcs_gate.py"
+decision = "not-evidence"
+reason_family = "ND-004"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0028"
+project = ""
+control = "gate#scripts/cargo_test_target_gate.py"
+decision = "not-evidence"
+reason_family = "ND-004"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0029"
+project = ""
+control = "gate#scripts/heavy_lane_disk_preflight.py"
+decision = "not-evidence"
+reason_family = "ND-004"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0030"
+project = ""
+control = "gate#scripts/node_matrix_state.py"
+decision = "not-evidence"
+reason_family = "ND-004"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0031"
+project = ""
+control = "gate#scripts/prepare_node_matrix.sh"
+decision = "not-evidence"
+reason_family = "ND-004"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0032"
+project = ""
+control = "gate#scripts/prepare_python_matrix.sh"
+decision = "not-evidence"
+reason_family = "ND-004"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0033"
+project = ""
+control = "gate#scripts/self_hosted_docker_gate.py"
+decision = "not-evidence"
+reason_family = "ND-004"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0034"
+project = ""
+control = "gate#scripts/use_pinned_toolchain.sh"
+decision = "not-evidence"
+reason_family = "ND-004"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0035"
+project = ""
+control = "gate#scripts/verification_runner_preflight.sh"
+decision = "not-evidence"
+reason_family = "ND-004"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0036"
+project = ""
+control = "gate#scripts/workspace_lints_gate.py"
+decision = "not-evidence"
+reason_family = "ND-004"
+recorded = "2026-09-19"
+
+# --- ND-005 ---
+
+[[disposition]]
+id = "CD-0037"
+project = ""
+control = "gate#scripts/check_port_registry.py"
+decision = "not-evidence"
+reason_family = "ND-005"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0038"
+project = ""
+control = "gate#scripts/jcs_vocabulary_gate.py"
+decision = "not-evidence"
+reason_family = "ND-005"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0039"
+project = ""
+control = "gate#scripts/proxy_flag_doc_gate.py"
+decision = "not-evidence"
+reason_family = "ND-005"
+recorded = "2026-09-19"
+
+# --- ND-006 ---
+
+[[disposition]]
+id = "CD-0040"
+project = ""
+control = "gate#scripts/codebuild_guard_gate.py"
+decision = "not-evidence"
+reason_family = "ND-006"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0041"
+project = ""
+control = "gate#scripts/tracked_secrets_gate.py"
+decision = "not-evidence"
+reason_family = "ND-006"
+recorded = "2026-09-19"
+
+# --- ND-007 ---
+
+[[disposition]]
+id = "CD-0042"
+project = ""
+control = "gate#scripts/lifecycle_purity_gate.py"
+decision = "not-evidence"
+reason_family = "ND-007"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0043"
+project = ""
+control = "gate#scripts/semantic_altitude_gate.py"
+decision = "not-evidence"
+reason_family = "ND-007"
+recorded = "2026-09-19"
+
+# --- ND-008 ---
+
+[[disposition]]
+id = "CD-0044"
+project = ""
+control = "gate#scripts/bump_version.sh"
+decision = "not-evidence"
+reason_family = "ND-008"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0045"
+project = ""
+control = "gate#scripts/coverage.sh"
+decision = "not-evidence"
+reason_family = "ND-008"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0046"
+project = ""
+control = "gate#scripts/demo-gcp-kms.sh"
+decision = "not-evidence"
+reason_family = "ND-008"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0047"
+project = ""
+control = "gate#scripts/demo-local.sh"
+decision = "not-evidence"
+reason_family = "ND-008"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0048"
+project = ""
+control = "gate#scripts/local_gate.sh"
+decision = "not-evidence"
+reason_family = "ND-008"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0049"
+project = ""
+control = "gate#scripts/local_slo_lane.sh"
+decision = "not-evidence"
+reason_family = "ND-008"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0050"
+project = ""
+control = "gate#scripts/merge_readiness_gate.py"
+decision = "not-evidence"
+reason_family = "ND-008"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0051"
+project = ""
+control = "gate#scripts/merge_verified_pr.py"
+decision = "not-evidence"
+reason_family = "ND-008"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0052"
+project = ""
+control = "gate#scripts/module_map.py"
+decision = "not-evidence"
+reason_family = "ND-008"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0053"
+project = ""
+control = "gate#scripts/run_gate.sh"
+decision = "not-evidence"
+reason_family = "ND-008"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0054"
+project = ""
+control = "gate#scripts/run_gate_selftest.sh"
+decision = "not-evidence"
+reason_family = "ND-008"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0055"
+project = ""
+control = "gate#scripts/run_test_lane.sh"
+decision = "not-evidence"
+reason_family = "ND-008"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0056"
+project = ""
+control = "gate#scripts/runtime_topology_sweep.sh"
+decision = "not-evidence"
+reason_family = "ND-008"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0057"
+project = ""
+control = "gate#scripts/saturation_liveness.sh"
+decision = "not-evidence"
+reason_family = "ND-008"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0058"
+project = ""
+control = "gate#scripts/saturation_rig.sh"
+decision = "not-evidence"
+reason_family = "ND-008"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0059"
+project = ""
+control = "gate#scripts/startup_backedges.py"
+decision = "not-evidence"
+reason_family = "ND-008"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-0060"
+project = ""
+control = "gate#scripts/test-demos.sh"
+decision = "not-evidence"
+reason_family = "ND-008"
+recorded = "2026-09-19"
+

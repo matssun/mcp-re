@@ -83,10 +83,18 @@ def failures(report) -> list[str]:
         if row.decision == "new-proposition" and not row.proposition:
             out.append(f"{row.id}: new-proposition with no proposition id")
         out.extend(_scope_failures(row, record))
-    known = {entry["id"] for entry in propositions()}
+    entries = propositions()
+    known = {entry["id"] for entry in entries}
     for row in report.dispositions:
         if row.proposition and row.proposition not in known:
             out.append(f"{row.id}: proposition {row.proposition} is not declared")
+    for entry in entries:
+        # A proposition with no durable record is the §5 step-1 half missing: the census
+        # would report unresolved debt that states nothing about what is missing.
+        if _record(entry["id"]) is None:
+            out.append(f"{entry['id']}: no record in {REGISTER.name}")
+        if not any(row.proposition == entry["id"] for row in report.dispositions):
+            out.append(f"{entry['id']}: declared and no control cites it")
     return out
 
 
