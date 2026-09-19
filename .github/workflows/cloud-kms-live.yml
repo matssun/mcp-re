@@ -199,6 +199,9 @@ jobs:
       MCP_RE_GCP_ACCESS_TOKEN: ${{ secrets.MCP_RE_GCP_ACCESS_TOKEN }}
       # Optional endpoint override (real Cloud KMS by default; no faithful emulator).
       MCP_RE_GCP_KMS_ENDPOINT: ${{ secrets.MCP_RE_GCP_KMS_ENDPOINT }}
+      # A SECOND, DISTINCT Ed25519 key version, read by gcp_kms_delegated_tls_live_test.
+      # Absent, the delegated-TLS step is skipped and the step after it says so out loud.
+      MCP_RE_GCP_KEY_VERSION_TLS: ${{ secrets.MCP_RE_GCP_KEY_VERSION_TLS }}
     steps:
       - uses: actions/checkout@v7
       - name: Why this is nightly-real-only
@@ -232,3 +235,28 @@ jobs:
           --features gcp_kms_keysource
           --test integration_live
           -- --ignored gcp_kms_http_profile_live_test::
+      - name: Run GCP Cloud KMS delegated-signing custody (#[ignore], real endpoint)
+        # ADR-MCPRE-052 §4, the counterpart of the AWS delegated-signing step above:
+        # ZERO KMS operations on the per-request signing path. The GCP job had the
+        # delegated-REQUIRED and HTTP-profile steps and not this one, so the property
+        # was claimed for both clouds and measured on one.
+        run: >-
+          scripts/run_test_lane.sh cargo test -p mcp-re-proxy
+          --features gcp_kms_keysource
+          --test integration_live
+          -- --ignored gcp_kms_delegated_signing_live_test::gcp_kms_delegated_signing_live
+      - name: Run GCP Cloud KMS delegated TLS (#[ignore], real endpoint)
+        # The TLS private key stays in Cloud KMS: a fully-validating mTLS handshake
+        # completes only because a real Cloud KMS asymmetricSign produced the
+        # CertificateVerify. Needs its own SECOND key version, so it is conditional
+        # rather than silently degraded — the AWS job's precedent.
+        if: ${{ env.MCP_RE_GCP_KEY_VERSION_TLS != '' }}
+        run: >-
+          scripts/run_test_lane.sh cargo test -p mcp-re-proxy
+          --features gcp_kms_keysource
+          --test integration_live
+          -- --ignored gcp_kms_delegated_tls_live_test::
+      - name: Note when GCP delegated TLS was not exercised
+        if: ${{ env.MCP_RE_GCP_KEY_VERSION_TLS == '' }}
+        run: |
+          echo "::warning title=gcp delegated-TLS not exercised::MCP_RE_GCP_KEY_VERSION_TLS absent — the GCP delegated-TLS lane did NOT run. This is not coverage; provide a SECOND, DISTINCT Ed25519 Cloud KMS key version to exercise it."

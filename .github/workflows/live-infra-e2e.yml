@@ -179,6 +179,7 @@ jobs:
           --features async_serve,redis_replay,online_ocsp
           --test integration_ext
           -- redis_replay_e2e_test:: redis_trust_epoch_e2e_test:: ocsp_e2e_test::
+          redis_continuation_e2e_test::
 
       - name: Run live-infra e2e (Redis replay race through the serving path)
         run: >-

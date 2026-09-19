@@ -48,6 +48,7 @@ passed over some source".
 
 from __future__ import annotations
 
+import argparse
 import re
 import subprocess
 import sys
@@ -409,7 +410,34 @@ def measure_unit(unit: dict, toolchains: dict) -> tuple[bool, str]:
     return not failed, "; ".join(details)
 
 
-def main() -> int:
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    """Argv, with an unknown token REFUSED rather than dropped.
+
+    A selector that selects NOTHING and a selector that selects EVERYTHING are both a
+    selector nobody validated, and this tool used to have the second face: `main` read no
+    argv at all, so `--unit proxy.peer_identity_value` — or any other spelling, right or
+    wrong — was discarded in silence, the whole 196-unit lane ran, and the run exited 0
+    under a `PASS` that answered a question nobody had asked. It failed in the safe
+    direction that day. On a SMALLER lane the same typo prints `PASS` having measured
+    something other than what was asked for, and nothing in the output says so.
+
+    So: `parse_args`, never `parse_known_args`, and the selection basis is PRINTED rather
+    than inferred from the flag that was typed.
+    """
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--unit",
+        action="append",
+        default=[],
+        metavar="ID",
+        help="measure only this unit; repeatable. An id no unit declares is an error, "
+        "because a subset flag that selects nothing must never read as a clean lane.",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(sys.argv[1:] if argv is None else argv)
     try:
         doc = load_verification()
         toolchains = load_toolchains()
@@ -419,6 +447,33 @@ def main() -> int:
         return 1
 
     units = [unit for unit in doc.get("unit", []) if claims_test_evidence(unit)]
+    basis = f"every unit declaring test:// evidence ({len(units)} of {len(doc.get('unit', []))})"
+    if args.unit:
+        wanted = dict.fromkeys(args.unit)
+        declared = {unit["id"] for unit in doc.get("unit", [])}
+        unknown = [uid for uid in wanted if uid not in declared]
+        if unknown:
+            print(
+                f"FAIL: --unit names no declared unit: {', '.join(sorted(unknown))}",
+                file=sys.stderr,
+            )
+            print("VERDICT: FAIL")
+            return 1
+        units = [unit for unit in units if unit["id"] in wanted]
+        silent = [uid for uid in wanted if uid not in {unit["id"] for unit in units}]
+        if silent:
+            print(
+                f"FAIL: --unit names {len(silent)} unit(s) declaring no test:// evidence: "
+                f"{', '.join(sorted(silent))}. A battery selected from a unit that claims "
+                f"none would report a green lane over an empty selection.",
+                file=sys.stderr,
+            )
+            print("VERDICT: FAIL")
+            return 1
+        basis = f"--unit ({len(units)} selected of {len(doc.get('unit', []))} declared)"
+    # The scope of a run belongs in its OWN output. A reader who has only the log must be
+    # able to see what was measured without reconstructing it from the command line.
+    print(f"verify-tests: selection basis — {basis}")
     if not units:
         # NOT_REQUIRED, not SKIPPED: the manifest asks nothing of this lane. SKIPPED would
         # mean it was required and deliberately not run.
