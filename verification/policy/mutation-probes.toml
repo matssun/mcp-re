@@ -8604,3 +8604,115 @@ The other two controls stay green, correctly, which locates the conjunct: neithe
 battery holding only those two would report a resolver that answers every key in the universe
 as no change, because the table it reads would still be exactly right.
 """
+
+# ---------------------------------------------------------------------------
+# The http-profile's own premises — ADR-MCPRE-069 NP-087, NP-088, NP-094, NP-103
+# ---------------------------------------------------------------------------
+#
+# All four weakenings leave a tree that BUILDS and a system that keeps serving. One admits a
+# block with a member nobody declared, one lets the composer overwrite the caller's own
+# `_meta`, one folds two Core verdicts into a third, and one turns the fleet-strict store-class
+# gate into its own negation. None errors, and none is visible above the file it is in.
+
+[[probe]]
+id = "M320-httpprofile-the-evidence-block-is-a-closed-value"
+unit = "http_profile.evidence_block_closure"
+theorem = "THM-0015"
+conjunct = "the request evidence block PARSED and validated under the profile tag — parsing a block is refusing the members it does not declare, not reading past them"
+path = "mcp-re-http-profile/src/block.rs"
+anchor = "#[serde(deny_unknown_fields)]\npub struct HttpRequestEvidenceBlock {\n"
+weakening = "pub struct HttpRequestEvidenceBlock {\n"
+expect_red = ["lib#block::tests::unknown_field_fails_closed"]
+note = """
+THE CLOSURE IS A DERIVE, WHICH IS EXACTLY WHY IT NEEDS A FALSIFIER. `validate` is a function
+whose refusals a reader can see; `deny_unknown_fields` is one attribute line, and deleting it
+changes no signature, no control flow and no error type. Under the weakening a block carrying
+a member this profile has never heard of parses, validates, and is covered by the signature
+along with everything else — so a future field can be introduced by a sender and ignored by
+a verifier that was written before it existed, which is the difference between an extension
+mechanism and a silent one.
+
+The other three controls stay green, correctly, and that is what locates the conjunct.
+`foreign_profile_fails_closed` and `empty_artifact_bindings_fails_closed` refuse inside
+`validate`, which this probe does not touch; `block_round_trips` serializes a block that has
+no stray member to ignore. Closure at the TYPE and refusal in the FUNCTION are two clauses,
+and this probe falsifies the first.
+"""
+
+[[probe]]
+id = "M321-httpprofile-the-carrier-extends-the-callers-meta"
+unit = "http_profile.evidence_block_carriage"
+theorem = "THM-0125"
+conjunct = "the MCP-RE evidence block lands at the body root rather than inside the caller's content, and the caller's own `_meta` survives signing unchanged"
+path = "mcp-re-http-profile/src/body/mod.rs"
+anchor = "    let meta = obj\n        .entry(META_KEY)\n        .or_insert_with(|| Value::Object(serde_json::Map::new()));\n"
+weakening = "    let meta = obj\n        .entry(META_KEY)\n        .and_modify(|m| *m = Value::Object(serde_json::Map::new()))\n        .or_insert_with(|| Value::Object(serde_json::Map::new()));\n"
+expect_red = ["lib#body::tests::insert_preserves_existing_meta_entries"]
+note = """
+THE SEAM SIGNS WHAT IT JUST EDITED, and under this weakening it edits more than its own
+entry. `entry().or_insert_with()` creates `_meta` only when it is absent; the weakening
+replaces it whenever it is present, so every member the caller put there is gone before the
+body is digested. The request still composes, still signs, and still verifies — the digest
+covers the bytes the composer produced, and those bytes are simply missing content the caller
+wrote. There is no error anywhere and no peer can tell.
+
+That is precisely the failure THM-0125's consequence names: "the caller's `params._meta`
+surviving is what keeps this seam from silently editing the content it is signing over."
+`insert_then_extract_roundtrips` stays green, correctly — its body carries no `_meta` at all,
+so the replacing branch is never taken, and a battery holding only the round trip would report
+this weakening as no change.
+"""
+
+[[probe]]
+id = "M322-httpprofile-an-outage-is-not-an-actor-binding-failure"
+unit = "http_profile.carrier_verdict_projection"
+theorem = "THM-0111"
+conjunct = "the RFC 9421 carrier states which of those verdicts it IS, through an exhaustive projection with no wildcard arm, and DERIVES its token from that projection"
+path = "mcp-re-http-profile/src/error/core_projection.rs"
+anchor = "            HttpProfileError::TrustResolverUnavailable => McpReError::TrustResolverUnavailable,\n"
+weakening = "            HttpProfileError::TrustResolverUnavailable => McpReError::ActorBindingFailed,\n"
+expect_red = [
+  "lib#error::core_projection::tests::an_outage_does_not_project_onto_an_actor_binding_failure",
+  "lib#error::core_projection::tests::the_derived_token_is_the_projected_verdicts_own",
+  "lib#error::core_projection::tests::the_projection_preserves_the_ratified_group_count",
+]
+note = """
+THE WEAKENING RE-CREATES THE FOLD MCPRE-92 SPLIT, and it is a COLLAPSE rather than an invented
+token deliberately. The projection stays exhaustive and stays wildcard-free — the two
+properties a reader checks by looking — while two carrier failures that mean opposite things
+reach the wire as one verdict. An operator paged by `mcp-re.actor_binding_failed` during a
+trust-store outage investigates the caller's key, and nothing in the tree says otherwise.
+
+The three reds are three different reasons, which is what makes the conjunct located rather
+than merely touched: the pair assertion fails because the two now project equal, the derived
+token fails because `wire_code` reads THIS arm, and the golden count falls from 26 to 25
+because a distinct verdict has left the image. `failure_classes_map_to_their_precise_codes`
+and the `error.rs` value-comparison controls stay green, correctly — the VARIANTS are still
+distinct, and the taxonomy holding two values is a different clause from the projection
+keeping them apart.
+"""
+
+[[probe]]
+id = "M323-httpprofile-the-fleet-strict-store-class-gate"
+unit = "http_profile.fleet_strict_store_class"
+theorem = "THM-0092"
+conjunct = "under the fleet-strict posture, replay admission refuses BEFORE any store side effect when the deployment wires a store that self-reports the single-process reference class"
+path = "mcp-re-http-profile/src/dispatch.rs"
+anchor = "    if config.fleet_strict && replay.is_single_process_reference() {\n        return Err(DispatchError::NonSharedReplayTier);\n    }\n"
+weakening = "    if !config.fleet_strict && replay.is_single_process_reference() {\n        return Err(DispatchError::NonSharedReplayTier);\n    }\n"
+expect_red = ["tests/dispatch_test#fleet_strict_rejects_single_process_reference_cache"]
+note = """
+THE POSTURE IS INVERTED RATHER THAN DELETED, which is the smaller and the more dangerous
+weakening. The gate still exists, still reads the store's self-reported class, and still
+returns the exact refusal it returned before — for the deployments that did NOT ask for
+fleet-strict. A deployment that declared the strict posture gets process-local replay
+protection while believing it has cross-replica protection, and the exchange succeeds, so
+there is no verdict, no log line and no metric to notice. That is THM-0092's consequence in
+its own words: "a deployment that believes it has cross-replica replay protection and has
+process-local protection".
+
+`fleet_strict_admits_durable_cache` stays green, correctly: a durable store never satisfies
+`is_single_process_reference()`, so the admitting direction cannot see this arm at all. A
+battery holding only the positive control would report the inversion as no change, which is
+why both directions are declared.
+"""

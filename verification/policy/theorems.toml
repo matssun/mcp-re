@@ -788,6 +788,8 @@ review_requirement = "Owner security-specification review"
 supported_by = [
   "unit://http_profile.request_full_result",
   "unit://http_profile.artifact_verification_boundary",
+  "unit://http_profile.evidence_block_closure",
+  "unit://http_profile.evidence_block_carriage",
 ]
 depends_on = ["THM-0014", "THM-0007", "THM-0008"]
 
@@ -4459,7 +4461,10 @@ carries.
 """
 owner = "proxy.replay_admission_gate"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.replay_admission_gate"]
+supported_by = [
+  "unit://proxy.replay_admission_gate",
+  "unit://http_profile.fleet_strict_store_class",
+]
 depends_on = ["THM-0086", "THM-0106", "THM-0107"]
 
 [[theorem]]
@@ -6326,6 +6331,7 @@ supported_by = [
   "unit://conformance.production_half_definition",
   "unit://conformance.scanned_tree_declaration",
   "unit://core.verification_taxonomy",
+  "unit://http_profile.carrier_verdict_projection",
   "unit://policy.authorization_taxonomy",
   "unit://client.binding_spec_refusal",
 ]
@@ -7139,7 +7145,10 @@ Executable, class V0, measured in the default cargo lane.
 """
 owner = "client.request_construction"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://client.request_construction"]
+supported_by = [
+  "unit://client.request_construction",
+  "unit://http_profile.evidence_block_carriage",
+]
 depends_on = []
 
 [[theorem]]
