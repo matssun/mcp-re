@@ -120,15 +120,25 @@ def selftest() -> int:
         else:
             print(f"ok   {name}")
 
-    # The live registry must describe the live tree, and a gate whose registry has drifted
-    # into naming nothing would pass on an empty measurement. Asserted non-empty for the
-    # reason an empty join reads as a clean tree.
+    # The live registry must describe the live tree. An empty registry is the CORRECT state
+    # once ADR-MCPRE-069 closes — every control claimed or dispositioned — and it is the
+    # false-green state at any other time, so the check is consistency and not non-emptiness:
+    # empty registry IFF empty residue, measured, not assumed. An earlier version asserted
+    # non-emptiness, which would have failed on the day the campaign succeeded.
+    from _census import census  # noqa: PLC0415 — the tool path is set up at import
+
     registered = load_registry()
-    if not registered:
+    measured = residue_by_file(census())
+    if bool(registered) != bool(measured):
         failures += 1
-        print("FAIL the live registry is empty; a gate over nothing states nothing")
+        print(
+            f"FAIL registry names {len(registered)} file(s) and the tree holds "
+            f"{len(measured)}; one of them is describing a tree that is not there"
+        )
+    elif registered:
+        print(f"ok   the live registry names {len(registered)} file(s), and so does the tree")
     else:
-        print(f"ok   the live registry names {len(registered)} file(s)")
+        print("ok   registry and residue are both empty — ADR-MCPRE-069's closure state")
     print(f"control-census ratchet selftest: {'PASS' if not failures else f'FAIL ({failures})'}")
     return 1 if failures else 0
 

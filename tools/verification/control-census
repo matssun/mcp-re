@@ -45,8 +45,20 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _census import RESIDUE_DECISIONS, census, propositions  # noqa: E402
+from _census import (  # noqa: E402
+    DISPOSITION_KEYS,
+    PROPOSITION_KEYS,
+    RESIDUE_DECISIONS,
+    census,
+    propositions,
+    raw_registry,
+)
 from _controls import KINDS, REPO_ROOT  # noqa: E402
+
+#: ADR-MCPRE-068 §4.1's severity vocabulary. A proposition's consequence is compared against
+#: other propositions' and against the units it would become, so a word outside the
+#: vocabulary is a claim about consequence nobody can compare.
+SEVERITIES = ("medium", "high", "critical")
 
 #: The durable register a `not-evidence` reason family points at. Same mechanism as
 #: ADR-MCPRE-061 §14's `review_ref` — a named record in a committed document, checked for
@@ -95,7 +107,49 @@ def failures(report) -> list[str]:
             out.append(f"{entry['id']}: no record in {REGISTER.name}")
         if not any(row.proposition == entry["id"] for row in report.dispositions):
             out.append(f"{entry['id']}: declared and no control cites it")
+    out.extend(_orphan_records(report, known))
+    out.extend(_schema_failures())
     return out
+
+
+def _schema_failures(raw: dict | None = None) -> list[str]:
+    """Unknown keys and an unknown severity, which the registry's own header promises.
+
+    The header says "Unknown keys are a validation failure: a typo in a disposition must not
+    read as an absent one" — and until this check existed, the loader simply ignored them,
+    so the file promised an enforcement it did not have. That is the class ADR-MCPRE-069's
+    parent record exists about, arriving inside this campaign's own registry.
+    """
+    out: list[str] = []
+    raw = raw_registry() if raw is None else raw
+    for row in raw.get("disposition", []):
+        for key in set(row) - DISPOSITION_KEYS:
+            out.append(f"{row.get('id', '?')}: unknown key {key!r}")
+    for entry in raw.get("proposition", []):
+        for key in set(entry) - PROPOSITION_KEYS:
+            out.append(f"{entry.get('id', '?')}: unknown key {key!r}")
+        if entry.get("consequence") not in SEVERITIES:
+            out.append(
+                f"{entry.get('id', '?')}: consequence {entry.get('consequence')!r} is not "
+                f"one of {SEVERITIES}"
+            )
+    return out
+
+
+def _orphan_records(report, propositions: set[str]) -> list[str]:
+    """A `##` record in the register that nothing declares.
+
+    The other direction is checked above — a declaration must have a record. This is the
+    one the repository has already been bitten by in a different register: *a dead row hides
+    the next live one.* A reason family or proposition record nobody cites reads as part of
+    the campaign's reasoning while adjudicating nothing, and the next reader cannot tell it
+    from one that is load-bearing.
+    """
+    if not REGISTER.is_file():
+        return []
+    declared = propositions | {row.reason_family for row in report.dispositions if row.reason_family}
+    found = set(re.findall(r"^## (NP-\d+|ND-\d+)", REGISTER.read_text(), re.M))
+    return [f"{name}: a record in {REGISTER.name} that nothing declares" for name in sorted(found - declared)]
 
 
 #: What a family record must say before a FILE-wide disposition may cite it. The same

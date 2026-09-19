@@ -22,6 +22,7 @@ Run: python3 tools/verification/test_controls.py
 
 from __future__ import annotations
 
+import importlib.machinery
 import sys
 from pathlib import Path
 
@@ -105,6 +106,23 @@ def test_a_gate_a_unit_declares_is_claimed():
         if c.control.kind == "gate"
     }
     assert len(claimed_gates) >= 4, sorted(claimed_gates)
+
+
+def test_a_measurements_own_argv_claims_its_controls():
+    """A `measured` unit declares no battery, and its protocol still selects controls.
+
+    ADR-MCPRE-068 §4.1 gives a measured unit a protocol and an apparatus control instead of
+    `tested_symbols`. A census reading only `tested_symbols` reports the controls the
+    measurement RUNS as claimed by nothing — and would invite a `not-evidence` reason to be
+    written about a measurement's own apparatus.
+    """
+    selected = {
+        claim.control.identity
+        for claim in REPORT.claims
+        if claim.selector.startswith("measured-argv:")
+    }
+    assert selected, "no measurement argv resolved to a control; the join went dark"
+    assert any("the_measurement_moves_when_the_scanned_set_shrinks" in s for s in selected)
 
 
 def test_every_control_kind_is_non_empty():
@@ -277,6 +295,83 @@ def test_the_enumerator_is_deterministic():
     """Two runs over one tree produce the same list, so a report can be diffed."""
     again = _controls.all_controls()
     assert [c.identity for c in again] == [c.identity for c in CONTROLS]
+
+
+def test_a_modified_describe_block_still_names_its_suite():
+    """`describe.runIf(expr)("title", …)` nests its cases, and the census must see it.
+
+    A suite the scanner misses does not remove its cases — they are enumerated under the
+    WRONG reported name, which is worse than losing them: the identity joins to nothing, and
+    a registration written against it would select a case vitest never reports. The live
+    instance is the TypeScript end-to-end suite, whose cases ADR-069 dispositions.
+    """
+    live = (
+        "sdk/typescript",
+        "vitest#test/transport_e2e.test.ts > McpReHttpTransport (live) > "
+        "fails closed on an unsigned response",
+    )
+    assert live in INDEX, "the live e2e suite moved; retarget this control"
+
+
+def test_the_register_and_the_registry_agree_in_both_directions():
+    """Every declaration has a record, and every record is declared.
+
+    The gate checks both. This control checks that the live pair actually agrees, so the
+    assertion goes red on a dead record as well as on a missing one — *a dead row hides the
+    next live one* is a defect this repository has already met in another register.
+    """
+    import re
+    import tomllib
+
+    from _controls import POLICY, REPO_ROOT
+
+    register = REPO_ROOT / "docs" / "architecture" / "control-dispositions.md"
+    raw = tomllib.loads((POLICY / "control-dispositions.toml").read_text())
+    declared = {entry["id"] for entry in raw.get("proposition", [])} | {
+        row["reason_family"] for row in raw.get("disposition", []) if row.get("reason_family")
+    }
+    found = set(re.findall(r"^## (NP-\d+|ND-\d+)", register.read_text(), re.M))
+    assert declared, "nothing declared; the registry went dark"
+    assert found - declared == set(), sorted(found - declared)
+    assert declared - found == set(), sorted(declared - found)
+
+
+def test_an_unknown_key_in_the_registry_is_refused():
+    """The registry's header promises it, so something has to keep the promise.
+
+    Until this check existed the loader ignored an unknown key, so a typo in `reason_family`
+    read as an ABSENT reason and a `not-evidence` row passed the ADR-069 D3 check with
+    nothing behind it. Perturbed rather than asserted: a schema check that has never seen a
+    bad key is a schema check nobody has run.
+    """
+    censor = _load_census_tool()
+    clean = {"disposition": [{"id": "CD-X", "decision": "not-evidence"}], "proposition": []}
+    assert censor._schema_failures(clean) == []
+    typo = {"disposition": [{"id": "CD-X", "decision": "not-evidence", "reson_family": "ND-001"}]}
+    assert any("reson_family" in problem for problem in censor._schema_failures(typo))
+
+
+def test_a_severity_outside_the_vocabulary_is_refused():
+    """ADR-MCPRE-068 §4.1's words, because a consequence is compared across records."""
+    censor = _load_census_tool()
+    entries = _census.propositions()
+    assert entries, "no propositions; the registry went dark"
+    assert all(e.get("consequence") in ("medium", "high", "critical") for e in entries)
+    bad = {"proposition": [{"id": "NP-X", "consequence": "severe"}], "disposition": []}
+    assert any("severe" in problem for problem in censor._schema_failures(bad))
+
+
+def _load_census_tool():
+    """The `control-census` executable as a module — it has no `.py` suffix."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_loader(
+        "control_census",
+        importlib.machinery.SourceFileLoader("control_census", str(HERE / "control-census")),
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_a_doctest_carries_its_fence_mode():

@@ -179,6 +179,11 @@ stage_static() {
     && tools/verification/control-census --gate \
     && python3 scripts/control_census_gate.py --selftest \
     && python3 scripts/control_census_gate.py \
+    `# ADR-MCPRE-069 CLOSED 2026-09-19: unclaimed + undispositioned = 0. The ratchet above` \
+    `# already refuses a new control that is neither claimed nor dispositioned, so this is` \
+    `# the criterion stated rather than a second enforcement — and a verdict nobody prints` \
+    `# is a verdict nobody notices stop being true.` \
+    && tools/verification/control-census --closure \
     && python3 scripts/serving_identity_provenance_gate.py --selftest \
     && python3 scripts/serving_identity_provenance_gate.py \
     && python3 scripts/authorization_provenance_gate.py --selftest \

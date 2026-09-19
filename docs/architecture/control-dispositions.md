@@ -140,6 +140,13 @@ SLO measurement is ever registered as `measured://`, its `measurement_control` w
 sensitivity or reproducibility control on the number — not a test that the harness declines
 to run on a busy machine.
 
+**Extended 2026-09-19, batch 21:** `mcp-re-proxy/tests/tls_load_harness_bench.rs`, the Rust
+load harness itself. Same reason, and one more that is this repository's own worked example
+of a false green: the file is gated to the `redis_replay` feature rather than marked
+`#[ignore]`, so the `-- --ignored` form selects ZERO tests, exits 0 and writes no report.
+`scripts/slo_invocation_gate.py` exists to keep that form out. A harness whose invocation had
+to be policed is not a control over the product.
+
 **What would move a control out of this family.** A control here that IS the reproducibility
 or sensitivity control of a registered `measured://` record. That control is that unit's
 declared evidence and leaves the census by being named in the registry.
@@ -195,7 +202,8 @@ the property.
 
 ## ND-005 — mirrored and documented values
 
-**Covers:** `jcs_vocabulary_gate.py`, `proxy_flag_doc_gate.py`, `check_port_registry.py`.
+**Covers:** `jcs_vocabulary_gate.py`, `proxy_flag_doc_gate.py`, `check_port_registry.py`, and
+`mcp-re-transport`'s crate-root `no_run` doctest (added 2026-09-19, batch 8).
 **Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 2.
 
 Each holds a second copy of a fact equal to its source: the deprecation vocabulary against
@@ -206,6 +214,12 @@ chart's `bindPort` against `config/ports.toml`.
 system admits. The proxy binds the port the registry names whether or not the chart's mirror
 agrees; the parser accepts the flags it accepts whether or not a guide lists them; the
 carrier is RFC 9421 + RFC 9530 whatever a design document's framing says.
+
+**The doctest belongs here for the same reason as `proxy_flag_doc_gate.py`.** A `no_run`
+rustdoc example COMPILES and does not run: it establishes that the documented usage still
+type-checks against the current API, which is the same fact that gate establishes for a
+`--flag`, one language layer down. Its failure means the guide teaches an API that is not
+there.
 
 **Stated because it is the sharpest close call in this register.**
 `check_port_registry.py` also enforces a band invariant — every registered port falls inside
@@ -264,6 +278,150 @@ That is a property of the EVIDENCE, not of the system, which is this register's 
 something the system does not today. `semantic_altitude_gate` is the likelier of the two:
 if a sibling field is ever READ on a path that decides anything, the proposition stops being
 about shape and the disposition becomes `new-proposition`.
+
+## ND-009 — data-structure API robustness with no security proposition
+
+**Covers:** `sdk/python/tests/test_correlation.py::TestRecordAndTake::test_iterating_yields_the_outstanding_requests`,
+`::TestReaping::test_reaping_an_empty_store_is_a_no_op`,
+`::TestTheStoreIsBounded::test_abandon_is_idempotent_and_never_raises`.
+**Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 5.
+
+Three controls over the correlation store's API surface: that iterating yields the
+outstanding entries, that reaping an empty store does nothing, and that abandoning twice
+does not raise.
+
+**Why they are not evidence.** Each asserts a TOTAL or IDEMPOTENT API behaviour. A violation
+is a crash or a wrong iteration inside the adapter — not something the system admits, emits
+or attributes, and not a clause of any proposition the graph holds. They are the reason the
+adapter does not fall over, which is a different kind of good from the reason it cannot be
+made to lie.
+
+**Stated because `abandon` is the close call.** If `abandon` raised, an error path could
+fail to retire an entry — which WOULD bear on `sdk_python.correlation_lifecycle`'s clause
+that no remotely triggerable outcome leaves an entry outstanding. It is not registered
+there because the control does not measure that: it measures that a second call does not
+raise, over a store that the first call already emptied. The outstanding claim is measured
+by the three boundedness controls registered in that unit, and those are the controls whose
+failure would make it false.
+
+**What would move a control out.** A control here that exercises the store on a path a
+remote peer can drive. These three are driven by the test, not by a reply.
+
+## ND-010 — a `compile_fail` doctest superseded by a structural probe
+
+**Covers:** `mcp-re-http-profile` `doc#verified_response::bound::VerifiedMcpResponse`,
+`doc#verified_response::bound::VerifiedDelegatedMcpResponse`,
+`doc#verified_request::VerifiedMcpRequest`.
+**Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 8.
+
+Four `compile_fail` examples over three items, each a hostile construction the type system
+must refuse. ADR-MCPRE-068 §12.1 called these "the best worked example of the defect in the
+repository" — they were registered as `test://` evidence for a claim only a compile refusal
+can make — and Phase 0B/0D moved the claim to `structural://` probes S01, S02, S03 and S05,
+each of which names the very `doc_item` above in `structural-probes.toml`.
+
+**Why the doctest itself is not evidence.** ADR-068's own reason, in the probe registry's
+words: *rustdoc's expected-error-code annotation is checked only on nightly, so on the
+pinned stable toolchain `compile_fail,E0308` and bare `compile_fail` are the same
+declaration.* The doctest therefore passes when the example fails to compile for ANY reason
+— a renamed import, a typo, an unrelated error — and cannot attribute the refusal to the
+boundary. The structural probe compiles the identical construction itself and requires the
+declared rustc error code with its primary span on the marker line.
+
+So the example is **documentation of the seal, and the probe is the evidence for it.** That
+is not a demotion: the doctest is the thing a reader reaches for first, and keeping it is
+what makes the probe's construction checkable against a human-readable statement. It is
+simply not the control the claim rests on.
+
+**What would move a control out.** The pinned toolchain gaining a checked error-code
+annotation for doctests, or the probe for an item being withdrawn. Either makes the doctest
+the only control over that boundary again, and `test_structural_lane.py` already holds the
+case where a probe's documented example has drifted from what the registry says it does.
+
+## ND-011 — a carrier the legality model admits no deployment to reach
+
+**Covers:** every control in `mcp-re-proxy/src/ocsp.rs` (38).
+**Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 11.
+**Scope:** `carrier-scope: admitted`.
+
+The online-OCSP checker: responder signature verification, certid binding, freshness and
+skew, nonce round-trip and match, delegated-responder validity window, the AIA-URL policy
+that refuses a `file:` scheme, `localhost` and a loopback host BEFORE any fetch, the
+hard-fail/soft-fail policy table, and a SHA-1 known-answer vector. Careful controls over a
+careful verifier.
+
+**Why they are not evidence.** `proxy.online_ocsp_reachability` is a registered unit whose
+whole statement is that this carrier is unreachable: *"The legality model admits no
+online-OCSP deployment: `OnlineRevocationEvidenceRequest::Required` is refused on the only
+route to a `ValidatedDeployment`."* Its battery includes
+`a_programmatic_config_cannot_claim_an_ocsp_check_the_serving_path_never_makes`. So no legal
+deployment builds an `OcspChecker`, and a control over what that checker does establishes
+nothing about any deployment MCP-RE admits.
+
+**This is ADR-MCPRE-061 §8 question 9 arriving as a census result** — *what branches are
+unreachable under the current legality model* — and the answer is unusual in being already
+OWNED: the estate does not merely fail to reach this code, it has a unit that says so.
+
+**What this is NOT.** It is not a finding that the code is dead in the delete-it sense, and
+it is not a reason to remove the controls. `proxy.online_ocsp_reachability` exists so that
+the refusal is a measured fact rather than an assumption, and the verifier's own controls
+are what make re-admitting the mode a decision rather than a leap.
+
+**What would move a control out, precisely.** The legality model admitting
+`OnlineRevocationEvidenceRequest::Required` on any route to a `ValidatedDeployment`. On that
+day `proxy.online_ocsp_reachability`'s statement becomes false, these 38 controls become
+evidence for a proposition that must then exist, and the disposition is `register` or
+`new-proposition` — never this family. The exit condition is mechanical: that unit's battery
+goes red.
+
+## ND-012 — a fixture or report GENERATOR
+
+**Covers:** `mcp-re-conformance/tests/delegation_vectors_test.rs::write_delegation_fixtures`,
+`http_profile_vectors_test.rs::write_http_profile_fixtures`,
+`scitt_vectors_test.rs::write_scitt_fixtures`,
+`scitt_interop_test.rs::write_verification_reports`,
+`scitt_retained_corpus_test.rs::write_retained_corpus`.
+**Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 15.
+
+Five `#[test]` functions that do not test anything: each regenerates a committed corpus or
+verification report when run deliberately. They are the write half of the
+regenerate-and-compare pattern whose READ half — *regenerated fixtures match the committed
+bytes* — is a control and is dispositioned with its corpus.
+
+**Why they are not evidence.** A generator cannot fail in a way that says a proposition is
+false; it can only fail to produce a file. The proposition is carried entirely by the
+comparison, and registering the generator beside it would put a control in a battery that,
+if it went red, would mean the fixtures could not be rewritten — which is not a security
+fact about anything.
+
+**Why they are enumerated at all.** Because the census enumerates every `#[test]`, and a
+kind of function that is not a control is exactly the kind of thing a person filters out of
+a list and a machine must be told about. The alternative — teaching the enumerator to skip
+`write_*` — would be a name-shaped rule that goes stale silently.
+
+**What would move a control out.** A generator that also compares. Then it is a control and
+belongs with its corpus.
+
+## ND-013 — demo fixture material
+
+**Covers:** `mcp-re-demo/tests/demo_fixtures_test.rs` (5).
+**Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 18.
+**Scope:** `carrier-scope: admitted`.
+
+Controls over the demo's own generated material: that the matching client identity
+round-trips and equals the signer, that the mismatched client chains to the same CA but
+differs from the signer, that the server leaf does not chain to the client CA, that the
+trust JSON carries the signer's public key, and that writing the files materialises every
+input and cleans up on drop.
+
+**Why they are not evidence.** Their subject is the DEMO's fixtures — they establish that
+the demo presents the situations it means to present. A violation makes a demonstration
+misleading, not a deployment insecure, and no proposition MCP-RE makes is true or false
+depending on them. `scripts/merge_path_gate.py` already rules on the demo runner in the same
+words: *a demo runner, not a control*.
+
+**What would move a control out.** A fixture that becomes a conformance vector. Then its
+pinning is NP-080's subject and it is claimed there.
 
 ## ND-008 — not a control: drivers, runners, reports and demos
 
@@ -470,3 +628,2245 @@ retention, not about the advertised surface. A new unit, or an extension ratifie
 which is `claim_surface_gate.py`'s shape applied to conformance rather than to theorems —
 and unlike that gate, its subject is what the product tells an auditor.
 **Severity:** `high`.
+
+## NP-009 — the shipped adapter's end-to-end composition, and the lane that does not run it
+
+**Controls:** `sdk/typescript/test/transport_e2e.test.ts` (5),
+`sdk/python/tests/test_transport_e2e.py` (5).
+**Carrier:** `McpReHttpTransport` / the Python transport adapter, against the real Rust
+`http_profile_proxy` and a real MCP SDK Streamable-HTTP backend.
+**Statement.** *An application calls `callTool` and nothing else — no sign, no verify, no
+correlation — and the composition fails closed: a tampered response never reaches the
+application, an unsigned one is refused, a signed rejection raises correlated rather than
+hanging, and the hardening profile refuses a software key before connecting.*
+**If false.** The claim each SDK adapter exists to make is false, and it is the composition
+claim: every unit below it is about one property in isolation, and none of them says the
+shipped adapter puts them together.
+**Likely owner:** none. Measured over every `sdk_python.*` and `sdk_typescript.*` unit: each
+states a property of the transport; not one states the composition.
+**Root relationship.** THM-0094 and THM-0095 directly. This is their headline demonstration.
+**Severity:** `critical`.
+
+**The blocker, and it is the reason this is recorded rather than registered.** *These ten
+controls run in no lane.* Both are conditional, for two different reasons, and both were
+measured rather than assumed:
+
+- the TypeScript half is `describe.runIf(existsSync(PROXY_BIN) && haveInnerBackend())`, and
+  the vitest job builds the napi addon and runs `npx vitest run --coverage` without ever
+  building `cargo build -p mcp-re-proxy --example http_profile_proxy` or installing the MCP
+  SDK server. Every case skips.
+- the Python half calls `pytest.importorskip("httpx")`, and `uv.lock` resolves `httpx2`.
+  The whole module skips on import. ADR-MCPRE-068 Phase 1 recorded this and it is still
+  true on main.
+
+So registering them is not available: `verify-tests` requires each declared control to
+PASS, and a skipped case is not a pass. **Ratifying this proposition means provisioning the
+harness in a lane**, not writing a `tested_symbols` entry — and until then the strongest
+evidence either SDK root could have is evidence nothing produces. That is the honest state,
+and hiding it inside a unit that does run would be the false green this campaign exists to
+remove.
+
+## NP-010 — the shipped SDKs reproduce the frozen oracle byte for byte
+
+**Controls:** `sdk/typescript/test/parity.test.ts` (7), `sdk/python/tests/test_parity.py` (8).
+**Carrier:** each SDK's signing path, and `tools/gen_sdk_parity_fixture.py`'s frozen oracle.
+**Statement.** *For every case the frozen oracle pins, each SDK's emitted signature bytes
+equal the oracle's exactly and are deterministic across runs, and the two SDKs agree with it
+on the profile tag.*
+**If false.** The two SDKs and the Rust core disagree on the wire while every per-property
+unit stays green, because each measures its own implementation against its own expectation.
+Parity is the only control that compares them to a common fixed point.
+**Likely owner:** none. `*.authorization_binding` says binding specs are "serialized
+canonically and byte-identically to the TypeScript twin" / "to the Python twin" — which is
+ONE conjunct of parity, about one field family, and is already claimed.
+**Root relationship.** Under THM-0094 and THM-0095 jointly. It is the only proposition in
+either root's neighbourhood that is about BOTH.
+**Severity:** `critical`.
+**Scope controls, and why they belong to this proposition rather than beside it.** Five of
+the fifteen assert what the oracle CONTAINS — the expected schema, non-emptiness, all three
+binding forms and not just DPoP, the pinned decision carrier holding the document and its
+digest, the generic opaque case staying off the decision type, the notification envelope.
+They are this proposition's `measurement_scope` in ADR-MCPRE-068 §4.1's sense: a parity
+claim over a corpus that had quietly lost a case is a claim about a smaller corpus, and it
+would read identically. They are not separable evidence and are not separately registered.
+**What the controls do NOT establish, and any ratification inherits it.** That the two SDKs
+BEHAVE the same. The fixtures pin emitted bytes for the cases they name and nothing else.
+
+## NP-011 — custody class does not change the bytes
+
+**Controls:** `sdk/typescript/test/parity.test.ts` (3), `sdk/python/tests/test_parity.py` (3).
+**Carrier:** each SDK's signer abstraction over software and non-exporting custody.
+**Statement.** *Non-exporting custody produces byte-identical output to software custody; a
+notification envelope carries no id in either custody class; and a signed continuation leg
+signs differently from the open leg it answers.*
+**If false.** Custody becomes observable on the wire — a verifier or a log could tell which
+custody a deployment uses — or, in the other direction, a continuation leg signs the same
+bytes as the leg before it, which is the evidence-reuse failure the continuation chain
+exists to prevent.
+**Likely owner:** `*.signer_policy` owns the POLICY — that the transport does not open
+unless the signer satisfies the route's custody requirement. It says nothing about whether
+the two custody classes are distinguishable afterwards.
+**Root relationship.** Under THM-0094/THM-0095 beside NP-010, and bearing on the custody
+propositions the proxy side already holds.
+**Severity:** `high`.
+
+## NP-012 — the artifact that ships implements the profile
+
+**Controls:** `sdk/typescript/test/smoke.test.ts` (2), `sdk/python/tests/test_smoke.py` (3).
+**Carrier:** the BUILT package — the napi native addon and the PyO3 wheel — not the source
+tree every other unit's battery measures.
+**Statement.** *The package as built and packed loads, reports a non-empty core version and
+the RFC 9421 profile tag, and signs an MCP request as an RFC 9421 message.*
+**If false.** Every `sdk_python.*` and `sdk_typescript.*` proposition is established over
+source that the published artifact does not faithfully carry. This is not hypothetical
+distance: both SDKs are native extensions, so the artifact is a build product and not the
+files the unit paths name.
+**Likely owner:** none. No unit's `paths` name a build product, and none could — a unit's
+source closure is source.
+**Root relationship.** Under THM-0094/THM-0095, and the same shape as NP-001: a claim about
+what ships rather than about what was written.
+**Severity:** `high`.
+
+## NP-013 — every exchange terminates, and no slot is leaked
+
+**Controls:** `sdk/typescript/test/transport.test.ts` (6),
+`sdk/python/tests/test_transport.py` (4).
+**Carrier:** each SDK transport's concurrency semaphore and exchange completion path.
+**Statement.** *The number of exchanges in flight is bounded, so a burst cannot exhaust the
+poster; exchanges run concurrently rather than head-of-line blocking; an invalid bound is
+refused at construction rather than deadlocking; a slot is released even when an exchange
+throws a non-`Error`; and a failure still completes the call when no handler is installed.*
+**If false.** A caller's transport deadlocks or leaks slots until it stops making progress —
+a client-side denial of service reachable by a peer that returns the wrong shape, and one
+that presents as a hang rather than as an error.
+**Likely owner:** `*.post_close_emission` (TypeScript) mentions "a request still queued at
+the concurrency semaphore", which presumes the semaphore without claiming its bound;
+`*.bounded_read` bounds a single response, not the number in flight.
+**Root relationship.** Under THM-0094/THM-0095. The TypeScript file says in its own comment
+that the two SDKs "must agree on how many exchanges may be in flight, not just on the bytes
+they emit" — which is this proposition, stated in a test file and nowhere in the graph.
+**Severity:** `medium`.
+
+## NP-014 — after close, the Python SDK signs and transmits nothing
+
+**Controls:** `sdk/python/tests/test_transport.py` (4).
+**Carrier:** the Python transport adapter's `close`.
+**Statement.** *After `close()`, further work is refused, in-flight work is aborted rather
+than drained, an in-flight notification is aborted too, and nothing is delivered to a caller
+that has left.*
+**If false.** A transport keeps signing and transmitting after the application closed it.
+**Likely owner:** none on the Python side.
+**Root relationship.** Under THM-0094 — **and this is an ASYMMETRY between the two SDK
+roots, which is why it is recorded separately from NP-013.** `sdk_typescript.post_close_emission`
+exists, is `critical`, and states exactly this for the TypeScript adapter. There is no
+`sdk_python.post_close_emission`. The Python controls are written, they pass, and the root
+above them makes no claim they support. A twin promise held by one root and not the other
+is not a bookkeeping gap; it is the two system roots promising different things.
+**Severity:** `critical`, matching its TypeScript twin.
+
+## NP-015 — a device that cannot sign emits no evidence (Python)
+
+**Controls:** `sdk/python/tests/test_custody.py::TestDeviceFailsClosed` (7).
+**Carrier:** `sdk/python/python/mcp_re_sdk/custody.py`'s device signer.
+**Statement.** *A signing device that throws, returns a non-`bytes` value, or returns a
+signature of the wrong length raises `SignerUnavailable` and emits no evidence; the
+underlying cause travels with it; `SignerUnavailable` is not a wire error; and a failure in
+the CORE is not attributed to the device.*
+**If false.** The adapter emits unsigned or wrongly-signed evidence when the device
+misbehaves, or reports a local device failure as a peer-originated wire verdict — which is
+the provenance confusion `*.local_failure_provenance` exists to prevent, arriving through
+the custody path instead of the transport path.
+**Likely owner:** `sdk_python.signer_policy`, and this is why it is a proposition rather
+than a registration: **`sdk_typescript.signer_policy` says "a device that cannot sign fails
+closed rather than emitting unsigned evidence" and `sdk_python.signer_policy` does not.**
+The Python statement stops at the policy check and the rendering refusal. Seven controls are
+written, they pass in the measured lane, and the unit above them makes no claim they support.
+**Root relationship.** Under THM-0094. A second asymmetry between the two SDK roots, found
+the same way as NP-014 and recorded separately from it because it is a different clause.
+**Severity:** `high`, matching its TypeScript twin.
+**Note on shape.** One of the seven is parametrised over signature lengths, and pytest's
+generated ids for it embed raw bytes. That is a registration-mechanics problem for whoever
+ratifies this, not a reason the proposition is absent, and it is recorded here so the
+ratification meets it deliberately.
+
+## NP-016 — the signing device is the key's sole holder
+
+**Controls:** `sdk/python/tests/test_custody.py::TestNonExportingIsByteIdentical::test_the_device_is_the_sole_holder_of_the_key`,
+`::test_signing_device_exposes_no_public_route_to_key_material`.
+**Carrier:** `custody.py`'s non-exporting signer.
+**Statement.** *Under non-exporting custody the device is the only holder of the key, and the
+signer exposes no public route by which the material could be obtained.*
+**If false.** Non-exporting custody is a label rather than a property: the material is
+reachable from the process that was supposed not to hold it, and every hardening-profile
+refusal above it is enforcing a distinction that does not exist.
+**Likely owner:** `sdk_python.signer_policy` says *key material is never rendered*. That is
+about RENDERING — a `repr`, a log line, a string conversion. **Unconstructibility is a
+different and stronger claim**, and registering these two against the rendering clause would
+make the unit's evidence cover a seal its statement does not assert. This is exactly the
+`register`-misapplied case ADR-069 §5 names.
+**Root relationship.** Under THM-0094, and the same shape as the proxy-side
+`*_sole_producer` units ADR-MCPRE-068 Phase 0D created — which suggests the ratified form is
+`structural`, not `tested`.
+**Severity:** `critical`.
+
+## NP-017 — a signer cannot be constructed from illegal material
+
+**Controls:** `sdk/python/tests/test_custody.py::TestCustodyClasses::test_rejects_a_seed_that_is_not_32_bytes`,
+`::test_rejects_a_non_callable_sign_callback`.
+**Carrier:** `custody.py`'s two constructors.
+**Statement.** *No software signer exists whose seed is not exactly 32 bytes, and no device
+signer exists whose sign callback is not callable.*
+**If false.** A signer is constructible over a short seed — a weaker key than Ed25519's
+contract — or over a device that cannot be called at all, and the failure appears later, at
+signing time, as something else.
+**Likely owner:** `sdk_python.signer_policy` is about what the POLICY admits at open time;
+this is about what the VALUE admits at construction. The repository's own rule is the
+distinction: *the invariant belongs to the value, not to the code that builds it*, and a
+policy check is the code that builds it.
+**Root relationship.** Under THM-0094.
+**Severity:** `high`.
+
+## NP-018 — the correlation entry is the request's audit record
+
+**Controls:** `sdk/python/tests/test_correlation.py::TestRecordAndTake::test_the_correlation_id_is_the_request_evidence_handle`,
+`::test_the_store_carries_the_audit_fields_the_adr_enumerates`.
+**Carrier:** `sdk/python/python/mcp_re_sdk/correlation.py`'s entry.
+**Statement.** *A request's correlation id IS its evidence handle — not a separate local
+key that happens to accompany one — and the entry carries every audit field ADR-MCPS-044
+enumerates.*
+**If false.** The adapter holds a local bookkeeping key beside the evidence handle, and the
+two can diverge: an entry retired under one identity while a reply arrives under the other,
+and an audit record that names fewer facts than the ADR says it must. The first is the
+`identity, not locator` failure this repository has ruled on before; the second is an audit
+record that reads as complete.
+**Likely owner:** `sdk_python.correlation_lifecycle` is a WINDOW claim plus the store's
+refusals. It says nothing about what the entry IS or what it carries.
+**Root relationship.** Under THM-0094, and adjacent to the proxy-side audit-record
+propositions, which are about the record the proxy writes rather than the one the client
+keeps.
+**Severity:** `high`.
+
+## NP-019 — the correlation store's peek and take split
+
+**Controls:** `sdk/python/tests/test_correlation.py::TestRecordAndTake::test_peek_does_not_consume`,
+`::test_take_consumes_the_outstanding_request`.
+**Carrier:** `correlation.py`'s `peek` and `take`.
+**Statement.** *Peeking an outstanding request never retires it, and taking it retires it
+exactly once.*
+**If false.** Either a peek retires an entry — so a legitimate answer that arrives
+afterwards is refused as unbound — or a take does not, so one reply can be answered twice.
+Both are reachable by a peer that controls when replies arrive.
+**Likely owner:** `sdk_python.correlation_lifecycle`. It was tempting to register
+`test_take_consumes_the_outstanding_request` there alone, as the mechanism of its
+outstanding-entry clause, and that is exactly the half-registration ADR-069 D2 is about: the
+proposition is the SPLIT, and half of it is not a weaker version of it but a different claim.
+The proxy side holds the same proposition whole —
+`proxy.continuation_correlation_store` registers
+`peek_does_not_consume_and_consume_is_one_shot` as one control — which is the form this
+should take.
+**Root relationship.** Under THM-0094.
+**Severity:** `high`.
+
+---
+
+## The Python authorization-binding asymmetry — NP-020 through NP-024
+
+One clause, present in the TypeScript unit and absent from its Python twin, accounts for
+twenty-two unclaimed controls in one file. `sdk_typescript.authorization_binding` says:
+
+> … the core digests the real artifact material and a caller is given no way to supply a
+> precomputed digest or to mint half a binding pair; and the digest retained per outstanding
+> request identifies which artefacts the request was bound to without ever being
+> re-interpreted.
+
+`sdk_python.authorization_binding` says everything after the semicolon and nothing before
+it. This is the THIRD asymmetry between the two SDK roots this campaign has measured, after
+NP-014 and NP-015, and it is the largest: the Python file's controls are written, they pass
+in the measured lane, and the unit above them makes no claim they support.
+
+The clause is not one proposition. It is decomposed here the way the controls decompose,
+rather than registered as one, because question 1 of ADR-MCPRE-061 §8 applies: an answer
+that needs an "and" is a shallow boundary.
+
+## NP-020 — the core digests the real artifact, and the caller supplies no digest
+
+**Controls:** `test_authorization.py` (9) — the core digests the real artifact, a caller
+cannot pass a precomputed digest, there is no parameter for the digest, changed bytes change
+the digest, the digest is deterministic, the reference form binds the real bytes and names
+the system, the document travels and the core mints its binding, the reference digest equals
+the opaque digest for the same bytes, and `str` and `bytes` produce the same carrier.
+**Carrier:** `sdk/python/python/mcp_re_sdk/authorization.py` and the native binding seam.
+**Statement.** *The digest in the signed evidence is computed by the core over the artifact
+material the provider supplied; no caller-facing route accepts a precomputed one; the same
+material always produces the same digest whatever its Python type; and different material
+produces a different one.*
+**If false.** A caller supplies a digest that does not correspond to the artifact, and the
+signed evidence binds a request to something that was never presented. That is the whole
+point of a binding, and it is the failure the file's own docstring names — *bind, do not
+interpret* — checked against an independent stdlib SHA-256 oracle rather than the core's own
+opinion of what it computed.
+**Likely owner:** `sdk_python.authorization_binding`, once its statement carries the clause
+its TypeScript twin already does.
+**Root relationship.** Under THM-0094.
+**Severity:** `critical`.
+
+## NP-021 — a binding carries metadata, never the artifact
+
+**Controls:** `test_authorization.py` (2) — the binding carries metadata only and never the
+artifact; the reference form leaks no secret material.
+**Statement.** *What travels in the signed evidence is the digest and the metadata naming
+the artifact's type and system — never the artifact bytes, and never secret material a
+reference form was given.*
+**If false.** Authorization material — a token, a document, a credential — is copied into
+evidence that is signed, transmitted and retained. A signature base carries covered values,
+so anything placed there is in every retained copy of the base.
+**Likely owner:** `sdk_python.authorization_binding`.
+**Severity:** `critical`.
+
+## NP-022 — the generic provider cannot mint half a binding pair
+
+**Controls:** `test_authorization.py::TestTheGenericProviderCannotMintHalfAPair` (3) — the
+wrapper refuses the generic opaque form, the native seam refuses it independently, and the
+reference form is untouched.
+**Statement.** *No caller can produce one half of a binding pair through the generic opaque
+provider: the Python wrapper refuses it, and the native seam refuses it independently of the
+wrapper.*
+**If false.** A binding exists whose two halves were minted separately, so the pair asserts
+a correspondence nothing established.
+**Why the third control matters, and why it is in this proposition rather than beside it.**
+"the reference form is untouched" is the anti-vacuity arm: a refusal that also refused the
+legitimate form would satisfy the first two and break the feature.
+**Likely owner:** `sdk_python.authorization_binding`. Its TypeScript twin states this clause
+verbatim.
+**Severity:** `high`.
+
+## NP-023 — a binding provider refuses illegal material at construction
+
+**Controls:** `test_authorization.py` (6) — empty material fails closed in both provider
+forms, an unregistered artifact type fails closed in both, a partial reference fails closed,
+and an empty decision fails closed.
+**Statement.** *No binding provider exists over empty material, an unregistered artifact
+type, a partially specified reference, or an empty decision.*
+**If false.** A provider is constructible over material that names nothing, and the failure
+appears later — at signing time, as something else, or not at all.
+**Likely owner:** `sdk_python.authorization_binding` is about what the POLICY permits at
+request time. This is about what the VALUE admits at construction, which is the same
+distinction NP-017 draws for custody: the invariant belongs to the value, not to the code
+that builds it.
+**Severity:** `high`.
+
+## NP-024 — a request acts under at most one authorization decision
+
+**Controls:** `test_authorization.py::TestAuthorizationDecision::test_a_request_acts_under_at_most_one_decision`,
+`::test_the_document_appears_exactly_once`.
+**Statement.** *A request carries at most one authorization decision, and the decision
+document appears exactly once in the evidence it rides in.*
+**If false.** A verifier reading the evidence has two answers to *what authorized this
+call*, or one answer written twice — and a duplicate is how two readers of one message come
+to disagree about what it says.
+**Likely owner:** `sdk_python.authorization_binding`.
+**Severity:** `high`.
+
+---
+
+## The command line is an authority nothing owns — NP-025 through NP-035
+
+`mcp-re-proxy/src/cli.rs` holds **142 controls and is in no unit's `paths`.** It is the
+single largest unclaimed carrier in the repository, and its controls are not incidental:
+*a zero timeout is refused because it disables the slow-loris defense*, *attested ingress
+without pinned mTLS fails closed*, *the default build rejects the AWS KMS key source*, *a
+plaintext KMS endpoint to a remote host is refused*, *an argv PKCS#11 PIN is refused with
+the replacement named*.
+
+**It is invisible to the adjacent authority as well.** `scripts/unit_closure_gate.py`
+registers files the module tree REACHES from a measured unit; `cli.rs` is declared by a
+crate root no unit names, so it is not reached, and its production half is outside that
+register too. That is ADR-MCPRE-061's question and is referred there rather than answered
+here — but it is worth recording that two registers disagree about nothing, because neither
+can see this file.
+
+**Why these are propositions and not registrations.** The `config_state::*` units are
+carefully scoped to a CLASSIFIER at its own API — `proxy.cross_machine_legality` says so in
+terms: *"Every relation reads classified owner states rather than RAW REQUEST FIELDS."* The
+CLI is the authority one layer up: it decides what an operator can SAY, and it refuses
+things no classifier ever sees. `default_build_rejects_aws_kms_key_source` is a fact about
+a Cargo feature, `unknown_flag_errors` is a fact about the parser, and
+`argv_pkcs11_pin_is_refused_with_the_replacement_named` is a fact about a withdrawn flag.
+Registering these against a classifier unit would put the argv boundary inside a statement
+that explicitly excludes raw request fields.
+
+**Eleven propositions and not one.** *The command line admits no illegal deployment* needs
+an "and" for every authority it covers, and ADR-MCPRE-061 §8 question 1 is that an answer
+needing an "and" is a shallow boundary. Each of the eleven below has a distinct
+`config_state` neighbour one layer down, which is the evidence that the decomposition
+follows the estate's own seams rather than the file's headings.
+
+| id | proposition | controls | severity |
+|---|---|---:|---|
+| NP-025 | the parser is total and diagnoses completely | 11 | `medium` |
+| NP-026 | a key source is admitted only in a build that carries it, with its whole flag set | 30 | `critical` |
+| NP-027 | a KMS endpoint is a literal HTTPS authority, or loopback HTTP for an emulator | 8 | `critical` |
+| NP-028 | admission is off unless an argv names a complete enforcing configuration | 12 | `high` |
+| NP-029 | the strict guard is always on for a safe configuration and reports every violation at once | 17 | `critical` |
+| NP-030 | the client-certificate posture an argv can express fails closed by default | 20 | `critical` |
+| NP-031 | a replay tier is named exactly once and carries what it cannot run without | 11 | `critical` |
+| NP-032 | the trust-refresh posture an argv can express holds its cadence to its window | 14 | `high` |
+| NP-033 | attested ingress is configured whole or not at all | 9 | `critical` |
+| NP-034 | no command line disables a liveness bound | 4 | `high` |
+| NP-035 | the serving target an argv names binds something | 6 | `high` |
+
+## NP-025 — the parser is total and diagnoses completely
+
+**Controls:** `mcp-re-proxy/src/cli.rs` (11).
+**Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
+**Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
+**Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
+**Severity:** `medium`.
+
+*Every argv is answered: an unknown flag, a missing required flag and a bad
+value are each named, a command line wrong three ways is answered about all three, and every
+default a minimal configuration takes is stated rather than inferred.* If false, an operator
+who mistypes a security flag gets a deployment that silently omits it — the class where a
+misspelling reads as an absent declaration rather than as an error.
+
+## NP-026 — a key source is admitted only in a build that carries it
+
+**Controls:** `mcp-re-proxy/src/cli.rs` (30).
+**Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
+**Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
+**Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
+**Severity:** `critical`.
+
+*A key source reaches a deployment only from a build that carries it — the
+default build refuses AWS KMS, GCP KMS, PKCS#11 and the env source — and only with every
+flag that source cannot operate without; a TLS key named through a KMS may not also be
+exported; and the withdrawn argv PKCS#11 PIN is refused with its replacement named.* If
+false, a deployment signs under a key source nobody built for, or under a half-configured
+one, or an operator's PIN travels in a process argument list where every other process on
+the host can read it. `critical`, and the largest group in the file.
+
+## NP-027 — a KMS endpoint is a literal HTTPS authority
+
+**Controls:** `mcp-re-proxy/src/cli.rs` (8).
+**Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
+**Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
+**Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
+**Severity:** `critical`.
+
+*A KMS endpoint an operator names is an `https` URL with a literal host and no
+userinfo, or an `http` loopback for an emulator, and nothing else.* If false, key operations
+are directed at a host resolved by name at use time, over plaintext, or under credentials
+smuggled in an authority — three different ways to move signing to an endpoint the operator
+did not choose.
+
+## NP-028 — admission is off unless an argv names a complete enforcing configuration
+
+**Controls:** `mcp-re-proxy/src/cli.rs` (12).
+**Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
+**Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
+**Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
+**Severity:** `high`.
+
+*Admission is off by default; an enforcing configuration parses only with an
+authority and a source; a dangling setting, an unknown mode, both limits at once, a zero
+ceiling and an undecodable authority key are each refused; and an explicit ceiling equal to
+the default is not an absent one.* If false, a deployment reads as admitting nothing while
+admitting everything, or an operator's explicit choice is indistinguishable from silence —
+which is the provenance failure this repository has ruled on before.
+
+## NP-029 — the strict guard is always on, and reports every violation at once
+
+**Controls:** `mcp-re-proxy/src/cli.rs` (17).
+**Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
+**Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
+**Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
+**Severity:** `critical`.
+
+*The unsafe-configuration guard is on for every safe configuration, reports
+every violation of an unsafe one at once, and refuses the legacy CN identity source, a
+disabled or over-ceiling certificate lifetime, an LB assertion binding, a `none` transport
+binding and a weak replay durability tier — and a fully configured Mode C clears every
+completeness check and is still refused.* If false, the guard passes a deployment it exists
+to refuse, or reports one violation and hides the rest, so a fix produces a second failure
+and the operator learns the shape of the guard rather than the shape of the problem.
+
+## NP-030 — the client-certificate posture an argv can express fails closed by default
+
+**Controls:** `mcp-re-proxy/src/cli.rs` (20).
+**Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
+**Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
+**Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
+**Severity:** `critical`.
+
+*By default there are no CRLs, unknown revocation status fails closed and online
+OCSP is off and hard-fail; `client-ocsp-require` fails closed in every build; a responder URL
+without the requirement, an empty segment in a CRL or revocation list, an unparseable or
+overflowing certificate lifetime, and an unknown identity source are each refused; repeated
+and comma-separated CRL flags accumulate rather than replace; and a revocation list nothing
+consults is refused rather than accepted and ignored.* If false, a listener admits a client
+certificate whose revocation status was never established, and the deployment's transcript
+says it was configured to check.
+
+## NP-031 — a replay tier is named exactly once and carries what it cannot run without
+
+**Controls:** `mcp-re-proxy/src/cli.rs` (11).
+**Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
+**Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
+**Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
+**Severity:** `critical`.
+
+*Exactly one replay store is named; omitting the configuration is refused;
+naming both on one command line is refused; a shared store carries its URL and its
+durability tier; a linearizable tier carries its cpstore endpoint and a cpstore endpoint
+without one is refused; and a single node may take the file cache.* If false, a fleet runs
+on a node-local replay cache while reading as configured for a shared one — the exact
+deployment the shipped Helm chart's own guard refuses (NP-007).
+
+## NP-032 — the trust-refresh posture holds its cadence to its window
+
+**Controls:** `mcp-re-proxy/src/cli.rs` (14).
+**Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
+**Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
+**Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
+**Severity:** `high`.
+
+*A trust epoch is named; a URL-shaped epoch source and the push tier require
+each other; live and push tiers require a reload cadence and every cadence is held to the
+window it claims; the revocation tier defaults to a bounded cache; a degraded window is
+positive and its refusal names the clock-skew term; and the maximum clock skew is accepted
+across its whole bound and refused at parse outside it.* If false, a replica enforces a
+trust picture it stopped refreshing, or refreshes on a cadence longer than the window it
+claims to hold — a posture that states a currency it does not have.
+
+## NP-033 — attested ingress is configured whole or not at all
+
+**Controls:** `mcp-re-proxy/src/cli.rs` (9).
+**Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
+**Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
+**Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
+**Severity:** `critical`.
+
+*Attested ingress is configured whole or not at all: it requires an attestor key,
+an identity and an audience, it fails closed without pinned mTLS, its flags do not dangle
+without the binding, an invalid or malformed LB key is refused, a duplicate LB key id is
+refused, and an LB assertion binding requires at least one key.* If false, ingress
+attestation is half-configured — flags present, binding absent — and the deployment believes
+a hop it never verified.
+
+## NP-034 — no command line disables a liveness bound
+
+**Controls:** `mcp-re-proxy/src/cli.rs` (4).
+**Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
+**Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
+**Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
+**Severity:** `high`.
+
+*No command line disables a liveness bound: a zero timeout is refused because it
+disables the slow-loris defense, the connection-age bound is defaulted and zero is refused,
+a request deadline over the cap is refused, and the defaults are bounded so the refusal
+never fires by default.* If false, a single operator flag turns off the defence against a
+class of denial of service, and the default configuration is the one that exercises it.
+
+## NP-035 — the serving target an argv names binds something
+
+**Controls:** `mcp-re-proxy/src/cli.rs` (6).
+**Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
+**Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
+**Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
+**Severity:** `high`.
+
+*The serving target an argv names binds something: an empty or missing target
+URI is refused, a target that binds nothing is refused at the validation boundary, an inner
+HTTP URL is present and has no empty segment, repeated and comma-separated URLs accumulate,
+and a fleet-wide target does not erase the per-core default.* If false, the proxy serves an
+endpoint nobody named, or silently drops one an operator did name.
+
+## NP-036 — the shared production-half definition is exact
+
+**Controls:** `mcp-re-test-paths/src/rust_source.rs` (13),
+`mcp-re-test-paths/src/rust_source/brace_scan.rs` (6).
+**Carrier:** `mcp-re-test-paths`'s `production_half` and its brace scanner.
+**Statement.** *A brace inside a string, a char literal, a nested block comment or a raw
+string does not close a `#[cfg(test)]` region; a raw string closes only on its own hash
+count; an identifier ending in `r` opens none; a lifetime is not a char literal; line
+numbers survive the elision; a trailing test module does not end the scan; and a file with
+no tests is wholly production.*
+**If false.** Every consumer of `production_half` measures a different corpus from the one
+it says it measured — `scripts/module_size_gate.py`'s production-line count, the guards that
+scan production text, and `conformance.verdict_vocabulary_scope`'s measured scope. This is
+not hypothetical: the rule's own documentation records that counting "lines before the first
+test module" discarded production code below the tests and measured `trust_plane.rs` at 134
+lines when it is 690.
+**Likely owner:** `conformance.verdict_vocabulary_scope` names these files in its `paths`,
+so its fingerprint already moves when they change — **and it cannot claim these controls.**
+It is a `measured` unit, and ADR-MCPRE-068 §4.1 gives a measured unit one apparatus slot,
+`measurement_control`, whose meaning is *the demonstration that the number can still MOVE*.
+MSR-0001 carries such a control. These are a different thing: a scanner that is wrong in a
+fixed way still moves. **The `measured` class has no slot for apparatus CORRECTNESS**, and
+that is the finding, not a reason to file these anywhere convenient.
+**Root relationship.** Beneath the measured unit rather than beside it: the scope of a
+measurement is a premise of the measurement, and this is the scope's own correctness.
+**Severity:** `high`.
+**What ratification would probably look like:** a `tested` sibling unit over the apparatus,
+which the measured unit depends on — not a widening of the measured unit, and not a
+`measurement_control` this is not.
+
+## NP-037 — a guard's inputs resolve, or the guard fails loudly
+
+**Controls:** `mcp-re-test-paths/src/lib.rs` (4), `src/source_trees.rs` (3),
+`src/traceability_sources.rs` (2).
+**Carrier:** `mcp-re-test-paths`'s binary/fixture resolver and its three declaration tables.
+**Statement.** *An unknown key is refused rather than resolved to an empty path; no key is
+declared twice; no binary key is also a source fallback; and every declared fallback,
+sentinel and witness names a file that exists.*
+**If false.** A guard resolves its input to an empty path, walks nothing, finds nothing and
+reports a clean tree. That is the exact false-green class this repository has already
+measured twice — a `tests/` glob that silently exempted a crate from the srcs gate for a
+whole campaign, and an empty join that read as a clean tree — and the resolver is where the
+first of those enters.
+**Likely owner:** none. The resolver is in no unit's `paths`; the tables it holds decide
+what several guards see.
+**Root relationship.** Not under a product root. It is a premise of the guards, in the same
+place NP-036 sits.
+**Severity:** `high`.
+
+## NP-038 — a revoked root's resolver is not obtainable
+
+**Control:** `mcp-re-client-core` `doc#delegated_trust::DelegatedResponseTrust` — two
+`compile_fail` examples.
+**Carrier:** `mcp-re-client-core/src/delegated_trust/mod.rs`'s `TrustedIssuerSet`.
+**Statement.** *`TrustedIssuerSet` hands out no response resolver and exposes no raw
+lifecycle lookup, so the pairing that made verifying under a REVOKED root possible — a
+resolver beside a foreign or empty revocation source, composed through
+`CompositeResponseTrust` — is not expressible. What remains public is `resolve_issuer`,
+which fails closed on a revoked issuer without consulting the caller's revocation half at
+all.*
+**If false.** A client verifies a response under a root that has been revoked, because the
+two halves of the trust answer were obtained separately and only one of them knew about the
+revocation. The file's own documentation says it: *two doors had to close, not one.*
+**Likely owner:** `client.trust_manifest_lifecycle` names this file in its `paths` and owns
+*which credential identifiers are revoked*. That is the FACT; this is the
+unconstructibility of a pairing that would route around it — a different and stronger
+claim, and registering the examples against the revocation clause would make that unit's
+evidence cover a seal its statement does not assert.
+**Root relationship.** Under the client response-trust roots.
+**Severity:** `critical`.
+**This is ADR-MCPRE-069 §2.1's own named instance.** That section predicted these two
+examples exist and are claimed by nothing, and used them to argue the first census was
+structurally blind to a whole control kind. They are still unclaimed on main.
+**And the ratification is NOT a doctest registration.** ND-010 records why a
+`compile_fail` example cannot attribute its refusal on the pinned stable toolchain. The
+form this should take is a `structural://` probe pair, exactly as ADR-MCPRE-068 Phase 0B
+did for the http-profile items: one probe per door, each naming the rustc error code the
+boundary earns — `E0599` for the withdrawn resolver and `E0624` for the `pub(crate)`
+lifecycle lookup — rather than a `test://` URI over an example that passes on any
+compile error at all.
+
+---
+
+## The external transparency auditor — NP-039 through NP-043
+
+`mcp-re-proxy/src/transparency/auditor/**` holds **58 controls and is in no unit's
+`paths`.** It is the v0.18-C auditor: a shipped binary (`mcp-re-auditor`) with its own
+invocation parser, its own trust profile, its own registration client and its own artifact
+format. The whole feature is outside the assurance graph.
+
+It is the same shape as the command line (NP-025 … NP-035) one product step later: a
+deployable whose controls are careful and whose propositions are unstated. Five
+propositions, one per authority the subtree actually separates — the directories are the
+seams here, and they were drawn by the implementation rather than by this campaign.
+
+## NP-039 — the auditor's invocation is total
+
+**Controls:** `auditor/invocation/mod.rs` (14), `invocation/flag.rs` (3),
+`invocation/instant.rs` (4).
+**Statement.** *Every auditor invocation is answered: a single-valued flag given twice is
+refused rather than resolved, a value never given is refused BY NAME, an unknown flag is
+refused with the usage, a flag with no value is refused, every required flag is required, a
+hop that is not a digest is refused, hop order is kept, a registration budget without a
+target and an inadmissible target are refused at parse, an audit instant that is not a
+timestamp or is at or before the epoch is refused, and the default instant is the system
+clock.*
+**If false.** An auditor runs against a different set of hops, at a different instant, or
+against a registration target nobody named — and it emits an artifact that says it audited
+something. "A value given twice is refused rather than RESOLVED" is the sharp one: silently
+taking the last occurrence is how an operator's first, correct argument disappears.
+**Likely owner:** none.
+**Root relationship.** The auditor's product claim, which the graph does not hold.
+**Severity:** `high`.
+
+## NP-040 — the auditor trusts exactly what its profile enrolls
+
+**Controls:** `auditor/profile/mod.rs` (5), `auditor/trust_view.rs` (4).
+**Statement.** *A coherent trust document becomes a profile and an incoherent one never
+does; an unknown member and a negative clock skew are refused; the revoked set answers for
+the keys it names; and in the resulting view an enrolled request signer resolves with the
+auditor's labels, the response anchor resolves ONLY in the response slot, an unenrolled key
+id resolves to nothing, and a revoked key resolves in no slot.*
+**If false.** The auditor attributes evidence to a key it was never told to trust, or in a
+slot that key was not enrolled for, or one that has been revoked — and an audit verdict is
+exactly as good as the trust picture it was computed under.
+**Likely owner:** none. The proxy's own trust-plane units are about the SERVING path's
+trust; this is the auditor's, and the two are deliberately different pictures.
+**Severity:** `critical`.
+
+## NP-041 — a registration target is admissible before anything is submitted
+
+**Controls:** `auditor/registration/endpoint/mod.rs` (4), `endpoint/flags.rs` (5),
+`registration/policy.rs` (4), `registration/protocol.rs` (2).
+**Statement.** *A registration target is an endpoint the network policy admits — plaintext
+only off no interface but loopback — carrying a bounded, pollable budget and a named
+protocol; an unknown protocol refuses BEFORE anything is submitted; a term without a
+service, an unterminating budget, an unbounded wait and a budget that cannot poll are each
+refused; an invocation that names no service registers nothing; and the default protocol is
+the one that was the only one.*
+**If false.** The auditor submits a statement to an endpoint over plaintext, or waits
+forever on a service that never answers, or registers nowhere while reporting that it
+registered. The plaintext arm is the one with a peer: the same refusal the CLI makes about
+a KMS endpoint (NP-027), one product step out.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-042 — a statement is registered only against a receipt about itself
+
+**Controls:** `auditor/registration/capability.rs` (5),
+`registration/ureq_exchange.rs` (3), `registration/exchange.rs` (1).
+**Statement.** *A verifying receipt about THIS statement, from a pinned log, produces a
+registered statement; an answer that is not a receipt, a receipt about another statement,
+and a receipt from an unpinned log are each refused; a mechanism refusal is carried through
+with its certainty rather than flattened; and the exchange carries the body verbatim across
+the socket, refuses a disallowed scheme with no transport at all, and reads a header
+case-insensitively taking the first.*
+**If false.** The auditor records a registration that a transparency service never made, or
+made about something else — which is the whole of what a transparency claim is worth. The
+"carried through with its certainty" clause is the one this repository has ruled on before:
+a refusal must not be flattened into the safe side, because *did not run* and *unknown
+whether it ran* are different facts.
+**Likely owner:** none. `http_profile.scitt_retained_correspondence` is about the
+commitment a Signed Statement carries, not about what the auditor will accept as a receipt
+for it.
+**Severity:** `critical`.
+
+## NP-043 — the auditor's artifact is its own schema and round-trips its verdicts
+
+**Controls:** `auditor/artifact/mod.rs` (3), `artifact/verdict.rs` (1).
+**Statement.** *An artifact round-trips its verdicts; a foreign schema is refused; a
+statement that is not base64url is refused on the way IN; and every incomplete reason has
+its own token.*
+**If false.** An audit artifact is read as this schema when it is another's, or an
+incomplete audit reports a reason indistinguishable from a different one — which is the
+bare-boolean failure `http_profile.retained_chain_record` exists to prevent, arriving in the
+artifact instead of in the chain label.
+**Likely owner:** none.
+**Severity:** `high`.
+
+---
+
+## NP-044 — the retention read side distinguishes absent from error
+
+**Controls:** `mcp-re-proxy/src/transparency/retained_archive.rs::a_missing_hop_is_absent_rather_than_an_error`,
+`::a_read_only_archive_opens_where_the_retention_authority_refuses`.
+**Carrier:** `transparency/retained_archive.rs`.
+**Statement.** *Reading a retained archive distinguishes a hop that is absent from a read
+that failed, and a read-only archive opens in exactly the places the retention WRITE
+authority refuses to.*
+**If false.** An auditor reading the archive cannot tell "this hop was never retained" from
+"this read did not work" — the execution-certainty collapse this repository has ruled on —
+and a read is refused wherever a write is, so evidence that exists cannot be examined.
+**Likely owner:** `proxy.retention_commitment` is the WRITE authority and says so. The read
+side is a separable authority, which ADR-MCPRE-061 §14's `EX-012` census already found and
+recorded when it decomposed `retained_evidence.rs`.
+**Severity:** `high`.
+
+## NP-045 — the proxy's own store refuses an incomplete chain
+
+**Control:** `mcp-re-proxy/src/transparency/durability.rs::a_chain_with_a_missing_hop_is_refused_rather_than_reconstructed`.
+**Carrier:** `transparency/durability.rs`.
+**Statement.** *A chain presented to the proxy's retention store with a hop missing is
+refused rather than reconstructed into a shorter chain that would read as complete.*
+**If false.** The store itself manufactures the complete-looking truncated record that
+`http_profile.retained_chain_record` exists to make impossible downstream.
+**Likely owner:** `http_profile.retained_chain_record` states exactly this proposition —
+**and it cannot claim this control.** That unit's battery runs in `mcp-re-http-profile`, the
+control lives in `mcp-re-proxy`, and a unit's lane is project-scoped, so no selector in that
+unit can name it. This is the first REATTRIBUTION this campaign has found to be
+mechanically impossible, and it is recorded in the unit itself as well as here.
+**Root relationship.** The proxy-side twin of an http-profile proposition; the same shape as
+NP-014 and NP-015 one crate over.
+**Severity:** `high`.
+
+## NP-048 — the retention store enforces the record contract at the storage boundary
+
+**Controls:** `mcp-re-proxy/src/transparency/durability.rs::only_the_signed_headers_are_retained`,
+`::a_record_without_the_schema_token_is_refused`,
+`::a_retained_exchange_comes_back_byte_identical`,
+`mcp-re-proxy/src/transparency/retained_archive.rs::an_object_that_is_not_a_retained_record_is_refused`.
+**Carrier:** `transparency/durability.rs` and `transparency/retained_archive.rs`.
+**Statement.** *What the store writes and what the archive accepts obey the retained-record
+contract: only the headers the signature base names are retained, a record without the
+schema token is refused, a retained exchange comes back byte-identical, and an object that
+is not a retained record is refused at the archive.*
+**If false.** The record contract holds where a record is ENCODED and not where it is
+STORED — so a live credential reaches the store, or a record the encoder would refuse is
+read back as one.
+**Likely owner:** `proxy.retained_record_content` states this contract, **and it cannot
+claim these controls.** `verify --manifests` refuses a `lib#` selector whose module is not
+under that unit's `paths`, for a reason this campaign agrees with: *an in-crate test whose
+source the unit does not measure can be rewritten under the same name without moving the
+fingerprint.* Widening its `paths` to reach `durability.rs` would pull the whole
+retention-commitment machinery into a unit about record CONTENT.
+**Root relationship.** The storage-boundary twin of `proxy.retained_record_content`, the
+same shape as NP-045 one unit over — and the second mechanically impossible reattribution
+this campaign has measured. Both come from the same place: **a unit's battery can only
+select controls inside the source it measures, in the project it measures it in.**
+**Severity:** `high`.
+
+## NP-046 — no durable write blocks a runtime worker
+
+**Control:** `mcp-re-proxy/src/transparency/durability.rs::the_fsync_does_not_run_on_the_runtime_worker`.
+**Statement.** *The fsync that makes a retention record durable does not run on a runtime
+worker.*
+**If false.** A durable write stalls the async runtime, and the proxy stops serving while it
+is being answerable — a liveness failure produced by the very mechanism that records
+answerability.
+**Likely owner:** `proxy.retention_commitment` is about WHEN the deployment became
+answerable and says nothing about what the recording costs the runtime. The nearest stated
+neighbour is NP-003, which is about worker LIFETIME rather than worker occupancy.
+**Severity:** `medium`.
+
+## NP-047 — retaining one exchange twice yields one object
+
+**Control:** `mcp-re-proxy/src/transparency/durability.rs::retaining_the_same_exchange_twice_yields_one_object`.
+**Statement.** *Retaining the same exchange twice yields one object, not two.*
+**If false.** The archive holds two records of one exchange, and an auditor counting
+exchanges, or reconstructing a chain from what is stored, sees a call that happened twice.
+**Likely owner:** `proxy.retained_record_content` says WHAT a record contains, not how many
+there are of it.
+**Severity:** `medium`.
+
+---
+
+## The layer-A legality boundary is half-owned — NP-049 through NP-061
+
+`mcp-re-proxy/src/config_state/` holds sixteen configuration classifiers. **Five have a
+unit** — admission, custody, trust revocation, trust document, continuation control,
+authorization — and **eleven do not**, and the eleven are not the small ones: replay,
+delegated signing, transport and CRL, channel credential custody, freshness, key-file
+access, server identity, evidence retention, in-flight limit, MCP transport contract,
+topology.
+
+The granularity below is the estate's own: one proposition per classifier, which is exactly
+how the five owned ones are units. The decomposition was not chosen — it was read off the
+module boundary the implementation already drew, and the fact that the owned and unowned
+modules are indistinguishable in shape is the finding.
+
+## NP-049 — the replay configuration classifier
+
+**Controls:** `config_state/replay.rs`.
+**Statement.** *Every legal replay state form is classified and accepted; each state names every locator it cannot start without and the feature that could establish it; a shared store with no declared tier, a sub-strict tier, a wait-quorum tier that waits for no acknowledgement and no declared tier at all each name NO state; a locator belonging to the other state is refused; the planned store is the validated locator; the tier is DERIVED from the state rather than stored beside it; and the withdrawn alias names its replacement rather than being reinterpreted.*
+**If false.** A fleet starts on a replay store it cannot reach, or on a durability tier weaker than the one it recorded — and the tier stored beside the state is the shape that lets the two disagree. The withdrawn-alias clause is the sharper one: an alias silently reinterpreted is an operator's old configuration meaning something new.
+**Likely owner:** none. Its five sibling classifiers are units; this one is not.
+**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
+**Severity:** `critical`.
+
+## NP-050 — the delegated-signing configuration classifier
+
+**Controls:** `config_state/delegated_signing.rs`.
+**Statement.** *Every fact a delegated-signing request resolves is present and non-empty however it was produced — a whitespace-minted fact is refused like an empty one, and a one-character fact is not refused by the emptiness guard; a TTL above the ceiling, an overlap outside the rotor range and an overlap outside the TTL are refused or resolve no window; an absent trust epoch names no posture; an explicit value overrides the fallback; the issuer-kid fallback is required only where the resolution reads it; and the two defaults are resolved by this owner.*
+**If false.** A replica signs under a delegated credential whose window, rotor range or issuer identity was defaulted into existence rather than declared — and the whitespace arm is the one that has bitten elsewhere: a value that looks present and resolves to nothing.
+**Likely owner:** none. Its five sibling classifiers are units; this one is not.
+**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
+**Severity:** `critical`.
+
+## NP-051 — the transport, crl and identity-source classifier
+
+**Controls:** `config_state/transport.rs`.
+**Statement.** *Every legal CRL state form and both binding states are classified and accepted; a cadence with no list to re-read and a CRL list holding an empty path are refused; a ZERO cadence is an unbounded reloader and not a disabled one; only an EXACT transport binding becomes a state and every other kind is refused aloud; attested ingress is refused BY NAME rather than passed over; the deprecated identity source names no state; and the identity field names the state while the form decides whether there is one.*
+**If false.** A listener runs with a revocation list it never re-reads, or with a transport binding weaker than exact that was read as acceptable, or with an attested-ingress setting silently ignored. 'Refused aloud' and 'refused by name' are the clauses: a setting passed over is indistinguishable from one honoured.
+**Likely owner:** none. Its five sibling classifiers are units; this one is not.
+**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
+**Severity:** `critical`.
+
+## NP-052 — the channel credential custody classifier
+
+**Controls:** `config_state/channel_credential_custody.rs and channel_key_material.rs`.
+**Statement.** *Both roles answer the custody question with ONE semantic fact; a file key is the exported state and carries the key it exports; the exported state cannot start without that key; the delegated state does not want it; any backend's selector names the same state and records itself; a channel mechanism that does not exist drives the same consumer; and a key object projects its own locator and no neighbours.*
+**If false.** The two roles disagree about whether the channel credential is exported, so one plane protects material the other has already written to disk. 'One semantic fact' is the whole claim: two answers to a custody question is how a key ends up somewhere nobody meant.
+**Likely owner:** none. Its five sibling classifiers are units; this one is not.
+**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
+**Severity:** `critical`.
+
+## NP-053 — the freshness-window classifier
+
+**Controls:** `config_state/freshness.rs`.
+**Statement.** *A skew outside the bound resolves no window; an overflowing expiry saturates rather than wrapping; retention never ends before the verifier stops accepting; the two projections are derived from the same skew; and the public constructor validates too.*
+**If false.** An expiry that wraps is an unbounded acceptance window, and retention ending before the verifier stops accepting is evidence discarded while it is still being relied on. 'The public constructor validates too' is the seal arm: without it the invariant is remembered at one construction site.
+**Likely owner:** none. Its five sibling classifiers are units; this one is not.
+**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
+**Severity:** `high`.
+
+## NP-054 — key-file access policy
+
+**Controls:** `config_state/key_file_access.rs` (5), and — added in batch 12 —
+`mcp-re-proxy/src/app.rs` (10): the composition root applying the policy to every key file
+it actually opens. A world-readable key file is refused; a group-readable one is refused
+without the opt-in and accepted with it only when the process is in that group; group write
+is refused even with the opt-in; an owner-only file is accepted; an absent file is not an
+error; a file whose posture cannot be established is refused; the PKCS#11 PIN file is
+permission-checked; the TLS key is checked under EVERY custody mode; and a delegated TLS key
+contributes no file to check.
+
+**Two halves of one proposition, and both are needed.** The classifier half says the policy
+is right; the root half says it is applied to every file, which is the half a correct policy
+nobody calls would satisfy. They are recorded together rather than as two propositions
+because neither is a claim on its own: *no policy accepts world access* and *this file was
+checked* are the same sentence about different objects.
+**Statement.** *Owner-only accepts 0600 and 0400 and nothing else; no policy accepts world access or group write; group read is accepted only for a group this process is IN; the mode predicate flags group and world bits; and the default deployment is owner-only.*
+**If false.** A signing key sits on disk readable by another account on the host. This is the one proposition in the configuration layer whose violation needs no protocol at all to exploit.
+**Likely owner:** none. Its five sibling classifiers are units; this one is not.
+**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
+**Severity:** `critical`.
+
+## NP-055 — the server-identity classifier
+
+**Controls:** `config_state/server_identity.rs`.
+**Statement.** *A legal request yields ONE canonical identity; a missing coordinate leaves no identity and NAMES ITSELF; a request missing both coordinates reports both in one pass; a whitespace coordinate is empty and names itself; and the identity keyid follows the RESOLVED ISSUER rather than the server key id.*
+**If false.** The proxy signs under an identity assembled from a coordinate nobody supplied, or advertises a keyid that is not the one the issuer resolved — which is the identity-not-locator failure at the configuration layer.
+**Likely owner:** none. Its five sibling classifiers are units; this one is not.
+**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
+**Severity:** `critical`.
+
+## NP-056 — the evidence-retention classifier
+
+**Controls:** `config_state/evidence.rs`.
+**Statement.** *Every legal state form is classified; retention is selected by its OWN locator; the ON state carries the directory that selected it; and only the trusted context asserts something configuration cannot check.*
+**If false.** A deployment retains evidence somewhere other than where the operator pointed, or reads as retaining when it is not. The last clause is the boundary: what configuration can check and what only a trusted context can assert are different facts, and collapsing them is how a configuration claim becomes an assurance claim.
+**Likely owner:** none. Its five sibling classifiers are units; this one is not.
+**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
+**Severity:** `high`.
+
+## NP-057 — the in-flight limit classifier
+
+**Controls:** `config_state/in_flight_limit.rs`.
+**Statement.** *Saying nothing resolves to the bounded default; an absent limit is DISTINGUISHABLE from one that equals the default; a stated basis is carried through unchanged; and exactly one projection answers for every basis.*
+**If false.** The in-flight ceiling is unbounded because silence was read as a choice, or an operator's explicit choice is indistinguishable from silence — the provenance collapse this repository has ruled on, in the one setting that bounds concurrent work.
+**Likely owner:** none. Its five sibling classifiers are units; this one is not.
+**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
+**Severity:** `medium`.
+
+## NP-058 — the mcp transport contract classifier
+
+**Controls:** `config_state/mcp_transport_contract.rs`.
+**Statement.** *Every legal state form is classified; the ABSENT contract is a state and not a defect; the enforced state carries the set that selected it; and an unusual accepted set is classified rather than refused.*
+**If false.** A deployment enforces a transport contract it did not select, or refuses a legal one as malformed. 'Absent is a state' is the clause that keeps an unset contract from reading as a bug in the classifier.
+**Likely owner:** none. Its five sibling classifiers are units; this one is not.
+**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
+**Severity:** `high`.
+
+## NP-059 — the topology classifier
+
+**Controls:** `config_state/topology.rs`.
+**Statement.** *The default deployment is a single node; zero is a DEFERRAL and not a count; the runtime projection spells auto as zero; and the topology and the shard request do not constrain each other.*
+**If false.** A fleet-shaped deployment runs single-node, or a zero core count is read as a count of zero rather than as 'decide at runtime' — and the two-machine independence clause is what keeps a shard request from silently deciding the topology.
+**Likely owner:** none. Its five sibling classifiers are units; this one is not.
+**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
+**Severity:** `medium`.
+
+## NP-060 — the validation boundary is total and names what it refused
+
+**Controls:** `config_state/validation/* , config_state/mod.rs and config_state/trust_document.rs`.
+**Statement.** *Every required coordinate is refused when empty HOWEVER the request was built, and a whitespace coordinate is refused like an empty one; a target URI that would disable the reconstruction check is refused; the inventory IS the file rather than a list beside it; a machine with no clauses contributes nothing to the violation list; the internal error names the machine that recognised nothing; a refusal names the flag; and the state carries what the planes would otherwise re-derive.*
+**If false.** A required coordinate reaches a plane empty because the request was built the other way, or an operator gets a refusal that does not say what to change. 'The inventory IS the file' is the anti-drift clause: a hand-maintained list of what must be validated is a list that goes stale.
+**Likely owner:** none. Its five sibling classifiers are units; this one is not.
+**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
+**Severity:** `high`.
+
+## NP-061 — a configuration machine decides only its own subject
+
+**Controls:** `config_state/continuation_control.rs`.
+**Statement.** *The continuation-control machine does not read the replay tier.*
+**If false.** One configuration machine re-derives another's decision from raw fields, so two owners answer the same question and can disagree. `proxy.cross_machine_legality` states exactly this shape — 'every relation reads classified owner states rather than raw request fields', with `the_trust_epoch_posture_is_not_re_derived_here` as its registered control — and it CANNOT claim this one: its paths are `cross_machine.rs` alone, and `verify --manifests` refuses a `lib#` selector whose module the unit does not measure. The third mechanically impossible reattribution this campaign has measured.
+**Likely owner:** none. Its five sibling classifiers are units; this one is not.
+**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
+**Severity:** `high`.
+
+## NP-062 — the CRL index answers revocation exactly
+
+**Controls:** `mcp-re-proxy/src/client_revocation.rs` (12).
+**Carrier:** the client-revocation index and its snapshot.
+**Statement.** *A listed serial is revoked and an unlisted one is good, with zero padding
+normalised; a CRL revokes only leaves of its own CA and says nothing about another; an
+uncovered issuer is UNKNOWN and refused; a malformed CRL is refused rather than skipped; an
+expired CRL refuses its issuer rather than admitting it, and a stale one certifies nothing
+but still revokes; two CRLs for one issuer union their serials and keep the earliest
+nextUpdate; an empty index admits everything; unknown status is refused with no policy input
+that could admit it; and the snapshot swaps atomically, with a poisoned lock still yielding
+the last good index and still accepting a swap.*
+**If false.** A revoked client certificate is admitted — by a CRL that was skipped because it
+was malformed, by an issuer nobody covered being read as good, by an expired list being
+trusted, or by a serial that did not match because of its padding. Each of those is a
+different route to the same outcome, which is why the clauses are enumerated rather than
+summarised.
+**Likely owner:** `proxy.client_certificate_posture` states that every production verifier
+*denies unknown revocation status, enforces revocation over the full chain and enforces CRL
+expiration*, and `proxy.client_revocation_currency` states that a set of CRLs is installable
+only inside its own nextUpdate window. **Neither can claim these controls**: their `paths`
+are the `tls_plane` and `tls_listener_state` files, and `client_revocation.rs` — the index
+those propositions are ABOUT — is in neither. The fourth mechanically impossible
+reattribution this campaign has measured, and the first where TWO units state the
+proposition and neither owns the carrier.
+**Root relationship.** Under the client-certificate roots.
+**Severity:** `critical`.
+**The stale/expired pair is the clause worth reading twice.** *A stale CRL certifies nothing
+but still revokes*, and *an expired CRL refuses its issuer rather than admitting it*. Those
+are opposite directions on purpose: age must never turn a revocation into an admission, and
+must never turn an absence of evidence into one either.
+
+## NP-063 — a revocation tier's published guarantee is its own
+
+**Controls:** `mcp-re-proxy/src/revocation_tier.rs` (9).
+**Carrier:** the revocation tier vocabulary and its published guarantees.
+**Statement.** *Every tier has a non-empty guarantee, each tier's guarantee is DISTINCT from
+every other's, no tier claims a zero window unless proven — LIVE is near-zero with a hard
+availability dependency and PUSH is near-zero with a bounded fallback, neither a zero window
+— the wire names are the semantic ADR names, parsing round-trips each tier and refuses
+unknown and malformed ones, and the startup audit line carries the backend, the tier and the
+guarantee and no key material.*
+**If false.** A deployment publishes a revocation guarantee it does not have. Two tiers
+sharing a guarantee makes the choice between them meaningless; a tier claiming a zero window
+makes a bounded staleness read as none; and a wire name that is not the ADR's name is an
+operator selecting a posture by a word that means something else.
+**Likely owner:** none. `proxy.trust_revocation_classification` classifies which posture a
+deployment REQUESTS; this is what each posture, once requested, is allowed to SAY about
+itself.
+**Root relationship.** Under THM-0077 beside the configuration family.
+**Severity:** `high`.
+**The audit-line clause belongs here rather than with the redaction unit.**
+`proxy.operator_facing_redaction` owns the two fields that carry credentials; this control is
+about a line whose subject is the tier, and what it must contain as much as what it must not.
+
+## NP-064 — the root resolves exactly one bind, and refuses an unresolvable one
+
+**Controls:** `mcp-re-proxy/src/app.rs::an_unresolvable_bind_is_refused_and_names_the_flag`,
+`::the_fleet_config_carries_the_topology_and_resolves_the_bind`.
+**Statement.** *A bind address that cannot be resolved is refused, and the refusal NAMES THE
+FLAG; and the fleet configuration carries the topology and resolves the bind, so one place
+decides what the process listens on.*
+**If false.** The process listens somewhere the operator did not name, or fails with a
+diagnostic that does not say which flag to change. The client side of this repository holds
+the sharper form of the same claim — `client.bind_scope` is `critical` and sealed — and the
+proxy's root has no statement at all.
+**Likely owner:** none. `proxy.trust_composition_root` is about which fields the root reads
+raw; this is about what it does with the one that decides the listener.
+**Severity:** `high`.
+
+## NP-065 — a faulted deployment clock refuses exactly where it would disable a refusal
+
+**Controls:** `mcp-re-proxy/src/app.rs::a_faulted_clock_refuses_only_when_it_disables_the_crl_refusal`,
+`mcp-re-proxy/src/startup_plan.rs::an_epoch_or_pre_epoch_clock_reading_is_a_fault`,
+`::a_plausible_deployment_clock_is_not_a_fault`.
+**Statement.** *An epoch or pre-epoch clock reading is a fault and a plausible one is not;
+and a faulted clock refuses startup exactly where the fault would otherwise disable a
+refusal — the CRL expiry check — and not elsewhere.*
+**If false.** A replica starts with a clock that makes every CRL look current, so expiry
+stops refusing anything — or, in the other direction, a plausible clock is treated as a
+fault and a healthy deployment will not start. The precision is the proposition: *refuses
+ONLY when it disables the CRL refusal*.
+**Likely owner:** none. `proxy.client_revocation_currency` is about the CRLs' own windows,
+not about the clock those windows are read against.
+**Severity:** `critical`.
+
+## NP-066 — no record enqueued before teardown is lost
+
+**Control:** `mcp-re-proxy/src/app.rs::a_record_enqueued_immediately_before_teardown_still_reaches_stderr`.
+**Statement.** *A record enqueued immediately before teardown still reaches its sink.*
+**If false.** The last records before shutdown — the ones describing why the process is
+shutting down — are the ones dropped.
+**Likely owner:** none, and the estate has already said so in a different register:
+ADR-MCPRE-061 §14 records `app.rs` as `reviewed-action-required` precisely because *the
+audit-drain teardown authority is separable and has an owner next door.* This control is
+that authority's only evidence, sitting in the file the census says should not keep it.
+**Severity:** `high`.
+
+## NP-067 — every plane transitions and the substrate is reclaimed, on every path
+
+**Controls:** `mcp-re-proxy/src/materialized_runtime.rs` (11).
+**Statement.** *A populated runtime transitions every plane and then reclaims the substrate;
+a runtime dropped without serving reclaims it; one that reaches Stopped leaves no plane
+holding authority; a PANICKED worker still leaves its plane transitioned and the substrate
+reclaimable; a worker that never stops bounds teardown without skipping the other planes;
+the transition phase leaves the substrate intact; shutdown is idempotent; a serve that never
+bound justifies no lifecycle event; the post-drain sequence is refused before the drain is
+PROVEN and is unreachable from a serve that never started; and a served shutdown records
+serving and the drain.*
+**If false.** A plane keeps authority after the runtime reports Stopped — which is exactly
+the conclusion THM-0012's lifecycle record is relied on for — or the post-drain sequence runs
+on a drain nobody proved. The panicked-worker clause is the one that makes it a claim about
+teardown rather than about the happy path.
+**Likely owner:** none. `proxy.runtime_lifecycle` owns the RELATION — eleven states, ten
+events, one closed transition relation — and `proxy.runtime_lifecycle_sole_mutator` owns the
+seal. Neither says what MATERIALIZING that lifecycle does to the planes, and
+`materialized_runtime.rs` is in neither's `paths`.
+**Root relationship.** THM-0012 — *the lifecycle record cannot claim a shutdown that did not
+happen* — is the root above it, and this is the half about what the shutdown DID.
+**Severity:** `critical`.
+
+## NP-068 — a plan carries what it was given, not what it found
+
+**Controls:** `mcp-re-proxy/src/startup_plan.rs` (10).
+**Statement.** *Each startup plan carries the decision it was handed: the signing plan
+carries the epoch it was GIVEN and not one it found; the continuation plan carries its own
+endpoint verbatim; the channel plan carries the classified custody and the credential window;
+the epoch plan normalises the key ONCE; the issuer kid in the credential is the one that was
+planned, falling back to the server key id only where the resolution reads it; the audience
+scope defaults to the response audience and is overridable; both consumers of the epoch hold
+ONE decision; each CRL posture is projected as its own variant; and the paths accessor
+answers which FILES, not which posture.*
+**If false.** The plan re-derives a decision an owner already made, so two answers to one
+question exist and can diverge — which is the defect `proxy.cross_machine_legality` states
+for relations, arriving one layer later in the planner. "Normalises the key once" and "both
+consumers hold one decision" are the same rule stated twice because the planner has two ways
+to break it.
+**Likely owner:** none. `startup_plan.rs` is in no unit's `paths`.
+**Severity:** `critical`.
+
+## NP-069 — planning refuses a state that skipped the parser, and contacts nothing
+
+**Controls:** `mcp-re-proxy/src/startup_plan.rs` (17).
+**Statement.** *A tier that reached the planner without passing the parser is refused for
+whatever it is missing — a linearizable tier without an endpoint, a shared Redis tier
+without a URL, a shared tier without a durability tier — and a request with no durable replay
+configuration fails closed; the withdrawn alias is refused rather than reinterpreted; each
+declaration is made by its own owner (continuation on its own locator and not the replay
+tier, admission independently of replay, only the Redis tier declaring a need, only the
+networked push state planning an epoch source), the requirement being the OR of every
+contributor; the build refusal is stated once and names both consequences; the assertion arm
+is refused at the boundary and the both-set arm agrees with the gate on an unreachable
+input; a deployable configuration reads the verified peer certificate; and PLANNING A
+NETWORKED TIER CONTACTS NOTHING.*
+**If false.** A deployment is planned around a state no classifier ever accepted — the
+"skipped the parser" route is the one a programmatic configuration takes — or planning
+reaches the network, so a startup that should have failed on configuration instead hangs on
+a socket.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-070 — the per-core pool ceiling saturates and is raised only when it must be
+
+**Controls:** `mcp-re-proxy/src/startup_plan.rs` (4).
+**Statement.** *A ceiling that would overflow SATURATES rather than wrapping; both bounds
+reach the pool through the gate's per-core ceiling; the pool is raised only when the fleet
+ceiling exceeds its default; and a total that does not divide evenly yields the aggregate the
+gate admits.*
+**If false.** A wrapping ceiling is an unbounded pool — the arithmetic-semantics failure this
+repository has a lint for — reached from an operator-supplied number.
+**Likely owner:** none. `proxy.admission_configuration_state` classifies the ceilings; this
+is what the planner does with them.
+**Severity:** `high`.
+
+---
+
+## Batch 13 — the per-axis flag adapters
+
+`mcp-re-proxy/src/cli/` holds 59 more controls in eighteen small modules, one per
+configuration axis: admission flags, authorization flags, audit flags, channel flags,
+currency flags, delegated-signing flags, identity flags, peer-identity flags, protocol
+flags, revocation flags, runtime flags, serving flags, signing-source flags, storage flags.
+
+**These are the same eleven propositions one layer down**, and they are attached to them
+rather than given propositions of their own. `cli.rs` is the parser; these are the adapters
+that turn each axis's flags into the request an owner classifies. A control here — *an
+enforcing gate without a record-currentness budget is refused* — is the argv arm of exactly
+the proposition `cli.rs`'s own control of the same subject is an arm of, and splitting them
+would give one authority two records.
+
+Two axes had no proposition at all, and get one.
+
+## NP-071 — the authorization axis is exactly four flags, and names its alternatives
+
+**Controls:** `mcp-re-proxy/src/cli/authorization_flags.rs` (7).
+**Statement.** *Exactly four flags reach the authorization axis; the production mechanism is
+selectable with its two parameters; an unknown selection names the THREE that exist and an
+unknown scope names the TWO the signed claims can carry; a staleness bound that is not a
+number is refused BY NAME; a deny list accumulates across repetition and commas; and a
+parameter supplied beside no selection still parses and is refused later, by the owner.*
+**If false.** An operator selects an authorization mechanism that does not exist and learns
+only which flag was wrong, not which values are possible — or a deny list silently keeps the
+last spelling instead of accumulating, so entries an operator wrote are not enforced.
+**Likely owner:** `proxy.authorization_configuration_state` classifies what the deployment
+RECOGNISES; this is what an operator can say. The last clause is the layering, stated as a
+control: a parameter beside no selection PARSES and is refused by the owner, rather than the
+adapter deciding a question that is not its.
+**Root relationship.** Under THM-0077 with the rest of the argv family.
+**Severity:** `high`.
+
+## NP-072 — the audit axis records and forwards nothing unsigned by default
+
+**Controls:** `mcp-re-proxy/src/cli/audit_flags.rs` (2).
+**Statement.** *The defaults record, and forward nothing unsigned; an unknown selection is
+refused rather than defaulted.*
+**If false.** A deployment forwards audit records nobody signed, or an operator's misspelled
+selection silently takes the default — which is the one case where a typo turns a chosen
+posture into an unchosen one on the axis whose whole subject is what gets recorded.
+**Likely owner:** none.
+**Severity:** `high`.
+
+---
+
+## The ingress and transport-binding plane — NP-073 through NP-078
+
+`mcp-re-proxy/src/transport/` holds 47 controls and no unit's `paths` name any of it. It is
+the hop in front of the proxy: the load-balancer assertion in two frozen formats, the
+transport binding between a channel peer and a request actor, the asserted-identity value,
+and the routing headers. Six propositions, split along what each one is ABOUT rather than by
+file — v1 and v2 share a proposition because they are two encodings of one claim, and the
+guarantee each format PUBLISHES is separated from the verification because it is a statement
+about what the deployment may say.
+
+## NP-073 — an ingress assertion binds to the request in hand
+
+**Controls:** `transport/ingress/v1.rs` (10), `transport/ingress/v2.rs` (14),
+`transport/ingress/mod.rs` (1), across both frozen formats.
+**Statement.** *An accepted ingress assertion carries a signature that verifies under a
+KNOWN key id, over a length-prefixed and unambiguous preimage, binds to the hash of the
+request in hand, is inside its window — stale and implausibly-future rejected, a future
+expiry accepted — and, on v2, names this audience and a trusted ingress identity; a
+tampered field, a malformed framing, a malformed identity shape, a malformed enum
+discriminant and a cross-request binding are each rejected; recorded-facts admission fails
+closed; the wire form round-trips through parse; and the two frozen formats have DISJOINT
+PREIMAGES.*
+**If false.** A peer replays one request's ingress assertion onto another — the
+cross-request arm — or an assertion signed for one audience is accepted by another
+deployment, and the proxy believes a hop it never verified. The disjoint-preimages clause is
+the cross-format version of the same attack: one format's signature must not verify as the
+other's.
+**Likely owner:** none. NP-033 is the CONFIGURATION side — attested ingress configured whole
+or not at all; this is the verification the configuration turns on.
+**Root relationship.** Under the peer-identity roots.
+**Severity:** `critical`.
+**"Length-prefixed and unambiguous" is a proposition about the preimage and not about the
+signature**, and it is registered here because it is what makes every other clause mean
+what it says: a preimage two different messages can produce makes a valid signature evidence
+for the wrong one.
+
+## NP-074 — each ingress format publishes the guarantee it actually gives
+
+**Controls:** `transport/ingress/v1.rs::lb_assertion_guarantee_is_not_end_to_end_mtls`,
+`transport/ingress/v2.rs::v2_guarantee_is_attested_delegation_not_end_to_end`.
+**Statement.** *The guarantee each ingress format publishes is what it gives: v1's LB
+assertion is not end-to-end mTLS, and v2's is attested delegation and not end-to-end.*
+**If false.** A deployment reads an ingress assertion as end-to-end channel evidence and
+stops requiring the thing that would have been end-to-end. This is NP-063's shape at a
+different layer — a mechanism publishing a guarantee it does not have — and it is separated
+from NP-073 because verification and publication are different authorities: an assertion can
+verify perfectly and still be described as more than it is.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-075 — the transport binding is exact match, and no policy can manufacture it
+
+**Controls:** `transport/mod.rs` (7).
+**Statement.** *The installable binding is EXACT MATCH; it binds a channel peer and a
+request actor that name ONE principal and refuses two different ones; an absent channel peer
+fails closed; a permissive policy cannot manufacture the binding fact; the composite actor
+id is NOT the binding coordinate; and a static provider yields its identity ignoring the
+request.*
+**If false.** The proxy treats a request as bound to the channel it arrived on when the two
+name different principals — the substitution the binding exists to prevent — or a permissive
+policy produces the binding fact without any correspondence being checked. "A permissive
+policy cannot MANUFACTURE the fact" is the seal clause: the fact is produced by the
+correspondence, not by the policy that decides whether it is required.
+**Likely owner:** none. `proxy.certificate_identity` owns what the INTERPRETER decides about
+a certificate field; this is what the binding does with the identity once interpreted, in
+`transport/`, which that unit does not measure.
+**Severity:** `critical`.
+
+## NP-076 — an asserted identity is a bounded, printable, non-empty value
+
+**Controls:** `transport/mod.rs` (4).
+**Statement.** *An asserted identity accepts a well-formed value and trims it, and rejects
+an empty one, an oversized one, and one carrying control characters.*
+**If false.** A peer-supplied identity carrying control characters reaches a log, an audit
+record or a comparison — and an unbounded one is a memory cost a peer chooses.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-077 — a routing header is well-formed and singular, or the request fails closed
+
+**Controls:** `transport/mod.rs` (6).
+**Statement.** *An absent routing header passes and a well-formed one passes; a duplicate, an
+empty and a malformed one each FAIL CLOSED; and request-header parsing skips the request
+line and is case-insensitive.*
+**If false.** Two routing headers disagree and the proxy picks one — the header-smuggling
+shape — or a malformed header is ignored rather than refused. The absent/present pair is what
+keeps "fails closed" from meaning "refuses everything".
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-078 — a certificate identity is readable only through its projections
+
+**Controls:** `transport/identity.rs` (2).
+**Statement.** *A certificate that does not carry the configured field yields NOTHING, and
+the projections are the only way to read an identity from one.*
+**If false.** A consumer reads a certificate field directly and gets an identity the
+interpreter would have refused — the fallback `proxy.certificate_identity` exists to make
+impossible, arriving through a second reader instead of through the interpreter.
+**Likely owner:** `proxy.certificate_identity` states exactly this (*no fallback to another
+field*) and `proxy.certificate_identity_authority_boundary` seals the pairing. Neither can
+claim these controls: both units' `paths` are `communication_assurance/*` files, and
+`transport/identity.rs` is in neither. The fifth mechanically impossible reattribution this
+campaign has measured.
+**Severity:** `critical`.
+
+---
+
+## The conformance claim surface — NP-079 through NP-086
+
+`mcp-re-conformance/` holds 97 unclaimed controls across seventeen test files, and **two
+units**. Conformance is what MCP-RE tells an auditor it implements, so these controls are
+the evidence behind a product-facing claim surface — the same subject NP-008 approaches
+from the gate side, arriving here as the claims themselves.
+
+## NP-079 — a third party's receipt verifies offline, and only for its own statement
+
+**Controls:** `scitt_interop_test.rs` (15), `scitt_cross_verification_test.rs` (4).
+**Statement.** *A real transparency service's receipt, an operated service's receipt and a
+third party's receipt each verify OFFLINE under the MCP-RE verifier; a wrong pinned service
+key, a mutated receipt, a draft-era label set, an externally built negative, and a receipt
+about another statement are each refused; the wrong leaf profile REFUSES RATHER THAN FALLING
+BACK and neither older leaf profile verifies the operated service's receipt; the two
+capsule-anchor deployments do not verify for each other; a statement identifying no
+submission binds no retained record and the pre-revision corpus cannot bind one; and the
+committed verification reports match a fresh run.*
+**If false.** MCP-RE accepts a transparency receipt that does not attest what it is read as
+attesting — by falling back to an older leaf profile, by verifying under another
+deployment's anchor, or by binding a statement that identifies no submission.
+**Likely owner:** none. `http_profile.scitt_retained_correspondence` owns the commitment
+relation inside the profile crate; this is the interop claim over real services' output.
+**Root relationship.** Under the transparency roots.
+**Severity:** `critical`.
+
+## NP-080 — every published corpus is pinned, and regenerates to the committed bytes
+
+**Controls:** `scitt_vectors_test.rs` (5), `corpus_pinning_test.rs` (5),
+`http_profile_vectors_test.rs` (2), `delegation_vectors_test.rs` (3).
+**Statement.** *Every committed fixture matches its published hash and a tampered one fails
+it; the corpus digest commits to the manifest entries, is order-independent, and CHANGES
+when a vector is added or removed; the corpus directory holds no unpinned vector;
+regenerating the fixtures reproduces the committed bytes; each committed vector reaches its
+expected verdict; the wire form is a tagged `COSE_Sign1`; and the delegation corpus covers
+the full taxonomy.*
+**If false.** An advertised conformance corpus is not the corpus that was verified — a
+vector quietly added, removed or edited, with the digest still agreeing. "Adding or removing
+a vector CHANGES the digest" and "order-independent" are the two halves that make the digest
+an identity rather than a checksum of whatever order the walk produced.
+**Likely owner:** `conformance.retained_corpus` is one corpus; this is the pinning
+discipline over all of them.
+**Severity:** `high`.
+
+## NP-081 — the shipped profile has the security properties it advertises
+
+**Controls:** `rfc9421_security_properties_test.rs` (14),
+`full_profile_parity_test.rs` (8), `rfc9421_cross_verification_test.rs` (2).
+**Statement.** *Over the shipped profile end to end: an expired request, a replayed one, a
+mutated payload, a tampered body, an untrusted signer key, an unauthorized key id and a
+wrong audience are each rejected; a request within the skew bound is accepted and one beyond
+it is not, a future-dated request inside the bound is accepted, and the strict tier restores
+exact freshness; the transport identity binds to the request actor; caller-supplied proxy
+meta is NOT the signed authority; a response bound to the wrong request is rejected, and in
+the integrated path a body tamper, a response splice, an artifact mismatch, a continuation
+mismatch and a replay each fail, with a response-evidence mismatch emitting request-binding
+mismatch; a full exchange activates ALL blocks; and an externally produced signature is
+accepted by the MCP-RE verifier, with key and signature agreeing byte for byte across
+implementations.*
+**If false.** The profile MCP-RE publishes does not have the properties published for it.
+`full_exchange_activates_all_blocks` is the anti-vacuity clause for the whole file: without
+it every rejection above could be produced by a path that never assembled the evidence.
+**Likely owner:** none. The `http_profile.*` units own the profile's internals; this is the
+shipped composition measured as a conformance claim.
+**Severity:** `critical`.
+
+## NP-082 — delegation interoperates in both directions
+
+**Controls:** `delegation_cross_verification_test.rs` (2).
+**Statement.** *An external credential verifies under the MCP-RE verifier, and the MCP-RE
+issuer reproduces the external bytes.*
+**If false.** MCP-RE's delegation is compatible in one direction only, which is not
+compatibility. Both directions are one proposition for the same reason NP-019's peek/take
+split is: half of it is a different claim, not a weaker one.
+**Severity:** `high`.
+
+## NP-083 — the audit vocabulary is frozen and minted in one place
+
+**Controls:** `audit_vocabulary_guard_test.rs` (7).
+**Statement.** *Every audit token is a wire code or a fixed event type; event types do not
+collide with frozen wire codes; the success and key-lifecycle event sets are EXACTLY their
+allowlists; no producer outside the Core mints a wire token; there is no authorization
+hash-mismatch audit reason; and the guard's inputs are non-empty.*
+**If false.** An audit record carries a token that means one thing to its producer and
+another to its reader, or a producer outside the frozen taxonomy mints one — which makes the
+vocabulary a convention rather than a contract.
+**Likely owner:** `conformance.verdict_vocabulary_scope` measures HOW MANY files decide what
+a verdict token says, and its argv claims three of this file's ten controls. The other seven
+are about what the tokens ARE, which that measurement does not say. A `measured` unit has no
+battery to hold them, which is NP-036's finding arriving from the other side.
+**Severity:** `high`.
+**`guard_inputs_are_non_empty` is registered here rather than dispositioned as apparatus**,
+because it is this proposition's anti-vacuity arm: a guard over an empty input set reports a
+clean vocabulary.
+
+## NP-084 — the security traceability manifest is derived, not remembered
+
+**Controls:** `security_traceability_guard_test.rs` (10).
+**Statement.** *Every section-A claim maps to a manifest entry and the source table names
+exactly the manifest sources; every named test function appears in its source and every
+Bazel target is declared in a BUILD file; each entry's source matches its target package;
+the recorded count is DERIVED rather than stale; the required gate guards are mapped; the
+four server-auth cases are present; the drift detector rejects a renamed target and function;
+and the guard's inputs are non-empty.*
+**If false.** The traceability manifest names evidence that does not exist — a test function
+that was renamed, a Bazel target nobody declares — and a claim reads as traced to something
+unrunnable. "The recorded count is derived not stale" is the clause that keeps the manifest
+from agreeing with itself.
+**Severity:** `high`.
+
+## NP-085 — the shipped codes and names are the ones the MCP revision defines
+
+**Controls:** `mcp_2026_07_28_alignment_test.rs` (5),
+`method_name_drift_guard_test.rs` (2), `method_transparency_test.rs` (1).
+**Statement.** *The MRTR `input_required` discriminator matches SEP-2322; the rejection code
+is outside the JSON-RPC reserved range and in neither MCP sub-range; the Core and
+http-profile codes are the SAME INTEGER; the recognised result types are the two the core
+protocol defines; no banned method literal appears in non-test Core source, with the region
+scan looking BELOW a test module; and the accepted verdict is identical across all methods.*
+**If false.** MCP-RE emits a code another implementation reads as something else, or two of
+its own crates disagree about the same integer. NP-005 is this proposition's structural
+precondition — the discriminator open-coded in one place — and they were found from opposite
+ends: one from a gate with no unit, one from a conformance file with no unit.
+**Severity:** `critical`.
+
+## NP-086 — no forbidden claim is asserted anywhere in the published surface
+
+**Controls:** `forbidden_claim_guard_test.rs` (4).
+**Statement.** *No forbidden phrase appears as an ASSERTED claim; the detector catches an
+asserted claim while allowing a repudiation; the legacy security boundary is a stub with no
+live claim; and the guard's inputs are non-empty.*
+**If false.** The published surface asserts a security property the implementation does not
+have — the exact failure the deprecation vocabulary exists to prevent, and the one whose
+consequence is entirely borne by a reader.
+**Likely owner:** none. `scripts/jcs_vocabulary_gate.py` is ND-005 because it holds a
+documented value equal to its source; this is a claim about what the surface ASSERTS, which
+is not a mirror.
+**Severity:** `high`.
+
+---
+
+## The signature-base plane — NP-087 through NP-090
+
+`block.rs`, `body/`, `sigbase.rs` and `structured_fields_strictness_test.rs` hold 54
+unclaimed controls. The three source files are in **ten to fourteen units' `paths` each** —
+they are the shared bottom of the profile, so almost every `http_profile.*` unit measures
+them — and not one of those units claims a single control in them.
+
+**That combination is worth stating on its own.** A file inside fourteen fingerprints whose
+own controls belong to none of them is not a gap in any one unit's battery; it is a layer
+everybody depends on and nobody answers for. The four propositions below are what those
+controls establish, and each of them is a premise of every unit above it.
+
+## NP-087 — the evidence block is injective and closed
+
+**Controls:** `mcp-re-http-profile/src/block.rs` (11).
+**Statement.** *No two distinct evidence blocks produce the same identifier: the actor id is
+deterministic, pinned, and INJECTIVE ACROSS COLON BOUNDARIES; the separator cannot be forged
+across fields; the escape marker itself creates no collision; a separator inside a field does
+not collapse two audiences; different audiences on one endpoint hash differently; and the
+block is closed — an unknown field, a foreign profile and empty artifact bindings each fail
+closed.*
+**If false.** Two different actors, or two different audiences, share one identifier — so
+evidence about one is evidence about the other. Injectivity across the colon boundary is the
+whole of it: `a:bc` and `ab:c` must not be the same actor.
+**Likely owner:** none of the fourteen units that measure this file. Each of them is about
+what its own verdict means; this is about the identifier they all compare.
+**Severity:** `critical`.
+
+## NP-088 — the body is signed as written, or refused
+
+**Controls:** `mcp-re-http-profile/src/body/mod.rs` (14),
+`src/body/decimal_token.rs` (5).
+**Statement.** *A number the carrier's round trip would alter is REFUSED, NOT REWRITTEN —
+decimal or integer — while a representable one, including a wide but exactly carried
+decimal, composes unchanged; one number written many ways is one value and numbers that
+differ are not equal, compared digit for digit across a wide significand, with an unstateable
+exponent and a non-number both reading as none; a duplicate member name is refused and
+lookalikes are not, an escaped duplicate is refused like a plain one, a non-object body and a
+foreign field each fail closed; insert preserves existing meta entries and insert-then-extract
+round-trips; an absent block is MISSING EVIDENCE; and the representability scan never reads
+past the body.*
+**If false.** The composer rewrites a value on its way into the signature, so the bytes
+signed are not the bytes the caller wrote — which is the one thing a signature over a body
+is for. "Refused, not rewritten" is the clause: silently normalising is how a signature
+comes to cover something nobody sent.
+**Likely owner:** none of the eleven units that measure this file.
+**Severity:** `critical`.
+
+## NP-089 — the signature base is exactly the covered components
+
+**Controls:** `mcp-re-http-profile/src/sigbase.rs` (8).
+**Statement.** *A missing covered field and a duplicated one each fail closed; CRLF in a
+field value and in a derived component each fail closed; a `req` component on a request fails
+closed; derived components resolve; the method case is carried VERBATIM into the base; and a
+nonce the profile cannot carry is never emitted.*
+**If false.** The base a verifier reconstructs differs from the base the signer produced — by
+a folded header, an injected line, a component that belongs to the other direction, or a case
+change — and a valid signature verifies over the wrong bytes. The CRLF clauses are request
+smuggling arriving inside the signature base.
+**Likely owner:** none of the ten units that measure this file.
+**Severity:** `critical`.
+
+## NP-090 — the structured-field surface is closed and canonical
+
+**Controls:** `mcp-re-http-profile/tests/structured_fields_strictness_test.rs` (16).
+**Statement.** *The component set and the parameter set are CLOSED — a foreign component, a
+foreign parameter and a foreign tag are each rejected; a duplicated component or parameter
+fails closed; component and parameter reordering change the base and fail, while canonical
+order still verifies; RFC 8941 quoting cannot be used to merge or split members — a semicolon
+inside a quoted value does not split parameters, an escaped quote in a neighbouring member
+does not merge it, a decoy signature member does not merge into this profile's member, and a
+string parameter carrying an escape fails closed on verify; non-canonical integer parameter
+forms fail closed; a string parameter RFC 8941 cannot carry is NEVER SIGNED; ordinary string
+parameters still sign and verify; and a `req` component on a request fails closed.*
+**If false.** A signature over one structured field is read as a signature over another —
+the parser-differential attack this file is entirely about. "Never signed" rather than
+"rejected on verify" is the direction that matters: a value the format cannot carry must not
+enter the base in the first place.
+**Likely owner:** none. This file is in no unit's `paths` at all, unlike the three above it.
+**Severity:** `critical`.
+
+---
+
+## The rest of the HTTP profile — NP-091 through NP-105
+
+The remaining 165 unclaimed controls in `mcp-re-http-profile`, in fifteen propositions
+grouped by subject. The pattern is the one batch 16 found: these files are measured by many
+units and claimed by none, and the propositions below are what each file's own controls
+establish rather than what any unit above them promises.
+
+## NP-091 — the MCP transport contract is agreed and enforced on the wire
+
+**Controls:** `mcp-re-http-profile/tests/mcp_transport_headers_test.rs`, `mcp-re-http-profile/src/mcp_transport/mod.rs`, `mcp-re-http-profile/src/mcp_transport/agreement.rs`.
+**Statement.** *The transport headers a peer may send and must send are a closed, agreed set: the accepted contract is the one both sides named, a header outside it is refused rather than ignored, and what the agreement records is what the exchange is held to.*
+**If false.** A peer negotiates one transport contract and is held to another, so a header that decides framing or session identity is honoured under an agreement that never admitted it.
+**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
+**Severity:** `critical`.
+
+## NP-092 — a result is classified once, and never read as terminal by default
+
+**Controls:** `mcp-re-http-profile/src/result_class.rs`.
+**Statement.** *The recognised set is complete — input-required and absent; a body with no result member is terminal; a near-miss discriminator, an unparseable body, and an input-required reply without a usable state are each REFUSED and not read as terminal; a non-string or unadvertised result type is unrecognized, and unrecognized is not terminal; a terminal reply has no continuation state and an input-required one yields its state.*
+**If false.** A continuation is consumed as a completed call. Every clause names a different way to arrive there, and the repeated 'not read as terminal' is the point: the default on doubt must not be the one that ends the exchange.
+**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
+**Severity:** `critical`.
+
+## NP-093 — a response envelope is a JSON-RPC response or it is refused
+
+**Controls:** `mcp-re-http-profile/src/envelope/response.rs`.
+**Statement.** *The version is exactly 2.0; a response carrying both result and error, or neither, is refused; a non-object body, a non-object result, a malformed error member and an unparseable body are each refused; a JSON-RPC error is a VALID response and not a malformed one; an ordinary result response validates; and an arbitrary application payload inside result is not inspected.*
+**If false.** A malformed envelope is interpreted rather than refused — or, in the other direction, a legitimate JSON-RPC error is treated as malformed, which turns a peer's honest refusal into a transport fault. The non-inspection clause is the boundary: the profile validates the envelope and does not read the application's payload.
+**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
+**Severity:** `high`.
+
+## NP-094 — a refusal carries its own provenance and is read only after verification
+
+**Controls:** `mcp-re-http-profile/src/rejection/mod.rs`, `mcp-re-http-profile/src/error/core_projection.rs`, `mcp-re-http-profile/src/error.rs`.
+**Statement.** *A wire code is read ONLY AFTER the signature verifies, an unsigned rejection is untrusted, a bound rejection verifies and exposes its code, an ordinary rejection body gains no new fields, and the indeterminate rejection states that a retry is unsafe; projection preserves the ratified group count and maps each failure class to its precise code, the derived token is the projected verdict's own, absent and malformed evidence are different verdicts, an outage does not project onto an actor-binding failure and is not an untrusted key, and omission and tampering are different failures.*
+**If false.** A refusal an attacker wrote is read as one the peer signed, or two failures with different causes are reported as one — which is how 'the key is untrusted' and 'the network was down' become the same alarm.
+**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
+**Severity:** `critical`.
+
+## NP-095 — delegation verifies the chain it was given
+
+**Controls:** `mcp-re-http-profile/src/delegation/mod.rs`, `mcp-re-http-profile/src/delegation/verify.rs`, `mcp-re-http-profile/tests/delegation_e2e_test.rs`.
+**Statement.** *The delegated credential chain presented is the one verified, end to end.*
+**If false.** A delegated signature is accepted under a chain that was not the one presented.
+**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
+**Severity:** `critical`.
+
+## NP-096 — a PDP decision carries exactly the claims it was issued with
+
+**Controls:** `mcp-re-http-profile/src/pdp_decision/claims.rs`, `mcp-re-http-profile/src/pdp_decision/issue.rs`, `mcp-re-http-profile/src/pdp_decision/mod.rs`, `mcp-re-http-profile/src/pdp_decision/verify.rs`.
+**Statement.** *The claims a decision carries are the ones it was issued with, and verification reads no others.*
+**If false.** An authorization decision is honoured for claims nobody issued it for.
+**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
+**Severity:** `critical`.
+
+## NP-097 — the SCITT value types parse only their own shapes
+
+**Controls:** `mcp-re-http-profile/src/scitt/retained.rs`, `mcp-re-http-profile/src/scitt/cose_key/mod.rs`, `mcp-re-http-profile/src/scitt/merkle.rs`, `mcp-re-http-profile/src/scitt/receipt/mod.rs`, `mcp-re-http-profile/src/scitt/statement/mod.rs`.
+**Statement.** *Each SCITT value — retained record, COSE key, Merkle node, receipt, statement — parses its own shape and refuses another's.*
+**If false.** One SCITT structure is read as another, so an inclusion proof or a key is interpreted under the wrong shape.
+**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
+**Severity:** `high`.
+
+## NP-098 — the cryptographic floor refuses what it cannot state exactly
+
+**Controls:** `mcp-re-http-profile/src/verify/floor/sf_dictionary.rs`, `mcp-re-http-profile/src/verify/floor/signature_input.rs`, `mcp-re-http-profile/src/verify/floor/signature_parameters.rs`, `mcp-re-http-profile/src/verify/bound_request.rs`, `mcp-re-http-profile/tests/proof_path_test.rs`, `mcp-re-http-profile/tests/algorithm_confusion_test.rs`.
+**Statement.** *An empty dictionary member and dictionary-member spacing are REFUSED, NOT normalised or ignored; alternate signature-input spellings are refused rather than normalised, while a space inside a quoted parameter value is kept; negative zero is not an SF integer; a request with no signature-input has no handle; and the proof path admits no algorithm the header did not name.*
+**If false.** A verifier normalises an input into something that verifies, so two different wire forms produce one base — the parser-differential attack again, at the floor rather than at the surface. 'Refused, not normalised' is the same clause NP-088 makes about the body, at the other end of the exchange.
+**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
+**Severity:** `critical`.
+
+## NP-099 — each verifier product states what it established, without an Option
+
+**Controls:** `mcp-re-http-profile/src/verified_request/mod.rs`, `mcp-re-http-profile/src/verified_response/bound.rs`, `mcp-re-http-profile/src/verified_response/facts.rs`, `mcp-re-http-profile/src/verified_response/unbound.rs`.
+**Statement.** *A full product states its audience, a bound one its binding and a delegated one its issuer WITHOUT AN OPTION; a floor product carries the slot trust resolved it in; a seam-authorized floor projects the signer it resolved; the shared facts carry who signed and no authorization; bound and unbound facts are not the same type; an agreement records both handles and not only the verdict; and the unbound products carry no request binding and no trust-seam resolution TO MISREAD.*
+**If false.** A product admits two proof strengths in one type, so a consumer reads an absent fact as a weaker establishment rather than as a different product. The repository has ruled on this exact shape: one Verified type, one proof strength, and an Option documented 'None on the minimal path' is a type admitting two.
+**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
+**Severity:** `critical`.
+
+## NP-100 — the evidence handle is domain-separated and derived, never a bare digest
+
+**Controls:** `mcp-re-http-profile/src/evidence.rs`, `mcp-re-http-profile/src/context.rs`, `mcp-re-http-profile/src/digest.rs`, `mcp-re-http-profile/src/artifact.rs`, `mcp-re-http-profile/src/policy.rs`, `mcp-re-http-profile/src/replay.rs`, `mcp-re-http-profile/src/authoritative_admission/record/currentness.rs`.
+**Statement.** *A handle is split-form and deterministic, is NOT a bare digest of the base, differs when the base differs, cannot confuse a label with an input, and separates roles by domain over IDENTICAL BYTES; the proxy's own meta keys are stripped and application meta preserved, with a meta of only proxy keys removed entirely and a strip without meta a no-op; a digest round-trips, a tampered body fails closed, and an absent sha-256 member of a present header is malformed.*
+**If false.** Two different roles over the same bytes produce the same handle, so evidence for one is evidence for the other — which is NP-087's injectivity failure at the handle rather than at the actor. 'Not a bare digest of the base' is what makes the domain separation structural instead of conventional.
+**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
+**Severity:** `critical`.
+
+## NP-101 — the JSON mode carries the profile and nothing else
+
+**Controls:** `mcp-re-http-profile/tests/json_mode_test.rs`.
+**Statement.** *The JSON carrier admits exactly the profile's own members and refuses a foreign one.*
+**If false.** A JSON-mode exchange carries a member the profile never defined and a reader interprets it.
+**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
+**Severity:** `high`.
+
+## NP-102 — the signer seam takes a preimage in and a signature out
+
+**Controls:** `mcp-re-http-profile/tests/signer_seam_test.rs`.
+**Statement.** *The signer seam accepts a preimage and returns a signature, and carries nothing else across.*
+**If false.** The seam carries key material or a decision across a boundary whose whole purpose is that it does not.
+**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
+**Severity:** `critical`.
+
+## NP-103 — dispatch admits only what verified
+
+**Controls:** `mcp-re-http-profile/tests/dispatch_test.rs`.
+**Statement.** *What reaches dispatch is what verification admitted, with nothing re-derived between.*
+**If false.** An unverified request reaches the backend, or a verified one is dispatched under facts the verifier did not establish.
+**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
+**Severity:** `critical`.
+
+## NP-104 — the profile reproduces the RFC 9421 known-answer vectors
+
+**Controls:** `mcp-re-http-profile/tests/rfc9421_kat.rs`.
+**Statement.** *The implementation reproduces the RFC's own published vectors byte for byte.*
+**If false.** The profile is self-consistent and wrong: every internal control passes and no other RFC 9421 implementation agrees with it.
+**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
+**Severity:** `high`.
+
+## NP-105 — an admission binding names one identifier and binds to it
+
+**Controls:** `mcp-re-http-profile/tests/admission_binding_test.rs`, `mcp-re-http-profile/tests/binding_identifier_test.rs`.
+**Statement.** *An admission binding names exactly one identifier, and the binding it produces is to that identifier.*
+**If false.** A request is admitted against a binding identifier other than the one it named.
+**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
+**Severity:** `critical`.
+
+---
+
+## The small crates — NP-106 through NP-113
+
+Seventy-six controls outside `mcp-re-proxy`. Nine REGISTER — seven into
+`client.binding_spec_refusal`'s own file, and two that are the ANTI-VACUITY arm of
+`client.transport_server_identity`: they show that the declared fault injector is what makes
+an untrusted or wrong-identity server certificate accepted, so the rejections that unit
+claims are the real verifier's and not an artefact of a test that never presented a bad
+certificate.
+
+The rest are eight propositions, and three of them are premises of everything above
+them.
+
+## NP-106 — the Core's Ed25519 primitive is exact and total
+
+**Controls:** `mcp-re-core/src/crypto.rs`.
+**Statement.** *`ensure_ed25519_alg` accepts the supported algorithm and rejects an unknown one with the caller's supplied error; sign-then-verify round-trips and the signature is deterministic for a fixed seed; a wrong key, a wrong-length signature, a tampered preimage and a malformed base64 signature each fail; a malformed key — in b64url or in bytes — maps to actor-binding-failed and the response variant maps to response-sig-invalid; a verification key round-trips through bytes and b64url; and the raw primitive verifies with no algorithm plumbing at all.*
+**If false.** The one primitive every signature in the system rests on accepts something it should not, or reports a key problem as a signature problem. The error-mapping clauses are why they are enumerated: a malformed key and a bad signature are different facts, and an alarm that cannot tell them apart sends the operator to the wrong place. `ensure_ed25519_alg_rejects_unknown_alg_with_supplied_error` is also NP-002's other half — the refusal that keeps ES256 out of MCP-RE's own signing.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-107 — base64url is the exact encoding, in both directions
+
+**Controls:** `mcp-re-core/src/encoding.rs`.
+**Statement.** *Encoding uses the URL-safe alphabet and emits NO padding; decoding rejects a non-alphabet character and rejects padding; an empty input decodes to empty; arbitrary bytes round-trip; and a known answer is reproduced.*
+**If false.** Two spellings of one value both decode, so a comparison over the encoded form does not mean what a comparison over the bytes would. Rejecting padding is the clause that makes the encoded form canonical rather than merely decodable.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-108 — the error taxonomy is frozen, exhaustive and duplicate-free
+
+**Controls:** `mcp-re-core/src/error.rs`, `mcp-re-core/src/ids.rs`.
+**Statement.** *`ALL_ERRORS` is duplicate-free and the wire-code list is EXHAUSTIVE; errors compare by value; every frozen wire string renders exactly — the full taxonomy, the delegation strings, the draft-02 strings, the http-profile signed-rejection strings, and renamed-and-kept variants; the http-profile codes are distinct from the folds they replace; a draft-02 missing binding is distinct from a draft-01 missing hash; and the profile-agnostic constants are frozen.*
+**If false.** A wire token means one thing to MCP-RE and another to a peer, or two distinct failures render the same string. Exhaustiveness is what makes the taxonomy a contract: a variant nobody listed renders nothing, and nothing is what a reader cannot distinguish from a token they do not know.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-109 — the admitted time era is bounded and its formatter is total
+
+**Controls:** `mcp-re-core/src/time/mod.rs`.
+**Statement.** *The admitted era round-trips through the formatter; the lowest and highest admitted instants are the boundaries; a five-digit year is REFUSED; and the fixed-digit fields are total outside the parser's widths.*
+**If false.** An instant outside the era formats to something a peer parses as a different time — the five-digit year is the concrete case — or the formatter is partial and a legal instant has no representation.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-110 — the Core stays pure
+
+**Controls:** `mcp-re-core/tests/firewall_test.rs`.
+**Statement.** *`mcp-re-core` depends on no networking, no async runtime, no filesystem and nothing up-stack.*
+**If false.** The layer every signature rests on acquires a dependency that can read a file, open a socket or block — and the argument that a Core verdict is a function of its inputs stops being true. This is the crate's whole architectural premise, measured as one control and claimed by nothing.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-111 — a verified reply's disposition is the one the receipt states
+
+**Controls:** `mcp-re-client-proxy/src/proxy.rs`, `mcp-re-client-core/src/response.rs`.
+**Statement.** *A JSON-RPC error reply is carried through and NOT flattened to a null result; a verified error reply is classified as a failed call and not a success; a reply that is not a JSON-RPC response fails closed and an unparseable verified reply is a VERIFICATION failure rather than a bad request; an input-required reply and an unrecognized result type are never terminal; a verified rejection carries its execution contract to the local client and an UNSTATED contract produces no invented disposition; a post-dispatch rejection carries its execution and retry contract; a retention failure is readable as such; an out-of-range skew cannot widen the credential window; an ordinary result still rebuilds; the proxy-owned meta is stripped from the plain reply; and the reply carries the id THE PROXY SIGNED rather than the one the server echoed.*
+**If false.** The application is told the call succeeded, or failed, or did not run, on the strength of something the receipt did not say. `an_unstated_contract_is_not_a_did_not_run_verdict` and `an_unstated_contract_produces_no_invented_disposition` are the same rule in two crates: silence is not a verdict.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-112 — a host signer signs under its own identity and renders no key
+
+**Controls:** `mcp-re-host/src/signer.rs`.
+**Statement.** *A signed request names the signer's OWN key id; the identity is readable and the key is not; and the tool-call convenience signs under the same identity.*
+**If false.** A host signs under an identity that is not the one it advertises, or the convenience path signs under a different one from the explicit path — two identities for one signer.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-113 — a revocation source reports availability honestly
+
+**Controls:** `mcp-re-policy/src/revocation.rs`.
+**Statement.** *An empty source revokes nothing; an in-memory source is always available; a revoked id is reported revoked; and an unavailable source carries its details for diagnostics.*
+**If false.** An unavailable revocation source is read as an empty one, so nothing is revoked and the deployment cannot tell the difference. That is the execution-certainty collapse this repository has ruled on, in the one place where 'we could not check' and 'nothing is revoked' must never be the same answer.
+**Likely owner:** none.
+**Severity:** `high`.
+
+---
+
+## The proxy's top-level source — NP-114 through NP-128
+
+117 controls in `mcp-re-proxy/src/*.rs` and `src/continuation_store/`. Nine REGISTER into
+three units whose own statements name the clause the control measures — the "minimal audited
+SigV4" the AWS adapter's statement ends on, the poller's liveness bound and the rotation
+overlap, and the signing budget `proxy.listener_state_assembly` lists as one of its four
+terms. Four more attach to propositions this campaign already recorded.
+
+The rest are fifteen propositions, and one of them is **ADR-MCPRE-069 §3's own worked
+instance**, still unclaimed on main.
+
+## NP-114 — a KMS access token is fetched once, reused honestly, and never extended
+
+**Controls:** `mcp-re-proxy/src/gcp_kms_keysource.rs`.
+**Statement.** *A token response yields the credential and its lifetime and an empty or absent access token is refused; a STATED expiry is never extended by the reuse floor and an unestablishable lifetime is reported as a fact rather than read as a stated one; an unreadable `expires_in` is reused briefly rather than refetched every call, including when every clock read differs; concurrent callers perform ONE metadata fetch between them and a failed fetch is not repeated by every waiter; a 401 discards the token and retries once, a persistent 401 stops costing a refetch per call, a 403 does NOT discard a valid token, and only a refusal with a token to discard costs a second call; the failure cool-off expires, a success clears it, a backwards clock step does not extend it, and it must outlast the network timeout as the unknown-expiry floor must outlast the refresh margin; invalidating a token another thread already replaced is a no-op and invalidating the source forces a re-fetch; a poisoned token lock still serves tokens; the access token is MOVED out of the parsed document; and two token sources share neither a cache nor a flight.*
+**If false.** The response signer cannot sign — because a 403 threw away a good token, because a persistent 401 turned every call into a metadata fetch, or because a cool-off outlived its own reason — or it signs with a credential past its stated expiry because a reuse floor extended it. `proxy.gcp_kms_adapter` states what the SIGNER does; this is how it gets the credential to do it, and it is a different authority with twenty-three controls and no claim.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-115 — the delegated TLS signer offers Ed25519 and nothing else
+
+**Controls:** `mcp-re-proxy/src/delegated_tls.rs`.
+**Statement.** *The handshake offers Ed25519 ONLY; the signer scheme is Ed25519 and the signature is 64 bytes; and a wrong-length signature fails closed.*
+**If false.** The TLS handshake negotiates a scheme the remote signer does not implement, or accepts a signature of the wrong length as a valid one. This is NP-002's containment argument at the handshake: the set of algorithms offered is the set that can be used.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-116 — channel peer resolution yields the identity the relationship authenticated as
+
+**Controls:** `mcp-re-proxy/src/tls.rs`.
+**Statement.** *Direct TLS resolves the identity the relationship AUTHENTICATED AS; each relationship resolves its own peer's identity and a resumed one resolves the same identity as a full handshake; a leaf without the configured field and an absent acceptance each resolve NO identity; an issuer in the accepted chain never becomes the transport identity; and an LB-assertion deployment resolves no transport identity at all.*
+**If false.** The proxy attributes a request to a peer that did not authenticate as that peer — by promoting an issuer out of the chain, by resolving an identity from a resumed session that differs from the handshake's, or by producing a transport identity in a deployment where the channel is terminated in front of it. The last is the sharpest: under an LB assertion there IS no transport identity, and producing one would let NP-074's guarantee be read as end-to-end.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-117 — every deployment classifies to exactly one currency policy, read at call time
+
+**Controls:** `mcp-re-proxy/src/tls.rs`.
+**Statement.** *Every deployment classifies to EXACTLY ONE currency policy, and the policy reads the index in force AT THE TIME OF THE CALL.*
+**If false.** Two policies are applicable and which one applies depends on the reader, or a call is decided against an index that has since been replaced — so a revocation that landed before the call is not in force for it.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-118 — a trust snapshot swaps atomically and a held one never changes
+
+**Controls:** `mcp-re-proxy/src/reloading_trust.rs`.
+**Statement.** *A reader never observes a snapshot built from two different reads; a snapshot a reader already holds is unaffected by later swaps; the shared handle observes the swap; a swapped store revokes WITHOUT A RESTART; and every edit moves the resolver and the signer set TOGETHER.*
+**If false.** A request is decided against half of one trust document and half of another. `proxy.trust_resolution_window` says it takes the materialized snapshot AS AN INPUT AUTHORITY — this is the premise that makes that legitimate, and nothing claimed it.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-119 — a continuation leg is established exactly once
+
+**Controls:** `mcp-re-proxy/src/continuation_store/mod.rs`, `mcp-re-proxy/src/redis_continuation_store.rs`.
+**Statement.** *The first open leg stores; a second open on a LIVE key is refused and changes nothing; concurrent creators yield exactly ONE stored; an expired key may be established again; a backing failure is UNAVAILABLE and never a collision; and at the Redis backend the open leg records the bases under an NX-guarded, bounded PX TTL, a taken key answers collision rather than an error, and a non-positive TTL still asks for an expiring entry.*
+**If false.** Two writers each believe they opened the same continuation leg, so an answer leg signs over bases that belong to the other — or a backing outage is reported as a collision, which tells the caller the leg exists when nobody knows. THIS IS ADR-MCPRE-069 §3's OWN WORKED INSTANCE: five controls in `continuation_store/mod.rs` that the record used to show that a proposition can be real, passing, and claimed by nothing. `proxy.continuation_correlation_store` registers two controls from the same file and states a different proposition — reachability by the resolved actor and the peek/consume split — and §5 forbids widening it to cover establishment. The three Redis controls are the same proposition at the backend and are recorded with them.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-120 — the shared replay store admits a nonce once, across instances
+
+**Controls:** `mcp-re-proxy/src/shared_replay.rs`.
+**Statement.** *A fresh request is admitted and a replay refused on one instance; a request inserted via instance A is a replay via instance B; distinct tuples do not alias; an already-stale request is rejected PRE-STORE and not recorded as fresh; a non-positive window is flagged stale pre-store; the skew folded into `retain_until` matches the in-memory semantics; the ceiling FAILS CLOSED when full and the store recovers once its entries expire; a stale request via the shared cache fails closed; and the durability class delegates to the backing store.*
+**If false.** A replayed request is admitted — because the second instance never saw the first's insert, because two distinct tuples aliased to one key, or because a full store failed open. 'Rejected pre-store and NOT RECORDED AS FRESH' is the clause that keeps a stale request from consuming the slot that would have caught its replay.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-121 — a replay tier's published guarantee is its own
+
+**Controls:** `mcp-re-proxy/src/replay_tier.rs`.
+**Statement.** *Every tier has a non-empty guarantee and NO TIER CLAIMS UNCONDITIONAL; a tier promising wait supplies its wait parameters and wait-quorum parsing extracts the quorum and timeout; the async tier's claim ceiling is not linearizable; the strict production minimum is wait-quorum or stronger; parsing round-trips the simple tiers and refuses unknown and malformed ones; the wire names are the semantic ADR names; and the startup audit line carries the backend, tier and guarantee and NO NONCE.*
+**If false.** A deployment publishes a replay guarantee it does not have, or an async tier is read as linearizable. This is NP-063's proposition for the other tier vocabulary, and the two are recorded separately because they are two vocabularies with two ceilings — the audit-line clause differs too: no key material there, no NONCE here.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-122 — the handshake quota opens on quota failures only, and never shortens
+
+**Controls:** `mcp-re-proxy/src/handshake_quota.rs`.
+**Statement.** *ONLY quota failures open the window; a throttled signature stops calling the signer for the cooldown; a successful probe reopens the path AT ONCE and does not clear a window armed later; only one handshake probes at the cooldown boundary; a straggler cannot SHORTEN the window; a slow throttled call still opens a live window; the window is never shorter than the network timeout; and a poisoned window lock still signs.*
+**If false.** A remote signer under quota pressure is hammered by every handshake — or, in the other direction, an unrelated failure opens a cooldown and the listener stops signing for a reason that was never quota. 'A straggler cannot shorten the window' is the race: a late reply from before the window must not end it.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-123 — a serving capability is ON with an artifact or OFF with an explanation
+
+**Controls:** `mcp-re-proxy/src/serving_capabilities.rs`.
+**Statement.** *An ON posture ALWAYS carries an artifact and an OFF posture never does; every OFF line tells the operator what to do about it; evidence retention attaches a store only for a NAMED directory and an unopenable retention directory refuses startup NAMING THE FLAG; the security-audit posture follows the classified audit state; and the verified-context carrier is attached only for a trusted inner channel.*
+**If false.** A capability reports ON while carrying nothing, so the transcript says a protection is active that is not. The OFF-line clause is NP-004's operator problem solved from the other side: not merely that a seam states its posture, but that the statement is actionable.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-124 — a control-plane runtime exists only where it is needed, and outlives no owner
+
+**Controls:** `mcp-re-proxy/src/control_runtime.rs`.
+**Statement.** *A deployment that needs no control-plane client starts NO runtime; a single contributor is enough and no contributor is not; every consumer receives a handle to the SAME runtime; a runtime built before a later failure does not escape it; and dropping the owner stops work a surviving handle had started.*
+**If false.** A runtime outlives the failure that should have torn it down, or a surviving handle keeps work going after its owner is gone. NP-003 is the same rule for threads; this is it for the runtime that owns them.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-125 — a key source signs by delegation and never by export
+
+**Controls:** `mcp-re-proxy/src/key_source.rs`.
+**Statement.** *A boxed source signs BY DELEGATION AND NEVER BY EXPORT; an export attempt registers on the counter; a TLS-only source names no signing seed; the default is no delegated TLS signer; and the refusal vocabulary separates ABSENT from MALFORMED.*
+**If false.** Key material leaves the custody boundary through a source that was supposed to sign inside it. The counter is the measurement that makes 'never by export' checkable rather than asserted, and the absent/malformed separation is the same rule NP-106 makes about the primitive's errors.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-126 — a client CRL is loaded or the listener fails closed, and it must fall out of force
+
+**Controls:** `mcp-re-proxy/src/client_crl_publication.rs`.
+**Statement.** *A missing client-CRL file FAILS CLOSED; no CRL paths loads an empty vector; a CRL that states its nextUpdate is accepted; and a CRL that NEVER FALLS OUT OF FORCE is refused.*
+**If false.** A listener starts with a revocation list it could not read and believes it is enforcing revocation — or with one that never expires, so a stale list is trusted forever. 'Never falls out of force is refused' is the clause: a CRL without an expiry is not a permanent CRL, it is an unbounded one.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-127 — a configuration handle keeps serving the configuration it was taken under
+
+**Controls:** `mcp-re-proxy/src/config_snapshot.rs`.
+**Statement.** *A handle taken BEFORE a swap keeps serving its configuration; load returns the current one and store swaps; reload swaps on a successful rebuild and KEEPS THE LAST GOOD one on failure.*
+**If false.** An in-flight exchange is decided half under the old configuration and half under the new — NP-118's failure for configuration rather than trust — or a failed reload leaves the process with no configuration at all instead of the one that was working.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-128 — the deployment clock reads a plausible present and never runs backwards
+
+**Controls:** `mcp-re-proxy/src/clock.rs`.
+**Statement.** *The clock reads a plausible present instant, does not run backwards between reads, and a sane host clock is not diagnosed as faulted.*
+**If false.** Every freshness window, every expiry and every cool-off is computed against a clock that moved the wrong way. NP-065 decides what a FAULTED clock does; this is what makes 'faulted' a measurement rather than a guess, and its third clause is the false-positive arm.
+**Likely owner:** none.
+**Severity:** `high`.
+
+---
+
+## The proxy's subtrees — NP-129 through NP-148
+
+229 controls across twenty subtree modules of `mcp-re-proxy/src/`. Twenty propositions, one
+per authority the subtree separates — and fifteen more controls attach to propositions this
+campaign already recorded: eight managed-worker controls to NP-003, six
+materializing-runtime controls to NP-067, and one KMS bracketed-host control to NP-027.
+
+Three subtrees hold two authorities each and are split accordingly: the serving path
+separates *what it refuses before spending* from *what an acknowledgement may assert*, the
+authorization plane separates *where the actor and action come from* from *what each refusal
+is called*, and the trust plane separates *the cache* from *the posture*.
+
+## NP-129 — the serving path refuses before it spends or signs
+
+**Controls:** `mcp-re-proxy/src/http_profile_serve`.
+**Statement.** *A body the profile cannot carry unchanged is refused BEFORE ANYTHING IS SPENT and an unrepresentable one before any reserialization; a saturated plane refuses BEFORE A BYTE IS TRANSMITTED; a document that is not an MCP message is refused at 400 and request state is read only as a string under `params`; a notification and a request are told apart ONCE; an uncorrelated reply is refused before anything signs it, an unrecognized result type is NEVER SIGNED, and a JSON-RPC error is a terminal answer rather than a malformed one; an open leg yields the state its answer re-presents and a collision fails the leg closed WITHOUT RETRYING; the carrier holds the terminal the request selected and the reply carries the class the classifier read; the audience the store keys under is the one the verifier enforces; the binding prerequisite and the assertion coordinate are different facts and the binding stage hands on the FACT rather than a unit; and application meta survives the PEP-owned strip.*
+**If false.** The proxy spends a budget, transmits bytes, or signs a reply for a request it was going to refuse — and 'never signed' is the clause that matters most: an unrecognized result type that gets signed is MCP-RE attesting to something it could not classify.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-130 — an acknowledgement asserts only what actually happened
+
+**Controls:** `mcp-re-proxy/src/http_profile_serve`.
+**Statement.** *A message that MAY NOT HAVE ARRIVED is not acknowledged, and neither is a notification the backend may not have received; a timeout is NEITHER A REPLY NOR A DEFINITE FAILURE; an unusable answer to a notification still says the backend WAS REACHED; a deployment that retains nothing owes nothing on any of the three and nothing is owed where retention is not configured; an unconfigured deployment claims nothing about permission and the carrier does not flatten the authorization posture; only a REAL retirement spends an approval; the record budget is bounded and small; and a disabled plane still carries the default lifetime.*
+**If false.** The proxy tells a caller something happened that may not have. Every clause is the same refusal to collapse execution certainty onto the convenient side — the rule this repository has ruled on and measured before — and the last of them is its opposite arm: reaching the backend IS a fact, and an unusable answer must not erase it.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-131 — the actor and the action come from one signed request
+
+**Controls:** `mcp-re-proxy/src/authorization`.
+**Statement.** *The coordinate is read FROM THE SIGNED BODY and a body that is not the signed body cannot produce one; a body or a document FROM ANOTHER REQUEST cannot be paired with this actor or this binding; one binding over these exact bytes corresponds, two evidence bindings leave the pairing AMBIGUOUS and are refused, and a decision with no binding at all is refused; a reference binding never becomes evidence even with the same digest; the binding reaches the policy WHOLE and is not reopened; the actor and the action come from ONE request; a rotated key is the same subject and a different canonical actor, distinct trust domains are distinct actors under the same subject, and the canonical id is the identity owner's join rather than a second one; and `resources/read` names its target under a different key, so a method naming no target is not the same as one missing its target.*
+**If false.** An authorization decision is made about one request's actor and another request's action. 'Two evidence bindings leave the pairing ambiguous and are REFUSED' is the clause that keeps a choice from being made silently, and the canonical-id clause is the identity-not-locator rule inside the authorization plane.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-132 — each authorization refusal is its own token
+
+**Controls:** `mcp-re-proxy/src/authorization`.
+**Statement.** *An actor mismatch and an action mismatch are DIFFERENT TOKENS; no configured authority and an untrusted issuer are different tokens; a digest mismatch is not reported as a malformed artifact; a scope the deployment does not accept is not an actor mismatch; a signed body that is not JSON and one with no method are different facts; a request carrying no decision is NOT A REFUSAL and one presenting nothing says so RATHER THAN BORROWING A DENIAL; an unbound deployment says not-claimed rather than asserting a binding; a malformed request is reported rather than refused by THIS authority; every verified dimension is projected separately; an explicit deny and an action mismatch deliberately collapse onto one token; and a resolver that trusts nobody is a deployment that authorizes nothing.*
+**If false.** An operator reading a refusal is sent to the wrong place, or a request that presented nothing is recorded as having been denied — which is a denial nobody made. The one deliberate collapse is stated as a control rather than left as a coincidence, which is what makes the other separations claims instead of accidents.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-133 — a request form carries only its own material
+
+**Controls:** `mcp-re-proxy/src/deployment_request`.
+**Statement.** *Each form carries ONLY ITS OWN MATERIAL: a replay store is one backend with only its own locator, a coordinate cannot exist without the store it names a place in, and the derived coordinates start unnamed; an attested form cannot exist without the acknowledgement and the off request supplies no parameter any machine could dangle; the unenforced form has no gate inputs to dangle and both enforcing forms carry the gate they apply, an applied gate always naming the record it compares against; a degraded window exists only where one opens and only above zero, and failing closed is the default and carries no window; the cadence is optional under exactly one tier and only the pushing tier can name an epoch source; an empty set is the unconfigured posture, configuring neither mechanism IS a posture, and the two mechanisms COMPOSE rather than excluding each other; the durability claim and the store are separately stated and the locator projection names no backend; one Redis can serve two roles without the roles becoming one; a source without a named key is still a source and a store that does not exist drives the same consumer; the default form is the channel credential and the default identity field is the URI SAN; a scope beside off is representable because refusing it is NOT THIS TYPE'S JOB; and the verification set can be empty and is judged at the boundary.*
+**If false.** A request value exists that carries a parameter no machine will read — the dangling-input class the classifiers refuse one layer up — or a form is inhabitable without the material it cannot operate without. The last clause is the layering, stated as a control: this type represents, and the boundary refuses.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-134 — the trust cache answers from what it has, and stops caching before it stops answering
+
+**Controls:** `mcp-re-proxy/src/trust_plane`.
+**Statement.** *The compose key is INJECTIVE across delimiter-containing pairs; no positive caching consults the inner resolver every call; not-found uses a short TTL so a new key propagates; expired entries are SWEPT rather than merely ignored and prune evicts closed windows; a push for a different key does not evict the active entry; past the ceiling the cache STOPS CACHING BUT KEEPS ANSWERING; the strictest applicable T picks the tightest window and a T exceeding the recommended maximum is flagged; a revocation-source outage FAILS CLOSED; a second revocation authority rejects even when key status is active; and the only input production can build makes the rule the identity.*
+**If false.** Two different key pairs share a cache entry — the injectivity failure, here in the cache key rather than in the actor — so a lookup for one answers with the other's trust. The ceiling clause is the availability arm: a cache that stopped answering when it stopped caching would turn a memory bound into an outage.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-135 — a trust posture names its reload floor, and staleness is terminal or undone
+
+**Controls:** `mcp-re-proxy/src/trust_plane`.
+**Statement.** *Every posture names the reload floor UNDER ITS NUMBER; a configured cadence is named on the tier line; a tier with no reload cadence says the store CANNOT CHANGE and a bounded cache with no cadence names the frozen store; a recoverable staleness is undone by a successful reload while a TERMINAL staleness survives a straggler reporting fresh; a directory that outlives the plane still answers from the last snapshot; and surviving handles do not keep the refresh workers alive.*
+**If false.** A replica reports a trust posture it is not maintaining, or a terminal staleness is cleared by a late report from before it — the straggler race, in the one place where clearing it means resuming trust that was withdrawn.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-136 — retained bytes come back under their digest, from an owner-only store
+
+**Controls:** `mcp-re-proxy/src/retained_evidence`.
+**Statement.** *Retained bytes come back UNDER THEIR DIGEST and modified evidence gets a different one; a non-token digest CANNOT ESCAPE THE ROOT; bytes replaced on disk are refused by the read view and a truncated object is REWRITTEN rather than reported as retained; retaining the same bytes twice is idempotent and staging the same object concurrently leaves one object and no residue; temp residue from an interrupted write does not block a later put; a missing object is ABSENT RATHER THAN AN ERROR; a created root, store root and file are OWNER-ONLY; creating over an existing path is refused and a path that is not a directory is refused at open; opening an unwritable directory fails at open, opening for reading does not create the directory, and a read-only directory opens for reading and serves its objects; the writability probe leaves nothing in the store; and no two suffixes are the same.*
+**If false.** Retained evidence is not the evidence that was retained — replaced on disk, truncated and read back as whole, or fetched from outside the root by a digest that was never a token. The path-traversal clause and the owner-only clauses are the two that need no protocol at all to exploit.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-137 — a credential-currency or identity refusal names what it read
+
+**Controls:** `mcp-re-proxy/src/communication_assurance`.
+**Statement.** *A presented leaf that REFUSES is never reported as an ABSENT one and an optional leaf that is `None` is the same evidence as absent; a refusal names the CONFIGURED field rather than the field that was present; rubbish DER reads no facts and the projections report what was constructed; an authentication that never happened CANNOT BE MADE CURRENT; a span within the ceiling is current and NAMES THE CONTROL THAT RAN; an inverted window is not orderable and contains nothing, and being orderable is not the same question as containing now; a self-issued certificate in the chain is exempt from the window; only the unevaluated policy applies no controls; and the defaults are the URI SAN and the channel credential.*
+**If false.** A refusal says a credential was absent when it was present and refused — different facts with different operator responses — or an authentication that never happened is reported as current. 'Names the control that ran' is what makes currency a measurement rather than a verdict.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-138 — the blocking harness parses HTTP/1 strictly and bounds its reads
+
+**Controls:** `mcp-re-proxy/src/blocking_mtls_harness`.
+**Statement.** *A bare CR in the header section, a bare LF line ending, an obs-fold continuation line, a duplicate `Content-Length` — even with the same value — and a negative one are each REJECTED; a single valid `Content-Length` parses and an absent one is a zero-length body; the aggregate deadline fires on a sub-per-read trickle; and a disabled deadline does not cut off a completing read.*
+**If false.** Request smuggling: two parsers disagree about where one message ends. Rejecting a duplicate `Content-Length` WITH THE SAME VALUE is the clause that makes it strictness rather than a de-duplication convenience, and the trickle clause is the slow-loris bound NP-034 configures.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-139 — an unhealthy backend is ejected, probed once, and readmitted on success
+
+**Controls:** `mcp-re-proxy/src/http_inner`.
+**Statement.** *Consecutive failures trip the breaker open at the threshold and a success resets the failure run; an open backend is readmitted as a PROBE after the cooldown and closes on success, while a failed probe reopens for another cooldown; each probe claim takes a slot NO SECOND CLAIM CAN TAKE, and preparing claims the recovery probe while dropping it gives the probe back; all-open selection returns none before the cooldown and preparing refuses only while EVERY backend is ejected; a health-aware balancer skips an open backend and uses a healthy one; a held preparation consumes the in-flight bound; a closure inner reports a backend reply; and the post-commitment outcomes are distinguishable.*
+**If false.** Every replica probes an unhealthy backend at once — the thundering-herd recovery — or a backend that never recovers keeps taking traffic. 'Preparing refuses only while EVERY backend is ejected' is the availability arm: one ejection must not stop the proxy.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-140 — the TLS plane republishes its own epoch and bounds established connections
+
+**Controls:** `mcp-re-proxy/src/tls_plane`.
+**Statement.** *The store starts under the epoch of the plane's OWN client-auth inputs and a rebuild republishes the epoch of the anchor set THE PLANE OWNS; a reload cadence bounds ESTABLISHED CONNECTIONS and not only handshakes; without a cadence the bound is the CRL's own expiry, and without a CRL the bound is the certificate lifetime; a retired plane stops claiming a cadence; a snapshot that outlives the plane still serves; and a key source that disagrees with the declared custody refuses, while an agreeing one passes the check and fails on something else.*
+**If false.** A revoked client keeps a connection it established before the revocation — the clause that makes this about established connections rather than handshakes — or a plane republishes an epoch belonging to inputs it does not own, so an invalidation is attributed to the wrong anchor set.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-141 — the async core budgets bodies and frames without double counting
+
+**Controls:** `mcp-re-proxy/src/async_serve`.
+**Statement.** *The core budget admits a maximum-size body and refuses past the ceiling; absorbing a frame does not release its bytes TWICE and an abandoned body read RETURNS ITS CHARGE; a clone shares the core's bounds rather than making new ones; the handshake bound leaves workers for the rest of the core; and the origin check compares the received path and query, treats a root target as matching a root request, does not compare the configured authority, and does not check an empty configured target here.*
+**If false.** A double release or a lost charge makes the body budget drift until it bounds nothing — the accounting failure that presents as a memory bound that quietly stopped existing. The clone clause is the same defect one level up: a per-core bound remade per clone is no bound at all.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-142 — the stage timers index and name every stage
+
+**Controls:** `mcp-re-proxy/src/stage_timers`.
+**Statement.** *Stage discriminants are DISTINCT AND COVER EVERY SLOT, every stage indexes within the accumulator, the name table covers every slot and each slot carries its own name; a timer started while disabled READS NO CLOCK and an in-flight guard taken while disabled is inert; and the rewrite period cannot divide by zero.*
+**If false.** Two stages share a slot, so the timing an operator reads belongs to a stage that did not run. The disabled clauses are the cost argument: instrumentation that is off must not read a clock.
+**Likely owner:** none.
+**Severity:** `medium`.
+
+## NP-143 — materialization refuses rather than defaulting, and prints no secret
+
+**Controls:** `mcp-re-proxy/src/capability_materialization`.
+**Statement.** *A Mode-C verifier missing its audience FAILS CLOSED RATHER THAN DEFAULTING and rejects an unusable attestor key rather than DROPPING IT; it is built only for the attested-ingress binding and the retained one still admits an assertion from its configured attestor; a group-readable PIN file is refused; the PIN reader trims a trailing newline and refuses an empty file; and a secret string does not print its value OR ITS LENGTH.*
+**If false.** A verifier is built with a defaulted audience, or with an unusable attestor key silently dropped so it verifies nothing — the two ways a Mode-C deployment can appear configured and check nothing. 'Or its length' is the clause that makes redaction a rule rather than a habit.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-144 — an admission record is addressed by its workload and reported once
+
+**Controls:** `mcp-re-proxy/src/redis_admission_source`.
+**Statement.** *The record is addressed by THE WORKLOAD'S OWN NAME; a store writer without the signing authority produces NOTHING ADMITTED; a restored admitted record does not outlive the authorized window; every class has its own latch, a class is reported once and then suppressed, and one class being reported does not suppress another; and a key is readable by an operator.*
+**If false.** An admission record is read for the wrong workload, or a restored record admits past the window it was authorized for. The per-class latches are the diagnosis argument: one noisy failure class must not silence a different one that starts later.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-145 — the operator-facing vocabularies agree and render distinctly
+
+**Controls:** `mcp-re-proxy/src/facades`.
+**Statement.** *Every fact renders to a DISTINCT SENTENCE; the two vocabularies agree FIELD FOR FIELD; every owner refusal maps to the historical rejection it replaced; an unsupported algorithm tells the operator WHICH algorithm was given; and a valid value comes back trimmed and borrowed.*
+**If false.** Two different facts render the same sentence, so an operator cannot tell them apart — or the two vocabularies drift and the same deployment is described differently depending on which one is read.
+**Likely owner:** none.
+**Severity:** `medium`.
+
+## NP-146 — refusal reporting is bounded, counted in full, and never panics
+
+**Controls:** `mcp-re-proxy/src/async_replay`.
+**Statement.** *A budget refusal is rendered WITHOUT THE LEDGER LOCK; refusals are paced by the process and COUNTED IN FULL; the L1 fast reject is never fresh and evicts FIFO; and reporting NEVER PANICS.*
+**If false.** The path that reports a refusal takes the lock the refusal is about, or panics — so the mechanism that exists to survive overload is the one that fails under it. 'Paced but counted in full' is the pair: suppressing output must not suppress the count.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-147 — the fleet topology is at least one shard and never overridden
+
+**Controls:** `mcp-re-proxy/src/async_fleet`.
+**Statement.** *`auto` is ALWAYS at least one shard of one worker, keeps a shard per CPU and adds depth; and an EXPLICIT topology is never overridden.*
+**If false.** A deployment starts with zero shards and serves nothing, or an operator's explicit topology is silently replaced by the automatic one — the provenance collapse NP-057 names for the in-flight limit, here for the shape of the fleet.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-148 — signing-plane materialization refuses rather than starting half-built
+
+**Controls:** `mcp-re-proxy/src/signing_plane`.
+**Statement.** *`materialize` publishes a usable key AND OWNS ONE ROTATION WORKER; it refuses when the configured shared epoch cannot be read; and it refuses when the root cannot issue the first key.*
+**If false.** The plane starts with no usable key, or with a rotation worker nobody owns — NP-003's lifetime rule at the one plane whose worker mints keys.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+---
+
+## The proxy's integration lanes — NP-149 through NP-168
+
+The last 327 controls, in `mcp-re-proxy/tests/`. These are the COMPOSITIONS: each one takes
+propositions this campaign recorded at a component's own API and establishes that the
+components work together on a real serving path. That is why almost none of them could be
+registered against an existing unit — a unit is the smallest authority whose source can be
+fingerprinted, and a composition's source is every unit under it.
+
+**Two of them carry a lane fact that any ratification inherits**, and it is recorded here
+rather than discovered later: NP-149 runs only in the opt-in nightly cloud lane, and NP-150
+only where a live Redis and etcd exist. NP-167 runs only under Bazel. Registering any of
+them without saying so would put a control the merge path never executes inside a battery
+the merge path checks.
+
+## NP-149 — MCP-RE signs under a real cloud KMS key, end to end
+
+**Controls:** `mcp-re-proxy/tests/integration_live` and its siblings.
+**Statement.** *Against a real AWS or GCP KMS key: the HTTP profile serves, the delegated-required posture serves, the delegated-TLS handshake signs, delegated signing issues, and a root rotation completes — each under a key the process never holds.*
+**If false.** The custody argument holds against a fixture and not against the cloud. Every unit above these is measured against an in-process signer; this is the only evidence that the same composition works where the key is somewhere else.
+**The lane.** These run ONLY in the opt-in nightly `cloud-kms-live.yml` lane, which needs real cloud credentials. A unit registering them would fail the merge-path lane on every pull request — the same mechanical constraint NP-009 records, with the difference that here the lane exists and runs. Ratifying this proposition means deciding what a claim established only nightly is worth, which is exactly the question ADR-MCPRE-068's evidence classes were built to ask.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-150 — the external-backend tiers behave as the tier promises
+
+**Controls:** `mcp-re-proxy/tests/integration_ext` and its siblings.
+**Statement.** *Against a real Redis and a real etcd: the replay tier admits a nonce once, the continuation store establishes a leg once, the trust-epoch source turns reads into invalidation events, the cpstore endpoint serves a linearizable tier, and the OCSP path behaves as configured.*
+**If false.** A tier's published guarantee (NP-121) is established against an in-memory stand-in and not against the backend that has to provide it. The stand-in cannot lose a write, and the backend can.
+**The lane.** These are feature-gated lanes that need a live Redis and etcd; `cargo test --workspace` compiles them to zero tests. The property includes the lane it exists in, and a unit claiming them without that lane would report green over nothing.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-151 — the MRT continuation is driven correctly across replicas
+
+**Controls:** `mcp-re-proxy/tests/integration_async/mrt_continuation_serving_test.rs` and its siblings.
+**Statement.** *The stateless cross-replica continuation: an open leg is established, its handles reach the answer leg, a non-terminal reply pauses the call and a terminal one resolves it, and no replica can be made to answer a leg it did not open.*
+**If false.** A continuation is answered by a replica that never saw its open leg, or an answer leg signs over handles from a different exchange. This is the serving-path composition above NP-119's store.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-152 — the TLS listener admits exactly the peers it was configured for
+
+**Controls:** `mcp-re-proxy/tests/integration/tls_test.rs` and its siblings.
+**Statement.** *End to end over a real listener: a client certificate that is untrusted, revoked, expired or carries the wrong identity is refused during the handshake; the transport binding holds between the channel peer and the request actor; and the declared fault injector is what makes any of those accepted.*
+**If false.** The listener admits a peer it was configured to refuse. The fault-injection controls are the anti-vacuity arm — the same role they play for the client transport in batch 18 — and they are here because a handshake refusal nobody can make fail is a refusal nobody has measured.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-153 — the startup transcript is what the deployment actually did
+
+**Controls:** `mcp-re-proxy/tests/integration/app_startup_characterization_test.rs` and its siblings.
+**Statement.** *Over a real startup: the transcript names every posture the deployment took, a refusal precedence is stable and names the first thing wrong, the legality characterization matches the classifiers, and the documented CLI is the CLI that ran.*
+**If false.** An operator reads a transcript that describes a deployment other than the one running. This is the composition above NP-004, NP-123 and the argv family: each of those says a posture is stated; this says the statement is true of this process.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-154 — transparency retention and publication hold on the serving path
+
+**Controls:** `mcp-re-proxy/tests/integration_async/transparency_e2e_test.rs` and its siblings.
+**Statement.** *Over a real exchange: a reservation is taken before dispatch and discharged by the response actually served, a post-dispatch refusal leaves no dangling crossing, and what is retained is the exchange that happened.*
+**If false.** The answerability record and the exchange diverge on the live path, which is where they are relied on. NP-048's storage-boundary contract and `proxy.retention_commitment`'s two stages meet here, on a real serving path rather than at either owner's API.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-155 — the delegated client-server composition works end to end
+
+**Controls:** `mcp-re-proxy/tests/integration_async/delegated_client_server_e2e_test.rs` and its siblings.
+**Statement.** *A real client, a real proxy and a real backend over delegated signing and mTLS: the request is signed, the response is verified as bound to it, the delegated credential chains to a trusted root, and the production wiring is the wiring that runs.*
+**If false.** Every delegated-path unit is established over a component; this is the only evidence that the components compose. It is the proxy-side twin of NP-009 — and unlike NP-009, this one does run, in the Bazel `async_serve` lane.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-156 — the inner-backend health machinery works under a real serving load
+
+**Controls:** `mcp-re-proxy/tests/integration_async/http_inner_test.rs` and its siblings.
+**Statement.** *Over a real inner backend: ejection, cooldown, single-probe recovery and health-aware selection behave as NP-139 describes, under concurrent serving rather than at the unit's API.*
+**If false.** The breaker is correct in isolation and wrong under concurrency — which is the only condition it exists for.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `high`.
+
+## NP-157 — the replay tier admits a nonce once under contention
+
+**Controls:** `mcp-re-proxy/tests/integration_async/replay_race_harness_test.rs` and its siblings.
+**Statement.** *Under a deliberate race: concurrent presentations of one nonce yield exactly one admission, and the async tier's accounting survives the contention.*
+**If false.** A replay is admitted because two workers checked before either recorded. NP-120 establishes the store's semantics; this establishes that the serving path uses them in a way the race cannot defeat.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-158 — AWS web identity is exchanged, cached and refreshed correctly
+
+**Controls:** `mcp-re-proxy/tests/aws_irsa_web_identity_test.rs` and its siblings.
+**Statement.** *The IRSA web-identity token is read from its projected file, exchanged for credentials, cached for its stated lifetime and re-exchanged when the file rotates or the credentials expire.*
+**If false.** The proxy signs with expired credentials, or re-exchanges on every call and is throttled out of signing at all. NP-114 is the same authority for GCP's metadata token, and the two are separate because the mechanisms differ in what can go wrong.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-159 — a root key rotates without a gap and without a restart
+
+**Controls:** `mcp-re-proxy/tests/integration_async/root_key_lifecycle_test.rs` and its siblings.
+**Statement.** *Over a live rotation: the new root is published before the old one is withdrawn, the manifest names the set in force, and a verifier following the manifest never sees a window with no acceptable root.*
+**If false.** A rotation leaves a window in which nothing verifies, or the old root stays acceptable after it was meant to be withdrawn — the two failure directions of every key rotation.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-160 — admission currency is enforced on the serving path
+
+**Controls:** `mcp-re-proxy/tests/integration_async/admission_currency_serving_test.rs` and its siblings.
+**Statement.** *Over a real serving path: an admission record past its authorized window does not admit, a current one does, and the propagation delay between the source and the serving decision is bounded and measured.*
+**If false.** A workload keeps being admitted after its admission was withdrawn. NP-144 establishes the record's addressing and window at the source; this establishes that the serving path honours them.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-161 — dispatch carries the request the caller signed, unchanged
+
+**Controls:** `mcp-re-proxy/tests/integration/http_profile_dispatch_test.rs` and its siblings.
+**Statement.** *Over a real dispatch: the body forwarded to the backend is the body the signature covered, byte for byte; an RFC 9421 round trip through the proxy verifies at both ends; and body fidelity survives forwarding.*
+**If false.** The proxy forwards something other than what it verified, so the backend acts on bytes no signature covered. NP-088 says the composer does not rewrite; this says the forwarder does not either.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-162 — a configuration reachback and hot reload change what is served and nothing else
+
+**Controls:** `mcp-re-proxy/tests/integration/plane_config_reachback_test.rs` and its siblings.
+**Statement.** *A plane's configuration reachback answers from the configuration in force, and a hot reload swaps it without disturbing exchanges already in flight.*
+**If false.** An in-flight exchange is decided half under each configuration — NP-127's failure on the live path — or a reachback reports a configuration that is not the one serving.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `high`.
+
+## NP-163 — an authorization decision reaches the serving path intact
+
+**Controls:** `mcp-re-proxy/tests/integration_async/pdp_authorization_serving_test.rs` and its siblings.
+**Statement.** *Over a real serving path: the PDP decision the request carried is the one the policy evaluated, and a request whose decision does not authorize its action is refused before dispatch.*
+**If false.** An unauthorized call reaches the backend. NP-131 establishes the pairing at the authorization plane's API; this establishes that the serving path does not reopen it.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-164 — a key source is selected, opened and used as configured
+
+**Controls:** `mcp-re-proxy/tests/key_source_test.rs` and its siblings.
+**Statement.** *End to end for each source: a PKCS#11 token signs without exporting, a development environment source is refused in a production build, and the source the configuration selected is the source that signs.*
+**If false.** The process signs under a different key source from the one configured — the one case where every other custody argument is about the wrong object. NP-125 states the delegation rule; this establishes it over each real source.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-165 — revocation is consulted per request, not per connection
+
+**Controls:** `mcp-re-proxy/tests/integration_async/per_request_revocation_test.rs` and its siblings.
+**Statement.** *A peer revoked after its connection was established is refused on its next request rather than served for the life of the connection.*
+**If false.** A revoked client keeps being served until it disconnects. NP-140 states the bound on established connections; this is that bound measured on the serving path.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-166 — the verified-context carrier is attached only where the inner channel is trusted
+
+**Controls:** `mcp-re-proxy/tests/integration_async/verified_context_carrier_test.rs` and its siblings.
+**Statement.** *Over a real exchange: the verified-context carrier reaches the backend only when the inner channel is trusted, and carries exactly what was verified.*
+**If false.** A backend receives a verified-context assertion over a channel that did not earn it, and treats a claim MCP-RE made about itself as one it can rely on.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-167 — the async drain is bounded and ordered
+
+**Controls:** `mcp-re-proxy/tests/async_drain_test.rs` and its siblings.
+**Statement.** *Teardown drains in-flight work within a bound, in the documented order, and nothing is accepted after the drain begins.*
+**If false.** A shutdown either hangs on work that never completes or abandons work that had been accepted. Only the Bazel lane runs this file — it is `#![cfg(feature = "async_serve")]` and `cargo test --workspace` compiles it to zero tests — which is a fact any ratification inherits.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-168 — no exchange transition is advanced by two owners
+
+**Controls:** `mcp-re-proxy/tests/integration/exchange_transition_ownership_test.rs` and its siblings.
+**Statement.** *Every exchange-lifecycle transition an assembly stage establishes is advanced by that stage alone, and no serving-path step advances one a stage owns.*
+**If false.** Two owners advance one transition, so the exchange lifecycle records a step that happened twice or a step nobody took. This is `proxy.cross_machine_legality`'s rule for the exchange lifecycle, and its three registered siblings in the same file are already claimed while this one is not.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+---
+
+## NP-169 — the server-authentication control is load-bearing
+
+**Controls:** `mcp-re-transport/tests/fault_injection_test.rs` (2) —
+`fault_accept_any_server_makes_untrusted_server_cert_accepted`,
+`fault_accept_any_server_makes_wrong_identity_server_cert_accepted`.
+**Carrier:** the client transport's server verifier, under the `fault_accept_any_server`
+feature.
+**Statement.** *With the server-authentication control deliberately broken, an untrusted
+server certificate and a wrong-identity one are ACCEPTED — so the rejections
+`client.transport_server_identity` claims are the real verifier's work and not an artefact
+of a test that never presented a bad certificate.*
+**If false.** The three rejections that unit claims pass for a reason other than the
+verifier — a harness that never completes a handshake would produce them too — and the whole
+unit is vacuous while reading as `critical` evidence.
+**Likely owner:** `client.transport_server_identity`, **and it cannot claim them.** This is a
+sixth mechanically impossible registration, of a kind the others did not show:
+
+> A unit's `test_features` are ONE set for the WHOLE battery, and an anti-vacuity control
+> whose purpose is to FALSIFY the property cannot live in the same battery as the property.
+
+`fault_injection_test.rs` compiles only under `fault_accept_any_server`, which is off by
+default and never in the normal build; without it the target reports ZERO tests, which is
+the false green this repository has a gate for. Declaring the feature on the unit would run
+the whole battery under it, and `untrusted_server_cert_is_rejected` — the control the feature
+exists to break — would fail. Measured, not reasoned: the registration was written, the
+target was run, and it reported `0 passed; 0 filtered out`.
+**Root relationship.** Under the client transport roots, beside the unit whose vacuity it
+refuses.
+**Severity:** `critical`.
+**What ratification would look like:** a separate unit over the same carrier declaring
+`test_features = ["fault_accept_any_server"]`, whose battery is these two controls and
+nothing else — which is what "one `test_features` set per battery" makes the only shape
+available.
+

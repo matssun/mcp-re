@@ -2,10 +2,12 @@
 
 # ADR-MCPRE-069 — Evidence that runs but nothing claims
 
-**Status:** 🚧 **ACCEPTED** 2026-09-17, subordinate to ADR-MCPRE-068 — **implementation in
-progress.** Phase 069-A (the current-tree census and its instrument) is on main; the
-disposition campaign is running. This record becomes COMPLETE when a fresh census derives
-`unclaimed + undispositioned = 0` and every control sits in exactly one honest state.
+**Status:** ✅ **COMPLETE** 2026-09-19. ACCEPTED 2026-09-17, subordinate to ADR-MCPRE-068.
+A fresh census over the current tree derives `unclaimed + undispositioned = 0`: every
+executable control in the repository is claimed by the proposition it establishes,
+reattributed to the one it actually supports, identified as evidence for a proposition the
+graph does not hold, or dispositioned as not assurance evidence with a durable reason. §10
+is the closure report.
 **Discussion:** [#968](https://github.com/matssun/mcp-re/discussions/968).
 **Parent:** ADR-MCPRE-068 — *Evidence classes*
 ([discussion #967](https://github.com/matssun/mcp-re/discussions/967),
@@ -358,3 +360,156 @@ control it would be 2,458 rows of bookkeeping duplicating the census, kept in st
 
 **`--closure`** states the closure criterion itself — residue zero — and is the release-time
 question, not the merge-time one.
+
+---
+
+## 10. The closure report
+
+Derived from the tree at the campaign's close, by
+`tools/verification/control-census --json` and `--closure`.
+
+### The population
+
+| kind | lane | total | claimed | unclaimed |
+|---|---|---:|---:|---:|
+| `rust-test` | cargo | 3167 | 1571 | 1596 |
+| `rust-doctest` | cargo | 5 | 0 | 5 |
+| `pytest` | python | 825 | 117 | 708 |
+| `vitest` | typescript | 184 | 161 | 23 |
+| `structural` | structural lane | 25 | 25 | 0 |
+| `mutation` | mutation lane | 304 | 304 | 0 |
+| `measurement` | measured lane | 1 | 1 | 0 |
+| `gate` | gate lane | 64 | 4 | 60 |
+| **total** | | **4575** | **2183** | **2392** |
+
+Every ecosystem the repository supports is covered, and each is covered by a NAMED control
+in `test_controls.py` rather than by a count: a lib test, an integration test, a
+binary-target test, a `compile_fail` doctest, an SDK pytest, a repository-tooling pytest, a
+vitest case, a structural probe, a mutation probe, a gate, a gate a unit CLAIMS, and a
+control a measurement's own argv selects.
+
+### The dispositions
+
+| disposition | controls |
+|---|---:|
+| `register` / `reattribute` — landed in `verification.toml` | **63 selectors across 12 units** |
+| `new-proposition` | **1641 controls across 169 propositions** |
+| `not-evidence` | **751 controls across 13 reason families** |
+| **undispositioned** | **0** |
+| stale selectors | **0** |
+
+### `not-evidence`, by family
+
+| family | controls | what it covers |
+|---|---:|---|
+| ND-001 | 598 | the assurance platform's own self-tests |
+| ND-002 | 47 | the SLO harness's own self-tests, including the Rust load harness |
+| ND-011 | 38 | `ocsp.rs` — a carrier the legality model admits no deployment to reach |
+| ND-008 | 17 | drivers, runners, reports and demos: not controls |
+| ND-003 | 16 | assurance-process ratchets and registries |
+| ND-004 | 11 | build-system, toolchain and runner wiring |
+| ND-012 | 5 | fixture and report generators |
+| ND-013 | 5 | demo fixture material |
+| ND-005 | 4 | mirrored and documented values |
+| ND-009 | 3 | data-structure API robustness |
+| ND-010 | 3 | `compile_fail` doctests superseded by a structural probe |
+| ND-006 | 2 | repository and build-infrastructure security controls |
+| ND-007 | 2 | architecture shape rules |
+
+**A large `not-evidence` population is not success, and this one is not what it looks
+like.** 645 of the 751 — ND-001 and ND-002 — are the assurance platform's and the SLO
+harness's own self-tests, dispositioned on ADR-MCPRE-068's own boundary statement: the
+assurance TCB sits outside the product theorem roots and no entry there becomes a `THM-`.
+A further 38 are one carrier a registered unit says is unreachable. The residue that is
+`not-evidence` for an ordinary reason is 68 controls in eleven families, each with a record
+in [`control-dispositions.md`](control-dispositions.md) stating what would move a control
+OUT of it.
+
+### `new-proposition` — 169, all at step 1
+
+None is ratified. Each is recorded with its controls, its production carrier, the statement
+in prose, what is false if it fails, the unit that would hold it, and its root relationship.
+They are visible unresolved assurance debt and the release view reports them as such.
+
+The largest clusters, by what they turn out to be:
+
+| what | propositions | controls |
+|---|---:|---:|
+| the proxy's integration lanes — the compositions | 20 | 322 |
+| the proxy's subtree modules, one authority each | 20 | 229 |
+| the HTTP profile, including the signature-base layer | 19 | 219 |
+| the argv boundary — `cli.rs` and its eighteen per-axis adapters | 13 | 201 |
+| the conformance claim surface | 8 | 92 |
+| the two shipped SDKs | 12 | 96 |
+| the layer-A legality boundary — eleven unowned classifiers | 13 | 85 |
+| the external transparency auditor | 5 | 58 |
+| the gate lane | 8 | 9 |
+
+### What the campaign found that a count would not have
+
+**Six registrations that are mechanically impossible.** Five come from one fact now stated:
+*a unit's battery can only select controls inside the source it measures, in the project it
+measures it in.* `verify --manifests` refuses a `lib#` selector whose module the unit's
+`paths` do not cover, and a unit's lane runs in one project. Where a proposition's controls
+sit outside that, the honest disposition is the twin proposition, not a widened path.
+NP-045, NP-048, NP-061, NP-062 and NP-078 are those five, and NP-062 is the sharpest:
+**two** units state the proposition and neither owns the carrier.
+
+The sixth is a different kind and was found by RUNNING a registration this campaign had
+already written. **A unit's `test_features` are one set for the whole battery, so an
+anti-vacuity control whose purpose is to FALSIFY the property cannot live in the same battery
+as the property.** `client.transport_server_identity` claims that an untrusted or
+wrong-identity server certificate is rejected; `fault_injection_test.rs` proves those
+rejections are the verifier's work by breaking the verifier — and it compiles only under
+`fault_accept_any_server`, which is off by default. Registered, then run: `0 passed; 0
+filtered out`. Withdrawn, and recorded as NP-169 with the shape a ratification would have to
+take.
+
+**Three asymmetries between the two SDK system roots.** `sdk_typescript.post_close_emission`
+exists and `sdk_python` has no twin (NP-014); `sdk_typescript.signer_policy` says a device
+that cannot sign emits no unsigned evidence and the Python statement stops short (NP-015);
+`sdk_typescript.authorization_binding` says the core digests the real artifact and no caller
+supplies a digest, and the Python twin says everything after the semicolon and nothing
+before it (NP-020 … NP-024, twenty-two controls). Two roots promising different things is
+not a bookkeeping gap.
+
+**Ten controls that run in no lane** (NP-009), measured in both halves and for two different
+causes: a `describe.runIf` guarded on a proxy binary the vitest job never builds, and an
+`importorskip("httpx")` against a lock that resolves `httpx2`. They are THM-0094's and
+THM-0095's headline demonstration.
+
+**A carrier the estate says is unreachable, with 38 careful controls over it** (ND-011), and
+an exit condition that is mechanical rather than remembered.
+
+**A layer inside fourteen fingerprints that nobody answers for**: `block.rs`, `body/` and
+`sigbase.rs` are measured by ten to fourteen `http_profile` units each and claimed by none.
+
+**`measured` has no slot for apparatus CORRECTNESS** (NP-036, NP-083). ADR-MCPRE-068 §4.1
+gives a measured unit one apparatus control — the demonstration that its number can MOVE —
+and a scanner that is wrong in a fixed way still moves.
+
+### Three census corrections, each found by reading prior authority
+
+1. **`gate_controls` is a claim.** ADR-068 Phase 1 registered four gates as the production
+   carriers of theorems a type could not establish, three of them `critical`. The first join
+   read only `tested_symbols` and reported all four as unclaimed.
+2. **A measurement's own argv is a claim.** A `measured` unit declares no battery, and
+   MSR-0001's protocol and control select three controls by name. Reading only
+   `tested_symbols` would have written a `not-evidence` reason about a measurement's own
+   apparatus.
+3. **`describe.runIf(expr)("title", …)` nests its cases.** The scanner missed it, so the
+   live end-to-end cases were enumerated WITHOUT their suite prefix — worse than losing
+   them, because the identity then joins to nothing.
+
+Each is now a named control in `test_controls.py`.
+
+### What closure does NOT mean
+
+- **No proposition is ratified.** 169 sit at ADR-069 §5 step 1. Ratifying one is a product
+  claim under ADR-MCPRE-059 §28 and is not this record's to grant.
+- **No `not-evidence` reason is certified true.** D3 checks the reason's SHAPE. What the
+  campaign adds is that every reason is written once, in a durable record, with an explicit
+  statement of what would move a control out of it.
+- **The census is not self-validating.** It is worth exactly what `test_controls.py`
+  establishes, which is what that file exists to state and what `--selftest` runs on every
+  gate.
