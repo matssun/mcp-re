@@ -324,6 +324,13 @@ on:
       - "mcp-re-proxy/src/config_state/server_identity.rs"
       - "mcp-re-proxy/src/config_state/validation/machine_violations.rs"
       - "mcp-re-proxy/src/config_state/validation/recognition.rs"
+      # SL-POSTURE-2: the last four unowned classifiers, and the startup planner, which was
+      # in no unit's `paths` at all until its three propositions got units.
+      - "mcp-re-proxy/src/config_state/evidence.rs"
+      - "mcp-re-proxy/src/config_state/in_flight_limit.rs"
+      - "mcp-re-proxy/src/config_state/mcp_transport_contract.rs"
+      - "mcp-re-proxy/src/config_state/topology.rs"
+      - "mcp-re-proxy/src/startup_plan.rs"
       # ADR-MCPRE-067 Phase 5 moved the online-revocation SELECTION out of a flat
       # `DeploymentRequest` field, so `proxy.online_ocsp_reachability`'s closure now names
       # the file holding `is_required()` — the predicate THM-0013's refusal reads.
@@ -644,6 +651,13 @@ on:
       - "mcp-re-proxy/src/config_state/server_identity.rs"
       - "mcp-re-proxy/src/config_state/validation/machine_violations.rs"
       - "mcp-re-proxy/src/config_state/validation/recognition.rs"
+      # SL-POSTURE-2: the last four unowned classifiers, and the startup planner, which was
+      # in no unit's `paths` at all until its three propositions got units.
+      - "mcp-re-proxy/src/config_state/evidence.rs"
+      - "mcp-re-proxy/src/config_state/in_flight_limit.rs"
+      - "mcp-re-proxy/src/config_state/mcp_transport_contract.rs"
+      - "mcp-re-proxy/src/config_state/topology.rs"
+      - "mcp-re-proxy/src/startup_plan.rs"
       # ADR-MCPRE-067 Phase 5 moved the online-revocation SELECTION out of a flat
       # `DeploymentRequest` field, so `proxy.online_ocsp_reachability`'s closure now names
       # the file holding `is_required()` — the predicate THM-0013's refusal reads.

@@ -6271,6 +6271,9 @@ tested_symbols = [
   "lib#kms_endpoint_policy::tests::split_authority_divides_on_the_bracket_not_the_first_colon",
   "lib#kms_endpoint_policy::tests::split_authority_refuses_a_bracket_that_does_not_close_or_is_followed_by_junk",
   "lib#kms_endpoint_policy::tests::check_host_refuses_a_bracket_shaped_host_that_is_not_an_address",
+  # A bracket is IPv6 notation and nothing else, so the bracketed spelling and the address
+  # the socket layer reaches are the same authority. ADR-MCPRE-069 NP-027's one R1 control.
+  "lib#kms_endpoint_policy::tests::a_bracketed_host_must_be_an_ipv6_literal",
   # The allowlist is stated as exactly what a resolver can answer for, so the agreement is
   # over a closed character set rather than over whatever the parser tolerated today.
   "lib#kms_endpoint_policy::tests::the_host_allowlist_is_exactly_the_characters_a_resolver_can_answer_for",
@@ -9458,4 +9461,204 @@ tested_symbols = [
   "lib#redis_admission_source::tests::the_record_is_addressed_by_the_workloads_own_name",
   "lib#redis_admission_source::tests::a_restored_admitted_record_does_not_outlive_the_authorized_window",
   "lib#redis_admission_source::tests::a_store_writer_without_the_signing_authority_produces_nothing_admitted",
+]
+
+
+# ---------------------------------------------------------------------------
+# The startup planner, and the last of the layer-A classifiers
+# ADR-MCPRE-069 NP-056…NP-059, NP-061, NP-068…NP-070
+# ---------------------------------------------------------------------------
+#
+# SL-POSTURE-1 gave seven `config_state/` machines owners. Four classifiers remained —
+# evidence retention, the in-flight limit basis, the MCP transport contract and topology —
+# plus one clause of a fifth: that the continuation-control machine decides its own subject
+# and does not read the replay tier.
+#
+# `startup_plan.rs` is the layer above them, and it was in no unit's `paths` at all. Its
+# three propositions are separable and are three units, not one: what the plan CARRIES
+# (provenance — every decision comes from the owner that made it), what planning REFUSES
+# (legality — a state that skipped the parser, and the build a plan cannot run in), and the
+# per-core pool CEILING's arithmetic. Question 2 of the twelve decides that: three
+# independently describable authorities, so three units.
+#
+# All are attached to THM-0077, whose statement contains them: "Every security capability
+# held by the serving runtime is derived from validated semantic owner state. Illegal,
+# unsupported or internally contradictory deployment postures cannot be silently
+# reinterpreted into a weaker posture during materialization or serving." A classifier
+# produces that validated owner state; the planner is the step that DERIVES the runtime's
+# capabilities from it, and both of THM-0077's ratified leaves say so in terms — THM-0086's
+# scope assigns "that the plan itself is a faithful projection of the validated
+# configuration" to "the planner's fact, reached through THM-0077 rather than asserted
+# here", and THM-0096's says it "DOES NOT ESTABLISH WHERE THE PLAN CAME FROM … That is a
+# parent composition/configuration fact."
+#
+# Nothing here claims the command line. `cli.rs` and `cli/` are a separate authority with no
+# ratified theorem, and a unit below that named one would be claiming it.
+
+[[unit]]
+id = "proxy.startup_plan_provenance"
+class = "V0"
+description = "A STARTUP PLAN CARRIES THE DECISION IT WAS HANDED, NOT ONE IT RE-DERIVED: the signing plan carries the trust epoch it was GIVEN, the continuation plan carries its own endpoint verbatim, the channel plan carries the classified custody and the credential window, the epoch plan normalises the key ONCE, the issuer kid in the minted credential is the one that was planned — falling back to the server key id only where the resolution reads it — the audience scope defaults to the response audience and is overridable, both consumers of the epoch hold ONE decision, each CRL posture is projected as its own variant, and the paths accessor answers which FILES rather than which posture. Says nothing about what planning REFUSES, which is `proxy.startup_plan_legality`'s, and nothing about whether any named endpoint can be reached, which is materialization's."
+paths = ["mcp-re-proxy/src/startup_plan.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/startup_plan_provenance/carried_decisions",
+  "mutation://proxy/startup_plan_provenance/issuer_kid_is_the_planned_one",
+]
+tested_symbols = [
+  "lib#startup_plan::tests::both_consumers_of_the_epoch_hold_one_decision",
+  "lib#startup_plan::tests::each_crl_posture_is_projected_as_its_own_variant",
+  "lib#startup_plan::tests::the_audience_scope_defaults_to_the_response_audience_and_is_overridable",
+  "lib#startup_plan::tests::the_channel_plan_carries_the_classified_custody_and_the_credential_window",
+  "lib#startup_plan::tests::the_continuation_plan_carries_its_own_endpoint_verbatim",
+  "lib#startup_plan::tests::the_epoch_plan_normalizes_the_key_once",
+  "lib#startup_plan::tests::the_issuer_kid_falls_back_to_the_server_key_id",
+  "lib#startup_plan::tests::the_issuer_kid_in_the_credential_is_the_one_that_was_planned",
+  "lib#startup_plan::tests::the_paths_accessor_answers_which_files_not_which_posture",
+  "lib#startup_plan::tests::the_signing_plan_carries_the_epoch_it_was_given_not_one_it_found",
+]
+
+[[unit]]
+id = "proxy.startup_plan_legality"
+class = "V0"
+description = "PLANNING REFUSES A STATE THAT SKIPPED THE PARSER, AND CONTACTS NOTHING: a linearizable tier without an endpoint, a shared Redis tier without a URL and a shared tier without a durability tier are each refused for what they are missing, a request with no durable replay configuration fails closed, the withdrawn alias is refused rather than reinterpreted, each declaration is made by its own owner — continuation on its own locator and not the replay tier, admission independently of replay, only the Redis tier declaring a need, only the networked push state planning an epoch source — with the control-runtime requirement being the OR of every contributor, the build refusal is stated ONCE and names both consequences, the assertion arm is refused at the boundary and the both-set arm agrees with the gate on an unreachable input, a deployable configuration reads the verified peer certificate, and PLANNING A NETWORKED TIER OPENS NO SOCKET. Says nothing about what a plan that survives CARRIES, which is `proxy.startup_plan_provenance`'s."
+paths = ["mcp-re-proxy/src/startup_plan.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/startup_plan_legality/refused_and_declared",
+  "mutation://proxy/startup_plan_legality/build_refusal_is_stated_once",
+]
+tested_symbols = [
+  "lib#startup_plan::tests::a_deployable_configuration_reads_the_verified_peer_certificate",
+  "lib#startup_plan::tests::a_linearizable_tier_that_skipped_the_parser_is_refused_without_an_endpoint",
+  "lib#startup_plan::tests::a_redis_tier_carries_its_url_and_its_wait_parameters",
+  "lib#startup_plan::tests::a_request_with_no_durable_replay_configuration_fails_closed",
+  "lib#startup_plan::tests::a_shared_redis_tier_that_skipped_the_parser_is_refused_without_a_url",
+  "lib#startup_plan::tests::a_shared_tier_that_skipped_the_parser_is_refused_without_a_durability_tier",
+  "lib#startup_plan::tests::admission_declares_independently_of_replay",
+  "lib#startup_plan::tests::continuation_declares_on_its_own_locator_not_the_replay_tier",
+  "lib#startup_plan::tests::linearizable_plans_etcd_at_the_declared_endpoint",
+  "lib#startup_plan::tests::only_the_networked_push_state_plans_an_epoch_source",
+  "lib#startup_plan::tests::only_the_redis_replay_tier_declares_a_need",
+  "lib#startup_plan::tests::planning_reaches_a_networked_tier_without_contacting_anything",
+  "lib#startup_plan::tests::the_assertion_arm_is_refused_at_the_boundary",
+  "lib#startup_plan::tests::the_both_set_arm_agrees_with_the_gate_on_an_unreachable_input",
+  "lib#startup_plan::tests::the_build_refusal_is_stated_once_and_names_both_consequences",
+  "lib#startup_plan::tests::the_old_alias_is_refused_rather_than_reinterpreted",
+  "lib#startup_plan::tests::the_requirement_is_the_or_of_every_contributor",
+]
+
+[[unit]]
+id = "proxy.startup_plan_pool_ceiling"
+class = "V0"
+description = "THE PER-CORE POOL CEILING SATURATES, AND THE POOL IS RAISED ONLY WHEN IT MUST BE: a ceiling that would overflow SATURATES rather than wrapping, both bounds reach the inner pool through the admission gate's per-core ceiling rather than through a second reading of the flags, a fleet total that does not divide evenly yields the aggregate the gate actually admits, and the pool is raised only where the fleet ceiling exceeds its default. Says nothing about which basis the operator stated, which `proxy.in_flight_limit_basis` classifies."
+paths = ["mcp-re-proxy/src/startup_plan.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/startup_plan_pool_ceiling/saturating_projection",
+  "mutation://proxy/startup_plan_pool_ceiling/ceiling_saturates",
+]
+tested_symbols = [
+  "lib#startup_plan::tests::a_ceiling_that_would_overflow_saturates_rather_than_wrapping",
+  "lib#startup_plan::tests::a_total_that_does_not_divide_evenly_yields_the_aggregate_the_gate_admits",
+  "lib#startup_plan::tests::both_bounds_reach_the_pool_through_the_gates_per_core_ceiling",
+  "lib#startup_plan::tests::the_pool_is_raised_only_when_the_fleet_ceiling_exceeds_its_default",
+]
+
+[[unit]]
+id = "proxy.evidence_retention_state"
+class = "V0"
+description = "WHAT THIS DEPLOYMENT RECORDS, AND WHAT IT MERELY ASSERTS: every legal state form of the audit, retention and verified-context machines is classified, retention is selected by its OWN locator so the posture and the path are one answer, the retaining state carries the directory that selected it rather than leaving a second question to ask, and only the TRUSTED verified-context state asserts the inner-channel property no configuration check can confirm. Says nothing about whether the named directory is writable or whether the asserted isolation holds — the last clause is precisely the boundary between what configuration checks and what a trusted context asserts."
+paths = ["mcp-re-proxy/src/config_state/evidence.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/evidence_retention_state/recognised_forms",
+  "mutation://proxy/evidence_retention_state/trusted_context_asserts",
+]
+tested_symbols = [
+  "lib#config_state::evidence::tests::every_legal_state_form_is_classified",
+  "lib#config_state::evidence::tests::only_the_trusted_context_asserts_something_configuration_cannot_check",
+  "lib#config_state::evidence::tests::retention_is_selected_by_its_own_locator",
+  "lib#config_state::evidence::tests::the_on_state_carries_the_directory_that_selected_it",
+]
+
+[[unit]]
+id = "proxy.in_flight_limit_basis"
+class = "V0"
+description = "WHICH ADMISSION-LIMIT BASIS SURVIVED, AND WHAT SILENCE RESOLVES TO: saying nothing resolves to the BOUNDED fail-safe per-core default rather than to no ceiling, an absent limit is DISTINGUISHABLE from one that happens to equal the default, a stated basis is carried through unchanged rather than normalised, and exactly one of the two projections answers for every basis so the gate is never handed the both-set input nothing should produce. Says nothing about the per-core number a fleet total becomes — that needs the resolved core count and is `proxy.startup_plan_pool_ceiling`'s side of the seam."
+paths = ["mcp-re-proxy/src/config_state/in_flight_limit.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = [
+  "test://proxy/in_flight_limit_basis/resolved_basis",
+  "mutation://proxy/in_flight_limit_basis/silence_is_bounded",
+]
+tested_symbols = [
+  "lib#config_state::in_flight_limit::tests::a_stated_basis_is_carried_through_unchanged",
+  "lib#config_state::in_flight_limit::tests::an_absent_limit_is_distinguishable_from_one_that_equals_the_default",
+  "lib#config_state::in_flight_limit::tests::exactly_one_projection_answers_for_every_basis",
+  "lib#config_state::in_flight_limit::tests::saying_nothing_resolves_to_the_bounded_default",
+]
+
+[[unit]]
+id = "proxy.mcp_transport_contract_state"
+class = "V0"
+description = "WHETHER THIS DEPLOYMENT ASSERTS THE MCP TRANSPORT/VERSION CONTRACT: every legal state form is classified, the ABSENT contract is a posture the operator chose and not a defect the classifier reports, the enforcing state carries the accepted set that selected it so the seam has no emptiness left to re-test, and an unusual accepted set is classified rather than refused because the set is the deployment's own consent and this machine neither parses nor narrows it. Says nothing about what the contract requires of a request at serving time, which is the transport policy's."
+paths = ["mcp-re-proxy/src/config_state/mcp_transport_contract.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/mcp_transport_contract_state/recognised_forms",
+  "mutation://proxy/mcp_transport_contract_state/enforced_set_is_carried",
+]
+tested_symbols = [
+  "lib#config_state::mcp_transport_contract::tests::an_unusual_accepted_set_is_classified_rather_than_refused",
+  "lib#config_state::mcp_transport_contract::tests::every_legal_state_form_is_classified",
+  "lib#config_state::mcp_transport_contract::tests::the_absent_contract_is_a_state_and_not_a_defect",
+  "lib#config_state::mcp_transport_contract::tests::the_enforced_state_carries_the_set_that_selected_it",
+]
+
+[[unit]]
+id = "proxy.deployment_topology_state"
+class = "V0"
+description = "WHAT THIS DEPLOYMENT IS, AT TWO ALTITUDES THAT DO NOT CONSTRAIN EACH OTHER: the default deployment is a single node and `--fleet` names the Fleet state, a zero shard or worker count is a DEFERRAL to the host rather than a count of zero, the runtime projection spells that deferral as the `0` the serving runtime encodes it with, and the semantic topology and the shard request constrain each other in neither direction. Says nothing about the resolved shard count, which is host discovery and therefore runtime evidence rather than a layer-A fact."
+paths = ["mcp-re-proxy/src/config_state/topology.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = [
+  "test://proxy/deployment_topology_state/recognised_forms",
+  "mutation://proxy/deployment_topology_state/fleet_is_the_declared_state",
+]
+tested_symbols = [
+  "lib#config_state::topology::tests::the_default_deployment_is_a_single_node",
+  "lib#config_state::topology::tests::the_runtime_projection_spells_auto_as_zero",
+  "lib#config_state::topology::tests::the_topology_and_the_shard_request_do_not_constrain_each_other",
+  "lib#config_state::topology::tests::zero_is_a_deferral_not_a_count",
+]
+
+[[unit]]
+id = "proxy.continuation_control_subject_boundary"
+class = "V0"
+description = "THE CONTINUATION-CONTROL MACHINE DECIDES ONLY ITS OWN SUBJECT: the replay tier does not reach it — neither a linearizable durability tier nor a configured replay store switches continuation correlation on or off — so the two machines cannot disagree about a question only one of them owns (CF-12). Distinct from `proxy.continuation_materialization`, which says what the PLAN yields once read, and from `proxy.continuation_materialization_sole_producer`, which is the compile-time fact that the plan came from this classifier; neither states what this machine may READ, which is why this clause has its own unit."
+paths = ["mcp-re-proxy/src/config_state/continuation_control.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/continuation_control_subject_boundary/replay_does_not_reach_it",
+  "mutation://proxy/continuation_control_subject_boundary/replay_does_not_reach_it",
+]
+tested_symbols = [
+  "lib#config_state::continuation_control::tests::the_replay_tier_does_not_reach_this_machine",
 ]

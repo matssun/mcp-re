@@ -3905,6 +3905,25 @@ supported_by = [
   "unit://proxy.freshness_window_state",
   "unit://proxy.server_identity_facts",
   "unit://proxy.legality_boundary_totality",
+  # ADR-MCPRE-069 NP-056…NP-059 and NP-061, the same decomposition continued: the last four
+  # unowned classifiers, and the clause that one classifier decides only its own subject.
+  "unit://proxy.evidence_retention_state",
+  "unit://proxy.in_flight_limit_basis",
+  "unit://proxy.mcp_transport_contract_state",
+  "unit://proxy.deployment_topology_state",
+  "unit://proxy.continuation_control_subject_boundary",
+  # ADR-MCPRE-069 NP-068…NP-070. The planner is the step that DERIVES the serving runtime's
+  # capabilities from that validated owner state, which is the first sentence's own verb.
+  # Both ratified leaves below place the fact here rather than in themselves: THM-0086's
+  # scope assigns "that the plan itself is a faithful projection of the validated
+  # configuration" to "the planner's fact, reached through THM-0077 rather than asserted
+  # here", and THM-0096's states that it "DOES NOT ESTABLISH WHERE THE PLAN CAME FROM …
+  # That is a parent composition/configuration fact." Three units, because the plan's
+  # provenance, its refusals and the pool ceiling's arithmetic are three independently
+  # describable authorities over one carrier.
+  "unit://proxy.startup_plan_provenance",
+  "unit://proxy.startup_plan_legality",
+  "unit://proxy.startup_plan_pool_ceiling",
 ]
 depends_on = [
   "THM-0067",
