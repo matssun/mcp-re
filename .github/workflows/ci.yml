@@ -459,11 +459,13 @@ jobs:
           tools/verification/control-census --gate
           python3 scripts/control_census_gate.py --selftest
           python3 scripts/control_census_gate.py
-          # ADR-MCPRE-069 CLOSED 2026-09-19: unclaimed + undispositioned = 0. The ratchet
-          # above already refuses a new control that is neither claimed nor dispositioned,
-          # so this states the criterion rather than enforcing it twice — and a verdict
-          # nobody prints is a verdict nobody notices stop being true.
-          tools/verification/control-census --closure
+          # ADR-MCPRE-069's CLOSURE criterion is not the merge-time question, and
+          # `--closure` is no longer run here. It carries two clauses: residue zero, and —
+          # since `ratified_as` became an enforced fact — the recorded proposition
+          # population zero. The first is enforced above, and printed, by the ratchet's own
+          # verdict line. The second is a campaign-length debt, and a merge path red for
+          # the length of a campaign is a gate nobody can act on. `--closure` states the
+          # release criterion and is run at closure, by the campaign that owes it.
 
       # The assurance platform's own self-tests — the verdict algebra, the invalidation
       # rules, the measured-input closure, the escape-hatch detector, the theorem loader

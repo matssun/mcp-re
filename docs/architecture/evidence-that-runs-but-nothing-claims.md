@@ -358,8 +358,13 @@ campaign pays yesterday's debt while a new control must be claimed or dispositio
 commit that introduces it. The register is per FILE rather than per control because per
 control it would be 2,458 rows of bookkeeping duplicating the census, kept in step by hand.
 
-**`--closure`** states the closure criterion itself — residue zero — and is the release-time
-question, not the merge-time one.
+**`--closure`** states the closure criterion itself and is the release-time question, not the
+merge-time one. It carries two clauses: the residue is zero, and the recorded proposition
+population is zero — §5 step 1 identifies a proposition and step 2 ratifies it, so a tree
+holding `[[proposition]]` entries nobody has taken through step 2 has not closed, however
+empty its residue. The merge path runs `--gate` and the per-file ratchet; running `--closure`
+there would hold the merge path red for the length of the step-2 campaign, which is a verdict
+nobody can act on.
 
 ---
 

@@ -109,6 +109,20 @@ def units() -> list[dict]:
     return tomllib.loads((POLICY / "verification.toml").read_text())["unit"]
 
 
+def theorems() -> list[dict]:
+    """Every `[[theorem]]` row, read raw rather than through `_theorems.load()`.
+
+    The census asks one question of this file — does an id exist, and which units support
+    it — and `_theorems.load()` answers a much larger one, raising on any manifest defect
+    anywhere in the registry. Routing the census through it would make an unrelated
+    theorem-registry error surface as a ratification failure about a proposition that is
+    fine, which is the reverse of what a measurement is for. `verify --manifests` owns the
+    validation of this file and already runs on the merge path.
+    """
+    path = POLICY / "theorems.toml"
+    return tomllib.loads(path.read_text()).get("theorem", []) if path.is_file() else []
+
+
 def _resolve(index: dict[str, Control], selector: str) -> Control | None:
     """The control a `tested_symbols` entry selects inside one project."""
     exact = index.get(selector)
