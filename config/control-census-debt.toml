@@ -46,10 +46,6 @@ path = "sdk/python/tests/test_correlation.py"
 baseline = 21
 
 [[file]]
-path = "sdk/python/tests/test_custody.py"
-baseline = 18
-
-[[file]]
 path = "mcp-re-http-profile/tests/mcp_transport_headers_test.rs"
 baseline = 17
 

@@ -605,3 +605,66 @@ exists, is `critical`, and states exactly this for the TypeScript adapter. There
 above them makes no claim they support. A twin promise held by one root and not the other
 is not a bookkeeping gap; it is the two system roots promising different things.
 **Severity:** `critical`, matching its TypeScript twin.
+
+## NP-015 — a device that cannot sign emits no evidence (Python)
+
+**Controls:** `sdk/python/tests/test_custody.py::TestDeviceFailsClosed` (7).
+**Carrier:** `sdk/python/python/mcp_re_sdk/custody.py`'s device signer.
+**Statement.** *A signing device that throws, returns a non-`bytes` value, or returns a
+signature of the wrong length raises `SignerUnavailable` and emits no evidence; the
+underlying cause travels with it; `SignerUnavailable` is not a wire error; and a failure in
+the CORE is not attributed to the device.*
+**If false.** The adapter emits unsigned or wrongly-signed evidence when the device
+misbehaves, or reports a local device failure as a peer-originated wire verdict — which is
+the provenance confusion `*.local_failure_provenance` exists to prevent, arriving through
+the custody path instead of the transport path.
+**Likely owner:** `sdk_python.signer_policy`, and this is why it is a proposition rather
+than a registration: **`sdk_typescript.signer_policy` says "a device that cannot sign fails
+closed rather than emitting unsigned evidence" and `sdk_python.signer_policy` does not.**
+The Python statement stops at the policy check and the rendering refusal. Seven controls are
+written, they pass in the measured lane, and the unit above them makes no claim they support.
+**Root relationship.** Under THM-0094. A second asymmetry between the two SDK roots, found
+the same way as NP-014 and recorded separately from it because it is a different clause.
+**Severity:** `high`, matching its TypeScript twin.
+**Note on shape.** One of the seven is parametrised over signature lengths, and pytest's
+generated ids for it embed raw bytes. That is a registration-mechanics problem for whoever
+ratifies this, not a reason the proposition is absent, and it is recorded here so the
+ratification meets it deliberately.
+
+## NP-016 — the signing device is the key's sole holder
+
+**Controls:** `sdk/python/tests/test_custody.py::TestNonExportingIsByteIdentical::test_the_device_is_the_sole_holder_of_the_key`,
+`::test_signing_device_exposes_no_public_route_to_key_material`.
+**Carrier:** `custody.py`'s non-exporting signer.
+**Statement.** *Under non-exporting custody the device is the only holder of the key, and the
+signer exposes no public route by which the material could be obtained.*
+**If false.** Non-exporting custody is a label rather than a property: the material is
+reachable from the process that was supposed not to hold it, and every hardening-profile
+refusal above it is enforcing a distinction that does not exist.
+**Likely owner:** `sdk_python.signer_policy` says *key material is never rendered*. That is
+about RENDERING — a `repr`, a log line, a string conversion. **Unconstructibility is a
+different and stronger claim**, and registering these two against the rendering clause would
+make the unit's evidence cover a seal its statement does not assert. This is exactly the
+`register`-misapplied case ADR-069 §5 names.
+**Root relationship.** Under THM-0094, and the same shape as the proxy-side
+`*_sole_producer` units ADR-MCPRE-068 Phase 0D created — which suggests the ratified form is
+`structural`, not `tested`.
+**Severity:** `critical`.
+
+## NP-017 — a signer cannot be constructed from illegal material
+
+**Controls:** `sdk/python/tests/test_custody.py::TestCustodyClasses::test_rejects_a_seed_that_is_not_32_bytes`,
+`::test_rejects_a_non_callable_sign_callback`.
+**Carrier:** `custody.py`'s two constructors.
+**Statement.** *No software signer exists whose seed is not exactly 32 bytes, and no device
+signer exists whose sign callback is not callable.*
+**If false.** A signer is constructible over a short seed — a weaker key than Ed25519's
+contract — or over a device that cannot be called at all, and the failure appears later, at
+signing time, as something else.
+**Likely owner:** `sdk_python.signer_policy` is about what the POLICY admits at open time;
+this is about what the VALUE admits at construction. The repository's own rule is the
+distinction: *the invariant belongs to the value, not to the code that builds it*, and a
+policy check is the code that builds it.
+**Root relationship.** Under THM-0094.
+**Severity:** `high`.
+

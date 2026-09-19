@@ -4528,7 +4528,34 @@ tested_symbols = [
   "pytest#tests/test_transport.py::test_a_hardened_policy_refuses_software_custody",
   # `test_transport_e2e.py::test_the_hardening_profile_refuses_a_software_key_before_connecting`
   # belongs here and is NOT registered: that file does not run in the measured lane. See
-  # `sdk_python.exchange_binding` and the packet's P2-E.
+  # `sdk_python.exchange_binding` and the packet's P2-E. ADR-MCPRE-069 carries that finding
+  # forward as NP-009, with the cause measured on main: `importorskip("httpx")` names a
+  # package `uv.lock` resolves as `httpx2`, so the module skips on import.
+  #
+  # ADR-MCPRE-069 batch 4. The four above are the TRANSPORT's arms of this claim. The six
+  # below are the custody owner's own: `custody.py` is in this unit's `paths` and
+  # `test_custody.py` was in no unit's battery at all, which is the shape ADR-069 §3
+  # describes. Each is registered against a clause this statement already makes.
+  #
+  # Four things in that file are NOT registered here and are recorded as propositions
+  # instead, because this statement does not say them and widening it to cover them is what
+  # ADR-069 §5 forbids: the device-fails-closed family (NP-015), the sole-holder seal
+  # (NP-016), the construction refusals (NP-017) and the byte-identity of the two custody
+  # paths (NP-011).
+  #
+  # The policy's custody arm at the owner's own API, in BOTH directions, so no arm is
+  # satisfied by a check that always refuses or always admits.
+  "pytest#tests/test_custody.py::TestSignerPolicyFailsClosed::test_hardening_rejects_software_custody",
+  "pytest#tests/test_custody.py::TestSignerPolicyFailsClosed::test_hardening_accepts_non_exporting_custody",
+  "pytest#tests/test_custody.py::TestSignerPolicyFailsClosed::test_the_permissive_profile_accepts_software_custody",
+  # "the expected signer identity" — the policy's other half, which the four transport
+  # controls above never exercise.
+  "pytest#tests/test_custody.py::TestSignerPolicyFailsClosed::test_rejects_a_foreign_signer_id",
+  # "key material is never rendered", at the owner rather than through the transport.
+  "pytest#tests/test_custody.py::TestCustodyClasses::test_never_renders_key_material",
+  # What makes "non-exporting custody" a TERM this statement can use: the two classes are
+  # labelled distinctly. Without it every arm above is satisfiable by one label.
+  "pytest#tests/test_custody.py::TestCustodyClasses::test_labels_software_and_non_exporting_distinctly",
 ]
 
 # C10. THE BOUND IS AVAILABILITY; the honesty of what a timeout is REPORTED as is C4's. The

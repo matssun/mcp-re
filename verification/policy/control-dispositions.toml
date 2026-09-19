@@ -1394,3 +1394,137 @@ decision = "new-proposition"
 proposition = "NP-014"
 recorded = "2026-09-19"
 
+
+# ---------------------------------------------------------------------------
+# Batch 4 — the Python custody owner, 2026-09-19
+# ---------------------------------------------------------------------------
+#
+# `custody.py` is in `sdk_python.signer_policy`'s paths and `test_custody.py` was in no
+# unit's battery: ADR-MCPRE-069 §3's shape, at the owner rather than at the store. Six
+# controls REGISTER against clauses the unit's statement already makes (they land in
+# verification.toml, not here). The other twelve say four things the statement does not,
+# and each is a proposition rather than a widening.
+
+[[proposition]]
+id = "NP-015"
+title = "A device that cannot sign emits no evidence (Python)"
+carrier = "sdk/python/python/mcp_re_sdk/custody.py's device signer"
+likely_owner = "sdk_python.signer_policy, whose statement stops short of this clause"
+consequence = "high"
+root_relationship = "under THM-0094; an ASYMMETRY — sdk_typescript.signer_policy states it and the Python twin does not"
+record = "docs/architecture/control-dispositions.md#np-015"
+
+[[proposition]]
+id = "NP-016"
+title = "The signing device is the key's sole holder"
+carrier = "custody.py's non-exporting signer"
+likely_owner = "sdk_python.signer_policy says key material is never RENDERED, which is weaker"
+consequence = "critical"
+root_relationship = "under THM-0094; the shape of the proxy-side *_sole_producer units, so likely structural"
+record = "docs/architecture/control-dispositions.md#np-016"
+
+[[proposition]]
+id = "NP-017"
+title = "A signer cannot be constructed from illegal material"
+carrier = "custody.py's two constructors"
+likely_owner = "sdk_python.signer_policy is about what the policy admits at open time, not what the value admits at construction"
+consequence = "high"
+root_relationship = "under THM-0094"
+record = "docs/architecture/control-dispositions.md#np-017"
+
+[[disposition]]
+id = "CD-2001"
+project = "sdk/python"
+control = "pytest#tests/test_custody.py::TestDeviceFailsClosed::test_a_throwing_device_raises_signer_unavailable"
+decision = "new-proposition"
+proposition = "NP-015"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-2002"
+project = "sdk/python"
+control = "pytest#tests/test_custody.py::TestDeviceFailsClosed::test_signer_unavailable_keeps_the_underlying_cause"
+decision = "new-proposition"
+proposition = "NP-015"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-2003"
+project = "sdk/python"
+control = "pytest#tests/test_custody.py::TestDeviceFailsClosed::test_signer_unavailable_is_not_a_wire_error"
+decision = "new-proposition"
+proposition = "NP-015"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-2004"
+project = "sdk/python"
+control = "pytest#tests/test_custody.py::TestDeviceFailsClosed::test_a_wrong_length_signature_raises_signer_unavailable"
+decision = "new-proposition"
+proposition = "NP-015"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-2005"
+project = "sdk/python"
+control = "pytest#tests/test_custody.py::TestDeviceFailsClosed::test_a_non_bytes_return_raises_signer_unavailable"
+decision = "new-proposition"
+proposition = "NP-015"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-2006"
+project = "sdk/python"
+control = "pytest#tests/test_custody.py::TestDeviceFailsClosed::test_a_misbehaving_device_emits_no_evidence"
+decision = "new-proposition"
+proposition = "NP-015"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-2007"
+project = "sdk/python"
+control = "pytest#tests/test_custody.py::TestDeviceFailsClosed::test_a_core_failure_is_not_blamed_on_the_device"
+decision = "new-proposition"
+proposition = "NP-015"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-2008"
+project = "sdk/python"
+control = "pytest#tests/test_custody.py::TestNonExportingIsByteIdentical::test_the_device_is_the_sole_holder_of_the_key"
+decision = "new-proposition"
+proposition = "NP-016"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-2009"
+project = "sdk/python"
+control = "pytest#tests/test_custody.py::TestNonExportingIsByteIdentical::test_signing_device_exposes_no_public_route_to_key_material"
+decision = "new-proposition"
+proposition = "NP-016"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-2010"
+project = "sdk/python"
+control = "pytest#tests/test_custody.py::TestCustodyClasses::test_rejects_a_seed_that_is_not_32_bytes"
+decision = "new-proposition"
+proposition = "NP-017"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-2011"
+project = "sdk/python"
+control = "pytest#tests/test_custody.py::TestCustodyClasses::test_rejects_a_non_callable_sign_callback"
+decision = "new-proposition"
+proposition = "NP-017"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-2012"
+project = "sdk/python"
+control = "pytest#tests/test_custody.py::TestNonExportingIsByteIdentical::test_device_path_matches_software_path_exactly"
+decision = "new-proposition"
+proposition = "NP-011"
+recorded = "2026-09-19"
+
