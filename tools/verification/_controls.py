@@ -578,6 +578,14 @@ _TS_EACH_INLINE = re.compile(r"\)\s*\(\s*(['\"`])(.+?)\1")
 _TS_WRAPPER = re.compile(r"^\s*(?:const|let|function)\s+([A-Za-z_$][\w$]*)\s*[=(]\s*\(?\s*([A-Za-z_$][\w$]*)")
 _TS_TITLE = re.compile(r"^\s*(['\"`])(.+?)\1\s*,?\s*$")
 _TS_SUITE = re.compile(r"^(\s*)describe(?:\.\w+)*\s*\(\s*(['\"`])(.+?)\2")
+#: `describe.runIf(<expr>)("title", …)` and `describe.each([...])("title", …)`: the title
+#: follows the modifier's own argument list, so it is not where `_TS_SUITE` looks. A suite
+#: this misses does not vanish — its cases are still enumerated, under the WRONG reported
+#: name, which is worse: the identity would join to nothing and a registration written
+#: against it would name a case vitest never reports.
+_TS_SUITE_MODIFIED = re.compile(
+    r"^(\s*)describe\.\w+\s*\(.*?\)\s*\(\s*(['\"`])(.+?)\2"
+)
 
 #: How far after an `it.each([...])(` opening the case TITLE may sit. A table literal is
 #: usually wrapped across lines and the title follows it, so the title is not on the
@@ -621,7 +629,7 @@ def _vitest_cases_in(path: Path, project: str, rel: str, rel_repo: Path) -> list
     suites: list[tuple[int, str]] = []
     declarers = _case_declarers(lines)
     for index, line in enumerate(lines):
-        suite = _TS_SUITE.match(line)
+        suite = _TS_SUITE.match(line) or _TS_SUITE_MODIFIED.match(line)
         if suite is not None:
             indent = len(suite.group(1))
             while suites and suites[-1][0] >= indent:

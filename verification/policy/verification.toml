@@ -933,7 +933,14 @@ tested_symbols = [
   "lib#tls_listener_state::tests::a_rebuild_keeps_the_cache_and_the_epoch_of_the_state_it_was_built_through",
   "lib#tls_listener_state::tests::a_different_anchor_set_is_a_different_state_with_its_own_empty_cache",
   "lib#tls_listener_state::tests::no_config_this_owner_builds_can_resume_outside_the_store",
-  "lib#tls_listener_state::tests::a_delegated_rebuild_reuses_the_listeners_signing_budget",
+  "lib#tls_listener_state::tests::a_delegated_rebuild_reuses_the_listeners_signing_budget",  # ADR-MCPRE-069 batch 19. This statement names the SIGNING BUDGET as one of the four terms
+  # a listener obtains through one state. These three are that term measured: the budget
+  # bounds remote-signer invocations, refills over time, and — the one a bound normally
+  # loses — a poisoned budget lock still signs and counts the panic ONCE rather than either
+  # failing closed on a lock or losing the count.
+  "lib#delegated_tls::tests::handshake_signature_budget_bounds_remote_signer_invocations",
+  "lib#delegated_tls::tests::handshake_signature_budget_refills_over_time",
+  "lib#delegated_tls::tests::a_poisoned_budget_lock_still_signs_and_counts_the_panic_once",
 ]
 
 # THM-0054 IS `critical` AND HAD NO FALSIFIER. It shared a unit with THM-0048 and THM-0103,
@@ -2620,7 +2627,20 @@ tested_symbols = [
   "lib#config_state::trust_revocation::tests::bounded_cache_does_not_require_a_cadence",
   "lib#config_state::trust_revocation::tests::each_state_holds_the_cadence_to_the_window_it_claims",
   "lib#config_state::trust_revocation::tests::a_zero_cadence_is_a_spinning_reloader_in_every_state",
-  "lib#config_state::trust_revocation::tests::a_programmatic_config_cannot_spin_the_trust_reloader",
+  "lib#config_state::trust_revocation::tests::a_programmatic_config_cannot_spin_the_trust_reloader",  # ADR-MCPRE-069 batch 10. Four more in this unit's own file.
+  #
+  # "a ZERO cadence — a spinning reloader — is refused in every state" needs its other arm,
+  # or it is satisfied by a classifier that refuses every cadence.
+  "lib#config_state::trust_revocation::tests::the_smallest_positive_cadence_is_admitted",
+  # "each state holds its cadence to the window it claims", at the narrow end: a push window
+  # narrower than near-zero binds instead of it.
+  "lib#config_state::trust_revocation::tests::a_push_window_narrower_than_near_zero_binds_instead_of_it",
+  # "every legal state form is classified" — the LIVE form declares no bounded window, which
+  # is the form a bounded-window assumption would silently mis-classify.
+  "lib#config_state::trust_revocation::tests::live_declares_no_bounded_window",
+  # "which witnesses each state form requires": the state projects back to the tier the
+  # resolver is built from, so the witness a consumer reads is the one the state named.
+  "lib#config_state::trust_revocation::tests::the_state_projects_back_to_the_tier_the_resolver_is_built_from",
 ]
 
 # THM-0036's owner. A PAIRED locator and key, or not at all — the epoch source is what splits
@@ -2812,6 +2832,13 @@ tested_symbols = [
   "tests/integration#composition_raw_read_test::the_composition_root_reads_only_ordinary_validated_parameters",
   "tests/integration#composition_raw_read_test::the_rule_would_catch_a_new_raw_read",
   "tests/integration#composition_raw_read_test::every_ordinary_field_states_why_it_is_ordinary",
+  # ADR-MCPRE-069 batch 12. The three above are the source-text inventory — which raw reads
+  # EXIST. This one is the same statement measured behaviourally at the root: the channel
+  # binding's effects are a function of the RECOGNISED state, so what the root does with the
+  # channel is decided by the classifier's answer rather than reassembled from the fields
+  # the inventory permits it to read. Without it the inventory is satisfied by a root that
+  # reads only ordinary parameters and then derives a posture from them anyway.
+  "lib#app::tests::the_channel_binding_effects_are_a_function_of_the_recognised_state",
 ]
 
 [[unit]]
@@ -3148,6 +3175,13 @@ tested_symbols = [
   "tests/chain_reconstruction_test#an_unrecognized_result_type_mid_chain_is_named_for_what_it_is",
   "tests/chain_reconstruction_test#an_aged_multi_hop_record_still_reconstructs_complete",
   "tests/chain_reconstruction_test#the_aged_chains_hops_really_are_out_of_window_at_audit_time",
+  # ADR-MCPRE-069 batch 9 measured a reattribution that CANNOT be made here, and records it
+  # rather than leaving it to be rediscovered.
+  # `lib#transparency::durability::tests::a_chain_with_a_missing_hop_is_refused_rather_than_reconstructed`
+  # is this statement's own sentence, measured at the proxy's store — and it lives in
+  # `mcp-re-proxy`, while this unit's battery runs in `mcp-re-http-profile`. A unit's lane is
+  # project-scoped, so no selector here can name it. It is NP-045: the proxy-side twin of
+  # this proposition, which the proxy's graph does not state.
   "tests/chain_reconstruction_test#a_hop_created_after_the_audit_instant_is_refused",
   "tests/chain_reconstruction_test#the_audit_ceiling_tolerates_the_configured_skew",
   "tests/chain_reconstruction_test#an_over_wide_window_is_still_refused_in_an_aged_record",
@@ -4348,6 +4382,19 @@ tested_symbols = [
   # ADR-MCPRE-069 `register`: the budget is checked BEFORE the handler runs, so a call that
   # has spent its continuation budget is not prompted for an answer it cannot send.
   "pytest#tests/test_transport_replay.py::test_the_continuation_round_ceiling_is_enforced_before_the_caller_is_asked",
+  # ADR-MCPRE-069 batch 5, `reattribute`. These three sit in `test_correlation.py` and are
+  # about the STORE's API, which is why nothing had claimed them and why the obvious home
+  # looked like `sdk_python.correlation_lifecycle`. It is not: that unit's statement is a
+  # WINDOW claim plus the store's unbound and duplicate refusals, and says nothing about a
+  # non-terminal reply. Each of these three answers a clause of THIS statement, verbatim.
+  #
+  # "a non-terminal one PAUSES it" — the open leg survives the elicitation.
+  "pytest#tests/test_correlation.py::TestInputRequiredAssociatesWithoutConsuming::test_an_elicitation_leaves_the_open_leg_outstanding",
+  # "ONLY a terminal verified reply resolves the call" — and it still can, afterwards.
+  "pytest#tests/test_correlation.py::TestInputRequiredAssociatesWithoutConsuming::test_the_open_leg_can_still_be_taken_by_the_terminal_answer",
+  # "its answer leg signs over the VERIFIED HANDLES of the leg before it" — the handles the
+  # store associated are the ones the answer leg receives, with nothing re-derived between.
+  "pytest#tests/test_correlation.py::TestInputRequiredAssociatesWithoutConsuming::test_the_handles_feed_straight_into_the_answer_leg",
 ]
 
 # C7. THE CORRECTED CLAIM. The predecessor root said "a reply binding to nothing outstanding,
@@ -4391,6 +4438,40 @@ tested_symbols = [
   "pytest#tests/test_transport_replay.py::test_an_unanswered_elicitation_leaves_no_correlation_entry_outstanding",
   "pytest#tests/test_transport.py::test_correlation_state_belongs_to_the_transport_not_the_config",
   "pytest#tests/test_transport.py::test_an_injected_clock_and_ttl_are_honoured",
+  # ADR-MCPRE-069 batch 5. `correlation.py` is in this unit's `paths` and its own test file
+  # was in no unit's battery: the ten above are all reached through `transport.py`, so the
+  # store's own API — where two of this statement's three clauses explicitly live — had no
+  # declared evidence at all.
+  #
+  # "answerable only inside the window it declared", at the owner. The inclusive boundary is
+  # registered beside the late refusal because a window that excluded its own deadline would
+  # satisfy the late half and refuse an answer that is in time.
+  "pytest#tests/test_correlation.py::TestFailsClosed::test_a_response_at_exactly_the_deadline_is_still_in_window",
+  # ... and the late refusal RETIRES the entry, which is this statement's second clause and
+  # not its first: a refusal that left the entry outstanding would satisfy the window claim
+  # and break the outstanding one.
+  "pytest#tests/test_correlation.py::TestFailsClosed::test_a_late_response_also_retires_the_entry",
+  "pytest#tests/test_correlation.py::TestReaping::test_a_reaped_request_cannot_later_be_answered",
+  # The window's PRECISION, in the other direction: reaping that dropped a live entry would
+  # make a request unanswerable inside the window it declared.
+  "pytest#tests/test_correlation.py::TestReaping::test_expire_before_drops_only_the_dead",
+  # "`CorrelationStore`'s unbound and duplicate refusals are properties of the store at its
+  # own API" — the clause that names the store's API as its subject, and the one the
+  # transport-only battery could not reach.
+  "pytest#tests/test_correlation.py::TestFailsClosed::test_recording_the_same_request_twice_is_rejected",
+  "pytest#tests/test_correlation.py::TestInputRequiredAssociatesWithoutConsuming::test_an_unbound_elicitation_is_rejected",
+  "pytest#tests/test_correlation.py::TestInputRequiredAssociatesWithoutConsuming::test_an_elicitation_for_an_answered_request_is_a_replay",
+  "pytest#tests/test_correlation.py::TestInputRequiredAssociatesWithoutConsuming::test_a_late_elicitation_is_rejected",
+  # "no remotely triggerable outcome leaves a correlation entry outstanding" is a
+  # BOUNDEDNESS claim; these are it, measured as boundedness rather than case by case, and
+  # in both directions so that pruning everything would fail the second.
+  "pytest#tests/test_correlation.py::TestTheStoreIsBounded::test_a_long_session_of_failed_exchanges_does_not_grow_the_store",
+  "pytest#tests/test_correlation.py::TestTheStoreIsBounded::test_consumed_ids_are_dropped_once_they_can_no_longer_answer_anything",
+  "pytest#tests/test_correlation.py::TestTheStoreIsBounded::test_pruning_keeps_ids_that_can_still_be_answered",
+  # NOT registered here, and each is recorded as a proposition instead: the peek/take split
+  # (NP-019), the entry as the request's audit record (NP-018), and three store-API
+  # robustness controls (ND-009). Three more are `sdk_python.continuation_drive`'s and are
+  # reattributed there rather than claimed by this window statement.
 ]
 
 # C8. IN THE ROOT'S CHAIN, and the reason is not freshness hygiene: a guessable nonce makes a
@@ -4528,7 +4609,34 @@ tested_symbols = [
   "pytest#tests/test_transport.py::test_a_hardened_policy_refuses_software_custody",
   # `test_transport_e2e.py::test_the_hardening_profile_refuses_a_software_key_before_connecting`
   # belongs here and is NOT registered: that file does not run in the measured lane. See
-  # `sdk_python.exchange_binding` and the packet's P2-E.
+  # `sdk_python.exchange_binding` and the packet's P2-E. ADR-MCPRE-069 carries that finding
+  # forward as NP-009, with the cause measured on main: `importorskip("httpx")` names a
+  # package `uv.lock` resolves as `httpx2`, so the module skips on import.
+  #
+  # ADR-MCPRE-069 batch 4. The four above are the TRANSPORT's arms of this claim. The six
+  # below are the custody owner's own: `custody.py` is in this unit's `paths` and
+  # `test_custody.py` was in no unit's battery at all, which is the shape ADR-069 §3
+  # describes. Each is registered against a clause this statement already makes.
+  #
+  # Four things in that file are NOT registered here and are recorded as propositions
+  # instead, because this statement does not say them and widening it to cover them is what
+  # ADR-069 §5 forbids: the device-fails-closed family (NP-015), the sole-holder seal
+  # (NP-016), the construction refusals (NP-017) and the byte-identity of the two custody
+  # paths (NP-011).
+  #
+  # The policy's custody arm at the owner's own API, in BOTH directions, so no arm is
+  # satisfied by a check that always refuses or always admits.
+  "pytest#tests/test_custody.py::TestSignerPolicyFailsClosed::test_hardening_rejects_software_custody",
+  "pytest#tests/test_custody.py::TestSignerPolicyFailsClosed::test_hardening_accepts_non_exporting_custody",
+  "pytest#tests/test_custody.py::TestSignerPolicyFailsClosed::test_the_permissive_profile_accepts_software_custody",
+  # "the expected signer identity" — the policy's other half, which the four transport
+  # controls above never exercise.
+  "pytest#tests/test_custody.py::TestSignerPolicyFailsClosed::test_rejects_a_foreign_signer_id",
+  # "key material is never rendered", at the owner rather than through the transport.
+  "pytest#tests/test_custody.py::TestCustodyClasses::test_never_renders_key_material",
+  # What makes "non-exporting custody" a TERM this statement can use: the two classes are
+  # labelled distinctly. Without it every arm above is satisfiable by one label.
+  "pytest#tests/test_custody.py::TestCustodyClasses::test_labels_software_and_non_exporting_distinctly",
 ]
 
 # C10. THE BOUND IS AVAILABILITY; the honesty of what a timeout is REPORTED as is C4's. The
@@ -4600,6 +4708,34 @@ tested_symbols = [
   "pytest#tests/test_transport.py::test_the_canonical_bindings_json_emits_raw_utf8_like_json_stringify",
   "pytest#tests/test_transport.py::test_the_correlation_entry_records_the_authorization_binding_digest",
   "pytest#tests/test_transport.py::test_a_request_with_no_bindings_records_no_digest",
+  # ADR-MCPRE-069 batch 6. `authorization.py` is in this unit's `paths` and
+  # `test_authorization.py` was in no unit's battery: all four controls above reach the
+  # providers through `transport.py`, so the policy's own arms and the canonical order were
+  # measured only where a request happened to exercise them.
+  #
+  # "the specs a request carries are the ones the configured POLICY PERMITS" — all four
+  # arms, so the clause is not satisfied by a policy that permits everything or nothing.
+  "pytest#tests/test_authorization.py::TestPolicyFailsClosed::test_a_permitted_type_passes",
+  "pytest#tests/test_authorization.py::TestPolicyFailsClosed::test_an_unpermitted_type_fails_closed",
+  "pytest#tests/test_authorization.py::TestPolicyFailsClosed::test_a_required_binding_that_is_absent_fails_closed",
+  "pytest#tests/test_authorization.py::TestPolicyFailsClosed::test_an_optional_binding_may_be_absent",
+  # The policy permits by ARTIFACT TYPE, so a provider reporting its own type is the value
+  # the clause above reads. Without it every arm is about a type nobody asked for.
+  "pytest#tests/test_authorization.py::TestAuthzSystemReference::test_it_reports_its_artifact_type",
+  # "serialized CANONICALLY and byte-identically to the TypeScript twin". Byte identity is a
+  # statement about ORDER as much as about encoding, and these are the order: DPoP present
+  # and first with no provider at all, provider bindings appended after it, several
+  # providers in order, and the no-bindings path unchanged.
+  "pytest#tests/test_authorization.py::TestDpopStaysBuiltIn::test_dpop_is_present_and_first_without_any_provider",
+  "pytest#tests/test_authorization.py::TestDpopStaysBuiltIn::test_provider_bindings_append_after_dpop",
+  "pytest#tests/test_authorization.py::TestDpopStaysBuiltIn::test_several_providers_are_all_bound_in_order",
+  "pytest#tests/test_authorization.py::TestDpopStaysBuiltIn::test_the_no_bindings_path_is_unchanged",
+  # The other twenty-two controls in that file are NOT registered here, and the reason is a
+  # measured asymmetry rather than a judgement call. `sdk_typescript.authorization_binding`
+  # says "the core digests the real artifact material and a caller is given no way to supply
+  # a precomputed digest or to mint half a binding pair". THIS statement does not, and
+  # adding the controls without the sentence would make the unit's evidence cover a claim it
+  # does not make. Recorded as NP-020 through NP-024.
 ]
 
 # The composition proposition, and the reason the core's binding theorem is usable here
@@ -6243,6 +6379,33 @@ tested_symbols = [
   # unconstructible through the serving path, which is why the enforcement exists at all.
   "lib#http_profile_serve::reply_assembly::accepted::tests::the_publication_decision_precedes_retention_and_the_response_signed_record",
   "lib#http_profile_serve::reply_assembly::accepted::tests::the_publication_refusal_says_the_proxy_disagreed_with_itself_and_nothing_about_the_backend",
+  # ADR-MCPRE-069 batch 9. Eight more controls in this unit's OWN files, each answering a
+  # clause the statement already makes, and none of them previously any unit's evidence.
+  #
+  # "discharged by the terminal response the exchange actually served" — exactly one
+  # completion per stage, which is what makes discharge a discharge rather than a decrement.
+  "lib#transparency::durability::tests::a_reservation_is_worth_exactly_one_completion",
+  "lib#transparency::dispatch_committed::tests::a_commitment_is_worth_exactly_one_completion",
+  # "recorded by RENAMING the first" — and the rename is the last one: an acknowledged write
+  # is already at its final name, so nothing moves a record after it is answerable.
+  "lib#transparency::durability::tests::an_acknowledged_write_is_already_at_its_final_name",
+  # "which asserts nothing about execution and WITHDRAWS ITSELF", at the writer: a staged
+  # publication that never advanced publishes nothing, a discharged marker is cleared, one
+  # that never staged publishes nothing, and a withdrawal whose barrier does not hold is
+  # not reported as withdrawn.
+  "lib#transparency::durable_writer::tests::a_commitment_with_nothing_to_advance_publishes_nothing",
+  "lib#transparency::durable_writer::tests::a_durable_publication_clears_the_marker_it_discharges",
+  "lib#transparency::durable_writer::tests::a_publication_that_never_staged_publishes_nothing",
+  "lib#transparency::durable_writer::tests::a_withdrawal_whose_barrier_does_not_hold_is_unwithdrawn",
+  # "an obligation accepted … withdraws itself": the reservation's permit comes back, and a
+  # full queue costs a stale marker rather than a stall — the shape that keeps the
+  # obligation from becoming a liveness hazard.
+  "lib#transparency::reserved_before_dispatch::tests::dropping_a_reservation_gives_its_admission_permit_back",
+  "lib#transparency::reserved_before_dispatch::tests::a_full_queue_costs_a_stale_marker_and_never_a_stall",
+  # The positive form of the marker control already registered above: the marker carries the
+  # commitment and NOTHING ELSE, so "never carries the request or its credentials" is a
+  # consequence of what it does carry rather than a separate list to keep in step.
+  "lib#transparency::reservation_marker::tests::a_marker_carries_the_commitment_and_nothing_else",
 ]
 
 [[unit]]
@@ -6364,7 +6527,18 @@ tested_symbols = [
   "lib#startup_posture::tests::completeness_is_enforced_independently_of_debug_assertions",
   # `Seam::ALL` is what `assert_complete` checks membership against, so a seam missing from
   # it is a capability a deployment can install without the transcript mentioning it.
-  "lib#startup_posture::seam::tests::every_seam_is_in_the_set_the_transcript_is_checked_against",
+  "lib#startup_posture::seam::tests::every_seam_is_in_the_set_the_transcript_is_checked_against",  # ADR-MCPRE-069 batch 10. Three controls in `config_state/continuation_control.rs` — a
+  # file this unit already measures — each answering a clause of this statement, and none
+  # of them previously any unit's evidence.
+  #
+  # "an unselected capability is OFF and produces no artifact": DISABLED is a state, not a
+  # missing value, which is what makes "unselected" a thing the plan can carry.
+  "lib#config_state::continuation_control::tests::disabled_is_a_state_and_not_a_missing_value",
+  # "every legal state form is classified and accepted" — the classifier's own totality,
+  # without which every arm below is about whichever forms someone happened to list.
+  "lib#config_state::continuation_control::tests::every_legal_state_form_is_classified_and_accepted",
+  # "a selected one that CANNOT BE ESTABLISHED" — a locator that names no store.
+  "lib#config_state::continuation_control::tests::a_locator_that_cannot_name_a_store_is_refused",
 ]
 
 # The other build profile's arm of the SAME claim. A separate unit and not a
@@ -7452,7 +7626,13 @@ tested_symbols = [
   "lib#trust_epoch::tests::a_source_outage_flushes_nothing_and_the_deadline_still_governs",
   # The reader's one local rule about a foreign read's meaning. Exists only under
   # `redis_replay`, which is why `test_features` names it.
-  "lib#trust_epoch::tests::an_absent_epoch_key_is_a_read_failure_not_epoch_zero",
+  "lib#trust_epoch::tests::an_absent_epoch_key_is_a_read_failure_not_epoch_zero",  # ADR-MCPRE-069 batch 19. Two controls in this unit's own file, each a clause of this
+  # statement that its other controls do not reach: a source driven DIRECTLY is not subject
+  # to the poller's liveness bound — the bound is the poller's property and not the source's
+  # — and one epoch read cannot consume the rotation overlap, which is what keeps a single
+  # read from spending the window the rotation depends on.
+  "lib#trust_epoch::tests::a_directly_driven_source_is_not_subject_to_the_liveness_bound",
+  "lib#trust_epoch::tests::one_epoch_read_cannot_consume_the_rotation_overlap",
 ]
 # The Redis reader and its two controls exist only under this feature. Named so the
 # fingerprint says the battery measured the crate that carries the networked source, not
@@ -7828,7 +8008,19 @@ tested_symbols = [
   "tests/mtls_client_test#wrong_server_identity_is_rejected",
   "tests/mtls_client_test#expired_server_cert_is_rejected",
   "tests/mtls_client_test#empty_server_ca_is_rejected_fail_closed",
-  "tests/mtls_client_test#trusted_server_and_client_round_trip_succeeds",
+  "tests/mtls_client_test#trusted_server_and_client_round_trip_succeeds",  # ADR-MCPRE-069 batch 18 TRIED to register the ANTI-VACUITY arm of this statement here and
+  # MEASURED THAT IT CANNOT BE. `tests/fault_injection_test` proves that the declared fault
+  # injector is what makes an untrusted or wrong-identity server certificate accepted — so
+  # the three rejections above are the real verifier's and not an artefact of a test that
+  # never presented a bad certificate. It compiles only under the `fault_accept_any_server`
+  # cargo feature, which is off by default and never in the normal build, and
+  # `cargo test -p mcp-re-transport --test fault_injection_test` reports ZERO tests without
+  # it — a green run over nothing.
+  #
+  # A unit's `test_features` are ONE set for the WHOLE battery, and this battery cannot run
+  # under that feature: `untrusted_server_cert_is_rejected` is the control the feature exists
+  # to break. **An anti-vacuity control whose purpose is to falsify the property cannot live
+  # in the same battery as the property.** It is NP-169.
 ]
 
 [[unit]]
@@ -7941,7 +8133,23 @@ tested_symbols = [
   "lib#core_projection::tests::every_refusal_names_a_core_verdict",
   "lib#core_projection::tests::a_carrier_refusal_keeps_the_carriers_own_verdict",
   "lib#binding_spec::tests::the_opaque_form_refuses_pdp_decision_because_that_is_half_of_a_pair",
-  "lib#binding_spec::tests::the_reference_form_still_accepts_pdp_decision",
+  "lib#binding_spec::tests::the_reference_form_still_accepts_pdp_decision",  # ADR-MCPRE-069 batch 18. Seven controls in this unit's own `binding_spec/mod.rs`, none of
+  # them previously any unit's evidence, each answering a clause this statement makes.
+  #
+  # "WHICH PROVIDER LISTS are a legal contribution": a list that is not spec JSON is refused,
+  # and a request acts under at most one decision.
+  "lib#binding_spec::tests::a_provider_list_that_is_not_spec_json_is_refused",
+  "lib#binding_spec::tests::a_request_acts_under_at_most_one_decision",
+  # "the NARROWING — an opaque provider asked to mint a `pdp-decision` binding — is half of a
+  # Mode-2 pair and is REFUSED RATHER THAN CONSTRUCTED". These are that narrowing, in both
+  # directions: what the decision form is, what it yields, what it may not also name, and
+  # that every other artifact type keeps the generic opaque form rather than being narrowed
+  # with it.
+  "lib#binding_spec::tests::the_decision_form_is_only_about_a_decision",
+  "lib#binding_spec::tests::the_decision_form_yields_the_document_and_no_binding",
+  "lib#binding_spec::tests::a_decision_does_not_also_name_an_external_grant_handle",
+  "lib#binding_spec::tests::a_decision_is_text_or_it_is_not_a_compact_jws",
+  "lib#binding_spec::tests::other_artifact_types_keep_the_generic_opaque_form",
 ]
 
 # The measurement that replaced the producer list. `no_producer_outside_core_mints_a_wire_token`
@@ -8094,6 +8302,16 @@ tested_symbols = [
   # auditor reconstructs from. Without it the controls above are about a type rather than
   # about what the serving path writes.
   "tests/integration_async#transparency_e2e_test::a_served_notification_is_retained_like_any_other_accepted_exchange",
+  # ADR-MCPRE-069 batch 9 measured a reattribution that CANNOT be made here, for the same
+  # reason as NP-045 one unit over. Four controls in `transparency/durability.rs` and
+  # `transparency/retained_archive.rs` are this statement's own clauses at the STORAGE
+  # boundary — only the signed headers are retained, a record without the schema token is
+  # refused, a retained exchange comes back byte-identical, an object that is not a retained
+  # record is refused. Neither file is in this unit's `paths`, and `verify --manifests`
+  # refuses a `lib#` selector whose module the unit does not measure: an in-crate test whose
+  # source the unit does not measure can be rewritten under the same name without moving the
+  # fingerprint. Widening `paths` to reach them would pull the whole retention-commitment
+  # machinery into this unit's source closure. They are NP-048.
 ]
 
 # The auditor's half, and it is deliberately NOT on the request path — for three reasons the
@@ -8283,7 +8501,15 @@ tested_symbols = [
   # The quota wiring: this adapter passes ITS OWN signals to the shared rule. THM-0115 owns
   # the rule; these two establish the data reaching it is this provider's.
   "lib#aws_kms_keysource::tests::only_account_quota_failures_reach_the_exhausted_verdict",
-  "lib#aws_kms_keysource::tests::a_throttled_tls_sign_stops_calling_kms_for_the_cooldown",
+  "lib#aws_kms_keysource::tests::a_throttled_tls_sign_stops_calling_kms_for_the_cooldown",  # ADR-MCPRE-069 batch 19. This statement ends "over a MINIMAL AUDITED SigV4", and until now
+  # nothing measured that clause: the adapter's controls exercise the KMS operations and the
+  # SigV4 that carries them had no declared evidence at all. A canonical shape that drifts
+  # makes every request unsignable; one that drifts WRONG makes them signable by the wrong
+  # key. The published GET-vanilla vector is the external fixed point.
+  "lib#aws_sigv4::tests::sigv4_matches_published_get_vanilla_vector",
+  "lib#aws_sigv4::tests::kms_sign_request_canonical_shape_is_stable",
+  "lib#aws_sigv4::tests::empty_payload_hash_is_well_known",
+  "lib#aws_sigv4::tests::session_token_is_signed_and_returned",
 ]
 
 [[unit]]

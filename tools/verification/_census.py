@@ -191,7 +191,69 @@ def _registry_claims(index: dict[str, Control]) -> list[Claim]:
             owner = entry.get("unit")
             if control is not None and owner:
                 out.append(Claim(unit=owner, control=control, selector=identity))
+            if scheme == "measurement" and owner:
+                out.extend(_measurement_selected(entry, owner))
     return out
+
+
+def _measurement_selected(entry: dict, owner: str) -> list[Claim]:
+    """The libtest names a `[[measurement]]`'s own argv selects, as that unit's claims.
+
+    A `measured` unit declares no `tested_symbols` — ADR-MCPRE-068 §4.1 gives it a protocol
+    and an apparatus control instead — so a census reading only `tested_symbols` reports the
+    controls the measurement RUNS as claimed by nothing. They are claimed: the registry
+    names them, in argv, and `verify-measured` executes exactly them. Reading the protocol
+    is the same join as reading a battery, and not reading it would invite a `not-evidence`
+    reason to be written about a measurement's own apparatus.
+
+    Matched by NAME against the controls of the unit's project, because an argv names a
+    libtest filter rather than a `target#path` selector.
+    """
+    wanted: set[str] = set()
+    for key in ("protocol", "control"):
+        for token in entry.get(key, []):
+            text = str(token)
+            if text.startswith("-") or "/" in text or text in ("cargo", "test"):
+                continue
+            wanted.add(text)
+    if not wanted:
+        return []
+    out: list[Claim] = []
+    for control in _measurement_index():
+        tail = control.identity.rsplit("::", 1)[-1].rsplit("#", 1)[-1]
+        if tail in wanted:
+            out.append(Claim(unit=owner, control=control, selector=f"measured-argv:{tail}"))
+    return out
+
+
+#: Filled once per process. A measurement's argv is matched against every control, and
+#: re-walking the tree per measurement would make the census quadratic in the number of
+#: measured units.
+_MEASUREMENT_INDEX: list[Control] = []
+
+
+def _measurement_index() -> list[Control]:
+    if not _MEASUREMENT_INDEX:
+        _MEASUREMENT_INDEX.extend(all_controls())
+    return _MEASUREMENT_INDEX
+
+
+#: Every key a `[[disposition]]` row may carry, and every key a `[[proposition]]` may. The
+#: registry's header promises that an unknown key is a validation failure rather than a
+#: silently ignored field; these are what lets `control-census --gate` keep that promise.
+DISPOSITION_KEYS = frozenset(
+    {"id", "project", "control", "decision", "reason_family", "proposition", "recorded",
+     "scope", "carrier"}
+)
+PROPOSITION_KEYS = frozenset(
+    {"id", "title", "carrier", "likely_owner", "consequence", "root_relationship", "record",
+     "statement", "ratified_as"}
+)
+
+
+def raw_registry() -> dict:
+    path = POLICY / "control-dispositions.toml"
+    return tomllib.loads(path.read_text()) if path.is_file() else {}
 
 
 def dispositions() -> list[Disposition]:
