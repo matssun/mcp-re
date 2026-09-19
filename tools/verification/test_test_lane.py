@@ -596,6 +596,42 @@ def test_the_matching_interpreter_is_accepted():
     assert ok, detail
 
 
+def test_an_unrecognised_subset_flag_is_refused_rather_than_dropped():
+    """A selector nobody validated is the defect, in EITHER face.
+
+    `main` read no argv at all: `--unti proxy.peer_identity_value` was discarded, the whole
+    196-unit lane ran and the run exited 0 printing `PASS`. Measured, not reasoned — the run
+    is in this campaign's record. It failed safe that day only because the lane it ran was
+    larger than the one asked for; the same typo before a SMALLER selection prints `PASS`
+    over something else entirely.
+
+    The edit that turns this red is `parse_known_args` in place of `parse_args`, which is
+    the exact shape being refused.
+    """
+    import argparse
+
+    for bad in (["--unti", "proxy.peer_identity_value"], ["--units", "x"], ["proxy.x"]):
+        try:
+            lane.parse_args(bad)
+        except SystemExit as exit_:
+            assert exit_.code != 0, f"{bad} was refused with a zero exit"
+        else:
+            raise AssertionError(f"{bad} was accepted; an unknown token was dropped")
+    assert isinstance(lane.parse_args([]), argparse.Namespace)
+    assert lane.parse_args(["--unit", "a", "--unit", "b"]).unit == ["a", "b"]
+
+
+def test_a_subset_flag_naming_no_declared_unit_fails():
+    """A subset that selects nothing must never read as a clean lane.
+
+    This repository has met the zero-selection face three times — a word-splitting error
+    reporting `0 passed` for seven units, a probe run whose short ids matched nothing, and
+    an `#[ignore]` filter selecting zero tests at exit 0. A `--unit` naming no declared unit
+    is the same shape reachable by one typo, so it is a FAIL and not an empty PASS.
+    """
+    assert lane.main(["--unit", "no.such.unit.exists"]) != 0
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

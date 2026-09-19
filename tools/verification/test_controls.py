@@ -335,6 +335,128 @@ def test_the_register_and_the_registry_agree_in_both_directions():
     assert declared - found == set(), sorted(declared - found)
 
 
+def _register_sections() -> dict[str, list[str]]:
+    """Each `## NP-…` record in the register, as its id mapped to its body lines."""
+    import re
+
+    from _controls import REPO_ROOT
+
+    register = REPO_ROOT / "docs" / "architecture" / "control-dispositions.md"
+    sections: dict[str, list[str]] = {}
+    current: list[str] | None = None
+    for line in register.read_text().splitlines():
+        heading = re.match(r"^## (NP-\d+|ND-\d+)", line)
+        if heading:
+            current = sections.setdefault(heading.group(1), [])
+        elif current is not None:
+            current.append(line)
+    return sections
+
+
+def _control_paragraph(body: list[str]) -> tuple[str, bool] | None:
+    """A record's `**Control(s):**` paragraph, and whether it was written in the singular.
+
+    The paragraph runs from the field line to the next blank line or the next `**Field:**`,
+    because a record naming several carriers wraps and the wrapped lines carry counts too.
+    """
+    for index, line in enumerate(body):
+        if line.startswith(("**Control:**", "**Controls:**")):
+            paragraph = [line]
+            for follower in body[index + 1 :]:
+                if not follower.strip() or follower.startswith("**"):
+                    break
+                paragraph.append(follower)
+            return " ".join(paragraph), line.startswith("**Control:**")
+    return None
+
+
+def test_each_record_states_the_number_of_controls_the_registry_holds():
+    """A count in the durable record is a claim about the registry, so it is checked.
+
+    `test_the_register_and_the_registry_agree_in_both_directions` goes red on a dead or a
+    missing record. It says nothing about a record that EXISTS and states a number the
+    registry contradicts, which is how the argv family's records came to state `cli.rs`'s
+    own test module as each proposition's total while the registry held the `cli/*_flags*`
+    submodules' rows as well. Sixteen records drifted that way before anything asked.
+
+    Two claims are read, and only claims:
+
+      * a paragraph carrying parenthesised counts claims their SUM;
+      * a paragraph written `**Control:**`, singular, claims exactly ONE.
+
+    A plural paragraph with no number claims nothing numeric and is outside this assertion;
+    inventing a claim for it is not this control's business.
+    """
+    import collections
+    import tomllib
+
+    from _controls import POLICY
+
+    raw = tomllib.loads((POLICY / "control-dispositions.toml").read_text())
+    rows = collections.Counter(
+        row["proposition"]
+        for row in raw.get("disposition", [])
+        if row.get("decision") == "new-proposition" and row.get("proposition")
+    )
+    sections = _register_sections()
+    assert sections, "no records parsed; the register went dark"
+
+    drifted = []
+    for entry in raw.get("proposition", []):
+        body = sections.get(entry["id"])
+        if body is None:
+            continue  # the id-set control above owns a missing record
+        paragraph = _control_paragraph(body)
+        if paragraph is None:
+            drifted.append(f"{entry['id']}: no **Control(s):** paragraph")
+            continue
+        text, singular = paragraph
+        import re as _re
+
+        stated = [int(number) for number in _re.findall(r"\((\d+)\)", text)]
+        held = rows.get(entry["id"], 0)
+        if stated:
+            if sum(stated) != held:
+                drifted.append(f"{entry['id']}: record states {sum(stated)}, registry holds {held}")
+        elif singular and held != 1:
+            drifted.append(f"{entry['id']}: record is singular **Control:**, registry holds {held}")
+    assert not drifted, "\n".join(sorted(drifted))
+
+
+def test_a_records_heading_and_its_registry_title_are_one_fact():
+    """The `##` heading and the `[[proposition]].title` are two spellings of one thing.
+
+    They drift silently and in the direction that matters: NP-112's title was widened to
+    "A host OR CLIENT signer …" to cover three `mcp-re-client` rows the record's heading,
+    its `**Controls:**` line and its three-clause statement all still described nothing
+    about. The registry then said a record covered six controls while the record described
+    three, which is the defect no count check reaches — a widened title is not a wrong
+    number, it is a record claiming a scope it never wrote down.
+
+    Compared case- and punctuation-insensitively: the heading is lowercase prose and the
+    title is a sentence, and neither spelling is the defect.
+    """
+    import re
+    import tomllib
+
+    from _controls import POLICY, REPO_ROOT
+
+    register = REPO_ROOT / "docs" / "architecture" / "control-dispositions.md"
+    headings = dict(re.findall(r"^## (NP-\d+) — (.+)$", register.read_text(), re.M))
+    raw = tomllib.loads((POLICY / "control-dispositions.toml").read_text())
+    assert headings, "no headings parsed; the register went dark"
+
+    def flatten(text: str) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+
+    disagreeing = [
+        f"{entry['id']}: heading {headings[entry['id']]!r} vs title {entry['title']!r}"
+        for entry in raw.get("proposition", [])
+        if entry["id"] in headings and flatten(headings[entry["id"]]) != flatten(entry["title"])
+    ]
+    assert not disagreeing, "\n".join(sorted(disagreeing))
+
+
 def test_an_unknown_key_in_the_registry_is_refused():
     """The registry's header promises it, so something has to keep the promise.
 
