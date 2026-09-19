@@ -337,10 +337,12 @@ remote peer can drive. These three are driven by the test, not by a reply.
 
 **Covers:** `mcp-re-http-profile` `doc#verified_response::bound::VerifiedMcpResponse`,
 `doc#verified_response::bound::VerifiedDelegatedMcpResponse`,
-`doc#verified_request::VerifiedMcpRequest`.
-**Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 8.
+`doc#verified_request::VerifiedMcpRequest`; `mcp-re-client-core`
+`doc#delegated_trust::DelegatedResponseTrust`.
+**Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 8; the client-core item added by
+the S-05/CL-CLIENT slice, which built its probes first.
 
-Four `compile_fail` examples over three items, each a hostile construction the type system
+Six `compile_fail` examples over four items, each a hostile construction the type system
 must refuse. ADR-MCPRE-068 §12.1 called these "the best worked example of the defect in the
 repository" — they were registered as `test://` evidence for a claim only a compile refusal
 can make — and Phase 0B/0D moved the claim to `structural://` probes S01, S02, S03 and S05,
@@ -363,6 +365,15 @@ simply not the control the claim rests on.
 annotation for doctests, or the probe for an item being withdrawn. Either makes the doctest
 the only control over that boundary again, and `test_structural_lane.py` already holds the
 case where a probe's documented example has drifted from what the registry says it does.
+
+**The ordering is part of the family, not a note beside it.** This record's own premise —
+that the example is *superseded by a probe* — was FALSE for
+`doc#delegated_trust::DelegatedResponseTrust` at `cf1cdf35`: `structural-probes.toml` held
+four `doc_item` rows and none of them named `delegated_trust`, so ADR-MCPRE-069 §2.1's named
+instance was covered by nothing at all. A control does not join this family because a probe
+is planned for it. S26 and S27 were registered and demonstrated green BEFORE that row was
+moved here, so at no point between the two states was the boundary claimed by a family whose
+reason had not yet become true.
 
 ## ND-011 — a carrier the legality model admits no deployment to reach
 
@@ -1281,40 +1292,6 @@ They serve the proxy and auditor integration lanes and the traceability manifest
 are several theorems rather than one, and no theorem in this registry states that a guard's
 declared inputs resolve. The referral and the shape a ratification would take are recorded in
 [`verification/reviews/packets/adr069-np-037-ratification-2026-09-19.md`](../../verification/reviews/packets/adr069-np-037-ratification-2026-09-19.md).
-
-## NP-038 — a revoked root's resolver is not obtainable
-
-**Control:** `mcp-re-client-core` `doc#delegated_trust::DelegatedResponseTrust` — two
-`compile_fail` examples.
-**Carrier:** `mcp-re-client-core/src/delegated_trust/mod.rs`'s `TrustedIssuerSet`.
-**Statement.** *`TrustedIssuerSet` hands out no response resolver and exposes no raw
-lifecycle lookup, so the pairing that made verifying under a REVOKED root possible — a
-resolver beside a foreign or empty revocation source, composed through
-`CompositeResponseTrust` — is not expressible. What remains public is `resolve_issuer`,
-which fails closed on a revoked issuer without consulting the caller's revocation half at
-all.*
-**If false.** A client verifies a response under a root that has been revoked, because the
-two halves of the trust answer were obtained separately and only one of them knew about the
-revocation. The file's own documentation says it: *two doors had to close, not one.*
-**Likely owner:** `client.trust_manifest_lifecycle` names this file in its `paths` and owns
-*which credential identifiers are revoked*. That is the FACT; this is the
-unconstructibility of a pairing that would route around it — a different and stronger
-claim, and registering the examples against the revocation clause would make that unit's
-evidence cover a seal its statement does not assert.
-**Root relationship.** Under the client response-trust roots.
-**Severity:** `critical`.
-**This is ADR-MCPRE-069 §2.1's own named instance.** That section predicted these two
-examples exist and are claimed by nothing, and used them to argue the first census was
-structurally blind to a whole control kind. They are still unclaimed on main.
-**And the ratification is NOT a doctest registration.** ND-010 records why a
-`compile_fail` example cannot attribute its refusal on the pinned stable toolchain. The
-form this should take is a `structural://` probe pair, exactly as ADR-MCPRE-068 Phase 0B
-did for the http-profile items: one probe per door, each naming the rustc error code the
-boundary earns — `E0599` for the withdrawn resolver and `E0624` for the `pub(crate)`
-lifecycle lookup — rather than a `test://` URI over an example that passes on any
-compile error at all.
-
----
 
 ## The external transparency auditor — NP-039 through NP-043
 
@@ -2479,13 +2456,135 @@ And the eight that did not leave, with the clause that decides each:
 **Split and partly registered, ADR-MCPRE-069 RM-S1.** The record covered five controls over two propositions and RR-002 C5 forbids one disposition over the set. THM-0002 SPLITS it in its own words. It CONTAINS the boundary half — *"The two endpoints specifically are reachable, and are pinned by boundary controls at their exact Unix seconds, but the claim is containment."* — so `boundary_lowest_admitted_instant`, `boundary_highest_admitted_instant` and `boundary_a_five_digit_year_is_refused` joined `unit://core.time_rfc3339`'s existing battery, with no new unit, no `paths` change and no new obligation: that unit is `proved`, and these are the controls its own theorem's scope cites. It EXCLUDES the formatter half in terms — *"It says nothing about the inverse direction: that unix_to_rfc3339_utc round-trips a value in this range is a different proposition with its own evidence."*
 **Why the helper control is here and not in the battery.** `fixed_digit_fields_are_total_outside_the_parser_widths` is not about the formatter at all, and the grouping it inherited from the scheduling analysis was imprecise. It was judged on its own. Three of its six assertions are inside THM-0002's reach and three — start 100, width 10, width 35 — are widths `parse_rfc3339_utc` never issues, so the control as a whole states a proposition about `parse_fixed_digits` as a standalone total function, strictly WIDER than THM-0002's claim about `parse_rfc3339_utc`. Clause 2 asks for a strict decomposition of a contained proposition; a wider one is not that, and a control cannot be split. Both rows stay. Packet at `verification/reviews/packets/adr069-np-109-ratification-2026-09-19.md`.
 
-## NP-111 — a verified reply's disposition is the one the receipt states
+## NP-111 — a rebuilt plain reply is a JSON-RPC response or it is nothing
 
-**Controls:** `mcp-re-client-proxy/src/proxy.rs`, `mcp-re-client-core/src/response.rs`.
-**Statement.** *A JSON-RPC error reply is carried through and NOT flattened to a null result; a verified error reply is classified as a failed call and not a success; a reply that is not a JSON-RPC response fails closed and an unparseable verified reply is a VERIFICATION failure rather than a bad request; an input-required reply and an unrecognized result type are never terminal; a verified rejection carries its execution contract to the local client and an UNSTATED contract produces no invented disposition; a post-dispatch rejection carries its execution and retry contract; a retention failure is readable as such; an out-of-range skew cannot widen the credential window; an ordinary result still rebuilds; the proxy-owned meta is stripped from the plain reply; and the reply carries the id THE PROXY SIGNED rather than the one the server echoed.*
-**If false.** The application is told the call succeeded, or failed, or did not run, on the strength of something the receipt did not say. `an_unstated_contract_is_not_a_did_not_run_verdict` and `an_unstated_contract_produces_no_invented_disposition` are the same rule in two crates: silence is not a verdict.
-**Likely owner:** none.
+**Controls:** `mcp-re-client-proxy/src/proxy.rs`'s `plain_response_from_verified` (6).
+**Statement.** *Rebuilding the plain MCP reply from the verified bytes yields a JSON-RPC
+response or it yields a refusal, and never something in between: a JSON-RPC `error` reply is
+carried through rather than flattened to a null result; a body that is not a single response
+object carrying EXACTLY ONE of `result`/`error` — an empty envelope, a batch array, a bare
+scalar, both members at once, a legal result beside a top-level `method` — fails closed;
+bytes that are not JSON at all are a VERIFICATION failure and never a malformed REQUEST,
+because the exchange has already run; an ordinary result still rebuilds; the proxy-owned
+`_meta` block is stripped from both positions; and the reply carries the id THE PROXY SIGNED
+rather than the one the server echoed.*
+**If false.** A signed reply the local client cannot act on is delivered as a completed tool
+call returning `null`, or a caller "fixes" its request after a 400 and retries a side effect
+the server already performed, or a server addresses its answer to a different outstanding
+call by choosing the id. Each one is a truthful-looking success the server never sent.
+**Likely owner:** none, and the asymmetry is the finding rather than an accident. The Python
+and TypeScript SDKs each have an `sdk_*.reply_envelope` unit over exactly this question; the
+Rust client proxy has none. Three implementations of one profile, two of which state the
+proposition and one of which does not.
+**Root relationship.** The reply-envelope proposition. No client theorem holds it: THM-0084
+owns the request/expectation pairing, THM-0126 owns what a verified reply ENTITLES, and
+THM-0061 owns what the receipt SAYS — none of the three says anything about the shape of the
+bytes handed back.
 **Severity:** `critical`.
+**Referred (R6).** Packet:
+[`verification/reviews/packets/adr069-np-111-ratification-2026-09-19.md`](../../verification/reviews/packets/adr069-np-111-ratification-2026-09-19.md).
+
+**What left this record in the S-05/CL-CLIENT slice.** It was filed whole over fifteen
+controls and held four independently describable propositions. Six are now registered
+evidence under THM-0061 in `client.proxy_reply_disposition` and
+`client.receipt_contract_carriage`; three moved to records of their own (NP-181, NP-182,
+NP-183); six remain here, and they are the ones that share a production function and a
+question.
+
+---
+
+## NP-181 — a verified error reply is a failed call at the place that decides
+
+**Control:** `mcp-re-client-proxy` `lib#proxy::tests::a_verified_error_reply_is_classified_as_a_failed_call_not_a_success`.
+**Carrier:** `mcp-re-client-proxy/src/verified_outcome.rs`'s `read_outcome`.
+**Statement.** *A verified reply carrying a JSON-RPC `error` member resolves to `CallFailed`
+carrying the server's code, and never to `Success`. `classify_result` reads the `result`
+member, an error reply has none, and an absent `result` classifies Terminal — which is the
+success label — so without a distinct arm the failure is announced to the local client as a
+completed call.*
+**If false.** A tool call that the inner backend failed is delivered to the application as a
+success. The signature verifies either way; what differs is what the server said, and the
+difference is not recoverable once the header has been written.
+**Why it is a record and not a registration, and this is the finding.** The control does not
+measure the production arm. It rebuilds the reply and then writes the selection itself —
+
+> ```rust
+> let kind = match plain.get("error").map(|e| e.get("code").and_then(Value::as_i64)) {
+>     Some(code) => ResponseKind::CallFailed { code },
+>     None => match classify_result(plain.get("result")) { … },
+> };
+> ```
+
+— which is a transcription of `read_outcome`'s first arm, not a call to it. Delete that arm
+from `verified_outcome.rs` and this control stays GREEN. It is the shape this repository has
+ruled on before: name the production function whose change turns it red, or it is a
+tautology. What it does establish is that `plain_response_from_verified` carries the `error`
+member through, and NP-111's first clause already owns that.
+**Likely owner.** `client.verified_outcome` under THM-0126, whose statement covers the
+composition — but not with this control. The registration this record refuses is the
+attractive one: the unit's project and file are right, and its battery would then hold a
+control that cannot go red on any edit to the file. Closing it means a control that CALLS
+`read_outcome`, next to the five that already do, and that is production-adjacent work this
+slice did not have authority for.
+**Severity:** `critical`.
+**Referred (R6).** Packet:
+[`verification/reviews/packets/adr069-np-181-ratification-2026-09-19.md`](../../verification/reviews/packets/adr069-np-181-ratification-2026-09-19.md).
+
+---
+
+## NP-182 — an unstated contract is not a did-not-run verdict
+
+**Control:** `mcp-re-client-core` `lib#response::delegated_tests::an_unstated_contract_is_not_a_did_not_run_verdict`.
+**Carrier:** `mcp-re-client-core/src/execution_contract.rs`.
+**Statement.** *`ExecutionStatus::Unstated` and `ExecutionStatus::NotExecuted` are distinct
+inhabitants; an empty contract is not stated, reports neither a consumed continuation nor a
+failed retention, and yields `RetrySafety::Unstated`; and a token this client does not know
+is `Unrecognized` carrying the string, is STATED, and refuses the retry.*
+**If false.** "Unknown whether it ran" becomes "it did not run" at the one call site that
+decides whether to retry, and a side effect is performed a second time.
+**Why it is a record and not a registration.** The proposition is THM-0061's first clause,
+and it is already registered: `client.execution_contract` holds
+`a_receipt_that_says_nothing_is_not_a_receipt_that_says_it_did_not_run` and
+`an_unrecognized_value_is_carried_and_never_read_as_a_known_one` over the same production
+property, in the owner's own module. This control is a superset of the two, and its BODY
+lives in `response.rs` — a file `client.execution_contract` does not list in `paths` and
+therefore does not digest. Registering it would give that unit a control it could lose the
+body of without its fingerprint moving, which is the drift `_fingerprint._test_sources`
+exists to stop, arriving through the one door it cannot see.
+**What would close it.** Moving the control into `execution_contract.rs`'s own `mod tests`
+and adding the selector to `client.execution_contract`. That is a source move, and moving a
+test is the operation this repository has measured as breaking several tables at once, so it
+is not a registry edit and did not belong in this slice.
+**Severity:** `high`.
+**Referred (R6).** Packet:
+[`verification/reviews/packets/adr069-np-182-ratification-2026-09-19.md`](../../verification/reviews/packets/adr069-np-182-ratification-2026-09-19.md).
+
+---
+
+## NP-183 — a configured clock skew cannot widen the credential window
+
+**Control:** `mcp-re-client-core` `lib#response::delegated_tests::an_out_of_range_skew_cannot_widen_the_credential_window`.
+**Carrier:** `mcp-re-client-core/src/response.rs`, the delegation verify parameters.
+**Statement.** *The operator-configured `max_clock_skew` does not reach the credential's
+`nbf`/`exp` window unclamped: a receipt whose RFC 9421 freshness is current at the
+verification instant, signed off a credential that expired long before it, fails on the
+CREDENTIAL window rather than being admitted by a skew allowance.*
+**If false.** An operator who sets a week of skew gets a week on the delegated credential's
+TTL — the bound on a compromised delegated key's exposure — while the signature gate they
+could observe is silently clamped, so testing the setting shows nothing wrong. That is the
+worst shape a configuration defect takes: the observable half behaves and the unobservable
+half does not.
+**Why it is here at all.** It was filed as one of NP-111's fifteen and is not a reply-
+disposition control in any reading. The receipt's disposition is not what it measures; the
+credential's validity window is. Nothing in NP-111's statement, in THM-0061 or in THM-0126
+asks the question, and the units that do own credential validity —
+`client.response_signer_authorization` under THM-0058 — state WHICH signer is authorized
+rather than how long the material stays current under a configured skew. Whether that
+theorem's clause contains this is the ratification question, and answering it needs the
+owner rather than this slice.
+**Severity:** `critical`.
+**Referred (R6).** Packet:
+[`verification/reviews/packets/adr069-np-183-ratification-2026-09-19.md`](../../verification/reviews/packets/adr069-np-183-ratification-2026-09-19.md).
 
 ## NP-112 — a host signer signs under its own identity and renders no key
 

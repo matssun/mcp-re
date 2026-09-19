@@ -4187,6 +4187,114 @@ tested_symbols = [
   "lib#verified_outcome::tests::a_verified_rejection_receipt_is_an_answer_and_never_a_success",
 ]
 
+# ---------------------------------------------------------------------------
+# The delegated-response trust authority's seal — ADR-MCPRE-069 NP-038
+# ---------------------------------------------------------------------------
+#
+# THM-0057's statement ends on the clause this unit decomposes: "the revocation half is
+# carried by the same authority as the resolution half". That is a claim about a PAIRING,
+# and the only thing attacking it was two ```compile_fail examples in
+# `delegated_trust/mod.rs`. ND-010 records why such an example cannot attribute its refusal
+# on the pinned stable toolchain — rustdoc's expected-error-code annotation is checked only
+# on nightly, so `compile_fail,E0599` and bare `compile_fail` are the same declaration — and
+# ADR-MCPRE-069 §2.1 named these two examples as its own instance of a control kind the
+# first census was structurally blind to. The boundary was documented and measured by
+# nothing.
+#
+# `client.trust_manifest_lifecycle` lists the same two files in its `paths`, and "it is in
+# the paths" is not the argument this unit is justified by. That unit is `tested` and its
+# claim is the FACT the trust document states — which identifiers are revoked, and for how
+# long a root anchors. This is the unconstructibility of a pairing that would route around
+# the fact: a different and stronger claim, and registering the examples against the
+# revocation clause would make a tested unit's evidence cover a seal its statement does not
+# assert.
+[[unit]]
+id = "client.delegated_trust_pairing_seal"
+class = "V0"
+description = "THE TWO HALVES OF THE DELEGATED-RESPONSE TRUST ANSWER CANNOT BE OBTAINED SEPARATELY BY A DOWNSTREAM CONSUMER: `TrustedIssuerSet` hands out no response resolver at all, and its raw lifecycle lookup — which answers ROTATION and returns a revoked root's actor — is `pub(crate)`, so neither can be lifted out and paired with a foreign or empty `RevocationSource` through `CompositeResponseTrust`. The pairing that made verifying a response under a REVOKED root possible is therefore not expressible, rather than merely not written: what remains public is `resolve_issuer`, which fails closed on a revoked issuer without consulting the caller's revocation half at all. States nothing about WHICH identifiers are revoked, which roots anchor, or how long the document lives — that is `client.trust_manifest_lifecycle`'s — and nothing about whether a response verified under a resolved anchor is an answer to this request."
+paths = [
+  "mcp-re-client-core/src/delegated_trust/mod.rs",
+  "mcp-re-client-core/src/delegated_trust/anchors.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "critical"
+evidence = [
+  "structural://client/delegated_trust/pairing_seal",
+]
+
+# ---------------------------------------------------------------------------
+# What a verified reply's disposition is — ADR-MCPRE-069 NP-111
+# ---------------------------------------------------------------------------
+#
+# THM-0061 states the rule these two units decompose: "`ExecutionStatus::Unstated` and
+# `ExecutionStatus::NotExecuted` are distinct inhabitants, and a rejection body carrying no
+# execution contract yields the silent one rather than a guess. An unrecognized value is
+# carried as unrecognized and never read as a known one, a spent elicitation is reported as
+# requiring a new one rather than as an ordinary failure, and a failed retention obligation
+# survives beside whatever the execution status says." Its scope says what that covers:
+# "What the receipt SAYS, and what a client may conclude from it."
+#
+# TWO UNITS AND NOT ONE, and the split is forced rather than chosen. A unit's project is
+# derived from its `paths`, and the census resolves a `tested_symbols` entry only inside that
+# project — so one unit cannot hold both a `mcp-re-client-proxy` control and a
+# `mcp-re-client-core` one, whatever its description says. The boundary the constraint
+# happens to fall on is the real one: one is the client library's verifier carrying a
+# receipt's statement out of verification, the other is the shipped proxy rendering that
+# statement into the plain JSON-RPC a local agent reads. They fail differently — the first
+# loses a statement the receipt made, the second invents one the receipt did not — and
+# neither falsifier reddens one control of the other.
+#
+# NOT registered into `client.execution_contract`, which is where the VOCABULARY lives.
+# Its `paths` are `execution_contract.rs` and `result_classification.rs`; every control below
+# has its body in `proxy.rs` or `response.rs`, so that unit would derive FRESH over a battery
+# whose bytes it does not digest — the exact drift `_fingerprint._test_sources` exists to
+# stop, arriving through the one door it cannot see.
+#
+# Severity is `high`, matching THM-0061 and `client.execution_contract`. The ADR-069 record
+# grades NP-111 `critical`; the theorem that contains the proposition grades the same
+# consequence `high`, and a decomposition may not raise what is at stake.
+
+[[unit]]
+id = "client.proxy_reply_disposition"
+class = "V0"
+description = "WHAT THE SHIPPED PROXY TELLS A LOCAL AGENT A VERIFIED REPLY MEANS, IN BOTH DIRECTIONS AT ONCE: on the rejection path only the members the receipt ACTUALLY CARRIED are emitted — an absent `execution_status` stays absent rather than becoming `not_executed`, an absent `retention_status` is not invented, and a receipt carrying neither a wire code nor a contract emits no `data` member at all rather than an empty object that reads as a statement — while a receipt that DID state its contract carries the frozen wire code and the whole ADR-MCPRE-058 §10 execution/retry contract into the ordinary `error.data` in one object, because the party deciding whether to retry is the local agent. On the success path the rebuild that strips the proxy-owned evidence block leaves the reply's own discriminator INTACT, so an `input_required` reply still classifies non-terminal and a `resultType` this client does not recognize still classifies unrecognized after the rebuild exactly as before it. Neither inventing a disposition nor losing one. States NOTHING about the SHAPE of the rebuilt envelope — which bodies are refused as not being JSON-RPC responses, what is stripped, which id is written — and nothing about whether the receipt's statement is TRUE, which is the serving path's."
+paths = ["mcp-re-client-proxy/src/proxy.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://client/proxy/reply_disposition",
+  "mutation://client/proxy/reply_disposition",
+]
+# Two directions, two controls each, and the pairing is what the two falsifiers locate.
+# M332 invents absent members and reddens the first pair only; M333 drops the discriminator
+# during the rebuild and reddens the second pair only. A unit holding one pair would report
+# the other weakening as no change at all.
+tested_symbols = [
+  "lib#proxy::tests::a_verified_rejection_carries_its_execution_contract_to_the_local_client",
+  "lib#proxy::tests::an_unstated_contract_produces_no_invented_disposition",
+  "lib#proxy::tests::an_input_required_reply_does_not_classify_as_terminal",
+  "lib#proxy::tests::an_unrecognized_result_type_is_never_terminal",
+]
+
+[[unit]]
+id = "client.receipt_contract_carriage"
+class = "V0"
+description = "A VERIFIED REJECTION RECEIPT'S EXECUTION AND RETENTION CONTRACT SURVIVES VERIFICATION AND REACHES THE CALLER AS TYPED STATE: a post-dispatch refusal arrives as possibly-executed and unsafe-without-reconciliation rather than as an ordinary outage; a refusal that spent an elicitation and ran NOTHING arrives as requiring a NEW elicitation, which is a different remedy from reconciliation and must not read as it; and an indeterminate retention obligation is readable as its own fact beside whatever the execution status says. The contract is lifted from the same receipt body the delegated signature covered, onto the outcome the verifier returns, so a caller holding a verified rejection holds what the server stated about execution rather than a wire code alone. States NOTHING about what the contract VOCABULARY means — the Unstated/NotExecuted distinction and the unrecognized-token rule are `client.execution_contract`'s — and nothing about whether the receipt answers THIS request, which is `client.response_binding_disposition`'s."
+paths = ["mcp-re-client-core/src/response.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://client/response/receipt_contract_carriage",
+  "mutation://client/response/receipt_contract_carriage",
+]
+tested_symbols = [
+  "lib#response::delegated_tests::a_post_dispatch_rejection_carries_its_execution_and_retry_contract",
+  "lib#response::delegated_tests::a_retention_failure_is_readable_as_such",
+]
+
 # ---------------------------------------------------------------------------------------
 # Stage 5 — the response-emission cluster.
 #
