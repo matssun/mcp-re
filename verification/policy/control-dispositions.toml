@@ -6486,33 +6486,9 @@ proposition = "NP-087"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-14005"
-project = "mcp-re-http-profile"
-control = "lib#block::tests::block_round_trips"
-decision = "new-proposition"
-proposition = "NP-087"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-14006"
 project = "mcp-re-http-profile"
 control = "lib#block::tests::different_audiences_on_one_endpoint_hash_differently"
-decision = "new-proposition"
-proposition = "NP-087"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-14007"
-project = "mcp-re-http-profile"
-control = "lib#block::tests::empty_artifact_bindings_fails_closed"
-decision = "new-proposition"
-proposition = "NP-087"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-14008"
-project = "mcp-re-http-profile"
-control = "lib#block::tests::foreign_profile_fails_closed"
 decision = "new-proposition"
 proposition = "NP-087"
 recorded = "2026-09-19"
@@ -6529,14 +6505,6 @@ recorded = "2026-09-19"
 id = "CD-14010"
 project = "mcp-re-http-profile"
 control = "lib#block::tests::the_escape_marker_itself_does_not_create_a_collision"
-decision = "new-proposition"
-proposition = "NP-087"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-14011"
-project = "mcp-re-http-profile"
-control = "lib#block::tests::unknown_field_fails_closed"
 decision = "new-proposition"
 proposition = "NP-087"
 recorded = "2026-09-19"
@@ -6614,14 +6582,6 @@ proposition = "NP-088"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-14021"
-project = "mcp-re-http-profile"
-control = "lib#body::tests::absent_block_is_missing_evidence"
-decision = "new-proposition"
-proposition = "NP-088"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-14022"
 project = "mcp-re-http-profile"
 control = "lib#body::tests::an_escaped_duplicate_member_name_is_refused_like_a_plain_one"
@@ -6633,38 +6593,6 @@ recorded = "2026-09-19"
 id = "CD-14023"
 project = "mcp-re-http-profile"
 control = "lib#body::tests::an_integer_the_round_trip_would_alter_is_refused_not_rewritten"
-decision = "new-proposition"
-proposition = "NP-088"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-14024"
-project = "mcp-re-http-profile"
-control = "lib#body::tests::foreign_field_fails_closed"
-decision = "new-proposition"
-proposition = "NP-088"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-14025"
-project = "mcp-re-http-profile"
-control = "lib#body::tests::insert_preserves_existing_meta_entries"
-decision = "new-proposition"
-proposition = "NP-088"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-14026"
-project = "mcp-re-http-profile"
-control = "lib#body::tests::insert_then_extract_roundtrips"
-decision = "new-proposition"
-proposition = "NP-088"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-14027"
-project = "mcp-re-http-profile"
-control = "lib#body::tests::non_object_body_fails_closed"
 decision = "new-proposition"
 proposition = "NP-088"
 recorded = "2026-09-19"
@@ -6913,7 +6841,7 @@ record = "docs/architecture/control-dispositions.md#np-092"
 
 [[proposition]]
 id = "NP-094"
-title = "A refusal carries its own provenance and is read only after verification"
+title = "A refusal is a document, and its wire code is read only after the signature verifies"
 carrier = "mcp-re-http-profile: src/rejection/mod.rs"
 likely_owner = ""
 consequence = "critical"
@@ -6991,15 +6919,6 @@ likely_owner = ""
 consequence = "critical"
 root_relationship = "a premise of the http_profile units that measure these files"
 record = "docs/architecture/control-dispositions.md#np-102"
-
-[[proposition]]
-id = "NP-103"
-title = "Dispatch admits only what verified"
-carrier = "mcp-re-http-profile: tests/dispatch_test.rs"
-likely_owner = ""
-consequence = "critical"
-root_relationship = "a premise of the http_profile units that measure these files"
-record = "docs/architecture/control-dispositions.md#np-103"
 
 [[proposition]]
 id = "NP-104"
@@ -7089,70 +7008,6 @@ project = "mcp-re-http-profile"
 control = "lib#delegation::tests::signer_seam_is_wire_identical_to_the_in_process_path"
 decision = "new-proposition"
 proposition = "NP-095"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15027"
-project = "mcp-re-http-profile"
-control = "lib#error::core_projection::tests::absent_evidence_and_malformed_evidence_are_different_verdicts"
-decision = "new-proposition"
-proposition = "NP-094"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15028"
-project = "mcp-re-http-profile"
-control = "lib#error::core_projection::tests::an_outage_does_not_project_onto_an_actor_binding_failure"
-decision = "new-proposition"
-proposition = "NP-094"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15029"
-project = "mcp-re-http-profile"
-control = "lib#error::core_projection::tests::failure_classes_map_to_their_precise_codes"
-decision = "new-proposition"
-proposition = "NP-094"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15030"
-project = "mcp-re-http-profile"
-control = "lib#error::core_projection::tests::the_derived_token_is_the_projected_verdicts_own"
-decision = "new-proposition"
-proposition = "NP-094"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15031"
-project = "mcp-re-http-profile"
-control = "lib#error::core_projection::tests::the_projection_preserves_the_ratified_group_count"
-decision = "new-proposition"
-proposition = "NP-094"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15032"
-project = "mcp-re-http-profile"
-control = "lib#error::tests::a_context_carrying_failure_names_what_was_missing"
-decision = "new-proposition"
-proposition = "NP-094"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15033"
-project = "mcp-re-http-profile"
-control = "lib#error::tests::an_outage_is_not_an_untrusted_key"
-decision = "new-proposition"
-proposition = "NP-094"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15034"
-project = "mcp-re-http-profile"
-control = "lib#error::tests::omission_and_tampering_are_different_failures"
-decision = "new-proposition"
-proposition = "NP-094"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -7633,22 +7488,6 @@ project = "mcp-re-http-profile"
 control = "tests/admission_binding_test#tampering_the_admission_binding_breaks_the_signature"
 decision = "new-proposition"
 proposition = "NP-105"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15119"
-project = "mcp-re-http-profile"
-control = "tests/dispatch_test#fleet_strict_admits_durable_cache"
-decision = "new-proposition"
-proposition = "NP-103"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15120"
-project = "mcp-re-http-profile"
-control = "tests/dispatch_test#fleet_strict_rejects_single_process_reference_cache"
-decision = "new-proposition"
-proposition = "NP-103"
 recorded = "2026-09-19"
 
 [[disposition]]
