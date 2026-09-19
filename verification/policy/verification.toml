@@ -933,7 +933,14 @@ tested_symbols = [
   "lib#tls_listener_state::tests::a_rebuild_keeps_the_cache_and_the_epoch_of_the_state_it_was_built_through",
   "lib#tls_listener_state::tests::a_different_anchor_set_is_a_different_state_with_its_own_empty_cache",
   "lib#tls_listener_state::tests::no_config_this_owner_builds_can_resume_outside_the_store",
-  "lib#tls_listener_state::tests::a_delegated_rebuild_reuses_the_listeners_signing_budget",
+  "lib#tls_listener_state::tests::a_delegated_rebuild_reuses_the_listeners_signing_budget",  # ADR-MCPRE-069 batch 19. This statement names the SIGNING BUDGET as one of the four terms
+  # a listener obtains through one state. These three are that term measured: the budget
+  # bounds remote-signer invocations, refills over time, and — the one a bound normally
+  # loses — a poisoned budget lock still signs and counts the panic ONCE rather than either
+  # failing closed on a lock or losing the count.
+  "lib#delegated_tls::tests::handshake_signature_budget_bounds_remote_signer_invocations",
+  "lib#delegated_tls::tests::handshake_signature_budget_refills_over_time",
+  "lib#delegated_tls::tests::a_poisoned_budget_lock_still_signs_and_counts_the_panic_once",
 ]
 
 # THM-0054 IS `critical` AND HAD NO FALSIFIER. It shared a unit with THM-0048 and THM-0103,
@@ -7619,7 +7626,13 @@ tested_symbols = [
   "lib#trust_epoch::tests::a_source_outage_flushes_nothing_and_the_deadline_still_governs",
   # The reader's one local rule about a foreign read's meaning. Exists only under
   # `redis_replay`, which is why `test_features` names it.
-  "lib#trust_epoch::tests::an_absent_epoch_key_is_a_read_failure_not_epoch_zero",
+  "lib#trust_epoch::tests::an_absent_epoch_key_is_a_read_failure_not_epoch_zero",  # ADR-MCPRE-069 batch 19. Two controls in this unit's own file, each a clause of this
+  # statement that its other controls do not reach: a source driven DIRECTLY is not subject
+  # to the poller's liveness bound — the bound is the poller's property and not the source's
+  # — and one epoch read cannot consume the rotation overlap, which is what keeps a single
+  # read from spending the window the rotation depends on.
+  "lib#trust_epoch::tests::a_directly_driven_source_is_not_subject_to_the_liveness_bound",
+  "lib#trust_epoch::tests::one_epoch_read_cannot_consume_the_rotation_overlap",
 ]
 # The Redis reader and its two controls exist only under this feature. Named so the
 # fingerprint says the battery measured the crate that carries the networked source, not
@@ -8484,7 +8497,15 @@ tested_symbols = [
   # The quota wiring: this adapter passes ITS OWN signals to the shared rule. THM-0115 owns
   # the rule; these two establish the data reaching it is this provider's.
   "lib#aws_kms_keysource::tests::only_account_quota_failures_reach_the_exhausted_verdict",
-  "lib#aws_kms_keysource::tests::a_throttled_tls_sign_stops_calling_kms_for_the_cooldown",
+  "lib#aws_kms_keysource::tests::a_throttled_tls_sign_stops_calling_kms_for_the_cooldown",  # ADR-MCPRE-069 batch 19. This statement ends "over a MINIMAL AUDITED SigV4", and until now
+  # nothing measured that clause: the adapter's controls exercise the KMS operations and the
+  # SigV4 that carries them had no declared evidence at all. A canonical shape that drifts
+  # makes every request unsignable; one that drifts WRONG makes them signable by the wrong
+  # key. The published GET-vanilla vector is the external fixed point.
+  "lib#aws_sigv4::tests::sigv4_matches_published_get_vanilla_vector",
+  "lib#aws_sigv4::tests::kms_sign_request_canonical_shape_is_stable",
+  "lib#aws_sigv4::tests::empty_payload_hash_is_well_known",
+  "lib#aws_sigv4::tests::session_token_is_signed_and_returned",
 ]
 
 [[unit]]

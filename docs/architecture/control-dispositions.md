@@ -2342,3 +2342,136 @@ them.
 **Likely owner:** none.
 **Severity:** `high`.
 
+---
+
+## The proxy's top-level source — NP-114 through NP-128
+
+117 controls in `mcp-re-proxy/src/*.rs` and `src/continuation_store/`. Nine REGISTER into
+three units whose own statements name the clause the control measures — the "minimal audited
+SigV4" the AWS adapter's statement ends on, the poller's liveness bound and the rotation
+overlap, and the signing budget `proxy.listener_state_assembly` lists as one of its four
+terms. Four more attach to propositions this campaign already recorded.
+
+The rest are fifteen propositions, and one of them is **ADR-MCPRE-069 §3's own worked
+instance**, still unclaimed on main.
+
+## NP-114 — a KMS access token is fetched once, reused honestly, and never extended
+
+**Controls:** `mcp-re-proxy/src/gcp_kms_keysource.rs`.
+**Statement.** *A token response yields the credential and its lifetime and an empty or absent access token is refused; a STATED expiry is never extended by the reuse floor and an unestablishable lifetime is reported as a fact rather than read as a stated one; an unreadable `expires_in` is reused briefly rather than refetched every call, including when every clock read differs; concurrent callers perform ONE metadata fetch between them and a failed fetch is not repeated by every waiter; a 401 discards the token and retries once, a persistent 401 stops costing a refetch per call, a 403 does NOT discard a valid token, and only a refusal with a token to discard costs a second call; the failure cool-off expires, a success clears it, a backwards clock step does not extend it, and it must outlast the network timeout as the unknown-expiry floor must outlast the refresh margin; invalidating a token another thread already replaced is a no-op and invalidating the source forces a re-fetch; a poisoned token lock still serves tokens; the access token is MOVED out of the parsed document; and two token sources share neither a cache nor a flight.*
+**If false.** The response signer cannot sign — because a 403 threw away a good token, because a persistent 401 turned every call into a metadata fetch, or because a cool-off outlived its own reason — or it signs with a credential past its stated expiry because a reuse floor extended it. `proxy.gcp_kms_adapter` states what the SIGNER does; this is how it gets the credential to do it, and it is a different authority with twenty-three controls and no claim.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-115 — the delegated TLS signer offers Ed25519 and nothing else
+
+**Controls:** `mcp-re-proxy/src/delegated_tls.rs`.
+**Statement.** *The handshake offers Ed25519 ONLY; the signer scheme is Ed25519 and the signature is 64 bytes; and a wrong-length signature fails closed.*
+**If false.** The TLS handshake negotiates a scheme the remote signer does not implement, or accepts a signature of the wrong length as a valid one. This is NP-002's containment argument at the handshake: the set of algorithms offered is the set that can be used.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-116 — channel peer resolution yields the identity the relationship authenticated as
+
+**Controls:** `mcp-re-proxy/src/tls.rs`.
+**Statement.** *Direct TLS resolves the identity the relationship AUTHENTICATED AS; each relationship resolves its own peer's identity and a resumed one resolves the same identity as a full handshake; a leaf without the configured field and an absent acceptance each resolve NO identity; an issuer in the accepted chain never becomes the transport identity; and an LB-assertion deployment resolves no transport identity at all.*
+**If false.** The proxy attributes a request to a peer that did not authenticate as that peer — by promoting an issuer out of the chain, by resolving an identity from a resumed session that differs from the handshake's, or by producing a transport identity in a deployment where the channel is terminated in front of it. The last is the sharpest: under an LB assertion there IS no transport identity, and producing one would let NP-074's guarantee be read as end-to-end.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-117 — every deployment classifies to exactly one currency policy, read at call time
+
+**Controls:** `mcp-re-proxy/src/tls.rs`.
+**Statement.** *Every deployment classifies to EXACTLY ONE currency policy, and the policy reads the index in force AT THE TIME OF THE CALL.*
+**If false.** Two policies are applicable and which one applies depends on the reader, or a call is decided against an index that has since been replaced — so a revocation that landed before the call is not in force for it.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-118 — a trust snapshot swaps atomically and a held one never changes
+
+**Controls:** `mcp-re-proxy/src/reloading_trust.rs`.
+**Statement.** *A reader never observes a snapshot built from two different reads; a snapshot a reader already holds is unaffected by later swaps; the shared handle observes the swap; a swapped store revokes WITHOUT A RESTART; and every edit moves the resolver and the signer set TOGETHER.*
+**If false.** A request is decided against half of one trust document and half of another. `proxy.trust_resolution_window` says it takes the materialized snapshot AS AN INPUT AUTHORITY — this is the premise that makes that legitimate, and nothing claimed it.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-119 — a continuation leg is established exactly once
+
+**Controls:** `mcp-re-proxy/src/continuation_store/mod.rs`, `mcp-re-proxy/src/redis_continuation_store.rs`.
+**Statement.** *The first open leg stores; a second open on a LIVE key is refused and changes nothing; concurrent creators yield exactly ONE stored; an expired key may be established again; a backing failure is UNAVAILABLE and never a collision; and at the Redis backend the open leg records the bases under an NX-guarded, bounded PX TTL, a taken key answers collision rather than an error, and a non-positive TTL still asks for an expiring entry.*
+**If false.** Two writers each believe they opened the same continuation leg, so an answer leg signs over bases that belong to the other — or a backing outage is reported as a collision, which tells the caller the leg exists when nobody knows. THIS IS ADR-MCPRE-069 §3's OWN WORKED INSTANCE: five controls in `continuation_store/mod.rs` that the record used to show that a proposition can be real, passing, and claimed by nothing. `proxy.continuation_correlation_store` registers two controls from the same file and states a different proposition — reachability by the resolved actor and the peek/consume split — and §5 forbids widening it to cover establishment. The three Redis controls are the same proposition at the backend and are recorded with them.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-120 — the shared replay store admits a nonce once, across instances
+
+**Controls:** `mcp-re-proxy/src/shared_replay.rs`.
+**Statement.** *A fresh request is admitted and a replay refused on one instance; a request inserted via instance A is a replay via instance B; distinct tuples do not alias; an already-stale request is rejected PRE-STORE and not recorded as fresh; a non-positive window is flagged stale pre-store; the skew folded into `retain_until` matches the in-memory semantics; the ceiling FAILS CLOSED when full and the store recovers once its entries expire; a stale request via the shared cache fails closed; and the durability class delegates to the backing store.*
+**If false.** A replayed request is admitted — because the second instance never saw the first's insert, because two distinct tuples aliased to one key, or because a full store failed open. 'Rejected pre-store and NOT RECORDED AS FRESH' is the clause that keeps a stale request from consuming the slot that would have caught its replay.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-121 — a replay tier's published guarantee is its own
+
+**Controls:** `mcp-re-proxy/src/replay_tier.rs`.
+**Statement.** *Every tier has a non-empty guarantee and NO TIER CLAIMS UNCONDITIONAL; a tier promising wait supplies its wait parameters and wait-quorum parsing extracts the quorum and timeout; the async tier's claim ceiling is not linearizable; the strict production minimum is wait-quorum or stronger; parsing round-trips the simple tiers and refuses unknown and malformed ones; the wire names are the semantic ADR names; and the startup audit line carries the backend, tier and guarantee and NO NONCE.*
+**If false.** A deployment publishes a replay guarantee it does not have, or an async tier is read as linearizable. This is NP-063's proposition for the other tier vocabulary, and the two are recorded separately because they are two vocabularies with two ceilings — the audit-line clause differs too: no key material there, no NONCE here.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-122 — the handshake quota opens on quota failures only, and never shortens
+
+**Controls:** `mcp-re-proxy/src/handshake_quota.rs`.
+**Statement.** *ONLY quota failures open the window; a throttled signature stops calling the signer for the cooldown; a successful probe reopens the path AT ONCE and does not clear a window armed later; only one handshake probes at the cooldown boundary; a straggler cannot SHORTEN the window; a slow throttled call still opens a live window; the window is never shorter than the network timeout; and a poisoned window lock still signs.*
+**If false.** A remote signer under quota pressure is hammered by every handshake — or, in the other direction, an unrelated failure opens a cooldown and the listener stops signing for a reason that was never quota. 'A straggler cannot shorten the window' is the race: a late reply from before the window must not end it.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-123 — a serving capability is ON with an artifact or OFF with an explanation
+
+**Controls:** `mcp-re-proxy/src/serving_capabilities.rs`.
+**Statement.** *An ON posture ALWAYS carries an artifact and an OFF posture never does; every OFF line tells the operator what to do about it; evidence retention attaches a store only for a NAMED directory and an unopenable retention directory refuses startup NAMING THE FLAG; the security-audit posture follows the classified audit state; and the verified-context carrier is attached only for a trusted inner channel.*
+**If false.** A capability reports ON while carrying nothing, so the transcript says a protection is active that is not. The OFF-line clause is NP-004's operator problem solved from the other side: not merely that a seam states its posture, but that the statement is actionable.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-124 — a control-plane runtime exists only where it is needed, and outlives no owner
+
+**Controls:** `mcp-re-proxy/src/control_runtime.rs`.
+**Statement.** *A deployment that needs no control-plane client starts NO runtime; a single contributor is enough and no contributor is not; every consumer receives a handle to the SAME runtime; a runtime built before a later failure does not escape it; and dropping the owner stops work a surviving handle had started.*
+**If false.** A runtime outlives the failure that should have torn it down, or a surviving handle keeps work going after its owner is gone. NP-003 is the same rule for threads; this is it for the runtime that owns them.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-125 — a key source signs by delegation and never by export
+
+**Controls:** `mcp-re-proxy/src/key_source.rs`.
+**Statement.** *A boxed source signs BY DELEGATION AND NEVER BY EXPORT; an export attempt registers on the counter; a TLS-only source names no signing seed; the default is no delegated TLS signer; and the refusal vocabulary separates ABSENT from MALFORMED.*
+**If false.** Key material leaves the custody boundary through a source that was supposed to sign inside it. The counter is the measurement that makes 'never by export' checkable rather than asserted, and the absent/malformed separation is the same rule NP-106 makes about the primitive's errors.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-126 — a client CRL is loaded or the listener fails closed, and it must fall out of force
+
+**Controls:** `mcp-re-proxy/src/client_crl_publication.rs`.
+**Statement.** *A missing client-CRL file FAILS CLOSED; no CRL paths loads an empty vector; a CRL that states its nextUpdate is accepted; and a CRL that NEVER FALLS OUT OF FORCE is refused.*
+**If false.** A listener starts with a revocation list it could not read and believes it is enforcing revocation — or with one that never expires, so a stale list is trusted forever. 'Never falls out of force is refused' is the clause: a CRL without an expiry is not a permanent CRL, it is an unbounded one.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-127 — a configuration handle keeps serving the configuration it was taken under
+
+**Controls:** `mcp-re-proxy/src/config_snapshot.rs`.
+**Statement.** *A handle taken BEFORE a swap keeps serving its configuration; load returns the current one and store swaps; reload swaps on a successful rebuild and KEEPS THE LAST GOOD one on failure.*
+**If false.** An in-flight exchange is decided half under the old configuration and half under the new — NP-118's failure for configuration rather than trust — or a failed reload leaves the process with no configuration at all instead of the one that was working.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-128 — the deployment clock reads a plausible present and never runs backwards
+
+**Controls:** `mcp-re-proxy/src/clock.rs`.
+**Statement.** *The clock reads a plausible present instant, does not run backwards between reads, and a sane host clock is not diagnosed as faulted.*
+**If false.** Every freshness window, every expiry and every cool-off is computed against a clock that moved the wrong way. NP-065 decides what a FAULTED clock does; this is what makes 'faulted' a measurement rather than a guess, and its third clause is the false-positive arm.
+**Likely owner:** none.
+**Severity:** `high`.
+

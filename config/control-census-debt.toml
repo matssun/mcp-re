@@ -18,10 +18,6 @@ path = "mcp-re-proxy/tests/integration/tls_test.rs"
 baseline = 28
 
 [[file]]
-path = "mcp-re-proxy/src/gcp_kms_keysource.rs"
-baseline = 23
-
-[[file]]
 path = "mcp-re-proxy/tests/integration/app_startup_characterization_test.rs"
 baseline = 21
 
@@ -38,10 +34,6 @@ path = "mcp-re-proxy/tests/integration_async/http_inner_test.rs"
 baseline = 15
 
 [[file]]
-path = "mcp-re-proxy/src/shared_replay.rs"
-baseline = 13
-
-[[file]]
 path = "mcp-re-proxy/tests/integration_async/replay_race_harness_test.rs"
 baseline = 13
 
@@ -54,10 +46,6 @@ path = "mcp-re-proxy/src/http_inner/mod.rs"
 baseline = 11
 
 [[file]]
-path = "mcp-re-proxy/src/replay_tier.rs"
-baseline = 11
-
-[[file]]
 path = "mcp-re-proxy/src/blocking_mtls_harness/http1.rs"
 baseline = 10
 
@@ -66,16 +54,8 @@ path = "mcp-re-proxy/src/retained_evidence/store.rs"
 baseline = 10
 
 [[file]]
-path = "mcp-re-proxy/src/tls.rs"
-baseline = 10
-
-[[file]]
 path = "mcp-re-proxy/tests/integration_async/root_key_lifecycle_test.rs"
 baseline = 10
-
-[[file]]
-path = "mcp-re-proxy/src/handshake_quota.rs"
-baseline = 9
 
 [[file]]
 path = "mcp-re-proxy/src/tls_plane/mod.rs"
@@ -118,15 +98,7 @@ path = "mcp-re-proxy/src/authorization/verified_action.rs"
 baseline = 6
 
 [[file]]
-path = "mcp-re-proxy/src/delegated_tls.rs"
-baseline = 6
-
-[[file]]
 path = "mcp-re-proxy/src/managed_worker/mod.rs"
-baseline = 6
-
-[[file]]
-path = "mcp-re-proxy/src/serving_capabilities.rs"
 baseline = 6
 
 [[file]]
@@ -146,23 +118,7 @@ path = "mcp-re-proxy/tests/pkcs11_keysource_e2e_test.rs"
 baseline = 6
 
 [[file]]
-path = "mcp-re-proxy/src/continuation_store/mod.rs"
-baseline = 5
-
-[[file]]
-path = "mcp-re-proxy/src/control_runtime.rs"
-baseline = 5
-
-[[file]]
-path = "mcp-re-proxy/src/key_source.rs"
-baseline = 5
-
-[[file]]
 path = "mcp-re-proxy/src/materializing_runtime/mod.rs"
-baseline = 5
-
-[[file]]
-path = "mcp-re-proxy/src/reloading_trust.rs"
 baseline = 5
 
 [[file]]
@@ -210,19 +166,7 @@ path = "mcp-re-proxy/src/authorization/verified_actor.rs"
 baseline = 4
 
 [[file]]
-path = "mcp-re-proxy/src/aws_sigv4.rs"
-baseline = 4
-
-[[file]]
 path = "mcp-re-proxy/src/capability_materialization/ingress.rs"
-baseline = 4
-
-[[file]]
-path = "mcp-re-proxy/src/client_crl_publication.rs"
-baseline = 4
-
-[[file]]
-path = "mcp-re-proxy/src/config_snapshot.rs"
 baseline = 4
 
 [[file]]
@@ -278,10 +222,6 @@ path = "mcp-re-proxy/src/capability_materialization/key_source/pin.rs"
 baseline = 3
 
 [[file]]
-path = "mcp-re-proxy/src/clock.rs"
-baseline = 3
-
-[[file]]
 path = "mcp-re-proxy/src/communication_assurance/credential_currency/x509_adapter.rs"
 baseline = 3
 
@@ -303,10 +243,6 @@ baseline = 3
 
 [[file]]
 path = "mcp-re-proxy/src/redis_admission_source/refusal_report.rs"
-baseline = 3
-
-[[file]]
-path = "mcp-re-proxy/src/redis_continuation_store.rs"
 baseline = 3
 
 [[file]]
@@ -423,14 +359,6 @@ baseline = 2
 
 [[file]]
 path = "mcp-re-proxy/src/managed_worker/halt.rs"
-baseline = 2
-
-[[file]]
-path = "mcp-re-proxy/src/startup_posture.rs"
-baseline = 2
-
-[[file]]
-path = "mcp-re-proxy/src/trust_epoch.rs"
 baseline = 2
 
 [[file]]
@@ -566,15 +494,7 @@ path = "mcp-re-proxy/src/http_profile_serve/retention/mod.rs"
 baseline = 1
 
 [[file]]
-path = "mcp-re-proxy/src/inner_plane_bound.rs"
-baseline = 1
-
-[[file]]
 path = "mcp-re-proxy/src/kms_endpoint_policy/mod.rs"
-baseline = 1
-
-[[file]]
-path = "mcp-re-proxy/src/log_sink.rs"
 baseline = 1
 
 [[file]]
