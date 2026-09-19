@@ -837,3 +837,217 @@ to disagree about what it says.
 **Likely owner:** `sdk_python.authorization_binding`.
 **Severity:** `high`.
 
+---
+
+## The command line is an authority nothing owns — NP-025 through NP-035
+
+`mcp-re-proxy/src/cli.rs` holds **142 controls and is in no unit's `paths`.** It is the
+single largest unclaimed carrier in the repository, and its controls are not incidental:
+*a zero timeout is refused because it disables the slow-loris defense*, *attested ingress
+without pinned mTLS fails closed*, *the default build rejects the AWS KMS key source*, *a
+plaintext KMS endpoint to a remote host is refused*, *an argv PKCS#11 PIN is refused with
+the replacement named*.
+
+**It is invisible to the adjacent authority as well.** `scripts/unit_closure_gate.py`
+registers files the module tree REACHES from a measured unit; `cli.rs` is declared by a
+crate root no unit names, so it is not reached, and its production half is outside that
+register too. That is ADR-MCPRE-061's question and is referred there rather than answered
+here — but it is worth recording that two registers disagree about nothing, because neither
+can see this file.
+
+**Why these are propositions and not registrations.** The `config_state::*` units are
+carefully scoped to a CLASSIFIER at its own API — `proxy.cross_machine_legality` says so in
+terms: *"Every relation reads classified owner states rather than RAW REQUEST FIELDS."* The
+CLI is the authority one layer up: it decides what an operator can SAY, and it refuses
+things no classifier ever sees. `default_build_rejects_aws_kms_key_source` is a fact about
+a Cargo feature, `unknown_flag_errors` is a fact about the parser, and
+`argv_pkcs11_pin_is_refused_with_the_replacement_named` is a fact about a withdrawn flag.
+Registering these against a classifier unit would put the argv boundary inside a statement
+that explicitly excludes raw request fields.
+
+**Eleven propositions and not one.** *The command line admits no illegal deployment* needs
+an "and" for every authority it covers, and ADR-MCPRE-061 §8 question 1 is that an answer
+needing an "and" is a shallow boundary. Each of the eleven below has a distinct
+`config_state` neighbour one layer down, which is the evidence that the decomposition
+follows the estate's own seams rather than the file's headings.
+
+| id | proposition | controls | severity |
+|---|---|---:|---|
+| NP-025 | the parser is total and diagnoses completely | 11 | `medium` |
+| NP-026 | a key source is admitted only in a build that carries it, with its whole flag set | 30 | `critical` |
+| NP-027 | a KMS endpoint is a literal HTTPS authority, or loopback HTTP for an emulator | 8 | `critical` |
+| NP-028 | admission is off unless an argv names a complete enforcing configuration | 12 | `high` |
+| NP-029 | the strict guard is always on for a safe configuration and reports every violation at once | 17 | `critical` |
+| NP-030 | the client-certificate posture an argv can express fails closed by default | 20 | `critical` |
+| NP-031 | a replay tier is named exactly once and carries what it cannot run without | 11 | `critical` |
+| NP-032 | the trust-refresh posture an argv can express holds its cadence to its window | 14 | `high` |
+| NP-033 | attested ingress is configured whole or not at all | 9 | `critical` |
+| NP-034 | no command line disables a liveness bound | 4 | `high` |
+| NP-035 | the serving target an argv names binds something | 6 | `high` |
+
+## NP-025 — the parser is total and diagnoses completely
+
+**Controls:** `mcp-re-proxy/src/cli.rs` (11).
+**Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
+**Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
+**Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
+**Severity:** `medium`.
+
+*Every argv is answered: an unknown flag, a missing required flag and a bad
+value are each named, a command line wrong three ways is answered about all three, and every
+default a minimal configuration takes is stated rather than inferred.* If false, an operator
+who mistypes a security flag gets a deployment that silently omits it — the class where a
+misspelling reads as an absent declaration rather than as an error.
+
+## NP-026 — a key source is admitted only in a build that carries it
+
+**Controls:** `mcp-re-proxy/src/cli.rs` (30).
+**Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
+**Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
+**Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
+**Severity:** `critical`.
+
+*A key source reaches a deployment only from a build that carries it — the
+default build refuses AWS KMS, GCP KMS, PKCS#11 and the env source — and only with every
+flag that source cannot operate without; a TLS key named through a KMS may not also be
+exported; and the withdrawn argv PKCS#11 PIN is refused with its replacement named.* If
+false, a deployment signs under a key source nobody built for, or under a half-configured
+one, or an operator's PIN travels in a process argument list where every other process on
+the host can read it. `critical`, and the largest group in the file.
+
+## NP-027 — a KMS endpoint is a literal HTTPS authority
+
+**Controls:** `mcp-re-proxy/src/cli.rs` (8).
+**Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
+**Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
+**Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
+**Severity:** `critical`.
+
+*A KMS endpoint an operator names is an `https` URL with a literal host and no
+userinfo, or an `http` loopback for an emulator, and nothing else.* If false, key operations
+are directed at a host resolved by name at use time, over plaintext, or under credentials
+smuggled in an authority — three different ways to move signing to an endpoint the operator
+did not choose.
+
+## NP-028 — admission is off unless an argv names a complete enforcing configuration
+
+**Controls:** `mcp-re-proxy/src/cli.rs` (12).
+**Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
+**Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
+**Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
+**Severity:** `high`.
+
+*Admission is off by default; an enforcing configuration parses only with an
+authority and a source; a dangling setting, an unknown mode, both limits at once, a zero
+ceiling and an undecodable authority key are each refused; and an explicit ceiling equal to
+the default is not an absent one.* If false, a deployment reads as admitting nothing while
+admitting everything, or an operator's explicit choice is indistinguishable from silence —
+which is the provenance failure this repository has ruled on before.
+
+## NP-029 — the strict guard is always on, and reports every violation at once
+
+**Controls:** `mcp-re-proxy/src/cli.rs` (17).
+**Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
+**Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
+**Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
+**Severity:** `critical`.
+
+*The unsafe-configuration guard is on for every safe configuration, reports
+every violation of an unsafe one at once, and refuses the legacy CN identity source, a
+disabled or over-ceiling certificate lifetime, an LB assertion binding, a `none` transport
+binding and a weak replay durability tier — and a fully configured Mode C clears every
+completeness check and is still refused.* If false, the guard passes a deployment it exists
+to refuse, or reports one violation and hides the rest, so a fix produces a second failure
+and the operator learns the shape of the guard rather than the shape of the problem.
+
+## NP-030 — the client-certificate posture an argv can express fails closed by default
+
+**Controls:** `mcp-re-proxy/src/cli.rs` (20).
+**Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
+**Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
+**Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
+**Severity:** `critical`.
+
+*By default there are no CRLs, unknown revocation status fails closed and online
+OCSP is off and hard-fail; `client-ocsp-require` fails closed in every build; a responder URL
+without the requirement, an empty segment in a CRL or revocation list, an unparseable or
+overflowing certificate lifetime, and an unknown identity source are each refused; repeated
+and comma-separated CRL flags accumulate rather than replace; and a revocation list nothing
+consults is refused rather than accepted and ignored.* If false, a listener admits a client
+certificate whose revocation status was never established, and the deployment's transcript
+says it was configured to check.
+
+## NP-031 — a replay tier is named exactly once and carries what it cannot run without
+
+**Controls:** `mcp-re-proxy/src/cli.rs` (11).
+**Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
+**Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
+**Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
+**Severity:** `critical`.
+
+*Exactly one replay store is named; omitting the configuration is refused;
+naming both on one command line is refused; a shared store carries its URL and its
+durability tier; a linearizable tier carries its cpstore endpoint and a cpstore endpoint
+without one is refused; and a single node may take the file cache.* If false, a fleet runs
+on a node-local replay cache while reading as configured for a shared one — the exact
+deployment the shipped Helm chart's own guard refuses (NP-007).
+
+## NP-032 — the trust-refresh posture holds its cadence to its window
+
+**Controls:** `mcp-re-proxy/src/cli.rs` (14).
+**Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
+**Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
+**Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
+**Severity:** `high`.
+
+*A trust epoch is named; a URL-shaped epoch source and the push tier require
+each other; live and push tiers require a reload cadence and every cadence is held to the
+window it claims; the revocation tier defaults to a bounded cache; a degraded window is
+positive and its refusal names the clock-skew term; and the maximum clock skew is accepted
+across its whole bound and refused at parse outside it.* If false, a replica enforces a
+trust picture it stopped refreshing, or refreshes on a cadence longer than the window it
+claims to hold — a posture that states a currency it does not have.
+
+## NP-033 — attested ingress is configured whole or not at all
+
+**Controls:** `mcp-re-proxy/src/cli.rs` (9).
+**Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
+**Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
+**Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
+**Severity:** `critical`.
+
+*Attested ingress is configured whole or not at all: it requires an attestor key,
+an identity and an audience, it fails closed without pinned mTLS, its flags do not dangle
+without the binding, an invalid or malformed LB key is refused, a duplicate LB key id is
+refused, and an LB assertion binding requires at least one key.* If false, ingress
+attestation is half-configured — flags present, binding absent — and the deployment believes
+a hop it never verified.
+
+## NP-034 — no command line disables a liveness bound
+
+**Controls:** `mcp-re-proxy/src/cli.rs` (4).
+**Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
+**Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
+**Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
+**Severity:** `high`.
+
+*No command line disables a liveness bound: a zero timeout is refused because it
+disables the slow-loris defense, the connection-age bound is defaulted and zero is refused,
+a request deadline over the cap is refused, and the defaults are bounded so the refusal
+never fires by default.* If false, a single operator flag turns off the defence against a
+class of denial of service, and the default configuration is the one that exercises it.
+
+## NP-035 — the serving target an argv names binds something
+
+**Controls:** `mcp-re-proxy/src/cli.rs` (6).
+**Carrier:** `mcp-re-proxy/src/cli.rs` — the argv boundary.
+**Likely owner:** none. Its `config_state::*` neighbour owns the CLASSIFICATION of the same subject and explicitly does not own raw request fields.
+**Root relationship:** THM-0077 — *no deployment serves a posture nobody selected* — is the root above this family, and the command line is where a posture is selected.
+**Severity:** `high`.
+
+*The serving target an argv names binds something: an empty or missing target
+URI is refused, a target that binds nothing is refused at the validation boundary, an inner
+HTTP URL is present and has no empty segment, repeated and comma-separated URLs accumulate,
+and a fleet-wide target does not erase the per-core default.* If false, the proxy serves an
+endpoint nobody named, or silently drops one an operator did name.
+

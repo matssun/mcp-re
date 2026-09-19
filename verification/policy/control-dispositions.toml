@@ -1843,3 +1843,1279 @@ decision = "new-proposition"
 proposition = "NP-024"
 recorded = "2026-09-19"
 
+
+# ---------------------------------------------------------------------------
+# Batch 7 — the command line, 2026-09-19
+# ---------------------------------------------------------------------------
+#
+# `mcp-re-proxy/src/cli.rs` holds 142 controls and is in NO unit's paths — the single
+# largest unclaimed carrier in the repository, and invisible to the unit-closure register
+# too, because no unit names the crate root that declares it.
+#
+# NOT registered against the config_state units, whose statements are about a CLASSIFIER at
+# its own API — `proxy.cross_machine_legality` says 'every relation reads classified owner
+# states rather than RAW REQUEST FIELDS'. The CLI is the authority one layer up, and it
+# refuses things no classifier ever sees: a Cargo feature, an unknown flag, a withdrawn one.
+#
+# Eleven propositions rather than one, because 'the command line admits no illegal
+# deployment' needs an 'and' for every authority it covers. Each of the eleven has a
+# distinct config_state neighbour one layer down, which is the evidence that the
+# decomposition follows the estate's seams and not the file's headings.
+
+[[proposition]]
+id = "NP-025"
+title = "The parser is total and diagnoses completely"
+carrier = "mcp-re-proxy/src/cli.rs — the argv boundary"
+likely_owner = ""
+consequence = "medium"
+root_relationship = "under THM-0077 — no deployment serves a posture nobody selected"
+record = "docs/architecture/control-dispositions.md#np-025"
+
+[[proposition]]
+id = "NP-026"
+title = "A key source is admitted only in a build that carries it"
+carrier = "mcp-re-proxy/src/cli.rs — the argv boundary"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "under THM-0077 — no deployment serves a posture nobody selected"
+record = "docs/architecture/control-dispositions.md#np-026"
+
+[[proposition]]
+id = "NP-027"
+title = "A KMS endpoint is a literal HTTPS authority"
+carrier = "mcp-re-proxy/src/cli.rs — the argv boundary"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "under THM-0077 — no deployment serves a posture nobody selected"
+record = "docs/architecture/control-dispositions.md#np-027"
+
+[[proposition]]
+id = "NP-028"
+title = "Admission is off unless an argv names a complete enforcing configuration"
+carrier = "mcp-re-proxy/src/cli.rs — the argv boundary"
+likely_owner = ""
+consequence = "high"
+root_relationship = "under THM-0077 — no deployment serves a posture nobody selected"
+record = "docs/architecture/control-dispositions.md#np-028"
+
+[[proposition]]
+id = "NP-029"
+title = "The strict guard is always on, and reports every violation at once"
+carrier = "mcp-re-proxy/src/cli.rs — the argv boundary"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "under THM-0077 — no deployment serves a posture nobody selected"
+record = "docs/architecture/control-dispositions.md#np-029"
+
+[[proposition]]
+id = "NP-030"
+title = "The client-certificate posture an argv can express fails closed by default"
+carrier = "mcp-re-proxy/src/cli.rs — the argv boundary"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "under THM-0077 — no deployment serves a posture nobody selected"
+record = "docs/architecture/control-dispositions.md#np-030"
+
+[[proposition]]
+id = "NP-031"
+title = "A replay tier is named exactly once and carries what it cannot run without"
+carrier = "mcp-re-proxy/src/cli.rs — the argv boundary"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "under THM-0077 — no deployment serves a posture nobody selected"
+record = "docs/architecture/control-dispositions.md#np-031"
+
+[[proposition]]
+id = "NP-032"
+title = "The trust-refresh posture holds its cadence to its window"
+carrier = "mcp-re-proxy/src/cli.rs — the argv boundary"
+likely_owner = ""
+consequence = "high"
+root_relationship = "under THM-0077 — no deployment serves a posture nobody selected"
+record = "docs/architecture/control-dispositions.md#np-032"
+
+[[proposition]]
+id = "NP-033"
+title = "Attested ingress is configured whole or not at all"
+carrier = "mcp-re-proxy/src/cli.rs — the argv boundary"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "under THM-0077 — no deployment serves a posture nobody selected"
+record = "docs/architecture/control-dispositions.md#np-033"
+
+[[proposition]]
+id = "NP-034"
+title = "No command line disables a liveness bound"
+carrier = "mcp-re-proxy/src/cli.rs — the argv boundary"
+likely_owner = ""
+consequence = "high"
+root_relationship = "under THM-0077 — no deployment serves a posture nobody selected"
+record = "docs/architecture/control-dispositions.md#np-034"
+
+[[proposition]]
+id = "NP-035"
+title = "The serving target an argv names binds something"
+carrier = "mcp-re-proxy/src/cli.rs — the argv boundary"
+likely_owner = ""
+consequence = "high"
+root_relationship = "under THM-0077 — no deployment serves a posture nobody selected"
+record = "docs/architecture/control-dispositions.md#np-035"
+
+# --- NP-025 (11) ---
+
+[[disposition]]
+id = "CD-5001"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::a_command_line_wrong_three_ways_is_answered_about_all_three"
+decision = "new-proposition"
+proposition = "NP-025"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5002"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::cores_defaults_to_auto_zero"
+decision = "new-proposition"
+proposition = "NP-025"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5003"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::mcp_protocol_version_is_repeatable_and_absent_by_default"
+decision = "new-proposition"
+proposition = "NP-025"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5004"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::missing_required_flag_errors"
+decision = "new-proposition"
+proposition = "NP-025"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5005"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::non_numeric_cores_fails_closed"
+decision = "new-proposition"
+proposition = "NP-025"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5006"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::parse_rejects_bad_values_and_names_each_missing_required_flag"
+decision = "new-proposition"
+proposition = "NP-025"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5007"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::parses_a_minimal_config_with_defaults"
+decision = "new-proposition"
+proposition = "NP-025"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5008"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::parses_configurable_limits"
+decision = "new-proposition"
+proposition = "NP-025"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5009"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::parses_explicit_cores"
+decision = "new-proposition"
+proposition = "NP-025"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5010"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::the_audit_sink_defaults_to_on"
+decision = "new-proposition"
+proposition = "NP-025"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5011"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::unknown_flag_errors"
+decision = "new-proposition"
+proposition = "NP-025"
+recorded = "2026-09-19"
+
+# --- NP-026 (30) ---
+
+[[disposition]]
+id = "CD-5012"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::a_non_exporting_custody_does_not_require_a_signing_key_seed"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5013"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::argv_pkcs11_pin_is_refused_with_the_replacement_named"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5014"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::aws_kms_requires_region_and_key_id"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5015"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::aws_kms_tls_key_id_plus_exported_tls_key_fails_closed"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5016"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::aws_kms_tls_key_id_without_aws_kms_fails_closed"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5017"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::aws_kms_use_web_identity_without_aws_kms_fails_closed"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5018"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::aws_kms_web_identity_is_off_by_default_and_on_when_named"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5019"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::aws_sts_endpoint_without_web_identity_fails_closed"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5020"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::default_build_rejects_aws_kms_key_source"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5021"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::default_build_rejects_gcp_kms_key_source"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5022"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::default_build_rejects_pkcs11_key_source"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5023"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::env_key_source_rejected_in_production_build"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5024"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::file_custody_still_requires_a_signing_key_seed"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5025"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::file_key_source_is_always_constructible"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5026"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::gcp_kms_requires_key_version"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5027"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::gcp_kms_tls_key_version_plus_exported_tls_key_fails_closed"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5028"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::gcp_kms_tls_key_version_without_gcp_kms_fails_closed"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5029"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::gcp_use_metadata_only_with_gcp_kms"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5030"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::parses_aws_kms_key_source_flags"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5031"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::parses_aws_kms_tls_key_id_flag"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5032"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::parses_gcp_kms_key_source_flags"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5033"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::parses_gcp_kms_tls_key_version_flag"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5034"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::parses_pkcs11_key_source_flags"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5035"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::pkcs11_key_source_requires_each_flag"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5036"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::pkcs11_tls_label_makes_tls_key_optional"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5037"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::pkcs11_tls_label_with_exported_tls_key_is_rejected"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5038"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::pkcs11_tls_label_without_pkcs11_source_is_rejected"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5039"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::pkcs11_without_tls_label_still_requires_tls_key"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5040"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::unknown_key_source_lists_cloud_kms"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5041"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::unknown_key_source_lists_pkcs11"
+decision = "new-proposition"
+proposition = "NP-026"
+recorded = "2026-09-19"
+
+# --- NP-027 (8) ---
+
+[[disposition]]
+id = "CD-5042"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::a_kms_endpoint_host_that_is_not_a_literal_is_refused"
+decision = "new-proposition"
+proposition = "NP-027"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5043"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::a_kms_endpoint_whose_authority_carries_userinfo_is_refused"
+decision = "new-proposition"
+proposition = "NP-027"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5044"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::a_kms_endpoint_with_no_host_is_refused"
+decision = "new-proposition"
+proposition = "NP-027"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5045"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::a_loopback_http_kms_endpoint_is_accepted_for_emulators"
+decision = "new-proposition"
+proposition = "NP-027"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5046"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::a_non_http_kms_endpoint_scheme_is_refused"
+decision = "new-proposition"
+proposition = "NP-027"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5047"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::a_plaintext_kms_endpoint_to_a_remote_host_is_refused"
+decision = "new-proposition"
+proposition = "NP-027"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5048"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::an_https_kms_endpoint_is_accepted"
+decision = "new-proposition"
+proposition = "NP-027"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5049"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::the_kms_endpoints_an_operator_legitimately_sets_are_still_accepted"
+decision = "new-proposition"
+proposition = "NP-027"
+recorded = "2026-09-19"
+
+# --- NP-028 (12) ---
+
+[[disposition]]
+id = "CD-5050"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::a_complete_admission_configuration_raises_no_violation"
+decision = "new-proposition"
+proposition = "NP-028"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5051"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::a_dangling_admission_setting_is_refused"
+decision = "new-proposition"
+proposition = "NP-028"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5052"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::a_programmatic_config_cannot_carry_an_undecodable_admission_authority_key"
+decision = "new-proposition"
+proposition = "NP-028"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5053"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::admission_ceilings_are_configurable_and_bounded_by_default"
+decision = "new-proposition"
+proposition = "NP-028"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5054"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::admission_is_off_by_default"
+decision = "new-proposition"
+proposition = "NP-028"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5055"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::an_explicit_ceiling_equal_to_the_default_is_not_an_absent_one"
+decision = "new-proposition"
+proposition = "NP-028"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5056"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::an_unknown_admission_mode_is_refused"
+decision = "new-proposition"
+proposition = "NP-028"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5057"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::enforcing_admission_parses_with_an_authority_and_a_source"
+decision = "new-proposition"
+proposition = "NP-028"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5058"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::enforcing_admission_without_a_source_is_refused"
+decision = "new-proposition"
+proposition = "NP-028"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5059"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::enforcing_admission_without_an_authority_is_refused"
+decision = "new-proposition"
+proposition = "NP-028"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5060"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::naming_both_admission_limits_is_refused"
+decision = "new-proposition"
+proposition = "NP-028"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5061"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::zero_admission_ceiling_is_refused"
+decision = "new-proposition"
+proposition = "NP-028"
+recorded = "2026-09-19"
+
+# --- NP-029 (17) ---
+
+[[disposition]]
+id = "CD-5062"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::a_fully_configured_mode_c_clears_every_completeness_check_and_is_still_refused"
+decision = "new-proposition"
+proposition = "NP-029"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5063"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::mode_c_is_refused_by_the_unsafe_configuration_guard_itself"
+decision = "new-proposition"
+proposition = "NP-029"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5064"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::strict_accepts_cert_lifetime_at_ceiling"
+decision = "new-proposition"
+proposition = "NP-029"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5065"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::strict_accepts_cert_lifetime_below_ceiling"
+decision = "new-proposition"
+proposition = "NP-029"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5066"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::strict_accepts_shared_replay_at_adequate_tier"
+decision = "new-proposition"
+proposition = "NP-029"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5067"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::strict_accepts_wait_quorum_replay_durability_tier"
+decision = "new-proposition"
+proposition = "NP-029"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5068"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::strict_fleet_accepts_shared_wait_quorum"
+decision = "new-proposition"
+proposition = "NP-029"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5069"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::strict_is_always_on_for_a_safe_config"
+decision = "new-proposition"
+proposition = "NP-029"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5070"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::strict_rejects_cn_legacy_identity_source"
+decision = "new-proposition"
+proposition = "NP-029"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5071"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::strict_rejects_disabled_cert_lifetime_none"
+decision = "new-proposition"
+proposition = "NP-029"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5072"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::strict_rejects_disabled_cert_lifetime_zero"
+decision = "new-proposition"
+proposition = "NP-029"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5073"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::strict_rejects_lb_assertion_binding"
+decision = "new-proposition"
+proposition = "NP-029"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5074"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::strict_rejects_over_ceiling_cert_lifetime"
+decision = "new-proposition"
+proposition = "NP-029"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5075"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::strict_rejects_over_ceiling_lifetime_2h"
+decision = "new-proposition"
+proposition = "NP-029"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5076"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::strict_rejects_transport_binding_none"
+decision = "new-proposition"
+proposition = "NP-029"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5077"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::strict_rejects_weak_replay_durability_tier"
+decision = "new-proposition"
+proposition = "NP-029"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5078"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::strict_reports_all_violations_at_once"
+decision = "new-proposition"
+proposition = "NP-029"
+recorded = "2026-09-19"
+
+# --- NP-030 (20) ---
+
+[[disposition]]
+id = "CD-5079"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::a_supplied_revocation_list_is_refused_because_nothing_consults_it"
+decision = "new-proposition"
+proposition = "NP-030"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5080"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::an_overflowing_client_cert_lifetime_is_refused_not_wrapped"
+decision = "new-proposition"
+proposition = "NP-030"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5081"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::authz_off_does_not_require_a_revocation_list"
+decision = "new-proposition"
+proposition = "NP-030"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5082"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::authz_reference_is_refused"
+decision = "new-proposition"
+proposition = "NP-030"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5083"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::client_ocsp_require_fails_closed_in_every_build"
+decision = "new-proposition"
+proposition = "NP-030"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5084"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::default_has_no_crls_and_fails_closed_on_unknown_status"
+decision = "new-proposition"
+proposition = "NP-030"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5085"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::default_has_online_ocsp_off_and_hard_fail"
+decision = "new-proposition"
+proposition = "NP-030"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5086"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::empty_client_crl_segment_errors"
+decision = "new-proposition"
+proposition = "NP-030"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5087"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::empty_responder_url_errors"
+decision = "new-proposition"
+proposition = "NP-030"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5088"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::empty_revocation_list_segment_is_rejected"
+decision = "new-proposition"
+proposition = "NP-030"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5089"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::parses_a_single_client_crl_path"
+decision = "new-proposition"
+proposition = "NP-030"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5090"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::parses_client_cert_lifetime_forms"
+decision = "new-proposition"
+proposition = "NP-030"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5091"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::parses_client_ocsp_require_and_knobs"
+decision = "new-proposition"
+proposition = "NP-030"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5092"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::parses_comma_separated_client_crls"
+decision = "new-proposition"
+proposition = "NP-030"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5093"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::parses_identity_source_selection"
+decision = "new-proposition"
+proposition = "NP-030"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5094"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::repeated_client_crl_flags_accumulate"
+decision = "new-proposition"
+proposition = "NP-030"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5095"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::responder_url_without_require_errors"
+decision = "new-proposition"
+proposition = "NP-030"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5096"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::unknown_client_ocsp_value_errors"
+decision = "new-proposition"
+proposition = "NP-030"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5097"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::unknown_identity_source_errors"
+decision = "new-proposition"
+proposition = "NP-030"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5098"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::unparseable_client_cert_lifetime_errors"
+decision = "new-proposition"
+proposition = "NP-030"
+recorded = "2026-09-19"
+
+# --- NP-031 (11) ---
+
+[[disposition]]
+id = "CD-5099"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::cpstore_endpoint_without_linearizable_fails_closed"
+decision = "new-proposition"
+proposition = "NP-031"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5100"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::linearizable_tier_with_cpstore_endpoint_parses"
+decision = "new-proposition"
+proposition = "NP-031"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5101"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::linearizable_tier_without_cpstore_endpoint_fails_closed"
+decision = "new-proposition"
+proposition = "NP-031"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5102"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::naming_both_replay_stores_on_the_command_line_fails_closed"
+decision = "new-proposition"
+proposition = "NP-031"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5103"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::omitting_replay_configuration_is_refused"
+decision = "new-proposition"
+proposition = "NP-031"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5104"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::parses_shared_replay_selection"
+decision = "new-proposition"
+proposition = "NP-031"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5105"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::parses_wait_quorum_durability_tier"
+decision = "new-proposition"
+proposition = "NP-031"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5106"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::rejects_unknown_durability_tier"
+decision = "new-proposition"
+proposition = "NP-031"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5107"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::shared_replay_requires_durability_tier"
+decision = "new-proposition"
+proposition = "NP-031"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5108"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::shared_replay_requires_url"
+decision = "new-proposition"
+proposition = "NP-031"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5109"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::single_node_accepts_file_replay_cache"
+decision = "new-proposition"
+proposition = "NP-031"
+recorded = "2026-09-19"
+
+# --- NP-032 (14) ---
+
+[[disposition]]
+id = "CD-5110"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::a_cadence_longer_than_the_declared_window_is_refused"
+decision = "new-proposition"
+proposition = "NP-032"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5111"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::degraded_mode_requires_a_positive_bound"
+decision = "new-proposition"
+proposition = "NP-032"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5112"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::delegated_overlap_not_less_than_ttl_is_rejected"
+decision = "new-proposition"
+proposition = "NP-032"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5113"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::delegated_signing_parses_with_defaults"
+decision = "new-proposition"
+proposition = "NP-032"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5114"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::live_and_push_tiers_require_a_trust_reload_cadence"
+decision = "new-proposition"
+proposition = "NP-032"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5115"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::max_clock_skew_is_accepted_across_the_whole_bound"
+decision = "new-proposition"
+proposition = "NP-032"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5116"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::missing_trust_epoch_is_rejected"
+decision = "new-proposition"
+proposition = "NP-032"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5117"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::out_of_bounds_max_clock_skew_is_refused_at_parse"
+decision = "new-proposition"
+proposition = "NP-032"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5118"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::parses_each_revocation_tier"
+decision = "new-proposition"
+proposition = "NP-032"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5119"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::rejects_unknown_or_malformed_revocation_tier"
+decision = "new-proposition"
+proposition = "NP-032"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5120"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::revocation_tier_defaults_to_bounded_cache_tier_1"
+decision = "new-proposition"
+proposition = "NP-032"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5121"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::the_degraded_window_refusal_names_the_clock_skew_term"
+decision = "new-proposition"
+proposition = "NP-032"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5122"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::trust_epoch_url_with_push_tier_parses"
+decision = "new-proposition"
+proposition = "NP-032"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5123"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::trust_epoch_url_without_push_tier_is_rejected"
+decision = "new-proposition"
+proposition = "NP-032"
+recorded = "2026-09-19"
+
+# --- NP-033 (9) ---
+
+[[disposition]]
+id = "CD-5124"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::attested_ingress_flags_dangle_without_binding"
+decision = "new-proposition"
+proposition = "NP-033"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5125"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::attested_ingress_invalid_attestor_key_errors"
+decision = "new-proposition"
+proposition = "NP-033"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5126"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::attested_ingress_requires_attestor_key_identity_and_audience"
+decision = "new-proposition"
+proposition = "NP-033"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5127"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::attested_ingress_without_pinned_mtls_fails_closed"
+decision = "new-proposition"
+proposition = "NP-033"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5128"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::duplicate_ingress_lb_key_id_errors"
+decision = "new-proposition"
+proposition = "NP-033"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5129"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::ingress_lb_key_invalid_public_key_errors"
+decision = "new-proposition"
+proposition = "NP-033"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5130"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::ingress_lb_key_malformed_value_errors"
+decision = "new-proposition"
+proposition = "NP-033"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5131"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::ingress_lb_key_without_lb_assertion_binding_errors"
+decision = "new-proposition"
+proposition = "NP-033"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5132"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::lb_assertion_binding_requires_at_least_one_key"
+decision = "new-proposition"
+proposition = "NP-033"
+recorded = "2026-09-19"
+
+# --- NP-034 (4) ---
+
+[[disposition]]
+id = "CD-5133"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::a_zero_timeout_is_refused_because_it_disables_the_slow_loris_defense"
+decision = "new-proposition"
+proposition = "NP-034"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5134"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::request_deadline_secs_over_cap_is_rejected"
+decision = "new-proposition"
+proposition = "NP-034"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5135"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::the_connection_age_bound_is_defaulted_and_zero_is_refused"
+decision = "new-proposition"
+proposition = "NP-034"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5136"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::the_default_timeouts_are_bounded_so_the_refusal_never_fires_by_default"
+decision = "new-proposition"
+proposition = "NP-034"
+recorded = "2026-09-19"
+
+# --- NP-035 (6) ---
+
+[[disposition]]
+id = "CD-5137"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::a_fleet_wide_target_survives_without_erasing_the_per_core_default"
+decision = "new-proposition"
+proposition = "NP-035"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5138"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::empty_inner_http_url_segment_fails_closed"
+decision = "new-proposition"
+proposition = "NP-035"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5139"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::empty_or_missing_target_uri_is_refused"
+decision = "new-proposition"
+proposition = "NP-035"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5140"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::missing_inner_http_url_fails_closed"
+decision = "new-proposition"
+proposition = "NP-035"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5141"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::parses_repeated_and_comma_separated_inner_http_urls"
+decision = "new-proposition"
+proposition = "NP-035"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-5142"
+project = "mcp-re-proxy"
+control = "lib#cli::tests::the_validation_boundary_refuses_a_target_uri_that_binds_nothing"
+decision = "new-proposition"
+proposition = "NP-035"
+recorded = "2026-09-19"
+

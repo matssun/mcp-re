@@ -10,10 +10,6 @@
 schema_version = 1
 
 [[file]]
-path = "mcp-re-proxy/src/cli.rs"
-baseline = 142
-
-[[file]]
 path = "mcp-re-proxy/src/ocsp.rs"
 baseline = 38
 
