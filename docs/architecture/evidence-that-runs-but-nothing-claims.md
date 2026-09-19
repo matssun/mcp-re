@@ -372,7 +372,7 @@ Derived from the tree at the campaign's close, by
 
 | kind | lane | total | claimed | unclaimed |
 |---|---|---:|---:|---:|
-| `rust-test` | cargo | 3167 | 1573 | 1594 |
+| `rust-test` | cargo | 3167 | 1571 | 1596 |
 | `rust-doctest` | cargo | 5 | 0 | 5 |
 | `pytest` | python | 825 | 117 | 708 |
 | `vitest` | typescript | 184 | 161 | 23 |
@@ -380,7 +380,7 @@ Derived from the tree at the campaign's close, by
 | `mutation` | mutation lane | 304 | 304 | 0 |
 | `measurement` | measured lane | 1 | 1 | 0 |
 | `gate` | gate lane | 64 | 4 | 60 |
-| **total** | | **4575** | **2185** | **2390** |
+| **total** | | **4575** | **2183** | **2392** |
 
 Every ecosystem the repository supports is covered, and each is covered by a NAMED control
 in `test_controls.py` rather than by a count: a lib test, an integration test, a
@@ -392,8 +392,8 @@ control a measurement's own argv selects.
 
 | disposition | controls |
 |---|---:|
-| `register` / `reattribute` — landed in `verification.toml` | **65 selectors across 13 units** |
-| `new-proposition` | **1639 controls across 168 propositions** |
+| `register` / `reattribute` — landed in `verification.toml` | **63 selectors across 12 units** |
+| `new-proposition` | **1641 controls across 169 propositions** |
 | `not-evidence` | **751 controls across 13 reason families** |
 | **undispositioned** | **0** |
 | stale selectors | **0** |
@@ -425,7 +425,7 @@ A further 38 are one carrier a registered unit says is unreachable. The residue 
 in [`control-dispositions.md`](control-dispositions.md) stating what would move a control
 OUT of it.
 
-### `new-proposition` — 168, all at step 1
+### `new-proposition` — 169, all at step 1
 
 None is ratified. Each is recorded with its controls, its production carrier, the statement
 in prose, what is false if it fails, the unit that would hold it, and its root relationship.
@@ -447,13 +447,23 @@ The largest clusters, by what they turn out to be:
 
 ### What the campaign found that a count would not have
 
-**Five reattributions that are mechanically impossible**, all from one fact now stated: *a
-unit's battery can only select controls inside the source it measures, in the project it
+**Six registrations that are mechanically impossible.** Five come from one fact now stated:
+*a unit's battery can only select controls inside the source it measures, in the project it
 measures it in.* `verify --manifests` refuses a `lib#` selector whose module the unit's
 `paths` do not cover, and a unit's lane runs in one project. Where a proposition's controls
 sit outside that, the honest disposition is the twin proposition, not a widened path.
 NP-045, NP-048, NP-061, NP-062 and NP-078 are those five, and NP-062 is the sharpest:
 **two** units state the proposition and neither owns the carrier.
+
+The sixth is a different kind and was found by RUNNING a registration this campaign had
+already written. **A unit's `test_features` are one set for the whole battery, so an
+anti-vacuity control whose purpose is to FALSIFY the property cannot live in the same battery
+as the property.** `client.transport_server_identity` claims that an untrusted or
+wrong-identity server certificate is rejected; `fault_injection_test.rs` proves those
+rejections are the verifier's work by breaking the verifier — and it compiles only under
+`fault_accept_any_server`, which is off by default. Registered, then run: `0 passed; 0
+filtered out`. Withdrawn, and recorded as NP-169 with the shape a ratification would have to
+take.
 
 **Three asymmetries between the two SDK system roots.** `sdk_typescript.post_close_emission`
 exists and `sdk_python` has no twin (NP-014); `sdk_typescript.signer_policy` says a device
@@ -495,7 +505,7 @@ Each is now a named control in `test_controls.py`.
 
 ### What closure does NOT mean
 
-- **No proposition is ratified.** 168 sit at ADR-069 §5 step 1. Ratifying one is a product
+- **No proposition is ratified.** 169 sit at ADR-069 §5 step 1. Ratifying one is a product
   claim under ADR-MCPRE-059 §28 and is not this record's to grant.
 - **No `not-evidence` reason is certified true.** D3 checks the reason's SHAPE. What the
   campaign adds is that every reason is written once, in a durable record, with an explicit

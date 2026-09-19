@@ -8008,15 +8008,19 @@ tested_symbols = [
   "tests/mtls_client_test#wrong_server_identity_is_rejected",
   "tests/mtls_client_test#expired_server_cert_is_rejected",
   "tests/mtls_client_test#empty_server_ca_is_rejected_fail_closed",
-  "tests/mtls_client_test#trusted_server_and_client_round_trip_succeeds",  # ADR-MCPRE-069 batch 18. The ANTI-VACUITY arm of this statement, and the reason it is
-  # registered rather than dispositioned as apparatus: this unit says an untrusted or
-  # wrong-identity server certificate is rejected during the handshake. These two controls
-  # show that the DECLARED FAULT INJECTOR is what makes either one accepted — so the
-  # rejections above are the real verifier's and not an artefact of a test that never
-  # presented a bad certificate. `client_verifier_posture_test` names this injector as the
-  # only other verifier in the tree; these are what make that naming mean something.
-  "tests/fault_injection_test#fault_accept_any_server_makes_untrusted_server_cert_accepted",
-  "tests/fault_injection_test#fault_accept_any_server_makes_wrong_identity_server_cert_accepted",
+  "tests/mtls_client_test#trusted_server_and_client_round_trip_succeeds",  # ADR-MCPRE-069 batch 18 TRIED to register the ANTI-VACUITY arm of this statement here and
+  # MEASURED THAT IT CANNOT BE. `tests/fault_injection_test` proves that the declared fault
+  # injector is what makes an untrusted or wrong-identity server certificate accepted — so
+  # the three rejections above are the real verifier's and not an artefact of a test that
+  # never presented a bad certificate. It compiles only under the `fault_accept_any_server`
+  # cargo feature, which is off by default and never in the normal build, and
+  # `cargo test -p mcp-re-transport --test fault_injection_test` reports ZERO tests without
+  # it — a green run over nothing.
+  #
+  # A unit's `test_features` are ONE set for the WHOLE battery, and this battery cannot run
+  # under that feature: `untrusted_server_cert_is_rejected` is the control the feature exists
+  # to break. **An anti-vacuity control whose purpose is to falsify the property cannot live
+  # in the same battery as the property.** It is NP-169.
 ]
 
 [[unit]]

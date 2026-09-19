@@ -15825,3 +15825,37 @@ decision = "not-evidence"
 reason_family = "ND-002"
 recorded = "2026-09-19"
 
+
+# ---------------------------------------------------------------------------
+# NP-169 — measured after batch 18, before batch 21 closed
+# ---------------------------------------------------------------------------
+#
+# Batch 18 registered these two into `client.transport_server_identity` and the registration
+# was WRONG: the target compiles only under `fault_accept_any_server` and reports zero tests
+# without it. A unit's `test_features` are one set for the whole battery, and this battery
+# cannot run under the feature that exists to break its own control.
+
+[[proposition]]
+id = "NP-169"
+title = "The server-authentication control is load-bearing"
+carrier = "mcp-re-transport/tests/fault_injection_test.rs"
+likely_owner = "client.transport_server_identity, which cannot claim an anti-vacuity control needing a feature that falsifies its siblings"
+consequence = "critical"
+root_relationship = "under the client transport roots, beside the unit whose vacuity it refuses"
+record = "docs/architecture/control-dispositions.md#np-169"
+
+[[disposition]]
+id = "CD-20001"
+project = "mcp-re-transport"
+control = "tests/fault_injection_test#fault_accept_any_server_makes_untrusted_server_cert_accepted"
+decision = "new-proposition"
+proposition = "NP-169"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-20002"
+project = "mcp-re-transport"
+control = "tests/fault_injection_test#fault_accept_any_server_makes_wrong_identity_server_cert_accepted"
+decision = "new-proposition"
+proposition = "NP-169"
+recorded = "2026-09-19"

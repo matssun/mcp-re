@@ -2834,3 +2834,39 @@ the merge path checks.
 **Likely owner:** none — a composition's source is every unit under it.
 **Severity:** `critical`.
 
+---
+
+## NP-169 — the server-authentication control is load-bearing
+
+**Controls:** `mcp-re-transport/tests/fault_injection_test.rs` (2) —
+`fault_accept_any_server_makes_untrusted_server_cert_accepted`,
+`fault_accept_any_server_makes_wrong_identity_server_cert_accepted`.
+**Carrier:** the client transport's server verifier, under the `fault_accept_any_server`
+feature.
+**Statement.** *With the server-authentication control deliberately broken, an untrusted
+server certificate and a wrong-identity one are ACCEPTED — so the rejections
+`client.transport_server_identity` claims are the real verifier's work and not an artefact
+of a test that never presented a bad certificate.*
+**If false.** The three rejections that unit claims pass for a reason other than the
+verifier — a harness that never completes a handshake would produce them too — and the whole
+unit is vacuous while reading as `critical` evidence.
+**Likely owner:** `client.transport_server_identity`, **and it cannot claim them.** This is a
+sixth mechanically impossible registration, of a kind the others did not show:
+
+> A unit's `test_features` are ONE set for the WHOLE battery, and an anti-vacuity control
+> whose purpose is to FALSIFY the property cannot live in the same battery as the property.
+
+`fault_injection_test.rs` compiles only under `fault_accept_any_server`, which is off by
+default and never in the normal build; without it the target reports ZERO tests, which is
+the false green this repository has a gate for. Declaring the feature on the unit would run
+the whole battery under it, and `untrusted_server_cert_is_rejected` — the control the feature
+exists to break — would fail. Measured, not reasoned: the registration was written, the
+target was run, and it reported `0 passed; 0 filtered out`.
+**Root relationship.** Under the client transport roots, beside the unit whose vacuity it
+refuses.
+**Severity:** `critical`.
+**What ratification would look like:** a separate unit over the same carrier declaring
+`test_features = ["fault_accept_any_server"]`, whose battery is these two controls and
+nothing else — which is what "one `test_features` set per battery" makes the only shape
+available.
+
