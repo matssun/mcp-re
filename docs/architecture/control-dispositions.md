@@ -1059,6 +1059,24 @@ are directed at a host resolved by name at use time, over plaintext, or under cr
 smuggled in an authority — three different ways to move signing to an endpoint the operator
 did not choose.
 
+**PARTIALLY DISCHARGED, 2026-09-19 (ADR-MCPRE-069 §5).** One control of the nine this record
+had carried since batch 12 —
+`lib#kms_endpoint_policy::tests::a_bracketed_host_must_be_an_ipv6_literal` — is an **R1**: the
+existing `[[unit]]` `proxy.kms_endpoint_authority` already declares
+`mcp-re-proxy/src/kms_endpoint_policy/mod.rs` in its `paths`, and its description already
+states the proposition — *"A KMS endpoint's literal spelling and its machine interpretation
+name the same authority: the host and port a reader sees are the host and port that will be
+reached."* A bracket is IPv6 notation and nothing else, so a bracket-shaped host that is not an
+address is exactly a spelling whose interpretation differs from its reading. The selector was
+registered into that unit's `tested_symbols`; no `paths` widened, no unit was created, no
+theorem field moved, and the unit's three existing falsifiers — M215, M216 and M217, all
+demonstrated red before — continue to carry it.
+
+**WHAT REMAINS.** The eight `cli::tests` controls above are the argv arm and this record keeps
+them. They belong with NP-025 … NP-035 to a pending owner decision about the command-line
+boundary; `cli.rs` is in no unit's `paths` and must not be added to one to make a selector
+resolve.
+
 ## NP-028 — admission is off unless an argv names a complete enforcing configuration
 
 **Controls:** `mcp-re-proxy/src/cli.rs` (12).
@@ -1460,6 +1478,17 @@ how the five owned ones are units. The decomposition was not chosen — it was r
 module boundary the implementation already drew, and the fact that the owned and unowned
 modules are indistinguishable in shape is the finding.
 
+**THE FAMILY IS NOW CLOSED EXCEPT FOR ITS ARGV FRAGMENTS, 2026-09-19.** SL-POSTURE-1 gave
+seven of the eleven owners; SL-POSTURE-2 gave the remaining four — NP-056 the evidence
+machines (`proxy.evidence_retention_state`, M315), NP-057 the in-flight limit basis
+(`proxy.in_flight_limit_basis`, M316), NP-058 the MCP transport contract
+(`proxy.mcp_transport_contract_state`, M317) and NP-059's classifier half
+(`proxy.deployment_topology_state`, M318) — plus NP-061's clause
+(`proxy.continuation_control_subject_boundary`, M319). All five are attached to THM-0077's
+`supported_by` and all five falsifiers were demonstrated red. What is left of this family is
+`cli/` controls and NP-060's one `config_state/mod.rs` control, and none of them is a
+registry edit.
+
 ## NP-054 — key-file access policy
 
 **Controls:** `config_state/key_file_access.rs` (5), and — added in batch 12 —
@@ -1506,33 +1535,6 @@ mechanically exclusive. The argv boundary has no ratified theorem, so registerin
 R6 owner decision rather than a registry edit. The prepared packet is
 [`verification/reviews/packets/adr069-np-055-ratification-2026-09-19.md`](../../verification/reviews/packets/adr069-np-055-ratification-2026-09-19.md).
 
-## NP-056 — the evidence-retention classifier
-
-**Controls:** `config_state/evidence.rs`.
-**Statement.** *Every legal state form is classified; retention is selected by its OWN locator; the ON state carries the directory that selected it; and only the trusted context asserts something configuration cannot check.*
-**If false.** A deployment retains evidence somewhere other than where the operator pointed, or reads as retaining when it is not. The last clause is the boundary: what configuration can check and what only a trusted context can assert are different facts, and collapsing them is how a configuration claim becomes an assurance claim.
-**Likely owner:** none. Its five sibling classifiers are units; this one is not.
-**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
-**Severity:** `high`.
-
-## NP-057 — the in-flight limit classifier
-
-**Controls:** `config_state/in_flight_limit.rs`.
-**Statement.** *Saying nothing resolves to the bounded default; an absent limit is DISTINGUISHABLE from one that equals the default; a stated basis is carried through unchanged; and exactly one projection answers for every basis.*
-**If false.** The in-flight ceiling is unbounded because silence was read as a choice, or an operator's explicit choice is indistinguishable from silence — the provenance collapse this repository has ruled on, in the one setting that bounds concurrent work.
-**Likely owner:** none. Its five sibling classifiers are units; this one is not.
-**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
-**Severity:** `medium`.
-
-## NP-058 — the mcp transport contract classifier
-
-**Controls:** `config_state/mcp_transport_contract.rs`.
-**Statement.** *Every legal state form is classified; the ABSENT contract is a state and not a defect; the enforced state carries the set that selected it; and an unusual accepted set is classified rather than refused.*
-**If false.** A deployment enforces a transport contract it did not select, or refuses a legal one as malformed. 'Absent is a state' is the clause that keeps an unset contract from reading as a bug in the classifier.
-**Likely owner:** none. Its five sibling classifiers are units; this one is not.
-**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
-**Severity:** `high`.
-
 ## NP-059 — the topology classifier
 
 **Controls:** `config_state/topology.rs`.
@@ -1541,6 +1543,20 @@ R6 owner decision rather than a registry edit. The prepared packet is
 **Likely owner:** none. Its five sibling classifiers are units; this one is not.
 **Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
 **Severity:** `medium`.
+
+**PARTIALLY DISCHARGED, 2026-09-19 (ADR-MCPRE-069 §5).** The four
+`config_state::topology::tests` controls are now claimed by `[[unit]]`
+`proxy.deployment_topology_state`, attached to THM-0077's `supported_by`, with falsifier
+`M318-proxy-the-fleet-topology-is-the-one-the-deployment-declared` demonstrated red.
+
+**WHAT REMAINS, AND WHY IT DID NOT LAND.**
+`lib#cli::runtime_flags::tests::the_topology_counts_admit_zero_as_the_auto_posture` states what
+ARGV admits as a shard count, not what the classifier resolves, and
+`mcp-re-proxy/src/cli/runtime_flags.rs` is in no unit's `paths`. It is the same shape as
+NP-055's residue: `_manifest.py::_validate_in_crate_selectors` refuses the selector without the
+path, and declaring the path would make one unit answer for two authorities. The argv boundary
+has no ratified theorem, so it is an R6 owner decision. The prepared packet is
+[`verification/reviews/packets/adr069-np-059-ratification-2026-09-19.md`](../../verification/reviews/packets/adr069-np-059-ratification-2026-09-19.md).
 
 ## NP-060 — the validation boundary is total and names what it refused
 
@@ -1581,6 +1597,26 @@ ratification packet.
 **Likely owner:** none. Its five sibling classifiers are units; this one is not.
 **Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
 **Severity:** `high`.
+
+**PARTIALLY DISCHARGED, 2026-09-19 (ADR-MCPRE-069 §5).**
+`lib#config_state::continuation_control::tests::the_replay_tier_does_not_reach_this_machine` is
+now claimed by `[[unit]]` `proxy.continuation_control_subject_boundary`, attached to THM-0077's
+`supported_by`, with falsifier
+`M319-proxy-the-replay-tier-does-not-reach-the-continuation-machine` demonstrated red. It is a
+unit of its own rather than a symbol added to a neighbouring battery:
+`continuation_control.rs` is already in `proxy.continuation_materialization`'s and
+`proxy.continuation_materialization_sole_producer`'s `paths`, but neither states what this
+machine may READ — one says what the plan YIELDS, the other is the compile-time fact that the
+plan came from this classifier — and registering the control under a proposition that does not
+contain it is the quiet widening ADR-069 §5 forbids.
+
+**WHAT REMAINS, AND WHY IT DID NOT LAND.** The two `cli::runtime_flags::tests` controls —
+`every_claimed_flag_routes_to_the_authority_that_owns_it` and
+`the_composed_runtime_carries_the_ceiling_the_admission_authority_read` — state a different
+proposition: which authority each runtime FLAG is routed to, which is the argv boundary's own
+subject. `mcp-re-proxy/src/cli/runtime_flags.rs` is in no unit's `paths` and the argv boundary
+has no ratified theorem, so they are R6. The prepared packet is
+[`verification/reviews/packets/adr069-np-061-ratification-2026-09-19.md`](../../verification/reviews/packets/adr069-np-061-ratification-2026-09-19.md).
 
 ## NP-062 — the CRL index answers revocation exactly
 
@@ -1703,58 +1739,14 @@ seal. Neither says what MATERIALIZING that lifecycle does to the planes, and
 happen* — is the root above it, and this is the half about what the shutdown DID.
 **Severity:** `critical`.
 
-## NP-068 — a plan carries what it was given, not what it found
-
-**Controls:** `mcp-re-proxy/src/startup_plan.rs` (10).
-**Statement.** *Each startup plan carries the decision it was handed: the signing plan
-carries the epoch it was GIVEN and not one it found; the continuation plan carries its own
-endpoint verbatim; the channel plan carries the classified custody and the credential window;
-the epoch plan normalises the key ONCE; the issuer kid in the credential is the one that was
-planned, falling back to the server key id only where the resolution reads it; the audience
-scope defaults to the response audience and is overridable; both consumers of the epoch hold
-ONE decision; each CRL posture is projected as its own variant; and the paths accessor
-answers which FILES, not which posture.*
-**If false.** The plan re-derives a decision an owner already made, so two answers to one
-question exist and can diverge — which is the defect `proxy.cross_machine_legality` states
-for relations, arriving one layer later in the planner. "Normalises the key once" and "both
-consumers hold one decision" are the same rule stated twice because the planner has two ways
-to break it.
-**Likely owner:** none. `startup_plan.rs` is in no unit's `paths`.
-**Severity:** `critical`.
-
-## NP-069 — planning refuses a state that skipped the parser, and contacts nothing
-
-**Controls:** `mcp-re-proxy/src/startup_plan.rs` (17).
-**Statement.** *A tier that reached the planner without passing the parser is refused for
-whatever it is missing — a linearizable tier without an endpoint, a shared Redis tier
-without a URL, a shared tier without a durability tier — and a request with no durable replay
-configuration fails closed; the withdrawn alias is refused rather than reinterpreted; each
-declaration is made by its own owner (continuation on its own locator and not the replay
-tier, admission independently of replay, only the Redis tier declaring a need, only the
-networked push state planning an epoch source), the requirement being the OR of every
-contributor; the build refusal is stated once and names both consequences; the assertion arm
-is refused at the boundary and the both-set arm agrees with the gate on an unreachable
-input; a deployable configuration reads the verified peer certificate; and PLANNING A
-NETWORKED TIER CONTACTS NOTHING.*
-**If false.** A deployment is planned around a state no classifier ever accepted — the
-"skipped the parser" route is the one a programmatic configuration takes — or planning
-reaches the network, so a startup that should have failed on configuration instead hangs on
-a socket.
-**Likely owner:** none.
-**Severity:** `critical`.
-
-## NP-070 — the per-core pool ceiling saturates and is raised only when it must be
-
-**Controls:** `mcp-re-proxy/src/startup_plan.rs` (4).
-**Statement.** *A ceiling that would overflow SATURATES rather than wrapping; both bounds
-reach the pool through the gate's per-core ceiling; the pool is raised only when the fleet
-ceiling exceeds its default; and a total that does not divide evenly yields the aggregate the
-gate admits.*
-**If false.** A wrapping ceiling is an unbounded pool — the arithmetic-semantics failure this
-repository has a lint for — reached from an operator-supplied number.
-**Likely owner:** none. `proxy.admission_configuration_state` classifies the ceilings; this
-is what the planner does with them.
-**Severity:** `high`.
+**NP-068, NP-069 AND NP-070 ARE DISCHARGED, 2026-09-19 (ADR-MCPRE-069 §5).** All 31 of the
+startup planner's controls that were theirs are now claimed by three `[[unit]]`s over
+`mcp-re-proxy/src/startup_plan.rs` — `proxy.startup_plan_provenance` (10),
+`proxy.startup_plan_legality` (17) and `proxy.startup_plan_pool_ceiling` (4) — each attached
+to THM-0077's `supported_by`, with falsifiers M312, M313 and M314 demonstrated red. The file
+was in no unit's `paths` before this; it now is, so a change to the planner moves the
+fingerprint of every claim resting on it. The two remaining `startup_plan::tests` controls
+are NP-065's clock-fault pair and stay in the queue with that record.
 
 ---
 
@@ -2632,7 +2624,7 @@ is called*, and the trust plane separates *the cache* from *the posture*.
 
 **Controls:** `mcp-re-proxy/src/async_fleet`.
 **Statement.** *`auto` is ALWAYS at least one shard of one worker, keeps a shard per CPU and adds depth; and an EXPLICIT topology is never overridden.*
-**If false.** A deployment starts with zero shards and serves nothing, or an operator's explicit topology is silently replaced by the automatic one — the provenance collapse NP-057 names for the in-flight limit, here for the shape of the fleet.
+**If false.** A deployment starts with zero shards and serves nothing, or an operator's explicit topology is silently replaced by the automatic one — the provenance collapse `proxy.in_flight_limit_basis` names for the in-flight limit, here for the shape of the fleet.
 **Likely owner:** none.
 **Severity:** `high`.
 
