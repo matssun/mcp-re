@@ -10994,3 +10994,2025 @@ decision = "new-proposition"
 proposition = "NP-077"
 recorded = "2026-09-19"
 
+
+# ---------------------------------------------------------------------------
+# Batch 20 — the proxy's subtrees, 2026-09-19
+# ---------------------------------------------------------------------------
+#
+# 229 controls across twenty subtree modules. One proposition per authority the subtree
+# separates; three subtrees hold two each and are split. Fifteen controls attach to
+# propositions already recorded — eight managed-worker to NP-003, six materializing-runtime
+# to NP-067, one KMS bracketed-host to NP-027.
+
+[[proposition]]
+id = "NP-129"
+title = "The serving path refuses before it spends or signs"
+carrier = "mcp-re-proxy/src/http_profile_serve"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-129"
+
+[[proposition]]
+id = "NP-130"
+title = "An acknowledgement asserts only what actually happened"
+carrier = "mcp-re-proxy/src/http_profile_serve"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-130"
+
+[[proposition]]
+id = "NP-131"
+title = "The actor and the action come from one signed request"
+carrier = "mcp-re-proxy/src/authorization"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-131"
+
+[[proposition]]
+id = "NP-132"
+title = "Each authorization refusal is its own token"
+carrier = "mcp-re-proxy/src/authorization"
+likely_owner = ""
+consequence = "high"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-132"
+
+[[proposition]]
+id = "NP-133"
+title = "A request form carries only its own material"
+carrier = "mcp-re-proxy/src/deployment_request"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-133"
+
+[[proposition]]
+id = "NP-134"
+title = "The trust cache answers from what it has, and stops caching before it stops answering"
+carrier = "mcp-re-proxy/src/trust_plane"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-134"
+
+[[proposition]]
+id = "NP-135"
+title = "A trust posture names its reload floor, and staleness is terminal or undone"
+carrier = "mcp-re-proxy/src/trust_plane"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-135"
+
+[[proposition]]
+id = "NP-136"
+title = "Retained bytes come back under their digest, from an owner-only store"
+carrier = "mcp-re-proxy/src/retained_evidence"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-136"
+
+[[proposition]]
+id = "NP-137"
+title = "A credential-currency or identity refusal names what it read"
+carrier = "mcp-re-proxy/src/communication_assurance"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-137"
+
+[[proposition]]
+id = "NP-138"
+title = "The blocking harness parses HTTP/1 strictly and bounds its reads"
+carrier = "mcp-re-proxy/src/blocking_mtls_harness"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-138"
+
+[[proposition]]
+id = "NP-139"
+title = "An unhealthy backend is ejected, probed once, and readmitted on success"
+carrier = "mcp-re-proxy/src/http_inner"
+likely_owner = ""
+consequence = "high"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-139"
+
+[[proposition]]
+id = "NP-140"
+title = "The TLS plane republishes its own epoch and bounds established connections"
+carrier = "mcp-re-proxy/src/tls_plane"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-140"
+
+[[proposition]]
+id = "NP-141"
+title = "The async core budgets bodies and frames without double counting"
+carrier = "mcp-re-proxy/src/async_serve"
+likely_owner = ""
+consequence = "high"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-141"
+
+[[proposition]]
+id = "NP-142"
+title = "The stage timers index and name every stage"
+carrier = "mcp-re-proxy/src/stage_timers"
+likely_owner = ""
+consequence = "medium"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-142"
+
+[[proposition]]
+id = "NP-143"
+title = "Materialization refuses rather than defaulting, and prints no secret"
+carrier = "mcp-re-proxy/src/capability_materialization"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-143"
+
+[[proposition]]
+id = "NP-144"
+title = "An admission record is addressed by its workload and reported once"
+carrier = "mcp-re-proxy/src/redis_admission_source"
+likely_owner = ""
+consequence = "high"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-144"
+
+[[proposition]]
+id = "NP-145"
+title = "The operator-facing vocabularies agree and render distinctly"
+carrier = "mcp-re-proxy/src/facades"
+likely_owner = ""
+consequence = "medium"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-145"
+
+[[proposition]]
+id = "NP-146"
+title = "Refusal reporting is bounded, counted in full, and never panics"
+carrier = "mcp-re-proxy/src/async_replay"
+likely_owner = ""
+consequence = "high"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-146"
+
+[[proposition]]
+id = "NP-147"
+title = "The fleet topology is at least one shard and never overridden"
+carrier = "mcp-re-proxy/src/async_fleet"
+likely_owner = ""
+consequence = "high"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-147"
+
+[[proposition]]
+id = "NP-148"
+title = "Signing-plane materialization refuses rather than starting half-built"
+carrier = "mcp-re-proxy/src/signing_plane"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-148"
+
+[[disposition]]
+id = "CD-18001"
+project = "mcp-re-proxy"
+control = "lib#admission_source::tests::a_key_is_readable_by_an_operator"
+decision = "new-proposition"
+proposition = "NP-144"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18002"
+project = "mcp-re-proxy"
+control = "lib#async_fleet::topology_tests::auto_is_always_at_least_one_shard_of_one_worker"
+decision = "new-proposition"
+proposition = "NP-147"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18003"
+project = "mcp-re-proxy"
+control = "lib#async_fleet::topology_tests::auto_keeps_a_shard_per_cpu_and_adds_depth"
+decision = "new-proposition"
+proposition = "NP-147"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18004"
+project = "mcp-re-proxy"
+control = "lib#async_fleet::topology_tests::explicit_topology_is_never_overridden"
+decision = "new-proposition"
+proposition = "NP-147"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18005"
+project = "mcp-re-proxy"
+control = "lib#async_inner::tests::a_closure_inner_reports_a_backend_reply"
+decision = "new-proposition"
+proposition = "NP-139"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18006"
+project = "mcp-re-proxy"
+control = "lib#async_inner::tests::the_post_commitment_outcomes_are_distinguishable"
+decision = "new-proposition"
+proposition = "NP-139"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18007"
+project = "mcp-re-proxy"
+control = "lib#async_replay::budget_report::tests::refusals_are_paced_by_the_process_and_counted_in_full"
+decision = "new-proposition"
+proposition = "NP-146"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18008"
+project = "mcp-re-proxy"
+control = "lib#async_replay::budget_report::tests::reporting_never_panics"
+decision = "new-proposition"
+proposition = "NP-146"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18009"
+project = "mcp-re-proxy"
+control = "lib#async_replay::l1_fast_reject::tests::l1_fast_reject_never_fresh_and_evicts_fifo"
+decision = "new-proposition"
+proposition = "NP-146"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18010"
+project = "mcp-re-proxy"
+control = "lib#async_replay::retention_ledger::tests::a_budget_refusal_is_rendered_without_the_ledger_lock"
+decision = "new-proposition"
+proposition = "NP-146"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18011"
+project = "mcp-re-proxy"
+control = "lib#async_serve::admission_bound_tests::the_handshake_bound_leaves_workers_for_the_rest_of_the_core"
+decision = "new-proposition"
+proposition = "NP-141"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18012"
+project = "mcp-re-proxy"
+control = "lib#async_serve::body_budget::tests::absorbing_a_frame_does_not_release_its_bytes_twice"
+decision = "new-proposition"
+proposition = "NP-141"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18013"
+project = "mcp-re-proxy"
+control = "lib#async_serve::body_budget::tests::an_abandoned_body_read_returns_its_charge"
+decision = "new-proposition"
+proposition = "NP-141"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18014"
+project = "mcp-re-proxy"
+control = "lib#async_serve::body_budget::tests::the_core_budget_admits_a_maximum_size_body_and_refuses_past_the_ceiling"
+decision = "new-proposition"
+proposition = "NP-141"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18015"
+project = "mcp-re-proxy"
+control = "lib#async_serve::core_admission::tests::a_clone_shares_the_cores_bounds_rather_than_making_new_ones"
+decision = "new-proposition"
+proposition = "NP-141"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18016"
+project = "mcp-re-proxy"
+control = "lib#async_serve::target_uri_tests::a_different_query_is_refused"
+decision = "new-proposition"
+proposition = "NP-141"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18017"
+project = "mcp-re-proxy"
+control = "lib#async_serve::target_uri_tests::a_different_received_path_is_refused"
+decision = "new-proposition"
+proposition = "NP-141"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18018"
+project = "mcp-re-proxy"
+control = "lib#async_serve::target_uri_tests::a_matching_origin_form_is_consistent"
+decision = "new-proposition"
+proposition = "NP-141"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18019"
+project = "mcp-re-proxy"
+control = "lib#async_serve::target_uri_tests::a_root_target_matches_a_root_request"
+decision = "new-proposition"
+proposition = "NP-141"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18020"
+project = "mcp-re-proxy"
+control = "lib#async_serve::target_uri_tests::an_empty_configured_target_is_not_checked_here"
+decision = "new-proposition"
+proposition = "NP-141"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18021"
+project = "mcp-re-proxy"
+control = "lib#async_serve::target_uri_tests::the_configured_authority_is_not_compared"
+decision = "new-proposition"
+proposition = "NP-141"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18022"
+project = "mcp-re-proxy"
+control = "lib#authorization::pdp::evidence::tests::a_decision_with_no_binding_at_all_is_refused"
+decision = "new-proposition"
+proposition = "NP-131"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18023"
+project = "mcp-re-proxy"
+control = "lib#authorization::pdp::evidence::tests::a_document_from_another_request_cannot_be_paired_with_this_binding"
+decision = "new-proposition"
+proposition = "NP-131"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18024"
+project = "mcp-re-proxy"
+control = "lib#authorization::pdp::evidence::tests::a_reference_binding_never_becomes_evidence_even_with_the_same_digest"
+decision = "new-proposition"
+proposition = "NP-131"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18025"
+project = "mcp-re-proxy"
+control = "lib#authorization::pdp::evidence::tests::a_request_carrying_no_decision_is_not_a_refusal"
+decision = "new-proposition"
+proposition = "NP-132"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18026"
+project = "mcp-re-proxy"
+control = "lib#authorization::pdp::evidence::tests::one_binding_over_these_exact_bytes_corresponds"
+decision = "new-proposition"
+proposition = "NP-131"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18027"
+project = "mcp-re-proxy"
+control = "lib#authorization::pdp::evidence::tests::two_evidence_bindings_leave_the_pairing_ambiguous_and_are_refused"
+decision = "new-proposition"
+proposition = "NP-131"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18028"
+project = "mcp-re-proxy"
+control = "lib#authorization::pdp::policy::tests::a_resolver_that_trusts_nobody_is_a_deployment_that_authorizes_nothing"
+decision = "new-proposition"
+proposition = "NP-132"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18029"
+project = "mcp-re-proxy"
+control = "lib#authorization::pdp::refusal::tests::a_digest_mismatch_is_not_reported_as_a_malformed_artifact"
+decision = "new-proposition"
+proposition = "NP-132"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18030"
+project = "mcp-re-proxy"
+control = "lib#authorization::pdp::refusal::tests::a_request_presenting_nothing_says_so_rather_than_borrowing_a_denial"
+decision = "new-proposition"
+proposition = "NP-132"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18031"
+project = "mcp-re-proxy"
+control = "lib#authorization::pdp::refusal::tests::a_scope_the_deployment_does_not_accept_is_not_an_actor_mismatch"
+decision = "new-proposition"
+proposition = "NP-132"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18032"
+project = "mcp-re-proxy"
+control = "lib#authorization::pdp::refusal::tests::an_actor_mismatch_and_an_action_mismatch_are_different_tokens"
+decision = "new-proposition"
+proposition = "NP-132"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18033"
+project = "mcp-re-proxy"
+control = "lib#authorization::pdp::refusal::tests::an_explicit_deny_and_an_action_mismatch_collapse_onto_one_token"
+decision = "new-proposition"
+proposition = "NP-132"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18034"
+project = "mcp-re-proxy"
+control = "lib#authorization::pdp::refusal::tests::no_configured_authority_and_an_untrusted_issuer_are_different_tokens"
+decision = "new-proposition"
+proposition = "NP-132"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18035"
+project = "mcp-re-proxy"
+control = "lib#authorization::request::tests::a_body_from_another_request_cannot_be_paired_with_this_actor"
+decision = "new-proposition"
+proposition = "NP-131"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18036"
+project = "mcp-re-proxy"
+control = "lib#authorization::request::tests::an_unbound_deployment_says_not_claimed_rather_than_asserting_a_binding"
+decision = "new-proposition"
+proposition = "NP-132"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18037"
+project = "mcp-re-proxy"
+control = "lib#authorization::request::tests::the_actor_and_the_action_come_from_one_request"
+decision = "new-proposition"
+proposition = "NP-131"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18038"
+project = "mcp-re-proxy"
+control = "lib#authorization::request::tests::the_binding_reaches_the_policy_whole_and_is_not_reopened"
+decision = "new-proposition"
+proposition = "NP-131"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18039"
+project = "mcp-re-proxy"
+control = "lib#authorization::verified_action::tests::a_body_that_is_not_the_signed_body_cannot_produce_a_coordinate"
+decision = "new-proposition"
+proposition = "NP-131"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18040"
+project = "mcp-re-proxy"
+control = "lib#authorization::verified_action::tests::a_malformed_request_is_reported_rather_than_refused_by_this_authority"
+decision = "new-proposition"
+proposition = "NP-132"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18041"
+project = "mcp-re-proxy"
+control = "lib#authorization::verified_action::tests::a_method_that_names_no_target_is_not_the_same_as_one_missing_its_target"
+decision = "new-proposition"
+proposition = "NP-132"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18042"
+project = "mcp-re-proxy"
+control = "lib#authorization::verified_action::tests::a_signed_body_that_is_not_json_and_one_with_no_method_are_different_facts"
+decision = "new-proposition"
+proposition = "NP-132"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18043"
+project = "mcp-re-proxy"
+control = "lib#authorization::verified_action::tests::resources_read_names_its_target_under_a_different_key"
+decision = "new-proposition"
+proposition = "NP-131"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18044"
+project = "mcp-re-proxy"
+control = "lib#authorization::verified_action::tests::the_coordinate_is_read_from_the_signed_body"
+decision = "new-proposition"
+proposition = "NP-131"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18045"
+project = "mcp-re-proxy"
+control = "lib#authorization::verified_actor::tests::a_rotated_key_is_the_same_subject_and_a_different_canonical_actor"
+decision = "new-proposition"
+proposition = "NP-131"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18046"
+project = "mcp-re-proxy"
+control = "lib#authorization::verified_actor::tests::distinct_trust_domains_are_distinct_actors_under_the_same_subject"
+decision = "new-proposition"
+proposition = "NP-131"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18047"
+project = "mcp-re-proxy"
+control = "lib#authorization::verified_actor::tests::every_verified_dimension_is_projected_separately"
+decision = "new-proposition"
+proposition = "NP-132"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18048"
+project = "mcp-re-proxy"
+control = "lib#authorization::verified_actor::tests::the_canonical_id_is_the_identity_owner_s_join_not_a_second_one"
+decision = "new-proposition"
+proposition = "NP-131"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18049"
+project = "mcp-re-proxy"
+control = "lib#blocking_mtls_harness::deadline_stream::aggregate_deadline_tests::aggregate_deadline_fires_on_sub_per_read_trickle"
+decision = "new-proposition"
+proposition = "NP-138"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18050"
+project = "mcp-re-proxy"
+control = "lib#blocking_mtls_harness::deadline_stream::aggregate_deadline_tests::disabled_deadline_does_not_cut_off_a_completing_read"
+decision = "new-proposition"
+proposition = "NP-138"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18051"
+project = "mcp-re-proxy"
+control = "lib#blocking_mtls_harness::http1::content_length_framing_tests::absent_content_length_is_a_zero_length_body"
+decision = "new-proposition"
+proposition = "NP-138"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18052"
+project = "mcp-re-proxy"
+control = "lib#blocking_mtls_harness::http1::content_length_framing_tests::duplicate_content_length_is_rejected"
+decision = "new-proposition"
+proposition = "NP-138"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18053"
+project = "mcp-re-proxy"
+control = "lib#blocking_mtls_harness::http1::content_length_framing_tests::duplicate_content_length_same_value_is_still_rejected"
+decision = "new-proposition"
+proposition = "NP-138"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18054"
+project = "mcp-re-proxy"
+control = "lib#blocking_mtls_harness::http1::content_length_framing_tests::negative_content_length_is_rejected"
+decision = "new-proposition"
+proposition = "NP-138"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18055"
+project = "mcp-re-proxy"
+control = "lib#blocking_mtls_harness::http1::content_length_framing_tests::single_valid_content_length_parses"
+decision = "new-proposition"
+proposition = "NP-138"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18056"
+project = "mcp-re-proxy"
+control = "lib#blocking_mtls_harness::http1::content_length_framing_tests::unparseable_content_length_is_rejected"
+decision = "new-proposition"
+proposition = "NP-138"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18057"
+project = "mcp-re-proxy"
+control = "lib#blocking_mtls_harness::http1::header_framing_tests::bare_cr_in_header_section_is_rejected"
+decision = "new-proposition"
+proposition = "NP-138"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18058"
+project = "mcp-re-proxy"
+control = "lib#blocking_mtls_harness::http1::header_framing_tests::bare_lf_line_ending_is_rejected"
+decision = "new-proposition"
+proposition = "NP-138"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18059"
+project = "mcp-re-proxy"
+control = "lib#blocking_mtls_harness::http1::header_framing_tests::obs_fold_continuation_line_is_rejected"
+decision = "new-proposition"
+proposition = "NP-138"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18060"
+project = "mcp-re-proxy"
+control = "lib#blocking_mtls_harness::http1::header_framing_tests::well_formed_strict_crlf_request_is_accepted"
+decision = "new-proposition"
+proposition = "NP-138"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18061"
+project = "mcp-re-proxy"
+control = "lib#capability_materialization::ingress::tests::a_mode_c_verifier_missing_its_audience_fails_closed_rather_than_defaulting"
+decision = "new-proposition"
+proposition = "NP-143"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18062"
+project = "mcp-re-proxy"
+control = "lib#capability_materialization::ingress::tests::a_mode_c_verifier_rejects_an_unusable_attestor_key_rather_than_dropping_it"
+decision = "new-proposition"
+proposition = "NP-143"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18063"
+project = "mcp-re-proxy"
+control = "lib#capability_materialization::ingress::tests::the_mode_c_verifier_is_built_only_for_the_attested_ingress_binding"
+decision = "new-proposition"
+proposition = "NP-143"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18064"
+project = "mcp-re-proxy"
+control = "lib#capability_materialization::ingress::tests::the_retained_mode_c_verifier_still_admits_an_assertion_from_its_configured_attestor"
+decision = "new-proposition"
+proposition = "NP-143"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18065"
+project = "mcp-re-proxy"
+control = "lib#capability_materialization::key_source::pin::tests::a_group_readable_pin_file_is_refused"
+decision = "new-proposition"
+proposition = "NP-143"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18066"
+project = "mcp-re-proxy"
+control = "lib#capability_materialization::key_source::pin::tests::a_secret_string_does_not_print_its_value_or_length"
+decision = "new-proposition"
+proposition = "NP-143"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18067"
+project = "mcp-re-proxy"
+control = "lib#capability_materialization::key_source::pin::tests::the_pin_file_reader_trims_a_trailing_newline_and_refuses_an_empty_file"
+decision = "new-proposition"
+proposition = "NP-143"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18068"
+project = "mcp-re-proxy"
+control = "lib#communication_assurance::certificate_chain_evidence::tests::an_optional_leaf_that_is_none_is_the_same_evidence_as_absent"
+decision = "new-proposition"
+proposition = "NP-137"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18069"
+project = "mcp-re-proxy"
+control = "lib#communication_assurance::certificate_identity_policy::tests::the_default_policy_is_the_uri_san"
+decision = "new-proposition"
+proposition = "NP-137"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18070"
+project = "mcp-re-proxy"
+control = "lib#communication_assurance::certificate_identity_refusal::tests::a_presented_leaf_that_refuses_is_never_reported_as_an_absent_one"
+decision = "new-proposition"
+proposition = "NP-137"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18071"
+project = "mcp-re-proxy"
+control = "lib#communication_assurance::certificate_identity_refusal::tests::a_refusal_names_the_configured_field_not_the_field_that_was_present"
+decision = "new-proposition"
+proposition = "NP-137"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18072"
+project = "mcp-re-proxy"
+control = "lib#communication_assurance::certificate_peer_identity_evidence::tests::the_projections_report_what_was_constructed"
+decision = "new-proposition"
+proposition = "NP-137"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18073"
+project = "mcp-re-proxy"
+control = "lib#communication_assurance::credential_currency::evaluation::tests::a_self_issued_certificate_in_the_chain_is_exempt_from_the_window"
+decision = "new-proposition"
+proposition = "NP-137"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18074"
+project = "mcp-re-proxy"
+control = "lib#communication_assurance::credential_currency::evaluation::tests::a_span_within_the_ceiling_is_current_and_names_the_control_that_ran"
+decision = "new-proposition"
+proposition = "NP-137"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18075"
+project = "mcp-re-proxy"
+control = "lib#communication_assurance::credential_currency::policy::tests::only_the_unevaluated_policy_applies_no_controls"
+decision = "new-proposition"
+proposition = "NP-137"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18076"
+project = "mcp-re-proxy"
+control = "lib#communication_assurance::credential_currency::x509_adapter::tests::an_inverted_window_is_not_orderable_and_contains_nothing"
+decision = "new-proposition"
+proposition = "NP-137"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18077"
+project = "mcp-re-proxy"
+control = "lib#communication_assurance::credential_currency::x509_adapter::tests::an_orderable_window_is_not_the_same_question_as_containing_now"
+decision = "new-proposition"
+proposition = "NP-137"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18078"
+project = "mcp-re-proxy"
+control = "lib#communication_assurance::credential_currency::x509_adapter::tests::rubbish_der_reads_no_facts"
+decision = "new-proposition"
+proposition = "NP-137"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18079"
+project = "mcp-re-proxy"
+control = "lib#communication_assurance::current_authenticated_peer::tests::an_authentication_that_never_happened_cannot_be_made_current"
+decision = "new-proposition"
+proposition = "NP-137"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18080"
+project = "mcp-re-proxy"
+control = "lib#communication_assurance::peer_identity_provenance::tests::the_default_provenance_is_the_channel_credential"
+decision = "new-proposition"
+proposition = "NP-137"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18081"
+project = "mcp-re-proxy"
+control = "lib#deployment_request::admission::availability::tests::failing_closed_is_the_default_and_carries_no_window"
+decision = "new-proposition"
+proposition = "NP-133"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18082"
+project = "mcp-re-proxy"
+control = "lib#deployment_request::admission::gate::tests::an_applied_gate_always_names_the_record_it_compares_against"
+decision = "new-proposition"
+proposition = "NP-133"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18083"
+project = "mcp-re-proxy"
+control = "lib#deployment_request::admission::tests::a_degraded_window_exists_only_where_one_opens_and_only_above_zero"
+decision = "new-proposition"
+proposition = "NP-133"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18084"
+project = "mcp-re-proxy"
+control = "lib#deployment_request::admission::tests::both_enforcing_forms_carry_the_gate_they_apply"
+decision = "new-proposition"
+proposition = "NP-133"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18085"
+project = "mcp-re-proxy"
+control = "lib#deployment_request::admission::tests::the_unenforced_form_has_no_gate_inputs_to_dangle"
+decision = "new-proposition"
+proposition = "NP-133"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18086"
+project = "mcp-re-proxy"
+control = "lib#deployment_request::authorization::tests::a_scope_beside_off_is_representable_because_refusing_it_is_not_this_types_job"
+decision = "new-proposition"
+proposition = "NP-133"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18087"
+project = "mcp-re-proxy"
+control = "lib#deployment_request::authorization::tests::the_off_request_supplies_no_parameter_any_machine_could_dangle"
+decision = "new-proposition"
+proposition = "NP-133"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18088"
+project = "mcp-re-proxy"
+control = "lib#deployment_request::delegated_signing::tests::the_derived_coordinates_start_unnamed"
+decision = "new-proposition"
+proposition = "NP-133"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18089"
+project = "mcp-re-proxy"
+control = "lib#deployment_request::peer_identity::attested_ingress::tests::an_attested_form_cannot_exist_without_the_acknowledgement"
+decision = "new-proposition"
+proposition = "NP-133"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18090"
+project = "mcp-re-proxy"
+control = "lib#deployment_request::peer_identity::channel_credential_identity::tests::the_default_identity_field_is_the_uri_san"
+decision = "new-proposition"
+proposition = "NP-133"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18091"
+project = "mcp-re-proxy"
+control = "lib#deployment_request::peer_identity::ingress_assertion::tests::the_verification_set_can_be_empty_and_is_judged_at_the_boundary"
+decision = "new-proposition"
+proposition = "NP-133"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18092"
+project = "mcp-re-proxy"
+control = "lib#deployment_request::peer_identity::tests::a_form_carries_only_its_own_material"
+decision = "new-proposition"
+proposition = "NP-133"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18093"
+project = "mcp-re-proxy"
+control = "lib#deployment_request::peer_identity::tests::the_default_form_is_the_channel_credential"
+decision = "new-proposition"
+proposition = "NP-133"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18094"
+project = "mcp-re-proxy"
+control = "lib#deployment_request::request_signer_currency::tests::only_the_pushing_tier_can_name_an_epoch_source"
+decision = "new-proposition"
+proposition = "NP-133"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18095"
+project = "mcp-re-proxy"
+control = "lib#deployment_request::request_signer_currency::tests::the_cadence_is_optional_under_exactly_one_tier"
+decision = "new-proposition"
+proposition = "NP-133"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18096"
+project = "mcp-re-proxy"
+control = "lib#deployment_request::revocation::revocation_list::tests::an_empty_set_is_the_unconfigured_posture"
+decision = "new-proposition"
+proposition = "NP-133"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18097"
+project = "mcp-re-proxy"
+control = "lib#deployment_request::revocation::tests::configuring_neither_mechanism_is_a_posture"
+decision = "new-proposition"
+proposition = "NP-133"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18098"
+project = "mcp-re-proxy"
+control = "lib#deployment_request::revocation::tests::the_two_mechanisms_compose_rather_than_excluding_each_other"
+decision = "new-proposition"
+proposition = "NP-133"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18099"
+project = "mcp-re-proxy"
+control = "lib#deployment_request::storage::continuation_storage::tests::no_shared_store_is_the_default_posture"
+decision = "new-proposition"
+proposition = "NP-133"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18100"
+project = "mcp-re-proxy"
+control = "lib#deployment_request::storage::continuation_storage::tests::one_redis_can_serve_two_roles_without_the_roles_becoming_one"
+decision = "new-proposition"
+proposition = "NP-133"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18101"
+project = "mcp-re-proxy"
+control = "lib#deployment_request::storage::replay_storage::tests::a_replay_store_is_one_backend_and_carries_only_its_own_locator"
+decision = "new-proposition"
+proposition = "NP-133"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18102"
+project = "mcp-re-proxy"
+control = "lib#deployment_request::storage::replay_storage::tests::the_durability_claim_and_the_store_are_separately_stated"
+decision = "new-proposition"
+proposition = "NP-133"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18103"
+project = "mcp-re-proxy"
+control = "lib#deployment_request::storage::shared_store::tests::a_store_that_does_not_exist_drives_the_same_consumer"
+decision = "new-proposition"
+proposition = "NP-133"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18104"
+project = "mcp-re-proxy"
+control = "lib#deployment_request::storage::shared_store::tests::the_locator_projection_names_no_backend"
+decision = "new-proposition"
+proposition = "NP-133"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18105"
+project = "mcp-re-proxy"
+control = "lib#deployment_request::storage::trust_epoch_storage::tests::a_coordinate_cannot_exist_without_the_store_it_names_a_place_in"
+decision = "new-proposition"
+proposition = "NP-133"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18106"
+project = "mcp-re-proxy"
+control = "lib#deployment_request::storage::trust_epoch_storage::tests::a_source_without_a_named_key_is_still_a_source"
+decision = "new-proposition"
+proposition = "NP-133"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18107"
+project = "mcp-re-proxy"
+control = "lib#facades::asserted_identity::tests::a_valid_value_comes_back_trimmed_and_borrowed"
+decision = "new-proposition"
+proposition = "NP-145"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18108"
+project = "mcp-re-proxy"
+control = "lib#facades::asserted_identity::tests::every_owner_refusal_maps_to_the_historical_rejection_it_replaced"
+decision = "new-proposition"
+proposition = "NP-145"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18109"
+project = "mcp-re-proxy"
+control = "lib#facades::asserted_identity::tests::the_two_vocabularies_agree_field_for_field"
+decision = "new-proposition"
+proposition = "NP-145"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18110"
+project = "mcp-re-proxy"
+control = "lib#facades::delegated_key_correspondence::tests::an_unsupported_algorithm_tells_the_operator_which_algorithm_was_given"
+decision = "new-proposition"
+proposition = "NP-145"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18111"
+project = "mcp-re-proxy"
+control = "lib#facades::delegated_key_correspondence::tests::every_fact_renders_to_a_distinct_sentence"
+decision = "new-proposition"
+proposition = "NP-145"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18112"
+project = "mcp-re-proxy"
+control = "lib#http_inner::tests::a_held_preparation_consumes_the_in_flight_bound"
+decision = "new-proposition"
+proposition = "NP-139"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18113"
+project = "mcp-re-proxy"
+control = "lib#http_inner::tests::a_success_resets_the_failure_run"
+decision = "new-proposition"
+proposition = "NP-139"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18114"
+project = "mcp-re-proxy"
+control = "lib#http_inner::tests::all_open_selection_returns_none_before_cooldown"
+decision = "new-proposition"
+proposition = "NP-139"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18115"
+project = "mcp-re-proxy"
+control = "lib#http_inner::tests::consecutive_failures_trip_open_at_threshold"
+decision = "new-proposition"
+proposition = "NP-139"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18116"
+project = "mcp-re-proxy"
+control = "lib#http_inner::tests::each_probe_claim_takes_a_slot_that_no_second_claim_can_take"
+decision = "new-proposition"
+proposition = "NP-139"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18117"
+project = "mcp-re-proxy"
+control = "lib#http_inner::tests::failed_probe_reopens_for_another_cooldown"
+decision = "new-proposition"
+proposition = "NP-139"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18118"
+project = "mcp-re-proxy"
+control = "lib#http_inner::tests::health_aware_lb_skips_open_backend_and_uses_healthy_one"
+decision = "new-proposition"
+proposition = "NP-139"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18119"
+project = "mcp-re-proxy"
+control = "lib#http_inner::tests::healthy_backend_selected_and_closed_stays_closed_on_success"
+decision = "new-proposition"
+proposition = "NP-139"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18120"
+project = "mcp-re-proxy"
+control = "lib#http_inner::tests::open_backend_readmitted_as_probe_after_cooldown_then_closes_on_success"
+decision = "new-proposition"
+proposition = "NP-139"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18121"
+project = "mcp-re-proxy"
+control = "lib#http_inner::tests::preparing_claims_the_recovery_probe_and_dropping_it_gives_the_probe_back"
+decision = "new-proposition"
+proposition = "NP-139"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18122"
+project = "mcp-re-proxy"
+control = "lib#http_inner::tests::preparing_refuses_only_while_every_backend_is_ejected"
+decision = "new-proposition"
+proposition = "NP-139"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18123"
+project = "mcp-re-proxy"
+control = "lib#http_profile_serve::answering_commitment::tests::only_a_real_retirement_spends_an_approval"
+decision = "new-proposition"
+proposition = "NP-130"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18124"
+project = "mcp-re-proxy"
+control = "lib#http_profile_serve::body_boundary::tests::an_unrepresentable_body_is_refused_before_any_reserialization"
+decision = "new-proposition"
+proposition = "NP-129"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18125"
+project = "mcp-re-proxy"
+control = "lib#http_profile_serve::body_boundary::tests::application_meta_survives_the_pep_owned_strip"
+decision = "new-proposition"
+proposition = "NP-129"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18126"
+project = "mcp-re-proxy"
+control = "lib#http_profile_serve::body_boundary::tests::request_state_is_read_only_as_a_string_under_params"
+decision = "new-proposition"
+proposition = "NP-129"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18127"
+project = "mcp-re-proxy"
+control = "lib#http_profile_serve::continuation::open_leg::tests::a_collision_fails_the_leg_closed_without_retrying"
+decision = "new-proposition"
+proposition = "NP-129"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18128"
+project = "mcp-re-proxy"
+control = "lib#http_profile_serve::continuation::open_leg::tests::the_record_budget_is_bounded_and_small"
+decision = "new-proposition"
+proposition = "NP-130"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18129"
+project = "mcp-re-proxy"
+control = "lib#http_profile_serve::continuation::tests::a_disabled_plane_still_carries_the_default_lifetime"
+decision = "new-proposition"
+proposition = "NP-130"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18130"
+project = "mcp-re-proxy"
+control = "lib#http_profile_serve::inner_plane::tests::a_notification_the_backend_may_not_have_received_is_not_acknowledged"
+decision = "new-proposition"
+proposition = "NP-130"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18131"
+project = "mcp-re-proxy"
+control = "lib#http_profile_serve::inner_plane::tests::a_saturated_plane_refuses_before_a_byte_is_transmitted"
+decision = "new-proposition"
+proposition = "NP-129"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18132"
+project = "mcp-re-proxy"
+control = "lib#http_profile_serve::inner_plane::tests::a_timeout_is_neither_a_reply_nor_a_definite_failure"
+decision = "new-proposition"
+proposition = "NP-130"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18133"
+project = "mcp-re-proxy"
+control = "lib#http_profile_serve::inner_plane::tests::an_unusable_answer_to_a_notification_still_says_the_backend_was_reached"
+decision = "new-proposition"
+proposition = "NP-130"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18134"
+project = "mcp-re-proxy"
+control = "lib#http_profile_serve::pre_admission::action::tests::an_unconfigured_deployment_claims_nothing_about_permission"
+decision = "new-proposition"
+proposition = "NP-130"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18135"
+project = "mcp-re-proxy"
+control = "lib#http_profile_serve::pre_admission::standing::admission_prerequisite_tests::the_binding_prerequisite_and_the_assertion_coordinate_are_different_facts"
+decision = "new-proposition"
+proposition = "NP-129"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18136"
+project = "mcp-re-proxy"
+control = "lib#http_profile_serve::pre_admission::standing::admission_prerequisite_tests::the_binding_stage_hands_on_the_fact_rather_than_a_unit"
+decision = "new-proposition"
+proposition = "NP-129"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18137"
+project = "mcp-re-proxy"
+control = "lib#http_profile_serve::pre_admission::tests::the_carrier_does_not_flatten_the_authorization_posture"
+decision = "new-proposition"
+proposition = "NP-130"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18138"
+project = "mcp-re-proxy"
+control = "lib#http_profile_serve::pre_admission::tests::the_carrier_holds_the_terminal_selected_by_the_request"
+decision = "new-proposition"
+proposition = "NP-129"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18139"
+project = "mcp-re-proxy"
+control = "lib#http_profile_serve::reply::tests::a_jsonrpc_error_is_a_terminal_answer_and_not_a_malformed_one"
+decision = "new-proposition"
+proposition = "NP-129"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18140"
+project = "mcp-re-proxy"
+control = "lib#http_profile_serve::reply::tests::an_open_leg_yields_the_state_its_answer_re_presents"
+decision = "new-proposition"
+proposition = "NP-129"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18141"
+project = "mcp-re-proxy"
+control = "lib#http_profile_serve::reply::tests::an_uncorrelated_reply_is_refused_before_anything_signs_it"
+decision = "new-proposition"
+proposition = "NP-129"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18142"
+project = "mcp-re-proxy"
+control = "lib#http_profile_serve::reply::tests::an_unrecognized_result_type_is_never_signed"
+decision = "new-proposition"
+proposition = "NP-129"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18143"
+project = "mcp-re-proxy"
+control = "lib#http_profile_serve::reply_assembly::accepted::tests::nothing_is_owed_where_retention_is_not_configured"
+decision = "new-proposition"
+proposition = "NP-130"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18144"
+project = "mcp-re-proxy"
+control = "lib#http_profile_serve::reply_assembly::notification::tests::a_message_that_may_not_have_arrived_is_not_acknowledged"
+decision = "new-proposition"
+proposition = "NP-130"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18145"
+project = "mcp-re-proxy"
+control = "lib#http_profile_serve::reply_assembly::tests::the_reply_carries_the_class_the_classifier_read"
+decision = "new-proposition"
+proposition = "NP-129"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18146"
+project = "mcp-re-proxy"
+control = "lib#http_profile_serve::request_admission::tests::a_body_the_profile_cannot_carry_unchanged_is_refused_before_anything_is_spent"
+decision = "new-proposition"
+proposition = "NP-129"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18147"
+project = "mcp-re-proxy"
+control = "lib#http_profile_serve::request_admission::tests::a_document_that_is_not_an_mcp_message_is_refused_at_400"
+decision = "new-proposition"
+proposition = "NP-129"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18148"
+project = "mcp-re-proxy"
+control = "lib#http_profile_serve::request_admission::tests::a_notification_and_a_request_are_told_apart_once"
+decision = "new-proposition"
+proposition = "NP-129"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18149"
+project = "mcp-re-proxy"
+control = "lib#http_profile_serve::request_admission::tests::the_audience_the_store_keys_under_is_the_one_the_verifier_enforces"
+decision = "new-proposition"
+proposition = "NP-129"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18150"
+project = "mcp-re-proxy"
+control = "lib#http_profile_serve::retention::tests::a_deployment_that_retains_nothing_owes_nothing_on_any_of_the_three"
+decision = "new-proposition"
+proposition = "NP-130"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18151"
+project = "mcp-re-proxy"
+control = "lib#kms_endpoint_policy::tests::a_bracketed_host_must_be_an_ipv6_literal"
+decision = "new-proposition"
+proposition = "NP-027"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18152"
+project = "mcp-re-proxy"
+control = "lib#managed_worker::halt::tests::a_raised_halt_never_becomes_unraised"
+decision = "new-proposition"
+proposition = "NP-003"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18153"
+project = "mcp-re-proxy"
+control = "lib#managed_worker::halt::tests::either_source_alone_raises_the_halt"
+decision = "new-proposition"
+proposition = "NP-003"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18154"
+project = "mcp-re-proxy"
+control = "lib#managed_worker::tests::a_worker_also_stops_when_the_deployment_stops"
+decision = "new-proposition"
+proposition = "NP-003"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18155"
+project = "mcp-re-proxy"
+control = "lib#managed_worker::tests::a_worker_that_ignores_the_halt_is_bounded_and_named"
+decision = "new-proposition"
+proposition = "NP-003"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18156"
+project = "mcp-re-proxy"
+control = "lib#managed_worker::tests::an_interrupted_sleep_reports_that_it_was_cut_short"
+decision = "new-proposition"
+proposition = "NP-003"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18157"
+project = "mcp-re-proxy"
+control = "lib#managed_worker::tests::dropping_the_set_stops_a_worker_the_deployment_flag_never_stopped"
+decision = "new-proposition"
+proposition = "NP-003"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18158"
+project = "mcp-re-proxy"
+control = "lib#managed_worker::tests::reclaiming_twice_is_harmless"
+decision = "new-proposition"
+proposition = "NP-003"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18159"
+project = "mcp-re-proxy"
+control = "lib#managed_worker::tests::the_halt_stays_raised_after_the_set_is_gone"
+decision = "new-proposition"
+proposition = "NP-003"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18160"
+project = "mcp-re-proxy"
+control = "lib#materializing_runtime::completeness::tests::the_first_missing_resource_is_the_one_named"
+decision = "new-proposition"
+proposition = "NP-067"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18161"
+project = "mcp-re-proxy"
+control = "lib#materializing_runtime::tests::a_failure_after_partial_acquisition_reaches_neither_materialized_nor_a_leak"
+decision = "new-proposition"
+proposition = "NP-067"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18162"
+project = "mcp-re-proxy"
+control = "lib#materializing_runtime::tests::a_refused_finish_yields_no_lifecycle_at_all"
+decision = "new-proposition"
+proposition = "NP-067"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18163"
+project = "mcp-re-proxy"
+control = "lib#materializing_runtime::tests::dropping_an_unfinished_builder_reclaims_and_records_the_failure"
+decision = "new-proposition"
+proposition = "NP-067"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18164"
+project = "mcp-re-proxy"
+control = "lib#materializing_runtime::tests::finish_reports_the_incomplete_graph_and_names_a_resource"
+decision = "new-proposition"
+proposition = "NP-067"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18165"
+project = "mcp-re-proxy"
+control = "lib#materializing_runtime::tests::partial_reclaim_follows_the_documented_order_not_installation_order"
+decision = "new-proposition"
+proposition = "NP-067"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18166"
+project = "mcp-re-proxy"
+control = "lib#redis_admission_source::refusal_report::tests::a_class_is_reported_once_and_then_suppressed"
+decision = "new-proposition"
+proposition = "NP-144"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18167"
+project = "mcp-re-proxy"
+control = "lib#redis_admission_source::refusal_report::tests::every_class_has_its_own_latch"
+decision = "new-proposition"
+proposition = "NP-144"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18168"
+project = "mcp-re-proxy"
+control = "lib#redis_admission_source::refusal_report::tests::one_class_being_reported_does_not_suppress_another"
+decision = "new-proposition"
+proposition = "NP-144"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18169"
+project = "mcp-re-proxy"
+control = "lib#redis_admission_source::tests::a_restored_admitted_record_does_not_outlive_the_authorized_window"
+decision = "new-proposition"
+proposition = "NP-144"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18170"
+project = "mcp-re-proxy"
+control = "lib#redis_admission_source::tests::a_store_writer_without_the_signing_authority_produces_nothing_admitted"
+decision = "new-proposition"
+proposition = "NP-144"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18171"
+project = "mcp-re-proxy"
+control = "lib#redis_admission_source::tests::the_record_is_addressed_by_the_workloads_own_name"
+decision = "new-proposition"
+proposition = "NP-144"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18172"
+project = "mcp-re-proxy"
+control = "lib#retained_evidence::archive::tests::a_non_token_digest_cannot_escape_the_root"
+decision = "new-proposition"
+proposition = "NP-136"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18173"
+project = "mcp-re-proxy"
+control = "lib#retained_evidence::archive::tests::a_path_that_is_not_a_directory_is_refused_at_open"
+decision = "new-proposition"
+proposition = "NP-136"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18174"
+project = "mcp-re-proxy"
+control = "lib#retained_evidence::archive::tests::a_read_only_directory_opens_for_reading_and_serves_its_objects"
+decision = "new-proposition"
+proposition = "NP-136"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18175"
+project = "mcp-re-proxy"
+control = "lib#retained_evidence::archive::tests::bytes_replaced_on_disk_are_refused_by_the_read_view"
+decision = "new-proposition"
+proposition = "NP-136"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18176"
+project = "mcp-re-proxy"
+control = "lib#retained_evidence::archive::tests::opening_for_reading_does_not_create_the_directory"
+decision = "new-proposition"
+proposition = "NP-136"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18177"
+project = "mcp-re-proxy"
+control = "lib#retained_evidence::private_file::tests::a_created_file_is_readable_by_its_owner_and_nobody_else"
+decision = "new-proposition"
+proposition = "NP-136"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18178"
+project = "mcp-re-proxy"
+control = "lib#retained_evidence::private_file::tests::a_created_root_is_owner_only"
+decision = "new-proposition"
+proposition = "NP-136"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18179"
+project = "mcp-re-proxy"
+control = "lib#retained_evidence::private_file::tests::creating_over_an_existing_path_is_refused"
+decision = "new-proposition"
+proposition = "NP-136"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18180"
+project = "mcp-re-proxy"
+control = "lib#retained_evidence::private_file::tests::no_two_suffixes_are_the_same"
+decision = "new-proposition"
+proposition = "NP-136"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18181"
+project = "mcp-re-proxy"
+control = "lib#retained_evidence::store::tests::a_created_store_root_is_owner_only"
+decision = "new-proposition"
+proposition = "NP-136"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18182"
+project = "mcp-re-proxy"
+control = "lib#retained_evidence::store::tests::a_missing_object_is_absent_rather_than_an_error"
+decision = "new-proposition"
+proposition = "NP-136"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18183"
+project = "mcp-re-proxy"
+control = "lib#retained_evidence::store::tests::a_truncated_object_is_rewritten_rather_than_reported_as_retained"
+decision = "new-proposition"
+proposition = "NP-136"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18184"
+project = "mcp-re-proxy"
+control = "lib#retained_evidence::store::tests::modified_evidence_gets_a_different_digest"
+decision = "new-proposition"
+proposition = "NP-136"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18185"
+project = "mcp-re-proxy"
+control = "lib#retained_evidence::store::tests::opening_an_unwritable_directory_fails_at_open"
+decision = "new-proposition"
+proposition = "NP-136"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18186"
+project = "mcp-re-proxy"
+control = "lib#retained_evidence::store::tests::retained_bytes_come_back_under_their_digest"
+decision = "new-proposition"
+proposition = "NP-136"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18187"
+project = "mcp-re-proxy"
+control = "lib#retained_evidence::store::tests::retaining_the_same_bytes_twice_is_idempotent"
+decision = "new-proposition"
+proposition = "NP-136"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18188"
+project = "mcp-re-proxy"
+control = "lib#retained_evidence::store::tests::staging_the_same_object_concurrently_leaves_one_object_and_no_residue"
+decision = "new-proposition"
+proposition = "NP-136"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18189"
+project = "mcp-re-proxy"
+control = "lib#retained_evidence::store::tests::temp_residue_from_an_interrupted_write_does_not_block_a_later_put"
+decision = "new-proposition"
+proposition = "NP-136"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18190"
+project = "mcp-re-proxy"
+control = "lib#retained_evidence::store::tests::the_writability_probe_leaves_nothing_in_the_store"
+decision = "new-proposition"
+proposition = "NP-136"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18191"
+project = "mcp-re-proxy"
+control = "lib#signing_plane::rotation_owner_tests::materialize_publishes_a_usable_key_and_owns_one_rotation_worker"
+decision = "new-proposition"
+proposition = "NP-148"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18192"
+project = "mcp-re-proxy"
+control = "lib#signing_plane::rotation_owner_tests::materialize_refuses_when_the_configured_shared_epoch_cannot_be_read"
+decision = "new-proposition"
+proposition = "NP-148"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18193"
+project = "mcp-re-proxy"
+control = "lib#signing_plane::rotation_owner_tests::materialize_refuses_when_the_root_cannot_issue_the_first_key"
+decision = "new-proposition"
+proposition = "NP-148"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18194"
+project = "mcp-re-proxy"
+control = "lib#stage_timers::tests::a_timer_started_while_disabled_reads_no_clock"
+decision = "new-proposition"
+proposition = "NP-142"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18195"
+project = "mcp-re-proxy"
+control = "lib#stage_timers::tests::an_inflight_guard_taken_while_disabled_is_inert"
+decision = "new-proposition"
+proposition = "NP-142"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18196"
+project = "mcp-re-proxy"
+control = "lib#stage_timers::tests::each_stage_slot_carries_its_own_name"
+decision = "new-proposition"
+proposition = "NP-142"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18197"
+project = "mcp-re-proxy"
+control = "lib#stage_timers::tests::every_stage_indexes_within_the_accumulator"
+decision = "new-proposition"
+proposition = "NP-142"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18198"
+project = "mcp-re-proxy"
+control = "lib#stage_timers::tests::stage_discriminants_are_distinct_and_cover_every_slot"
+decision = "new-proposition"
+proposition = "NP-142"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18199"
+project = "mcp-re-proxy"
+control = "lib#stage_timers::tests::the_name_table_covers_every_slot"
+decision = "new-proposition"
+proposition = "NP-142"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18200"
+project = "mcp-re-proxy"
+control = "lib#stage_timers::tests::the_rewrite_period_cannot_divide_by_zero"
+decision = "new-proposition"
+proposition = "NP-142"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18201"
+project = "mcp-re-proxy"
+control = "lib#tls_plane::custody_agreement_tests::a_key_source_that_disagrees_with_the_declared_custody_refuses"
+decision = "new-proposition"
+proposition = "NP-140"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18202"
+project = "mcp-re-proxy"
+control = "lib#tls_plane::custody_agreement_tests::agreeing_custody_passes_the_check_and_fails_on_something_else"
+decision = "new-proposition"
+proposition = "NP-140"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18203"
+project = "mcp-re-proxy"
+control = "lib#tls_plane::fleet_crl_bound_tests::a_reload_cadence_bounds_established_connections_not_only_handshakes"
+decision = "new-proposition"
+proposition = "NP-140"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18204"
+project = "mcp-re-proxy"
+control = "lib#tls_plane::fleet_crl_bound_tests::without_a_cadence_the_bound_is_the_crls_own_expiry"
+decision = "new-proposition"
+proposition = "NP-140"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18205"
+project = "mcp-re-proxy"
+control = "lib#tls_plane::fleet_crl_bound_tests::without_a_crl_the_bound_is_the_certificate_lifetime"
+decision = "new-proposition"
+proposition = "NP-140"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18206"
+project = "mcp-re-proxy"
+control = "lib#tls_plane::handle_lifetime_tests::a_retired_plane_stops_claiming_a_cadence"
+decision = "new-proposition"
+proposition = "NP-140"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18207"
+project = "mcp-re-proxy"
+control = "lib#tls_plane::handle_lifetime_tests::a_snapshot_that_outlives_the_plane_still_serves"
+decision = "new-proposition"
+proposition = "NP-140"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18208"
+project = "mcp-re-proxy"
+control = "lib#tls_plane::trust_epoch_binding_tests::a_rebuild_republishes_the_epoch_of_the_anchor_set_the_plane_owns"
+decision = "new-proposition"
+proposition = "NP-140"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18209"
+project = "mcp-re-proxy"
+control = "lib#tls_plane::trust_epoch_binding_tests::the_store_starts_under_the_epoch_of_the_planes_own_client_auth_inputs"
+decision = "new-proposition"
+proposition = "NP-140"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18210"
+project = "mcp-re-proxy"
+control = "lib#trust_plane::freshness::tests::a_recoverable_staleness_is_undone_by_a_successful_reload"
+decision = "new-proposition"
+proposition = "NP-135"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18211"
+project = "mcp-re-proxy"
+control = "lib#trust_plane::freshness::tests::a_terminal_staleness_survives_a_straggler_reporting_fresh"
+decision = "new-proposition"
+proposition = "NP-135"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18212"
+project = "mcp-re-proxy"
+control = "lib#trust_plane::handle_lifetime_tests::a_directory_that_outlives_the_plane_still_answers_from_the_last_snapshot"
+decision = "new-proposition"
+proposition = "NP-135"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18213"
+project = "mcp-re-proxy"
+control = "lib#trust_plane::handle_lifetime_tests::surviving_handles_do_not_keep_the_refresh_workers_alive"
+decision = "new-proposition"
+proposition = "NP-135"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18214"
+project = "mcp-re-proxy"
+control = "lib#trust_plane::live_trust::tests::no_positive_caching_consults_inner_every_call"
+decision = "new-proposition"
+proposition = "NP-134"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18215"
+project = "mcp-re-proxy"
+control = "lib#trust_plane::live_trust::tests::revocation_source_outage_fails_closed"
+decision = "new-proposition"
+proposition = "NP-134"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18216"
+project = "mcp-re-proxy"
+control = "lib#trust_plane::live_trust::tests::second_revocation_authority_rejects_even_when_key_status_active"
+decision = "new-proposition"
+proposition = "NP-134"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18217"
+project = "mcp-re-proxy"
+control = "lib#trust_plane::push_trust::tests::push_for_a_different_key_does_not_evict_the_active_entry"
+decision = "new-proposition"
+proposition = "NP-134"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18218"
+project = "mcp-re-proxy"
+control = "lib#trust_plane::store_cadence_tests::a_bounded_cache_with_no_cadence_names_the_frozen_store"
+decision = "new-proposition"
+proposition = "NP-135"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18219"
+project = "mcp-re-proxy"
+control = "lib#trust_plane::store_cadence_tests::a_configured_cadence_is_named_on_the_tier_line"
+decision = "new-proposition"
+proposition = "NP-135"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18220"
+project = "mcp-re-proxy"
+control = "lib#trust_plane::store_cadence_tests::a_tier_with_no_reload_cadence_says_the_store_cannot_change"
+decision = "new-proposition"
+proposition = "NP-135"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18221"
+project = "mcp-re-proxy"
+control = "lib#trust_plane::store_cadence_tests::every_posture_names_the_reload_floor_under_its_number"
+decision = "new-proposition"
+proposition = "NP-135"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18222"
+project = "mcp-re-proxy"
+control = "lib#trust_plane::trust_cache::tests::compose_key_is_injective_across_delimiter_containing_pairs"
+decision = "new-proposition"
+proposition = "NP-134"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18223"
+project = "mcp-re-proxy"
+control = "lib#trust_plane::trust_cache::tests::expired_entries_are_swept_rather_than_merely_ignored"
+decision = "new-proposition"
+proposition = "NP-134"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18224"
+project = "mcp-re-proxy"
+control = "lib#trust_plane::trust_cache::tests::not_found_uses_short_ttl_so_a_new_key_propagates"
+decision = "new-proposition"
+proposition = "NP-134"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18225"
+project = "mcp-re-proxy"
+control = "lib#trust_plane::trust_cache::tests::past_the_ceiling_the_cache_stops_caching_but_keeps_answering"
+decision = "new-proposition"
+proposition = "NP-134"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18226"
+project = "mcp-re-proxy"
+control = "lib#trust_plane::trust_cache::tests::prune_evicts_closed_windows"
+decision = "new-proposition"
+proposition = "NP-134"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18227"
+project = "mcp-re-proxy"
+control = "lib#trust_plane::window_policy::tests::strictest_applicable_t_picks_the_tightest_window"
+decision = "new-proposition"
+proposition = "NP-134"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18228"
+project = "mcp-re-proxy"
+control = "lib#trust_plane::window_policy::tests::t_exceeds_recommended_max_flags_long_windows"
+decision = "new-proposition"
+proposition = "NP-134"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-18229"
+project = "mcp-re-proxy"
+control = "lib#trust_plane::window_policy::tests::the_only_input_production_can_build_makes_the_rule_the_identity"
+decision = "new-proposition"
+proposition = "NP-134"
+recorded = "2026-09-19"
+

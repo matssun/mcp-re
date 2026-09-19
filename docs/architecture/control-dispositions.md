@@ -2475,3 +2475,177 @@ instance**, still unclaimed on main.
 **Likely owner:** none.
 **Severity:** `high`.
 
+---
+
+## The proxy's subtrees — NP-129 through NP-148
+
+229 controls across twenty subtree modules of `mcp-re-proxy/src/`. Twenty propositions, one
+per authority the subtree separates — and fifteen more controls attach to propositions this
+campaign already recorded: eight managed-worker controls to NP-003, six
+materializing-runtime controls to NP-067, and one KMS bracketed-host control to NP-027.
+
+Three subtrees hold two authorities each and are split accordingly: the serving path
+separates *what it refuses before spending* from *what an acknowledgement may assert*, the
+authorization plane separates *where the actor and action come from* from *what each refusal
+is called*, and the trust plane separates *the cache* from *the posture*.
+
+## NP-129 — the serving path refuses before it spends or signs
+
+**Controls:** `mcp-re-proxy/src/http_profile_serve`.
+**Statement.** *A body the profile cannot carry unchanged is refused BEFORE ANYTHING IS SPENT and an unrepresentable one before any reserialization; a saturated plane refuses BEFORE A BYTE IS TRANSMITTED; a document that is not an MCP message is refused at 400 and request state is read only as a string under `params`; a notification and a request are told apart ONCE; an uncorrelated reply is refused before anything signs it, an unrecognized result type is NEVER SIGNED, and a JSON-RPC error is a terminal answer rather than a malformed one; an open leg yields the state its answer re-presents and a collision fails the leg closed WITHOUT RETRYING; the carrier holds the terminal the request selected and the reply carries the class the classifier read; the audience the store keys under is the one the verifier enforces; the binding prerequisite and the assertion coordinate are different facts and the binding stage hands on the FACT rather than a unit; and application meta survives the PEP-owned strip.*
+**If false.** The proxy spends a budget, transmits bytes, or signs a reply for a request it was going to refuse — and 'never signed' is the clause that matters most: an unrecognized result type that gets signed is MCP-RE attesting to something it could not classify.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-130 — an acknowledgement asserts only what actually happened
+
+**Controls:** `mcp-re-proxy/src/http_profile_serve`.
+**Statement.** *A message that MAY NOT HAVE ARRIVED is not acknowledged, and neither is a notification the backend may not have received; a timeout is NEITHER A REPLY NOR A DEFINITE FAILURE; an unusable answer to a notification still says the backend WAS REACHED; a deployment that retains nothing owes nothing on any of the three and nothing is owed where retention is not configured; an unconfigured deployment claims nothing about permission and the carrier does not flatten the authorization posture; only a REAL retirement spends an approval; the record budget is bounded and small; and a disabled plane still carries the default lifetime.*
+**If false.** The proxy tells a caller something happened that may not have. Every clause is the same refusal to collapse execution certainty onto the convenient side — the rule this repository has ruled on and measured before — and the last of them is its opposite arm: reaching the backend IS a fact, and an unusable answer must not erase it.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-131 — the actor and the action come from one signed request
+
+**Controls:** `mcp-re-proxy/src/authorization`.
+**Statement.** *The coordinate is read FROM THE SIGNED BODY and a body that is not the signed body cannot produce one; a body or a document FROM ANOTHER REQUEST cannot be paired with this actor or this binding; one binding over these exact bytes corresponds, two evidence bindings leave the pairing AMBIGUOUS and are refused, and a decision with no binding at all is refused; a reference binding never becomes evidence even with the same digest; the binding reaches the policy WHOLE and is not reopened; the actor and the action come from ONE request; a rotated key is the same subject and a different canonical actor, distinct trust domains are distinct actors under the same subject, and the canonical id is the identity owner's join rather than a second one; and `resources/read` names its target under a different key, so a method naming no target is not the same as one missing its target.*
+**If false.** An authorization decision is made about one request's actor and another request's action. 'Two evidence bindings leave the pairing ambiguous and are REFUSED' is the clause that keeps a choice from being made silently, and the canonical-id clause is the identity-not-locator rule inside the authorization plane.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-132 — each authorization refusal is its own token
+
+**Controls:** `mcp-re-proxy/src/authorization`.
+**Statement.** *An actor mismatch and an action mismatch are DIFFERENT TOKENS; no configured authority and an untrusted issuer are different tokens; a digest mismatch is not reported as a malformed artifact; a scope the deployment does not accept is not an actor mismatch; a signed body that is not JSON and one with no method are different facts; a request carrying no decision is NOT A REFUSAL and one presenting nothing says so RATHER THAN BORROWING A DENIAL; an unbound deployment says not-claimed rather than asserting a binding; a malformed request is reported rather than refused by THIS authority; every verified dimension is projected separately; an explicit deny and an action mismatch deliberately collapse onto one token; and a resolver that trusts nobody is a deployment that authorizes nothing.*
+**If false.** An operator reading a refusal is sent to the wrong place, or a request that presented nothing is recorded as having been denied — which is a denial nobody made. The one deliberate collapse is stated as a control rather than left as a coincidence, which is what makes the other separations claims instead of accidents.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-133 — a request form carries only its own material
+
+**Controls:** `mcp-re-proxy/src/deployment_request`.
+**Statement.** *Each form carries ONLY ITS OWN MATERIAL: a replay store is one backend with only its own locator, a coordinate cannot exist without the store it names a place in, and the derived coordinates start unnamed; an attested form cannot exist without the acknowledgement and the off request supplies no parameter any machine could dangle; the unenforced form has no gate inputs to dangle and both enforcing forms carry the gate they apply, an applied gate always naming the record it compares against; a degraded window exists only where one opens and only above zero, and failing closed is the default and carries no window; the cadence is optional under exactly one tier and only the pushing tier can name an epoch source; an empty set is the unconfigured posture, configuring neither mechanism IS a posture, and the two mechanisms COMPOSE rather than excluding each other; the durability claim and the store are separately stated and the locator projection names no backend; one Redis can serve two roles without the roles becoming one; a source without a named key is still a source and a store that does not exist drives the same consumer; the default form is the channel credential and the default identity field is the URI SAN; a scope beside off is representable because refusing it is NOT THIS TYPE'S JOB; and the verification set can be empty and is judged at the boundary.*
+**If false.** A request value exists that carries a parameter no machine will read — the dangling-input class the classifiers refuse one layer up — or a form is inhabitable without the material it cannot operate without. The last clause is the layering, stated as a control: this type represents, and the boundary refuses.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-134 — the trust cache answers from what it has, and stops caching before it stops answering
+
+**Controls:** `mcp-re-proxy/src/trust_plane`.
+**Statement.** *The compose key is INJECTIVE across delimiter-containing pairs; no positive caching consults the inner resolver every call; not-found uses a short TTL so a new key propagates; expired entries are SWEPT rather than merely ignored and prune evicts closed windows; a push for a different key does not evict the active entry; past the ceiling the cache STOPS CACHING BUT KEEPS ANSWERING; the strictest applicable T picks the tightest window and a T exceeding the recommended maximum is flagged; a revocation-source outage FAILS CLOSED; a second revocation authority rejects even when key status is active; and the only input production can build makes the rule the identity.*
+**If false.** Two different key pairs share a cache entry — the injectivity failure, here in the cache key rather than in the actor — so a lookup for one answers with the other's trust. The ceiling clause is the availability arm: a cache that stopped answering when it stopped caching would turn a memory bound into an outage.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-135 — a trust posture names its reload floor, and staleness is terminal or undone
+
+**Controls:** `mcp-re-proxy/src/trust_plane`.
+**Statement.** *Every posture names the reload floor UNDER ITS NUMBER; a configured cadence is named on the tier line; a tier with no reload cadence says the store CANNOT CHANGE and a bounded cache with no cadence names the frozen store; a recoverable staleness is undone by a successful reload while a TERMINAL staleness survives a straggler reporting fresh; a directory that outlives the plane still answers from the last snapshot; and surviving handles do not keep the refresh workers alive.*
+**If false.** A replica reports a trust posture it is not maintaining, or a terminal staleness is cleared by a late report from before it — the straggler race, in the one place where clearing it means resuming trust that was withdrawn.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-136 — retained bytes come back under their digest, from an owner-only store
+
+**Controls:** `mcp-re-proxy/src/retained_evidence`.
+**Statement.** *Retained bytes come back UNDER THEIR DIGEST and modified evidence gets a different one; a non-token digest CANNOT ESCAPE THE ROOT; bytes replaced on disk are refused by the read view and a truncated object is REWRITTEN rather than reported as retained; retaining the same bytes twice is idempotent and staging the same object concurrently leaves one object and no residue; temp residue from an interrupted write does not block a later put; a missing object is ABSENT RATHER THAN AN ERROR; a created root, store root and file are OWNER-ONLY; creating over an existing path is refused and a path that is not a directory is refused at open; opening an unwritable directory fails at open, opening for reading does not create the directory, and a read-only directory opens for reading and serves its objects; the writability probe leaves nothing in the store; and no two suffixes are the same.*
+**If false.** Retained evidence is not the evidence that was retained — replaced on disk, truncated and read back as whole, or fetched from outside the root by a digest that was never a token. The path-traversal clause and the owner-only clauses are the two that need no protocol at all to exploit.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-137 — a credential-currency or identity refusal names what it read
+
+**Controls:** `mcp-re-proxy/src/communication_assurance`.
+**Statement.** *A presented leaf that REFUSES is never reported as an ABSENT one and an optional leaf that is `None` is the same evidence as absent; a refusal names the CONFIGURED field rather than the field that was present; rubbish DER reads no facts and the projections report what was constructed; an authentication that never happened CANNOT BE MADE CURRENT; a span within the ceiling is current and NAMES THE CONTROL THAT RAN; an inverted window is not orderable and contains nothing, and being orderable is not the same question as containing now; a self-issued certificate in the chain is exempt from the window; only the unevaluated policy applies no controls; and the defaults are the URI SAN and the channel credential.*
+**If false.** A refusal says a credential was absent when it was present and refused — different facts with different operator responses — or an authentication that never happened is reported as current. 'Names the control that ran' is what makes currency a measurement rather than a verdict.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-138 — the blocking harness parses HTTP/1 strictly and bounds its reads
+
+**Controls:** `mcp-re-proxy/src/blocking_mtls_harness`.
+**Statement.** *A bare CR in the header section, a bare LF line ending, an obs-fold continuation line, a duplicate `Content-Length` — even with the same value — and a negative one are each REJECTED; a single valid `Content-Length` parses and an absent one is a zero-length body; the aggregate deadline fires on a sub-per-read trickle; and a disabled deadline does not cut off a completing read.*
+**If false.** Request smuggling: two parsers disagree about where one message ends. Rejecting a duplicate `Content-Length` WITH THE SAME VALUE is the clause that makes it strictness rather than a de-duplication convenience, and the trickle clause is the slow-loris bound NP-034 configures.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-139 — an unhealthy backend is ejected, probed once, and readmitted on success
+
+**Controls:** `mcp-re-proxy/src/http_inner`.
+**Statement.** *Consecutive failures trip the breaker open at the threshold and a success resets the failure run; an open backend is readmitted as a PROBE after the cooldown and closes on success, while a failed probe reopens for another cooldown; each probe claim takes a slot NO SECOND CLAIM CAN TAKE, and preparing claims the recovery probe while dropping it gives the probe back; all-open selection returns none before the cooldown and preparing refuses only while EVERY backend is ejected; a health-aware balancer skips an open backend and uses a healthy one; a held preparation consumes the in-flight bound; a closure inner reports a backend reply; and the post-commitment outcomes are distinguishable.*
+**If false.** Every replica probes an unhealthy backend at once — the thundering-herd recovery — or a backend that never recovers keeps taking traffic. 'Preparing refuses only while EVERY backend is ejected' is the availability arm: one ejection must not stop the proxy.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-140 — the TLS plane republishes its own epoch and bounds established connections
+
+**Controls:** `mcp-re-proxy/src/tls_plane`.
+**Statement.** *The store starts under the epoch of the plane's OWN client-auth inputs and a rebuild republishes the epoch of the anchor set THE PLANE OWNS; a reload cadence bounds ESTABLISHED CONNECTIONS and not only handshakes; without a cadence the bound is the CRL's own expiry, and without a CRL the bound is the certificate lifetime; a retired plane stops claiming a cadence; a snapshot that outlives the plane still serves; and a key source that disagrees with the declared custody refuses, while an agreeing one passes the check and fails on something else.*
+**If false.** A revoked client keeps a connection it established before the revocation — the clause that makes this about established connections rather than handshakes — or a plane republishes an epoch belonging to inputs it does not own, so an invalidation is attributed to the wrong anchor set.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-141 — the async core budgets bodies and frames without double counting
+
+**Controls:** `mcp-re-proxy/src/async_serve`.
+**Statement.** *The core budget admits a maximum-size body and refuses past the ceiling; absorbing a frame does not release its bytes TWICE and an abandoned body read RETURNS ITS CHARGE; a clone shares the core's bounds rather than making new ones; the handshake bound leaves workers for the rest of the core; and the origin check compares the received path and query, treats a root target as matching a root request, does not compare the configured authority, and does not check an empty configured target here.*
+**If false.** A double release or a lost charge makes the body budget drift until it bounds nothing — the accounting failure that presents as a memory bound that quietly stopped existing. The clone clause is the same defect one level up: a per-core bound remade per clone is no bound at all.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-142 — the stage timers index and name every stage
+
+**Controls:** `mcp-re-proxy/src/stage_timers`.
+**Statement.** *Stage discriminants are DISTINCT AND COVER EVERY SLOT, every stage indexes within the accumulator, the name table covers every slot and each slot carries its own name; a timer started while disabled READS NO CLOCK and an in-flight guard taken while disabled is inert; and the rewrite period cannot divide by zero.*
+**If false.** Two stages share a slot, so the timing an operator reads belongs to a stage that did not run. The disabled clauses are the cost argument: instrumentation that is off must not read a clock.
+**Likely owner:** none.
+**Severity:** `medium`.
+
+## NP-143 — materialization refuses rather than defaulting, and prints no secret
+
+**Controls:** `mcp-re-proxy/src/capability_materialization`.
+**Statement.** *A Mode-C verifier missing its audience FAILS CLOSED RATHER THAN DEFAULTING and rejects an unusable attestor key rather than DROPPING IT; it is built only for the attested-ingress binding and the retained one still admits an assertion from its configured attestor; a group-readable PIN file is refused; the PIN reader trims a trailing newline and refuses an empty file; and a secret string does not print its value OR ITS LENGTH.*
+**If false.** A verifier is built with a defaulted audience, or with an unusable attestor key silently dropped so it verifies nothing — the two ways a Mode-C deployment can appear configured and check nothing. 'Or its length' is the clause that makes redaction a rule rather than a habit.
+**Likely owner:** none.
+**Severity:** `critical`.
+
+## NP-144 — an admission record is addressed by its workload and reported once
+
+**Controls:** `mcp-re-proxy/src/redis_admission_source`.
+**Statement.** *The record is addressed by THE WORKLOAD'S OWN NAME; a store writer without the signing authority produces NOTHING ADMITTED; a restored admitted record does not outlive the authorized window; every class has its own latch, a class is reported once and then suppressed, and one class being reported does not suppress another; and a key is readable by an operator.*
+**If false.** An admission record is read for the wrong workload, or a restored record admits past the window it was authorized for. The per-class latches are the diagnosis argument: one noisy failure class must not silence a different one that starts later.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-145 — the operator-facing vocabularies agree and render distinctly
+
+**Controls:** `mcp-re-proxy/src/facades`.
+**Statement.** *Every fact renders to a DISTINCT SENTENCE; the two vocabularies agree FIELD FOR FIELD; every owner refusal maps to the historical rejection it replaced; an unsupported algorithm tells the operator WHICH algorithm was given; and a valid value comes back trimmed and borrowed.*
+**If false.** Two different facts render the same sentence, so an operator cannot tell them apart — or the two vocabularies drift and the same deployment is described differently depending on which one is read.
+**Likely owner:** none.
+**Severity:** `medium`.
+
+## NP-146 — refusal reporting is bounded, counted in full, and never panics
+
+**Controls:** `mcp-re-proxy/src/async_replay`.
+**Statement.** *A budget refusal is rendered WITHOUT THE LEDGER LOCK; refusals are paced by the process and COUNTED IN FULL; the L1 fast reject is never fresh and evicts FIFO; and reporting NEVER PANICS.*
+**If false.** The path that reports a refusal takes the lock the refusal is about, or panics — so the mechanism that exists to survive overload is the one that fails under it. 'Paced but counted in full' is the pair: suppressing output must not suppress the count.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-147 — the fleet topology is at least one shard and never overridden
+
+**Controls:** `mcp-re-proxy/src/async_fleet`.
+**Statement.** *`auto` is ALWAYS at least one shard of one worker, keeps a shard per CPU and adds depth; and an EXPLICIT topology is never overridden.*
+**If false.** A deployment starts with zero shards and serves nothing, or an operator's explicit topology is silently replaced by the automatic one — the provenance collapse NP-057 names for the in-flight limit, here for the shape of the fleet.
+**Likely owner:** none.
+**Severity:** `high`.
+
+## NP-148 — signing-plane materialization refuses rather than starting half-built
+
+**Controls:** `mcp-re-proxy/src/signing_plane`.
+**Statement.** *`materialize` publishes a usable key AND OWNS ONE ROTATION WORKER; it refuses when the configured shared epoch cannot be read; and it refuses when the root cannot issue the first key.*
+**If false.** The plane starts with no usable key, or with a rotation worker nobody owns — NP-003's lifetime rule at the one plane whose worker mints keys.
+**Likely owner:** none.
+**Severity:** `critical`.
+
