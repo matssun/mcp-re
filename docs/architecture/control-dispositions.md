@@ -737,3 +737,103 @@ should take.
 **Root relationship.** Under THM-0094.
 **Severity:** `high`.
 
+---
+
+## The Python authorization-binding asymmetry — NP-020 through NP-024
+
+One clause, present in the TypeScript unit and absent from its Python twin, accounts for
+twenty-two unclaimed controls in one file. `sdk_typescript.authorization_binding` says:
+
+> … the core digests the real artifact material and a caller is given no way to supply a
+> precomputed digest or to mint half a binding pair; and the digest retained per outstanding
+> request identifies which artefacts the request was bound to without ever being
+> re-interpreted.
+
+`sdk_python.authorization_binding` says everything after the semicolon and nothing before
+it. This is the THIRD asymmetry between the two SDK roots this campaign has measured, after
+NP-014 and NP-015, and it is the largest: the Python file's controls are written, they pass
+in the measured lane, and the unit above them makes no claim they support.
+
+The clause is not one proposition. It is decomposed here the way the controls decompose,
+rather than registered as one, because question 1 of ADR-MCPRE-061 §8 applies: an answer
+that needs an "and" is a shallow boundary.
+
+## NP-020 — the core digests the real artifact, and the caller supplies no digest
+
+**Controls:** `test_authorization.py` (9) — the core digests the real artifact, a caller
+cannot pass a precomputed digest, there is no parameter for the digest, changed bytes change
+the digest, the digest is deterministic, the reference form binds the real bytes and names
+the system, the document travels and the core mints its binding, the reference digest equals
+the opaque digest for the same bytes, and `str` and `bytes` produce the same carrier.
+**Carrier:** `sdk/python/python/mcp_re_sdk/authorization.py` and the native binding seam.
+**Statement.** *The digest in the signed evidence is computed by the core over the artifact
+material the provider supplied; no caller-facing route accepts a precomputed one; the same
+material always produces the same digest whatever its Python type; and different material
+produces a different one.*
+**If false.** A caller supplies a digest that does not correspond to the artifact, and the
+signed evidence binds a request to something that was never presented. That is the whole
+point of a binding, and it is the failure the file's own docstring names — *bind, do not
+interpret* — checked against an independent stdlib SHA-256 oracle rather than the core's own
+opinion of what it computed.
+**Likely owner:** `sdk_python.authorization_binding`, once its statement carries the clause
+its TypeScript twin already does.
+**Root relationship.** Under THM-0094.
+**Severity:** `critical`.
+
+## NP-021 — a binding carries metadata, never the artifact
+
+**Controls:** `test_authorization.py` (2) — the binding carries metadata only and never the
+artifact; the reference form leaks no secret material.
+**Statement.** *What travels in the signed evidence is the digest and the metadata naming
+the artifact's type and system — never the artifact bytes, and never secret material a
+reference form was given.*
+**If false.** Authorization material — a token, a document, a credential — is copied into
+evidence that is signed, transmitted and retained. A signature base carries covered values,
+so anything placed there is in every retained copy of the base.
+**Likely owner:** `sdk_python.authorization_binding`.
+**Severity:** `critical`.
+
+## NP-022 — the generic provider cannot mint half a binding pair
+
+**Controls:** `test_authorization.py::TestTheGenericProviderCannotMintHalfAPair` (3) — the
+wrapper refuses the generic opaque form, the native seam refuses it independently, and the
+reference form is untouched.
+**Statement.** *No caller can produce one half of a binding pair through the generic opaque
+provider: the Python wrapper refuses it, and the native seam refuses it independently of the
+wrapper.*
+**If false.** A binding exists whose two halves were minted separately, so the pair asserts
+a correspondence nothing established.
+**Why the third control matters, and why it is in this proposition rather than beside it.**
+"the reference form is untouched" is the anti-vacuity arm: a refusal that also refused the
+legitimate form would satisfy the first two and break the feature.
+**Likely owner:** `sdk_python.authorization_binding`. Its TypeScript twin states this clause
+verbatim.
+**Severity:** `high`.
+
+## NP-023 — a binding provider refuses illegal material at construction
+
+**Controls:** `test_authorization.py` (6) — empty material fails closed in both provider
+forms, an unregistered artifact type fails closed in both, a partial reference fails closed,
+and an empty decision fails closed.
+**Statement.** *No binding provider exists over empty material, an unregistered artifact
+type, a partially specified reference, or an empty decision.*
+**If false.** A provider is constructible over material that names nothing, and the failure
+appears later — at signing time, as something else, or not at all.
+**Likely owner:** `sdk_python.authorization_binding` is about what the POLICY permits at
+request time. This is about what the VALUE admits at construction, which is the same
+distinction NP-017 draws for custody: the invariant belongs to the value, not to the code
+that builds it.
+**Severity:** `high`.
+
+## NP-024 — a request acts under at most one authorization decision
+
+**Controls:** `test_authorization.py::TestAuthorizationDecision::test_a_request_acts_under_at_most_one_decision`,
+`::test_the_document_appears_exactly_once`.
+**Statement.** *A request carries at most one authorization decision, and the decision
+document appears exactly once in the evidence it rides in.*
+**If false.** A verifier reading the evidence has two answers to *what authorized this
+call*, or one answer written twice — and a duplicate is how two readers of one message come
+to disagree about what it says.
+**Likely owner:** `sdk_python.authorization_binding`.
+**Severity:** `high`.
+

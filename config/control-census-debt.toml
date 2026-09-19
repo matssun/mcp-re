@@ -26,10 +26,6 @@ path = "mcp-re-proxy/src/startup_plan.rs"
 baseline = 33
 
 [[file]]
-path = "sdk/python/tests/test_authorization.py"
-baseline = 31
-
-[[file]]
 path = "mcp-re-proxy/tests/integration/tls_test.rs"
 baseline = 28
 

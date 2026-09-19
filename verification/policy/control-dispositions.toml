@@ -1611,3 +1611,235 @@ decision = "not-evidence"
 reason_family = "ND-009"
 recorded = "2026-09-19"
 
+
+# ---------------------------------------------------------------------------
+# Batch 6 — the Python authorization-binding providers, 2026-09-19
+# ---------------------------------------------------------------------------
+#
+# Thirty-one controls. Nine REGISTER in verification.toml against the policy and canonical
+# order clauses this unit already states. The twenty-two below are one clause the unit does
+# NOT state and its TypeScript twin does — the third measured asymmetry between the two SDK
+# roots — decomposed the way the controls decompose rather than registered as one, because
+# an answer that needs an 'and' is a shallow boundary.
+
+[[proposition]]
+id = "NP-020"
+title = "The core digests the real artifact, and the caller supplies no digest"
+carrier = "sdk/python/python/mcp_re_sdk/authorization.py and the native binding seam"
+likely_owner = "sdk_python.authorization_binding, once its statement carries its twin's clause"
+consequence = "critical"
+root_relationship = "under THM-0094; the clause sdk_typescript.authorization_binding states and its Python twin does not"
+record = "docs/architecture/control-dispositions.md#np-020"
+
+[[proposition]]
+id = "NP-021"
+title = "A binding carries metadata, never the artifact"
+carrier = "sdk/python/python/mcp_re_sdk/authorization.py"
+likely_owner = "sdk_python.authorization_binding"
+consequence = "critical"
+root_relationship = "under THM-0094; a signature base carries covered values"
+record = "docs/architecture/control-dispositions.md#np-021"
+
+[[proposition]]
+id = "NP-022"
+title = "The generic provider cannot mint half a binding pair"
+carrier = "sdk/python/python/mcp_re_sdk/authorization.py and the native seam"
+likely_owner = "sdk_python.authorization_binding, whose TypeScript twin states this clause verbatim"
+consequence = "high"
+root_relationship = "under THM-0094"
+record = "docs/architecture/control-dispositions.md#np-022"
+
+[[proposition]]
+id = "NP-023"
+title = "A binding provider refuses illegal material at construction"
+carrier = "sdk/python/python/mcp_re_sdk/authorization.py's provider constructors"
+likely_owner = "sdk_python.authorization_binding is about what the policy permits, not what the value admits"
+consequence = "high"
+root_relationship = "under THM-0094; the same distinction NP-017 draws for custody"
+record = "docs/architecture/control-dispositions.md#np-023"
+
+[[proposition]]
+id = "NP-024"
+title = "A request acts under at most one authorization decision"
+carrier = "sdk/python/python/mcp_re_sdk/authorization.py's decision provider"
+likely_owner = "sdk_python.authorization_binding"
+consequence = "high"
+root_relationship = "under THM-0094"
+record = "docs/architecture/control-dispositions.md#np-024"
+
+[[disposition]]
+id = "CD-4001"
+project = "sdk/python"
+control = "pytest#tests/test_authorization.py::TestOpaqueBytes::test_the_core_digests_the_real_artifact"
+decision = "new-proposition"
+proposition = "NP-020"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-4002"
+project = "sdk/python"
+control = "pytest#tests/test_authorization.py::TestOpaqueBytes::test_a_caller_cannot_pass_a_precomputed_digest"
+decision = "new-proposition"
+proposition = "NP-020"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-4003"
+project = "sdk/python"
+control = "pytest#tests/test_authorization.py::TestAuthorizationDecision::test_there_is_no_parameter_for_the_digest"
+decision = "new-proposition"
+proposition = "NP-020"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-4004"
+project = "sdk/python"
+control = "pytest#tests/test_authorization.py::TestOpaqueBytes::test_changed_artifact_bytes_change_the_digest"
+decision = "new-proposition"
+proposition = "NP-020"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-4005"
+project = "sdk/python"
+control = "pytest#tests/test_authorization.py::TestOpaqueBytes::test_the_digest_is_deterministic"
+decision = "new-proposition"
+proposition = "NP-020"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-4006"
+project = "sdk/python"
+control = "pytest#tests/test_authorization.py::TestAuthzSystemReference::test_it_binds_the_real_bytes_and_names_the_system"
+decision = "new-proposition"
+proposition = "NP-020"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-4007"
+project = "sdk/python"
+control = "pytest#tests/test_authorization.py::TestAuthorizationDecision::test_the_document_travels_and_the_core_mints_its_binding"
+decision = "new-proposition"
+proposition = "NP-020"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-4008"
+project = "sdk/python"
+control = "pytest#tests/test_authorization.py::TestAuthzSystemReference::test_the_reference_digest_equals_the_opaque_digest_for_the_same_bytes"
+decision = "new-proposition"
+proposition = "NP-020"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-4009"
+project = "sdk/python"
+control = "pytest#tests/test_authorization.py::TestAuthorizationDecision::test_str_and_bytes_produce_the_same_carrier"
+decision = "new-proposition"
+proposition = "NP-020"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-4010"
+project = "sdk/python"
+control = "pytest#tests/test_authorization.py::TestOpaqueBytes::test_the_binding_carries_metadata_only_never_the_artifact"
+decision = "new-proposition"
+proposition = "NP-021"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-4011"
+project = "sdk/python"
+control = "pytest#tests/test_authorization.py::TestAuthzSystemReference::test_the_reference_form_leaks_no_secret_material"
+decision = "new-proposition"
+proposition = "NP-021"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-4012"
+project = "sdk/python"
+control = "pytest#tests/test_authorization.py::TestTheGenericProviderCannotMintHalfAPair::test_the_wrapper_refuses_the_generic_opaque_form"
+decision = "new-proposition"
+proposition = "NP-022"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-4013"
+project = "sdk/python"
+control = "pytest#tests/test_authorization.py::TestTheGenericProviderCannotMintHalfAPair::test_the_native_seam_refuses_it_independently"
+decision = "new-proposition"
+proposition = "NP-022"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-4014"
+project = "sdk/python"
+control = "pytest#tests/test_authorization.py::TestTheGenericProviderCannotMintHalfAPair::test_the_reference_form_is_untouched"
+decision = "new-proposition"
+proposition = "NP-022"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-4015"
+project = "sdk/python"
+control = "pytest#tests/test_authorization.py::TestOpaqueBytes::test_empty_material_fails_closed"
+decision = "new-proposition"
+proposition = "NP-023"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-4016"
+project = "sdk/python"
+control = "pytest#tests/test_authorization.py::TestAuthzSystemReference::test_empty_material_fails_closed"
+decision = "new-proposition"
+proposition = "NP-023"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-4017"
+project = "sdk/python"
+control = "pytest#tests/test_authorization.py::TestOpaqueBytes::test_an_unregistered_artifact_type_fails_closed"
+decision = "new-proposition"
+proposition = "NP-023"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-4018"
+project = "sdk/python"
+control = "pytest#tests/test_authorization.py::TestAuthzSystemReference::test_an_unregistered_artifact_type_fails_closed"
+decision = "new-proposition"
+proposition = "NP-023"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-4019"
+project = "sdk/python"
+control = "pytest#tests/test_authorization.py::TestAuthzSystemReference::test_a_partial_reference_fails_closed"
+decision = "new-proposition"
+proposition = "NP-023"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-4020"
+project = "sdk/python"
+control = "pytest#tests/test_authorization.py::TestAuthorizationDecision::test_an_empty_decision_fails_closed"
+decision = "new-proposition"
+proposition = "NP-023"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-4021"
+project = "sdk/python"
+control = "pytest#tests/test_authorization.py::TestAuthorizationDecision::test_a_request_acts_under_at_most_one_decision"
+decision = "new-proposition"
+proposition = "NP-024"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-4022"
+project = "sdk/python"
+control = "pytest#tests/test_authorization.py::TestAuthorizationDecision::test_the_document_appears_exactly_once"
+decision = "new-proposition"
+proposition = "NP-024"
+recorded = "2026-09-19"
+

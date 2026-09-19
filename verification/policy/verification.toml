@@ -4674,6 +4674,34 @@ tested_symbols = [
   "pytest#tests/test_transport.py::test_the_canonical_bindings_json_emits_raw_utf8_like_json_stringify",
   "pytest#tests/test_transport.py::test_the_correlation_entry_records_the_authorization_binding_digest",
   "pytest#tests/test_transport.py::test_a_request_with_no_bindings_records_no_digest",
+  # ADR-MCPRE-069 batch 6. `authorization.py` is in this unit's `paths` and
+  # `test_authorization.py` was in no unit's battery: all four controls above reach the
+  # providers through `transport.py`, so the policy's own arms and the canonical order were
+  # measured only where a request happened to exercise them.
+  #
+  # "the specs a request carries are the ones the configured POLICY PERMITS" — all four
+  # arms, so the clause is not satisfied by a policy that permits everything or nothing.
+  "pytest#tests/test_authorization.py::TestPolicyFailsClosed::test_a_permitted_type_passes",
+  "pytest#tests/test_authorization.py::TestPolicyFailsClosed::test_an_unpermitted_type_fails_closed",
+  "pytest#tests/test_authorization.py::TestPolicyFailsClosed::test_a_required_binding_that_is_absent_fails_closed",
+  "pytest#tests/test_authorization.py::TestPolicyFailsClosed::test_an_optional_binding_may_be_absent",
+  # The policy permits by ARTIFACT TYPE, so a provider reporting its own type is the value
+  # the clause above reads. Without it every arm is about a type nobody asked for.
+  "pytest#tests/test_authorization.py::TestAuthzSystemReference::test_it_reports_its_artifact_type",
+  # "serialized CANONICALLY and byte-identically to the TypeScript twin". Byte identity is a
+  # statement about ORDER as much as about encoding, and these are the order: DPoP present
+  # and first with no provider at all, provider bindings appended after it, several
+  # providers in order, and the no-bindings path unchanged.
+  "pytest#tests/test_authorization.py::TestDpopStaysBuiltIn::test_dpop_is_present_and_first_without_any_provider",
+  "pytest#tests/test_authorization.py::TestDpopStaysBuiltIn::test_provider_bindings_append_after_dpop",
+  "pytest#tests/test_authorization.py::TestDpopStaysBuiltIn::test_several_providers_are_all_bound_in_order",
+  "pytest#tests/test_authorization.py::TestDpopStaysBuiltIn::test_the_no_bindings_path_is_unchanged",
+  # The other twenty-two controls in that file are NOT registered here, and the reason is a
+  # measured asymmetry rather than a judgement call. `sdk_typescript.authorization_binding`
+  # says "the core digests the real artifact material and a caller is given no way to supply
+  # a precomputed digest or to mint half a binding pair". THIS statement does not, and
+  # adding the controls without the sentence would make the unit's evidence cover a claim it
+  # does not make. Recorded as NP-020 through NP-024.
 ]
 
 # The composition proposition, and the reason the core's binding theorem is usable here
