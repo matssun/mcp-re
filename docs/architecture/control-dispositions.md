@@ -2116,6 +2116,8 @@ while the property fails. Seven rows REMAIN, and letting the registered unit's d
 drift onto injectivity would be the widening ADR-069 §5 holds to be worse than leaving a
 control unregistered.
 
+Packet at `verification/reviews/packets/adr069-np-087-ratification-2026-09-19.md`.
+
 ## NP-088 — the body is signed as written, or refused
 
 **Controls:** `mcp-re-http-profile/src/body/mod.rs` (14),
@@ -2154,6 +2156,8 @@ predicate over a different JSON construct. No theorem in the registry states a
 composition-side refusal over the body — THM-0014 is verification-side and about bytes already
 fixed, and THM-0125's scope hands the carrier's composition here in terms.
 
+Packet at `verification/reviews/packets/adr069-np-088-ratification-2026-09-19.md`.
+
 ## NP-089 — the signature base is exactly the covered components
 
 **Controls:** `mcp-re-http-profile/src/sigbase.rs` (8).
@@ -2180,6 +2184,9 @@ theorem's clause states its GROUND, which is false for this control: measured at
 the base composer's own and not the response verifier's. A refusal in the base composer over a
 request message is not a strict decomposition of a statement about what an unbound-response
 verification establishes. All eight rows stay; the record is whole-R6, not R2(1) + R6(7).
+
+Packet at `verification/reviews/packets/adr069-np-089-np-090-ratification-2026-09-19.md`,
+which takes NP-089 and NP-090 jointly.
 
 ## NP-090 — the structured-field surface is closed and canonical
 
@@ -2209,6 +2216,10 @@ grouped by subject. The pattern is the one batch 16 found: these files are measu
 units and claimed by none, and the propositions below are what each file's own controls
 establish rather than what any unit above them promises.
 
+**Referred with NP-089, ADR-MCPRE-069 HP-S2.** Packet at
+`verification/reviews/packets/adr069-np-089-np-090-ratification-2026-09-19.md`, which takes
+this record's sixteen structured-field rows jointly with NP-089's eight.
+
 ## NP-091 — the MCP transport contract is agreed and enforced on the wire
 
 **Controls:** `mcp-re-http-profile/tests/mcp_transport_headers_test.rs`, `mcp-re-http-profile/src/mcp_transport/mod.rs`, `mcp-re-http-profile/src/mcp_transport/agreement.rs`.
@@ -2216,6 +2227,11 @@ establish rather than what any unit above them promises.
 **If false.** A peer negotiates one transport contract and is held to another, so a header that decides framing or session identity is honoured under an agreement that never admitted it.
 **Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
 **Severity:** `critical`.
+
+**Referred, ADR-MCPRE-069 HP-S2 — one row only.** `the_component_allowlist_is_still_closed`
+measures the generic component allowlist rather than a transport header, so it is argued in
+`verification/reviews/packets/adr069-np-089-np-090-ratification-2026-09-19.md` §2.2. This
+record's other thirty-one rows are unpacketed.
 
 ## NP-092 — a result is classified once, and never read as terminal by default
 
@@ -2257,6 +2273,8 @@ safety. `bound_rejection_verifies_and_exposes_the_wire_code` is the closest and 
 its first half is contained and its second half, *and exposes the wire code*, is the new
 clause. THM-0046 is `proxy.refusal_provenance` in another project and its scope excludes this
 by name; THM-0061 is the client-side twin.
+
+Packet at `verification/reviews/packets/adr069-np-094-ratification-2026-09-19.md`.
 
 ## NP-095 — delegation verifies the chain it was given
 
