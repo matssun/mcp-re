@@ -16,7 +16,7 @@ exists.
 
 # What the gate refuses
 
-Three things, and each is a way for a green census to be false rather than an aesthetic
+Four things, and each is a way for a green census to be false rather than an aesthetic
 preference:
 
   * a `tested_symbols` selector that resolves to NO control — a stale identity the lane's
@@ -25,13 +25,22 @@ preference:
     says a registered control leaves the census, so such a row is the registry disagreeing
     with the tree;
   * a `not-evidence` row with no reason family, or a family with no durable record — D3
-    requires the reason, and a reason nobody can look up is a word next to a symbol.
+    requires the reason, and a reason nobody can look up is a word next to a symbol;
+  * a `[[proposition]]` whose `ratified_as` does not resolve to a declared unit or theorem,
+    names more than one owner, resolves to a theorem whose support closure reaches no
+    claiming unit, or leaves any of its own controls still claimed by nothing. Until this
+    check existed the field was declared and read by nobody: setting
+    `ratified_as = "THM-9999-does-not-exist"` on all 169 rows produced ZERO failures and
+    made the report print 169 resolved propositions. That is the same class as a
+    `too-many-lines-threshold` parameterising an allow-by-default lint — a configuration
+    key nothing reads — arriving inside this campaign's own headline metric.
 
 It does NOT refuse a large unclaimed population. During the campaign that population is the
 work; a gate that failed on it would only invite the bulk registration ADR-069 D2 exists to
 forbid. `scripts/control_census_gate.py` holds that population against a per-file baseline
-instead, so it can only shrink, and `--closure` states ADR-069's closure criterion — residue
-zero — which is the release-time question and not the merge-time one.
+instead, so it can only shrink, and `--closure` states ADR-069's closure criterion —
+residue zero AND no unresolved `[[proposition]]` — which is the release-time question and
+not the merge-time one.
 """
 
 from __future__ import annotations
@@ -52,7 +61,9 @@ from _census import (  # noqa: E402
     census,
     propositions,
     raw_registry,
+    units,
 )
+from _census import theorems as theorem_rows  # noqa: E402
 from _controls import KINDS, REPO_ROOT  # noqa: E402
 
 #: ADR-MCPRE-068 §4.1's severity vocabulary. A proposition's consequence is compared against
@@ -100,13 +111,21 @@ def failures(report) -> list[str]:
     for row in report.dispositions:
         if row.proposition and row.proposition not in known:
             out.append(f"{row.id}: proposition {row.proposition} is not declared")
+    ratified = ratification_by_entry(report, entries)
     for entry in entries:
         # A proposition with no durable record is the §5 step-1 half missing: the census
         # would report unresolved debt that states nothing about what is missing.
         if _record(entry["id"]) is None:
             out.append(f"{entry['id']}: no record in {REGISTER.name}")
-        if not any(row.proposition == entry["id"] for row in report.dispositions):
-            out.append(f"{entry['id']}: declared and no control cites it")
+        # An entry naming a VALID resolving owner cites its owner instead of its controls:
+        # its rows all went when their controls were claimed, so requiring a citing row
+        # would make the resolved state unreachable. It is not an escape — a bad
+        # `ratified_as` fails above and does not exempt, and `--closure` still requires the
+        # entry itself to be gone.
+        if ratified[entry["id"]] or not entry.get("ratified_as"):
+            if not any(row.proposition == entry["id"] for row in report.dispositions):
+                out.append(f"{entry['id']}: declared and no control cites it")
+    out.extend(problem for entry in entries for problem in ratified[entry["id"]])
     out.extend(_orphan_records(report, known))
     out.extend(_schema_failures())
     return out
@@ -179,10 +198,144 @@ def _scope_failures(row, record: str | None) -> list[str]:
     return out
 
 
+#: `ratified_as` names the CANONICAL owner, and exactly one of them. A value carrying any
+#: of these separators is trying to name several, and this field cannot: where a
+#: proposition genuinely resolved through more than one owner, the per-control claims in
+#: `verification.toml` carry the rest, and a second name here would be a second place the
+#: same fact is written with nothing holding the two in agreement.
+_SEVERAL_OWNERS = re.compile(r"[\s,;+]")
+
+
+def _named_owner(entry: dict) -> tuple[str, list[str]]:
+    """The single id `ratified_as` names, and the reasons it names no single id."""
+    name = entry.get("id", "?")
+    value = entry.get("ratified_as", "")
+    if isinstance(value, list):
+        return "", [f"{name}: ratified_as is a list — it names ONE canonical owner"]
+    if not isinstance(value, str):
+        return "", [f"{name}: ratified_as {value!r} is not a string"]
+    if value and _SEVERAL_OWNERS.search(value):
+        return "", [
+            f"{name}: ratified_as {value!r} is not a single id — a separator or padding "
+            "makes it resolve to nothing, and several owners may not be named here"
+        ]
+    return value, []
+
+
+def _support_closure(theorem: str, index: dict[str, dict]) -> set[str]:
+    """The units a theorem rests on — its own `supported_by`, and its premises' too.
+
+    Transitive through `depends_on`, because a theorem may support its claim entirely
+    through the theorems below it; stopping at the direct `supported_by` would report an
+    honest composite claim as backed by nothing.
+    """
+    units: set[str] = set()
+    seen: set[str] = set()
+    pending = [theorem]
+    while pending:
+        current = pending.pop()
+        if current in seen or current not in index:
+            continue
+        seen.add(current)
+        units.update(str(uri).removeprefix("unit://") for uri in index[current].get("supported_by", []))
+        pending.extend(str(dep) for dep in index[current].get("depends_on", []))
+    return units
+
+
+def _ratification_owners(
+    entry: dict, value: str, unit_ids: set[str], index: dict[str, dict], claiming: set[str]
+) -> tuple[set[str], list[str]]:
+    """The units a resolved `ratified_as` puts in charge, or why it puts nobody in charge.
+
+    A theorem EXISTING is not the check. ADR-069 §5 step 2 resolves a proposition through
+    the ordinary theorem-architecture route, and a theorem whose support closure reaches no
+    unit — or only units whose batteries select nothing — is a title, so a proposition
+    pointing at one has moved its debt into a second registry rather than discharged it.
+    """
+    name = entry.get("id", "?")
+    if value in unit_ids:
+        return {value}, []
+    if value not in index:
+        return set(), [f"{name}: ratified_as {value!r} is neither a declared unit nor a theorem"]
+    closure = _support_closure(value, index)
+    if not closure:
+        return set(), [f"{name}: theorem {value} has an empty support closure — it names no unit"]
+    if not closure & claiming:
+        return set(), [
+            f"{name}: theorem {value}'s support closure claims no control at all: "
+            f"{sorted(closure)}"
+        ]
+    return closure, []
+
+
+def _entry_ratification(
+    entry: dict, rows: list, claimants: dict, unit_ids: set[str], index: dict, claiming: set[str]
+) -> list[str]:
+    """Whether ONE proposition's `ratified_as` is a fact about the tree or a typed word."""
+    value, problems = _named_owner(entry)
+    if problems or not value:
+        return problems
+    owners, problems = _ratification_owners(entry, value, unit_ids, index, claiming)
+    if problems:
+        return problems
+    cited = [row for row in rows if row.proposition == entry.get("id")
+             and row.decision == "new-proposition"]
+    unowned = [row for row in cited
+               if not claimants.get((row.project, row.control), set()) & owners]
+    if not unowned:
+        return []
+    # EVERY cited control, not one of them: a row survives only for a control nothing
+    # claims, so an owner claiming 1 of 37 would read as owning the proposition while 36
+    # controls it was written about still establish nothing anybody states.
+    return [
+        f"{entry.get('id', '?')}: ratified_as {value} owns "
+        f"{len(cited) - len(unowned)} of {len(cited)} cited control(s); "
+        f"{len(unowned)} remain(s) claimed by nothing"
+    ]
+
+
+def ratification_by_entry(
+    report, entries: list[dict] | None = None,
+    unit_ids: set[str] | None = None, theorems: list[dict] | None = None,
+) -> dict[str, list[str]]:
+    """Every proposition's `ratified_as` verdict, keyed by proposition id.
+
+    Returned per entry rather than as a flat list because `failures()` needs the verdict
+    per proposition, not merely its total: a proposition that has genuinely resolved is
+    exempt from the "no control cites it" check, and an unresolved one is not.
+    """
+    entries = propositions() if entries is None else entries
+    unit_ids = {unit["id"] for unit in units()} if unit_ids is None else unit_ids
+    rows = theorem_rows() if theorems is None else theorems
+    index = {str(row.get("id")): row for row in rows}
+    claimants: dict[tuple[str, str], set[str]] = {}
+    for claim in report.claims:
+        claimants.setdefault((claim.control.project, claim.control.identity), set()).add(claim.unit)
+    claiming = {claim.unit for claim in report.claims}
+    return {
+        entry.get("id", "?"): _entry_ratification(
+            entry, report.dispositions, claimants, unit_ids, index, claiming
+        )
+        for entry in entries
+    }
+
+
 def closure_failures(report) -> list[str]:
-    """ADR-069's closure criterion, stated as the things that would falsify it."""
+    """ADR-069's closure criterion, stated as the things that would falsify it.
+
+    Two populations, and both must be empty. The residue is the controls nothing claims
+    and nothing has decided. The propositions are ADR-069 §5's other half: a `[[proposition]]`
+    row IS unresolved assurance debt — step 1 identified it, step 2 has not happened — and a
+    closure verdict that ignored 169 of them would state that the campaign had closed while
+    its own registry still said otherwise. `--gate` deliberately does not require this:
+    step 2 runs through theorem architecture, on its own timescale, and failing every merge
+    on it would be pressure to widen an existing unit, which §5 forbids in terms.
+    """
     return failures(report) + [
         f"undispositioned: {control.project} {control.identity}" for control in report.residue
+    ] + [
+        f"unresolved proposition: {entry['id']} {entry.get('title', '')}"
+        for entry in propositions()
     ]
 
 
