@@ -64,12 +64,16 @@ attestations this view cannot see.
 | unit://http_profile.bound_response_full_result | source, contracts or evidence | THM-0018 | _no consumer_ |
 | unit://http_profile.bound_response_seam_result | source, contracts or evidence | THM-0016 | _no consumer_ |
 | unit://http_profile.bound_response_shared_facts | source, contracts or evidence | THM-0021 | _no consumer_ |
+| unit://http_profile.carrier_verdict_projection | source, contracts or evidence | THM-0111 | _no consumer_ |
 | unit://http_profile.continuation_binding | source, contracts or evidence | THM-0010 | http_profile.continuation_unbypassability (PROOF_DEPENDENCY) |
 | unit://http_profile.continuation_unbypassability | source, contracts or evidence | THM-0009 | _no consumer_ |
 | unit://http_profile.delegated_bound_result | source, contracts or evidence | THM-0019 | _no consumer_ |
 | unit://http_profile.delegated_credential_chain | source, contracts or evidence | THM-0019, THM-0020 | _no consumer_ |
 | unit://http_profile.delegated_signing_custody | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://http_profile.delegated_unbound_result | source, contracts or evidence | THM-0020 | _no consumer_ |
+| unit://http_profile.evidence_block_carriage | source, contracts or evidence | THM-0015, THM-0125 | _no consumer_ |
+| unit://http_profile.evidence_block_closure | source, contracts or evidence | THM-0015 | _no consumer_ |
+| unit://http_profile.fleet_strict_store_class | source, contracts or evidence | THM-0092 | _no consumer_ |
 | unit://http_profile.freshness_window | source, contracts or evidence | THM-0001, THM-0014, THM-0016, THM-0017, THM-0021, THM-0022 | _no consumer_ |
 | unit://http_profile.keyid | source, contracts or evidence | THM-0055 | _no consumer_ |
 | unit://http_profile.keyid_selector | source, contracts or evidence | THM-0050 | _no consumer_ |

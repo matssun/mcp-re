@@ -9744,3 +9744,108 @@ tested_symbols = [
   "lib#error::tests::http_profile_signed_rejection_wire_strings",
   "lib#error::tests::renamed_and_kept_variants_render_exact_wire_strings",
 ]
+
+
+
+
+# ---------------------------------------------------------------------------
+# The http-profile's own premises — ADR-MCPRE-069 NP-087, NP-088, NP-094, NP-103
+# ---------------------------------------------------------------------------
+#
+# `block.rs`, `body/mod.rs`, `error.rs` and `error/core_projection.rs` sit in ELEVEN to
+# FOURTEEN `http_profile.*` units' `paths` each and in none of their batteries — the shared
+# bottom the `http_profile.verifier_results` 1 -> 10 split left behind. "It is in the paths"
+# is therefore available as an argument for almost every control in these files, and it is
+# the argument ADR-069 §5 calls a quiet widening. None of the four units below is justified
+# that way: each names the clause of a RATIFIED theorem that already contains it, and each
+# declares a proposition its theorem states rather than one its file happens to hold.
+#
+# What is deliberately NOT here is as load-bearing as what is. The seven `block.rs`
+# coordinate-INJECTIVITY controls, the fourteen `body/` representability controls, the five
+# `rejection/` refusal-document controls and all eight `sigbase.rs` controls stay in the
+# ADR-069 census: the actor-id join's injectivity is ASSERTED as a premise by THM-0034 and
+# claimed by nothing, a composition-side refusal over the body is stated by no theorem, and
+# THM-0022's `;req` clause is a conditional over what two UNBOUND-RESPONSE verifications
+# return, not over what the base composer refuses on a request.
+
+[[unit]]
+id = "http_profile.evidence_block_closure"
+class = "V0"
+description = "THE REQUEST EVIDENCE BLOCK IS A CLOSED VALUE, AND IT VALIDATES UNDER THE PROFILE TAG OR NOT AT ALL: a stray member is refused by the type rather than ignored, a foreign profile tag is `UnknownProfileTag`, an empty `artifact_bindings` is malformed evidence, and a valid block survives its own serde round trip and then validates — so the refusals are not vacuous. This is the CLOSURE half of the block and nothing else. It says NOTHING about the block's identity coordinates: that the `role:trust_domain:subject:keyid` actor-id join and the audience hash are INJECTIVE encodings is a separate proposition, asserted as a premise by THM-0034 and consumed by THM-0079, established by no theorem in this registry and left in the ADR-069 census under NP-087."
+paths = ["mcp-re-http-profile/src/block.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://http_profile/block/evidence_block_closure",
+  "mutation://http_profile/block/evidence_block_closure",
+]
+tested_symbols = [
+  "lib#block::tests::block_round_trips",
+  "lib#block::tests::empty_artifact_bindings_fails_closed",
+  "lib#block::tests::foreign_profile_fails_closed",
+  "lib#block::tests::unknown_field_fails_closed",
+]
+
+[[unit]]
+id = "http_profile.evidence_block_carriage"
+class = "V0"
+description = "THE `_meta` CARRIER THE EVIDENCE BLOCK TRAVELS IN, IN BOTH DIRECTIONS: the block is written at the BODY ROOT under `_meta[key]` and an existing `_meta` object is extended rather than replaced, so a caller's own entries survive composition; what was inserted is what comes back out; a body that is not a JSON object cannot carry one; an absent block is MISSING evidence and a block carrying a foreign member is MALFORMED evidence, refused by the block type rather than read past. Insertion and extraction are one mechanism measured at both ends — the round trip is what keeps the three refusals from being green under an extractor that always errs. It says nothing about WHICH values the body may carry: that a number the carrier's round trip would alter is refused rather than rewritten is a composition-side proposition no theorem states, and it stays in the ADR-069 census under NP-088."
+paths = ["mcp-re-http-profile/src/body/mod.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://http_profile/body/evidence_block_carriage",
+  "mutation://http_profile/body/evidence_block_carriage",
+]
+tested_symbols = [
+  "lib#body::tests::absent_block_is_missing_evidence",
+  "lib#body::tests::foreign_field_fails_closed",
+  "lib#body::tests::insert_preserves_existing_meta_entries",
+  "lib#body::tests::insert_then_extract_roundtrips",
+  "lib#body::tests::non_object_body_fails_closed",
+]
+
+[[unit]]
+id = "http_profile.carrier_verdict_projection"
+class = "V0"
+description = "WHAT THE RFC 9421 CARRIER'S FAILURES MEAN IN CORE'S TERMS, DECIDED IN ONE PLACE: `HttpProfileError` and `DispatchError` each state which frozen Core verdict they ARE through an exhaustive, wildcard-free projection, and `wire_code` is DERIVED from that projection rather than kept as a second table beside it — the derived token is the projected verdict's own. The carrier taxonomy underneath it holds one value per distinguishable fact, which is what gives the projection something to state: omission and tampering are different failures, a context-carrying failure is distinguished by its context, and a store outage is not a verdict about the caller's key. The golden group count is the guard against an edit silently MERGING two groups or splitting one. Says NOTHING about whether the grouping is RIGHT — which carrier failure is which Core verdict is the ratified MCPRE-92 owner decision, and THM-0111's own scope says no guard can see a failure mapped onto the wrong verdict. The twin of `core.verification_taxonomy` and `policy.authorization_taxonomy`, on the carrier THM-0111's statement names and no unit held."
+paths = [
+  "mcp-re-http-profile/src/error.rs",
+  "mcp-re-http-profile/src/error/core_projection.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://http_profile/error/carrier_verdict_projection",
+  "mutation://http_profile/error/carrier_verdict_projection",
+]
+tested_symbols = [
+  "lib#error::core_projection::tests::absent_evidence_and_malformed_evidence_are_different_verdicts",
+  "lib#error::core_projection::tests::an_outage_does_not_project_onto_an_actor_binding_failure",
+  "lib#error::core_projection::tests::failure_classes_map_to_their_precise_codes",
+  "lib#error::core_projection::tests::the_derived_token_is_the_projected_verdicts_own",
+  "lib#error::core_projection::tests::the_projection_preserves_the_ratified_group_count",
+  "lib#error::tests::a_context_carrying_failure_names_what_was_missing",
+  "lib#error::tests::an_outage_is_not_an_untrusted_key",
+  "lib#error::tests::omission_and_tampering_are_different_failures",
+]
+
+[[unit]]
+id = "http_profile.fleet_strict_store_class"
+class = "V0"
+description = "THE STORE-CLASS HALF OF THE FLEET-STRICT REFUSAL, MEASURED WHERE THE HTTP-PROFILE DISPATCH PATH WIRES IT: under the fleet-strict posture a replay store that SELF-REPORTS the single-process reference class is refused as `NonSharedReplayTier` before the store is touched at all, and a durable one is admitted — so the gate is a refusal of a declared class rather than a refusal of everything. The `paths` is the production site `dispatch.rs`, whose step 1 is that gate; the battery is the integration lane that drives it end to end. Says nothing about the DECLARED tier, which is the operator's statement checked in `proxy.replay_admission_gate`, and nothing about what an acknowledgement durably established — that is per-mechanism and registered as ASM-0040 / ASM-0041."
+paths = ["mcp-re-http-profile/src/dispatch.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://http_profile/dispatch/fleet_strict_store_class",
+  "mutation://http_profile/dispatch/fleet_strict_store_class",
+]
+tested_symbols = [
+  "tests/dispatch_test#fleet_strict_admits_durable_cache",
+  "tests/dispatch_test#fleet_strict_rejects_single_process_reference_cache",
+]
