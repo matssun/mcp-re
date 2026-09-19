@@ -142,10 +142,6 @@ path = "mcp-re-proxy/tests/integration_async/root_key_lifecycle_test.rs"
 baseline = 10
 
 [[file]]
-path = "mcp-re-proxy/src/cli/admission_flags/mod.rs"
-baseline = 9
-
-[[file]]
 path = "mcp-re-proxy/src/handshake_quota.rs"
 baseline = 9
 
@@ -195,10 +191,6 @@ baseline = 7
 
 [[file]]
 path = "mcp-re-proxy/src/async_serve/mod.rs"
-baseline = 7
-
-[[file]]
-path = "mcp-re-proxy/src/cli/authorization_flags.rs"
 baseline = 7
 
 [[file]]
@@ -410,18 +402,6 @@ path = "mcp-re-proxy/src/capability_materialization/ingress.rs"
 baseline = 4
 
 [[file]]
-path = "mcp-re-proxy/src/cli/admission_flags/record_currentness.rs"
-baseline = 4
-
-[[file]]
-path = "mcp-re-proxy/src/cli/currency_flags.rs"
-baseline = 4
-
-[[file]]
-path = "mcp-re-proxy/src/cli/peer_identity_flags/mod.rs"
-baseline = 4
-
-[[file]]
 path = "mcp-re-proxy/src/client_crl_publication.rs"
 baseline = 4
 
@@ -519,26 +499,6 @@ baseline = 3
 
 [[file]]
 path = "mcp-re-proxy/src/capability_materialization/key_source/pin.rs"
-baseline = 3
-
-[[file]]
-path = "mcp-re-proxy/src/cli/runtime_flags/admission_ceiling.rs"
-baseline = 3
-
-[[file]]
-path = "mcp-re-proxy/src/cli/runtime_flags/mod.rs"
-baseline = 3
-
-[[file]]
-path = "mcp-re-proxy/src/cli/serving_flags.rs"
-baseline = 3
-
-[[file]]
-path = "mcp-re-proxy/src/cli/signing_source_flags/stray_value.rs"
-baseline = 3
-
-[[file]]
-path = "mcp-re-proxy/src/cli/storage_flags.rs"
 baseline = 3
 
 [[file]]
@@ -663,38 +623,6 @@ baseline = 2
 
 [[file]]
 path = "mcp-re-proxy/src/blocking_mtls_harness/deadline_stream.rs"
-baseline = 2
-
-[[file]]
-path = "mcp-re-proxy/src/cli/audit_flags.rs"
-baseline = 2
-
-[[file]]
-path = "mcp-re-proxy/src/cli/channel_flags.rs"
-baseline = 2
-
-[[file]]
-path = "mcp-re-proxy/src/cli/delegated_signing_flags.rs"
-baseline = 2
-
-[[file]]
-path = "mcp-re-proxy/src/cli/identity_flags.rs"
-baseline = 2
-
-[[file]]
-path = "mcp-re-proxy/src/cli/protocol_flags.rs"
-baseline = 2
-
-[[file]]
-path = "mcp-re-proxy/src/cli/revocation_flags.rs"
-baseline = 2
-
-[[file]]
-path = "mcp-re-proxy/src/cli/runtime_flags/connection_limits.rs"
-baseline = 2
-
-[[file]]
-path = "mcp-re-proxy/src/cli/signing_source_flags/channel_role.rs"
 baseline = 2
 
 [[file]]

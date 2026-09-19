@@ -1708,3 +1708,50 @@ repository has a lint for — reached from an operator-supplied number.
 is what the planner does with them.
 **Severity:** `high`.
 
+---
+
+## Batch 13 — the per-axis flag adapters
+
+`mcp-re-proxy/src/cli/` holds 59 more controls in eighteen small modules, one per
+configuration axis: admission flags, authorization flags, audit flags, channel flags,
+currency flags, delegated-signing flags, identity flags, peer-identity flags, protocol
+flags, revocation flags, runtime flags, serving flags, signing-source flags, storage flags.
+
+**These are the same eleven propositions one layer down**, and they are attached to them
+rather than given propositions of their own. `cli.rs` is the parser; these are the adapters
+that turn each axis's flags into the request an owner classifies. A control here — *an
+enforcing gate without a record-currentness budget is refused* — is the argv arm of exactly
+the proposition `cli.rs`'s own control of the same subject is an arm of, and splitting them
+would give one authority two records.
+
+Two axes had no proposition at all, and get one.
+
+## NP-071 — the authorization axis is exactly four flags, and names its alternatives
+
+**Controls:** `mcp-re-proxy/src/cli/authorization_flags.rs` (7).
+**Statement.** *Exactly four flags reach the authorization axis; the production mechanism is
+selectable with its two parameters; an unknown selection names the THREE that exist and an
+unknown scope names the TWO the signed claims can carry; a staleness bound that is not a
+number is refused BY NAME; a deny list accumulates across repetition and commas; and a
+parameter supplied beside no selection still parses and is refused later, by the owner.*
+**If false.** An operator selects an authorization mechanism that does not exist and learns
+only which flag was wrong, not which values are possible — or a deny list silently keeps the
+last spelling instead of accumulating, so entries an operator wrote are not enforced.
+**Likely owner:** `proxy.authorization_configuration_state` classifies what the deployment
+RECOGNISES; this is what an operator can say. The last clause is the layering, stated as a
+control: a parameter beside no selection PARSES and is refused by the owner, rather than the
+adapter deciding a question that is not its.
+**Root relationship.** Under THM-0077 with the rest of the argv family.
+**Severity:** `high`.
+
+## NP-072 — the audit axis records and forwards nothing unsigned by default
+
+**Controls:** `mcp-re-proxy/src/cli/audit_flags.rs` (2).
+**Statement.** *The defaults record, and forward nothing unsigned; an unknown selection is
+refused rather than defaulted.*
+**If false.** A deployment forwards audit records nobody signed, or an operator's misspelled
+selection silently takes the default — which is the one case where a typo turns a chosen
+posture into an unchosen one on the axis whose whole subject is what gets recorded.
+**Likely owner:** none.
+**Severity:** `high`.
+
