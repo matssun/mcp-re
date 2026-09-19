@@ -102,10 +102,6 @@ path = "mcp-re-proxy/tests/integration_async/replay_race_harness_test.rs"
 baseline = 13
 
 [[file]]
-path = "mcp-re-test-paths/src/rust_source.rs"
-baseline = 13
-
-[[file]]
 path = "mcp-re-proxy/src/client_revocation.rs"
 baseline = 12
 
@@ -306,10 +302,6 @@ path = "mcp-re-proxy/tests/pkcs11_keysource_e2e_test.rs"
 baseline = 6
 
 [[file]]
-path = "mcp-re-test-paths/src/rust_source/brace_scan.rs"
-baseline = 6
-
-[[file]]
 path = "mcp-re-conformance/tests/corpus_pinning_test.rs"
 baseline = 5
 
@@ -347,10 +339,6 @@ baseline = 5
 
 [[file]]
 path = "mcp-re-http-profile/src/rejection/mod.rs"
-baseline = 5
-
-[[file]]
-path = "mcp-re-http-profile/src/verified_response/bound.rs"
 baseline = 5
 
 [[file]]
@@ -463,10 +451,6 @@ baseline = 4
 
 [[file]]
 path = "mcp-re-http-profile/src/delegation/verify.rs"
-baseline = 4
-
-[[file]]
-path = "mcp-re-http-profile/src/verified_request/mod.rs"
 baseline = 4
 
 [[file]]
@@ -602,10 +586,6 @@ path = "mcp-re-proxy/tests/integration_live/gcp_kms_http_profile_live_test.rs"
 baseline = 4
 
 [[file]]
-path = "mcp-re-test-paths/src/lib.rs"
-baseline = 4
-
-[[file]]
 path = "mcp-re-conformance/tests/http_profile_vectors_test.rs"
 baseline = 3
 
@@ -627,6 +607,14 @@ baseline = 3
 
 [[file]]
 path = "mcp-re-http-profile/src/pdp_decision/issue.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-http-profile/src/verified_request/mod.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-http-profile/src/verified_response/bound.rs"
 baseline = 3
 
 [[file]]
@@ -763,10 +751,6 @@ baseline = 3
 
 [[file]]
 path = "mcp-re-proxy/tests/integration_live/gcp_kms_delegated_tls_live_test.rs"
-baseline = 3
-
-[[file]]
-path = "mcp-re-test-paths/src/source_trees.rs"
 baseline = 3
 
 [[file]]
@@ -966,16 +950,8 @@ path = "mcp-re-proxy/tests/integration_live/gcp_kms_delegated_signing_live_test.
 baseline = 2
 
 [[file]]
-path = "mcp-re-test-paths/src/traceability_sources.rs"
-baseline = 2
-
-[[file]]
 path = "mcp-re-transport/tests/fault_injection_test.rs"
 baseline = 2
-
-[[file]]
-path = "mcp-re-client-core/src/delegated_trust/mod.rs"
-baseline = 1
 
 [[file]]
 path = "mcp-re-client/src/lib.rs"
@@ -1243,9 +1219,5 @@ baseline = 1
 
 [[file]]
 path = "mcp-re-proxy/tests/integration_live/gcp_kms_root_rotation_live_test.rs"
-baseline = 1
-
-[[file]]
-path = "mcp-re-transport/src/lib.rs"
 baseline = 1
 

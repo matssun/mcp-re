@@ -195,7 +195,8 @@ the property.
 
 ## ND-005 — mirrored and documented values
 
-**Covers:** `jcs_vocabulary_gate.py`, `proxy_flag_doc_gate.py`, `check_port_registry.py`.
+**Covers:** `jcs_vocabulary_gate.py`, `proxy_flag_doc_gate.py`, `check_port_registry.py`, and
+`mcp-re-transport`'s crate-root `no_run` doctest (added 2026-09-19, batch 8).
 **Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 2.
 
 Each holds a second copy of a fact equal to its source: the deprecation vocabulary against
@@ -206,6 +207,12 @@ chart's `bindPort` against `config/ports.toml`.
 system admits. The proxy binds the port the registry names whether or not the chart's mirror
 agrees; the parser accepts the flags it accepts whether or not a guide lists them; the
 carrier is RFC 9421 + RFC 9530 whatever a design document's framing says.
+
+**The doctest belongs here for the same reason as `proxy_flag_doc_gate.py`.** A `no_run`
+rustdoc example COMPILES and does not run: it establishes that the documented usage still
+type-checks against the current API, which is the same fact that gate establishes for a
+`--flag`, one language layer down. Its failure means the guide teaches an API that is not
+there.
 
 **Stated because it is the sharpest close call in this register.**
 `check_port_registry.py` also enforces a band invariant — every registered port falls inside
@@ -292,6 +299,37 @@ failure would make it false.
 
 **What would move a control out.** A control here that exercises the store on a path a
 remote peer can drive. These three are driven by the test, not by a reply.
+
+## ND-010 — a `compile_fail` doctest superseded by a structural probe
+
+**Covers:** `mcp-re-http-profile` `doc#verified_response::bound::VerifiedMcpResponse`,
+`doc#verified_response::bound::VerifiedDelegatedMcpResponse`,
+`doc#verified_request::VerifiedMcpRequest`.
+**Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 8.
+
+Four `compile_fail` examples over three items, each a hostile construction the type system
+must refuse. ADR-MCPRE-068 §12.1 called these "the best worked example of the defect in the
+repository" — they were registered as `test://` evidence for a claim only a compile refusal
+can make — and Phase 0B/0D moved the claim to `structural://` probes S01, S02, S03 and S05,
+each of which names the very `doc_item` above in `structural-probes.toml`.
+
+**Why the doctest itself is not evidence.** ADR-068's own reason, in the probe registry's
+words: *rustdoc's expected-error-code annotation is checked only on nightly, so on the
+pinned stable toolchain `compile_fail,E0308` and bare `compile_fail` are the same
+declaration.* The doctest therefore passes when the example fails to compile for ANY reason
+— a renamed import, a typo, an unrelated error — and cannot attribute the refusal to the
+boundary. The structural probe compiles the identical construction itself and requires the
+declared rustc error code with its primary span on the marker line.
+
+So the example is **documentation of the seal, and the probe is the evidence for it.** That
+is not a demotion: the doctest is the thing a reader reaches for first, and keeping it is
+what makes the probe's construction checkable against a human-readable statement. It is
+simply not the control the claim rests on.
+
+**What would move a control out.** The pinned toolchain gaining a checked error-code
+annotation for doctests, or the probe for an item being withdrawn. Either makes the doctest
+the only control over that boundary again, and `test_structural_lane.py` already holds the
+case where a probe's documented example has drifted from what the registry says it does.
 
 ## ND-008 — not a control: drivers, runners, reports and demos
 
@@ -1050,4 +1088,85 @@ URI is refused, a target that binds nothing is refused at the validation boundar
 HTTP URL is present and has no empty segment, repeated and comma-separated URLs accumulate,
 and a fleet-wide target does not erase the per-core default.* If false, the proxy serves an
 endpoint nobody named, or silently drops one an operator did name.
+
+## NP-036 — the shared production-half definition is exact
+
+**Controls:** `mcp-re-test-paths/src/rust_source.rs` (13),
+`mcp-re-test-paths/src/rust_source/brace_scan.rs` (6).
+**Carrier:** `mcp-re-test-paths`'s `production_half` and its brace scanner.
+**Statement.** *A brace inside a string, a char literal, a nested block comment or a raw
+string does not close a `#[cfg(test)]` region; a raw string closes only on its own hash
+count; an identifier ending in `r` opens none; a lifetime is not a char literal; line
+numbers survive the elision; a trailing test module does not end the scan; and a file with
+no tests is wholly production.*
+**If false.** Every consumer of `production_half` measures a different corpus from the one
+it says it measured — `scripts/module_size_gate.py`'s production-line count, the guards that
+scan production text, and `conformance.verdict_vocabulary_scope`'s measured scope. This is
+not hypothetical: the rule's own documentation records that counting "lines before the first
+test module" discarded production code below the tests and measured `trust_plane.rs` at 134
+lines when it is 690.
+**Likely owner:** `conformance.verdict_vocabulary_scope` names these files in its `paths`,
+so its fingerprint already moves when they change — **and it cannot claim these controls.**
+It is a `measured` unit, and ADR-MCPRE-068 §4.1 gives a measured unit one apparatus slot,
+`measurement_control`, whose meaning is *the demonstration that the number can still MOVE*.
+MSR-0001 carries such a control. These are a different thing: a scanner that is wrong in a
+fixed way still moves. **The `measured` class has no slot for apparatus CORRECTNESS**, and
+that is the finding, not a reason to file these anywhere convenient.
+**Root relationship.** Beneath the measured unit rather than beside it: the scope of a
+measurement is a premise of the measurement, and this is the scope's own correctness.
+**Severity:** `high`.
+**What ratification would probably look like:** a `tested` sibling unit over the apparatus,
+which the measured unit depends on — not a widening of the measured unit, and not a
+`measurement_control` this is not.
+
+## NP-037 — a guard's inputs resolve, or the guard fails loudly
+
+**Controls:** `mcp-re-test-paths/src/lib.rs` (4), `src/source_trees.rs` (3),
+`src/traceability_sources.rs` (2).
+**Carrier:** `mcp-re-test-paths`'s binary/fixture resolver and its three declaration tables.
+**Statement.** *An unknown key is refused rather than resolved to an empty path; no key is
+declared twice; no binary key is also a source fallback; and every declared fallback,
+sentinel and witness names a file that exists.*
+**If false.** A guard resolves its input to an empty path, walks nothing, finds nothing and
+reports a clean tree. That is the exact false-green class this repository has already
+measured twice — a `tests/` glob that silently exempted a crate from the srcs gate for a
+whole campaign, and an empty join that read as a clean tree — and the resolver is where the
+first of those enters.
+**Likely owner:** none. The resolver is in no unit's `paths`; the tables it holds decide
+what several guards see.
+**Root relationship.** Not under a product root. It is a premise of the guards, in the same
+place NP-036 sits.
+**Severity:** `high`.
+
+## NP-038 — a revoked root's resolver is not obtainable
+
+**Control:** `mcp-re-client-core` `doc#delegated_trust::DelegatedResponseTrust` — two
+`compile_fail` examples.
+**Carrier:** `mcp-re-client-core/src/delegated_trust/mod.rs`'s `TrustedIssuerSet`.
+**Statement.** *`TrustedIssuerSet` hands out no response resolver and exposes no raw
+lifecycle lookup, so the pairing that made verifying under a REVOKED root possible — a
+resolver beside a foreign or empty revocation source, composed through
+`CompositeResponseTrust` — is not expressible. What remains public is `resolve_issuer`,
+which fails closed on a revoked issuer without consulting the caller's revocation half at
+all.*
+**If false.** A client verifies a response under a root that has been revoked, because the
+two halves of the trust answer were obtained separately and only one of them knew about the
+revocation. The file's own documentation says it: *two doors had to close, not one.*
+**Likely owner:** `client.trust_manifest_lifecycle` names this file in its `paths` and owns
+*which credential identifiers are revoked*. That is the FACT; this is the
+unconstructibility of a pairing that would route around it — a different and stronger
+claim, and registering the examples against the revocation clause would make that unit's
+evidence cover a seal its statement does not assert.
+**Root relationship.** Under the client response-trust roots.
+**Severity:** `critical`.
+**This is ADR-MCPRE-069 §2.1's own named instance.** That section predicted these two
+examples exist and are claimed by nothing, and used them to argue the first census was
+structurally blind to a whole control kind. They are still unclaimed on main.
+**And the ratification is NOT a doctest registration.** ND-010 records why a
+`compile_fail` example cannot attribute its refusal on the pinned stable toolchain. The
+form this should take is a `structural://` probe pair, exactly as ADR-MCPRE-068 Phase 0B
+did for the http-profile items: one probe per door, each naming the rustc error code the
+boundary earns — `E0599` for the withdrawn resolver and `E0624` for the `pub(crate)`
+lifecycle lookup — rather than a `test://` URI over an example that passes on any
+compile error at all.
 
