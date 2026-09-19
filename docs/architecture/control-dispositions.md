@@ -2300,8 +2300,71 @@ an untrusted or wrong-identity server certificate accepted, so the rejections th
 claims are the real verifier's and not an artefact of a test that never presented a bad
 certificate.
 
-The rest are eight propositions, and three of them are premises of everything above
-them.
+The rest are eleven propositions, and four of them are premises of everything above
+them. Four of the eleven are the RR-002 C5 split of the original NP-106.
+
+## NP-106 — the Ed25519 floor accepts the material it is supposed to accept
+
+**Controls:** `mcp-re-core/src/crypto.rs`.
+**Statement.** *A signature this system's own signer produces over a preimage verifies under the matching verification key — through the request wrapper `verify_ed25519` and through the raw primitive with no envelope algorithm gate in front of it — and `ensure_ed25519_alg` ADMITS the one supported token, `Ed25519`.*
+**If false.** MCP-RE cannot verify what MCP-RE signed. Nothing is forged and nothing is admitted that should not be: the floor simply refuses everything, the proxy admits no request, and the deployment is down. That is the whole reason this is a separate record from the refusals — the two halves fail in opposite directions and only one of them is a soundness fact.
+**Likely owner:** none. `core.ed25519_primitive` is the unit over this file, and THM-0014 is its theorem; the accepting direction is outside that theorem, for the reason stated below.
+**Severity:** `critical`.
+**Narrowed from "the Core's Ed25519 primitive is exact and total", ADR-MCPRE-069 RM-S1-FIX.** The record covered thirteen controls spanning five propositions, and RR-002 C5 forbids filing a heterogeneous record whole. Three controls stay here; `signature_is_deterministic_for_fixed_seed` is NP-170, the three error-rendering controls are NP-171, `verification_key_round_trips_bytes_and_b64url` is NP-172, and five REGISTERED. Packet at `verification/reviews/packets/adr069-np-106-ratification-2026-09-19.md`.
+
+**The clause-2 argument for the five that left, in full, because it is the argument that has to survive.** THM-0014 says:
+
+> If `Verifier::verify_request_floor` returns Ok, then for the request supplied: the covered
+> `Content-Digest` agreed with the body, the RFC 9421 signature verified over the
+> reconstructed signature base under an algorithm the verifier's policy accepts, the
+> signature parameters were admitted as current, and the presented keyid was resolved through
+> the trust seam for the Request slot.
+
+It is a conditional over SUCCESSFUL returns, and its security consequence is stated entirely in the negative: *"An attacker cannot obtain a floor-verified request by tampering with the body, by presenting a signature under an algorithm the deployment does not accept, by replaying expired parameters, or by presenting a key the seam vouches for only in the Response slot."* So the containment test is a single question asked control by control: **does a world in which this control is false contain a successful `verify_request_floor` return for which one of those clauses is false?**
+
+- `wrong_key_fails` — **contained**, by the verb in clause 2. If `verify_ed25519` accepted a signature under a key that did not produce it, "the RFC 9421 signature verified over the reconstructed signature base" is false of a request the floor returned Ok for. This is the conjunct M312 falsifies.
+- `tamper_preimage_fails` — **contained**, same clause and the same probe. A tampered signature base that still verifies is a floor-verified request whose signature covered different bytes.
+- `malformed_signature_base64_fails` — **contained**, clause 2. `verify_ed25519_with` returning Ok on input it never decoded is a floor-verified request under a signature that was never checked at all. It refuses at the decode arm rather than at `verify_strict`, which is why M312 leaves it green: a different arm of the same clause.
+- `wrong_length_signature_fails` — **contained**, clause 2, at the `try_into` arm. Sixty-four bytes is what an Ed25519 signature IS; accepting fewer is accepting a value the clause's verb cannot be true of.
+- `ensure_ed25519_alg_rejects_unknown_alg_with_supplied_error` — **contained**, by clause 2's qualifier *"under an algorithm the verifier's policy accepts"* and by the security consequence's second limb in terms. If the gate admitted `RS256` or `ES256`, an envelope declaring an algorithm the deployment does not accept would reach the raw primitive and could be floor-verified. It is also NP-002's other half — the refusal that keeps ES256 out of MCP-RE's own signing.
+
+And the eight that did not leave, with the clause that decides each:
+
+- `ensure_ed25519_alg_accepts_the_supported_alg` — **not contained.** Falsify it and `ensure_ed25519_alg` rejects `Ed25519` too; `verify_request_floor` then returns Ok for nothing and the conditional holds vacuously over an empty set of successful returns. No clause is false of any request. The theorem names no algorithm, so it does not pin WHICH token the policy accepts, only that a floor-verified request used one it did. Here, under NP-106.
+- `raw_primitive_verifies_without_any_alg_plumbing` — **not contained**, identically. Its single assertion is `verify_ed25519(preimage, &sig, &vk).is_ok()`. A primitive that refuses genuine material produces no successful return to be a counterexample. What it protects is the ADR-MCPS-02 layering split staying ergonomic for fixed-Ed25519 callers with no envelope — KMS self-checks, LB assertions, conformance vectors — which is a statement about this module's API and not about `verify_request_floor`. Here, under NP-106.
+- `sign_then_verify_round_trip` — **not contained**, identically, and this is the control whose registration the review named first. It is the completeness half of the primitive. THM-0014 has no completeness clause. Here, under NP-106.
+- `signature_is_deterministic_for_fixed_seed` — **not contained.** It asserts `sk.sign(m) == sk.sign(m)`, a property of SIGNING; THM-0014 constrains a VERIFIER and mentions no signer. A randomised Ed25519 signer falsifies this control and leaves every clause of THM-0014 true, because every signature it emits still verifies. NP-170.
+- `malformed_key_b64url_maps_to_actor_binding_failed` — **not contained.** It fixes WHICH variant a malformed key renders as. THM-0014 says nothing about any error variant; it has no failure clause at all, and clause 4's key arrives "resolved through the trust seam", not through `VerificationKey::from_b64url`. NP-171.
+- `malformed_key_bytes_map_to_actor_binding_failed` — **not contained**, same clause, same reason, at `from_bytes`.
+- `response_variant_maps_to_response_sig_invalid` — **not contained.** It is on the RESPONSE path, and THM-0014 is the request floor; its clause 4 is about the Request slot specifically. THM-0021 was read as the second candidate and declines it too, for the reason recorded in the packet: what this control STATES is which sentinel comes back, and THM-0021 is an Ok-conditional that is indifferent to the sentinel. NP-171.
+- `verification_key_round_trips_bytes_and_b64url` — **not contained**, and refusing it is what makes this commit consistent with itself. NP-107 is referred to R6 on the finding that *base64url is the exact encoding in both directions* is a premise THM-0014 USES rather than a proposition it contains — replace base64url with hex at every site and every clause still holds. A key round-tripping through that same codec is the same premise on a different carrier; it cannot be outside THM-0014 in `encoding.rs` and inside it in `crypto.rs`. NP-172.
+
+## NP-170 — Ed25519 signing is a deterministic function of seed and message
+
+**Controls:** `mcp-re-core/src/crypto.rs`.
+**Statement.** *`SigningKey::from_seed_bytes(seed).sign(message)` returns the same Base64URL signature every time it is called.*
+**If false.** A published conformance vector stops reproducing, and the SDK-parity fixtures that pin emitted bytes cease to be a test of anything: a mismatch would no longer distinguish a wrong implementation from a fresh signature. `SigningKey`'s own documentation gives this as the reason signing lives in the library at all — *"needed to generate reproducible conformance vectors (MCPS-002)"* — so it is the premise a whole evidence lane rests on.
+**Likely owner:** none. It is a property of the signer, and every theorem over this file constrains a verifier.
+**Severity:** `high`.
+**Split out of NP-106, ADR-MCPRE-069 RM-S1-FIX.** Packet at `verification/reviews/packets/adr069-np-170-ratification-2026-09-19.md`.
+
+## NP-171 — the crypto primitive never invents an error variant
+
+**Controls:** `mcp-re-core/src/crypto.rs`.
+**Statement.** *Every failure this module reports is the variant its own layer owns: a resolved-but-malformed verification key — whether it arrived as bytes or as Base64URL — is `ActorBindingFailed`, and the error-agnostic verification core returns the sentinel its CALLER supplied, so a response-path failure surfaces as `ResponseSigInvalid` and never as the request path's `InvalidSignature`.*
+**If false.** A key problem is reported as a signature problem, or a response failure as a request failure. Nothing is admitted that should not be — the refusal still happens — but the operator, the audit record and the peer are all told the wrong thing about WHY, and an alarm that cannot tell a malformed key from a bad signature sends the responder to the wrong place. That is the whole content of the module's own *"# Error mapping (deliberate)"* section, and this record is that section's measurement.
+**Likely owner:** none, and the one authority this could belong to is a taxonomy theorem rather than a verification theorem — THM-0111 owns the frozen rendering of `mcp-re-core/src/error.rs`, not which site chooses which variant, which is a ratified owner decision no guard can see.
+**Severity:** `high`.
+**Split out of NP-106, ADR-MCPRE-069 RM-S1-FIX.** Packet at `verification/reviews/packets/adr069-np-171-ratification-2026-09-19.md`.
+
+## NP-172 — a verification key round-trips through its raw bytes and its Base64URL spelling
+
+**Controls:** `mcp-re-core/src/crypto.rs`.
+**Statement.** *`VerificationKey::to_bytes` and `VerificationKey::from_bytes` are mutual inverses, and so are `to_b64url` and `from_b64url`: a key put through either projection and rebuilt holds the same 32 bytes.*
+**If false.** A key enrolled in one spelling and presented in the other is not recognised as the same key — or, worse, two different keys have one spelling. Every comparison the system makes over an encoded key, and every keyid derived from one, inherits whatever this loses.
+**Likely owner:** none, and deliberately the same answer as NP-107's. This is NP-107's proposition on a second carrier: the codec being exact in both directions, measured through the key type instead of through the helpers. It should be ratified with NP-107 or not at all.
+**Severity:** `high`.
+**Split out of NP-106, ADR-MCPRE-069 RM-S1-FIX.** Packet at `verification/reviews/packets/adr069-np-172-ratification-2026-09-19.md`.
 
 ## NP-107 — base64url is the exact encoding, in both directions
 
@@ -2310,7 +2373,7 @@ them.
 **If false.** Two spellings of one value both decode, so a comparison over the encoded form does not mean what a comparison over the bytes would. Rejecting padding is the clause that makes the encoded form canonical rather than merely decodable.
 **Likely owner:** none.
 **Severity:** `high`.
-**Referred whole, ADR-MCPRE-069 RM-S1.** THM-0014 was the candidate and it was read strictly rather than assumed. It contains the Ed25519 primitive by its own verb — "the RFC 9421 signature VERIFIED" is false if the primitive is inexact — but it does not contain the codec. Swap base64url for hex everywhere and every clause of THM-0014 still holds; the codec is a premise it USES, not a proposition it promises, which is exactly the distinction ADR-069 §5 clause 2 turns on. Two of the seven controls fail clause 3 outright: `encode_has_no_padding` and `encode_uses_url_safe_alphabet` state MCP_RE_SPEC §3's wire promise — *"All MCP-RE signature and hash values are Base64URL WITHOUT padding"* — which is an independently, externally meaningful product promise to a peer and belongs to no theorem here. THM-0055 was checked as the second candidate and declines it too: it claims only that *"The keyid's base64url-no-pad encoding is injective over the fixed 32-byte width of a SHA-256 output"*, a narrower proposition over a different carrier, and its unit `http_profile.keyid` would need a `paths` widening to reach `mcp-re-core/src/encoding.rs`. Its seven rows and this record stay. Packet at `verification/reviews/packets/adr069-np-107-ratification-2026-09-19.md`.
+**Referred whole, ADR-MCPRE-069 RM-S1.** THM-0014 was the candidate and it was read strictly rather than assumed. It contains the Ed25519 primitive's REFUSALS by its own verb — "the RFC 9421 signature VERIFIED" is false if the primitive accepts a wrong key or a tampered preimage — but it does not contain the codec. Swap base64url for hex everywhere and every clause of THM-0014 still holds; the codec is a premise it USES, not a proposition it promises, which is exactly the distinction ADR-069 §5 clause 2 turns on. Two of the seven controls fail clause 3 outright: `encode_has_no_padding` and `encode_uses_url_safe_alphabet` state MCP_RE_SPEC §3's wire promise — *"All MCP-RE signature and hash values are Base64URL WITHOUT padding"* — which is an independently, externally meaningful product promise to a peer and belongs to no theorem here. THM-0055 was checked as the second candidate and declines it too: it claims only that *"The keyid's base64url-no-pad encoding is injective over the fixed 32-byte width of a SHA-256 output"*, a narrower proposition over a different carrier, and its unit `http_profile.keyid` would need a `paths` widening to reach `mcp-re-core/src/encoding.rs`. Its seven rows and this record stay. Packet at `verification/reviews/packets/adr069-np-107-ratification-2026-09-19.md`.
 
 ## NP-108 — the profile-agnostic constants the RFC 9421 carrier stands on are frozen
 

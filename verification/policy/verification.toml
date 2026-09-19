@@ -9480,6 +9480,15 @@ tested_symbols = [
 # module does not exist. R1 is unavailable rather than declined, so these are two new units
 # over the files the existing batteries already measure.
 #
+# `core.ed25519_primitive` carries the REFUSING direction of NP-106 and nothing else. THM-0014
+# is a soundness conditional — it constrains what a successful `verify_request_floor` return
+# means and says nothing whatsoever about what is accepted — so the five refusals below are
+# what it contains, and the eight controls that state the accepting direction, the signer's
+# determinism, the per-layer error rendering and the key's encoding round-trip stay in the
+# census under NP-106, NP-170, NP-171 and NP-172, each with a ratification packet. A unit whose
+# declared proposition reached past its theorem would be the widening ADR-069 holds to be worse
+# than leaving a control unregistered.
+#
 # `core.verification_taxonomy` is the twin of `policy.authorization_taxonomy`, which has
 # held the OTHER frozen vocabulary under THM-0111 since that theorem was written. THM-0111's
 # statement names both files and says of each that it "owns its own mapping totally — one
@@ -9489,27 +9498,19 @@ tested_symbols = [
 [[unit]]
 id = "core.ed25519_primitive"
 class = "V0"
-description = "THE RAW ED25519 PRIMITIVE EVERY SIGNATURE IN THE SYSTEM RESTS ON, AND WHAT IT REFUSES: sign-then-verify round-trips, the signature is deterministic for a fixed seed, and the primitive verifies with no algorithm plumbing at all; a wrong key, a wrong-length signature, a tampered preimage and a malformed Base64URL signature each fail. The algorithm gate accepts the one supported token and rejects any other with the caller's supplied error, so the raw primitive is never reached by an envelope declaring something else. The error mapping is part of the proposition, not decoration: a malformed key — in b64url or in bytes — maps to actor-binding-failed, the response-side caller's failure maps to response-sig-invalid, and a verification key round-trips through bytes and b64url. Says nothing about which keys are enrolled, which slot a key answers for, or whether a deployment was right to trust the actor."
+description = "WHAT THE ED25519 FLOOR REFUSES ON THE REQUEST PATH: a wrong key and a tampered preimage each fail at `verify_strict`, a wrong-length signature and a malformed Base64URL signature each fail structurally before the curve is touched at all, and the algorithm gate rejects any token other than `Ed25519` with the caller's supplied error, so an envelope declaring something else never reaches the raw primitive. This unit is the refusing direction only, because that is the direction THM-0014 claims: it says NOTHING about what the primitive accepts, nothing about signing being deterministic for a fixed seed, nothing about which variant a malformed KEY renders as, nothing about the response-path sentinel, and nothing about a verification key round-tripping through its encodings — each of those is a separate proposition carrying its own census record. It also says nothing about which keys are enrolled, which slot a key answers for, or whether a deployment was right to trust the actor."
 paths = ["mcp-re-core/src/crypto.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
 evidence = [
-  "test://core/ed25519_primitive/exact_and_total",
-  "mutation://core/ed25519_primitive/exact_and_total",
+  "test://core/ed25519_primitive/refuses_forged_and_malformed_material",
+  "mutation://core/ed25519_primitive/refuses_forged_and_malformed_material",
 ]
 tested_symbols = [
-  "lib#crypto::tests::ensure_ed25519_alg_accepts_the_supported_alg",
   "lib#crypto::tests::ensure_ed25519_alg_rejects_unknown_alg_with_supplied_error",
-  "lib#crypto::tests::malformed_key_b64url_maps_to_actor_binding_failed",
-  "lib#crypto::tests::malformed_key_bytes_map_to_actor_binding_failed",
   "lib#crypto::tests::malformed_signature_base64_fails",
-  "lib#crypto::tests::raw_primitive_verifies_without_any_alg_plumbing",
-  "lib#crypto::tests::response_variant_maps_to_response_sig_invalid",
-  "lib#crypto::tests::sign_then_verify_round_trip",
-  "lib#crypto::tests::signature_is_deterministic_for_fixed_seed",
   "lib#crypto::tests::tamper_preimage_fails",
-  "lib#crypto::tests::verification_key_round_trips_bytes_and_b64url",
   "lib#crypto::tests::wrong_key_fails",
   "lib#crypto::tests::wrong_length_signature_fails",
 ]

@@ -8266,7 +8266,7 @@ calls `verify_strict` — it simply does not act on the answer. Every layer abov
 "the RFC 9421 signature verified over the reconstructed signature base"; under the weakening
 that sentence is false while nothing in the tree says so.
 
-The three earlier-returning arms stay green, correctly. `malformed_signature_base64_fails`
+The two earlier-returning arms stay green, correctly. `malformed_signature_base64_fails`
 refuses at the decode, and `wrong_length_signature_fails` at the `try_into` — both before the
 line this probe touches. That they do NOT move is what locates the conjunct: the cryptographic
 answer is the only thing being falsified here, and the two structural refusals are a different

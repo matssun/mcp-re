@@ -8406,10 +8406,51 @@ recorded = "2026-09-19"
 # Batch 18 — the small crates, 2026-09-19
 # ---------------------------------------------------------------------------
 #
-# 76 controls outside mcp-re-proxy. Nine REGISTER (verification.toml); five are demo fixture
-# material (ND-013); the Core's purity firewall is ND-007; the rest are the propositions
-# below, among them two premises of everything above them: the encoding, and the inverse of
-# the time parser.
+# 76 controls outside mcp-re-proxy. Fourteen REGISTER (verification.toml); five are demo
+# fixture material (ND-013); the Core's purity firewall is ND-007; the rest are the
+# propositions below, among them three premises of everything above them: the encoding, the
+# inverse of the time parser, and the accepting direction of the Ed25519 primitive.
+#
+# NP-106 is the split RR-002 C5 required. THM-0014 is a soundness conditional and contains
+# the FIVE refusals of `mcp-re-core/src/crypto.rs`; the other eight controls of the original
+# record state four further propositions, and each carries its own entry and packet rather
+# than riding into a theorem that does not claim it.
+
+[[proposition]]
+id = "NP-106"
+title = "The Ed25519 floor accepts the material it is supposed to accept"
+carrier = "mcp-re-core/src/crypto.rs"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the units above it"
+record = "docs/architecture/control-dispositions.md#np-106"
+
+[[proposition]]
+id = "NP-170"
+title = "Ed25519 signing is a deterministic function of seed and message"
+carrier = "mcp-re-core/src/crypto.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "a premise of the units above it"
+record = "docs/architecture/control-dispositions.md#np-170"
+
+[[proposition]]
+id = "NP-171"
+title = "The crypto primitive never invents an error variant: each failure renders as the one its own layer owns"
+carrier = "mcp-re-core/src/crypto.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "a premise of the units above it"
+record = "docs/architecture/control-dispositions.md#np-171"
+
+[[proposition]]
+id = "NP-172"
+title = "A verification key round-trips through its raw bytes and its Base64URL spelling"
+carrier = "mcp-re-core/src/crypto.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "a premise of the units above it"
+record = "docs/architecture/control-dispositions.md#np-172"
 
 [[proposition]]
 id = "NP-107"
@@ -8479,6 +8520,70 @@ project = "mcp-re-client"
 control = "bin/mcp-re-client#tests::the_posture_line_reports_whether_the_floor_is_bounded_upward"
 decision = "new-proposition"
 proposition = "NP-112"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16003"
+project = "mcp-re-core"
+control = "lib#crypto::tests::ensure_ed25519_alg_accepts_the_supported_alg"
+decision = "new-proposition"
+proposition = "NP-106"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16005"
+project = "mcp-re-core"
+control = "lib#crypto::tests::malformed_key_b64url_maps_to_actor_binding_failed"
+decision = "new-proposition"
+proposition = "NP-171"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16006"
+project = "mcp-re-core"
+control = "lib#crypto::tests::malformed_key_bytes_map_to_actor_binding_failed"
+decision = "new-proposition"
+proposition = "NP-171"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16008"
+project = "mcp-re-core"
+control = "lib#crypto::tests::raw_primitive_verifies_without_any_alg_plumbing"
+decision = "new-proposition"
+proposition = "NP-106"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16009"
+project = "mcp-re-core"
+control = "lib#crypto::tests::response_variant_maps_to_response_sig_invalid"
+decision = "new-proposition"
+proposition = "NP-171"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16010"
+project = "mcp-re-core"
+control = "lib#crypto::tests::sign_then_verify_round_trip"
+decision = "new-proposition"
+proposition = "NP-106"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16011"
+project = "mcp-re-core"
+control = "lib#crypto::tests::signature_is_deterministic_for_fixed_seed"
+decision = "new-proposition"
+proposition = "NP-170"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-16013"
+project = "mcp-re-core"
+control = "lib#crypto::tests::verification_key_round_trips_bytes_and_b64url"
+decision = "new-proposition"
+proposition = "NP-172"
 recorded = "2026-09-19"
 
 [[disposition]]
