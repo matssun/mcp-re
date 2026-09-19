@@ -154,10 +154,6 @@ path = "mcp-re-proxy/src/replay_tier.rs"
 baseline = 11
 
 [[file]]
-path = "sdk/python/tests/test_parity.py"
-baseline = 11
-
-[[file]]
 path = "mcp-re-conformance/tests/audit_vocabulary_guard_test.rs"
 baseline = 10
 
@@ -195,10 +191,6 @@ baseline = 10
 
 [[file]]
 path = "mcp-re-proxy/tests/integration_async/root_key_lifecycle_test.rs"
-baseline = 10
-
-[[file]]
-path = "sdk/typescript/test/parity.test.ts"
 baseline = 10
 
 [[file]]
@@ -251,10 +243,6 @@ baseline = 8
 
 [[file]]
 path = "mcp-re-proxy/tests/integration/plane_config_reachback_test.rs"
-baseline = 8
-
-[[file]]
-path = "sdk/python/tests/test_transport.py"
 baseline = 8
 
 [[file]]
@@ -335,10 +323,6 @@ baseline = 6
 
 [[file]]
 path = "mcp-re-test-paths/src/rust_source/brace_scan.rs"
-baseline = 6
-
-[[file]]
-path = "sdk/typescript/test/transport.test.ts"
 baseline = 6
 
 [[file]]
@@ -471,14 +455,6 @@ baseline = 5
 
 [[file]]
 path = "mcp-re-proxy/tests/tls_load_harness_bench.rs"
-baseline = 5
-
-[[file]]
-path = "sdk/python/tests/test_transport_e2e.py"
-baseline = 5
-
-[[file]]
-path = "sdk/typescript/test/transport_e2e.test.ts"
 baseline = 5
 
 [[file]]
@@ -810,10 +786,6 @@ path = "mcp-re-test-paths/src/source_trees.rs"
 baseline = 3
 
 [[file]]
-path = "sdk/python/tests/test_smoke.py"
-baseline = 3
-
-[[file]]
 path = "mcp-re-client/src/main.rs"
 baseline = 2
 
@@ -1015,10 +987,6 @@ baseline = 2
 
 [[file]]
 path = "mcp-re-transport/tests/fault_injection_test.rs"
-baseline = 2
-
-[[file]]
-path = "sdk/typescript/test/smoke.test.ts"
 baseline = 2
 
 [[file]]

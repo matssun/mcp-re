@@ -926,3 +926,471 @@ decision = "not-evidence"
 reason_family = "ND-008"
 recorded = "2026-09-19"
 
+
+# ---------------------------------------------------------------------------
+# Batch 3 — the SDK lanes, 2026-09-19
+# ---------------------------------------------------------------------------
+#
+# Fifty controls across both shipped SDKs, in six propositions. Both SDKs are carried
+# together because the propositions are TWINS: the parity oracle is one fixed point the two
+# are compared against, and the concurrency file says in its own comment that the two 'must
+# agree on how many exchanges may be in flight, not just on the bytes they emit'. Splitting
+# them by language would have produced two halves of one claim and no place to say so.
+#
+# NP-014 is the exception and is recorded separately for the reason its record gives: it is
+# an asymmetry, not a twin.
+
+[[proposition]]
+id = "NP-009"
+title = "The shipped adapter's end-to-end composition"
+carrier = "McpReHttpTransport and the Python transport adapter against the real proxy and a real MCP SDK backend"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "THM-0094 and THM-0095 directly: this is their headline demonstration"
+record = "docs/architecture/control-dispositions.md#np-009"
+
+[[proposition]]
+id = "NP-010"
+title = "The shipped SDKs reproduce the frozen oracle byte for byte"
+carrier = "each SDK's signing path and tools/gen_sdk_parity_fixture.py's frozen oracle"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "under THM-0094 and THM-0095 jointly; the only proposition about BOTH"
+record = "docs/architecture/control-dispositions.md#np-010"
+
+[[proposition]]
+id = "NP-011"
+title = "Custody class does not change the bytes"
+carrier = "each SDK's signer abstraction over software and non-exporting custody"
+likely_owner = "*.signer_policy owns the policy and not the indistinguishability"
+consequence = "high"
+root_relationship = "beside NP-010 under THM-0094/THM-0095"
+record = "docs/architecture/control-dispositions.md#np-011"
+
+[[proposition]]
+id = "NP-012"
+title = "The artifact that ships implements the profile"
+carrier = "the built napi addon and PyO3 wheel, not the source tree the unit paths name"
+likely_owner = ""
+consequence = "high"
+root_relationship = "under THM-0094/THM-0095; the same shape as NP-001"
+record = "docs/architecture/control-dispositions.md#np-012"
+
+[[proposition]]
+id = "NP-013"
+title = "Every exchange terminates, and no slot is leaked"
+carrier = "each SDK transport's concurrency semaphore and exchange completion path"
+likely_owner = "*.post_close_emission presumes the semaphore without claiming its bound"
+consequence = "medium"
+root_relationship = "under THM-0094/THM-0095"
+record = "docs/architecture/control-dispositions.md#np-013"
+
+[[proposition]]
+id = "NP-014"
+title = "After close, the Python SDK signs and transmits nothing"
+carrier = "the Python transport adapter's close"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "under THM-0094; an ASYMMETRY — sdk_typescript.post_close_emission exists and has no Python twin"
+record = "docs/architecture/control-dispositions.md#np-014"
+
+[[disposition]]
+id = "CD-1001"
+project = "sdk/python"
+control = "pytest#tests/test_transport_e2e.py::test_a_real_session_calls_a_tool_with_no_sign_verify_in_app_code"
+decision = "new-proposition"
+proposition = "NP-009"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1002"
+project = "sdk/python"
+control = "pytest#tests/test_transport_e2e.py::test_a_signed_rejection_raises_correlated_rather_than_hanging"
+decision = "new-proposition"
+proposition = "NP-009"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1003"
+project = "sdk/python"
+control = "pytest#tests/test_transport_e2e.py::test_a_tampered_response_fails_closed_and_never_reaches_the_app"
+decision = "new-proposition"
+proposition = "NP-009"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1004"
+project = "sdk/python"
+control = "pytest#tests/test_transport_e2e.py::test_an_unsigned_response_fails_closed"
+decision = "new-proposition"
+proposition = "NP-009"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1005"
+project = "sdk/python"
+control = "pytest#tests/test_transport_e2e.py::test_the_hardening_profile_refuses_a_software_key_before_connecting"
+decision = "new-proposition"
+proposition = "NP-009"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1006"
+project = "sdk/typescript"
+control = "vitest#test/transport_e2e.test.ts > McpReHttpTransport (live) > fails closed on a tampered response, which never reaches the app"
+decision = "new-proposition"
+proposition = "NP-009"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1007"
+project = "sdk/typescript"
+control = "vitest#test/transport_e2e.test.ts > McpReHttpTransport (live) > fails closed on an unsigned response"
+decision = "new-proposition"
+proposition = "NP-009"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1008"
+project = "sdk/typescript"
+control = "vitest#test/transport_e2e.test.ts > McpReHttpTransport (live) > lets a real MCP Client call a tool with no sign/verify in app code"
+decision = "new-proposition"
+proposition = "NP-009"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1009"
+project = "sdk/typescript"
+control = "vitest#test/transport_e2e.test.ts > McpReHttpTransport (live) > refuses a software key under the hardening profile before connecting"
+decision = "new-proposition"
+proposition = "NP-009"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1010"
+project = "sdk/typescript"
+control = "vitest#test/transport_e2e.test.ts > McpReHttpTransport (live) > rejects rather than hangs when the proxy signs a rejection"
+decision = "new-proposition"
+proposition = "NP-009"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1011"
+project = "sdk/python"
+control = "pytest#tests/test_parity.py::test_oracle_is_the_expected_schema"
+decision = "new-proposition"
+proposition = "NP-010"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1012"
+project = "sdk/python"
+control = "pytest#tests/test_parity.py::test_profile_tag_matches_the_frozen_oracle"
+decision = "new-proposition"
+proposition = "NP-010"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1013"
+project = "sdk/python"
+control = "pytest#tests/test_parity.py::test_signed_bytes_match_the_frozen_oracle"
+decision = "new-proposition"
+proposition = "NP-010"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1014"
+project = "sdk/python"
+control = "pytest#tests/test_parity.py::test_signing_is_deterministic"
+decision = "new-proposition"
+proposition = "NP-010"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1015"
+project = "sdk/python"
+control = "pytest#tests/test_parity.py::test_the_oracle_covers_the_binding_forms"
+decision = "new-proposition"
+proposition = "NP-010"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1016"
+project = "sdk/python"
+control = "pytest#tests/test_parity.py::test_the_oracle_covers_the_notification_envelope"
+decision = "new-proposition"
+proposition = "NP-010"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1017"
+project = "sdk/python"
+control = "pytest#tests/test_parity.py::test_the_pinned_decision_carrier_holds_the_document_and_its_digest"
+decision = "new-proposition"
+proposition = "NP-010"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1018"
+project = "sdk/python"
+control = "pytest#tests/test_parity.py::test_the_pinned_generic_opaque_case_is_not_a_decision_type"
+decision = "new-proposition"
+proposition = "NP-010"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1019"
+project = "sdk/typescript"
+control = "vitest#test/parity.test.ts > signed bytes match the frozen oracle > %s reproduces byte-for-byte"
+decision = "new-proposition"
+proposition = "NP-010"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1020"
+project = "sdk/typescript"
+control = "vitest#test/parity.test.ts > signed bytes match the frozen oracle > %s signs deterministically"
+decision = "new-proposition"
+proposition = "NP-010"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1021"
+project = "sdk/typescript"
+control = "vitest#test/parity.test.ts > the frozen parity oracle > agrees with this SDK on the profile tag"
+decision = "new-proposition"
+proposition = "NP-010"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1022"
+project = "sdk/typescript"
+control = "vitest#test/parity.test.ts > the frozen parity oracle > is the expected schema and is non-empty"
+decision = "new-proposition"
+proposition = "NP-010"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1023"
+project = "sdk/typescript"
+control = "vitest#test/parity.test.ts > the oracle covers the binding forms > has the pinned decision carrier hold the document and its digest"
+decision = "new-proposition"
+proposition = "NP-010"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1024"
+project = "sdk/typescript"
+control = "vitest#test/parity.test.ts > the oracle covers the binding forms > keeps the generic opaque case off the decision type"
+decision = "new-proposition"
+proposition = "NP-010"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1025"
+project = "sdk/typescript"
+control = "vitest#test/parity.test.ts > the oracle covers the binding forms > pins all three, not just DPoP"
+decision = "new-proposition"
+proposition = "NP-010"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1026"
+project = "sdk/python"
+control = "pytest#tests/test_parity.py::test_non_exporting_custody_equals_software_custody_in_the_oracle"
+decision = "new-proposition"
+proposition = "NP-011"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1027"
+project = "sdk/python"
+control = "pytest#tests/test_parity.py::test_the_continuation_leg_signs_differently_from_the_open_leg"
+decision = "new-proposition"
+proposition = "NP-011"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1028"
+project = "sdk/python"
+control = "pytest#tests/test_parity.py::test_the_frozen_notification_body_carries_no_id"
+decision = "new-proposition"
+proposition = "NP-011"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1029"
+project = "sdk/typescript"
+control = "vitest#test/parity.test.ts > the oracle bytes witness the custody claim > a signed continuation changes the evidence it rides in"
+decision = "new-proposition"
+proposition = "NP-011"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1030"
+project = "sdk/typescript"
+control = "vitest#test/parity.test.ts > the oracle bytes witness the custody claim > non-exporting custody equals software custody"
+decision = "new-proposition"
+proposition = "NP-011"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1031"
+project = "sdk/typescript"
+control = "vitest#test/parity.test.ts > the oracle bytes witness the custody claim > the notification envelope carries no id, in either custody class"
+decision = "new-proposition"
+proposition = "NP-011"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1032"
+project = "sdk/python"
+control = "pytest#tests/test_smoke.py::test_core_version_is_nonempty_str"
+decision = "new-proposition"
+proposition = "NP-012"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1033"
+project = "sdk/python"
+control = "pytest#tests/test_smoke.py::test_profile_tag_is_nonempty_str"
+decision = "new-proposition"
+proposition = "NP-012"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1034"
+project = "sdk/python"
+control = "pytest#tests/test_smoke.py::test_sign_request_produces_rfc9421_signed_request"
+decision = "new-proposition"
+proposition = "NP-012"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1035"
+project = "sdk/typescript"
+control = "vitest#test/smoke.test.ts > mcp-re-sdk smoke (built package) > exposes a non-empty core version and RFC 9421 profile tag"
+decision = "new-proposition"
+proposition = "NP-012"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1036"
+project = "sdk/typescript"
+control = "vitest#test/smoke.test.ts > mcp-re-sdk smoke (built package) > signs an MCP request as an RFC 9421 message"
+decision = "new-proposition"
+proposition = "NP-012"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1037"
+project = "sdk/python"
+control = "pytest#tests/test_transport.py::test_a_valid_bound_is_accepted"
+decision = "new-proposition"
+proposition = "NP-013"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1038"
+project = "sdk/python"
+control = "pytest#tests/test_transport.py::test_an_invalid_bound_is_refused_rather_than_deadlocking"
+decision = "new-proposition"
+proposition = "NP-013"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1039"
+project = "sdk/python"
+control = "pytest#tests/test_transport.py::test_concurrency_is_bounded_so_a_burst_cannot_exhaust_the_poster"
+decision = "new-proposition"
+proposition = "NP-013"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1040"
+project = "sdk/python"
+control = "pytest#tests/test_transport.py::test_exchanges_run_concurrently_rather_than_head_of_line_blocking"
+decision = "new-proposition"
+proposition = "NP-013"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1041"
+project = "sdk/typescript"
+control = "vitest#test/transport.test.ts > McpReHttpTransport concurrency > accepts a valid bound"
+decision = "new-proposition"
+proposition = "NP-013"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1042"
+project = "sdk/typescript"
+control = "vitest#test/transport.test.ts > McpReHttpTransport concurrency > bounds concurrency so a burst cannot exhaust the poster"
+decision = "new-proposition"
+proposition = "NP-013"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1043"
+project = "sdk/typescript"
+control = "vitest#test/transport.test.ts > McpReHttpTransport concurrency > does not leak a slot when an exchange throws a non-Error"
+decision = "new-proposition"
+proposition = "NP-013"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1044"
+project = "sdk/typescript"
+control = "vitest#test/transport.test.ts > McpReHttpTransport concurrency > refuses an invalid bound (%s) rather than deadlocking"
+decision = "new-proposition"
+proposition = "NP-013"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1045"
+project = "sdk/typescript"
+control = "vitest#test/transport.test.ts > McpReHttpTransport concurrency > runs exchanges concurrently rather than head-of-line blocking"
+decision = "new-proposition"
+proposition = "NP-013"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1046"
+project = "sdk/typescript"
+control = "vitest#test/transport.test.ts > McpReHttpTransport failure delivery > still completes when no onmessage is installed"
+decision = "new-proposition"
+proposition = "NP-013"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1047"
+project = "sdk/python"
+control = "pytest#tests/test_transport.py::test_close_aborts_an_in_flight_notification_too"
+decision = "new-proposition"
+proposition = "NP-014"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1048"
+project = "sdk/python"
+control = "pytest#tests/test_transport.py::test_close_aborts_in_flight_work_rather_than_draining_it"
+decision = "new-proposition"
+proposition = "NP-014"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1049"
+project = "sdk/python"
+control = "pytest#tests/test_transport.py::test_close_delivers_nothing_to_a_caller_that_has_left"
+decision = "new-proposition"
+proposition = "NP-014"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-1050"
+project = "sdk/python"
+control = "pytest#tests/test_transport.py::test_close_refuses_further_work"
+decision = "new-proposition"
+proposition = "NP-014"
+recorded = "2026-09-19"
+

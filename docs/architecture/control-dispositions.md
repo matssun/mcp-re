@@ -470,3 +470,138 @@ retention, not about the advertised surface. A new unit, or an extension ratifie
 which is `claim_surface_gate.py`'s shape applied to conformance rather than to theorems —
 and unlike that gate, its subject is what the product tells an auditor.
 **Severity:** `high`.
+
+## NP-009 — the shipped adapter's end-to-end composition, and the lane that does not run it
+
+**Controls:** `sdk/typescript/test/transport_e2e.test.ts` (5),
+`sdk/python/tests/test_transport_e2e.py` (5).
+**Carrier:** `McpReHttpTransport` / the Python transport adapter, against the real Rust
+`http_profile_proxy` and a real MCP SDK Streamable-HTTP backend.
+**Statement.** *An application calls `callTool` and nothing else — no sign, no verify, no
+correlation — and the composition fails closed: a tampered response never reaches the
+application, an unsigned one is refused, a signed rejection raises correlated rather than
+hanging, and the hardening profile refuses a software key before connecting.*
+**If false.** The claim each SDK adapter exists to make is false, and it is the composition
+claim: every unit below it is about one property in isolation, and none of them says the
+shipped adapter puts them together.
+**Likely owner:** none. Measured over every `sdk_python.*` and `sdk_typescript.*` unit: each
+states a property of the transport; not one states the composition.
+**Root relationship.** THM-0094 and THM-0095 directly. This is their headline demonstration.
+**Severity:** `critical`.
+
+**The blocker, and it is the reason this is recorded rather than registered.** *These ten
+controls run in no lane.* Both are conditional, for two different reasons, and both were
+measured rather than assumed:
+
+- the TypeScript half is `describe.runIf(existsSync(PROXY_BIN) && haveInnerBackend())`, and
+  the vitest job builds the napi addon and runs `npx vitest run --coverage` without ever
+  building `cargo build -p mcp-re-proxy --example http_profile_proxy` or installing the MCP
+  SDK server. Every case skips.
+- the Python half calls `pytest.importorskip("httpx")`, and `uv.lock` resolves `httpx2`.
+  The whole module skips on import. ADR-MCPRE-068 Phase 1 recorded this and it is still
+  true on main.
+
+So registering them is not available: `verify-tests` requires each declared control to
+PASS, and a skipped case is not a pass. **Ratifying this proposition means provisioning the
+harness in a lane**, not writing a `tested_symbols` entry — and until then the strongest
+evidence either SDK root could have is evidence nothing produces. That is the honest state,
+and hiding it inside a unit that does run would be the false green this campaign exists to
+remove.
+
+## NP-010 — the shipped SDKs reproduce the frozen oracle byte for byte
+
+**Controls:** `sdk/typescript/test/parity.test.ts` (7), `sdk/python/tests/test_parity.py` (8).
+**Carrier:** each SDK's signing path, and `tools/gen_sdk_parity_fixture.py`'s frozen oracle.
+**Statement.** *For every case the frozen oracle pins, each SDK's emitted signature bytes
+equal the oracle's exactly and are deterministic across runs, and the two SDKs agree with it
+on the profile tag.*
+**If false.** The two SDKs and the Rust core disagree on the wire while every per-property
+unit stays green, because each measures its own implementation against its own expectation.
+Parity is the only control that compares them to a common fixed point.
+**Likely owner:** none. `*.authorization_binding` says binding specs are "serialized
+canonically and byte-identically to the TypeScript twin" / "to the Python twin" — which is
+ONE conjunct of parity, about one field family, and is already claimed.
+**Root relationship.** Under THM-0094 and THM-0095 jointly. It is the only proposition in
+either root's neighbourhood that is about BOTH.
+**Severity:** `critical`.
+**Scope controls, and why they belong to this proposition rather than beside it.** Five of
+the fifteen assert what the oracle CONTAINS — the expected schema, non-emptiness, all three
+binding forms and not just DPoP, the pinned decision carrier holding the document and its
+digest, the generic opaque case staying off the decision type, the notification envelope.
+They are this proposition's `measurement_scope` in ADR-MCPRE-068 §4.1's sense: a parity
+claim over a corpus that had quietly lost a case is a claim about a smaller corpus, and it
+would read identically. They are not separable evidence and are not separately registered.
+**What the controls do NOT establish, and any ratification inherits it.** That the two SDKs
+BEHAVE the same. The fixtures pin emitted bytes for the cases they name and nothing else.
+
+## NP-011 — custody class does not change the bytes
+
+**Controls:** `sdk/typescript/test/parity.test.ts` (3), `sdk/python/tests/test_parity.py` (3).
+**Carrier:** each SDK's signer abstraction over software and non-exporting custody.
+**Statement.** *Non-exporting custody produces byte-identical output to software custody; a
+notification envelope carries no id in either custody class; and a signed continuation leg
+signs differently from the open leg it answers.*
+**If false.** Custody becomes observable on the wire — a verifier or a log could tell which
+custody a deployment uses — or, in the other direction, a continuation leg signs the same
+bytes as the leg before it, which is the evidence-reuse failure the continuation chain
+exists to prevent.
+**Likely owner:** `*.signer_policy` owns the POLICY — that the transport does not open
+unless the signer satisfies the route's custody requirement. It says nothing about whether
+the two custody classes are distinguishable afterwards.
+**Root relationship.** Under THM-0094/THM-0095 beside NP-010, and bearing on the custody
+propositions the proxy side already holds.
+**Severity:** `high`.
+
+## NP-012 — the artifact that ships implements the profile
+
+**Controls:** `sdk/typescript/test/smoke.test.ts` (2), `sdk/python/tests/test_smoke.py` (3).
+**Carrier:** the BUILT package — the napi native addon and the PyO3 wheel — not the source
+tree every other unit's battery measures.
+**Statement.** *The package as built and packed loads, reports a non-empty core version and
+the RFC 9421 profile tag, and signs an MCP request as an RFC 9421 message.*
+**If false.** Every `sdk_python.*` and `sdk_typescript.*` proposition is established over
+source that the published artifact does not faithfully carry. This is not hypothetical
+distance: both SDKs are native extensions, so the artifact is a build product and not the
+files the unit paths name.
+**Likely owner:** none. No unit's `paths` name a build product, and none could — a unit's
+source closure is source.
+**Root relationship.** Under THM-0094/THM-0095, and the same shape as NP-001: a claim about
+what ships rather than about what was written.
+**Severity:** `high`.
+
+## NP-013 — every exchange terminates, and no slot is leaked
+
+**Controls:** `sdk/typescript/test/transport.test.ts` (6),
+`sdk/python/tests/test_transport.py` (4).
+**Carrier:** each SDK transport's concurrency semaphore and exchange completion path.
+**Statement.** *The number of exchanges in flight is bounded, so a burst cannot exhaust the
+poster; exchanges run concurrently rather than head-of-line blocking; an invalid bound is
+refused at construction rather than deadlocking; a slot is released even when an exchange
+throws a non-`Error`; and a failure still completes the call when no handler is installed.*
+**If false.** A caller's transport deadlocks or leaks slots until it stops making progress —
+a client-side denial of service reachable by a peer that returns the wrong shape, and one
+that presents as a hang rather than as an error.
+**Likely owner:** `*.post_close_emission` (TypeScript) mentions "a request still queued at
+the concurrency semaphore", which presumes the semaphore without claiming its bound;
+`*.bounded_read` bounds a single response, not the number in flight.
+**Root relationship.** Under THM-0094/THM-0095. The TypeScript file says in its own comment
+that the two SDKs "must agree on how many exchanges may be in flight, not just on the bytes
+they emit" — which is this proposition, stated in a test file and nowhere in the graph.
+**Severity:** `medium`.
+
+## NP-014 — after close, the Python SDK signs and transmits nothing
+
+**Controls:** `sdk/python/tests/test_transport.py` (4).
+**Carrier:** the Python transport adapter's `close`.
+**Statement.** *After `close()`, further work is refused, in-flight work is aborted rather
+than drained, an in-flight notification is aborted too, and nothing is delivered to a caller
+that has left.*
+**If false.** A transport keeps signing and transmitting after the application closed it.
+**Likely owner:** none on the Python side.
+**Root relationship.** Under THM-0094 — **and this is an ASYMMETRY between the two SDK
+roots, which is why it is recorded separately from NP-013.** `sdk_typescript.post_close_emission`
+exists, is `critical`, and states exactly this for the TypeScript adapter. There is no
+`sdk_python.post_close_emission`. The Python controls are written, they pass, and the root
+above them makes no claim they support. A twin promise held by one root and not the other
+is not a bookkeeping gap; it is the two system roots promising different things.
+**Severity:** `critical`, matching its TypeScript twin.

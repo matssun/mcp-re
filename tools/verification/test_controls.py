@@ -279,6 +279,22 @@ def test_the_enumerator_is_deterministic():
     assert [c.identity for c in again] == [c.identity for c in CONTROLS]
 
 
+def test_a_modified_describe_block_still_names_its_suite():
+    """`describe.runIf(expr)("title", …)` nests its cases, and the census must see it.
+
+    A suite the scanner misses does not remove its cases — they are enumerated under the
+    WRONG reported name, which is worse than losing them: the identity joins to nothing, and
+    a registration written against it would select a case vitest never reports. The live
+    instance is the TypeScript end-to-end suite, whose cases ADR-069 dispositions.
+    """
+    live = (
+        "sdk/typescript",
+        "vitest#test/transport_e2e.test.ts > McpReHttpTransport (live) > "
+        "fails closed on an unsigned response",
+    )
+    assert live in INDEX, "the live e2e suite moved; retarget this control"
+
+
 def test_a_doctest_carries_its_fence_mode():
     """ADR-MCPRE-068 §4.1: a compile refusal is not behavioural evidence.
 
