@@ -2104,7 +2104,7 @@ controls establish, and each of them is a premise of every unit above it.
 
 ## NP-087 — the evidence block is injective and closed
 
-**Controls:** `mcp-re-http-profile/src/block.rs` (11).
+**Controls:** `mcp-re-http-profile/src/block.rs` (7).
 **Statement.** *No two distinct evidence blocks produce the same identifier: the actor id is
 deterministic, pinned, and INJECTIVE ACROSS COLON BOUNDARIES; the separator cannot be forged
 across fields; the escape marker itself creates no collision; a separator inside a field does
@@ -2139,7 +2139,7 @@ Packet at `verification/reviews/packets/adr069-np-087-ratification-2026-09-19.md
 
 ## NP-088 — the body is signed as written, or refused
 
-**Controls:** `mcp-re-http-profile/src/body/mod.rs` (14),
+**Controls:** `mcp-re-http-profile/src/body/mod.rs` (9),
 `src/body/decimal_token.rs` (5).
 **Statement.** *A number the carrier's round trip would alter is REFUSED, NOT REWRITTEN —
 decimal or integer — while a representable one, including a wide but exactly carried
