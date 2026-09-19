@@ -9065,6 +9065,200 @@ lean_theorems = ["MCPRE.Time.civil_from_days_total"]
 pilot = "lean-pilot"
 
 
+
+# ---------------------------------------------------------------------------
+# The layer-A configuration classifiers — ADR-MCPRE-069 NP-049…NP-060
+# ---------------------------------------------------------------------------
+#
+# `mcp-re-proxy/src/config_state/` holds sixteen configuration machines. Six already had
+# units — admission, custody, trust revocation, trust document, continuation control,
+# authorization — and the rest did not, while being indistinguishable from them in shape:
+# a private representation, one `classify_and_validate` producer, named projections, and a
+# battery over which forms are recognised and which are refused.
+#
+# Each unit below is one machine's proposition, at the granularity the estate already uses.
+# All are attached to THM-0077, whose statement contains them by subject: a classifier IS
+# the producer of "validated semantic owner state", and every clause here is either which
+# forms are recognised or which illegal form is refused rather than reinterpreted. Nothing
+# about the command line that reaches these machines is claimed — argv is a separate
+# authority with no theorem yet, and a unit here that named `cli/` would be claiming it.
+
+[[unit]]
+id = "proxy.replay_configuration_state"
+class = "V0"
+description = "WHICH SHARED REPLAY STORE THIS DEPLOYMENT NAMES, AND AT WHICH DURABILITY TIER: every legal state form is classified and accepted, each state names every locator it cannot start without and the feature that could establish it, and a shared store with no declared tier, a sub-strict tier, a wait-quorum tier that waits for no acknowledgement and no declared tier at all each name NO state. The tier is DERIVED from the variant rather than stored beside it, the planned store is the validated locator, and the withdrawn alias names its replacement rather than being reinterpreted. Says nothing about whether the named store can be reached, which is materialization's."
+paths = ["mcp-re-proxy/src/config_state/replay.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/replay_configuration_state/recognised_forms",
+  "mutation://proxy/replay_configuration_state/wait_quorum_guards",
+]
+tested_symbols = [
+  "lib#config_state::replay::tests::a_locator_belonging_to_the_other_state_is_refused",
+  "lib#config_state::replay::tests::a_plan_pairs_each_store_with_the_only_tier_that_store_serves",
+  "lib#config_state::replay::tests::a_required_locator_that_names_no_store_is_refused",
+  "lib#config_state::replay::tests::a_scheme_bearing_locator_is_not_refused_by_the_shape_guard",
+  "lib#config_state::replay::tests::a_shared_store_with_no_declared_tier_names_no_state",
+  "lib#config_state::replay::tests::a_sub_strict_tier_names_no_state",
+  "lib#config_state::replay::tests::a_wait_quorum_tier_that_waits_for_no_acknowledgement_names_no_state",
+  "lib#config_state::replay::tests::each_state_names_every_locator_it_cannot_start_without",
+  "lib#config_state::replay::tests::each_state_names_the_feature_that_could_establish_it",
+  "lib#config_state::replay::tests::every_legal_state_form_is_classified_and_accepted",
+  "lib#config_state::replay::tests::no_declared_tier_yields_no_state",
+  "lib#config_state::replay::tests::the_old_alias_names_its_replacement_rather_than_being_reinterpreted",
+  "lib#config_state::replay::tests::the_planned_store_is_the_validated_locator",
+  "lib#config_state::replay::tests::the_smallest_acknowledging_wait_quorum_parameters_are_accepted",
+  "lib#config_state::replay::tests::the_tier_is_derived_from_the_state_not_stored_beside_it",
+]
+
+[[unit]]
+id = "proxy.delegated_signing_configuration_state"
+class = "V0"
+description = "WHAT A DELEGATED-SIGNING POSTURE RESOLVES TO, AND WHICH ONES RESOLVE TO NOTHING: every fact is present and non-empty however it was produced — a whitespace-minted fact is refused like an empty one and a one-character fact is not refused by the emptiness guard — a TTL above the ceiling, an overlap outside the rotor range and an overlap outside the TTL are refused or resolve no window, an absent trust epoch names no posture, an explicit value overrides the fallback, the issuer-kid fallback is required only where the resolution reads it, and the two defaults are resolved by this owner. Says nothing about how the resolved window is used at signing time."
+paths = ["mcp-re-proxy/src/config_state/delegated_signing.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/delegated_signing_configuration_state/resolved_facts",
+  "mutation://proxy/delegated_signing_configuration_state/ttl_ceiling",
+]
+tested_symbols = [
+  "lib#config_state::delegated_signing::tests::a_fact_that_resolves_to_empty_is_refused_however_it_got_that_way",
+  "lib#config_state::delegated_signing::tests::a_legal_request_resolves_every_fact_and_reports_nothing",
+  "lib#config_state::delegated_signing::tests::a_one_character_fact_is_not_refused_by_the_emptiness_guard",
+  "lib#config_state::delegated_signing::tests::a_range_defect_is_reported_and_resolves_no_facts",
+  "lib#config_state::delegated_signing::tests::a_ttl_above_the_ceiling_is_refused",
+  "lib#config_state::delegated_signing::tests::a_whitespace_minted_fact_is_refused_like_an_empty_one",
+  "lib#config_state::delegated_signing::tests::an_absent_trust_epoch_names_no_posture",
+  "lib#config_state::delegated_signing::tests::an_explicit_value_overrides_the_fallback",
+  "lib#config_state::delegated_signing::tests::an_overlap_outside_the_rotor_range_is_refused",
+  "lib#config_state::delegated_signing::tests::an_overlap_outside_the_ttl_resolves_no_window",
+  "lib#config_state::delegated_signing::tests::the_epoch_refusal_conditions_the_counter_on_the_source_that_produces_it",
+  "lib#config_state::delegated_signing::tests::the_issuer_kid_fallback_is_required_only_where_the_resolution_reads_it",
+  "lib#config_state::delegated_signing::tests::the_two_defaults_are_resolved_by_this_owner",
+]
+
+[[unit]]
+id = "proxy.transport_binding_and_crl_state"
+class = "V0"
+description = "WHICH PEER-IDENTITY BINDING AND WHICH OFFLINE-REVOCATION POSTURE THIS DEPLOYMENT RECOGNISES: both binding states and every legal CRL state form are classified and accepted, only an EXACT transport binding becomes a state and every other kind is refused aloud, attested ingress is refused BY NAME rather than passed over, the deprecated identity source names no state, the identity field names the state while the form decides whether there is one, a cadence with no list to re-read and a CRL list holding an empty path are refused, and a ZERO cadence is an unbounded reloader rather than a disabled one. The attested-ingress clause measures a DELIBERATE product refusal (ADR-MCPRE-050; the capability is refused, not removed), not an unimplemented mode."
+paths = ["mcp-re-proxy/src/config_state/transport.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/transport_binding_and_crl_state/recognised_forms",
+  "mutation://proxy/transport_binding_and_crl_state/attested_ingress_refusal",
+]
+tested_symbols = [
+  "lib#config_state::transport::tests::a_cadence_with_no_list_to_re_read_is_refused",
+  "lib#config_state::transport::tests::a_crl_list_holding_an_empty_path_is_refused",
+  "lib#config_state::transport::tests::a_zero_cadence_is_an_unbounded_reloader_not_a_disabled_one",
+  "lib#config_state::transport::tests::attested_ingress_is_refused_by_name_rather_than_passed_over",
+  "lib#config_state::transport::tests::both_binding_states_are_classified_and_accepted",
+  "lib#config_state::transport::tests::every_legal_crl_state_form_is_classified_and_accepted",
+  "lib#config_state::transport::tests::only_exact_binding_becomes_a_state_and_every_other_kind_is_refused_aloud",
+  "lib#config_state::transport::tests::the_deprecated_identity_source_names_no_state",
+  "lib#config_state::transport::tests::the_identity_field_names_the_state_and_the_form_decides_whether_there_is_one",
+]
+
+[[unit]]
+id = "proxy.channel_credential_custody_state"
+class = "V0"
+description = "WHETHER THE CHANNEL-ESTABLISHMENT PRIVATE KEY CAN LEAVE THE SIGNER HOLDING IT: both roles answer the custody question with ONE semantic fact, a file key is the exported state and carries the key it exports, the exported state cannot start without that key, the delegated state does not want it, any backend's selector names the same state and records itself, a channel mechanism that does not exist drives the same consumer, and a key object projects its own locator and no neighbours. Says nothing about which selector is legal beside the response-signing custody state — that relation is `proxy.cross_machine_legality`'s X2a."
+paths = [
+  "mcp-re-proxy/src/config_state/channel_credential_custody.rs",
+  "mcp-re-proxy/src/config_state/channel_key_material.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/channel_credential_custody_state/recognised_forms",
+  "mutation://proxy/channel_credential_custody_state/exported_without_a_key",
+]
+tested_symbols = [
+  "lib#config_state::channel_credential_custody::tests::a_channel_mechanism_that_does_not_exist_drives_the_same_consumer",
+  "lib#config_state::channel_credential_custody::tests::a_file_key_is_the_exported_state_and_carries_the_key_it_exports",
+  "lib#config_state::channel_credential_custody::tests::any_backends_selector_names_the_same_state_and_records_itself",
+  "lib#config_state::channel_credential_custody::tests::both_roles_answer_the_custody_question_with_one_semantic_fact",
+  "lib#config_state::channel_credential_custody::tests::the_delegated_state_does_not_want_that_key",
+  "lib#config_state::channel_credential_custody::tests::the_exported_state_cannot_start_without_the_key_it_exports",
+  "lib#config_state::channel_key_material::tests::a_key_object_projects_its_own_locator_and_no_neighbours",
+]
+
+[[unit]]
+id = "proxy.freshness_window_state"
+class = "V0"
+description = "THE ACCEPTED TEMPORAL UNCERTAINTY AS ONE OWNED FACT: a skew outside the §5.1 bound resolves no window, an overflowing expiry saturates rather than wrapping, retention never ends before the verifier stops accepting, the two projections are derived from the same skew, and the public constructor validates too — so possessing a window means the skew was bounded whichever crate built it. Says nothing about how either consumer applies the window it reads."
+paths = ["mcp-re-proxy/src/config_state/freshness.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/freshness_window_state/bounded_skew",
+  "mutation://proxy/freshness_window_state/bounded_skew",
+]
+tested_symbols = [
+  "lib#config_state::freshness::tests::a_skew_outside_the_bound_resolves_no_window",
+  "lib#config_state::freshness::tests::an_overflowing_expiry_saturates_rather_than_wrapping",
+  "lib#config_state::freshness::tests::retention_never_ends_before_the_verifier_stops_accepting",
+  "lib#config_state::freshness::tests::the_public_constructor_validates_too",
+  "lib#config_state::freshness::tests::the_two_projections_are_derived_from_the_same_skew",
+]
+
+[[unit]]
+id = "proxy.server_identity_facts"
+class = "V0"
+description = "WHO THIS DEPLOYMENT IS, RESOLVED ONCE: a legal request yields ONE canonical actor identity, a missing coordinate leaves no identity and NAMES ITSELF, a request missing both coordinates reports both in one pass, a whitespace coordinate is empty and names itself, and the identity keyid follows the RESOLVED ISSUER rather than the server key id. Covers the classifier only; what the command line admits as a coordinate is the argv boundary's and has no unit."
+paths = ["mcp-re-proxy/src/config_state/server_identity.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/server_identity_facts/one_canonical_identity",
+  "mutation://proxy/server_identity_facts/keyid_follows_the_resolved_issuer",
+]
+tested_symbols = [
+  "lib#config_state::server_identity::tests::a_legal_request_yields_one_canonical_identity",
+  "lib#config_state::server_identity::tests::a_missing_coordinate_leaves_no_identity_and_names_itself",
+  "lib#config_state::server_identity::tests::a_request_missing_both_coordinates_reports_both_in_one_pass",
+  "lib#config_state::server_identity::tests::a_whitespace_coordinate_is_empty_and_names_itself",
+  "lib#config_state::server_identity::tests::the_identity_keyid_follows_the_resolved_issuer_not_the_server_key_id",
+]
+
+[[unit]]
+id = "proxy.legality_boundary_totality"
+class = "V0"
+description = "THE LAYER-A BOUNDARY IS TOTAL AND NAMES WHAT IT REFUSED: every required coordinate is refused when empty HOWEVER the request was built and a whitespace coordinate is refused like an empty one, a target URI that would disable the request-target reconstruction check is refused, the residue inventory IS the file rather than a list beside it, a machine with no clauses contributes nothing to the violation list, the internal error names the machine that recognised nothing, and a trust-document refusal names the flag. Says nothing about WHICH postures each machine recognises — that is each classifier's own unit — and nothing about the online-OCSP legality model, which is `proxy.online_ocsp_reachability`'s."
+paths = [
+  "mcp-re-proxy/src/config_state/validation/mod.rs",
+  "mcp-re-proxy/src/config_state/validation/machine_violations.rs",
+  "mcp-re-proxy/src/config_state/validation/recognition.rs",
+  "mcp-re-proxy/src/config_state/validation/residue.rs",
+  "mcp-re-proxy/src/config_state/trust_document.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/legality_boundary_totality/required_coordinates",
+  "mutation://proxy/legality_boundary_totality/target_uri_reconstruction",
+]
+tested_symbols = [
+  "lib#config_state::trust_document::tests::the_refusal_names_the_flag",
+  "lib#config_state::validation::machine_violations::tests::a_machine_with_no_clauses_contributes_nothing_to_the_list",
+  "lib#config_state::validation::recognition::tests::the_internal_error_names_the_machine_that_recognised_nothing",
+  "lib#config_state::validation::required_coordinate_tests::a_whitespace_coordinate_is_refused_like_an_empty_one",
+  "lib#config_state::validation::required_coordinate_tests::every_required_coordinate_is_refused_when_empty_however_the_request_was_built",
+  "lib#config_state::validation::required_coordinate_tests::the_fixture_these_controls_mutate_is_otherwise_legal",
+  "lib#config_state::validation::residue::tests::a_target_uri_that_would_disable_the_reconstruction_check_is_refused",
+  "lib#config_state::validation::residue::tests::the_inventory_is_the_file",
+]
+
 # ---------------------------------------------------------------------------
 # ADR-MCPRE-069 S1 — five `new-proposition` records registered under the
 # theorems whose own claims already contain them. Each unit below states ONE

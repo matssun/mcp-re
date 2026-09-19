@@ -3888,7 +3888,24 @@ closed is inside the claim, an unavailable tier being softened into an allow is 
 """
 owner = "proxy.trust_composition_root"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.trust_composition_root", "unit://proxy.cross_machine_legality"]
+supported_by = [
+  "unit://proxy.trust_composition_root",
+  "unit://proxy.cross_machine_legality",
+  # ADR-MCPRE-069 NP-049…NP-060. Each is one layer-A configuration classifier: the producer
+  # of the "validated semantic owner state" this statement's first sentence names, and the
+  # refusal of the "illegal, unsupported or internally contradictory deployment posture"
+  # its second sentence forbids being silently reinterpreted. Strict decomposition by
+  # SUBJECT — no clause of the claim, the consequence or the scope moves, and none of them
+  # introduces a product promise, trust boundary or assumption the theorem did not already
+  # carry.
+  "unit://proxy.replay_configuration_state",
+  "unit://proxy.delegated_signing_configuration_state",
+  "unit://proxy.transport_binding_and_crl_state",
+  "unit://proxy.channel_credential_custody_state",
+  "unit://proxy.freshness_window_state",
+  "unit://proxy.server_identity_facts",
+  "unit://proxy.legality_boundary_totality",
+]
 depends_on = [
   "THM-0067",
   "THM-0038",
