@@ -1,0 +1,350 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The ADR-MCPRE-069 disposition registry — what a control that no proposition claims IS.
+#
+# ADR-069 D1 gives four dispositions. Two of them discharge somewhere else and are
+# deliberately absent here:
+#
+#   register      the symbol joins a unit's `tested_symbols` in verification.toml
+#   reattribute   the symbol joins ANOTHER unit's battery, same file
+#
+# A registered control leaves the census by construction (D4), so a row here about one
+# would be a second place the same fact is written, and the two could then disagree. The
+# gate refuses such a row as an orphan rather than ignoring it.
+#
+# The two that DO live here are the residue — the controls that run and that no proposition
+# will ever claim, or that establish something the graph does not yet state:
+#
+#   not-evidence      a useful control that is not evidence for a security proposition.
+#                     D3: it carries a REASON, and the reason is checked for SHAPE, not for
+#                     truth. `reason_family` names a record in
+#                     docs/architecture/control-dispositions.md, which is what makes a large
+#                     not-evidence population distinguishable from a campaign that gave up —
+#                     ADR-069 §8 question 1, answered with the mechanism ADR-MCPRE-061 §14
+#                     already uses rather than with a second debt authority.
+#
+#   new-proposition   the control establishes something real that no unit claims. Step 1 of
+#                     ADR-069 §5: it is IDENTIFIED here, in prose, with its production
+#                     carrier and likely owner, and it is visible unresolved assurance debt
+#                     until the ordinary theorem-architecture route ratifies it. Widening an
+#                     existing unit to swallow it is what §5 forbids in terms.
+#
+# Validated by `tools/verification/control-census --gate`. Unknown keys are a validation
+# failure: a typo in a disposition must not read as an absent one.
+
+schema_version = 1
+policy_revision = "adr-mcpre-069-r1"
+
+# ---------------------------------------------------------------------------
+# [[proposition]] — a `new-proposition` cluster, identified but not yet ratified
+# ---------------------------------------------------------------------------
+#
+# ADR-069 §8 question 3 asks what the UNIT of a new-proposition disposition is. It is the
+# PROPOSITION, not the control: §3's worked instance is five controls establishing one
+# statement about single-writer establishment semantics, and recording five separate
+# dispositions would lose the only thing that makes them worth ratifying together.
+#
+# Fields:
+#   id                     NP-nnn, stable identity
+#   title                  the proposition in one line
+#   statement              the proposition in precise prose — what would be false if it
+#                          failed, not what the tests do
+#   carrier                the production path the proposition is about
+#   likely_owner           the unit that would hold it, or "" where none exists yet
+#   consequence            what a violation causes, in the ADR-068 severity vocabulary
+#   root_relationship      which declared root it would sit under, and why
+#   ratified_as            the theorem or unit id, once ADR-069 §5 step 2 has happened.
+#                          ABSENT means identified and unresolved — there is no `status`
+#                          field, because a `status = "ratified"` bit would be precisely the
+#                          stored approval ADR-MCPRE-059 §14.7 forbids: it would survive
+#                          every edit to the proposition it approved. A reference to what
+#                          the proposition BECAME is a fact about the graph, not a bit on
+#                          this record.
+
+# ---------------------------------------------------------------------------
+# [[disposition]] — one row per unclaimed control
+# ---------------------------------------------------------------------------
+#
+# Fields:
+#   id                 ND-nnnn (not-evidence) or NP-nnnn-nn (a proposition's control)
+#   project            the control's project, exactly as the census reports it
+#   control            the control's identity, exactly as the census reports it
+#   decision           not-evidence | new-proposition — the ADR-069 disposition. NOT named
+#                      `verdict`: scripts/registry_approval_gate.py refuses an approval word
+#                      stored on a policy record, and it is right to. A disposition says what
+#                      a control IS rather than approving anything, and a registry that
+#                      needed an exemption to hold an approval-shaped key would be arguing
+#                      with a rule it agrees with.
+#   reason_family      for not-evidence: the ## record in the register document
+#   proposition        for new-proposition: the [[proposition]] id
+#   recorded           the date the disposition was reached
+
+# ---------------------------------------------------------------------------
+# Batch 1 — the assurance instrument, 2026-09-19
+# ---------------------------------------------------------------------------
+#
+# Carrier-scoped, because what makes these controls not evidence is a property of the
+# FILE's role rather than of any control inside it: it measures the instrument. ND-001
+# and ND-002 in docs/architecture/control-dispositions.md carry the reason and the
+# authority — ADR-MCPRE-068's own boundary statement, which puts the assurance platform
+# outside the product theorem roots in terms.
+
+# ND-001 — 25 carrier(s)
+
+[[disposition]]
+id = "ND-001-001"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/verification/test_assurance_graph.py"
+reason_family = "ND-001"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "ND-001-002"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/verification/test_attest.py"
+reason_family = "ND-001"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "ND-001-003"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/verification/test_compose.py"
+reason_family = "ND-001"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "ND-001-004"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/verification/test_controls.py"
+reason_family = "ND-001"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "ND-001-005"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/verification/test_ecosystems.py"
+reason_family = "ND-001"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "ND-001-006"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/verification/test_escape_hatches.py"
+reason_family = "ND-001"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "ND-001-007"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/verification/test_evidence_bundle.py"
+reason_family = "ND-001"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "ND-001-008"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/verification/test_evidence_class.py"
+reason_family = "ND-001"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "ND-001-009"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/verification/test_extraction_artifact.py"
+reason_family = "ND-001"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "ND-001-010"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/verification/test_extraction_identity.py"
+reason_family = "ND-001"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "ND-001-011"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/verification/test_invalidation.py"
+reason_family = "ND-001"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "ND-001-012"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/verification/test_lean_axioms.py"
+reason_family = "ND-001"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "ND-001-013"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/verification/test_lean_model.py"
+reason_family = "ND-001"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "ND-001-014"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/verification/test_measured_inputs.py"
+reason_family = "ND-001"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "ND-001-015"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/verification/test_measured_lane.py"
+reason_family = "ND-001"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "ND-001-016"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/verification/test_mutation_lane.py"
+reason_family = "ND-001"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "ND-001-017"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/verification/test_premise_class.py"
+reason_family = "ND-001"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "ND-001-018"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/verification/test_r9_linkage.py"
+reason_family = "ND-001"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "ND-001-019"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/verification/test_structural_lane.py"
+reason_family = "ND-001"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "ND-001-020"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/verification/test_test_lane.py"
+reason_family = "ND-001"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "ND-001-021"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/verification/test_theorem_review.py"
+reason_family = "ND-001"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "ND-001-022"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/verification/test_theorems.py"
+reason_family = "ND-001"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "ND-001-023"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/verification/test_verdict_algebra.py"
+reason_family = "ND-001"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "ND-001-024"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/verification/test_verus_lane.py"
+reason_family = "ND-001"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "ND-001-025"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/verification/test_views.py"
+reason_family = "ND-001"
+recorded = "2026-09-19"
+
+# ND-002 — 7 carrier(s)
+
+[[disposition]]
+id = "ND-002-026"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/slo/test_environment_preflight.py"
+reason_family = "ND-002"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "ND-002-027"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/slo/test_evidence_store.py"
+reason_family = "ND-002"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "ND-002-028"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/slo/test_host_gate.py"
+reason_family = "ND-002"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "ND-002-029"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/slo/test_install_arbiter.py"
+reason_family = "ND-002"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "ND-002-030"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/slo/test_run_supervisor.py"
+reason_family = "ND-002"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "ND-002-031"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/slo/test_vm_admission_hook.py"
+reason_family = "ND-002"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "ND-002-032"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "tools/slo/test_vm_participant.py"
+reason_family = "ND-002"
+recorded = "2026-09-19"

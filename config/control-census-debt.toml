@@ -1,0 +1,1539 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# ADR-MCPRE-069's debt register: files holding controls that no proposition claims
+# and no disposition covers. Held at a baseline by scripts/control_census_gate.py —
+# a registered file may not grow, an unregistered file may carry none, and an entry
+# whose count reaches zero is removed. It is a debt register, not an exception
+# mechanism: a control leaves by being claimed or dispositioned, never by being
+# excused from the measurement.
+
+schema_version = 1
+
+[[file]]
+path = "mcp-re-proxy/src/cli.rs"
+baseline = 142
+
+[[file]]
+path = "mcp-re-proxy/src/ocsp.rs"
+baseline = 38
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_async/mrt_continuation_serving_test.rs"
+baseline = 36
+
+[[file]]
+path = "mcp-re-proxy/src/startup_plan.rs"
+baseline = 33
+
+[[file]]
+path = "sdk/python/tests/test_authorization.py"
+baseline = 31
+
+[[file]]
+path = "mcp-re-proxy/tests/integration/tls_test.rs"
+baseline = 28
+
+[[file]]
+path = "mcp-re-proxy/src/gcp_kms_keysource.rs"
+baseline = 23
+
+[[file]]
+path = "mcp-re-proxy/tests/integration/app_startup_characterization_test.rs"
+baseline = 21
+
+[[file]]
+path = "sdk/python/tests/test_correlation.py"
+baseline = 21
+
+[[file]]
+path = "sdk/python/tests/test_custody.py"
+baseline = 18
+
+[[file]]
+path = "mcp-re-http-profile/tests/mcp_transport_headers_test.rs"
+baseline = 17
+
+[[file]]
+path = "mcp-re-proxy/src/transport/mod.rs"
+baseline = 17
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_async/transparency_e2e_test.rs"
+baseline = 17
+
+[[file]]
+path = "mcp-re-conformance/tests/scitt_interop_test.rs"
+baseline = 16
+
+[[file]]
+path = "mcp-re-http-profile/tests/structured_fields_strictness_test.rs"
+baseline = 16
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_async/delegated_client_server_e2e_test.rs"
+baseline = 16
+
+[[file]]
+path = "mcp-re-proxy/src/app.rs"
+baseline = 15
+
+[[file]]
+path = "mcp-re-proxy/src/config_state/replay.rs"
+baseline = 15
+
+[[file]]
+path = "mcp-re-proxy/src/transport/ingress/v2.rs"
+baseline = 15
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_async/http_inner_test.rs"
+baseline = 15
+
+[[file]]
+path = "mcp-re-conformance/tests/rfc9421_security_properties_test.rs"
+baseline = 14
+
+[[file]]
+path = "mcp-re-http-profile/src/body/mod.rs"
+baseline = 14
+
+[[file]]
+path = "mcp-re-proxy/src/transparency/auditor/invocation/mod.rs"
+baseline = 14
+
+[[file]]
+path = "mcp-re-core/src/crypto.rs"
+baseline = 13
+
+[[file]]
+path = "mcp-re-proxy/src/config_state/delegated_signing.rs"
+baseline = 13
+
+[[file]]
+path = "mcp-re-proxy/src/shared_replay.rs"
+baseline = 13
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_async/replay_race_harness_test.rs"
+baseline = 13
+
+[[file]]
+path = "mcp-re-test-paths/src/rust_source.rs"
+baseline = 13
+
+[[file]]
+path = "mcp-re-proxy/src/client_revocation.rs"
+baseline = 12
+
+[[file]]
+path = "mcp-re-proxy/src/transport/ingress/v1.rs"
+baseline = 12
+
+[[file]]
+path = "mcp-re-proxy/tests/aws_irsa_web_identity_test.rs"
+baseline = 12
+
+[[file]]
+path = "mcp-re-client-proxy/src/proxy.rs"
+baseline = 11
+
+[[file]]
+path = "mcp-re-http-profile/src/block.rs"
+baseline = 11
+
+[[file]]
+path = "mcp-re-proxy/src/http_inner/mod.rs"
+baseline = 11
+
+[[file]]
+path = "mcp-re-proxy/src/materialized_runtime.rs"
+baseline = 11
+
+[[file]]
+path = "mcp-re-proxy/src/replay_tier.rs"
+baseline = 11
+
+[[file]]
+path = "sdk/python/tests/test_parity.py"
+baseline = 11
+
+[[file]]
+path = "mcp-re-conformance/tests/audit_vocabulary_guard_test.rs"
+baseline = 10
+
+[[file]]
+path = "mcp-re-conformance/tests/security_traceability_guard_test.rs"
+baseline = 10
+
+[[file]]
+path = "mcp-re-core/src/error.rs"
+baseline = 10
+
+[[file]]
+path = "mcp-re-http-profile/src/envelope/response.rs"
+baseline = 10
+
+[[file]]
+path = "mcp-re-http-profile/src/mcp_transport/mod.rs"
+baseline = 10
+
+[[file]]
+path = "mcp-re-http-profile/src/result_class.rs"
+baseline = 10
+
+[[file]]
+path = "mcp-re-proxy/src/blocking_mtls_harness/http1.rs"
+baseline = 10
+
+[[file]]
+path = "mcp-re-proxy/src/retained_evidence/store.rs"
+baseline = 10
+
+[[file]]
+path = "mcp-re-proxy/src/tls.rs"
+baseline = 10
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_async/root_key_lifecycle_test.rs"
+baseline = 10
+
+[[file]]
+path = "sdk/typescript/test/parity.test.ts"
+baseline = 10
+
+[[file]]
+path = "mcp-re-proxy/src/cli/admission_flags/mod.rs"
+baseline = 9
+
+[[file]]
+path = "mcp-re-proxy/src/config_state/transport.rs"
+baseline = 9
+
+[[file]]
+path = "mcp-re-proxy/src/handshake_quota.rs"
+baseline = 9
+
+[[file]]
+path = "mcp-re-proxy/src/revocation_tier.rs"
+baseline = 9
+
+[[file]]
+path = "mcp-re-proxy/src/tls_plane/mod.rs"
+baseline = 9
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_async/admission_currency_serving_test.rs"
+baseline = 9
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_async/delegated_serving_test.rs"
+baseline = 9
+
+[[file]]
+path = "mcp-re-conformance/tests/full_profile_parity_test.rs"
+baseline = 8
+
+[[file]]
+path = "mcp-re-http-profile/src/sigbase.rs"
+baseline = 8
+
+[[file]]
+path = "mcp-re-http-profile/tests/proof_path_test.rs"
+baseline = 8
+
+[[file]]
+path = "mcp-re-proxy/src/transparency/durability.rs"
+baseline = 8
+
+[[file]]
+path = "mcp-re-proxy/tests/integration/http_profile_dispatch_test.rs"
+baseline = 8
+
+[[file]]
+path = "mcp-re-proxy/tests/integration/plane_config_reachback_test.rs"
+baseline = 8
+
+[[file]]
+path = "sdk/python/tests/test_transport.py"
+baseline = 8
+
+[[file]]
+path = "mcp-re-client-core/src/binding_spec/mod.rs"
+baseline = 7
+
+[[file]]
+path = "mcp-re-core/src/encoding.rs"
+baseline = 7
+
+[[file]]
+path = "mcp-re-http-profile/tests/json_mode_test.rs"
+baseline = 7
+
+[[file]]
+path = "mcp-re-proxy/src/async_serve/mod.rs"
+baseline = 7
+
+[[file]]
+path = "mcp-re-proxy/src/cli/authorization_flags.rs"
+baseline = 7
+
+[[file]]
+path = "mcp-re-proxy/src/stage_timers/mod.rs"
+baseline = 7
+
+[[file]]
+path = "mcp-re-conformance/tests/scitt_vectors_test.rs"
+baseline = 6
+
+[[file]]
+path = "mcp-re-http-profile/tests/signer_seam_test.rs"
+baseline = 6
+
+[[file]]
+path = "mcp-re-proxy/src/authorization/pdp/evidence.rs"
+baseline = 6
+
+[[file]]
+path = "mcp-re-proxy/src/authorization/pdp/refusal.rs"
+baseline = 6
+
+[[file]]
+path = "mcp-re-proxy/src/authorization/verified_action.rs"
+baseline = 6
+
+[[file]]
+path = "mcp-re-proxy/src/config_state/channel_credential_custody.rs"
+baseline = 6
+
+[[file]]
+path = "mcp-re-proxy/src/delegated_tls.rs"
+baseline = 6
+
+[[file]]
+path = "mcp-re-proxy/src/managed_worker/mod.rs"
+baseline = 6
+
+[[file]]
+path = "mcp-re-proxy/src/serving_capabilities.rs"
+baseline = 6
+
+[[file]]
+path = "mcp-re-proxy/src/trust_plane/mod.rs"
+baseline = 6
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_async/pdp_authorization_serving_test.rs"
+baseline = 6
+
+[[file]]
+path = "mcp-re-proxy/tests/key_source_test.rs"
+baseline = 6
+
+[[file]]
+path = "mcp-re-proxy/tests/pkcs11_keysource_e2e_test.rs"
+baseline = 6
+
+[[file]]
+path = "mcp-re-test-paths/src/rust_source/brace_scan.rs"
+baseline = 6
+
+[[file]]
+path = "sdk/typescript/test/transport.test.ts"
+baseline = 6
+
+[[file]]
+path = "mcp-re-conformance/tests/corpus_pinning_test.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-conformance/tests/mcp_2026_07_28_alignment_test.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-core/src/time/mod.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-demo/tests/demo_fixtures_test.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-http-profile/src/body/decimal_token.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-http-profile/src/error/core_projection.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-http-profile/src/evidence.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-http-profile/src/mcp_transport/agreement.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-http-profile/src/pdp_decision/claims.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-http-profile/src/rejection/mod.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-http-profile/src/verified_response/bound.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-http-profile/tests/dispatch_test.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-http-profile/tests/rfc9421_kat.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-proxy/src/config_state/freshness.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-proxy/src/config_state/key_file_access.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-proxy/src/config_state/server_identity.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-proxy/src/continuation_store/mod.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-proxy/src/control_runtime.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-proxy/src/key_source.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-proxy/src/materializing_runtime/mod.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-proxy/src/reloading_trust.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-proxy/src/retained_evidence/archive.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-proxy/src/transparency/auditor/profile/mod.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-proxy/src/transparency/auditor/registration/capability.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-proxy/src/transparency/auditor/registration/endpoint/flags.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-proxy/src/trust_plane/trust_cache.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-proxy/tests/integration/../startup_transcript/mod.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-proxy/tests/integration/config_refusal_precedence_test.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_async/async_replay_test.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_async/per_request_revocation_test.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_async/verified_context_carrier_test.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_ext/redis_replay_e2e_test.rs"
+baseline = 5
+
+[[file]]
+path = "mcp-re-proxy/tests/tls_load_harness_bench.rs"
+baseline = 5
+
+[[file]]
+path = "sdk/python/tests/test_transport_e2e.py"
+baseline = 5
+
+[[file]]
+path = "sdk/typescript/test/transport_e2e.test.ts"
+baseline = 5
+
+[[file]]
+path = "mcp-re-client-core/src/response.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-conformance/tests/delegation_vectors_test.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-conformance/tests/forbidden_claim_guard_test.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-conformance/tests/scitt_cross_verification_test.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-http-profile/src/delegation/mod.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-http-profile/src/delegation/verify.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-http-profile/src/verified_request/mod.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-http-profile/tests/admission_binding_test.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-http-profile/tests/binding_identifier_test.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-policy/src/revocation.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-proxy/src/authorization/request.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-proxy/src/authorization/verified_actor.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-proxy/src/aws_sigv4.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-proxy/src/capability_materialization/ingress.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-proxy/src/cli/admission_flags/record_currentness.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-proxy/src/cli/currency_flags.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-proxy/src/cli/peer_identity_flags/mod.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-proxy/src/client_crl_publication.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-proxy/src/config_snapshot.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-proxy/src/config_state/continuation_control.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-proxy/src/config_state/evidence.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-proxy/src/config_state/in_flight_limit.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-proxy/src/config_state/mcp_transport_contract.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-proxy/src/config_state/topology.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-proxy/src/config_state/trust_revocation.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-proxy/src/http_profile_serve/inner_plane.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-proxy/src/http_profile_serve/reply.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-proxy/src/http_profile_serve/request_admission.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-proxy/src/retained_evidence/private_file.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-proxy/src/transparency/auditor/invocation/instant.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-proxy/src/transparency/auditor/registration/endpoint/mod.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-proxy/src/transparency/auditor/registration/policy.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-proxy/src/transparency/auditor/trust_view.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-proxy/src/transparency/durable_writer.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-proxy/tests/dev_env_key_source_test.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_ext/redis_continuation_e2e_test.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_live/aws_kms_delegated_required_live_test.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_live/aws_kms_http_profile_live_test.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_live/gcp_kms_delegated_required_live_test.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_live/gcp_kms_http_profile_live_test.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-test-paths/src/lib.rs"
+baseline = 4
+
+[[file]]
+path = "mcp-re-conformance/tests/http_profile_vectors_test.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-host/src/signer.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-http-profile/src/context.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-http-profile/src/digest.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-http-profile/src/error.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-http-profile/src/pdp_decision/issue.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-http-profile/src/verified_response/facts.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-http-profile/tests/algorithm_confusion_test.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/src/async_fleet/mod.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/src/async_serve/body_budget.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/src/capability_materialization/key_source/pin.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/src/cli/runtime_flags/admission_ceiling.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/src/cli/runtime_flags/mod.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/src/cli/serving_flags.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/src/cli/signing_source_flags/stray_value.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/src/cli/storage_flags.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/src/clock.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/src/communication_assurance/credential_currency/x509_adapter.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/src/config_state/validation/mod.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/src/deployment_request/admission/mod.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/src/facades/asserted_identity.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/src/http_profile_serve/body_boundary.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/src/redis_admission_source/mod.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/src/redis_admission_source/refusal_report.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/src/redis_continuation_store.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/src/signing_plane/mod.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/src/transparency/auditor/artifact/mod.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/src/transparency/auditor/invocation/flag.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/src/transparency/auditor/registration/ureq_exchange.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/src/transparency/retained_archive.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/src/trust_plane/live_trust.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/src/trust_plane/window_policy.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/tests/async_drain_test.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/tests/integration/config_legality_characterization_test.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/tests/integration/mtls_transport_binding_test.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_async/forwarded_body_fidelity_test.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_async/mtls_client_leg_e2e_test.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_ext/cpstore_etcd_e2e_test.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_live/aws_kms_delegated_tls_live_test.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_live/gcp_kms_delegated_tls_live_test.rs"
+baseline = 3
+
+[[file]]
+path = "mcp-re-test-paths/src/source_trees.rs"
+baseline = 3
+
+[[file]]
+path = "sdk/python/tests/test_smoke.py"
+baseline = 3
+
+[[file]]
+path = "mcp-re-client/src/main.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-conformance/tests/delegation_cross_verification_test.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-conformance/tests/method_name_drift_guard_test.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-conformance/tests/rfc9421_cross_verification_test.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-http-profile/src/policy.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-http-profile/src/scitt/retained.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-http-profile/src/verified_response/unbound.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-http-profile/src/verify/floor/sf_dictionary.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-http-profile/src/verify/floor/signature_input.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/async_inner/mod.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/async_replay/budget_report.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/blocking_mtls_harness/deadline_stream.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/cli/audit_flags.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/cli/channel_flags.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/cli/delegated_signing_flags.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/cli/identity_flags.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/cli/protocol_flags.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/cli/revocation_flags.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/cli/runtime_flags/connection_limits.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/cli/signing_source_flags/channel_role.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/communication_assurance/certificate_identity_refusal.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/communication_assurance/credential_currency/evaluation.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/config_state/validation/residue.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/deployment_request/authorization.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/deployment_request/peer_identity/mod.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/deployment_request/request_signer_currency/mod.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/deployment_request/revocation/mod.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/deployment_request/storage/continuation_storage.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/deployment_request/storage/replay_storage.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/deployment_request/storage/shared_store.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/deployment_request/storage/trust_epoch_storage.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/facades/delegated_key_correspondence.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/http_profile_serve/continuation/open_leg.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/http_profile_serve/pre_admission/mod.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/http_profile_serve/pre_admission/standing.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/managed_worker/halt.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/startup_posture.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/transparency/auditor/registration/protocol.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/transparency/reserved_before_dispatch.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/transport/identity.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/trust_epoch.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/src/trust_plane/freshness.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/tests/fault_injection_test.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/tests/gcp_kms_live_test.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/tests/integration/documented_cli_test.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_async/rfc9421_round_trip_test.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_ext/redis_trust_epoch_e2e_test.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_live/aws_kms_delegated_signing_live_test.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_live/gcp_kms_delegated_signing_live_test.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-test-paths/src/traceability_sources.rs"
+baseline = 2
+
+[[file]]
+path = "mcp-re-transport/tests/fault_injection_test.rs"
+baseline = 2
+
+[[file]]
+path = "sdk/typescript/test/smoke.test.ts"
+baseline = 2
+
+[[file]]
+path = "mcp-re-client-core/src/delegated_trust/mod.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-client/src/lib.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-conformance/tests/method_transparency_test.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-conformance/tests/scitt_retained_corpus_test.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-core/src/ids.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-core/tests/firewall_test.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-http-profile/src/artifact.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-http-profile/src/authoritative_admission/record/currentness.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-http-profile/src/pdp_decision/mod.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-http-profile/src/pdp_decision/verify.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-http-profile/src/replay.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-http-profile/src/scitt/cose_key/mod.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-http-profile/src/scitt/merkle.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-http-profile/src/scitt/receipt/mod.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-http-profile/src/scitt/statement/mod.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-http-profile/src/verify/bound_request.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-http-profile/src/verify/floor/signature_parameters.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-http-profile/tests/delegation_e2e_test.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/admission_source/mod.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/async_replay/l1_fast_reject.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/async_replay/retention_ledger.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/async_serve/core_admission.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/authorization/pdp/policy.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/communication_assurance/certificate_chain_evidence.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/communication_assurance/certificate_identity_policy.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/communication_assurance/certificate_peer_identity_evidence.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/communication_assurance/credential_currency/policy.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/communication_assurance/current_authenticated_peer.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/communication_assurance/peer_identity_provenance.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/config_state/channel_key_material.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/config_state/mod.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/config_state/trust_document.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/config_state/validation/machine_violations.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/config_state/validation/recognition.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/deployment_request/admission/availability.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/deployment_request/admission/gate.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/deployment_request/delegated_signing/mod.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/deployment_request/peer_identity/attested_ingress.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/deployment_request/peer_identity/channel_credential_identity.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/deployment_request/peer_identity/ingress_assertion.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/deployment_request/revocation/revocation_list.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/http_profile_serve/answering_commitment.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/http_profile_serve/continuation/mod.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/http_profile_serve/pre_admission/action.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/accepted.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/mod.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/notification.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/http_profile_serve/retention/mod.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/inner_plane_bound.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/kms_endpoint_policy/mod.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/log_sink.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/materializing_runtime/completeness.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/transparency/auditor/artifact/verdict.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/transparency/auditor/registration/exchange.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/transparency/dispatch_committed.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/transparency/reservation_marker.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/transport/ingress/mod.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/src/trust_plane/push_trust.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/tests/admission_propagation_measure_test.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/tests/integration/exchange_transition_ownership_test.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_async/authorization_serving_test.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_async/config_snapshot_hot_reload_test.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_async/delegated_production_wiring_test.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_async/root_authority_manifest_test.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_ext/ocsp_e2e_test.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_live/aws_kms_live_test.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_live/aws_kms_root_rotation_live_test.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-proxy/tests/integration_live/gcp_kms_root_rotation_live_test.rs"
+baseline = 1
+
+[[file]]
+path = "mcp-re-transport/src/lib.rs"
+baseline = 1
+
+[[file]]
+path = "scripts/adr051_slo_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/assurance_obligation_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/bazel_gazelle_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/bazel_srcs_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/bump_version.sh"
+baseline = 1
+
+[[file]]
+path = "scripts/cargo_test_target_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/check_port_registry.py"
+baseline = 1
+
+[[file]]
+path = "scripts/claim_surface_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/clippy_ratchet_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/codebuild_guard_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/conformance_claims_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/control_census_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/coverage.sh"
+baseline = 1
+
+[[file]]
+path = "scripts/demo-gcp-kms.sh"
+baseline = 1
+
+[[file]]
+path = "scripts/demo-local.sh"
+baseline = 1
+
+[[file]]
+path = "scripts/deploy_image_tag_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/discriminator_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/es256_containment_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/evidence_class_ratchet.py"
+baseline = 1
+
+[[file]]
+path = "scripts/heavy_lane_disk_preflight.py"
+baseline = 1
+
+[[file]]
+path = "scripts/helm_render_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/jcs_vocabulary_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/lifecycle_purity_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/local_gate.sh"
+baseline = 1
+
+[[file]]
+path = "scripts/local_slo_lane.sh"
+baseline = 1
+
+[[file]]
+path = "scripts/merge_path_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/merge_readiness_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/merge_verified_pr.py"
+baseline = 1
+
+[[file]]
+path = "scripts/module_map.py"
+baseline = 1
+
+[[file]]
+path = "scripts/module_size_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/node_matrix_state.py"
+baseline = 1
+
+[[file]]
+path = "scripts/node_runtime_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/owned_worker_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/prepare_node_matrix.sh"
+baseline = 1
+
+[[file]]
+path = "scripts/prepare_python_matrix.sh"
+baseline = 1
+
+[[file]]
+path = "scripts/proxy_flag_doc_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/python_runtime_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/registry_approval_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/rehearsal_claim_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/release_assurance_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/run_gate.sh"
+baseline = 1
+
+[[file]]
+path = "scripts/run_gate_selftest.sh"
+baseline = 1
+
+[[file]]
+path = "scripts/run_test_lane.sh"
+baseline = 1
+
+[[file]]
+path = "scripts/runtime_topology_sweep.sh"
+baseline = 1
+
+[[file]]
+path = "scripts/saturation_liveness.sh"
+baseline = 1
+
+[[file]]
+path = "scripts/saturation_rig.sh"
+baseline = 1
+
+[[file]]
+path = "scripts/seam_posture_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/self_hosted_docker_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/semantic_altitude_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/slo_evidence_identity.py"
+baseline = 1
+
+[[file]]
+path = "scripts/slo_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/slo_invocation_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/startup_backedges.py"
+baseline = 1
+
+[[file]]
+path = "scripts/test-demos.sh"
+baseline = 1
+
+[[file]]
+path = "scripts/tracked_secrets_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/unit_closure_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/use_pinned_toolchain.sh"
+baseline = 1
+
+[[file]]
+path = "scripts/verification_runner_preflight.sh"
+baseline = 1
+
+[[file]]
+path = "scripts/verification_trigger_gate.py"
+baseline = 1
+
+[[file]]
+path = "scripts/workspace_lints_gate.py"
+baseline = 1
+

@@ -165,6 +165,20 @@ stage_static() {
     `# DIRECT-vs-CLOSURE distinction that makes "7 of 12 roots" and "3 of 12 roots" two` \
     `# different true statements.` \
     && tools/verification/evidence-class-census --selftest \
+    `# ADR-MCPRE-069. The census of controls that RUN and that no proposition claims. Its` \
+    `# selftest is the thing that makes a later "0 unclaimed" mean anything: ADR-069's` \
+    `# first measurement could not see doctests, Python, TypeScript or gates and reported` \
+    `# a clean sweep over the wrong population. One NAMED control per ecosystem must be` \
+    `# discovered, and removing a registration must make its control read as unclaimed.` \
+    && python3 tools/verification/test_controls.py \
+    `# Two different facts. The census gate refuses what is wrong INSIDE the tree — a` \
+    `# selector naming no control, a disposition about a control that is claimed or gone,` \
+    `# a not-evidence row with no durable reason. The ratchet holds the undispositioned` \
+    `# population against its baseline, because ADR-069's closure is a campaign and a gate` \
+    `# that failed on the residue would be pressure to bulk-register, which D2 forbids.` \
+    && tools/verification/control-census --gate \
+    && python3 scripts/control_census_gate.py --selftest \
+    && python3 scripts/control_census_gate.py \
     && python3 scripts/serving_identity_provenance_gate.py --selftest \
     && python3 scripts/serving_identity_provenance_gate.py \
     && python3 scripts/authorization_provenance_gate.py --selftest \
