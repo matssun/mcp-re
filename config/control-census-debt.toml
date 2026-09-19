@@ -34,20 +34,12 @@ path = "mcp-re-proxy/tests/integration_async/transparency_e2e_test.rs"
 baseline = 17
 
 [[file]]
-path = "mcp-re-http-profile/tests/structured_fields_strictness_test.rs"
-baseline = 16
-
-[[file]]
 path = "mcp-re-proxy/tests/integration_async/delegated_client_server_e2e_test.rs"
 baseline = 16
 
 [[file]]
 path = "mcp-re-proxy/tests/integration_async/http_inner_test.rs"
 baseline = 15
-
-[[file]]
-path = "mcp-re-http-profile/src/body/mod.rs"
-baseline = 14
 
 [[file]]
 path = "mcp-re-core/src/crypto.rs"
@@ -67,10 +59,6 @@ baseline = 12
 
 [[file]]
 path = "mcp-re-client-proxy/src/proxy.rs"
-baseline = 11
-
-[[file]]
-path = "mcp-re-http-profile/src/block.rs"
 baseline = 11
 
 [[file]]
@@ -128,10 +116,6 @@ baseline = 9
 [[file]]
 path = "mcp-re-proxy/tests/integration_async/delegated_serving_test.rs"
 baseline = 9
-
-[[file]]
-path = "mcp-re-http-profile/src/sigbase.rs"
-baseline = 8
 
 [[file]]
 path = "mcp-re-http-profile/tests/proof_path_test.rs"
@@ -215,10 +199,6 @@ baseline = 5
 
 [[file]]
 path = "mcp-re-demo/tests/demo_fixtures_test.rs"
-baseline = 5
-
-[[file]]
-path = "mcp-re-http-profile/src/body/decimal_token.rs"
 baseline = 5
 
 [[file]]

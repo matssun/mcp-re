@@ -7387,3 +7387,481 @@ decision = "new-proposition"
 proposition = "NP-084"
 recorded = "2026-09-19"
 
+
+# ---------------------------------------------------------------------------
+# Batch 16 — the signature-base plane, 2026-09-19
+# ---------------------------------------------------------------------------
+#
+# `block.rs`, `body/` and `sigbase.rs` are in TEN TO FOURTEEN units' paths each — the shared
+# bottom of the profile — and not one of those units claims a single control in them. A file
+# inside fourteen fingerprints whose own controls belong to none of them is not a gap in any
+# one battery; it is a layer everybody depends on and nobody answers for.
+
+[[proposition]]
+id = "NP-087"
+title = "The evidence block is injective and closed"
+carrier = "mcp-re-http-profile/src/block.rs"
+likely_owner = "none of the units that MEASURE this file; each is about what its own verdict means"
+consequence = "critical"
+root_relationship = "a premise of every http_profile unit above it"
+record = "docs/architecture/control-dispositions.md#np-087"
+
+[[proposition]]
+id = "NP-088"
+title = "The body is signed as written, or refused"
+carrier = "mcp-re-http-profile/src/body"
+likely_owner = "none of the units that MEASURE this file; each is about what its own verdict means"
+consequence = "critical"
+root_relationship = "a premise of every http_profile unit above it"
+record = "docs/architecture/control-dispositions.md#np-088"
+
+[[proposition]]
+id = "NP-089"
+title = "The signature base is exactly the covered components"
+carrier = "mcp-re-http-profile/src/sigbase.rs"
+likely_owner = "none of the units that MEASURE this file; each is about what its own verdict means"
+consequence = "critical"
+root_relationship = "a premise of every http_profile unit above it"
+record = "docs/architecture/control-dispositions.md#np-089"
+
+[[proposition]]
+id = "NP-090"
+title = "The structured-field surface is closed and canonical"
+carrier = "mcp-re-http-profile/tests/structured_fields_strictness_test.rs"
+likely_owner = "none of the units that MEASURE this file; each is about what its own verdict means"
+consequence = "critical"
+root_relationship = "a premise of every http_profile unit above it"
+record = "docs/architecture/control-dispositions.md#np-090"
+
+[[disposition]]
+id = "CD-14001"
+project = "mcp-re-http-profile"
+control = "lib#block::tests::a_separator_inside_a_field_does_not_collapse_two_audiences"
+decision = "new-proposition"
+proposition = "NP-087"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14002"
+project = "mcp-re-http-profile"
+control = "lib#block::tests::actor_id_is_deterministic_and_pinned"
+decision = "new-proposition"
+proposition = "NP-087"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14003"
+project = "mcp-re-http-profile"
+control = "lib#block::tests::actor_id_is_injective_across_colon_boundaries"
+decision = "new-proposition"
+proposition = "NP-087"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14004"
+project = "mcp-re-http-profile"
+control = "lib#block::tests::audience_hash_is_deterministic_and_b64url"
+decision = "new-proposition"
+proposition = "NP-087"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14005"
+project = "mcp-re-http-profile"
+control = "lib#block::tests::block_round_trips"
+decision = "new-proposition"
+proposition = "NP-087"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14006"
+project = "mcp-re-http-profile"
+control = "lib#block::tests::different_audiences_on_one_endpoint_hash_differently"
+decision = "new-proposition"
+proposition = "NP-087"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14007"
+project = "mcp-re-http-profile"
+control = "lib#block::tests::empty_artifact_bindings_fails_closed"
+decision = "new-proposition"
+proposition = "NP-087"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14008"
+project = "mcp-re-http-profile"
+control = "lib#block::tests::foreign_profile_fails_closed"
+decision = "new-proposition"
+proposition = "NP-087"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14009"
+project = "mcp-re-http-profile"
+control = "lib#block::tests::separator_cannot_be_forged_across_fields"
+decision = "new-proposition"
+proposition = "NP-087"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14010"
+project = "mcp-re-http-profile"
+control = "lib#block::tests::the_escape_marker_itself_does_not_create_a_collision"
+decision = "new-proposition"
+proposition = "NP-087"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14011"
+project = "mcp-re-http-profile"
+control = "lib#block::tests::unknown_field_fails_closed"
+decision = "new-proposition"
+proposition = "NP-087"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14012"
+project = "mcp-re-http-profile"
+control = "lib#body::decimal_token::tests::a_wide_significand_is_compared_digit_for_digit"
+decision = "new-proposition"
+proposition = "NP-088"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14013"
+project = "mcp-re-http-profile"
+control = "lib#body::decimal_token::tests::an_unstateable_exponent_is_none"
+decision = "new-proposition"
+proposition = "NP-088"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14014"
+project = "mcp-re-http-profile"
+control = "lib#body::decimal_token::tests::numbers_that_differ_are_not_equal"
+decision = "new-proposition"
+proposition = "NP-088"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14015"
+project = "mcp-re-http-profile"
+control = "lib#body::decimal_token::tests::one_number_written_many_ways_is_one_value"
+decision = "new-proposition"
+proposition = "NP-088"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14016"
+project = "mcp-re-http-profile"
+control = "lib#body::decimal_token::tests::what_is_not_a_number_is_none_and_never_a_value"
+decision = "new-proposition"
+proposition = "NP-088"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14017"
+project = "mcp-re-http-profile"
+control = "lib#body::tests::a_decimal_the_round_trip_would_alter_is_refused_not_rewritten"
+decision = "new-proposition"
+proposition = "NP-088"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14018"
+project = "mcp-re-http-profile"
+control = "lib#body::tests::a_duplicate_member_name_is_refused_and_lookalikes_are_not"
+decision = "new-proposition"
+proposition = "NP-088"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14019"
+project = "mcp-re-http-profile"
+control = "lib#body::tests::a_representable_decimal_keeps_its_value_through_the_composer"
+decision = "new-proposition"
+proposition = "NP-088"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14020"
+project = "mcp-re-http-profile"
+control = "lib#body::tests::a_wide_but_exactly_carried_decimal_is_composed_not_refused"
+decision = "new-proposition"
+proposition = "NP-088"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14021"
+project = "mcp-re-http-profile"
+control = "lib#body::tests::absent_block_is_missing_evidence"
+decision = "new-proposition"
+proposition = "NP-088"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14022"
+project = "mcp-re-http-profile"
+control = "lib#body::tests::an_escaped_duplicate_member_name_is_refused_like_a_plain_one"
+decision = "new-proposition"
+proposition = "NP-088"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14023"
+project = "mcp-re-http-profile"
+control = "lib#body::tests::an_integer_the_round_trip_would_alter_is_refused_not_rewritten"
+decision = "new-proposition"
+proposition = "NP-088"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14024"
+project = "mcp-re-http-profile"
+control = "lib#body::tests::foreign_field_fails_closed"
+decision = "new-proposition"
+proposition = "NP-088"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14025"
+project = "mcp-re-http-profile"
+control = "lib#body::tests::insert_preserves_existing_meta_entries"
+decision = "new-proposition"
+proposition = "NP-088"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14026"
+project = "mcp-re-http-profile"
+control = "lib#body::tests::insert_then_extract_roundtrips"
+decision = "new-proposition"
+proposition = "NP-088"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14027"
+project = "mcp-re-http-profile"
+control = "lib#body::tests::non_object_body_fails_closed"
+decision = "new-proposition"
+proposition = "NP-088"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14028"
+project = "mcp-re-http-profile"
+control = "lib#body::tests::representable_numbers_still_compose"
+decision = "new-proposition"
+proposition = "NP-088"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14029"
+project = "mcp-re-http-profile"
+control = "lib#body::tests::the_boundary_still_refuses_what_the_carrier_alters"
+decision = "new-proposition"
+proposition = "NP-088"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14030"
+project = "mcp-re-http-profile"
+control = "lib#body::tests::the_representability_scan_never_reads_past_the_body"
+decision = "new-proposition"
+proposition = "NP-088"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14031"
+project = "mcp-re-http-profile"
+control = "lib#sigbase::tests::a_nonce_the_profile_cannot_carry_is_never_emitted"
+decision = "new-proposition"
+proposition = "NP-089"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14032"
+project = "mcp-re-http-profile"
+control = "lib#sigbase::tests::crlf_in_a_derived_component_fails_closed"
+decision = "new-proposition"
+proposition = "NP-089"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14033"
+project = "mcp-re-http-profile"
+control = "lib#sigbase::tests::crlf_in_a_field_value_fails_closed"
+decision = "new-proposition"
+proposition = "NP-089"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14034"
+project = "mcp-re-http-profile"
+control = "lib#sigbase::tests::derived_components_resolve"
+decision = "new-proposition"
+proposition = "NP-089"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14035"
+project = "mcp-re-http-profile"
+control = "lib#sigbase::tests::duplicated_covered_field_fails_closed"
+decision = "new-proposition"
+proposition = "NP-089"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14036"
+project = "mcp-re-http-profile"
+control = "lib#sigbase::tests::method_case_is_carried_verbatim_into_the_base"
+decision = "new-proposition"
+proposition = "NP-089"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14037"
+project = "mcp-re-http-profile"
+control = "lib#sigbase::tests::missing_covered_field_fails_closed"
+decision = "new-proposition"
+proposition = "NP-089"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14038"
+project = "mcp-re-http-profile"
+control = "lib#sigbase::tests::req_component_on_request_fails_closed"
+decision = "new-proposition"
+proposition = "NP-089"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14039"
+project = "mcp-re-http-profile"
+control = "tests/structured_fields_strictness_test#a_decoy_signature_member_does_not_merge_into_this_profiles_member"
+decision = "new-proposition"
+proposition = "NP-090"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14040"
+project = "mcp-re-http-profile"
+control = "tests/structured_fields_strictness_test#a_duplicated_covered_component_fails_closed"
+decision = "new-proposition"
+proposition = "NP-090"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14041"
+project = "mcp-re-http-profile"
+control = "tests/structured_fields_strictness_test#a_semicolon_inside_a_quoted_value_does_not_split_parameters"
+decision = "new-proposition"
+proposition = "NP-090"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14042"
+project = "mcp-re-http-profile"
+control = "tests/structured_fields_strictness_test#a_string_parameter_carrying_an_escape_fails_closed_on_verify"
+decision = "new-proposition"
+proposition = "NP-090"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14043"
+project = "mcp-re-http-profile"
+control = "tests/structured_fields_strictness_test#a_string_parameter_that_rfc_8941_cannot_carry_is_never_signed"
+decision = "new-proposition"
+proposition = "NP-090"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14044"
+project = "mcp-re-http-profile"
+control = "tests/structured_fields_strictness_test#an_escaped_quote_in_a_neighbouring_member_does_not_merge_it"
+decision = "new-proposition"
+proposition = "NP-090"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14045"
+project = "mcp-re-http-profile"
+control = "tests/structured_fields_strictness_test#canonical_order_still_verifies"
+decision = "new-proposition"
+proposition = "NP-090"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14046"
+project = "mcp-re-http-profile"
+control = "tests/structured_fields_strictness_test#closed_component_set_rejects_a_foreign_component"
+decision = "new-proposition"
+proposition = "NP-090"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14047"
+project = "mcp-re-http-profile"
+control = "tests/structured_fields_strictness_test#closed_parameter_set_rejects_a_foreign_parameter"
+decision = "new-proposition"
+proposition = "NP-090"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14048"
+project = "mcp-re-http-profile"
+control = "tests/structured_fields_strictness_test#component_reordering_changes_the_base_and_fails"
+decision = "new-proposition"
+proposition = "NP-090"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14049"
+project = "mcp-re-http-profile"
+control = "tests/structured_fields_strictness_test#duplicated_parameter_fails_closed"
+decision = "new-proposition"
+proposition = "NP-090"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14050"
+project = "mcp-re-http-profile"
+control = "tests/structured_fields_strictness_test#foreign_tag_fails_closed"
+decision = "new-proposition"
+proposition = "NP-090"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14051"
+project = "mcp-re-http-profile"
+control = "tests/structured_fields_strictness_test#non_canonical_integer_parameter_forms_fail_closed"
+decision = "new-proposition"
+proposition = "NP-090"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14052"
+project = "mcp-re-http-profile"
+control = "tests/structured_fields_strictness_test#ordinary_string_parameters_still_sign_and_verify"
+decision = "new-proposition"
+proposition = "NP-090"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14053"
+project = "mcp-re-http-profile"
+control = "tests/structured_fields_strictness_test#parameter_reordering_fails_closed"
+decision = "new-proposition"
+proposition = "NP-090"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-14054"
+project = "mcp-re-http-profile"
+control = "tests/structured_fields_strictness_test#req_component_on_a_request_fails_closed"
+decision = "new-proposition"
+proposition = "NP-090"
+recorded = "2026-09-19"
+

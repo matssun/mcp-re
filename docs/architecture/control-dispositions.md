@@ -2031,3 +2031,86 @@ documented value equal to its source; this is a claim about what the surface ASS
 is not a mirror.
 **Severity:** `high`.
 
+---
+
+## The signature-base plane — NP-087 through NP-090
+
+`block.rs`, `body/`, `sigbase.rs` and `structured_fields_strictness_test.rs` hold 54
+unclaimed controls. The three source files are in **ten to fourteen units' `paths` each** —
+they are the shared bottom of the profile, so almost every `http_profile.*` unit measures
+them — and not one of those units claims a single control in them.
+
+**That combination is worth stating on its own.** A file inside fourteen fingerprints whose
+own controls belong to none of them is not a gap in any one unit's battery; it is a layer
+everybody depends on and nobody answers for. The four propositions below are what those
+controls establish, and each of them is a premise of every unit above it.
+
+## NP-087 — the evidence block is injective and closed
+
+**Controls:** `mcp-re-http-profile/src/block.rs` (11).
+**Statement.** *No two distinct evidence blocks produce the same identifier: the actor id is
+deterministic, pinned, and INJECTIVE ACROSS COLON BOUNDARIES; the separator cannot be forged
+across fields; the escape marker itself creates no collision; a separator inside a field does
+not collapse two audiences; different audiences on one endpoint hash differently; and the
+block is closed — an unknown field, a foreign profile and empty artifact bindings each fail
+closed.*
+**If false.** Two different actors, or two different audiences, share one identifier — so
+evidence about one is evidence about the other. Injectivity across the colon boundary is the
+whole of it: `a:bc` and `ab:c` must not be the same actor.
+**Likely owner:** none of the fourteen units that measure this file. Each of them is about
+what its own verdict means; this is about the identifier they all compare.
+**Severity:** `critical`.
+
+## NP-088 — the body is signed as written, or refused
+
+**Controls:** `mcp-re-http-profile/src/body/mod.rs` (14),
+`src/body/decimal_token.rs` (5).
+**Statement.** *A number the carrier's round trip would alter is REFUSED, NOT REWRITTEN —
+decimal or integer — while a representable one, including a wide but exactly carried
+decimal, composes unchanged; one number written many ways is one value and numbers that
+differ are not equal, compared digit for digit across a wide significand, with an unstateable
+exponent and a non-number both reading as none; a duplicate member name is refused and
+lookalikes are not, an escaped duplicate is refused like a plain one, a non-object body and a
+foreign field each fail closed; insert preserves existing meta entries and insert-then-extract
+round-trips; an absent block is MISSING EVIDENCE; and the representability scan never reads
+past the body.*
+**If false.** The composer rewrites a value on its way into the signature, so the bytes
+signed are not the bytes the caller wrote — which is the one thing a signature over a body
+is for. "Refused, not rewritten" is the clause: silently normalising is how a signature
+comes to cover something nobody sent.
+**Likely owner:** none of the eleven units that measure this file.
+**Severity:** `critical`.
+
+## NP-089 — the signature base is exactly the covered components
+
+**Controls:** `mcp-re-http-profile/src/sigbase.rs` (8).
+**Statement.** *A missing covered field and a duplicated one each fail closed; CRLF in a
+field value and in a derived component each fail closed; a `req` component on a request fails
+closed; derived components resolve; the method case is carried VERBATIM into the base; and a
+nonce the profile cannot carry is never emitted.*
+**If false.** The base a verifier reconstructs differs from the base the signer produced — by
+a folded header, an injected line, a component that belongs to the other direction, or a case
+change — and a valid signature verifies over the wrong bytes. The CRLF clauses are request
+smuggling arriving inside the signature base.
+**Likely owner:** none of the ten units that measure this file.
+**Severity:** `critical`.
+
+## NP-090 — the structured-field surface is closed and canonical
+
+**Controls:** `mcp-re-http-profile/tests/structured_fields_strictness_test.rs` (16).
+**Statement.** *The component set and the parameter set are CLOSED — a foreign component, a
+foreign parameter and a foreign tag are each rejected; a duplicated component or parameter
+fails closed; component and parameter reordering change the base and fail, while canonical
+order still verifies; RFC 8941 quoting cannot be used to merge or split members — a semicolon
+inside a quoted value does not split parameters, an escaped quote in a neighbouring member
+does not merge it, a decoy signature member does not merge into this profile's member, and a
+string parameter carrying an escape fails closed on verify; non-canonical integer parameter
+forms fail closed; a string parameter RFC 8941 cannot carry is NEVER SIGNED; ordinary string
+parameters still sign and verify; and a `req` component on a request fails closed.*
+**If false.** A signature over one structured field is read as a signature over another —
+the parser-differential attack this file is entirely about. "Never signed" rather than
+"rejected on verify" is the direction that matters: a value the format cannot carry must not
+enter the base in the first place.
+**Likely owner:** none. This file is in no unit's `paths` at all, unlike the three above it.
+**Severity:** `critical`.
+
