@@ -39,7 +39,6 @@ theorem, and the campaign may not widen an existing unit to swallow it. Until th
 ADR-MCPRE-059 §28 route registers it, it is visible unresolved assurance debt and the
 census reports it as such.
 
-
 ---
 
 ## The criterion this register applies to a gate
@@ -480,7 +479,6 @@ status that means a property failed rather than an operation failed. `run_gate.s
 is deliberately NOT such a case: it proves the wrapper cannot report a false green, which is
 ND-003's subject, and it is invoked as a control from `local_gate.sh` stage 1 rather than
 being one itself.
-
 
 ---
 
@@ -2540,22 +2538,6 @@ instance**, still unclaimed on main.
 **Likely owner:** none.
 **Severity:** `critical`.
 
-## NP-117 — every deployment classifies to exactly one currency policy, read at call time
-
-**Controls:** `mcp-re-proxy/src/tls.rs`.
-**Statement.** *Every deployment classifies to EXACTLY ONE currency policy, and the policy reads the index in force AT THE TIME OF THE CALL.*
-**If false.** Two policies are applicable and which one applies depends on the reader, or a call is decided against an index that has since been replaced — so a revocation that landed before the call is not in force for it.
-**Likely owner:** none.
-**Severity:** `high`.
-
-## NP-118 — a trust snapshot swaps atomically and a held one never changes
-
-**Controls:** `mcp-re-proxy/src/reloading_trust.rs`.
-**Statement.** *A reader never observes a snapshot built from two different reads; a snapshot a reader already holds is unaffected by later swaps; the shared handle observes the swap; a swapped store revokes WITHOUT A RESTART; and every edit moves the resolver and the signer set TOGETHER.*
-**If false.** A request is decided against half of one trust document and half of another. `proxy.trust_resolution_window` says it takes the materialized snapshot AS AN INPUT AUTHORITY — this is the premise that makes that legitimate, and nothing claimed it.
-**Likely owner:** none.
-**Severity:** `critical`.
-
 ## NP-119 — a continuation leg is established exactly once
 
 **Controls:** `mcp-re-proxy/src/continuation_store/mod.rs`, `mcp-re-proxy/src/redis_continuation_store.rs`.
@@ -2612,13 +2594,16 @@ instance**, still unclaimed on main.
 **Likely owner:** none.
 **Severity:** `critical`.
 
-## NP-126 — a client CRL is loaded or the listener fails closed, and it must fall out of force
+## NP-126 — a configured client CRL is loaded or the listener fails closed
 
-**Controls:** `mcp-re-proxy/src/client_crl_publication.rs`.
-**Statement.** *A missing client-CRL file FAILS CLOSED; no CRL paths loads an empty vector; a CRL that states its nextUpdate is accepted; and a CRL that NEVER FALLS OUT OF FORCE is refused.*
-**If false.** A listener starts with a revocation list it could not read and believes it is enforcing revocation — or with one that never expires, so a stale list is trusted forever. 'Never falls out of force is refused' is the clause: a CRL without an expiry is not a permanent CRL, it is an unbounded one.
+**Controls:** `mcp-re-proxy/src/client_crl_publication.rs` (2) —
+`client_crl_loading_tests::missing_client_crl_file_fails_closed`,
+`client_crl_loading_tests::no_crl_paths_loads_empty_vec`.
+**Statement.** *A configured-but-unreadable client-CRL path is a HARD ERROR naming the path, never a silently skipped revocation check; and an empty CRL list loads as an empty list rather than as a failure, because configuring no CRL is a posture and not a mistake.*
+**If false.** A listener starts with a revocation list it could not read and believes it is enforcing revocation — the fail-open an operator cannot see, because every later line about the CRL posture is then about a list that was never loaded.
 **Likely owner:** none.
 **Severity:** `critical`.
+**Registered in part, ADR-MCPRE-069 S-04.** The `nextUpdate` gate over a CRL VALUE — a CRL that states one is accepted, a CRL that never falls out of force is refused by name and by index — is now `unit://proxy.client_crl_next_update_gate` under THM-0131, falsified by `M326-proxy-a-crl-with-no-expiry-is-not-fresh`. THM-0131's statement contains that half verbatim: *"A set of client CRLs is installable only when every one of them is inside its own `nextUpdate` window and states one at all."* The two rows above are the LOADER, one layer below the value, and THM-0131 reaches them nowhere: its claim is a property *"of the value, not of a call site"*, and a path that cannot be read yields no value to classify. THM-0054 is about the VERIFIER's three postures and says explicitly that it *"does not establish that the CRLs a deployment loads are current or complete"*. Packet at `verification/reviews/packets/adr069-np-126-ratification-2026-09-19.md`.
 
 ## NP-127 — a configuration handle keeps serving the configuration it was taken under
 
@@ -2684,21 +2669,28 @@ is called*, and the trust plane separates *the cache* from *the posture*.
 **Likely owner:** none.
 **Severity:** `critical`.
 
-## NP-134 — the trust cache answers from what it has, and stops caching before it stops answering
+## NP-134 — the trust cache stops caching before it stops answering
 
-**Controls:** `mcp-re-proxy/src/trust_plane`.
-**Statement.** *The compose key is INJECTIVE across delimiter-containing pairs; no positive caching consults the inner resolver every call; not-found uses a short TTL so a new key propagates; expired entries are SWEPT rather than merely ignored and prune evicts closed windows; a push for a different key does not evict the active entry; past the ceiling the cache STOPS CACHING BUT KEEPS ANSWERING; the strictest applicable T picks the tightest window and a T exceeding the recommended maximum is flagged; a revocation-source outage FAILS CLOSED; a second revocation authority rejects even when key status is active; and the only input production can build makes the rule the identity.*
-**If false.** Two different key pairs share a cache entry — the injectivity failure, here in the cache key rather than in the actor — so a lookup for one answers with the other's trust. The ceiling clause is the availability arm: a cache that stopped answering when it stopped caching would turn a memory bound into an outage.
+**Controls:** `mcp-re-proxy/src/trust_plane` (4) —
+`trust_cache::tests::{expired_entries_are_swept_rather_than_merely_ignored,
+not_found_uses_short_ttl_so_a_new_key_propagates, past_the_ceiling_the_cache_stops_caching_but_keeps_answering,
+prune_evicts_closed_windows}`.
+**Statement.** *Past its entry ceiling the cache STOPS CACHING BUT KEEPS ANSWERING, so a memory bound does not become an outage; an expired entry is SWEPT rather than merely ignored on read, and `prune` evicts closed windows, so a distinct keyid from an unauthenticated peer does not leave a permanent entry behind; and a not-found answer is cached under a SHORT TTL so a freshly published key propagates well before the full `T` would elapse.*
+**If false.** Two opposite failures, both real. A cache that stopped answering when it stopped caching turns a memory bound into a load-triggered self-inflicted outage; a cache that never sweeps grows one entry per keyid an unauthenticated peer presents, because the keyid gate runs before trust resolution.
 **Likely owner:** none.
 **Severity:** `critical`.
+**Registered in part, ADR-MCPRE-069 S-04; split.** Three rows are registered. The ENTRY-ADDRESSING half — `trust_cache::tests::compose_key_is_injective_across_delimiter_containing_pairs` and `push_trust::tests::push_for_a_different_key_does_not_evict_the_active_entry` — is `unit://proxy.trust_cache_entry_addressing` under THM-0097, whose statement quantifies *"for every Request-slot `(signer, key_id)` its trust plane's resolver is asked about"*, falsified by `M328-proxy-the-cache-key-is-injective`. It is NOT registered under THM-0119 even though THM-0119 states the identical shape: THM-0119's scope says *"THE SEAM AND THE REFERENCE IMPLEMENTATION. Nothing here is about the runtime trust plane's tiers, its caching windows, or its revocation channel"*, which is this carrier. `live_trust::tests::no_positive_caching_consults_inner_every_call` is an R1 into `proxy.trust_resolution_window`, whose paths already hold `live_trust.rs` and whose declared proposition already carries the live tier; THM-0097 says *"always under the live tier"*. Three further propositions were separated out of this record rather than left inside it: NP-178, NP-179 and NP-180. The four rows that remain are the DEGRADATION half, which THM-0097 excludes in its own words — *"Not a liveness claim"* and *"What is cached NEGATIVELY — a revoked or unknown pair, and for how long — is an availability fact and is not part of this claim"*. Packet at `verification/reviews/packets/adr069-np-134-np-178-np-179-np-180-ratification-2026-09-19.md`.
 
-## NP-135 — a trust posture names its reload floor, and staleness is terminal or undone
+## NP-135 — a handle that outlives its trust plane keeps answering only where an answer carries no authority
 
-**Controls:** `mcp-re-proxy/src/trust_plane`.
-**Statement.** *Every posture names the reload floor UNDER ITS NUMBER; a configured cadence is named on the tier line; a tier with no reload cadence says the store CANNOT CHANGE and a bounded cache with no cadence names the frozen store; a recoverable staleness is undone by a successful reload while a TERMINAL staleness survives a straggler reporting fresh; a directory that outlives the plane still answers from the last snapshot; and surviving handles do not keep the refresh workers alive.*
-**If false.** A replica reports a trust posture it is not maintaining, or a terminal staleness is cleared by a late report from before it — the straggler race, in the one place where clearing it means resuming trust that was withdrawn.
+**Controls:** `mcp-re-proxy/src/trust_plane` (2) —
+`handle_lifetime_tests::{a_directory_that_outlives_the_plane_still_answers_from_the_last_snapshot,
+surviving_handles_do_not_keep_the_refresh_workers_alive}`.
+**Statement.** *After the owning plane is dropped, the SIGNER DIRECTORY keeps answering from the last snapshot — legitimately, because a kid to signer coordinate is not verification material and admits nothing by itself — while the resolver refuses; and a surviving handle of either kind does not keep the refresh workers alive.*
+**If false.** Either half is a different defect. A directory that emptied or panicked on its plane's drop turns a retirement into a request-path failure; a handle that kept the refresh workers alive makes a plane's lifetime unbounded by its owner, so a retired plane goes on re-reading `--trust` for a deployment that retired it.
 **Likely owner:** none.
 **Severity:** `critical`.
+**Registered in part, ADR-MCPRE-069 S-04.** Six of the eight rows are registered. The four `store_cadence_tests` rows are `unit://proxy.trust_posture_declaration` under THM-0100, whose statement contains them — *"The interval the startup transcript prints as the delivered revocation window is exactly this arithmetic: `R + T` for the caching tiers, `R` for the live tier, and `UNBOUNDED` when no cadence is configured — in which case the snapshot is the startup read for the process's lifetime"* — falsified by `M327-proxy-the-tier-line-names-its-reload-floor`. The two `freshness::tests` rows are an R1 into `proxy.trust_resolution_window`, needing no `paths` widening: THM-0097 states *"The two terminal cases are irreversible; a successful reload landing afterwards does not reopen the resolver"*, and that unit already drives the same transition through the plane. The two rows above stay because THM-0097 disclaims exactly what they assert: *"Not a liveness claim: that an admitted key IS served is not stated."* Both are claims that something KEEPS ANSWERING, and the second is additionally a runtime-lifetime proposition of the family NP-124 carries. Packet at `verification/reviews/packets/adr069-np-135-ratification-2026-09-19.md`.
 
 ## NP-136 — retained bytes come back under their digest, from an owner-only store
 
@@ -2733,13 +2725,17 @@ is called*, and the trust plane separates *the cache* from *the posture*.
 **Likely owner:** none.
 **Severity:** `high`.
 
-## NP-140 — the TLS plane republishes its own epoch and bounds established connections
+## NP-140 — what a CRL-less or cadence-less deployment is actually bounded by
 
-**Controls:** `mcp-re-proxy/src/tls_plane`.
-**Statement.** *The store starts under the epoch of the plane's OWN client-auth inputs and a rebuild republishes the epoch of the anchor set THE PLANE OWNS; a reload cadence bounds ESTABLISHED CONNECTIONS and not only handshakes; without a cadence the bound is the CRL's own expiry, and without a CRL the bound is the certificate lifetime; a retired plane stops claiming a cadence; a snapshot that outlives the plane still serves; and a key source that disagrees with the declared custody refuses, while an agreeing one passes the check and fails on something else.*
-**If false.** A revoked client keeps a connection it established before the revocation — the clause that makes this about established connections rather than handshakes — or a plane republishes an epoch belonging to inputs it does not own, so an invalidation is attributed to the wrong anchor set.
+**Controls:** `mcp-re-proxy/src/tls_plane` (4) —
+`fleet_crl_bound_tests::{a_reload_cadence_bounds_established_connections_not_only_handshakes,
+without_a_cadence_the_bound_is_the_crls_own_expiry, without_a_crl_the_bound_is_the_certificate_lifetime}`,
+`handle_lifetime_tests::a_snapshot_that_outlives_the_plane_still_serves`.
+**Statement.** *Every deployment has a STATED bound on how long a revoked client may keep a connection it already established, and the bound is a total function of what the deployment configured: with a reload cadence it is the cadence, and it applies to ESTABLISHED connections rather than only to new handshakes; without a cadence it is the CRL's own expiry; without a CRL at all it is the client certificate's lifetime. A snapshot taken before the plane retired goes on serving under the bound in force when it was taken.*
+**If false.** A revoked client keeps a connection it established before the revocation, with nothing in the handshake path able to see it — and an operator who configured no CRL is left with an unknown exposure rather than a stated one, when the truth is that the certificate lifetime bounds it.
 **Likely owner:** none.
 **Severity:** `critical`.
+**Registered in part, ADR-MCPRE-069 S-04; split.** Three rows are registered. `handle_lifetime_tests::a_retired_plane_stops_claiming_a_cadence` is `unit://proxy.retired_plane_cadence_retraction` under THM-0131, near verbatim — *"a replica whose reload worker has died, or whose plane has retired, retracts the cadence it advertised: the maintenance verdict is latched, and no later reload can clear it"* — falsified by `M329-proxy-a-retired-plane-retracts-its-cadence`; it is its own unit rather than an addition to `proxy.client_revocation_currency` because the retirement happens in `tls_plane/mod.rs`, which is not that unit's source closure, and a unit's `paths` may not be widened to reach a control. The two `trust_epoch_binding_tests` rows are an R1 into `proxy.listener_state_assembly` under THM-0048 — *"The epoch is a function of the anchor set alone"* — needing no `paths` widening, and measured rather than assumed: neither control constructs a `TlsPlane` at all, both drive `TlsListenerSecurityState` directly. The two `custody_agreement_tests` rows were separated out as NP-177. **A correction of law, carried from this campaign's adversarial review and re-checked here against the file.** `ANALYSIS-proxy-premise.md` blocked this record on THM-0102's sentence *"that a connection is in fact closed at the configured age is an OBLIGATION this theorem names and does not establish"*. That sentence names `async_serve/connection.rs` two clauses earlier — *"The bound on a live connection's age is enforced in `async_serve/connection.rs`"* — and this record's carrier is `tls_plane/`. The blocker was matched on the concept rather than on the carrier and does not apply; what remains unregistered here is unregistered because no theorem states the bound's TOTALITY over the CRL-less and cadence-less postures, not because THM-0102 declined it. Packet at `verification/reviews/packets/adr069-np-140-np-177-ratification-2026-09-19.md`.
 
 ## NP-141 — the async core budgets bodies and frames without double counting
 
@@ -3020,7 +3016,6 @@ refuses.
 nothing else — which is what "one `test_features` set per battery" makes the only shape
 available.
 
-
 ## NP-173 — every inner-process log event renders under the brief's own tag
 
 **Control:** `mcp-re-proxy/src/log_sink.rs::log_event_tags_match_the_brief`.
@@ -3105,3 +3100,110 @@ capability states ON or OFF, in every lane*, whose remaining control is
 seams, in no unit's `paths`, and genuinely referred. One record cannot be both landable and
 referred: NP-004's own `likely_owner` field said its owner "owns ONE seam's conjunct and says
 so", which is the record documenting its own split.
+
+## NP-177 — the TLS plane refuses a key source that disagrees with the declared channel custody
+
+**Controls:** `mcp-re-proxy/src/tls_plane` (2) —
+`custody_agreement_tests::{a_key_source_that_disagrees_with_the_declared_custody_refuses,
+agreeing_custody_passes_the_check_and_fails_on_something_else}`.
+**Carrier:** `mcp-re-proxy/src/tls_plane/mod.rs` — the one place the REQUESTED custody and the
+ESTABLISHED custody meet.
+**Statement.** *A deployment configured for delegated handshake custody and handed an exported
+key materializes NO TLS plane, and the refusal names both sides; and agreement is not refused —
+an agreeing pair passes this check and fails later, on something else, so the diagnostic proves
+which check ran.*
+**If false.** The deployment serves handshakes under weaker custody than its own transcript
+claims. Nothing else compares these two facts: layer A classifies the custody from the TLS key
+selectors, the key source produces an actual signer, and every startup line reports the
+DECLARED custody — so a divergence is invisible in exactly the place an operator looks.
+**Likely owner:** none.
+**Severity:** `critical`, carried from NP-140 rather than reassessed.
+**Root relationship.** A premise of the proxy units above it. Neither custody theorem contains
+it. THM-0064 is about the CLASSIFIER — *"The custody owner classifies each legal selection into
+exactly one state carrying the material that made it inhabitable, and projects a single semantic
+fact"* — and its scope says it establishes *"what the classified STATE asserts, not that the
+remote signer implementation honours it"*; a plane handed a key source contradicting the state
+falsifies neither. THM-0073 is the comparison between the two SIGNING ROLES' materialized public
+keys, a different relation over different values. THM-0082 is the nearest in spirit — *"A
+deployment cannot announce one signing custody at startup and sign with another on the data
+plane"* — but it is the RESPONSE-signing composition root, *"the counterpart of THM-0066 on the
+signing side"*, and this is the channel. Packet at
+`verification/reviews/packets/adr069-np-140-np-177-ratification-2026-09-19.md`.
+**Why this record exists at all.** It was two rows of NP-140, *the TLS plane republishes its own
+epoch and bounds established connections*, whose epoch half is now registered and whose
+remaining rows are the fleet-CRL bound. Custody agreement is neither, and one record describing
+three authorities is the defect RR-002 C5 names.
+
+## NP-178 — revocation is conjunctive across authorities, and a source outage fails closed
+
+**Controls:** `mcp-re-proxy/src/trust_plane` (2) —
+`live_trust::tests::{revocation_source_outage_fails_closed,
+second_revocation_authority_rejects_even_when_key_status_active}`.
+**Carrier:** `mcp-re-proxy/src/trust_plane/live_trust.rs`.
+**Statement.** *A second revocation authority's rejection stands even where the key status is
+active — the two authorities COMPOSE rather than being alternatives — and an outage of a
+revocation source fails closed rather than resolving to "not revoked".*
+**If false.** A revoked key keeps verifying for as long as the revocation source stays down,
+which is exactly when an attacker would want it down; and the weaker authority's silence
+overrides the stronger authority's rejection, which is the composition defect this repository
+has ruled on before — two mechanisms that COMPOSE must not be read as alternatives.
+**Likely owner:** none.
+**Severity:** `critical`, carried from NP-134 rather than reassessed.
+**Root relationship.** A premise of the proxy units above it. THM-0097 states what a resolver
+may ANSWER under one snapshot and one cache; it says nothing about how many revocation
+authorities are consulted or how their answers combine, and `proxy.trust_resolution_window`
+already carries the single-authority outage case as `live_trust::tests::store_outage_fails_closed_never_active`.
+The conjunctive-composition clause is a claim about the ALGEBRA over two authorities and is
+stated nowhere. Packet at
+`verification/reviews/packets/adr069-np-134-np-178-np-179-np-180-ratification-2026-09-19.md`.
+**Why this record exists at all.** It was two rows of NP-134, whose remaining rows are the
+cache's degradation behaviour. Revocation-authority composition is a different authority in the
+twelve-questions sense, and filing them together was hiding that.
+
+## NP-179 — the trust window in force is the strictest applicable one, and a long one is flagged
+
+**Controls:** `mcp-re-proxy/src/trust_plane` (2) —
+`window_policy::tests::{strictest_applicable_t_picks_the_tightest_window,
+t_exceeds_recommended_max_flags_long_windows}`.
+**Carrier:** `mcp-re-proxy/src/trust_plane/window_policy.rs` — in no unit's `paths`, and listed
+in `config/unit-closure-exclusions.toml`.
+**Statement.** *Where several window rules apply, the one in force is the TIGHTEST of them; and
+a configured window past the recommended maximum is flagged rather than silently accepted.*
+**If false.** A deployment matching two rules is served under the looser one, so the revocation
+window an operator computed from the stricter rule is not the window in force. The flag clause
+is the operator-facing half: a window nobody objected to reads as a window somebody approved.
+**Likely owner:** none.
+**Severity:** `critical`, carried from NP-134 rather than reassessed.
+**Root relationship.** A premise of the proxy units above it, and a premise in the strict sense.
+THM-0097's arithmetic takes `T` as given — *"The deadline is the cache's clock reading at first
+caching plus the declared window `T`"* — so how `T` is DERIVED from the applicable rules is an
+input to that claim rather than a decomposition of it, and `t_exceeds_recommended_max` is an
+advisory about the deployment's choice rather than a statement about what is served. Packet at
+`verification/reviews/packets/adr069-np-134-np-178-np-179-np-180-ratification-2026-09-19.md`.
+**Why this record exists at all.** It was two rows of NP-134. Selecting the window and honouring
+the window are two authorities, and this campaign's own prepared analysis read these two rows as
+landing under THM-0097 on the strength of the word "window" appearing in both.
+
+## NP-180 — the only window rule production can construct is the identity
+
+**Control:** `mcp-re-proxy/src/trust_plane` —
+`window_policy::tests::the_only_input_production_can_build_makes_the_rule_the_identity`.
+**Carrier:** `mcp-re-proxy/src/trust_plane/window_policy.rs`.
+**Statement.** *Over the inputs production can actually build, the window rule is the identity:
+no reachable construction produces a rule that moves a window at all.*
+**If false.** The rule's other branches are reachable from somewhere, and a window an operator
+configured is transformed before it is applied — the transformation being invisible precisely
+because the ordinary path never takes it.
+**Likely owner:** none.
+**Severity:** `critical`, carried from NP-134 rather than reassessed.
+**Evidence class.** `structural`, NOT `tested`, and this is the reason the row is its own record.
+It is a *possession is the proof* statement about which inputs a constructor admits — ADR-MCPRE-068
+§4.1 classes that `structural`, whose falsifier is a COMPILE REFUSAL over the illegal
+construction, not a `mutation://` weakening of a runtime branch. ADR-MCPRE-068 N4 forbids
+substituting one probe class for another, so sweeping this row into a `tested` unit beside its
+two `window_policy` file-mates would have registered it under evidence that cannot falsify it.
+A passing `cargo check` witnesses no seal: the owner adopting this record owes a hostile refusal
+probe naming the construction that must not compile.
+**Root relationship.** A premise of the proxy units above it. No theorem states the
+constructibility of a window rule. Packet at
+`verification/reviews/packets/adr069-np-134-np-178-np-179-np-180-ratification-2026-09-19.md`.

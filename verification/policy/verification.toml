@@ -957,6 +957,15 @@ tested_symbols = [
   "lib#delegated_tls::tests::handshake_signature_budget_bounds_remote_signer_invocations",
   "lib#delegated_tls::tests::handshake_signature_budget_refills_over_time",
   "lib#delegated_tls::tests::a_poisoned_budget_lock_still_signs_and_counts_the_panic_once",
+  # ADR-MCPRE-069 NP-140, two R1 rows needing no `paths` widening. Both files are
+  # already this unit's, and both controls exercise `TlsListenerSecurityState` itself:
+  # neither constructs a `TlsPlane`. They are the plane-side twins of
+  # `the_epoch_digests_the_anchors_this_state_owns` and
+  # `a_rebuild_keeps_the_cache_and_the_epoch_of_the_state_it_was_built_through` above,
+  # and THM-0048 states the fact they measure — "The epoch is a function of the anchor
+  # set alone … while a rebuild that republishes the same trust keeps its cache".
+  "lib#tls_plane::trust_epoch_binding_tests::a_rebuild_republishes_the_epoch_of_the_anchor_set_the_plane_owns",
+  "lib#tls_plane::trust_epoch_binding_tests::the_store_starts_under_the_epoch_of_the_planes_own_client_auth_inputs",
 ]
 
 # THM-0054 IS `critical` AND HAD NO FALSIFIER. It shared a unit with THM-0048 and THM-0103,
@@ -7577,6 +7586,17 @@ tested_symbols = [
   # agreeing is one claim, and only the surface is the deployment's answer. Deleting the
   # whole supervisor used to leave every test in the workspace green (R11-726).
   "lib#trust_plane::reload::supervision::tests::a_panicking_trust_reload_thread_makes_the_resolver_refuse",
+  # ADR-MCPRE-069 NP-134 / NP-135, three R1 rows needing no `paths` widening.
+  # `freshness.rs` and `live_trust.rs` are already this unit's, and its declared
+  # proposition already carries both facts: "a snapshot that has stopped being maintained
+  # … refuse with Unavailable rather than serving" is the two-flag staleness algebra
+  # measured on the type rather than driven through the plane, and "the live tier adds
+  # none of its own" is the no-positive-caching arm. THM-0097 states both — "The two
+  # terminal cases are irreversible; a successful reload landing afterwards does not
+  # reopen the resolver", and "always under the live tier".
+  "lib#trust_plane::freshness::tests::a_recoverable_staleness_is_undone_by_a_successful_reload",
+  "lib#trust_plane::freshness::tests::a_terminal_staleness_survives_a_straggler_reporting_fresh",
+  "lib#trust_plane::live_trust::tests::no_positive_caching_consults_inner_every_call",
 ]
 # No `test_features`: nothing in this closure is feature-gated. The reader's controls are
 # `proxy.trust_epoch_source`'s, which names `redis_replay`.
@@ -9939,4 +9959,139 @@ evidence = [
 tested_symbols = [
   "tests/dispatch_test#fleet_strict_admits_durable_cache",
   "tests/dispatch_test#fleet_strict_rejects_single_process_reference_cache",
+]
+
+# ---------------------------------------------------------------------------
+# The proxy's trust-plane premises — ADR-MCPRE-069 NP-117, NP-118, NP-126,
+# NP-134, NP-135, NP-140
+# ---------------------------------------------------------------------------
+#
+# `tls.rs`, `trust_plane/mod.rs`, `tls_plane/mod.rs` and `reloading_trust.rs` are the
+# estate's densest shared files: each already sits in two to six units' `paths`, and
+# `trust_plane/mod.rs` alone is in `proxy.trust_resolution_window`'s and
+# `proxy.trust_reload_cadence`'s. "It is in the paths" is therefore available as an
+# argument for nearly every control in this cluster, and it is the argument ADR-069 §5
+# calls a quiet widening. None of the six units below is justified that way: each names
+# the clause of a RATIFIED theorem that already contains it, and each declares a
+# proposition its theorem states rather than one its file happens to hold.
+#
+# What is deliberately NOT here is as load-bearing as what is. Nineteen of the forty rows
+# stay in the ADR-069 census: the CRL LOADER's fail-closed on an unreadable path, the
+# trust cache's SWEEP, PRUNE and ENTRY-CEILING behaviour, the WINDOW-POLICY derivation of
+# `T`, the two REVOCATION-AUTHORITY composition rows, the NEGATIVE-caching TTL, the trust
+# plane's and the TLS plane's HANDLE-LIFETIME rows, the three FLEET-CRL-BOUND rows and the
+# two TLS-plane CUSTODY-AGREEMENT rows. THM-0097 disclaims the first group in its own
+# words — "Not a liveness claim" and "What is cached NEGATIVELY … is an availability fact
+# and is not part of this claim" — and takes `T` as "the declared window `T`", an input
+# rather than a result; THM-0064 and THM-0073 are about the custody CLASSIFIER's projection
+# and about the two SIGNING ROLES being different keys, neither of which is the TLS plane's
+# comparison of a declared custody against the key source it was handed.
+
+[[unit]]
+id = "proxy.currency_policy_classification"
+class = "V0"
+description = "THE CLASSIFICATION STEP THAT PRODUCES A CREDENTIAL-CURRENCY POLICY, AND THE INSTANT IT READS THE REVOCATION INDEX AT: `currency_policy` is a total selector over `ServerOptions` with four variants and no `Option`, so every deployment is exactly one policy and `evaluating with nothing configured` cannot be written; and the revocation index the policy carries is the snapshot loaded on THIS call, so a reload that lands between two requests is in force for the second and a policy captured once per connection is not what the serving path holds. It says NOTHING about what the policy then concludes about a credential — the five facts, their strength asymmetry and the three-state outcome are `proxy.credential_currency`'s — and nothing about the ceiling's legality, which is `proxy.client_credential_window`'s."
+paths = ["mcp-re-proxy/src/tls.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/tls/currency_policy_classification",
+  "mutation://proxy/tls/currency_policy_classification",
+]
+tested_symbols = [
+  "lib#tls::currency_policy_tests::currency_policy_reads_the_index_in_force_at_the_time_of_the_call",
+  "lib#tls::currency_policy_tests::every_deployment_classifies_to_exactly_one_policy",
+]
+
+[[unit]]
+id = "proxy.trust_snapshot_swap"
+class = "V0"
+description = "ONE READ OF `--trust` IS ONE PUBLICATION UNIT: the verification keys and the kid -> signer coordinate are two views of the same read, held in one value behind one lock, so a successful cycle moves BOTH and a reader can never observe a snapshot assembled from two different reads. Every edit an operator makes — removal, addition, reassignment — moves the resolver and the signer set together; a swap revokes on a running process with no restart; the shared handle the tier wrappers hold observes that swap rather than a copy taken at boot; and a snapshot a reader already holds is a value, unaffected by any later swap. It says nothing about HOW OFTEN the read happens, which is `proxy.trust_reload_cadence`'s, nothing about what the resolver may ANSWER under the snapshot it has, which is `proxy.trust_resolution_window`'s, and nothing about what an accepted document MEANS."
+paths = ["mcp-re-proxy/src/reloading_trust.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/trust_plane/snapshot_swap",
+  "mutation://proxy/trust_plane/snapshot_swap",
+]
+tested_symbols = [
+  "lib#reloading_trust::tests::a_reader_never_observes_a_snapshot_built_from_two_different_reads",
+  "lib#reloading_trust::tests::a_snapshot_a_reader_already_holds_is_unaffected_by_later_swaps",
+  "lib#reloading_trust::tests::a_swapped_store_revokes_without_a_restart",
+  "lib#reloading_trust::tests::every_edit_moves_the_resolver_and_the_signer_set_together",
+  "lib#reloading_trust::tests::the_shared_handle_observes_the_swap",
+]
+
+[[unit]]
+id = "proxy.client_crl_next_update_gate"
+class = "V0"
+description = "THE `nextUpdate` GATE OVER A CLIENT CRL, AT THE PUBLICATION SITE: a CRL that states a `nextUpdate` is classified fresh and admitted, and one that states none at all is REFUSED by name and by index rather than treated as permanently in force. A CRL with no expiry is not a permanent CRL, it is an unbounded one — nothing downstream can age it out, because rustls' expiration enforcement has no field to compare and the per-request index answers Good for its issuer at any instant. It says nothing about LOADING: that a configured-but-unreadable CRL path is a hard error rather than a silently skipped revocation check is a separate proposition over `load_client_crls`, stated by no theorem and left in the ADR-069 census under NP-126. It says nothing about whether the CRLs are the RIGHT CRLs, and nothing about the verifier's handshake-time posture, which is `proxy.client_certificate_posture`'s."
+paths = ["mcp-re-proxy/src/client_crl_publication.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/tls/client_crl_next_update_gate",
+  "mutation://proxy/tls/client_crl_next_update_gate",
+]
+tested_symbols = [
+  "lib#client_crl_publication::crl_next_update_tests::a_crl_that_never_falls_out_of_force_is_refused",
+  "lib#client_crl_publication::crl_next_update_tests::a_crl_that_states_its_next_update_is_accepted",
+]
+
+[[unit]]
+id = "proxy.trust_posture_declaration"
+class = "V0"
+description = "WHAT THE STARTUP TIER LINE SAYS ABOUT THE STORE UNDERNEATH THE TIER'S OWN NUMBER: every posture names the reload floor under its number, because nothing resolves faster than the store is re-read; a configured cadence is named on the same line as the tier window, so the two windows are read together; and a deployment with NO cadence is told on that same line that the store cannot change until a restart, rather than on a later line an operator quoting the tier never reads. The postures are enumerated as DEPLOYMENTS rather than as `(tier, cadence)` pairs, so no line is asserted for a plan configuration validation refuses. It is a claim about the TRANSCRIPT the replica prints, not about the resolver: what may be answered under the snapshot in force is `proxy.trust_resolution_window`'s, and the delivered-window arithmetic and the push tier's own bound are `proxy.trust_reload_cadence`'s."
+paths = ["mcp-re-proxy/src/trust_plane/mod.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/trust_plane/posture_declaration",
+  "mutation://proxy/trust_plane/posture_declaration",
+]
+tested_symbols = [
+  "lib#trust_plane::store_cadence_tests::a_bounded_cache_with_no_cadence_names_the_frozen_store",
+  "lib#trust_plane::store_cadence_tests::a_configured_cadence_is_named_on_the_tier_line",
+  "lib#trust_plane::store_cadence_tests::a_tier_with_no_reload_cadence_says_the_store_cannot_change",
+  "lib#trust_plane::store_cadence_tests::every_posture_names_the_reload_floor_under_its_number",
+]
+
+[[unit]]
+id = "proxy.trust_cache_entry_addressing"
+class = "V0"
+description = "A CACHE ENTRY IS ADDRESSED BY EXACTLY THE `(signer, key_id)` PAIR IT WAS CACHED FOR: the composite key is a length-prefixed encoding rather than a naive delimiter join, so `(\"a#b\", \"c\")` and `(\"a\", \"b#c\")` occupy distinct entries and neither resolves under the other's; and a per-key invalidation delivered through the plane's channel strips exactly the named pair's entry, leaving another pair's active entry where it was. This is what makes THM-0097's per-Request-slot quantification well formed over the serving cache: without it a lookup for one pair could be answered from another pair's cached binding, which is a key confusion at the point the pipeline decides who signed. It says nothing about the DEADLINE algebra, about what is cached negatively, about the entry ceiling or about the sweep — those are `proxy.trust_resolution_window`'s or stay in the ADR-069 census under NP-134 — and nothing about the reference resolver at the seam, which is `core.trust_resolver_seam`'s."
+paths = [
+  "mcp-re-proxy/src/trust_plane/trust_cache.rs",
+  "mcp-re-proxy/src/trust_plane/push_trust.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/trust_plane/cache_entry_addressing",
+  "mutation://proxy/trust_plane/cache_entry_addressing",
+]
+tested_symbols = [
+  "lib#trust_plane::push_trust::tests::push_for_a_different_key_does_not_evict_the_active_entry",
+  "lib#trust_plane::trust_cache::tests::compose_key_is_injective_across_delimiter_containing_pairs",
+]
+
+[[unit]]
+id = "proxy.retired_plane_cadence_retraction"
+class = "V0"
+description = "A RETIRED TLS PLANE STOPS CLAIMING THE CRL RELOAD CADENCE IT ADVERTISED: nothing re-reads the CRLs once the plane that owned the reload worker is gone, so the shared revocation-currency value's maintenance verdict moves to `Stopped` for every holder rather than only inside the dropped value. This is the PLANE-RETIREMENT arm of the latch whose worker-death arm `proxy.client_revocation_currency` measures over `crl_reload_worker/supervision.rs`; it is registered separately because the retirement happens in `tls_plane/mod.rs`, which is not that unit's source closure. It is a claim about what the deployment may still SAY, not a fail-closed: the snapshot a retired plane leaves behind keeps serving, bounded by the CRLs' own `nextUpdate`, and whether that residual exposure is acceptable is a separate proposition left in the ADR-069 census under NP-140."
+paths = ["mcp-re-proxy/src/tls_plane/mod.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/tls/retired_plane_cadence_retraction",
+  "mutation://proxy/tls/retired_plane_cadence_retraction",
+]
+tested_symbols = [
+  "lib#tls_plane::handle_lifetime_tests::a_retired_plane_stops_claiming_a_cadence",
 ]

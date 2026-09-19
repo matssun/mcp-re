@@ -8152,24 +8152,6 @@ root_relationship = "a premise of the proxy units above it"
 record = "docs/architecture/control-dispositions.md#np-116"
 
 [[proposition]]
-id = "NP-117"
-title = "Every deployment classifies to exactly one currency policy, read at call time"
-carrier = "mcp-re-proxy/src/tls.rs"
-likely_owner = ""
-consequence = "high"
-root_relationship = "a premise of the proxy units above it"
-record = "docs/architecture/control-dispositions.md#np-117"
-
-[[proposition]]
-id = "NP-118"
-title = "A trust snapshot swaps atomically and a held one never changes"
-carrier = "mcp-re-proxy/src/reloading_trust.rs"
-likely_owner = ""
-consequence = "critical"
-root_relationship = "a premise of the proxy units above it"
-record = "docs/architecture/control-dispositions.md#np-118"
-
-[[proposition]]
 id = "NP-119"
 title = "A continuation leg is established exactly once"
 carrier = "mcp-re-proxy/src/continuation_store/mod.rs"
@@ -8234,7 +8216,7 @@ record = "docs/architecture/control-dispositions.md#np-125"
 
 [[proposition]]
 id = "NP-126"
-title = "A client CRL is loaded or the listener fails closed, and it must fall out of force"
+title = "A configured client CRL is loaded or the listener fails closed"
 carrier = "mcp-re-proxy/src/client_crl_publication.rs"
 likely_owner = ""
 consequence = "critical"
@@ -8271,22 +8253,6 @@ recorded = "2026-09-19"
 id = "CD-17002"
 project = "mcp-re-proxy"
 control = "lib#client_crl_publication::client_crl_loading_tests::no_crl_paths_loads_empty_vec"
-decision = "new-proposition"
-proposition = "NP-126"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-17003"
-project = "mcp-re-proxy"
-control = "lib#client_crl_publication::crl_next_update_tests::a_crl_that_never_falls_out_of_force_is_refused"
-decision = "new-proposition"
-proposition = "NP-126"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-17004"
-project = "mcp-re-proxy"
-control = "lib#client_crl_publication::crl_next_update_tests::a_crl_that_states_its_next_update_is_accepted"
 decision = "new-proposition"
 proposition = "NP-126"
 recorded = "2026-09-19"
@@ -8788,46 +8754,6 @@ proposition = "NP-119"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-17067"
-project = "mcp-re-proxy"
-control = "lib#reloading_trust::tests::a_reader_never_observes_a_snapshot_built_from_two_different_reads"
-decision = "new-proposition"
-proposition = "NP-118"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-17068"
-project = "mcp-re-proxy"
-control = "lib#reloading_trust::tests::a_snapshot_a_reader_already_holds_is_unaffected_by_later_swaps"
-decision = "new-proposition"
-proposition = "NP-118"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-17069"
-project = "mcp-re-proxy"
-control = "lib#reloading_trust::tests::a_swapped_store_revokes_without_a_restart"
-decision = "new-proposition"
-proposition = "NP-118"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-17070"
-project = "mcp-re-proxy"
-control = "lib#reloading_trust::tests::every_edit_moves_the_resolver_and_the_signer_set_together"
-decision = "new-proposition"
-proposition = "NP-118"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-17071"
-project = "mcp-re-proxy"
-control = "lib#reloading_trust::tests::the_shared_handle_observes_the_swap"
-decision = "new-proposition"
-proposition = "NP-118"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-17072"
 project = "mcp-re-proxy"
 control = "lib#replay_tier::tests::a_tier_promising_wait_supplies_wait_params"
@@ -9140,22 +9066,6 @@ proposition = "NP-116"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-17111"
-project = "mcp-re-proxy"
-control = "lib#tls::currency_policy_tests::currency_policy_reads_the_index_in_force_at_the_time_of_the_call"
-decision = "new-proposition"
-proposition = "NP-117"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-17112"
-project = "mcp-re-proxy"
-control = "lib#tls::currency_policy_tests::every_deployment_classifies_to_exactly_one_policy"
-decision = "new-proposition"
-proposition = "NP-117"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-17113"
 project = "mcp-re-proxy"
 control = "lib#tls::routing_header_tests::routing_header_rejection_fails_closed_on_bad_headers_only"
@@ -9211,7 +9121,7 @@ record = "docs/architecture/control-dispositions.md#np-133"
 
 [[proposition]]
 id = "NP-134"
-title = "The trust cache answers from what it has, and stops caching before it stops answering"
+title = "The trust cache stops caching before it stops answering"
 carrier = "mcp-re-proxy/src/trust_plane"
 likely_owner = ""
 consequence = "critical"
@@ -9220,7 +9130,7 @@ record = "docs/architecture/control-dispositions.md#np-134"
 
 [[proposition]]
 id = "NP-135"
-title = "A trust posture names its reload floor, and staleness is terminal or undone"
+title = "A handle that outlives its trust plane keeps answering only where an answer carries no authority"
 carrier = "mcp-re-proxy/src/trust_plane"
 likely_owner = ""
 consequence = "critical"
@@ -9265,7 +9175,7 @@ record = "docs/architecture/control-dispositions.md#np-139"
 
 [[proposition]]
 id = "NP-140"
-title = "The TLS plane republishes its own epoch and bounds established connections"
+title = "What a CRL-less or cadence-less deployment is actually bounded by"
 carrier = "mcp-re-proxy/src/tls_plane"
 likely_owner = ""
 consequence = "critical"
@@ -10685,7 +10595,7 @@ id = "CD-18201"
 project = "mcp-re-proxy"
 control = "lib#tls_plane::custody_agreement_tests::a_key_source_that_disagrees_with_the_declared_custody_refuses"
 decision = "new-proposition"
-proposition = "NP-140"
+proposition = "NP-177"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -10693,7 +10603,7 @@ id = "CD-18202"
 project = "mcp-re-proxy"
 control = "lib#tls_plane::custody_agreement_tests::agreeing_custody_passes_the_check_and_fails_on_something_else"
 decision = "new-proposition"
-proposition = "NP-140"
+proposition = "NP-177"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -10721,51 +10631,11 @@ proposition = "NP-140"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-18206"
-project = "mcp-re-proxy"
-control = "lib#tls_plane::handle_lifetime_tests::a_retired_plane_stops_claiming_a_cadence"
-decision = "new-proposition"
-proposition = "NP-140"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-18207"
 project = "mcp-re-proxy"
 control = "lib#tls_plane::handle_lifetime_tests::a_snapshot_that_outlives_the_plane_still_serves"
 decision = "new-proposition"
 proposition = "NP-140"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18208"
-project = "mcp-re-proxy"
-control = "lib#tls_plane::trust_epoch_binding_tests::a_rebuild_republishes_the_epoch_of_the_anchor_set_the_plane_owns"
-decision = "new-proposition"
-proposition = "NP-140"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18209"
-project = "mcp-re-proxy"
-control = "lib#tls_plane::trust_epoch_binding_tests::the_store_starts_under_the_epoch_of_the_planes_own_client_auth_inputs"
-decision = "new-proposition"
-proposition = "NP-140"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18210"
-project = "mcp-re-proxy"
-control = "lib#trust_plane::freshness::tests::a_recoverable_staleness_is_undone_by_a_successful_reload"
-decision = "new-proposition"
-proposition = "NP-135"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18211"
-project = "mcp-re-proxy"
-control = "lib#trust_plane::freshness::tests::a_terminal_staleness_survives_a_straggler_reporting_fresh"
-decision = "new-proposition"
-proposition = "NP-135"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -10785,19 +10655,11 @@ proposition = "NP-135"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-18214"
-project = "mcp-re-proxy"
-control = "lib#trust_plane::live_trust::tests::no_positive_caching_consults_inner_every_call"
-decision = "new-proposition"
-proposition = "NP-134"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-18215"
 project = "mcp-re-proxy"
 control = "lib#trust_plane::live_trust::tests::revocation_source_outage_fails_closed"
 decision = "new-proposition"
-proposition = "NP-134"
+proposition = "NP-178"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -10805,55 +10667,7 @@ id = "CD-18216"
 project = "mcp-re-proxy"
 control = "lib#trust_plane::live_trust::tests::second_revocation_authority_rejects_even_when_key_status_active"
 decision = "new-proposition"
-proposition = "NP-134"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18217"
-project = "mcp-re-proxy"
-control = "lib#trust_plane::push_trust::tests::push_for_a_different_key_does_not_evict_the_active_entry"
-decision = "new-proposition"
-proposition = "NP-134"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18218"
-project = "mcp-re-proxy"
-control = "lib#trust_plane::store_cadence_tests::a_bounded_cache_with_no_cadence_names_the_frozen_store"
-decision = "new-proposition"
-proposition = "NP-135"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18219"
-project = "mcp-re-proxy"
-control = "lib#trust_plane::store_cadence_tests::a_configured_cadence_is_named_on_the_tier_line"
-decision = "new-proposition"
-proposition = "NP-135"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18220"
-project = "mcp-re-proxy"
-control = "lib#trust_plane::store_cadence_tests::a_tier_with_no_reload_cadence_says_the_store_cannot_change"
-decision = "new-proposition"
-proposition = "NP-135"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18221"
-project = "mcp-re-proxy"
-control = "lib#trust_plane::store_cadence_tests::every_posture_names_the_reload_floor_under_its_number"
-decision = "new-proposition"
-proposition = "NP-135"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18222"
-project = "mcp-re-proxy"
-control = "lib#trust_plane::trust_cache::tests::compose_key_is_injective_across_delimiter_containing_pairs"
-decision = "new-proposition"
-proposition = "NP-134"
+proposition = "NP-178"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -10893,7 +10707,7 @@ id = "CD-18227"
 project = "mcp-re-proxy"
 control = "lib#trust_plane::window_policy::tests::strictest_applicable_t_picks_the_tightest_window"
 decision = "new-proposition"
-proposition = "NP-134"
+proposition = "NP-179"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -10901,7 +10715,7 @@ id = "CD-18228"
 project = "mcp-re-proxy"
 control = "lib#trust_plane::window_policy::tests::t_exceeds_recommended_max_flags_long_windows"
 decision = "new-proposition"
-proposition = "NP-134"
+proposition = "NP-179"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -10909,7 +10723,7 @@ id = "CD-18229"
 project = "mcp-re-proxy"
 control = "lib#trust_plane::window_policy::tests::the_only_input_production_can_build_makes_the_rule_the_identity"
 decision = "new-proposition"
-proposition = "NP-134"
+proposition = "NP-180"
 recorded = "2026-09-19"
 
 
@@ -13791,3 +13605,39 @@ likely_owner = "proxy.continuation_materialization — the file is already in it
 consequence = "medium"
 root_relationship = "under THM-0096, whose scope narrows the declaration conjunct"
 record = "docs/architecture/control-dispositions.md#np-176"
+
+[[proposition]]
+id = "NP-177"
+title = "The TLS plane refuses a key source that disagrees with the declared channel custody"
+carrier = "mcp-re-proxy/src/tls_plane"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-177"
+
+[[proposition]]
+id = "NP-178"
+title = "Revocation is conjunctive across authorities, and a source outage fails closed"
+carrier = "mcp-re-proxy/src/trust_plane"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-178"
+
+[[proposition]]
+id = "NP-179"
+title = "The trust window in force is the strictest applicable one, and a long one is flagged"
+carrier = "mcp-re-proxy/src/trust_plane"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-179"
+
+[[proposition]]
+id = "NP-180"
+title = "The only window rule production can construct is the identity"
+carrier = "mcp-re-proxy/src/trust_plane"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-180"
