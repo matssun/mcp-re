@@ -331,6 +331,42 @@ annotation for doctests, or the probe for an item being withdrawn. Either makes 
 the only control over that boundary again, and `test_structural_lane.py` already holds the
 case where a probe's documented example has drifted from what the registry says it does.
 
+## ND-011 — a carrier the legality model admits no deployment to reach
+
+**Covers:** every control in `mcp-re-proxy/src/ocsp.rs` (38).
+**Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 11.
+**Scope:** `carrier-scope: admitted`.
+
+The online-OCSP checker: responder signature verification, certid binding, freshness and
+skew, nonce round-trip and match, delegated-responder validity window, the AIA-URL policy
+that refuses a `file:` scheme, `localhost` and a loopback host BEFORE any fetch, the
+hard-fail/soft-fail policy table, and a SHA-1 known-answer vector. Careful controls over a
+careful verifier.
+
+**Why they are not evidence.** `proxy.online_ocsp_reachability` is a registered unit whose
+whole statement is that this carrier is unreachable: *"The legality model admits no
+online-OCSP deployment: `OnlineRevocationEvidenceRequest::Required` is refused on the only
+route to a `ValidatedDeployment`."* Its battery includes
+`a_programmatic_config_cannot_claim_an_ocsp_check_the_serving_path_never_makes`. So no legal
+deployment builds an `OcspChecker`, and a control over what that checker does establishes
+nothing about any deployment MCP-RE admits.
+
+**This is ADR-MCPRE-061 §8 question 9 arriving as a census result** — *what branches are
+unreachable under the current legality model* — and the answer is unusual in being already
+OWNED: the estate does not merely fail to reach this code, it has a unit that says so.
+
+**What this is NOT.** It is not a finding that the code is dead in the delete-it sense, and
+it is not a reason to remove the controls. `proxy.online_ocsp_reachability` exists so that
+the refusal is a measured fact rather than an assumption, and the verifier's own controls
+are what make re-admitting the mode a decision rather than a leap.
+
+**What would move a control out, precisely.** The legality model admitting
+`OnlineRevocationEvidenceRequest::Required` on any route to a `ValidatedDeployment`. On that
+day `proxy.online_ocsp_reachability`'s statement becomes false, these 38 controls become
+evidence for a proposition that must then exist, and the disposition is `register` or
+`new-proposition` — never this family. The exit condition is mechanical: that unit's battery
+goes red.
+
 ## ND-008 — not a control: drivers, runners, reports and demos
 
 **Covers:** `bump_version.sh`, `coverage.sh`, `demo-gcp-kms.sh`, `demo-local.sh`,
@@ -1484,4 +1520,59 @@ modules are indistinguishable in shape is the finding.
 **Likely owner:** none. Its five sibling classifiers are units; this one is not.
 **Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
 **Severity:** `high`.
+
+## NP-062 — the CRL index answers revocation exactly
+
+**Controls:** `mcp-re-proxy/src/client_revocation.rs` (12).
+**Carrier:** the client-revocation index and its snapshot.
+**Statement.** *A listed serial is revoked and an unlisted one is good, with zero padding
+normalised; a CRL revokes only leaves of its own CA and says nothing about another; an
+uncovered issuer is UNKNOWN and refused; a malformed CRL is refused rather than skipped; an
+expired CRL refuses its issuer rather than admitting it, and a stale one certifies nothing
+but still revokes; two CRLs for one issuer union their serials and keep the earliest
+nextUpdate; an empty index admits everything; unknown status is refused with no policy input
+that could admit it; and the snapshot swaps atomically, with a poisoned lock still yielding
+the last good index and still accepting a swap.*
+**If false.** A revoked client certificate is admitted — by a CRL that was skipped because it
+was malformed, by an issuer nobody covered being read as good, by an expired list being
+trusted, or by a serial that did not match because of its padding. Each of those is a
+different route to the same outcome, which is why the clauses are enumerated rather than
+summarised.
+**Likely owner:** `proxy.client_certificate_posture` states that every production verifier
+*denies unknown revocation status, enforces revocation over the full chain and enforces CRL
+expiration*, and `proxy.client_revocation_currency` states that a set of CRLs is installable
+only inside its own nextUpdate window. **Neither can claim these controls**: their `paths`
+are the `tls_plane` and `tls_listener_state` files, and `client_revocation.rs` — the index
+those propositions are ABOUT — is in neither. The fourth mechanically impossible
+reattribution this campaign has measured, and the first where TWO units state the
+proposition and neither owns the carrier.
+**Root relationship.** Under the client-certificate roots.
+**Severity:** `critical`.
+**The stale/expired pair is the clause worth reading twice.** *A stale CRL certifies nothing
+but still revokes*, and *an expired CRL refuses its issuer rather than admitting it*. Those
+are opposite directions on purpose: age must never turn a revocation into an admission, and
+must never turn an absence of evidence into one either.
+
+## NP-063 — a revocation tier's published guarantee is its own
+
+**Controls:** `mcp-re-proxy/src/revocation_tier.rs` (9).
+**Carrier:** the revocation tier vocabulary and its published guarantees.
+**Statement.** *Every tier has a non-empty guarantee, each tier's guarantee is DISTINCT from
+every other's, no tier claims a zero window unless proven — LIVE is near-zero with a hard
+availability dependency and PUSH is near-zero with a bounded fallback, neither a zero window
+— the wire names are the semantic ADR names, parsing round-trips each tier and refuses
+unknown and malformed ones, and the startup audit line carries the backend, the tier and the
+guarantee and no key material.*
+**If false.** A deployment publishes a revocation guarantee it does not have. Two tiers
+sharing a guarantee makes the choice between them meaningless; a tier claiming a zero window
+makes a bounded staleness read as none; and a wire name that is not the ADR's name is an
+operator selecting a posture by a word that means something else.
+**Likely owner:** none. `proxy.trust_revocation_classification` classifies which posture a
+deployment REQUESTS; this is what each posture, once requested, is allowed to SAY about
+itself.
+**Root relationship.** Under THM-0077 beside the configuration family.
+**Severity:** `high`.
+**The audit-line clause belongs here rather than with the redaction unit.**
+`proxy.operator_facing_redaction` owns the two fields that carry credentials; this control is
+about a line whose subject is the tier, and what it must contain as much as what it must not.
 

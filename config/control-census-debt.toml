@@ -10,10 +10,6 @@
 schema_version = 1
 
 [[file]]
-path = "mcp-re-proxy/src/ocsp.rs"
-baseline = 38
-
-[[file]]
 path = "mcp-re-proxy/tests/integration_async/mrt_continuation_serving_test.rs"
 baseline = 36
 
@@ -90,10 +86,6 @@ path = "mcp-re-proxy/tests/integration_async/replay_race_harness_test.rs"
 baseline = 13
 
 [[file]]
-path = "mcp-re-proxy/src/client_revocation.rs"
-baseline = 12
-
-[[file]]
 path = "mcp-re-proxy/src/transport/ingress/v1.rs"
 baseline = 12
 
@@ -167,10 +159,6 @@ baseline = 9
 
 [[file]]
 path = "mcp-re-proxy/src/handshake_quota.rs"
-baseline = 9
-
-[[file]]
-path = "mcp-re-proxy/src/revocation_tier.rs"
 baseline = 9
 
 [[file]]

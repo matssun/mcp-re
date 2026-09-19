@@ -4868,3 +4868,208 @@ decision = "new-proposition"
 proposition = "NP-060"
 recorded = "2026-09-19"
 
+
+# ---------------------------------------------------------------------------
+# Batch 11 — the revocation plane, 2026-09-19
+# ---------------------------------------------------------------------------
+#
+# `ocsp.rs` is carrier-scoped NOT EVIDENCE, and the reason is already a registered unit:
+# proxy.online_ocsp_reachability's whole statement is that no legal deployment reaches it.
+# `client_revocation.rs` and `revocation_tier.rs` are propositions nothing states — and
+# NP-062 is the first case where TWO units state the proposition and neither owns the
+# carrier, so neither can claim its controls.
+
+[[proposition]]
+id = "NP-062"
+title = "The CRL index answers revocation exactly"
+carrier = "mcp-re-proxy/src/client_revocation.rs"
+likely_owner = "proxy.client_certificate_posture and proxy.client_revocation_currency both state it; neither measures this file"
+consequence = "critical"
+root_relationship = "under the client-certificate roots"
+record = "docs/architecture/control-dispositions.md#np-062"
+
+[[proposition]]
+id = "NP-063"
+title = "A revocation tier's published guarantee is its own"
+carrier = "mcp-re-proxy/src/revocation_tier.rs"
+likely_owner = "proxy.trust_revocation_classification classifies which posture is requested, not what a posture may say about itself"
+consequence = "high"
+root_relationship = "under THM-0077 beside the configuration family"
+record = "docs/architecture/control-dispositions.md#np-063"
+
+[[disposition]]
+id = "CD-9001"
+decision = "not-evidence"
+scope = "carrier"
+carrier = "mcp-re-proxy/src/ocsp.rs"
+reason_family = "ND-011"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-9101"
+project = "mcp-re-proxy"
+control = "lib#client_revocation::tests::a_crl_revokes_a_leaf_of_the_same_ca_and_says_nothing_about_another_ca"
+decision = "new-proposition"
+proposition = "NP-062"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-9102"
+project = "mcp-re-proxy"
+control = "lib#client_revocation::tests::a_listed_serial_is_revoked_and_an_unlisted_one_is_good"
+decision = "new-proposition"
+proposition = "NP-062"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-9103"
+project = "mcp-re-proxy"
+control = "lib#client_revocation::tests::a_malformed_crl_is_refused_rather_than_skipped"
+decision = "new-proposition"
+proposition = "NP-062"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-9104"
+project = "mcp-re-proxy"
+control = "lib#client_revocation::tests::a_poisoned_lock_still_yields_the_last_good_index_and_still_accepts_a_swap"
+decision = "new-proposition"
+proposition = "NP-062"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-9105"
+project = "mcp-re-proxy"
+control = "lib#client_revocation::tests::a_stale_crl_certifies_nothing_but_still_revokes"
+decision = "new-proposition"
+proposition = "NP-062"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-9106"
+project = "mcp-re-proxy"
+control = "lib#client_revocation::tests::a_zero_padded_serial_still_matches"
+decision = "new-proposition"
+proposition = "NP-062"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-9107"
+project = "mcp-re-proxy"
+control = "lib#client_revocation::tests::an_empty_index_admits_everything"
+decision = "new-proposition"
+proposition = "NP-062"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-9108"
+project = "mcp-re-proxy"
+control = "lib#client_revocation::tests::an_expired_crl_refuses_its_issuer_rather_than_admitting_it"
+decision = "new-proposition"
+proposition = "NP-062"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-9109"
+project = "mcp-re-proxy"
+control = "lib#client_revocation::tests::an_uncovered_issuer_is_unknown_and_refused"
+decision = "new-proposition"
+proposition = "NP-062"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-9110"
+project = "mcp-re-proxy"
+control = "lib#client_revocation::tests::the_snapshot_swaps_atomically"
+decision = "new-proposition"
+proposition = "NP-062"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-9111"
+project = "mcp-re-proxy"
+control = "lib#client_revocation::tests::two_crls_for_one_issuer_union_their_serials_and_keep_the_earliest_next_update"
+decision = "new-proposition"
+proposition = "NP-062"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-9112"
+project = "mcp-re-proxy"
+control = "lib#client_revocation::tests::unknown_status_is_refused_with_no_policy_input_that_could_admit_it"
+decision = "new-proposition"
+proposition = "NP-062"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-9113"
+project = "mcp-re-proxy"
+control = "lib#revocation_tier::tests::each_tier_surfaces_its_own_distinct_guarantee"
+decision = "new-proposition"
+proposition = "NP-063"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-9114"
+project = "mcp-re-proxy"
+control = "lib#revocation_tier::tests::every_tier_has_a_nonempty_guarantee"
+decision = "new-proposition"
+proposition = "NP-063"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-9115"
+project = "mcp-re-proxy"
+control = "lib#revocation_tier::tests::live_guarantee_is_near_zero_with_hard_availability_dependency"
+decision = "new-proposition"
+proposition = "NP-063"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-9116"
+project = "mcp-re-proxy"
+control = "lib#revocation_tier::tests::no_tier_claims_a_zero_window_unless_proven"
+decision = "new-proposition"
+proposition = "NP-063"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-9117"
+project = "mcp-re-proxy"
+control = "lib#revocation_tier::tests::parse_rejects_unknown_and_malformed"
+decision = "new-proposition"
+proposition = "NP-063"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-9118"
+project = "mcp-re-proxy"
+control = "lib#revocation_tier::tests::parse_round_trips_each_tier"
+decision = "new-proposition"
+proposition = "NP-063"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-9119"
+project = "mcp-re-proxy"
+control = "lib#revocation_tier::tests::push_guarantee_is_near_zero_with_bounded_fallback_not_zero_window"
+decision = "new-proposition"
+proposition = "NP-063"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-9120"
+project = "mcp-re-proxy"
+control = "lib#revocation_tier::tests::startup_audit_line_carries_backend_tier_and_guarantee_no_key_material"
+decision = "new-proposition"
+proposition = "NP-063"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-9121"
+project = "mcp-re-proxy"
+control = "lib#revocation_tier::tests::wire_names_are_the_semantic_adr_names"
+decision = "new-proposition"
+proposition = "NP-063"
+recorded = "2026-09-19"
+
