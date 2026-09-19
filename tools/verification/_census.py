@@ -238,6 +238,24 @@ def _measurement_index() -> list[Control]:
     return _MEASUREMENT_INDEX
 
 
+#: Every key a `[[disposition]]` row may carry, and every key a `[[proposition]]` may. The
+#: registry's header promises that an unknown key is a validation failure rather than a
+#: silently ignored field; these are what lets `control-census --gate` keep that promise.
+DISPOSITION_KEYS = frozenset(
+    {"id", "project", "control", "decision", "reason_family", "proposition", "recorded",
+     "scope", "carrier"}
+)
+PROPOSITION_KEYS = frozenset(
+    {"id", "title", "carrier", "likely_owner", "consequence", "root_relationship", "record",
+     "statement", "ratified_as"}
+)
+
+
+def raw_registry() -> dict:
+    path = POLICY / "control-dispositions.toml"
+    return tomllib.loads(path.read_text()) if path.is_file() else {}
+
+
 def dispositions() -> list[Disposition]:
     path = POLICY / "control-dispositions.toml"
     if not path.is_file():

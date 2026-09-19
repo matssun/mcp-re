@@ -22,6 +22,7 @@ Run: python3 tools/verification/test_controls.py
 
 from __future__ import annotations
 
+import importlib.machinery
 import sys
 from pathlib import Path
 
@@ -333,6 +334,44 @@ def test_the_register_and_the_registry_agree_in_both_directions():
     assert declared, "nothing declared; the registry went dark"
     assert found - declared == set(), sorted(found - declared)
     assert declared - found == set(), sorted(declared - found)
+
+
+def test_an_unknown_key_in_the_registry_is_refused():
+    """The registry's header promises it, so something has to keep the promise.
+
+    Until this check existed the loader ignored an unknown key, so a typo in `reason_family`
+    read as an ABSENT reason and a `not-evidence` row passed the ADR-069 D3 check with
+    nothing behind it. Perturbed rather than asserted: a schema check that has never seen a
+    bad key is a schema check nobody has run.
+    """
+    censor = _load_census_tool()
+    clean = {"disposition": [{"id": "CD-X", "decision": "not-evidence"}], "proposition": []}
+    assert censor._schema_failures(clean) == []
+    typo = {"disposition": [{"id": "CD-X", "decision": "not-evidence", "reson_family": "ND-001"}]}
+    assert any("reson_family" in problem for problem in censor._schema_failures(typo))
+
+
+def test_a_severity_outside_the_vocabulary_is_refused():
+    """ADR-MCPRE-068 §4.1's words, because a consequence is compared across records."""
+    censor = _load_census_tool()
+    entries = _census.propositions()
+    assert entries, "no propositions; the registry went dark"
+    assert all(e.get("consequence") in ("medium", "high", "critical") for e in entries)
+    bad = {"proposition": [{"id": "NP-X", "consequence": "severe"}], "disposition": []}
+    assert any("severe" in problem for problem in censor._schema_failures(bad))
+
+
+def _load_census_tool():
+    """The `control-census` executable as a module — it has no `.py` suffix."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_loader(
+        "control_census",
+        importlib.machinery.SourceFileLoader("control_census", str(HERE / "control-census")),
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_a_doctest_carries_its_fence_mode():
