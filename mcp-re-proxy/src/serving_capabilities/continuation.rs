@@ -212,6 +212,36 @@ mod tests {
         );
     }
 
+    /// CONTROL 5 — the establishment that FAILS is an error too, not an OFF posture.
+    ///
+    /// Control 4 reaches the refusal by withholding the control runtime, so it measures the
+    /// seam's own precondition and never the backend. The realistic failure is the other
+    /// one: the runtime is there, the operator selected a store, and the store cannot be
+    /// reached. That path has its own `?`, and until this control existed nothing held it —
+    /// a probe replacing it with `Established::off` left every declared control green.
+    ///
+    /// The address is a port nothing can be listening on without privilege, so the connect
+    /// refuses rather than hanging.
+    #[cfg(feature = "redis_replay")]
+    #[test]
+    fn a_selected_store_that_cannot_be_reached_refuses_startup() {
+        let runtime = crate::control_runtime::ControlRuntime::start(
+            crate::control_runtime::ControlRuntimeRequirement::Required,
+        )
+        .expect("a control runtime for the establishment to run on")
+        .expect("Required must start one");
+        let unreachable = plan_for(|c| {
+            c.continuation_control.shared = Some(SharedStoreRequest::redis("redis://127.0.0.1:1"))
+        });
+        let refusal = mrtr_continuation_store(&unreachable, Some(&runtime))
+            .err()
+            .expect("a selected store that cannot be reached must refuse, never announce OFF");
+        assert!(
+            refusal.contains("connect redis continuation store"),
+            "the refusal must name the establishment that failed: {refusal}"
+        );
+    }
+
     /// The plan is the OWNER's projection, and both arms read the same one.
     ///
     /// Without this the controls above could be satisfied by a seam reading some other

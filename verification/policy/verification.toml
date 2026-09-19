@@ -3634,7 +3634,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://proxy/authorization/posture_selection"]
+evidence = [
+  "test://proxy/authorization/posture_selection",
+  "mutation://proxy/authorization/posture_selection",
+]
 # The two directions of the selection, and the two projections that must not collapse it.
 # `Off` is not `Allow`: an unconfigured deployment claims nothing, and a record that reported
 # it as an allow would manufacture a permission nobody granted.
@@ -4010,7 +4013,10 @@ paths = ["mcp-re-client-core/src/delegation_policy.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "medium"
-evidence = ["test://client/delegation_policy/skew_seal"]
+evidence = [
+  "test://client/delegation_policy/skew_seal",
+  "mutation://client/delegation_policy/skew_seal",
+]
 # The seal is the claim. A configured skew beyond the bound is not CONSTRUCTIBLE, rather
 # than rejected later by whichever window happens to check — which is what would let the two
 # windows disagree about the tolerance they applied.
@@ -4031,7 +4037,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://client/execution_contract/disposition_battery"]
+evidence = [
+  "test://client/execution_contract/disposition_battery",
+  "mutation://client/execution_contract/disposition_battery",
+]
 # The one distinction the whole module exists for is the second control: silence is not a
 # did-not-run verdict, and reading it as one is how a side effect gets repeated.
 tested_symbols = [
@@ -5356,7 +5365,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://proxy/serving/outstanding_id_provenance"]
+evidence = [
+  "test://proxy/serving/outstanding_id_provenance",
+  "mutation://proxy/serving/outstanding_id_provenance",
+]
 # `outstanding_id` is a published API with legitimate callers on the client side and in the
 # response validator, so it cannot be deleted to make a second read unavailable. What is
 # measured is that the SERVING PATH does not ask the same document twice — and the third
@@ -5536,7 +5548,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://proxy/signing/response_window_and_receipt"]
+evidence = [
+  "test://proxy/signing/response_window_and_receipt",
+  "mutation://proxy/signing/response_window_and_receipt",
+]
 # The window controls are the seal: `expires` is private and no constructor takes one, so
 # the four cases below are the whole derivation rather than four call sites that remembered
 # to clamp. The last-resort controls are the other half — what an UNSIGNED receipt may still
@@ -5560,7 +5575,10 @@ paths = ["mcp-re-proxy/src/config_state/custody.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://proxy/config_state/custody_exposure"]
+evidence = [
+  "test://proxy/config_state/custody_exposure",
+  "mutation://proxy/config_state/custody_exposure",
+]
 # The first two controls are the claim; the third is what makes it ADR-067-shaped. A
 # consumer asks *may the key be read here*, never *is this AWS* — so a mechanism that does
 # not exist yet drives the same consumer without editing it, which is the property a
@@ -5621,7 +5639,10 @@ paths = ["mcp-re-http-profile/src/sign.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://http_profile/sign/response_binding_roundtrip"]
+evidence = [
+  "test://http_profile/sign/response_binding_roundtrip",
+  "mutation://http_profile/sign/response_binding_roundtrip",
+]
 # ROUND-TRIP controls, deliberately: they sign and then verify, so they measure the EMISSION
 # side rather than restating what the verifier establishes. The third and fourth are the
 # negative half — a response minted for one exchange must not verify as the answer to
@@ -6202,6 +6223,7 @@ evidence_class = "tested"
 direct_consequence_severity = "critical"
 evidence = [
   "test://proxy/replay_materialization/selected_tier_is_established",
+  "mutation://proxy/replay_materialization/selected_tier_is_established",
 ]
 # `startup_plan` is deliberately ABSENT from this closure. That the plan is a projection of
 # the validated configuration is the planner's fact, not this plane's, and folding it in
@@ -6355,7 +6377,10 @@ paths = ["mcp-re-proxy/src/serving_capabilities/continuation.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://proxy/continuation_materialization/shared_arm_refuses_an_unestablishable_store"]
+evidence = [
+  "test://proxy/continuation_materialization/shared_arm_refuses_an_unestablishable_store",
+  "mutation://proxy/continuation_materialization/shared_arm_refuses_an_unestablishable_store",
+]
 # ONE control, deliberately. Everything the two arms share — OFF installs nothing, the OFF
 # line promises no fallback, the input is the owner's projection — is already measured by
 # `proxy.continuation_materialization` with controls that are not `cfg`-gated and therefore
@@ -6365,6 +6390,7 @@ evidence = ["test://proxy/continuation_materialization/shared_arm_refuses_an_une
 # not happen is an error, never an OFF posture.
 tested_symbols = [
   "lib#serving_capabilities::continuation::tests::a_selected_capability_that_cannot_be_established_refuses_startup",
+  "lib#serving_capabilities::continuation::tests::a_selected_store_that_cannot_be_reached_refuses_startup",
 ]
 # The feature this arm is compiled by. Declared rather than left to another lane: half the
 # seam does not exist in the default crate, and a lane that compiles it to zero tests would
@@ -6534,7 +6560,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://proxy/authorization_capability/installed_decision"]
+evidence = [
+  "test://proxy/authorization_capability/installed_decision",
+  "mutation://proxy/authorization_capability/installed_decision",
+]
 tested_symbols = [
   "lib#authorization::capability::tests::a_deployment_installing_nothing_says_so_without_reading_any_trust_material",
   "lib#authorization::capability::tests::a_configured_profile_installs_an_evaluator_over_the_enrolled_authorities",
@@ -8192,7 +8221,10 @@ paths = ["mcp-re-proxy/src/gcp_kms_keysource.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://proxy/gcp_kms_adapter/construction_and_emission"]
+evidence = [
+  "test://proxy/gcp_kms_adapter/construction_and_emission",
+  "mutation://proxy/gcp_kms_adapter/construction_and_emission",
+]
 test_features = ["gcp_kms_keysource"]
 tested_symbols = [
   "lib#gcp_kms_keysource::tests::non_ed25519_algorithm_fails_closed",
@@ -8236,7 +8268,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://proxy/pkcs11_adapter/token_custody_and_sessions"]
+evidence = [
+  "test://proxy/pkcs11_adapter/token_custody_and_sessions",
+  "mutation://proxy/pkcs11_adapter/token_custody_and_sessions",
+]
 test_features = ["pkcs11_keysource"]
 tested_symbols = [
   "lib#pkcs11_keysource::tests::tls_spki_is_well_formed_rfc8410_and_round_trips",
@@ -8398,7 +8433,10 @@ paths = ["mcp-re-client/src/anchors/mod.rs", "mcp-re-client/src/anchors/refreshe
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://client/anchor_refresh/last_good_and_expiry"]
+evidence = [
+  "test://client/anchor_refresh/last_good_and_expiry",
+  "mutation://client/anchor_refresh/last_good_and_expiry",
+]
 # The first three are the FLOOR: a published manifest raises it, a restart still refuses a
 # rolled-back one, and the ephemeral floor forgets — which is the control that keeps the
 # second from passing for a reason that has nothing to do with durability.
@@ -8439,7 +8477,10 @@ paths = ["mcp-re-client/src/startup.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://client/serving_lifetime/refresher_started_and_held"]
+evidence = [
+  "test://client/serving_lifetime/refresher_started_and_held",
+  "mutation://client/serving_lifetime/refresher_started_and_held",
+]
 # One control, and it observes the EFFECT rather than the call: the anchors in force become
 # the empty set while `serve_until_shutdown` runs. The question is asked at the load-time
 # instant, before the manifest's own expiry, so a false pass cannot be manufactured by the
@@ -8460,7 +8501,10 @@ paths = ["mcp-re-client-proxy/src/manifest_floor.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://client/manifest_floor/monotone_by_construction"]
+evidence = [
+  "test://client/manifest_floor/monotone_by_construction",
+  "mutation://client/manifest_floor/monotone_by_construction",
+]
 # Three groups, and each is a defence in a different direction.
 #
 # DOWNWARD, which is what a floor is for: a recorded version survives a reopen, the maximum

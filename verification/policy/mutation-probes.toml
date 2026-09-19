@@ -6486,3 +6486,493 @@ keeps the first and discards the second.
 The entry ceiling below is a sibling conjunct on the same rule, not a second carrier: it
 refuses when the cache is full, and says nothing about a cache whose lock is poisoned.
 """
+
+[[probe]]
+id = "M237-proxy-no-policy-deployed-is-not-a-grant"
+unit = "proxy.authorization_posture"
+theorem = "THM-0091"
+conjunct = "the two facts a posture keeps apart — no policy is deployed, and a policy permitted this"
+path = "mcp-re-proxy/src/authorization/decide.rs"
+anchor = """
+        Err(e) => Err(AuthorizationRefusal::PolicyRefused(e)),
+"""
+weakening = """
+        Err(_e) => Ok(AuthorizationPosture::NoPolicyConfigured),
+"""
+expect_red = [
+  "lib#authorization::decide::tests::a_denying_evaluator_refuses_with_its_own_token",
+]
+note = """
+THE TWO FACTS, CONFLATED IN THE DIRECTION THAT MATTERS. "No policy is deployed" and "a policy
+refused this" are both non-grants, so a reader that only asks *was this authorized?* cannot
+tell them apart -- and the weakening exploits exactly that: a DENY becomes the posture a
+deployment with no policy at all reports. An operator auditing why a request was not
+authorized is then told the deployment has no policy, which is false, and the evaluator's own
+refusal token -- the thing that says WHICH policy refused and why -- is discarded.
+
+The first attempt at this probe weakened the no-evaluator branch into a fabricated grant and
+DID NOT COMPILE, because the decision type has no default; the lane refused it as a
+measurement failure rather than reporting anything about the conjunct, which is the correct
+answer to a tree that does not build.
+"""
+
+[[probe]]
+id = "M238-proxy-an-unreadable-action-is-refused-before-any-policy"
+unit = "proxy.authorization_posture"
+theorem = "THM-0091"
+conjunct = "a request with no readable action is refused before any policy is consulted"
+path = "mcp-re-proxy/src/authorization/decide.rs"
+anchor = """
+    let request = authorization_request(verified, body, binding)
+        .map_err(AuthorizationRefusal::ActionNotVerifiable)?;
+"""
+weakening = """
+    let Ok(request) = authorization_request(verified, body, binding) else {
+        return Ok(AuthorizationPosture::NoPolicyConfigured);
+    };
+"""
+expect_red = [
+  "lib#authorization::decide::tests::a_request_with_no_readable_action_is_refused_before_any_policy_is_consulted",
+  "lib#authorization::decide::tests::a_denial_and_a_missing_coordinate_project_to_different_authorities",
+]
+note = """
+THE COORDINATE IS READ WHETHER OR NOT A POLICY IS CONFIGURED, which is what makes this a
+refusal rather than a lookup failure: a request whose ACTION cannot be established is not a
+request a policy could have been asked about, so answering `NoPolicyConfigured` for it would
+report the deployment's posture as the reason a specific request was unverifiable. The
+weakening collapses two authorities -- the action reader's and the policy's -- into one token,
+which is exactly what the sibling control about projecting to different authorities measures.
+"""
+
+[[probe]]
+id = "M239-proxy-a-configured-profile-with-no-authority-refuses-startup"
+unit = "proxy.authorization_capability"
+theorem = "THM-0091"
+conjunct = "a deployment that configures an authorization profile with no enrolled authority refuses to start rather than serving a profile that can decide nothing"
+path = "mcp-re-proxy/src/authorization/capability.rs"
+anchor = """
+    if issuers.is_empty() {
+"""
+weakening = """
+    if false {
+"""
+expect_red = [
+  "lib#authorization::capability::tests::a_configured_profile_with_no_enrolled_authority_refuses_startup",
+]
+note = """
+THE FAILURE MODE IS A DEPLOYMENT THAT LOOKS CONFIGURED. With no key enrolled for the
+`authorization-issuer` slot no decision can ever verify, so every request is refused for
+carrying no valid decision -- which reads as a policy working correctly and denying
+everything, not as a deployment that was never able to decide. Refusing at STARTUP is the
+only point at which the two are distinguishable, because afterwards the evidence is identical.
+"""
+
+[[probe]]
+id = "M240-proxy-a-selected-store-that-cannot-be-established-refuses-startup"
+unit = "proxy.continuation_materialization_shared"
+theorem = "THM-0091"
+conjunct = "in a build that carries the backend, a selected continuation store that cannot be established refuses startup rather than announcing OFF"
+path = "mcp-re-proxy/src/serving_capabilities/continuation.rs"
+anchor = """
+    let store = handle
+        .block_on(crate::redis_continuation_store::RedisContinuationStore::connect(url))
+        .map_err(|e| format!("connect redis continuation store: {e}"))?;
+"""
+weakening = """
+    let Ok(store) =
+        handle.block_on(crate::redis_continuation_store::RedisContinuationStore::connect(url))
+    else {
+        return Ok(Established::off(CONTINUATION_STORE_OFF));
+    };
+"""
+expect_red = [
+  "lib#serving_capabilities::continuation::tests::a_selected_store_that_cannot_be_reached_refuses_startup",
+]
+note = """
+THE WEAKENING IS THE DEFECT THIS SEAM REPLACED, and the module says so: an ignored selection
+is indistinguishable in the transcript from an operator who never set the flag. A deployment
+that asked for shared continuation correlation and got OFF reports the same startup line as
+one that asked for nothing, so nothing downstream -- no log, no readiness probe, no audit --
+can tell that a selected security capability was silently downgraded.
+
+The feature-gated sibling arm is not a second carrier: it refuses a selection a build without
+the backend cannot establish, which is a different fact about a different binary. This arm's
+proposition is about the build that CAN establish one and failed to.
+
+THIS PROBE FAILED FIRST, and the reason is that the declared control reached the refusal by
+WITHHOLDING THE CONTROL RUNTIME -- it measured the seam's own precondition and never the
+backend. The realistic failure is the other one: the runtime is there, the operator selected a
+store, and the store cannot be reached. That path has its own `?`, and nothing held it. The
+written control points the establishment at a port nothing can listen on without privilege, so
+the connect refuses rather than hanging.
+"""
+
+[[probe]]
+id = "M241-http-profile-the-response-carries-the-handle-over-this-request"
+unit = "http_profile.response_emission_binding"
+theorem = "THM-0091"
+conjunct = "the response evidence block's request-evidence handle is over the request being answered"
+path = "mcp-re-http-profile/src/sign.rs"
+anchor = """
+        request_evidence: RequestEvidenceDigest {
+            digest_alg: request_evidence.digest_alg.clone(),
+            digest_value: request_evidence.digest_value.clone(),
+        },
+    };
+    response.body = insert_meta_block(&response.body, RESPONSE_EVIDENCE_BLOCK_KEY, &block)?;
+    sign_response(response, request, key, key_id, created, expires)
+"""
+weakening = """
+        request_evidence: RequestEvidenceDigest {
+            digest_alg: request_evidence.digest_alg.clone(),
+            digest_value: format!("{}x", request_evidence.digest_value),
+        },
+    };
+    response.body = insert_meta_block(&response.body, RESPONSE_EVIDENCE_BLOCK_KEY, &block)?;
+    sign_response(response, request, key, key_id, created, expires)
+"""
+expect_red = [
+  "tests/full_profile_test#full_response_roundtrip_binds_request_evidence",
+]
+note = """
+TWO BINDINGS, AND THE SIGNATURE CARRIES ONLY ONE OF THEM. The `;req` components bind this
+response to the request's SIGNATURE BASE; the evidence block's handle binds it to the
+request's evidence. The weakening corrupts the handle and leaves `;req` untouched, so the
+response still verifies as the answer to this transmission while the handle it carries names
+a request that does not exist -- which is what makes these two conjuncts rather than one.
+
+An audit reconciling a response against the request it answers reads the HANDLE, not the
+signature base, so a wrong handle is a record that cannot be checked against anything.
+"""
+
+[[probe]]
+id = "M242-client-the-skew-is-clamped-at-construction"
+unit = "client.delegation_policy_seal"
+theorem = "THM-0091"
+conjunct = "the clock skew is clamped to the profile bound at construction, so no inhabitant carries an unbounded tolerance"
+path = "mcp-re-client-core/src/delegation_policy.rs"
+anchor = """
+            clock_skew: max_clock_skew
+                .clamp(0, mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND),
+"""
+weakening = """
+            clock_skew: max_clock_skew,
+"""
+expect_red = [
+  "lib#delegation_policy::policy_seal_tests::a_configured_skew_beyond_the_profile_bound_is_not_constructible",
+  "lib#delegation_policy::policy_seal_tests::a_negative_skew_narrows_to_zero_rather_than_skewing_the_window_backwards",
+]
+note = """
+THE SIGNATURE GATE IS NOT A SECOND CARRIER, and the historical defect is exactly that
+mistake. `VerifierPolicy::new` refuses a skew outside the profile bound, so the RFC 9421
+freshness window was always bounded -- and `DelegationExpectations` carries this number
+STRAIGHT THROUGH to `DelegationVerifyParams.max_clock_skew`, which widens the credential's
+`nbf`/`exp` with no cap of its own. A policy of 604800 therefore accepted a delegated
+credential a week past its `exp` while the signature gate silently clamped the same number,
+so one message was judged under two different notions of "close enough".
+
+THE SEAL IS THE PROPOSITION, not the clamp. The clamp used to live in a `bounded_clock_skew`
+helper every reader had to remember to call, and a reader that took the field directly got the
+unbounded number. Moving it into the only producer is what makes the bound a property of every
+INHABITANT rather than of the call sites somebody checked.
+"""
+
+[[probe]]
+id = "M243-client-an-expired-manifest-withdraws-rather-than-serves"
+unit = "client.anchor_refresh"
+theorem = "THM-0091"
+conjunct = "an EXPIRED manifest with no newer document accepted publishes an EMPTY anchor set rather than keeping the last good one"
+path = "mcp-re-client/src/anchors/refresher.rs"
+anchor = """
+            if now >= *manifest_expires_at {
+"""
+weakening = """
+            if false {
+"""
+expect_red = [
+  "lib#anchors::tests::an_expired_manifest_withdraws_the_anchors_rather_than_serving_on_them",
+]
+note = """
+THE TWO FAILURES LOOK IDENTICAL FROM THE REFRESH'S SIDE, which is why this branch exists. A
+refresh that fails because the publisher is briefly unreachable and one that fails while the
+loaded document has ALREADY EXPIRED both arrive here as `Err`. Keeping the last good anchors
+is right for the first and is precisely "serving on the stale trust picture the expiry check
+refuses" for the second.
+
+Under the weakening a client outlives its own trust picture QUIETLY: every request keeps
+verifying against anchors the issuer has retired, and nothing in the transcript distinguishes
+that from a healthy client. Publishing the empty set makes it fail closed LOUDLY -- every
+response fails as an untrusted issuer, the refresh keeps retrying, and the operator gets a
+signal.
+
+The manifest loader's own expiry refusal is not a second carrier: it refuses to LOAD an
+expired document, and this branch is about the document already in force when no replacement
+can be loaded at all.
+"""
+
+[[probe]]
+id = "M244-client-a-concurrent-raise-makes-the-accepted-version-unrecordable"
+unit = "client.manifest_floor"
+theorem = "THM-0091"
+conjunct = "a floor raised past the accepted version between the load's read and the record is reported rather than treated as success"
+path = "mcp-re-client-proxy/src/manifest_floor.rs"
+anchor = """
+        if durable > version {
+"""
+weakening = """
+        if false {
+"""
+expect_red = [
+  "lib#manifest_floor::tests::a_concurrent_raise_makes_the_accepted_version_unrecordable",
+]
+note = """
+THE ROLLBACK REACHED THROUGH A RACE INSTEAD OF A REPLAY. The manifest's own floor check
+happened at LOAD time and passed; another writer raised the floor between that read and this
+call, so the document that was accepted is one the floor has since refused. Reporting success
+here hands the caller anchors from exactly that document.
+
+The monotone directory is not a second carrier of this conjunct. Its maximum only grows, so
+the FLOOR is never walked back -- and that is a different proposition from the one this branch
+holds, which is that a caller is never handed anchors the current floor would refuse. The
+caller reads the error as "these anchors are not usable" and keeps what it had, which is the
+only safe answer when the two reads disagree.
+"""
+
+[[probe]]
+id = "M245-proxy-a-response-advertises-no-validity-past-its-credential"
+unit = "proxy.response_signing"
+theorem = "THM-0091"
+conjunct = "the validity a response may advertise is bounded by the credential it is signed under, not only by the configured TTL"
+path = "mcp-re-proxy/src/http_profile_serve/signing_window.rs"
+anchor = """
+            expires: now.saturating_add(ttl_secs).min(exp),
+"""
+weakening = """
+            expires: now.saturating_add(ttl_secs),
+"""
+expect_red = [
+  "lib#http_profile_serve::signing_window::tests::the_credential_bounds_a_ttl_that_would_outlive_it",
+  "lib#http_profile_serve::signing_window::tests::an_expired_credential_advertises_no_future_validity",
+]
+note = """
+TWO BOUNDS, AND THE OTHER ONE IS THE OPERATOR'S. The configured TTL is what the deployment
+chose; `exp` is what the delegated credential actually permits. Taking the minimum is what
+makes them one window -- under the weakening a deployment with a generous TTL signs responses
+advertising validity PAST the credential that signed them, so a verifier that trusts the
+advertised window accepts a response whose signing authority had already lapsed.
+
+`saturating_add` is not a second carrier of this conjunct: it stops the TTL arithmetic from
+wrapping, which is why the expired-credential control goes red too -- a wrapped sum would have
+compared as a small number and the `.min` would have hidden it. The two defects are adjacent
+and distinct, and this anchor holds only the bound.
+"""
+
+[[probe]]
+id = "M246-proxy-the-outstanding-id-is-not-read-a-second-time"
+unit = "proxy.outstanding_id_provenance"
+theorem = "THM-0091"
+conjunct = "the serving path never reads the outstanding id from the body a second time, carrying the decided value to its terminal instead"
+path = "mcp-re-proxy/src/http_profile_serve/mod.rs"
+anchor = """
+        let outstanding = &admitted.outstanding;
+"""
+weakening = """
+        let reread = mcp_re_http_profile::outstanding_id(&http_req.body)
+            .unwrap_or(mcp_re_http_profile::OutstandingId::Notification);
+        let outstanding = &reread;
+"""
+expect_red = [
+  "tests/integration#outstanding_id_provenance_test::no_production_serving_code_reads_the_outstanding_id_a_second_time",
+]
+note = """
+THE RULE IS THE CONTROL, and that is what makes this probe worth registering rather than
+awkward. The proposition is an ABSENCE -- nothing reads the body for this answer again -- and
+an absence has no branch to delete, so the weakening ADDS the second read the rule forbids.
+Only a source-scanning control can see it; no behavioural test would, because on a well-formed
+body the two reads AGREE.
+
+They disagree exactly where it matters: a body dispatched as a request and acknowledged as a
+notification means the tool ran and the caller was told nothing ran.
+"""
+
+[[probe]]
+id = "M247-proxy-a-volatile-replay-tier-is-never-handed-over"
+unit = "proxy.replay_materialization"
+theorem = "THM-0091"
+conjunct = "a tier that self-declares the volatile single-process posture is never handed to the serving path"
+path = "mcp-re-proxy/src/replay_plane/materialized.rs"
+anchor = """
+    if tier.durability_class() == mcp_re_core::ReplayDurabilityClass::SingleProcessReference {
+"""
+weakening = """
+    if false {
+"""
+expect_red = [
+  "lib#replay_plane::materialized::tests::a_volatile_tier_is_never_handed_over",
+  "lib#replay_plane::materialized::tests::a_volatile_tier_under_a_linearizable_posture_cannot_be_built",
+]
+note = """
+THE MODULE CALLS THIS DEFENCE IN DEPTH, AND THE MEASUREMENT SAYS OTHERWISE. `--replay-cache
+memory` never reaches here because validation refuses it outright, so for THAT selection the
+statement is a backstop -- but it is the SOLE carrier for two other populations: a store
+reached by some other selection path, and an UNDECLARED backend, because
+`mcp_re_core::durability_class()` defaults to the single-process reference. The weakening
+takes both declared controls red, which is what a sole carrier does; a redundant one would
+have left them green.
+
+So this is not a second instance of the compound-falsifier shape. The post-close-emission
+count stays at one: there, each of two sites independently enforces the WHOLE proposition.
+Here the sibling refusal covers a strictly smaller set of selections.
+
+What it costs is durability the operator believes they have: admitted nonces lost on restart
+and invisible to peer verifiers, under a posture that advertises replay protection.
+"""
+
+[[probe]]
+id = "M248-proxy-a-pkcs11-signature-is-verified-before-emission"
+unit = "proxy.pkcs11_adapter"
+theorem = "THM-0091"
+conjunct = "a 64-byte signature that does not verify under the token's advertised public key is refused before emission"
+path = "mcp-re-proxy/src/pkcs11_keysource/mod.rs"
+anchor = """
+    verify_ed25519(preimage, &signature_b64url, verify_key).map_err(|e| {
+"""
+weakening = """
+    Ok::<(), KeyError>(()).map_err(|e: KeyError| {
+"""
+expect_red = [
+  "lib#pkcs11_keysource::tests::unverifiable_64byte_signature_is_rejected_before_emit",
+]
+note = """
+THE LENGTH IS NOT THE CHECK. A token configured with a prehash or over-hashing CKM mechanism
+returns a perfectly well-formed 64 BYTES that verifies under nothing, and so does a
+mis-bound key -- the shape is right and the signature is wrong. Only verifying it locally
+against the SPKI the token itself advertised separates the two, and nothing between here and
+the wire asks again: the signature goes into a response the peer verifies against that same
+advertised key, so the failure surfaces on somebody else's machine.
+
+The same conjunct and the same weakening shape as M219 on the AWS KMS adapter. Two adapters,
+two units, one rule -- and each needs its own falsifier, because a third provider could
+implement the rule in neither.
+"""
+
+[[probe]]
+id = "M249-proxy-only-the-device-states-hold-the-key-off-this-process"
+unit = "proxy.custody_exposure"
+theorem = "THM-0091"
+conjunct = "the ADR-MCPRE-067 exposure fact read off a custody state — only the device states hold the key off this process"
+path = "mcp-re-proxy/src/config_state/custody.rs"
+anchor = """
+            CustodyKind::FileSeed { .. } | CustodyKind::EnvSeed { .. } => {
+                PrivateKeyExposure::ProcessReadable
+            }
+"""
+weakening = """
+            CustodyKind::FileSeed { .. } | CustodyKind::EnvSeed { .. } => {
+                PrivateKeyExposure::NonExporting
+            }
+"""
+expect_red = [
+  "lib#config_state::custody::tests::only_the_device_states_hold_the_key_off_this_process",
+]
+note = """
+THE WEAKENING IS A LIE ABOUT A DEPLOYMENT, not a broken mechanism. Nothing stops working: a
+file-seed deployment keeps signing exactly as before, and the only thing that changes is what
+it SAYS about itself. `PrivateKeyExposure` is the semantic answer ADR-MCPRE-067 consumers read
+-- it names no mechanism, deliberately -- so a consumer asking whether the private key can be
+read out of this process is told no while the seed sits in the process's own memory.
+
+That is why the classifier and the projection are one unit: a posture nobody can act on
+wrongly is worth nothing, and a posture that misreports is worse than none.
+"""
+
+[[probe]]
+id = "M250-client-silence-is-not-a-statement-that-nothing-ran"
+unit = "client.execution_contract"
+theorem = "THM-0091"
+conjunct = "a receipt that says nothing about execution is distinguished from one that says nothing ran"
+path = "mcp-re-client-core/src/execution_contract.rs"
+anchor = """
+            None => ExecutionStatus::Unstated,
+"""
+weakening = """
+            None => ExecutionStatus::NotExecuted,
+"""
+expect_red = [
+  "lib#execution_contract::tests::a_receipt_that_says_nothing_is_not_a_receipt_that_says_it_did_not_run",
+]
+note = """
+THE DEFAULT IS THE DECISION. Nothing here validates or refuses; the whole proposition is which
+of two answers an ABSENCE maps to, and the weakening is a one-token edit that no reader would
+flag. `Unstated` leaves the question open, so a caller must reconcile before retrying;
+`NotExecuted` closes it, so a caller retries -- and if the work did run, it runs twice under a
+fresh nonce that passes replay admission.
+
+The `Unrecognized` arm is not a second carrier: it covers a value the server DID send that this
+client does not know, which is a third fact again. Three answers, one match, and collapsing any
+two of them is a silent change of meaning rather than a broken mechanism.
+"""
+
+[[probe]]
+id = "M251-proxy-a-gcp-signature-is-verified-before-it-is-returned"
+unit = "proxy.gcp_kms_adapter"
+theorem = "THM-0091"
+conjunct = "every signature is verified locally against the advertised public key before it is returned, and a pre-hashed signature is refused"
+path = "mcp-re-proxy/src/gcp_kms_keysource.rs"
+anchor = """
+        verify_ed25519(
+            preimage,
+            &b64url_encode(signature.bytes()),
+            &self.verify_key,
+        )
+        .map_err(|e| {
+"""
+weakening = """
+        Ok::<(), KeyError>(())
+        .map_err(|e: KeyError| {
+"""
+expect_red = [
+  "lib#gcp_kms_keysource::tests::prehash_signature_is_rejected_before_return",
+]
+note = """
+THE THIRD PROVIDER, AND THE THIRD FALSIFIER FOR ONE RULE -- after M219 (AWS) and M248 (PKCS#11).
+That the same conjunct needs a probe in each adapter is the point rather than a duplication:
+the rule is not carried anywhere shared, so a fourth provider could implement it in none of
+them and no existing probe would notice.
+
+Worth recording as a Phase-2 observation: three adapters implementing one proposition
+independently is a candidate for a shared owner. That is an architectural question for
+ADR-MCPRE-061 question 2, not a falsifier question, and it is NOT acted on here.
+"""
+
+[[probe]]
+id = "M252-client-the-refresher-is-started-before-the-listener-is-served"
+unit = "client.serving_lifetime"
+theorem = "THM-0091"
+conjunct = "the anchor refresher is started unconditionally before the local listener is served and held for as long as it serves"
+path = "mcp-re-client/src/startup.rs"
+anchor = """
+    let _refresher = AnchorRefresher::start(
+"""
+weakening = """
+    let _ = AnchorRefresher::start(
+"""
+expect_red = [
+  "bin/mcp-re-client#startup::tests::the_serving_path_starts_the_anchor_refresher_and_anchors_are_withdrawn_on_expiry",
+]
+note = """
+`let _ = ` RATHER THAN A DELETION, and the difference is the proposition: the refresher is
+still STARTED, and it is dropped at the end of the statement instead of being held for the
+serving lifetime. So the weakening attacks "held for as long as it serves" precisely, and
+leaves "started" alone -- which is what makes the control's 31-second wait meaningful rather
+than incidental.
+
+Nothing on the request path withdraws anchors. A client without a running refresher keeps
+verifying against the anchors it loaded at startup for as long as it runs, including after the
+manifest in force has passed its own `expires_at`, and every unit test of the refresher would
+still pass while it did.
+
+THIS PROBE EXPOSED A LANE DEFECT before it measured anything: `bin/<name>` is one of the four
+declared Cargo target shapes and the lane held a second, smaller idea of them, so the battery
+never ran and the probe was blamed. Fixed in the lane, not here.
+"""
