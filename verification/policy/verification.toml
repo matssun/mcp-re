@@ -122,6 +122,7 @@ direct_consequence_severity = "high"
 evidence = [
   "test://http_profile/keyid/rfc8037_a3_known_answer",
   "test://http_profile/keyid/derivation_introduces_no_collisions",
+  "mutation://http_profile/keyid/rfc8037_a3_known_answer",
 ]
 # NO primitive assumption, and that is the point of the split. Everything this unit
 # measures is a property of code MCP-RE wrote: the form is a fixed prefix, the operand
@@ -151,7 +152,10 @@ paths = ["mcp-re-http-profile/src/keyid.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://http_profile/keyid/derivation_introduces_no_collisions"]
+evidence = [
+  "test://http_profile/keyid/derivation_introduces_no_collisions",
+  "mutation://http_profile/keyid/derivation_introduces_no_collisions",
+]
 # The MCP-RE half is measured here too, because the composition rests on it. What is NOT
 # measurable is the other half, and nothing here pretends otherwise: no test can establish
 # collision resistance, which is why ASM-0037 exists and why it is scoped to this unit and
@@ -1138,7 +1142,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://http_profile/admission/assertion_authenticity"]
+evidence = [
+  "test://http_profile/admission/assertion_authenticity",
+  "mutation://http_profile/admission/assertion_authenticity",
+]
 # The battery is negative on purpose. Each member removes one way an assertion could be
 # believed without being this enforcement point's to believe: another issuer's key, another
 # credential profile, another audience, another profile id, or a window that has passed in
@@ -3602,7 +3609,10 @@ paths = ["mcp-re-proxy/src/config_state/cross_machine.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://proxy/config_state/cross_machine_relations"]
+evidence = [
+  "test://proxy/config_state/cross_machine_relations",
+  "mutation://proxy/config_state/cross_machine_relations",
+]
 # The last control is the one that keeps this pass from becoming a second opinion: the
 # trust-epoch posture is NOT re-derived here, it is read from the machine that owns it.
 tested_symbols = [
@@ -3667,7 +3677,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://client/trust_manifest/lifecycle_battery"]
+evidence = [
+  "test://client/trust_manifest/lifecycle_battery",
+  "mutation://client/trust_manifest/lifecycle_battery",
+]
 # The negative controls carry this unit. A rolled-back version, a tampered signature, an
 # untrusted signer, a wrong profile and an expired deadline must each fail closed, and the
 # floor must not default to zero when it cannot be read — a fail-open there would accept
@@ -3923,7 +3936,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://client/response/signer_authorization"]
+evidence = [
+  "test://client/response/signer_authorization",
+  "mutation://client/response/signer_authorization",
+]
 # Two separations, each with its negative control: the pin against the ROOT issuer rather
 # than the rotating delegated kid, and revocation by every identifier the manifest can name.
 # The rotation control is the pair to the revocation ones: a new delegated key under the
@@ -3967,7 +3983,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://client/response/binding_disposition"]
+evidence = [
+  "test://client/response/binding_disposition",
+  "mutation://client/response/binding_disposition",
+]
 # The controls are the negatives: unbound-is-not-success, and a preflight receipt about
 # another request's bytes — or about no request at all — is not an answer to this one. The
 # positive `delegated_preflight_rejection_is_verified_unbound` is what makes them a
@@ -4052,7 +4071,10 @@ paths = ["mcp-re-client-proxy/src/verified_outcome.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://client/verified_outcome/what_a_verified_reply_entitles"]
+evidence = [
+  "test://client/verified_outcome/what_a_verified_reply_entitles",
+  "mutation://client/verified_outcome/what_a_verified_reply_entitles",
+]
 # The two refusals are the point, and the third control is what stops "fails closed" from
 # being satisfied by refusing every non-terminal leg: a well-formed continuation must still
 # surface its state. The rejection control keeps a provable denial an ANSWER rather than a
@@ -5300,7 +5322,10 @@ paths = ["mcp-re-http-profile/src/envelope/request.rs",
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://http_profile/envelope/request_and_correlation"]
+evidence = [
+  "test://http_profile/envelope/request_and_correlation",
+  "mutation://http_profile/envelope/request_and_correlation",
+]
 # The vocabulary half of THM-0083. The battery is largely negative: which bodies are NOT
 # messages, which bodies this profile cannot carry unchanged, and the two ways a correlation
 # could be faked — a null id, and a reply that is also a request.
@@ -5477,7 +5502,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
-evidence = ["test://proxy/materialization/signing_role_separation"]
+evidence = [
+  "test://proxy/materialization/signing_role_separation",
+  "mutation://proxy/materialization/signing_role_separation",
+]
 # Both directions, and the two arms that are NOT collapses. A refusal control alone would
 # pass on an authority that refused everything, and a materialization control alone would
 # pass on one that compared nothing — so the battery has to show it separates the cases. The
@@ -5980,6 +6008,7 @@ evidence_class = "tested"
 direct_consequence_severity = "critical"
 evidence = [
   "test://proxy/kms_endpoint_authority/spelling_is_interpretation",
+  "mutation://proxy/kms_endpoint_authority/spelling_is_interpretation",
 ]
 # WHAT THIS IS AND IS NOT. It is the KMS-specific leaf: an AGREEMENT between two readings
 # of one string. It is NOT a reachability claim — a config-time check over a host string
@@ -7015,7 +7044,10 @@ paths = ["mcp-re-http-profile/src/replay.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://http_profile/replay/key_injectivity"]
+evidence = [
+  "test://http_profile/replay/key_injectivity",
+  "mutation://http_profile/replay/key_injectivity",
+]
 # Injectivity here is a REAL claim about this code, not a primitive assumption: the separator
 # is a code point that cannot appear in a profile id, an RFC 9421 label, an escaped actor id
 # or a base64url audience hash, so the join cannot be forged. `every_component_discriminates`
@@ -7898,7 +7930,10 @@ paths = [
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://host/request_freshness_inputs"]
+evidence = [
+  "test://host/request_freshness_inputs",
+  "mutation://host/request_freshness_inputs",
+]
 # Three groups. The entropy controls are about the production source; the gating controls are
 # about the fixtures NOT being on the production surface, which is a two-part boundary — the
 # `#[cfg]` on each item AND the feature not being default and not being a normal dependency.
@@ -8122,7 +8157,10 @@ paths = ["mcp-re-proxy/src/aws_kms_keysource.rs", "mcp-re-proxy/src/aws_sigv4.rs
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://proxy/aws_kms_adapter/construction_and_emission"]
+evidence = [
+  "test://proxy/aws_kms_adapter/construction_and_emission",
+  "mutation://proxy/aws_kms_adapter/construction_and_emission",
+]
 test_features = ["aws_kms_keysource"]
 tested_symbols = [
   "lib#aws_kms_keysource::tests::non_ed25519_key_spec_fails_closed",
@@ -8275,7 +8313,10 @@ paths = ["mcp-re-core/src/replay.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://core/replay_seam/decision_and_outage"]
+evidence = [
+  "test://core/replay_seam/decision_and_outage",
+  "mutation://core/replay_seam/decision_and_outage",
+]
 # The key's shape is the first three: a nonce is fresh again under a different signer or a
 # different AUDIENCE, which is what makes the triple a triple rather than a nonce. There is no
 # principal control because the principal is not in the key — it is the retention budget's
@@ -8309,7 +8350,10 @@ paths = ["mcp-re-core/src/resolver.rs"]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
-evidence = ["test://core/trust_resolver_seam/binding_and_outage"]
+evidence = [
+  "test://core/trust_resolver_seam/binding_and_outage",
+  "mutation://core/trust_resolver_seam/binding_and_outage",
+]
 # The injectivity control is the one that is not about the mapping's happy path: without it,
 # a signer whose name contains the delimiter could resolve under another signer's key id.
 tested_symbols = [

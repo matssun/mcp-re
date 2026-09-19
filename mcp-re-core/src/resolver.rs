@@ -317,6 +317,37 @@ mod tests {
         assert_eq!(resolved_ab.to_bytes(), key_ab.to_bytes());
         assert_eq!(resolved_bc.to_bytes(), key_bc.to_bytes());
         assert_ne!(resolved_ab.to_bytes(), resolved_bc.to_bytes());
+
+        // AND the characters `compose_key` ITSELF joins on. `#` is what a naive DID-shaped
+        // join would collide over, and it exercises nothing about this encoding, because
+        // `compose_key` does not use `#`. The pairs that collapse under a naive version of
+        // THIS function are the ones containing `:` and `|`, and only they can tell the
+        // length-prefixed encoding from a bare join of the same two fields.
+        for (signer_x, key_id_x, signer_y, key_id_y) in [
+            ("a|b", "c", "a", "b|c"),
+            ("a:b", "c", "a", "b:c"),
+            ("1:a", "b", "1", "a:b"),
+        ] {
+            let mut resolver = InMemoryTrustResolver::new();
+            resolver.insert(signer_x, key_id_x, key_ab.clone());
+            resolver.insert(signer_y, key_id_y, key_bc.clone());
+            let x = resolver
+                .resolve(signer_x, key_id_x)
+                .expect("the first pair must resolve to its own key");
+            let y = resolver
+                .resolve(signer_y, key_id_y)
+                .expect("the second pair must resolve to its own key");
+            assert_eq!(
+                x.to_bytes(),
+                key_ab.to_bytes(),
+                "({signer_x:?}, {key_id_x:?}) resolved a key enrolled under another pair"
+            );
+            assert_eq!(
+                y.to_bytes(),
+                key_bc.to_bytes(),
+                "({signer_y:?}, {key_id_y:?}) resolved a key enrolled under another pair"
+            );
+        }
     }
 
     #[test]
