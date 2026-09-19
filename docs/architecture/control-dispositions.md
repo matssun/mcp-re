@@ -140,6 +140,13 @@ SLO measurement is ever registered as `measured://`, its `measurement_control` w
 sensitivity or reproducibility control on the number — not a test that the harness declines
 to run on a busy machine.
 
+**Extended 2026-09-19, batch 21:** `mcp-re-proxy/tests/tls_load_harness_bench.rs`, the Rust
+load harness itself. Same reason, and one more that is this repository's own worked example
+of a false green: the file is gated to the `redis_replay` feature rather than marked
+`#[ignore]`, so the `-- --ignored` form selects ZERO tests, exits 0 and writes no report.
+`scripts/slo_invocation_gate.py` exists to keep that form out. A harness whose invocation had
+to be policed is not a control over the product.
+
 **What would move a control out of this family.** A control here that IS the reproducibility
 or sensitivity control of a registered `measured://` record. That control is that unit's
 declared evidence and leaves the census by being named in the registry.
@@ -2647,5 +2654,183 @@ is called*, and the trust plane separates *the cache* from *the posture*.
 **Statement.** *`materialize` publishes a usable key AND OWNS ONE ROTATION WORKER; it refuses when the configured shared epoch cannot be read; and it refuses when the root cannot issue the first key.*
 **If false.** The plane starts with no usable key, or with a rotation worker nobody owns — NP-003's lifetime rule at the one plane whose worker mints keys.
 **Likely owner:** none.
+**Severity:** `critical`.
+
+---
+
+## The proxy's integration lanes — NP-149 through NP-168
+
+The last 327 controls, in `mcp-re-proxy/tests/`. These are the COMPOSITIONS: each one takes
+propositions this campaign recorded at a component's own API and establishes that the
+components work together on a real serving path. That is why almost none of them could be
+registered against an existing unit — a unit is the smallest authority whose source can be
+fingerprinted, and a composition's source is every unit under it.
+
+**Two of them carry a lane fact that any ratification inherits**, and it is recorded here
+rather than discovered later: NP-149 runs only in the opt-in nightly cloud lane, and NP-150
+only where a live Redis and etcd exist. NP-167 runs only under Bazel. Registering any of
+them without saying so would put a control the merge path never executes inside a battery
+the merge path checks.
+
+## NP-149 — MCP-RE signs under a real cloud KMS key, end to end
+
+**Controls:** `mcp-re-proxy/tests/integration_live` and its siblings.
+**Statement.** *Against a real AWS or GCP KMS key: the HTTP profile serves, the delegated-required posture serves, the delegated-TLS handshake signs, delegated signing issues, and a root rotation completes — each under a key the process never holds.*
+**If false.** The custody argument holds against a fixture and not against the cloud. Every unit above these is measured against an in-process signer; this is the only evidence that the same composition works where the key is somewhere else.
+**The lane.** These run ONLY in the opt-in nightly `cloud-kms-live.yml` lane, which needs real cloud credentials. A unit registering them would fail the merge-path lane on every pull request — the same mechanical constraint NP-009 records, with the difference that here the lane exists and runs. Ratifying this proposition means deciding what a claim established only nightly is worth, which is exactly the question ADR-MCPRE-068's evidence classes were built to ask.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-150 — the external-backend tiers behave as the tier promises
+
+**Controls:** `mcp-re-proxy/tests/integration_ext` and its siblings.
+**Statement.** *Against a real Redis and a real etcd: the replay tier admits a nonce once, the continuation store establishes a leg once, the trust-epoch source turns reads into invalidation events, the cpstore endpoint serves a linearizable tier, and the OCSP path behaves as configured.*
+**If false.** A tier's published guarantee (NP-121) is established against an in-memory stand-in and not against the backend that has to provide it. The stand-in cannot lose a write, and the backend can.
+**The lane.** These are feature-gated lanes that need a live Redis and etcd; `cargo test --workspace` compiles them to zero tests. The property includes the lane it exists in, and a unit claiming them without that lane would report green over nothing.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-151 — the MRT continuation is driven correctly across replicas
+
+**Controls:** `mcp-re-proxy/tests/integration_async/mrt_continuation_serving_test.rs` and its siblings.
+**Statement.** *The stateless cross-replica continuation: an open leg is established, its handles reach the answer leg, a non-terminal reply pauses the call and a terminal one resolves it, and no replica can be made to answer a leg it did not open.*
+**If false.** A continuation is answered by a replica that never saw its open leg, or an answer leg signs over handles from a different exchange. This is the serving-path composition above NP-119's store.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-152 — the TLS listener admits exactly the peers it was configured for
+
+**Controls:** `mcp-re-proxy/tests/integration/tls_test.rs` and its siblings.
+**Statement.** *End to end over a real listener: a client certificate that is untrusted, revoked, expired or carries the wrong identity is refused during the handshake; the transport binding holds between the channel peer and the request actor; and the declared fault injector is what makes any of those accepted.*
+**If false.** The listener admits a peer it was configured to refuse. The fault-injection controls are the anti-vacuity arm — the same role they play for the client transport in batch 18 — and they are here because a handshake refusal nobody can make fail is a refusal nobody has measured.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-153 — the startup transcript is what the deployment actually did
+
+**Controls:** `mcp-re-proxy/tests/integration/app_startup_characterization_test.rs` and its siblings.
+**Statement.** *Over a real startup: the transcript names every posture the deployment took, a refusal precedence is stable and names the first thing wrong, the legality characterization matches the classifiers, and the documented CLI is the CLI that ran.*
+**If false.** An operator reads a transcript that describes a deployment other than the one running. This is the composition above NP-004, NP-123 and the argv family: each of those says a posture is stated; this says the statement is true of this process.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-154 — transparency retention and publication hold on the serving path
+
+**Controls:** `mcp-re-proxy/tests/integration_async/transparency_e2e_test.rs` and its siblings.
+**Statement.** *Over a real exchange: a reservation is taken before dispatch and discharged by the response actually served, a post-dispatch refusal leaves no dangling crossing, and what is retained is the exchange that happened.*
+**If false.** The answerability record and the exchange diverge on the live path, which is where they are relied on. NP-048's storage-boundary contract and `proxy.retention_commitment`'s two stages meet here, on a real serving path rather than at either owner's API.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-155 — the delegated client-server composition works end to end
+
+**Controls:** `mcp-re-proxy/tests/integration_async/delegated_client_server_e2e_test.rs` and its siblings.
+**Statement.** *A real client, a real proxy and a real backend over delegated signing and mTLS: the request is signed, the response is verified as bound to it, the delegated credential chains to a trusted root, and the production wiring is the wiring that runs.*
+**If false.** Every delegated-path unit is established over a component; this is the only evidence that the components compose. It is the proxy-side twin of NP-009 — and unlike NP-009, this one does run, in the Bazel `async_serve` lane.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-156 — the inner-backend health machinery works under a real serving load
+
+**Controls:** `mcp-re-proxy/tests/integration_async/http_inner_test.rs` and its siblings.
+**Statement.** *Over a real inner backend: ejection, cooldown, single-probe recovery and health-aware selection behave as NP-139 describes, under concurrent serving rather than at the unit's API.*
+**If false.** The breaker is correct in isolation and wrong under concurrency — which is the only condition it exists for.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `high`.
+
+## NP-157 — the replay tier admits a nonce once under contention
+
+**Controls:** `mcp-re-proxy/tests/integration_async/replay_race_harness_test.rs` and its siblings.
+**Statement.** *Under a deliberate race: concurrent presentations of one nonce yield exactly one admission, and the async tier's accounting survives the contention.*
+**If false.** A replay is admitted because two workers checked before either recorded. NP-120 establishes the store's semantics; this establishes that the serving path uses them in a way the race cannot defeat.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-158 — AWS web identity is exchanged, cached and refreshed correctly
+
+**Controls:** `mcp-re-proxy/tests/aws_irsa_web_identity_test.rs` and its siblings.
+**Statement.** *The IRSA web-identity token is read from its projected file, exchanged for credentials, cached for its stated lifetime and re-exchanged when the file rotates or the credentials expire.*
+**If false.** The proxy signs with expired credentials, or re-exchanges on every call and is throttled out of signing at all. NP-114 is the same authority for GCP's metadata token, and the two are separate because the mechanisms differ in what can go wrong.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-159 — a root key rotates without a gap and without a restart
+
+**Controls:** `mcp-re-proxy/tests/integration_async/root_key_lifecycle_test.rs` and its siblings.
+**Statement.** *Over a live rotation: the new root is published before the old one is withdrawn, the manifest names the set in force, and a verifier following the manifest never sees a window with no acceptable root.*
+**If false.** A rotation leaves a window in which nothing verifies, or the old root stays acceptable after it was meant to be withdrawn — the two failure directions of every key rotation.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-160 — admission currency is enforced on the serving path
+
+**Controls:** `mcp-re-proxy/tests/integration_async/admission_currency_serving_test.rs` and its siblings.
+**Statement.** *Over a real serving path: an admission record past its authorized window does not admit, a current one does, and the propagation delay between the source and the serving decision is bounded and measured.*
+**If false.** A workload keeps being admitted after its admission was withdrawn. NP-144 establishes the record's addressing and window at the source; this establishes that the serving path honours them.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-161 — dispatch carries the request the caller signed, unchanged
+
+**Controls:** `mcp-re-proxy/tests/integration/http_profile_dispatch_test.rs` and its siblings.
+**Statement.** *Over a real dispatch: the body forwarded to the backend is the body the signature covered, byte for byte; an RFC 9421 round trip through the proxy verifies at both ends; and body fidelity survives forwarding.*
+**If false.** The proxy forwards something other than what it verified, so the backend acts on bytes no signature covered. NP-088 says the composer does not rewrite; this says the forwarder does not either.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-162 — a configuration reachback and hot reload change what is served and nothing else
+
+**Controls:** `mcp-re-proxy/tests/integration/plane_config_reachback_test.rs` and its siblings.
+**Statement.** *A plane's configuration reachback answers from the configuration in force, and a hot reload swaps it without disturbing exchanges already in flight.*
+**If false.** An in-flight exchange is decided half under each configuration — NP-127's failure on the live path — or a reachback reports a configuration that is not the one serving.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `high`.
+
+## NP-163 — an authorization decision reaches the serving path intact
+
+**Controls:** `mcp-re-proxy/tests/integration_async/pdp_authorization_serving_test.rs` and its siblings.
+**Statement.** *Over a real serving path: the PDP decision the request carried is the one the policy evaluated, and a request whose decision does not authorize its action is refused before dispatch.*
+**If false.** An unauthorized call reaches the backend. NP-131 establishes the pairing at the authorization plane's API; this establishes that the serving path does not reopen it.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-164 — a key source is selected, opened and used as configured
+
+**Controls:** `mcp-re-proxy/tests/key_source_test.rs` and its siblings.
+**Statement.** *End to end for each source: a PKCS#11 token signs without exporting, a development environment source is refused in a production build, and the source the configuration selected is the source that signs.*
+**If false.** The process signs under a different key source from the one configured — the one case where every other custody argument is about the wrong object. NP-125 states the delegation rule; this establishes it over each real source.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-165 — revocation is consulted per request, not per connection
+
+**Controls:** `mcp-re-proxy/tests/integration_async/per_request_revocation_test.rs` and its siblings.
+**Statement.** *A peer revoked after its connection was established is refused on its next request rather than served for the life of the connection.*
+**If false.** A revoked client keeps being served until it disconnects. NP-140 states the bound on established connections; this is that bound measured on the serving path.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-166 — the verified-context carrier is attached only where the inner channel is trusted
+
+**Controls:** `mcp-re-proxy/tests/integration_async/verified_context_carrier_test.rs` and its siblings.
+**Statement.** *Over a real exchange: the verified-context carrier reaches the backend only when the inner channel is trusted, and carries exactly what was verified.*
+**If false.** A backend receives a verified-context assertion over a channel that did not earn it, and treats a claim MCP-RE made about itself as one it can rely on.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-167 — the async drain is bounded and ordered
+
+**Controls:** `mcp-re-proxy/tests/async_drain_test.rs` and its siblings.
+**Statement.** *Teardown drains in-flight work within a bound, in the documented order, and nothing is accepted after the drain begins.*
+**If false.** A shutdown either hangs on work that never completes or abandons work that had been accepted. Only the Bazel lane runs this file — it is `#![cfg(feature = "async_serve")]` and `cargo test --workspace` compiles it to zero tests — which is a fact any ratification inherits.
+**Likely owner:** none — a composition's source is every unit under it.
+**Severity:** `critical`.
+
+## NP-168 — no exchange transition is advanced by two owners
+
+**Controls:** `mcp-re-proxy/tests/integration/exchange_transition_ownership_test.rs` and its siblings.
+**Statement.** *Every exchange-lifecycle transition an assembly stage establishes is advanced by that stage alone, and no serving-path step advances one a stage owns.*
+**If false.** Two owners advance one transition, so the exchange lifecycle records a step that happened twice or a step nobody took. This is `proxy.cross_machine_legality`'s rule for the exchange lifecycle, and its three registered siblings in the same file are already claimed while this one is not.
+**Likely owner:** none — a composition's source is every unit under it.
 **Severity:** `critical`.
 
