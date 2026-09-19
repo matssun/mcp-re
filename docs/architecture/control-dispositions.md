@@ -2098,6 +2098,23 @@ whole of it: `a:bc` and `ab:c` must not be the same actor.
 **Likely owner:** none of the fourteen units that measure this file. Each of them is about
 what its own verdict means; this is about the identifier they all compare.
 **Severity:** `critical`.
+**Registered in part, ADR-MCPRE-069 HP-S2 — the CLOSURE half only.** The record's title
+carries an "and", and the "and" is accurate: it holds two independently describable
+authorities. The closure half is now `unit://http_profile.evidence_block_closure` under
+**THM-0015**, whose statement contains it verbatim — *"the request evidence block parsed and
+validated under the profile tag"* — carrying `block_round_trips`,
+`unknown_field_fails_closed`, `foreign_profile_fails_closed` and
+`empty_artifact_bindings_fails_closed`.
+**The INJECTIVITY half is not registered, and the unit's description says so.** That the
+`role:trust_domain:subject:keyid` join and the audience hash are injective ENCODINGS is
+asserted as a premise by THM-0034 (*"The composite is the injective
+`role:trust_domain:subject:keyid` join, and it is the canonical coordinate for replay keys,
+audit records and trusted-key identity"*) and established by no theorem. THM-0079 is the
+closest and fails on a quantifier: its biconditional is over the five-tuple AS A TUPLE, so two
+distinct actors collapsing to one actor-id string produce EQUAL tuples and THM-0079 stays true
+while the property fails. Seven rows REMAIN, and letting the registered unit's description
+drift onto injectivity would be the widening ADR-069 §5 holds to be worse than leaving a
+control unregistered.
 
 ## NP-088 — the body is signed as written, or refused
 
@@ -2118,6 +2135,24 @@ is for. "Refused, not rewritten" is the clause: silently normalising is how a si
 comes to cover something nobody sent.
 **Likely owner:** none of the eleven units that measure this file.
 **Severity:** `critical`.
+**Registered in part, ADR-MCPRE-069 HP-S2 — the CARRIER, not the values it may carry.**
+Five controls are now `unit://http_profile.evidence_block_carriage`, whose `paths` is
+`src/body/mod.rs` alone. Four are contained by **THM-0015**'s *"the request evidence block
+parsed and validated under the profile tag"* — `foreign_field_fails_closed`,
+`non_object_body_fails_closed`, `absent_block_is_missing_evidence`, and
+`insert_then_extract_roundtrips`, which is their anti-vacuity partner: without the round trip
+the three refusals are green under an `extract_meta_block` that always errs. The fifth,
+`insert_preserves_existing_meta_entries`, is contained by **THM-0125**'s *"the MCP-RE evidence
+block lands at the body root rather than inside the caller's content"* and its companion
+clause *"The caller's own `params._meta` survives signing unchanged"*; the unit is appended to
+THM-0125's `supported_by`, and NOT to `client.request_construction`, whose `paths` are in
+`mcp-re-client-core` and which a cross-project widening would be required to reach.
+**Fourteen rows REMAIN**, and they are one proposition rather than three: *what the carrier
+cannot carry unchanged does not get signed*. The decimal-token algebra is the comparison
+`reject_unrepresentable_json` is DEFINED in terms of, and the duplicate-member arm is the same
+predicate over a different JSON construct. No theorem in the registry states a
+composition-side refusal over the body — THM-0014 is verification-side and about bytes already
+fixed, and THM-0125's scope hands the carrier's composition here in terms.
 
 ## NP-089 — the signature base is exactly the covered components
 
@@ -2132,6 +2167,19 @@ change — and a valid signature verifies over the wrong bytes. The CRLF clauses
 smuggling arriving inside the signature base.
 **Likely owner:** none of the ten units that measure this file.
 **Severity:** `critical`.
+**Referred whole, ADR-MCPRE-069 HP-S2 — and the one R2 candidate was re-tested and refused.**
+The scheduling analysis routed `sigbase::tests::req_component_on_request_fails_closed` to
+**THM-0022** under its clause *"a `;req` component is refused as malformed, because no request
+exists to resolve it against"*. Re-tested against the source, clause 2 fails twice over.
+THM-0022 is a conditional over values successfully returned by
+`verify_unbound_response_floor` and `verify_delegated_unbound_response`, and its scope says so
+— *"It characterizes values successfully returned by those two operations"* — while the
+control calls `signature_base` directly and no verification operation runs at all. And the
+theorem's clause states its GROUND, which is false for this control: measured at
+`src/sigbase.rs`, the source message is `SourceMessage::Request(&r)`, so the refusal here is
+the base composer's own and not the response verifier's. A refusal in the base composer over a
+request message is not a strict decomposition of a statement about what an unbound-response
+verification establishes. All eight rows stay; the record is whole-R6, not R2(1) + R6(7).
 
 ## NP-090 — the structured-field surface is closed and canonical
 
@@ -2177,13 +2225,38 @@ establish rather than what any unit above them promises.
 **Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
 **Severity:** `critical`.
 
-## NP-094 — a refusal carries its own provenance and is read only after verification
+## NP-094 — a refusal is a document, and its wire code is read only after the signature verifies
 
-**Controls:** `mcp-re-http-profile/src/rejection/mod.rs`, `mcp-re-http-profile/src/error/core_projection.rs`, `mcp-re-http-profile/src/error.rs`.
-**Statement.** *A wire code is read ONLY AFTER the signature verifies, an unsigned rejection is untrusted, a bound rejection verifies and exposes its code, an ordinary rejection body gains no new fields, and the indeterminate rejection states that a retry is unsafe; projection preserves the ratified group count and maps each failure class to its precise code, the derived token is the projected verdict's own, absent and malformed evidence are different verdicts, an outage does not project onto an actor-binding failure and is not an untrusted key, and omission and tampering are different failures.*
-**If false.** A refusal an attacker wrote is read as one the peer signed, or two failures with different causes are reported as one — which is how 'the key is untrusted' and 'the network was down' become the same alarm.
+**Controls:** `mcp-re-http-profile/src/rejection/mod.rs` (5).
+**Statement.** *A wire code is read ONLY AFTER the signature verifies, an unsigned rejection is untrusted, a bound rejection verifies and exposes its code, an ordinary rejection body gains no new fields, and the indeterminate rejection states that a retry is unsafe.*
+**If false.** A refusal an attacker wrote is read as one the peer signed — the refusal path becomes the one place in the profile where content is believed before its signature is.
 **Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
 **Severity:** `critical`.
+**Split and partly registered, ADR-MCPRE-069 HP-S2 — and the record is RE-TITLED to what it
+now holds.** The record covered 13 controls over two authorities, and ADR-069 RR-002 C5
+forbids one disposition over such a set. Its previous title — *a refusal carries its own
+provenance and is read only after verification* — and its `carrier` field were true of **5 of
+its 13 rows**; the other 8 were verdict projection in `src/error.rs` and
+`src/error/core_projection.rs`, which is a different authority with a different theorem. An
+owner shown "NP-094, 13 controls, a refusal proposition" would have been asked about something
+that did not exist.
+Those 8 are now `unit://http_profile.carrier_verdict_projection` under **THM-0111**, whose
+statement names this carrier in the claim itself: *"Every other taxonomy that reaches the wire
+states which of those verdicts it IS, through an exhaustive projection with no wildcard arm,
+and derives its token from that projection rather than keeping a table beside it: the RFC 9421
+carrier, the replay-tier dispatch gate, the PDP relation adapter …"*. It is the twin of
+`core.verification_taxonomy` and `policy.authorization_taxonomy`, and the unit's description
+carries the same disclaimer THM-0111's scope does — it says nothing about whether the
+GROUPING is right, which is the ratified MCPRE-92 owner decision.
+**Five rows REMAIN**, and they are the ones this record now describes: *a refusal is a
+document, and nothing in it is believed before its signature is.* The tempting registration is
+`http_profile.bound_response_shared_facts`, which already holds three of this file's eight
+controls — and its description is three conjuncts about what a SUCCESSFUL verification
+establishes, with nothing about a wire code, a reading order, an unsigned document or retry
+safety. `bound_rejection_verifies_and_exposes_the_wire_code` is the closest and still fails:
+its first half is contained and its second half, *and exposes the wire code*, is the new
+clause. THM-0046 is `proxy.refusal_provenance` in another project and its scope excludes this
+by name; THM-0061 is the client-side twin.
 
 ## NP-095 — delegation verifies the chain it was given
 
@@ -2254,15 +2327,6 @@ establish rather than what any unit above them promises.
 **If false.** The seam carries key material or a decision across a boundary whose whole purpose is that it does not.
 **Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
 **Severity:** `critical`.
-
-## NP-103 — dispatch admits only what verified
-
-**Controls:** `mcp-re-http-profile/tests/dispatch_test.rs`.
-**Statement.** *What reaches dispatch is what verification admitted, with nothing re-derived between.*
-**If false.** An unverified request reaches the backend, or a verified one is dispatched under facts the verifier did not establish.
-**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
-**Severity:** `critical`.
-**Registered in part, and MEASUREMENT-CORRECTED, ADR-MCPRE-069 S1.** The title said *dispatch admits only what verified*; all five controls measure REPLAY, and a record whose title names one authority and whose controls measure another is a claim exceeding its evidence. Three are now in `unit://http_profile.replay_key`, whose description states *"equality of the composite slots holds exactly when the full five-tuple is equal, and an admitted key is fresh once"* — `duplicate_nonce_same_actor_audience_profile_is_replay` is the second clause, `same_nonce_different_audience_does_not_collide` and `same_nonce_different_resolved_actor_does_not_collide` the first. The two `fleet_strict_*` rows REMAIN: their clause is THM-0092's, whose only unit `proxy.replay_admission_gate` lives in a DIFFERENT Cargo project, so the honest shape is a new `http_profile` unit under THM-0092's `supported_by` — R2, which this slice may not do. Packet at `verification/reviews/packets/adr069-np-103-ratification-2026-09-19.md`.
 
 ## NP-104 — the profile reproduces the RFC 9421 known-answer vectors
 
