@@ -124,6 +124,7 @@ attestations this view cannot see.
 | unit://proxy.client_certificate_posture | source, contracts or evidence | THM-0054 | proxy.credential_currency (COMPILE_DEPENDENCY) |
 | unit://proxy.client_credential_window | source, contracts or evidence | THM-0102 | _no consumer_ |
 | unit://proxy.client_credential_window_sole_producer | source, contracts or evidence | THM-0102 | _no consumer_ |
+| unit://proxy.client_crl_next_update_gate | source, contracts or evidence | THM-0131 | _no consumer_ |
 | unit://proxy.client_revocation_currency | source, contracts or evidence | THM-0131 | _no consumer_ |
 | unit://proxy.continuation_control_subject_boundary | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.continuation_correlation_store | source, contracts or evidence | THM-0087 | _no consumer_ |
@@ -138,6 +139,7 @@ attestations this view cannot see.
 | unit://proxy.credential_key_correspondence | source, contracts or evidence | THM-0026 | proxy.delegated_resolver_materialization (CONTRACT_CONSUMES) |
 | unit://proxy.credential_key_correspondence_sole_producer | source, contracts or evidence | THM-0026 | _no consumer_ |
 | unit://proxy.cross_machine_legality | source, contracts or evidence | THM-0049, THM-0077 | _no consumer_ |
+| unit://proxy.currency_policy_classification | source, contracts or evidence | THM-0032 | _no consumer_ |
 | unit://proxy.current_authenticated_peer | source, contracts or evidence | THM-0033 | proxy.request_peer_binding (CONTRACT_CONSUMES) |
 | unit://proxy.custody_exposure | source, contracts or evidence | THM-0064 | _no consumer_ |
 | unit://proxy.custody_exposure_sole_producer | source, contracts or evidence | THM-0064 | _no consumer_ |
@@ -189,6 +191,7 @@ attestations this view cannot see.
 | unit://proxy.response_signing | source, contracts or evidence | THM-0063, THM-0075 | _no consumer_ |
 | unit://proxy.retained_record_content | source, contracts or evidence | THM-0112 | _no consumer_ |
 | unit://proxy.retention_commitment | source, contracts or evidence | THM-0088 | _no consumer_ |
+| unit://proxy.retired_plane_cadence_retraction | source, contracts or evidence | THM-0131 | _no consumer_ |
 | unit://proxy.runtime_lifecycle | source, contracts or evidence | THM-0012 | _no consumer_ |
 | unit://proxy.runtime_lifecycle_sole_mutator | source, contracts or evidence | THM-0012 | _no consumer_ |
 | unit://proxy.scrapi_registration_leaf | source, contracts or evidence | _no theorem_ | _no consumer_ |
@@ -202,6 +205,7 @@ attestations this view cannot see.
 | unit://proxy.startup_plan_pool_ceiling | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.startup_plan_provenance | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.transport_binding_and_crl_state | source, contracts or evidence | THM-0077 | _no consumer_ |
+| unit://proxy.trust_cache_entry_addressing | source, contracts or evidence | THM-0097 | _no consumer_ |
 | unit://proxy.trust_composition_root | source, contracts or evidence | THM-0038, THM-0067, THM-0077 | _no consumer_ |
 | unit://proxy.trust_configuration_state_sole_producer | source, contracts or evidence | THM-0035, THM-0036 | _no consumer_ |
 | unit://proxy.trust_document_interpretation | source, contracts or evidence | THM-0098 | _no consumer_ |
@@ -209,9 +213,11 @@ attestations this view cannot see.
 | unit://proxy.trust_epoch_source | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.trust_plan | source, contracts or evidence | THM-0037, THM-0066 | _no consumer_ |
 | unit://proxy.trust_plan_co_provenance | source, contracts or evidence | THM-0037 | _no consumer_ |
+| unit://proxy.trust_posture_declaration | source, contracts or evidence | THM-0100 | _no consumer_ |
 | unit://proxy.trust_reload_cadence | source, contracts or evidence | THM-0100 | _no consumer_ |
 | unit://proxy.trust_resolution_window | source, contracts or evidence | THM-0097, THM-0098 | _no consumer_ |
 | unit://proxy.trust_revocation_classification | source, contracts or evidence | THM-0035 | _no consumer_ |
+| unit://proxy.trust_snapshot_swap | source, contracts or evidence | THM-0100 | _no consumer_ |
 | unit://sdk_python.authorization_binding | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://sdk_python.bounded_read | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://sdk_python.continuation_drive | source, contracts or evidence | THM-0094 | _no consumer_ |

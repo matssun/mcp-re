@@ -263,6 +263,11 @@ on:
       # stale the next time one is added — silently, because a filter that matches
       # nothing fails nothing.
       - "mcp-re-proxy/src/tls_plane/**"
+      # ADR-MCPRE-069 S-04: the client-CRL `nextUpdate` gate at the publication site,
+      # `proxy.client_crl_next_update_gate`, and the probe that weakens it. The file sits
+      # beside the plane rather than inside it, so the subtree pattern above does not
+      # reach it.
+      - "mcp-re-proxy/src/client_crl_publication.rs"
       - "mcp-re-proxy/src/delegated_tls.rs"
       # ADR-MCPRE-063 Slice 3: the correspondence gate on delegated resolver construction.
       - "mcp-re-proxy/src/delegated_tls/**"
@@ -590,6 +595,11 @@ on:
       # stale the next time one is added — silently, because a filter that matches
       # nothing fails nothing.
       - "mcp-re-proxy/src/tls_plane/**"
+      # ADR-MCPRE-069 S-04: the client-CRL `nextUpdate` gate at the publication site,
+      # `proxy.client_crl_next_update_gate`, and the probe that weakens it. The file sits
+      # beside the plane rather than inside it, so the subtree pattern above does not
+      # reach it.
+      - "mcp-re-proxy/src/client_crl_publication.rs"
       - "mcp-re-proxy/src/delegated_tls.rs"
       # ADR-MCPRE-063 Slice 3: the correspondence gate on delegated resolver construction.
       - "mcp-re-proxy/src/delegated_tls/**"

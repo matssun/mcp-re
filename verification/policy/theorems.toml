@@ -1791,7 +1791,7 @@ under THM-0028 and THM-0030. This claim consumes their conclusions and restates 
 """
 owner = "proxy.credential_currency"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.credential_currency", "unit://proxy.credential_currency_evidence_reporting"]
+supported_by = ["unit://proxy.credential_currency", "unit://proxy.credential_currency_evidence_reporting", "unit://proxy.currency_policy_classification"]
 depends_on = ["THM-0028", "THM-0030"]
 
 [[theorem]]
@@ -5358,7 +5358,7 @@ mutation-probed, not a machine-checked proof.
 """
 owner = "proxy.trust_resolution_window"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.trust_resolution_window"]
+supported_by = ["unit://proxy.trust_resolution_window", "unit://proxy.trust_cache_entry_addressing"]
 depends_on = []
 
 [[theorem]]
@@ -5539,7 +5539,7 @@ differ. Executable and structural, class V0.
 """
 owner = "proxy.trust_reload_cadence"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.trust_reload_cadence"]
+supported_by = ["unit://proxy.trust_reload_cadence", "unit://proxy.trust_snapshot_swap", "unit://proxy.trust_posture_declaration"]
 depends_on = ["THM-0097"]
 
 [[theorem]]
@@ -7311,5 +7311,5 @@ outside this repository, and no claim here rests on its doing so.
 """
 owner = "proxy.client_revocation_currency"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.client_revocation_currency"]
+supported_by = ["unit://proxy.client_revocation_currency", "unit://proxy.client_crl_next_update_gate", "unit://proxy.retired_plane_cadence_retraction"]
 depends_on = ["THM-0054"]
