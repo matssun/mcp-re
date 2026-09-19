@@ -7350,15 +7350,6 @@ root_relationship = "a premise of the http_profile units that measure these file
 record = "docs/architecture/control-dispositions.md#np-092"
 
 [[proposition]]
-id = "NP-093"
-title = "A response envelope is a JSON-RPC response or it is refused"
-carrier = "mcp-re-http-profile: src/envelope/response.rs"
-likely_owner = ""
-consequence = "high"
-root_relationship = "a premise of the http_profile units that measure these files"
-record = "docs/architecture/control-dispositions.md#np-093"
-
-[[proposition]]
 id = "NP-094"
 title = "A refusal carries its own provenance and is read only after verification"
 carrier = "mcp-re-http-profile: src/rejection/mod.rs"
@@ -7536,142 +7527,6 @@ project = "mcp-re-http-profile"
 control = "lib#delegation::tests::signer_seam_is_wire_identical_to_the_in_process_path"
 decision = "new-proposition"
 proposition = "NP-095"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15010"
-project = "mcp-re-http-profile"
-control = "lib#delegation::verify::tests::a_cnf_that_names_another_key_is_an_invalid_credential"
-decision = "new-proposition"
-proposition = "NP-095"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15011"
-project = "mcp-re-http-profile"
-control = "lib#delegation::verify::tests::a_stale_trust_epoch_is_its_own_refusal"
-decision = "new-proposition"
-proposition = "NP-095"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15012"
-project = "mcp-re-http-profile"
-control = "lib#delegation::verify::tests::each_scope_failure_names_what_it_is"
-decision = "new-proposition"
-proposition = "NP-095"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15013"
-project = "mcp-re-http-profile"
-control = "lib#delegation::verify::tests::revocation_is_consulted_with_every_identifier_the_credential_carries"
-decision = "new-proposition"
-proposition = "NP-095"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15014"
-project = "mcp-re-http-profile"
-control = "lib#digest::tests::digest_round_trip"
-decision = "new-proposition"
-proposition = "NP-100"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15015"
-project = "mcp-re-http-profile"
-control = "lib#digest::tests::sha256_member_absent_from_present_header_is_malformed"
-decision = "new-proposition"
-proposition = "NP-100"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15016"
-project = "mcp-re-http-profile"
-control = "lib#digest::tests::tampered_body_fails_closed"
-decision = "new-proposition"
-proposition = "NP-100"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15017"
-project = "mcp-re-http-profile"
-control = "lib#envelope::response::tests::a_json_rpc_error_is_a_valid_response_not_a_malformed_one"
-decision = "new-proposition"
-proposition = "NP-093"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15018"
-project = "mcp-re-http-profile"
-control = "lib#envelope::response::tests::a_malformed_error_member_is_refused"
-decision = "new-proposition"
-proposition = "NP-093"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15019"
-project = "mcp-re-http-profile"
-control = "lib#envelope::response::tests::a_non_object_body_is_refused"
-decision = "new-proposition"
-proposition = "NP-093"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15020"
-project = "mcp-re-http-profile"
-control = "lib#envelope::response::tests::a_non_object_result_is_refused"
-decision = "new-proposition"
-proposition = "NP-093"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15021"
-project = "mcp-re-http-profile"
-control = "lib#envelope::response::tests::a_response_carrying_both_result_and_error_is_refused"
-decision = "new-proposition"
-proposition = "NP-093"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15022"
-project = "mcp-re-http-profile"
-control = "lib#envelope::response::tests::a_response_carrying_neither_result_nor_error_is_refused"
-decision = "new-proposition"
-proposition = "NP-093"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15023"
-project = "mcp-re-http-profile"
-control = "lib#envelope::response::tests::an_ordinary_result_response_validates"
-decision = "new-proposition"
-proposition = "NP-093"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15024"
-project = "mcp-re-http-profile"
-control = "lib#envelope::response::tests::an_unparseable_body_is_refused"
-decision = "new-proposition"
-proposition = "NP-093"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15025"
-project = "mcp-re-http-profile"
-control = "lib#envelope::response::tests::arbitrary_application_payload_inside_result_is_not_inspected"
-decision = "new-proposition"
-proposition = "NP-093"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15026"
-project = "mcp-re-http-profile"
-control = "lib#envelope::response::tests::the_json_rpc_version_must_be_exactly_two_point_zero"
-decision = "new-proposition"
-proposition = "NP-093"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -7899,99 +7754,11 @@ proposition = "NP-091"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-15055"
-project = "mcp-re-http-profile"
-control = "lib#pdp_decision::claims::tests::a_credential_decision_cannot_lack_its_keyid"
-decision = "new-proposition"
-proposition = "NP-096"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15056"
-project = "mcp-re-http-profile"
-control = "lib#pdp_decision::claims::tests::a_principal_decision_has_no_keyid_to_omit"
-decision = "new-proposition"
-proposition = "NP-096"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15057"
-project = "mcp-re-http-profile"
-control = "lib#pdp_decision::claims::tests::an_unknown_scope_is_refused_rather_than_defaulted"
-decision = "new-proposition"
-proposition = "NP-096"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15058"
-project = "mcp-re-http-profile"
-control = "lib#pdp_decision::claims::tests::the_scope_is_carried_in_the_signed_claims_not_inferred"
-decision = "new-proposition"
-proposition = "NP-096"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15059"
-project = "mcp-re-http-profile"
-control = "lib#pdp_decision::claims::tests::the_two_scopes_share_the_dimensions_they_both_bind"
-decision = "new-proposition"
-proposition = "NP-096"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15060"
-project = "mcp-re-http-profile"
-control = "lib#pdp_decision::issue::tests::a_signer_that_refuses_does_not_yield_a_decision"
-decision = "new-proposition"
-proposition = "NP-096"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15061"
-project = "mcp-re-http-profile"
-control = "lib#pdp_decision::issue::tests::the_header_is_minted_here_and_names_this_profile"
-decision = "new-proposition"
-proposition = "NP-096"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15062"
-project = "mcp-re-http-profile"
-control = "lib#pdp_decision::issue::tests::the_signature_covers_the_header_and_the_claims"
-decision = "new-proposition"
-proposition = "NP-096"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-15063"
 project = "mcp-re-http-profile"
 control = "lib#pdp_decision::tests::the_linkage_form_and_the_evidence_form_are_not_interchangeable"
 decision = "new-proposition"
 proposition = "NP-096"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15064"
-project = "mcp-re-http-profile"
-control = "lib#pdp_decision::verify::tests::another_artifacts_typ_cannot_be_presented_as_a_decision"
-decision = "new-proposition"
-proposition = "NP-096"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15065"
-project = "mcp-re-http-profile"
-control = "lib#policy::tests::an_algorithm_without_a_verifier_cannot_be_allowlisted"
-decision = "new-proposition"
-proposition = "NP-100"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15066"
-project = "mcp-re-http-profile"
-control = "lib#policy::tests::the_registry_maps_tokens_to_implemented_verifiers"
-decision = "new-proposition"
-proposition = "NP-100"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -8032,14 +7799,6 @@ project = "mcp-re-http-profile"
 control = "lib#rejection::tests::wire_code_is_read_only_after_signature_verifies"
 decision = "new-proposition"
 proposition = "NP-094"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15072"
-project = "mcp-re-http-profile"
-control = "lib#replay::tests::the_principal_slot_is_the_subject_without_its_keyid"
-decision = "new-proposition"
-proposition = "NP-100"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -8131,22 +7890,6 @@ proposition = "NP-097"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-15084"
-project = "mcp-re-http-profile"
-control = "lib#scitt::merkle::tests::the_tree_size_determines_the_leaf_index_within_every_ambiguity_class"
-decision = "new-proposition"
-proposition = "NP-097"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15085"
-project = "mcp-re-http-profile"
-control = "lib#scitt::receipt::tests::a_leaf_index_outside_the_tree_is_refused"
-decision = "new-proposition"
-proposition = "NP-097"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-15086"
 project = "mcp-re-http-profile"
 control = "lib#scitt::retained::tests::a_token_names_a_digest_only_when_it_is_one"
@@ -8158,14 +7901,6 @@ recorded = "2026-09-19"
 id = "CD-15087"
 project = "mcp-re-http-profile"
 control = "lib#scitt::retained::tests::one_digest_has_one_spelling"
-decision = "new-proposition"
-proposition = "NP-097"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15088"
-project = "mcp-re-http-profile"
-control = "lib#scitt::statement::tests::editing_a_decoded_view_does_not_change_what_was_signed"
 decision = "new-proposition"
 proposition = "NP-097"
 recorded = "2026-09-19"
@@ -8339,78 +8074,6 @@ proposition = "NP-105"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-15110"
-project = "mcp-re-http-profile"
-control = "tests/algorithm_confusion_test#a_policy_enabling_algorithm_confusion_cannot_be_constructed"
-decision = "new-proposition"
-proposition = "NP-098"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15111"
-project = "mcp-re-http-profile"
-control = "tests/algorithm_confusion_test#only_implemented_algorithms_resolve"
-decision = "new-proposition"
-proposition = "NP-098"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15112"
-project = "mcp-re-http-profile"
-control = "tests/algorithm_confusion_test#the_same_signature_declaring_ed25519_verifies"
-decision = "new-proposition"
-proposition = "NP-098"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15113"
-project = "mcp-re-http-profile"
-control = "tests/binding_identifier_test#opaque_binding_carrying_reference_fields_is_malformed"
-decision = "new-proposition"
-proposition = "NP-105"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15114"
-project = "mcp-re-http-profile"
-control = "tests/binding_identifier_test#reference_binding_missing_its_reference_fields_is_malformed"
-decision = "new-proposition"
-proposition = "NP-105"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15115"
-project = "mcp-re-http-profile"
-control = "tests/binding_identifier_test#unknown_artifact_type_fails_closed"
-decision = "new-proposition"
-proposition = "NP-105"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15116"
-project = "mcp-re-http-profile"
-control = "tests/binding_identifier_test#unknown_binding_type_fails_closed"
-decision = "new-proposition"
-proposition = "NP-105"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15117"
-project = "mcp-re-http-profile"
-control = "tests/delegation_e2e_test#custody_signed_response_verifies_via_attestation_chain"
-decision = "new-proposition"
-proposition = "NP-095"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15118"
-project = "mcp-re-http-profile"
-control = "tests/dispatch_test#duplicate_nonce_same_actor_audience_profile_is_replay"
-decision = "new-proposition"
-proposition = "NP-103"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-15119"
 project = "mcp-re-http-profile"
 control = "tests/dispatch_test#fleet_strict_admits_durable_cache"
@@ -8422,22 +8085,6 @@ recorded = "2026-09-19"
 id = "CD-15120"
 project = "mcp-re-http-profile"
 control = "tests/dispatch_test#fleet_strict_rejects_single_process_reference_cache"
-decision = "new-proposition"
-proposition = "NP-103"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15121"
-project = "mcp-re-http-profile"
-control = "tests/dispatch_test#same_nonce_different_audience_does_not_collide"
-decision = "new-proposition"
-proposition = "NP-103"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15122"
-project = "mcp-re-http-profile"
-control = "tests/dispatch_test#same_nonce_different_resolved_actor_does_not_collide"
 decision = "new-proposition"
 proposition = "NP-103"
 recorded = "2026-09-19"
@@ -8659,41 +8306,9 @@ proposition = "NP-098"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-15150"
-project = "mcp-re-http-profile"
-control = "tests/proof_path_test#same_keyid_different_slots_do_not_collapse_actor_id"
-decision = "new-proposition"
-proposition = "NP-098"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-15151"
 project = "mcp-re-http-profile"
 control = "tests/proof_path_test#signer_and_verifier_derive_the_same_evidence_handle"
-decision = "new-proposition"
-proposition = "NP-098"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15152"
-project = "mcp-re-http-profile"
-control = "tests/proof_path_test#unsigned_request_fails_closed"
-decision = "new-proposition"
-proposition = "NP-098"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15153"
-project = "mcp-re-http-profile"
-control = "tests/proof_path_test#verified_request_exposes_resolved_actor_identity"
-decision = "new-proposition"
-proposition = "NP-098"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15154"
-project = "mcp-re-http-profile"
-control = "tests/proof_path_test#verified_response_exposes_resolved_server_actor"
 decision = "new-proposition"
 proposition = "NP-098"
 recorded = "2026-09-19"

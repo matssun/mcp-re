@@ -259,6 +259,17 @@ tested_symbols = [
   "tests/proof_path_test#request_signed_by_response_only_actor_fails_actor_binding",
   "tests/proof_path_test#resolver_returning_wrong_slot_is_rejected",
   "tests/algorithm_confusion_test#an_ed25519_signature_declaring_ml_dsa_is_rejected",
+  "tests/algorithm_confusion_test#a_policy_enabling_algorithm_confusion_cannot_be_constructed",
+  "tests/algorithm_confusion_test#only_implemented_algorithms_resolve",
+  "tests/algorithm_confusion_test#the_same_signature_declaring_ed25519_verifies",
+  "tests/proof_path_test#unsigned_request_fails_closed",
+  "tests/proof_path_test#verified_request_exposes_resolved_actor_identity",
+  "tests/proof_path_test#same_keyid_different_slots_do_not_collapse_actor_id",
+  "lib#digest::tests::digest_round_trip",
+  "lib#digest::tests::tampered_body_fails_closed",
+  "lib#digest::tests::sha256_member_absent_from_present_header_is_malformed",
+  "lib#policy::tests::an_algorithm_without_a_verifier_cannot_be_allowlisted",
+  "lib#policy::tests::the_registry_maps_tokens_to_implemented_verifiers",
 ]
 
 # THM-0015's owner.
@@ -425,6 +436,7 @@ evidence = [
 ]
 tested_symbols = [
   "tests/proof_path_test#response_signed_by_request_only_actor_fails_actor_binding",
+  "tests/proof_path_test#verified_response_exposes_resolved_server_actor",
 ]
 
 # THM-0022's owner.
@@ -774,6 +786,10 @@ tested_symbols = [
   "lib#delegation::tests::revoked_by_jti_is_revoked",
   "lib#delegation::tests::cnf_kid_not_delegated_kid_is_credential_invalid",
   "lib#delegation::tests::not_three_segments_is_credential_invalid",
+  "lib#delegation::verify::tests::a_cnf_that_names_another_key_is_an_invalid_credential",
+  "lib#delegation::verify::tests::a_stale_trust_epoch_is_its_own_refusal",
+  "lib#delegation::verify::tests::each_scope_failure_names_what_it_is",
+  "lib#delegation::verify::tests::revocation_is_consulted_with_every_identifier_the_credential_carries",
 ]
 
 [[unit]]
@@ -1564,6 +1580,10 @@ tested_symbols = [
   "tests/full_profile_test#a_carried_decision_cannot_satisfy_a_binding_of_another_type",
   "tests/full_profile_test#caller_supplied_material_verifies_non_header_binding",
   "tests/full_profile_test#unverifiable_binding_without_material_fails_closed",
+  "tests/binding_identifier_test#unknown_artifact_type_fails_closed",
+  "tests/binding_identifier_test#unknown_binding_type_fails_closed",
+  "tests/binding_identifier_test#opaque_binding_carrying_reference_fields_is_malformed",
+  "tests/binding_identifier_test#reference_binding_missing_its_reference_fields_is_malformed",
 ]
 
 # ---------------------------------------------------------------------------
@@ -2873,6 +2893,15 @@ tested_symbols = [
   "lib#pdp_decision::verify::tests::a_header_naming_a_different_kid_than_the_claims_is_refused",
   "lib#pdp_decision::verify::tests::a_deny_decision_verifies_and_is_returned_as_one",
   "lib#pdp_decision::verify::tests::a_malformed_document_says_which_part_failed",
+  "lib#pdp_decision::claims::tests::a_credential_decision_cannot_lack_its_keyid",
+  "lib#pdp_decision::claims::tests::a_principal_decision_has_no_keyid_to_omit",
+  "lib#pdp_decision::claims::tests::an_unknown_scope_is_refused_rather_than_defaulted",
+  "lib#pdp_decision::claims::tests::the_scope_is_carried_in_the_signed_claims_not_inferred",
+  "lib#pdp_decision::claims::tests::the_two_scopes_share_the_dimensions_they_both_bind",
+  "lib#pdp_decision::issue::tests::a_signer_that_refuses_does_not_yield_a_decision",
+  "lib#pdp_decision::issue::tests::the_header_is_minted_here_and_names_this_profile",
+  "lib#pdp_decision::issue::tests::the_signature_covers_the_header_and_the_claims",
+  "lib#pdp_decision::verify::tests::another_artifacts_typ_cannot_be_presented_as_a_decision",
 ]
 
 [[unit]]
@@ -2977,6 +3006,7 @@ evidence = [
 tested_symbols = [
   "lib#scitt::offline::tests::a_tampered_statement_fails_the_receipt",
   "lib#scitt::statement::tests::a_critical_header_on_a_signed_statement_is_refused",
+  "lib#scitt::statement::tests::editing_a_decoded_view_does_not_change_what_was_signed",
 ]
 
 # M73 is this unit's, and BEFORE ANY FOLD is the load-bearing half of its conjunct: a leaf
@@ -3006,6 +3036,7 @@ tested_symbols = [
   "lib#scitt::receipt::parse::tests::a_payload_that_is_not_a_tree_hash_is_neither_receipt_form",
   "lib#scitt::receipt::tests::an_unknown_critical_header_is_refused",
   "lib#scitt::receipt::parse::tests::a_leaf_index_outside_the_tree_is_refused_before_any_fold",
+  "lib#scitt::receipt::tests::a_leaf_index_outside_the_tree_is_refused",
 ]
 
 # PURE RFC 9162 TREE MATHEMATICS, and the one proposition here a prover could take. M72
@@ -3039,6 +3070,7 @@ tested_symbols = [
   "lib#scitt::merkle::tests::a_right_edge_restatement_is_indistinguishable_and_still_verifies",
   "lib#scitt::merkle::tests::an_empty_inclusion_path_is_only_valid_for_a_single_leaf_tree",
   "lib#scitt::offline::tests::a_forged_inclusion_path_fails",
+  "lib#scitt::merkle::tests::the_tree_size_determines_the_leaf_index_within_every_ambiguity_class",
 ]
 
 # M78 attacks this one — the fold's output compared against the root the receipt commits to.
@@ -5505,6 +5537,16 @@ tested_symbols = [
   "lib#envelope::response::tests::a_null_id_does_not_correlate_to_an_id_bearing_request",
   "lib#envelope::response::tests::a_response_id_that_does_not_match_the_request_is_refused",
   "lib#envelope::response::tests::a_reply_that_is_also_a_request_is_refused",
+  "lib#envelope::response::tests::a_json_rpc_error_is_a_valid_response_not_a_malformed_one",
+  "lib#envelope::response::tests::a_malformed_error_member_is_refused",
+  "lib#envelope::response::tests::a_non_object_body_is_refused",
+  "lib#envelope::response::tests::a_non_object_result_is_refused",
+  "lib#envelope::response::tests::a_response_carrying_both_result_and_error_is_refused",
+  "lib#envelope::response::tests::a_response_carrying_neither_result_nor_error_is_refused",
+  "lib#envelope::response::tests::an_ordinary_result_response_validates",
+  "lib#envelope::response::tests::an_unparseable_body_is_refused",
+  "lib#envelope::response::tests::arbitrary_application_payload_inside_result_is_not_inspected",
+  "lib#envelope::response::tests::the_json_rpc_version_must_be_exactly_two_point_zero",
 ]
 
 [[unit]]
@@ -6891,6 +6933,7 @@ tested_symbols = [
   "lib#custody::key_window::tests::an_overlap_outside_the_ttl_is_not_a_window",
   "lib#custody::key_window::tests::a_legal_pair_is_a_window_and_projects_what_it_was_given",
   "lib#custody::key_window::tests::the_magnitude_ceiling_is_not_this_types_to_apply",
+  "tests/delegation_e2e_test#custody_signed_response_verifies_via_attestation_chain",
 ]
 
 [[unit]]
@@ -7312,6 +7355,10 @@ tested_symbols = [
   "lib#replay::tests::every_component_discriminates",
   "lib#replay::tests::core_replay_key_carries_the_same_injective_slots",
   "lib#replay::tests::first_insert_is_fresh_replay_is_detected",
+  "lib#replay::tests::the_principal_slot_is_the_subject_without_its_keyid",
+  "tests/dispatch_test#duplicate_nonce_same_actor_audience_profile_is_replay",
+  "tests/dispatch_test#same_nonce_different_audience_does_not_collide",
+  "tests/dispatch_test#same_nonce_different_resolved_actor_does_not_collide",
 ]
 
 # ADR-MCPRE-059 §28 / issue #740. The corpus THIS implementation produced, as its own

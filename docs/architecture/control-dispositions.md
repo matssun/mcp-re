@@ -2159,14 +2159,6 @@ establish rather than what any unit above them promises.
 **Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
 **Severity:** `critical`.
 
-## NP-093 — a response envelope is a JSON-RPC response or it is refused
-
-**Controls:** `mcp-re-http-profile/src/envelope/response.rs`.
-**Statement.** *The version is exactly 2.0; a response carrying both result and error, or neither, is refused; a non-object body, a non-object result, a malformed error member and an unparseable body are each refused; a JSON-RPC error is a VALID response and not a malformed one; an ordinary result response validates; and an arbitrary application payload inside result is not inspected.*
-**If false.** A malformed envelope is interpreted rather than refused — or, in the other direction, a legitimate JSON-RPC error is treated as malformed, which turns a peer's honest refusal into a transport fault. The non-inspection clause is the boundary: the profile validates the envelope and does not read the application's payload.
-**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
-**Severity:** `high`.
-
 ## NP-094 — a refusal carries its own provenance and is read only after verification
 
 **Controls:** `mcp-re-http-profile/src/rejection/mod.rs`, `mcp-re-http-profile/src/error/core_projection.rs`, `mcp-re-http-profile/src/error.rs`.
@@ -2182,6 +2174,7 @@ establish rather than what any unit above them promises.
 **If false.** A delegated signature is accepted under a chain that was not the one presented.
 **Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
 **Severity:** `critical`.
+**Registered in part, ADR-MCPRE-069 S1.** Four credential-shape controls are now in `unit://http_profile.delegated_credential_chain`, whose description already states each clause: *"three segments under the profile's own algorithm, type and key use"* (`a_cnf_that_names_another_key_is_an_invalid_credential`, `each_scope_failure_names_what_it_is`), *"at an accepted trust epoch"* (`a_stale_trust_epoch_is_its_own_refusal`) and *"named on no revocation list by delegated kid, issuer kid or jti"* (`revocation_is_consulted_with_every_identifier_the_credential_carries`). The e2e control is in `unit://http_profile.delegated_signing_custody`, whose description opens *"The delegated-signing credential lifecycle: the root is never touched within a key's life"* — the assertion that test closes on. The four `delegation::tests::seam_*` rows REMAIN: they measure the ISSUANCE signer seam, which is NP-102's proposition and which no theorem in this project states. Packet at `verification/reviews/packets/adr069-np-095-ratification-2026-09-19.md`.
 
 ## NP-096 — a PDP decision carries exactly the claims it was issued with
 
@@ -2190,6 +2183,7 @@ establish rather than what any unit above them promises.
 **If false.** An authorization decision is honoured for claims nobody issued it for.
 **Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
 **Severity:** `critical`.
+**Registered in part, ADR-MCPRE-069 S1.** Nine of ten controls are now in `unit://http_profile.pdp_decision_authentication`, whose description states *"what the AUTHORITY said, and that it was said to this enforcement point. A decision's JWS shape, its issuer's resolution through the authorization trust seam, its signature, the profile and audience it names"* — the scope-algebra five are facts about what the signed claims carry, the issuance three about the JWS shape and signature, and the `typ` control about the shape. One row REMAINS: `lib#pdp_decision::tests::the_linkage_form_and_the_evidence_form_are_not_interchangeable` lives in `src/pdp_decision/mod.rs`, which is in NO unit's `paths`, so `_validate_in_crate_selectors` refuses the selector and widening `paths` is what ADR-069 §5 forbids. Packet at `verification/reviews/packets/adr069-np-096-ratification-2026-09-19.md`.
 
 ## NP-097 — the SCITT value types parse only their own shapes
 
@@ -2198,6 +2192,7 @@ establish rather than what any unit above them promises.
 **If false.** One SCITT structure is read as another, so an inclusion proof or a key is interpreted under the wrong shape.
 **Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
 **Severity:** `high`.
+**Registered in part, ADR-MCPRE-069 S1.** The record is a grab-bag over five SCITT owners, so it is split at registration and never registered as one unit. Three controls land where the owner's description already says it: `scitt::receipt::tests::a_leaf_index_outside_the_tree_is_refused` → `unit://http_profile.scitt_receipt_shape` (*"a leaf index that names a position the tree has"*); `scitt::merkle::tests::the_tree_size_determines_the_leaf_index_within_every_ambiguity_class` → `unit://http_profile.scitt_inclusion_fold` (*"a path of the wrong length does not reach the root"*, beside its existing right-edge-ambiguity controls); `scitt::statement::tests::editing_a_decoded_view_does_not_change_what_was_signed` → `unit://http_profile.scitt_statement_attribution` (*"not by what it says about itself"*). Three rows REMAIN: `scitt_retained_correspondence` claims commitment EQUALITY, not digest-token canonicality, and `scitt_algorithm_agreement` claims AGREEMENT between `alg` and key, not key well-formedness. Packet at `verification/reviews/packets/adr069-np-097-ratification-2026-09-19.md`.
 
 ## NP-098 — the cryptographic floor refuses what it cannot state exactly
 
@@ -2206,6 +2201,7 @@ establish rather than what any unit above them promises.
 **If false.** A verifier normalises an input into something that verifies, so two different wire forms produce one base — the parser-differential attack again, at the floor rather than at the surface. 'Refused, not normalised' is the same clause NP-088 makes about the body, at the other end of the exchange.
 **Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
 **Severity:** `critical`.
+**Registered in part, ADR-MCPRE-069 S1.** Six controls are now in `unit://http_profile.request_floor_result`, whose description states *"the RFC 9421 signature verified over the reconstructed base under a policy-accepted algorithm ... and the presented keyid resolved through the trust seam for the Request slot"* — the three algorithm-confusion controls are what makes *policy-accepted* non-vacuous (the unit already carries `an_ed25519_signature_declaring_ml_dsa_is_rejected`), and `unsigned_request_fails_closed`, `verified_request_exposes_resolved_actor_identity` and `same_keyid_different_slots_do_not_collapse_actor_id` are the signature and the slot-resolution clauses. `verified_response_exposes_resolved_server_actor` is in `unit://http_profile.bound_response_seam_result` (*"the actor the seam returned IS the accepted signer"*). Ten rows REMAIN: the five floor parser-strictness controls (*refused, not normalised* — NP-090's family, stated by no theorem), `foreign_tag_fails_closed` and `signer_and_verifier_derive_the_same_evidence_handle` (NP-087 / NP-100 handle family), `content_encoding_fails_closed` and `duplicate_authorization_fails_closed` (body representation and header strictness, and the second measures `sign_request`, not the verifier's return at all), and `a_request_with_no_signature_input_has_no_handle`, which measures `request_evidence_of` rather than `Verifier::verify_request_floor` — the function the unit's description names. Packet at `verification/reviews/packets/adr069-np-098-ratification-2026-09-19.md`.
 
 ## NP-099 — each verifier product states what it established, without an Option
 
@@ -2214,6 +2210,7 @@ establish rather than what any unit above them promises.
 **If false.** A product admits two proof strengths in one type, so a consumer reads an absent fact as a weaker establishment rather than as a different product. The repository has ruled on this exact shape: one Verified type, one proof strength, and an Option documented 'None on the minimal path' is a type admitting two.
 **Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
 **Severity:** `critical`.
+**Referred whole, ADR-MCPRE-069 S1.** The three substitutability controls could only go to `unit://http_profile.verifier_result_separation`, and that unit is `evidence_class = "structural"` with an EMPTY `tested_symbols` and a `structural://` evidence URI only. `_manifest.py` refuses `tested_symbols` with no `test://` entry claiming them, so registering them means adding a test lane to a structural unit — an ADR-MCPRE-068 class change, not a registration, and ADR-069 §5 does not admit it. The remaining eight are the *without an Option* family; THM-0047 declines it in its own words: *"It establishes nothing about what any of the operations verify."* Packet at `verification/reviews/packets/adr069-np-099-ratification-2026-09-19.md`.
 
 ## NP-100 — the evidence handle is domain-separated and derived, never a bare digest
 
@@ -2222,6 +2219,7 @@ establish rather than what any unit above them promises.
 **If false.** Two different roles over the same bytes produce the same handle, so evidence for one is evidence for the other — which is NP-087's injectivity failure at the handle rather than at the actor. 'Not a bare digest of the base' is what makes the domain separation structural instead of conventional.
 **Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
 **Severity:** `critical`.
+**Registered in part, ADR-MCPRE-069 S1.** The record spans seven files and three security stories, so it is split at registration. Six controls land: `digest::tests::{digest_round_trip, tampered_body_fails_closed, sha256_member_absent_from_present_header_is_malformed}` and `policy::tests::{an_algorithm_without_a_verifier_cannot_be_allowlisted, the_registry_maps_tokens_to_implemented_verifiers}` → `unit://http_profile.request_floor_result` (*"the covered `Content-Digest` agreed with the body ... under a policy-accepted algorithm"*); `replay::tests::the_principal_slot_is_the_subject_without_its_keyid` → `unit://http_profile.replay_key` (*"its injective pre-serialization onto the core cache's three slots"*). Ten rows REMAIN. The five `evidence.rs` handle controls are the record's headline clause and THM-0010 EXCLUDES it by name: *"It does NOT establish collision-resistant separation between roles."* The three `context.rs` proxy-meta-stripping controls are named by no theorem. `artifact::tests::bearer_token_extraction` measures a string parser, not *"a binding reported verified matched one explicitly supported typed verification branch"*, and `authoritative_admission::record::currentness::tests::every_class_has_a_distinct_index_inside_the_published_count` measures a refusal-enum bijection, which `admission_state_provenance`'s description does not state — both would be stretches, so neither is R1. Packet at `verification/reviews/packets/adr069-np-100-ratification-2026-09-19.md`.
 
 ## NP-101 — the JSON mode carries the profile and nothing else
 
@@ -2246,6 +2244,7 @@ establish rather than what any unit above them promises.
 **If false.** An unverified request reaches the backend, or a verified one is dispatched under facts the verifier did not establish.
 **Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
 **Severity:** `critical`.
+**Registered in part, and MEASUREMENT-CORRECTED, ADR-MCPRE-069 S1.** The title said *dispatch admits only what verified*; all five controls measure REPLAY, and a record whose title names one authority and whose controls measure another is a claim exceeding its evidence. Three are now in `unit://http_profile.replay_key`, whose description states *"equality of the composite slots holds exactly when the full five-tuple is equal, and an admitted key is fresh once"* — `duplicate_nonce_same_actor_audience_profile_is_replay` is the second clause, `same_nonce_different_audience_does_not_collide` and `same_nonce_different_resolved_actor_does_not_collide` the first. The two `fleet_strict_*` rows REMAIN: their clause is THM-0092's, whose only unit `proxy.replay_admission_gate` lives in a DIFFERENT Cargo project, so the honest shape is a new `http_profile` unit under THM-0092's `supported_by` — R2, which this slice may not do. Packet at `verification/reviews/packets/adr069-np-103-ratification-2026-09-19.md`.
 
 ## NP-104 — the profile reproduces the RFC 9421 known-answer vectors
 
@@ -2262,6 +2261,7 @@ establish rather than what any unit above them promises.
 **If false.** A request is admitted against a binding identifier other than the one it named.
 **Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
 **Severity:** `critical`.
+**Registered in part, ADR-MCPRE-069 S1.** The four `binding_identifier_test` controls are now in `unit://http_profile.artifact_verification_boundary`, whose description states *"a binding reported verified matched one explicitly supported typed verification branch and satisfied that branch's required binding form; every other artifact type is refused"* — the unit already carries `lib#block::tests::opaque_binding_with_reference_fields_fails_closed` and `reference_binding_missing_fields_fails_closed`, the in-crate twins of two of them. The four `admission_binding_test` rows REMAIN: the admission plane's theorems (THM-0003, THM-0006, THM-0053) are about the ASSERTION, and THM-0003/0006 rest on `http_profile.admission_currency`, a `proved` unit — attaching `tested` selectors there would misstate its class. Packet at `verification/reviews/packets/adr069-np-105-ratification-2026-09-19.md`.
 
 ---
 
