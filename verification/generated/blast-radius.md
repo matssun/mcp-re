@@ -94,6 +94,7 @@ attestations this view cannot see.
 | unit://proxy.admission_configuration_state | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.admission_configuration_state_sole_producer | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.admission_currency_gate | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://proxy.admission_record_addressing | source, contracts or evidence | THM-0129 | _no consumer_ |
 | unit://proxy.admission_state_source | source, contracts or evidence | THM-0129 | _no consumer_ |
 | unit://proxy.async_replay_retention | source, contracts or evidence | THM-0105 | _no consumer_ |
 | unit://proxy.audit_authority_coordinates | source, contracts or evidence | THM-0069 | _no consumer_ |
@@ -103,12 +104,14 @@ attestations this view cannot see.
 | unit://proxy.authenticated_relationship_peer | source, contracts or evidence | THM-0031 | proxy.current_authenticated_peer (CONTRACT_CONSUMES) |
 | unit://proxy.authorization_capability | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.authorization_configuration_state | source, contracts or evidence | _no theorem_ | _no consumer_ |
+| unit://proxy.authorization_coordinate_provenance | source, contracts or evidence | THM-0040 | _no consumer_ |
 | unit://proxy.authorization_posture | source, contracts or evidence | THM-0056 | _no consumer_ |
 | unit://proxy.aws_kms_adapter | source, contracts or evidence | THM-0116 | _no consumer_ |
 | unit://proxy.aws_sts_credentials | source, contracts or evidence | THM-0117 | _no consumer_ |
 | unit://proxy.capsule_anchor_registration_leaf | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.certificate_identity | source, contracts or evidence | THM-0024 | proxy.channel_associated_identity (COMPILE_DEPENDENCY) |
 | unit://proxy.certificate_identity_authority_boundary | source, contracts or evidence | THM-0024 | _no consumer_ |
+| unit://proxy.certificate_identity_refusal_vocabulary | source, contracts or evidence | THM-0024 | _no consumer_ |
 | unit://proxy.channel_associated_credential | source, contracts or evidence | THM-0028 | proxy.channel_associated_identity (CONTRACT_CONSUMES), proxy.mechanism_verified_credential (CONTRACT_CONSUMES) |
 | unit://proxy.channel_associated_identity | source, contracts or evidence | THM-0029 | proxy.authenticated_relationship_peer (CONTRACT_CONSUMES) |
 | unit://proxy.client_certificate_posture | source, contracts or evidence | THM-0054 | proxy.credential_currency (COMPILE_DEPENDENCY) |
@@ -123,6 +126,7 @@ attestations this view cannot see.
 | unit://proxy.continuation_materialization_shared | source, contracts or evidence | THM-0096 | _no consumer_ |
 | unit://proxy.continuation_materialization_sole_producer | source, contracts or evidence | THM-0096 | _no consumer_ |
 | unit://proxy.credential_currency | source, contracts or evidence | THM-0032 | proxy.current_authenticated_peer (CONTRACT_CONSUMES) |
+| unit://proxy.credential_currency_evidence_reporting | source, contracts or evidence | THM-0032 | _no consumer_ |
 | unit://proxy.credential_key_correspondence | source, contracts or evidence | THM-0026 | proxy.delegated_resolver_materialization (CONTRACT_CONSUMES) |
 | unit://proxy.credential_key_correspondence_sole_producer | source, contracts or evidence | THM-0026 | _no consumer_ |
 | unit://proxy.cross_machine_legality | source, contracts or evidence | THM-0049, THM-0077 | _no consumer_ |
@@ -155,6 +159,7 @@ attestations this view cannot see.
 | unit://proxy.peer_identity_value | source, contracts or evidence | THM-0023 | proxy.certificate_identity (COMPILE_DEPENDENCY) |
 | unit://proxy.peer_identity_value_sole_producer | source, contracts or evidence | THM-0023 | _no consumer_ |
 | unit://proxy.pkcs11_adapter | source, contracts or evidence | THM-0116 | _no consumer_ |
+| unit://proxy.pre_dispatch_refusal_precedence | source, contracts or evidence | THM-0078 | _no consumer_ |
 | unit://proxy.redis_replay_adapter | source, contracts or evidence | THM-0106 | _no consumer_ |
 | unit://proxy.refusal_audit_emission | source, contracts or evidence | THM-0085 | _no consumer_ |
 | unit://proxy.refusal_provenance | source, contracts or evidence | THM-0046, THM-0069, THM-0071, THM-0078 | _no consumer_ |
