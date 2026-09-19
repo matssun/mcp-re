@@ -2,7 +2,10 @@
 
 # ADR-MCPRE-069 — Evidence that runs but nothing claims
 
-**Status:** ✅ **ACCEPTED** 2026-09-17, subordinate to ADR-MCPRE-068. Not yet implemented.
+**Status:** 🚧 **ACCEPTED** 2026-09-17, subordinate to ADR-MCPRE-068 — **implementation in
+progress.** Phase 069-A (the current-tree census and its instrument) is on main; the
+disposition campaign is running. This record becomes COMPLETE when a fresh census derives
+`unclaimed + undispositioned = 0` and every control sits in exactly one honest state.
 **Discussion:** [#968](https://github.com/matssun/mcp-re/discussions/968).
 **Parent:** ADR-MCPRE-068 — *Evidence classes*
 ([discussion #967](https://github.com/matssun/mcp-re/discussions/967),
@@ -74,6 +77,81 @@ census that cannot see a whole control kind will report a clean sweep over the w
 population.
 
 ---
+
+### 2.2 The current-tree census, and why 626 is not the worklist
+
+**The figure above is historical and must not be used as a worklist.** It counted only
+`#[test]` and `#[tokio::test]` inside declared unit paths, it predates ADR-068's
+reclassifications, and by §2.1's own admission it could not see doctests at all — nor
+Python, nor TypeScript, nor a gate. A campaign run against it would be a campaign against a
+population that does not exist.
+
+So the estate is measured from zero, by `tools/verification/control-census`, over every
+control kind the repository's execution machinery actually supports. Measured over
+`8a31332c`, the tree ADR-MCPRE-068 closed on — the instrument's own two new carriers
+excluded, so the baseline describes the estate the campaign found rather than the estate
+plus the thing that measured it:
+
+| kind | lane | total | claimed | unclaimed |
+|---|---|---:|---:|---:|
+| `rust-test` | cargo | 3167 | 1534 | 1633 |
+| `rust-doctest` | cargo | 5 | 0 | **5** |
+| `pytest` | python | 809 | 88 | 721 |
+| `vitest` | typescript | 184 | 161 | 23 |
+| `structural` | structural lane | 25 | 25 | 0 |
+| `mutation` | mutation lane | 304 | 304 | 0 |
+| `measurement` | measured lane | 1 | 1 | 0 |
+| `gate` | gate lane | 63 | 4 | **59** |
+| **total** | | **4558** | **2117** | **2441** |
+
+Three things in that table are the reason it was worth measuring rather than extrapolating.
+**Every doctest in the repository is unclaimed** — §2.1 predicted two and there are five,
+and four of the five are `compile_fail` hostile constructions, which under ADR-068 §4.1 are
+`structural` controls and not behavioural evidence. **Four gates of sixty-three are claimed** — the ones ADR-068 Phase 1
+registered through `gate_controls` — and the question ADR-069 asks about the other
+fifty-nine is not "which unit forgot" but, gate by gate, whether it is the production
+carrier of a proposition at all. And the
+Python figure is an order of magnitude larger than the Rust ratio would suggest, because
+the assurance platform's own self-tests are pytest controls.
+
+### 2.3 What "claimed" means here, and the three ways this measurement could have lied
+
+A control is **claimed** when some unit's declared evidence SELECTS it — the
+`tested_symbols` entry resolves to this control in this unit's project — or, for a
+registry-carried control, when a probe or measurement names a unit. **Not** when it sits in
+a file a unit lists in `paths`. That distinction is the measurement: §3's worked instance
+is precisely a file whose controls are two-thirds unregistered inside a unit that lists it.
+
+The instrument therefore carries its own false-green catalogue
+(`tools/verification/test_controls.py`), because a census reporting zero over the wrong
+population is worse than no census:
+
+- **a control kind going dark.** One NAMED control per ecosystem must be discovered — a lib
+  test, an integration test, a binary-target test, a `compile_fail` doctest, an SDK pytest,
+  a repository-tooling pytest, a vitest case, a structural probe, a mutation probe and a
+  gate. A count would survive losing a whole discovery path as long as something else grew;
+  a named identity does not.
+- **a join that cannot see a registration.** Every `tested_symbols` selector must resolve to
+  a control. Zero stale selectors is evidence in both directions at once: the lane selects
+  with `--exact`, so a stale one would fail the lane, and an enumerator that had lost a
+  control kind would report every selector of that kind as stale.
+- **a measurement insensitive to its input.** Removing one registration must make its
+  control read as unclaimed, and removing one control must make its selector stale.
+
+**One census correction, found by reading the campaign's own prior authority rather than by
+a search.** A gate is claimed through `gate_controls`, not through `tested_symbols` — ADR-068
+Phase 1 built that lane, and four gates are the registered production carriers of theorems a
+type could not establish, three of them `critical`. A census reading only `tested_symbols`
+reported all four as unclaimed, which would have invited a `not-evidence` reason to be
+written about the carrier of a critical claim. The join reads both, and a `gate_controls`
+entry naming no gate is stale exactly as a `tested_symbols` entry naming no control is.
+
+A parametrised family is ONE control identified by the TEMPLATE the source declares, and the
+registry's per-case selectors are matched back to it. Expanding the family here would mean
+reimplementing pytest's and vitest's id algebras — which depend on values the census never
+sees — and getting that wrong in the silent direction would present a well-curated battery
+as unclaimed, and invite a `not-evidence` reason to be written about somebody's declared
+evidence.
 
 ## 3. The worked instance
 
@@ -219,16 +297,64 @@ and reported in the release view, as §5 says — never as a row in 068's debt r
 never as a premise record. It is a different fact: not *an obligation we owe and have not
 discharged*, but *a control we run whose proposition is unstated*.
 
-Still open, and none blocks the campaign:
+The three below were open at ratification. Phase 069-A answered all three from the
+architecture that exists, which is what §8 asked for; each answer is recorded with the
+mechanism that carries it.
 
-1. **Is `not-evidence` load-bearing enough to need a review record?** D3 requires a reason
-   but no `review_ref`. A large `not-evidence` population is indistinguishable from a
-   campaign that gave up, and nothing currently tells them apart.
-2. **Does the census belong in the same tool as 068's?** Both read the registry and walk the
-   tree. One tool with two reports keeps the walk honest; two tools keep the records
-   independent. ADR-068 Phase 0A moved the census into `tools/verification/`, which is the
-   moment to decide.
-3. **What is the unit of a `new-proposition` disposition?** The continuation-store instance
-   is five controls establishing one proposition. Nothing says a disposition may not be
-   one-control-to-one-proposition, and at 626 symbols that would be a very different campaign
-   from the one §3 illustrates.
+1. **Is `not-evidence` load-bearing enough to need a review record? — YES, and the
+   mechanism already existed.** D3 requires a reason and checks its shape; without somewhere
+   durable to look the reason up, a large `not-evidence` population and a campaign that gave
+   up are the same artefact, which is exactly what the question was circling. The answer is
+   ADR-MCPRE-061 §14's mechanism — a named record in a committed document, cited by a field,
+   with the gate failing when the cited record is absent — applied to a register of this
+   record's own:
+   [`control-dispositions.md`](control-dispositions.md), cited by `reason_family`.
+   **A separate register rather than a shared one**, because the authorities are separate:
+   061 adjudicates a unit that is too large, 069 adjudicates a control no proposition claims,
+   and one register per authority is what keeps a record citable by exactly one gate. It is
+   NOT a second generic debt authority: nothing is excused by a record here, a
+   `not-evidence` control is still enumerated and still listed under its family, and what
+   the record buys is that the reason is written once and reviewed once rather than retyped,
+   slightly differently, several hundred times.
+   The reason is recorded at FAMILY granularity, which is also what makes a `not-evidence`
+   population readable: `n` rows citing `k` families says something a reader can check, and
+   `n` free-text sentences says nothing.
+2. **Does the census belong in the same tool as 068's? — TWO tools, one walk.**
+   `tools/verification/_controls.py` measures what EXISTS and `_census.py` joins it to what
+   is CLAIMED; 068's `evidence-class-census` continues to measure the registry's own shape.
+   They are separate entry points because they answer to separate records and state separate
+   verdicts, and sharing an entry point would put 069's campaign pressure on 068's report.
+   They do not duplicate the walk: 069's enumeration is the only thing that reads the tree
+   for controls, and 068's census reads the registry.
+   The one thing that had to move is 068's own `unregistered_controls` figure, which counted
+   a file once per unit whose `paths` name it and so double-counted; it is superseded by
+   §2.2 and is a report, not a gate.
+3. **What is the unit of a `new-proposition` disposition? — THE PROPOSITION.** §3's worked
+   instance is five controls establishing one statement, and recording five separate
+   dispositions would lose the only thing that makes them worth ratifying together. So
+   `control-dispositions.toml` carries `[[proposition]]` records — statement, production
+   carrier, likely owner, consequence, root relationship, status — and a `new-proposition`
+   row on a control names the proposition it belongs to. One-control-to-one-proposition
+   remains possible and is simply the degenerate case; what is refused is a campaign in
+   which the cluster is not stated anywhere.
+
+## 9. How the campaign is held
+
+Three mechanisms, and they refuse different things.
+
+**`tools/verification/control-census --gate`** refuses what is wrong INSIDE the tree: a
+selector naming no control, a disposition about a control that is claimed or has ceased to
+exist (D4), a `not-evidence` row with no reason family, a family with no record, a
+`new-proposition` row naming no proposition. It does **not** refuse a large unclaimed
+population — during the campaign that population is the work, and a gate that failed on it
+would be pressure to bulk-register, which D2 forbids in terms.
+
+**`scripts/control_census_gate.py`** holds the undispositioned population against a per-file
+baseline in `config/control-census-debt.toml`: a registered file may not grow, an
+unregistered file may carry none, and an entry whose count reaches zero is removed. So the
+campaign pays yesterday's debt while a new control must be claimed or dispositioned in the
+commit that introduces it. The register is per FILE rather than per control because per
+control it would be 2,458 rows of bookkeeping duplicating the census, kept in step by hand.
+
+**`--closure`** states the closure criterion itself — residue zero — and is the release-time
+question, not the merge-time one.

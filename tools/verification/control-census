@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""ADR-MCPRE-069 — every executable control, and what claims it.
+
+    tools/verification/control-census                # the human report
+    tools/verification/control-census --json         # the same facts, machine-readable
+    tools/verification/control-census --residue      # the undispositioned population
+    tools/verification/control-census --gate         # a verdict, non-zero when it fails
+    tools/verification/control-census --selftest     # prove the instrument can see
+
+ADR-MCPRE-069's question is *which controls run and are claimed by nothing?* This states
+the answer as a measurement over the current tree rather than as a transcribed count: the
+626 in ADR-069 §2 was Rust-only, pre-ADR-068, and blind to doctests, Python, TypeScript and
+gates, and using it as a worklist would run a campaign against a population that no longer
+exists.
+
+# What the gate refuses
+
+Three things, and each is a way for a green census to be false rather than an aesthetic
+preference:
+
+  * a `tested_symbols` selector that resolves to NO control — a stale identity the lane's
+    `--exact` selection would fail on, and a sign the enumerator lost a control kind;
+  * a disposition row about a control that is claimed or has ceased to exist — ADR-069 D4
+    says a registered control leaves the census, so such a row is the registry disagreeing
+    with the tree;
+  * a `not-evidence` row with no reason family, or a family with no durable record — D3
+    requires the reason, and a reason nobody can look up is a word next to a symbol.
+
+It does NOT refuse a large unclaimed population. During the campaign that population is the
+work; a gate that failed on it would only invite the bulk registration ADR-069 D2 exists to
+forbid. `scripts/control_census_gate.py` holds that population against a per-file baseline
+instead, so it can only shrink, and `--closure` states ADR-069's closure criterion — residue
+zero — which is the release-time question and not the merge-time one.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from collections import Counter
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _census import RESIDUE_DECISIONS, census, propositions  # noqa: E402
+from _controls import KINDS, REPO_ROOT  # noqa: E402
+
+#: The durable register a `not-evidence` reason family points at. Same mechanism as
+#: ADR-MCPRE-061 §14's `review_ref` — a named record in a committed document, checked for
+#: existence — and a separate register because the authorities are separate: 061 adjudicates
+#: oversized units, 069 adjudicates controls.
+REGISTER = REPO_ROOT / "docs" / "architecture" / "control-dispositions.md"
+
+
+def _record(anchor: str) -> str | None:
+    """The register section for `anchor`, or None if the record does not exist."""
+    if not REGISTER.is_file():
+        return None
+    text = REGISTER.read_text()
+    found = re.search(rf"^##\s+{re.escape(anchor)}\b(.*?)(?=^## |\Z)", text, re.M | re.S)
+    return found.group(1) if found else None
+
+
+def failures(report) -> list[str]:
+    out: list[str] = []
+    for unit, project, selector in report.stale:
+        out.append(f"stale selector: {unit} ({project}) names no control: {selector}")
+    for row in report.orphan_dispositions:
+        out.append(
+            f"orphan disposition {row.id}: {row.project} {row.control} is claimed or absent"
+        )
+    for row in report.dispositions:
+        if row.decision not in RESIDUE_DECISIONS:
+            out.append(f"{row.id}: decision {row.decision!r} is not one of {RESIDUE_DECISIONS}")
+        if row.decision == "not-evidence" and not row.reason_family:
+            out.append(f"{row.id}: not-evidence with no reason_family (ADR-069 D3)")
+        record = _record(row.reason_family) if row.reason_family else None
+        if row.reason_family and record is None:
+            out.append(f"{row.id}: reason family {row.reason_family} has no record in {REGISTER.name}")
+        if row.decision == "new-proposition" and not row.proposition:
+            out.append(f"{row.id}: new-proposition with no proposition id")
+        out.extend(_scope_failures(row, record))
+    known = {entry["id"] for entry in propositions()}
+    for row in report.dispositions:
+        if row.proposition and row.proposition not in known:
+            out.append(f"{row.id}: proposition {row.proposition} is not declared")
+    return out
+
+
+#: What a family record must say before a FILE-wide disposition may cite it. The same
+#: idiom as ADR-MCPRE-061 §14's `growth-authorization:` — a literal a reviewer has to write,
+#: so that carrier scope is a decision somebody took rather than a field somebody set.
+CARRIER_SCOPE_TOKEN = "carrier-scope: admitted"
+
+
+def _scope_failures(row, record: str | None) -> list[str]:
+    """Whether this row's SCOPE is one its decision and its family admit."""
+    if row.scope == "control":
+        return [] if row.control else [f"{row.id}: control-scoped row names no control"]
+    if row.scope != "carrier":
+        return [f"{row.id}: scope {row.scope!r} is neither 'control' nor 'carrier'"]
+    out: list[str] = []
+    if not row.carrier:
+        out.append(f"{row.id}: carrier-scoped row names no carrier")
+    if row.decision != "not-evidence":
+        out.append(
+            f"{row.id}: {row.decision} may not be carrier-scoped — a proposition is a claim "
+            "about named controls, and a file-wide one is a claim nobody read"
+        )
+    if record is not None and CARRIER_SCOPE_TOKEN not in record:
+        out.append(
+            f"{row.id}: family {row.reason_family} does not state '{CARRIER_SCOPE_TOKEN}'"
+        )
+    return out
+
+
+def closure_failures(report) -> list[str]:
+    """ADR-069's closure criterion, stated as the things that would falsify it."""
+    return failures(report) + [
+        f"undispositioned: {control.project} {control.identity}" for control in report.residue
+    ]
+
+
+def to_json(report) -> dict:
+    return {
+        "controls": len(report.controls),
+        "by_kind": report.by_kind(report.controls),
+        "claimed": len(report.claimed),
+        "unclaimed": len(report.unclaimed),
+        "unclaimed_by_kind": report.by_kind(report.unclaimed),
+        "dispositioned": len(report.dispositioned),
+        "dispositions_by_decision": dict(
+            Counter(row.decision for row in report.dispositions)
+        ),
+        "residue": len(report.residue),
+        "stale_selectors": len(report.stale),
+        "propositions": [
+            {
+                "id": entry["id"],
+                "ratified_as": entry.get("ratified_as", ""),
+                "likely_owner": entry.get("likely_owner", ""),
+            }
+            for entry in propositions()
+        ],
+    }
+
+
+def human(report) -> None:
+    print(f"controls {len(report.controls)}  claimed {len(report.claimed)}  "
+          f"unclaimed {len(report.unclaimed)}")
+    print()
+    print(f"  {'kind':14} {'ecosystem':18} {'total':>7} {'claimed':>8} {'unclaimed':>10}")
+    total = report.by_kind(report.controls)
+    unclaimed = report.by_kind(report.unclaimed)
+    for kind, ecosystem in KINDS.items():
+        print(f"  {kind:14} {ecosystem:18} {total[kind]:>7} "
+              f"{total[kind] - unclaimed[kind]:>8} {unclaimed[kind]:>10}")
+    print()
+    decided = Counter(row.decision for row in report.dispositions)
+    for decision in RESIDUE_DECISIONS:
+        print(f"  {decision:18} {decided.get(decision, 0)}")
+    print(f"  {'undispositioned':18} {len(report.residue)}")
+    print(f"  {'stale selectors':18} {len(report.stale)}")
+    entries = propositions()
+    if entries:
+        print()
+        print("new propositions:")
+        for entry in entries:
+            landed = entry.get("ratified_as") or "unresolved"
+            print(f"  {entry['id']:8} {landed:12} {entry.get('title','')}")
+
+
+def residue_report(report) -> None:
+    """The undispositioned population, grouped by carrier — the campaign's worklist.
+
+    Grouped by FILE rather than listed flat, because a disposition batch is a semantic
+    owner's controls and the file is the nearest cheap proxy for one; a flat list of 2,445
+    identities invites exactly the regex-shaped batching ADR-069 D2 refuses.
+    """
+    groups: dict[str, list] = {}
+    for control in report.residue:
+        groups.setdefault(control.carrier, []).append(control)
+    for carrier, controls in sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        print(f"{len(controls):>4}  {carrier}")
+
+
+def selftest() -> int:
+    """Prove the instrument can SEE — one positive scope check per supported ecosystem."""
+    import test_controls
+
+    return test_controls.run()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--residue", action="store_true")
+    parser.add_argument("--gate", action="store_true")
+    parser.add_argument("--closure", action="store_true")
+    parser.add_argument("--selftest", action="store_true")
+    args = parser.parse_args()
+    if args.selftest:
+        return selftest()
+    report = census()
+    if args.json:
+        print(json.dumps(to_json(report), indent=2))
+        return 0
+    if args.residue:
+        residue_report(report)
+        return 0
+    if args.gate or args.closure:
+        problems = closure_failures(report) if args.closure else failures(report)
+        shown = problems[:40]
+        for problem in shown:
+            print(f"  {problem}")
+        if len(problems) > len(shown):
+            print(f"  … and {len(problems) - len(shown)} more")
+        verdict = "PASS" if not problems else f"FAIL ({len(problems)} problem(s))"
+        print(f"CONTROL CENSUS{' CLOSURE' if args.closure else ''}: {verdict}")
+        return 0 if not problems else 1
+    human(report)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

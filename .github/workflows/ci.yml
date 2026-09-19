@@ -439,6 +439,27 @@ jobs:
       - name: Evidence-class census selftest (a figure that cannot move is not a measurement)
         run: tools/verification/evidence-class-census --selftest
 
+      # ADR-MCPRE-069 — the mirror census: controls that RUN and that no proposition
+      # claims. The selftest comes first and is the reason a later "0 unclaimed" is worth
+      # anything: ADR-069's own first measurement was Rust-only and blind to doctests,
+      # Python, TypeScript and gate carriers, so it reported a clean sweep over a
+      # population missing whole control kinds. One NAMED control per ecosystem must be
+      # discovered, and removing a registration must make its control read as unclaimed.
+      #
+      # Then two DIFFERENT facts. `--gate` refuses what is wrong inside the tree: a
+      # `tested_symbols` selector that names no control (the lane selects with `--exact`,
+      # so it would fail), a disposition about a control that is claimed or gone, a
+      # `not-evidence` row whose reason nobody can look up. The ratchet holds the
+      # undispositioned population against a per-file baseline, because ADR-069's closure
+      # is a campaign and a gate that failed on the residue would be pressure to
+      # bulk-register — which ADR-069 D2 forbids in terms.
+      - name: Control census (ADR-MCPRE-069 — evidence that runs but nothing claims)
+        run: |
+          python3 tools/verification/test_controls.py
+          tools/verification/control-census --gate
+          python3 scripts/control_census_gate.py --selftest
+          python3 scripts/control_census_gate.py
+
       # The assurance platform's own self-tests — the verdict algebra, the invalidation
       # rules, the measured-input closure, the escape-hatch detector, the theorem loader
       # and review model, the test and Verus lane adapters, and the views generator. They
