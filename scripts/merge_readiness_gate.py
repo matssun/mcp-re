@@ -113,7 +113,7 @@ sys.path.insert(0, str(REPO / "tools" / "verification"))
 from _evidence import MALFORMED_LANE, PREREQUISITE_KINDS, required_lanes  # noqa: E402
 from _fingerprint import WORKSPACE_BUILD_INPUTS  # noqa: E402
 from _load_tool import load_tool  # noqa: E402
-from _manifest import load_verification  # noqa: E402
+from _manifest import SCHEMA_VERSION, load_verification  # noqa: E402
 
 #: The only three answers. A caller that wants to know whether to merge reads exactly one
 #: of these; there is deliberately no fourth "green except…" state to argue with.
@@ -352,6 +352,55 @@ def git(*args: str) -> str:
     return done.stdout.strip()
 
 
+#: The registry whose `[[unit]]` entries decide which lanes a candidate needs.
+VERIFICATION_TOML = "verification/policy/verification.toml"
+
+
+def manifest_at(sha: str) -> dict:
+    """The verification registry AS THE CANDIDATE CARRIES IT, not as the tree carries it.
+
+    Every other fact this gate reads is bound to the commit under review: the candidate
+    sha, its check runs, their conclusions. The required-lane SET was the exception — it
+    came from `verification/policy/verification.toml` in the working tree — so a verdict
+    was two tree states joined, and looked exactly like a correct one.
+
+    It is not a theoretical hazard and it was not one-directional. Both shapes were
+    measured in one campaign, in one workspace with two active PRs: 192 -> 197, where the
+    tree carried MORE units than the candidate, and 212 -> 206, where it carried FEWER.
+    Only the first is harmless. Deriving the required set from a SMALLER estate than the
+    commit being merged is the shape that returns READY for a candidate whose real
+    required set is larger, which is the one thing this gate exists to prevent.
+
+    Read raw rather than through `load_verification`: that validator resolves each unit's
+    `paths` globs against the CHECKED-OUT tree, so validating the candidate's registry from
+    another branch would fail on files the candidate has and the tree does not — a tree
+    fact again, in the one place that must carry none. The candidate's own lanes validate
+    its registry; this gate needs its unit and edge tables and the one property whose drift
+    would change what a lane MEANS:
+
+      * `git show` failing (no such commit, or a candidate carrying no registry at all)
+        and unparsable TOML both raise `Undecidable` — the brief's fallback (b), which
+        costs nothing once every input comes from one commit;
+      * a `schema_version` this tooling does not implement is `Undecidable` for the same
+        reason `load_verification` refuses it: the lane names would be read under a schema
+        nobody here implements.
+    """
+    import tomllib
+
+    blob = git("show", f"{sha}:{VERIFICATION_TOML}")
+    try:
+        doc = tomllib.loads(blob)
+    except tomllib.TOMLDecodeError as exc:
+        raise Undecidable(f"{VERIFICATION_TOML} at {sha[:12]} is unparsable: {exc}") from exc
+    if doc.get("schema_version") != SCHEMA_VERSION:
+        raise Undecidable(
+            f"{VERIFICATION_TOML} at {sha[:12]} declares schema_version "
+            f"{doc.get('schema_version')!r}; this gate implements {SCHEMA_VERSION}, so the "
+            f"lanes its units require would be read under a schema nobody here implements"
+        )
+    return doc
+
+
 def gh_json(*args: str):
     done = subprocess.run(["gh", *args], capture_output=True, text=True)
     if done.returncode != 0:
@@ -433,9 +482,14 @@ def changed_files(sha: str, base: str) -> set[str]:
 # --------------------------------------------------------------------------------- main
 
 
-def report(sha: str, units: set[str], rows: list[tuple], state: str, authority: str) -> None:
+def report(
+    sha: str, units: set[str], rows: list[tuple], state: str, authority: str, declared: int
+) -> None:
     print(f"candidate      {sha}")
     print(f"authority      {authority}")
+    # Both numbers, and the sha they came from: a reader can see that the estate the
+    # required set was derived from is the candidate's own, rather than trusting it.
+    print(f"registry       {VERIFICATION_TOML}@{sha[:12]} — {declared} declared unit(s)")
     print(f"affected units {len(units)}")
     for lane, check, mark, why in rows:
         # Under the ruleset authority the "lane" IS the check, so printing both would be
@@ -463,8 +517,9 @@ def main(argv: list[str]) -> int:
             sha = gh_json("pr", "view", args.pr, "--repo", args.repo, "--json", "headRefOid")["headRefOid"]
         sha = git("rev-parse", sha or "HEAD")
 
-        manifest = load_verification()
-        units, edges = manifest["unit"], manifest.get("edge", [])
+        # From the CANDIDATE, never from the tree: see `manifest_at`.
+        manifest = manifest_at(sha)
+        units, edges = manifest.get("unit", []), manifest.get("edge", [])
         affected = affected_units(units, edges, changed_files(sha, args.base))
         lanes: set[str] = set()
         for unit in units:
@@ -479,7 +534,7 @@ def main(argv: list[str]) -> int:
             authority = "branch ruleset (no declared unit affected)"
             required = {name: [name] for name in ruleset_required_checks(args.repo, args.base)}
         state, rows = decide(required, check_runs(args.repo, sha), sha, umbrella_checks())
-        report(sha, affected, rows, state, authority)
+        report(sha, affected, rows, state, authority, len(units))
         return {READY: 0, NOT_READY: 1, FAILED: 2}[state]
     except Undecidable as exc:
         print(f"MERGE-READINESS: UNDECIDABLE — {exc}", file=sys.stderr)
@@ -623,6 +678,33 @@ def selftest() -> int:
     every = affected_units(manifest["unit"], manifest.get("edge", []), {"Cargo.lock"})
     if len(every) != len(manifest["unit"]):
         print(f"  FAIL a Cargo.lock change widened to {len(every)} of {len(manifest['unit'])} units")
+        bad += 1
+
+    # The registry the required set is derived from must come from the COMMIT, not the
+    # tree. Perturbed rather than asserted: a version of `manifest_at` that read the tree
+    # would return the tree's unit count for every sha, so the control compares two
+    # commits that declare DIFFERENT numbers and requires the answers to differ with them.
+    # `git log -1 --format=%H -- <path>` finds the last commit that CHANGED the registry,
+    # so its parent is guaranteed to carry a different one wherever history has any.
+    changed_at = git("log", "-1", "--format=%H", "--", VERIFICATION_TOML)
+    if changed_at:
+        parent = git("rev-parse", f"{changed_at}^")
+        here, before = len(manifest_at(changed_at).get("unit", [])), len(
+            manifest_at(parent).get("unit", [])
+        )
+        for sha_, read in ((changed_at, here), (parent, before)):
+            declared = git("show", f"{sha_}:{VERIFICATION_TOML}").count("\n[[unit]]")
+            if read != declared:
+                print(f"  FAIL manifest_at({sha_[:12]}) read {read}; the blob declares {declared}")
+                bad += 1
+    # A candidate carrying no registry, or naming no commit, is UNDECIDABLE — never a
+    # verdict. `git()` raises it; this asserts the gate does not swallow it somewhere.
+    try:
+        manifest_at("0000000000000000000000000000000000000000")
+    except Undecidable:
+        pass
+    else:
+        print("  FAIL a candidate with no readable registry produced a manifest anyway")
         bad += 1
 
     print(f"merge_readiness_gate selftest: {'PASS' if bad == 0 else f'FAIL ({bad})'}")
