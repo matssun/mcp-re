@@ -5605,6 +5605,14 @@ tested_symbols = [
   # read refuses at materialization rather than minting unrevocably later.
   "lib#signing_plane::epoch_watch_wiring_tests::a_planned_but_unusable_epoch_url_refuses_instead_of_minting_unrevocably",
   "lib#signing_plane::epoch_watch_wiring_tests::no_planned_epoch_source_is_still_accepted",
+  # ADR-MCPRE-069 NP-148, one R1 row needing no `paths` widening: `signing_plane/mod.rs` is
+  # already this unit's, and "yields none before the first rotation" is the statement it
+  # measures. It is the same refusal as `failing_root_fails_closed_at_first_issuance` and
+  # `no_key_before_first_rotate_fails_closed` driven through `SigningPlane::materialize`
+  # itself, so the plane cannot be established around a signer that has no key — and it
+  # asserts the root was in fact asked, which is what keeps it from being satisfied by a
+  # materialization that refused for some other reason.
+  "lib#signing_plane::rotation_owner_tests::materialize_refuses_when_the_root_cannot_issue_the_first_key",
   # r11 R11-377. FIRST issuance, which is the transition every later one is measured against,
   # and the pairing that makes it publishable. `issue_delegation_credential_with_signer` only
   # length-checks what the root hands back, so a backend wired to the wrong key produced a
@@ -10202,4 +10210,129 @@ evidence = [
 ]
 tested_symbols = [
   "lib#tls_plane::handle_lifetime_tests::a_retired_plane_stops_claiming_a_cadence",
+]
+
+# ---------------------------------------------------------------------------
+# The proxy's posture premises — ADR-MCPRE-069 NP-121, NP-123, NP-143,
+# NP-147, NP-148
+# ---------------------------------------------------------------------------
+#
+# Thirty controls were measured over five records and NINE are registered here. The
+# twenty-one that are not are the slice's result, and each is refused against quoted text
+# rather than left out for want of time:
+#
+#   * the replay TIER VOCABULARY — its parse, its wire names, its guarantee strings and its
+#     tier-claim ceiling — is not THM-0086's. THM-0086 is a CONFIGURATION PROJECTION claim
+#     about what `MaterializedReplay::materialize` hands the serving path, and its "refused
+#     by name rather than substituted" clause is about a BACKEND THIS BUILD DOES NOT CARRY,
+#     already measured by `a_backend_the_build_lacks_is_refused_and_named` in
+#     `proxy.replay_materialization`. Rename every wire name and THM-0086 still holds, which
+#     is the operational test failing. What DOES land is the strict-production MINIMUM, and
+#     it lands under THM-0092, whose statement quantifies over it by name.
+#   * the Mode-C attested-ingress verifier is DORMANT. `undeployable_transport_binding_refusal`
+#     refuses `AttestedIngress` in every build with no `cfg`, so no validated deployment
+#     reaches `build_attested_ingress_binding` at all. THM-0077 quantifies over "every
+#     security capability held by the serving runtime"; a capability no deployment can hold
+#     is not one of them, and whether dormant code gets a claim at all is the question
+#     NP-146's residue already puts to the owner.
+#   * an OFF line's operator-actionability, a secret string's redaction at the consumer and
+#     the PIN file's mode are three operator-facing or custody propositions no theorem
+#     states. `proxy.operator_facing_redaction` owns the redaction subject and its own
+#     closure note ALREADY refuses this control by name — and that unit is itself under no
+#     theorem, so reattributing there would close nothing.
+#   * the AUTOMATIC fleet topology is a throughput and availability policy, not a security
+#     posture, and two of its three controls exercise a helper defined inside the test
+#     module rather than `resolve_topology`, so no production edit turns them red.
+
+[[unit]]
+id = "proxy.replay_tier_production_minimum"
+class = "V0"
+description = "WHICH DECLARED TIERS ARE BELOW THE STRICT-PRODUCTION MINIMUM: `REDIS_WAIT_QUORUM` and `LINEARIZABLE` meet it, `REDIS_ASYNC` and `SINGLE_STORE_FAIL_CLOSED` do not. It is the membership behind the threshold the fleet-strict admission gate refuses on — without it that refusal is well formed and empty, and an async deployment passes a gate that believes it is enforcing one. It is the ONLY ordering this type asserts and this unit claims no other: no tier is stronger than another here, nothing is said about what an acknowledged write to a tier durably establishes, and the refusal ITSELF — that a sub-minimum tier is refused before the store is touched — is `proxy.replay_admission_gate`'s over a different file."
+paths = ["mcp-re-proxy/src/replay_tier.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/replay_tier/production_minimum",
+  "mutation://proxy/replay_tier/production_minimum",
+]
+# One symbol, and deliberately one. The rest of `replay_tier.rs`'s battery is the tier
+# VOCABULARY — parse, wire names, guarantee strings, the claim ceiling — which no ratified
+# theorem states and which stays in the ADR-069 census under NP-121. A unit's battery is its
+# claim, so a wider battery here would make THM-0092 support a published-guarantee promise
+# it never made.
+tested_symbols = [
+  "lib#replay_tier::tests::strict_production_minimum_is_wait_quorum_or_stronger",
+]
+
+[[unit]]
+id = "proxy.serving_capability_posture"
+class = "V0"
+description = "AN OPTIONAL SERVING CAPABILITY IS ON WITH THE ARTIFACT IT ATTACHES OR OFF WITH NONE, AND WHICH IT IS FOLLOWS THE CLASSIFIED CONFIGURATION: the ON constructor cannot be reached without the artifact and the OFF constructor has nowhere to put one, so `the transcript says this protection is running` and `something was established` are one value rather than two statements kept in agreement; the verified-context carrier is attached only for a trusted inner channel and the security-audit posture only for the classified audit state; a retention store is opened exactly when the state named a directory, and a directory that cannot be opened REFUSES STARTUP rather than resolving to the OFF posture. It says nothing about the ORDER capabilities are established in, which is the composition root's, and nothing about what an OFF line tells the operator to do, which is an operator-facing promise left in the ADR-069 census under NP-123."
+paths = ["mcp-re-proxy/src/serving_capabilities.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/serving_capabilities/posture_follows_the_artifact",
+  "mutation://proxy/serving_capabilities/posture_follows_the_artifact",
+]
+tested_symbols = [
+  "lib#serving_capabilities::tests::an_on_posture_always_carries_an_artifact_and_an_off_posture_never_does",
+  "lib#serving_capabilities::tests::the_verified_context_carrier_is_attached_only_for_a_trusted_inner_channel",
+  "lib#serving_capabilities::tests::the_security_audit_posture_follows_the_classified_audit_state",
+  "lib#serving_capabilities::tests::evidence_retention_attaches_a_store_only_for_a_named_directory",
+  "lib#serving_capabilities::tests::an_unopenable_retention_directory_refuses_startup_naming_the_flag",
+]
+
+[[unit]]
+id = "proxy.fleet_topology_provenance"
+class = "V0"
+description = "AN EXPLICITLY CONFIGURED FLEET TOPOLOGY IS CARRIED THROUGH UNCHANGED: a stated shard count and a stated worker depth are the ones the fleet runs, including the explicit `1` that restores the single-shard share-nothing deployment, so the serving runtime cannot disagree with the operator about the shape it was told to take. It is the provenance half ONLY. What the automatic path computes when nothing was stated — a shard per cpu, the depth it adds on top, and the floor of one shard of one worker — is a throughput and availability policy rather than a security posture, and it stays in the ADR-069 census under NP-147."
+# CLOSURE, NOT CLAIM. `core_runtime.rs` is here because `mod core_runtime;` in the file
+# above resolves to it and UC-1 requires a measured file's own modules to be measured —
+# a unit that fingerprinted the topology function while its sibling module could be
+# rewritten under a standing attestation would be measuring half of what it names. This
+# unit claims nothing about the per-shard runtime builder.
+paths = [
+  "mcp-re-proxy/src/async_fleet/mod.rs",
+  "mcp-re-proxy/src/async_fleet/core_runtime.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/async_fleet/topology_provenance",
+  "mutation://proxy/async_fleet/topology_provenance",
+]
+# One symbol, measured rather than chosen. The other two controls on this carrier assert
+# over `auto_for`, a helper defined INSIDE `topology_tests` that restates the policy
+# `resolve_topology` implements; no edit to production turns them red, so naming them here
+# would put a control that cannot fail inside a battery.
+tested_symbols = [
+  "lib#async_fleet::topology_tests::explicit_topology_is_never_overridden",
+]
+
+[[unit]]
+id = "proxy.signing_plane_epoch_read_refusal"
+class = "V0"
+description = "A CONFIGURED REVOCATION KILL SWITCH WHOSE COUNTER CANNOT BE READ REFUSES THE PLANE, BEFORE THE FIRST MINT: a deployment that named a shared trust-epoch source and whose source answers nothing does not start with the switch wired to nothing, and the refusal precedes issuance, so no key is minted carrying an epoch label the operator's `INCR` could never revoke. It is the READ, one step past the wiring: that a locator which cannot be turned into a reader at all refuses is `proxy.delegated_signing_credential`'s over the same file, and this is the case where the reader is built and every read then fails. It says nothing about what the counter's VALUE means once read, which is `proxy.trust_epoch_source`'s, and nothing about the rotation loop's own refusal to mint under an unreadable epoch."
+paths = ["mcp-re-proxy/src/signing_plane/mod.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/signing_plane/epoch_read_refusal",
+  "mutation://proxy/signing_plane/epoch_read_refusal",
+]
+# THE LANE IS THE REASON THIS IS A UNIT OF ITS OWN. The control is
+# `#[cfg(feature = "redis_replay")]`, so the default cargo lane compiles it to ZERO tests,
+# and `proxy.delegated_signing_credential` — which already holds `signing_plane/mod.rs` and
+# every other refusal on this path — declares no `test_features` and says in its own closure
+# note that naming this control there would claim default-lane evidence for a feature-lane
+# fact. A unit's `test_features` are ONE set for the WHOLE battery, so the choice was a
+# separate unit or a silently vacuous member; this is the separate unit.
+test_features = ["redis_replay"]
+tested_symbols = [
+  "lib#signing_plane::rotation_owner_tests::materialize_refuses_when_the_configured_shared_epoch_cannot_be_read",
 ]

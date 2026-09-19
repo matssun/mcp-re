@@ -101,12 +101,6 @@ baseline_sha = "7e184961"
 status = "unreviewed"
 
 [[exclusion]]
-path = "mcp-re-proxy/src/serving_capabilities.rs"
-rule = "UC-2"
-baseline_sha = "7e184961"
-status = "unreviewed"
-
-[[exclusion]]
 path = "mcp-re-proxy/src/transparency/auditor/mod.rs"
 rule = "UC-1"
 baseline_sha = "7e184961"

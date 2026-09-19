@@ -9071,3 +9071,163 @@ The currency is SHARED, which is why the control asserts through a handle taken 
 drop rather than through the dropped value: a retraction that reached only the value going
 away would retract nothing an operator can read.
 """
+
+# ---------------------------------------------------------------------------
+# The proxy's posture premises — ADR-MCPRE-069 NP-121, NP-123, NP-147, NP-148
+# ---------------------------------------------------------------------------
+#
+# Four weakenings, and all four leave a tree that builds and a replica that serves. One
+# admits an async tier to a threshold that exists to exclude it, one turns a startup
+# refusal into an OFF posture line, one caps an operator's stated worker depth at the
+# automatic default, and one lets a configured kill switch that answers nothing read as a
+# label. None errors, none panics, and none is visible above the function it is in.
+
+[[probe]]
+id = "M335-proxy-the-production-minimum-excludes-the-async-tier"
+unit = "proxy.replay_tier_production_minimum"
+theorem = "THM-0092"
+conjunct = "declares one below the strict-production minimum"
+path = "mcp-re-proxy/src/replay_tier.rs"
+anchor = """
+        matches!(
+            self,
+            ReplayDurabilityTier::QuorumAcknowledged { .. } | ReplayDurabilityTier::Linearizable
+        )
+"""
+weakening = """
+        matches!(
+            self,
+            ReplayDurabilityTier::QuorumAcknowledged { .. }
+                | ReplayDurabilityTier::Linearizable
+                | ReplayDurabilityTier::AsyncReplicatedBounded
+        )
+"""
+expect_red = [
+  "lib#replay_tier::tests::strict_production_minimum_is_wait_quorum_or_stronger",
+]
+note = """
+THE MEMBERSHIP IS THE CLAIM, AND A MATCH ARM IS WHERE IT IS SPENT. Under the weakening
+`REDIS_ASYNC` meets the strict-production minimum, so a fleet-strict deployment declaring the
+tier whose own guarantee says a failover "may reopen a replay window" passes the gate that
+exists to refuse it. Nothing errors: the gate still runs, still refuses an undeclared tier and
+still refuses a store that self-reports the single-process class, and the startup transcript
+still prints REDIS_ASYNC. What changes is that the refusal's quantification has been emptied
+of its most important member.
+
+That is the shape THM-0092's own consequence names — "a deployment that believes it has
+cross-replica replay protection and has process-local protection" — reached without touching
+the refusal itself. This is why the membership is a leaf of its own rather than a sentence in
+`proxy.replay_admission_gate`: that unit's battery drives the gate, and the gate under this
+weakening behaves exactly as before.
+"""
+
+[[probe]]
+id = "M336-proxy-an-unopenable-retention-directory-is-not-an-off-posture"
+unit = "proxy.serving_capability_posture"
+theorem = "THM-0077"
+conjunct = "Illegal, unsupported or internally contradictory deployment postures cannot be silently reinterpreted into a weaker posture during materialization or serving"
+path = "mcp-re-proxy/src/serving_capabilities.rs"
+anchor = """
+    let retention = crate::transparency::EvidenceRetention::open(dir)
+        .map_err(|e| format!("--retained-evidence-dir {dir}: {e}"))?;
+"""
+weakening = """
+    let Ok(retention) = crate::transparency::EvidenceRetention::open(dir) else {
+        return Ok(Established::off(
+            "evidence retention = OFF: the directory could not be opened. Pass --retained-evidence-dir <path> to enable it.",
+        ));
+    };
+"""
+expect_red = [
+  "lib#serving_capabilities::tests::an_unopenable_retention_directory_refuses_startup_naming_the_flag",
+]
+note = """
+THE SILENT REINTERPRETATION, PERFORMED. An operator passes `--retained-evidence-dir`, the
+path cannot be opened, and the replica comes up announcing evidence retention as OFF — a
+posture nobody selected, printed in the same vocabulary as the posture of an operator who
+deliberately retained nothing. Every later SCITT statement about a call served here is then
+impossible, and the transcript the operator reads says the deployment chose that.
+
+It is a REPRESENTABLE weakening rather than an obviously wrong one, which is the point:
+`Established::off` is a legitimate constructor and the type system is satisfied. What refuses
+the posture is the `?`, one character of the four this probe removes.
+
+The other four controls in this battery stay green and that is what locates the conjunct.
+`evidence_retention_attaches_a_store_only_for_a_named_directory` drives the WRITABLE
+directory and the OFF state, neither of which this weakening reaches, so a battery holding
+only the attachment control would report the reinterpretation as no change at all.
+"""
+
+[[probe]]
+id = "M337-proxy-an-explicit-worker-depth-is-not-capped"
+unit = "proxy.fleet_topology_provenance"
+theorem = "THM-0077"
+conjunct = "a serving component cannot disagree with the owner about what was configured"
+path = "mcp-re-proxy/src/async_fleet/mod.rs"
+anchor = """
+    let workers = if configured_workers != 0 {
+        configured_workers
+    } else {
+        DEFAULT_MAX_WORKERS_PER_SHARD.min(available).max(1)
+    };
+"""
+weakening = """
+    let workers = if configured_workers != 0 {
+        DEFAULT_MAX_WORKERS_PER_SHARD.min(configured_workers)
+    } else {
+        DEFAULT_MAX_WORKERS_PER_SHARD.min(available).max(1)
+    };
+"""
+expect_red = [
+  "lib#async_fleet::topology_tests::explicit_topology_is_never_overridden",
+]
+note = """
+THE OVERRIDE, IN ITS PLAUSIBLE FORM. It does not replace the operator's topology with the
+automatic one — that would be obvious and would be caught by a shard assertion on any host.
+It CLAMPS the stated depth to the automatic default, which reads like a sanity bound and is
+indistinguishable from the operator's own choice everywhere below the default. A deployment
+that measured its hardware and stated sixteen workers per shard silently runs eight, and the
+startup transcript is not where it would be noticed.
+
+The weakening is deterministic and host-independent: `resolve_topology(1, 16)` yields `(1, 8)`
+whatever `available_parallelism` reports, so this probe measures the code and not the machine
+it ran on. The explicit `1` and the explicit `4` are unaffected, which is why a control
+asserting only that an explicit shard count survives would report this as no change.
+"""
+
+[[probe]]
+id = "M338-proxy-an-unreadable-kill-switch-is-not-a-label"
+unit = "proxy.signing_plane_epoch_read_refusal"
+theorem = "THM-0077"
+conjunct = "Every security capability held by the serving runtime is derived from validated semantic owner state"
+path = "mcp-re-proxy/src/signing_plane/mod.rs"
+anchor = """
+            let label = watch.current_label().ok_or_else(|| {
+"""
+weakening = """
+            let label = watch
+                .current_label()
+                .or_else(|| Some(rotor.trust_epoch().to_string()))
+                .ok_or_else(|| {
+"""
+expect_red = [
+  "lib#signing_plane::rotation_owner_tests::materialize_refuses_when_the_configured_shared_epoch_cannot_be_read",
+]
+note = """
+THE SWITCH WIRED TO NOTHING, WHICH IS THE BEHAVIOUR THE REFUSAL REPLACED. The weakening keeps
+the whole fail-closed block — the message, the `?`, the ADR reference — and makes its closure
+unreachable by supplying the bare base label when the shared counter cannot be read. The
+replica starts, announces the epoch watch as ACTIVE, and mints credentials under a label no
+`INCR` moves, so the operator's kill switch is present in the configuration, present in the
+transcript, and connected to nothing.
+
+This runs in the `redis_replay` lane and nowhere else. The control is
+`#[cfg(feature = "redis_replay")]`, so the default battery compiles it to zero tests and a
+default-lane run of this probe would report a green that measured nothing; the unit declares
+`test_features = ["redis_replay"]` and this probe inherits it.
+
+`a_planned_but_unusable_epoch_url_refuses_instead_of_minting_unrevocably`, in
+`proxy.delegated_signing_credential`, stays green: it refuses a locator that cannot be turned
+into a READER at all, one step before the read this weakening defeats. Two refusals, two
+units, and only the second is measured here.
+"""

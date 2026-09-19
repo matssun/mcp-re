@@ -3934,6 +3934,33 @@ supported_by = [
   "unit://proxy.startup_plan_provenance",
   "unit://proxy.startup_plan_legality",
   "unit://proxy.startup_plan_pool_ceiling",
+  # ADR-MCPRE-069 NP-123, NP-147, NP-148. The same decomposition carried past the plan into
+  # what MATERIALIZATION then holds, which is the first sentence's own verb and the second
+  # sentence's own noun:
+  #
+  #   serving_capability_posture    the artifact and the posture line are ONE value, so a
+  #                                 capability cannot announce itself as running over
+  #                                 nothing, and an unopenable retention directory refuses
+  #                                 rather than resolving to OFF — the "silent
+  #                                 reinterpretation into a weaker posture" verbatim
+  #   fleet_topology_provenance     an explicitly configured topology is carried through
+  #                                 unchanged, which is the consequence's "a serving
+  #                                 component cannot disagree with the owner about what was
+  #                                 configured". The PROVENANCE half only; what the
+  #                                 automatic path computes is throughput policy and is
+  #                                 deliberately outside this root.
+  #   signing_plane_epoch_read_refusal
+  #                                 a deployment that selected a revocation kill switch does
+  #                                 not start with it wired to nothing. The scope's own
+  #                                 sentence admits it: "an unavailable tier failing closed
+  #                                 is inside the claim".
+  #
+  # None of the three moves `statement`, `security_consequence`, `scope`, `depends_on` or
+  # `review_requirement`, and none introduces a trust boundary, an external assumption or a
+  # choice between product behaviours.
+  "unit://proxy.serving_capability_posture",
+  "unit://proxy.fleet_topology_provenance",
+  "unit://proxy.signing_plane_epoch_read_refusal",
 ]
 depends_on = [
   "THM-0067",
@@ -4471,6 +4498,14 @@ review_requirement = "Owner security-specification review"
 supported_by = [
   "unit://proxy.replay_admission_gate",
   "unit://http_profile.fleet_strict_store_class",
+  # ADR-MCPRE-069 NP-121. The statement refuses a deployment that "declares one below the
+  # strict-production minimum"; this leaf is the MEMBERSHIP that quantification ranges over
+  # — which declared tiers are below it — over `replay_tier.rs`, a file the gate's own unit
+  # does not measure. Strict decomposition by subject: without it the refusal above is well
+  # formed and empty, and it introduces no promise the claim did not already carry. The rest
+  # of that carrier's battery — the tier vocabulary and its published guarantees — is NOT
+  # here and is not THM-0086's either; it stays in the ADR-069 census.
+  "unit://proxy.replay_tier_production_minimum",
 ]
 depends_on = ["THM-0086", "THM-0106", "THM-0107"]
 
