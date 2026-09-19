@@ -95,7 +95,24 @@ def failures(report) -> list[str]:
             out.append(f"{entry['id']}: no record in {REGISTER.name}")
         if not any(row.proposition == entry["id"] for row in report.dispositions):
             out.append(f"{entry['id']}: declared and no control cites it")
+    out.extend(_orphan_records(report, known))
     return out
+
+
+def _orphan_records(report, propositions: set[str]) -> list[str]:
+    """A `##` record in the register that nothing declares.
+
+    The other direction is checked above — a declaration must have a record. This is the
+    one the repository has already been bitten by in a different register: *a dead row hides
+    the next live one.* A reason family or proposition record nobody cites reads as part of
+    the campaign's reasoning while adjudicating nothing, and the next reader cannot tell it
+    from one that is load-bearing.
+    """
+    if not REGISTER.is_file():
+        return []
+    declared = propositions | {row.reason_family for row in report.dispositions if row.reason_family}
+    found = set(re.findall(r"^## (NP-\d+|ND-\d+)", REGISTER.read_text(), re.M))
+    return [f"{name}: a record in {REGISTER.name} that nothing declares" for name in sorted(found - declared)]
 
 
 #: What a family record must say before a FILE-wide disposition may cite it. The same

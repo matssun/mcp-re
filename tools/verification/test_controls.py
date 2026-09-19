@@ -312,6 +312,29 @@ def test_a_modified_describe_block_still_names_its_suite():
     assert live in INDEX, "the live e2e suite moved; retarget this control"
 
 
+def test_the_register_and_the_registry_agree_in_both_directions():
+    """Every declaration has a record, and every record is declared.
+
+    The gate checks both. This control checks that the live pair actually agrees, so the
+    assertion goes red on a dead record as well as on a missing one — *a dead row hides the
+    next live one* is a defect this repository has already met in another register.
+    """
+    import re
+    import tomllib
+
+    from _controls import POLICY, REPO_ROOT
+
+    register = REPO_ROOT / "docs" / "architecture" / "control-dispositions.md"
+    raw = tomllib.loads((POLICY / "control-dispositions.toml").read_text())
+    declared = {entry["id"] for entry in raw.get("proposition", [])} | {
+        row["reason_family"] for row in raw.get("disposition", []) if row.get("reason_family")
+    }
+    found = set(re.findall(r"^## (NP-\d+|ND-\d+)", register.read_text(), re.M))
+    assert declared, "nothing declared; the registry went dark"
+    assert found - declared == set(), sorted(found - declared)
+    assert declared - found == set(), sorted(declared - found)
+
+
 def test_a_doctest_carries_its_fence_mode():
     """ADR-MCPRE-068 §4.1: a compile refusal is not behavioural evidence.
 
