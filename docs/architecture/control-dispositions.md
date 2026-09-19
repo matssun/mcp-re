@@ -2114,3 +2114,132 @@ enter the base in the first place.
 **Likely owner:** none. This file is in no unit's `paths` at all, unlike the three above it.
 **Severity:** `critical`.
 
+---
+
+## The rest of the HTTP profile — NP-091 through NP-105
+
+The remaining 165 unclaimed controls in `mcp-re-http-profile`, in fifteen propositions
+grouped by subject. The pattern is the one batch 16 found: these files are measured by many
+units and claimed by none, and the propositions below are what each file's own controls
+establish rather than what any unit above them promises.
+
+## NP-091 — the MCP transport contract is agreed and enforced on the wire
+
+**Controls:** `mcp-re-http-profile/tests/mcp_transport_headers_test.rs`, `mcp-re-http-profile/src/mcp_transport/mod.rs`, `mcp-re-http-profile/src/mcp_transport/agreement.rs`.
+**Statement.** *The transport headers a peer may send and must send are a closed, agreed set: the accepted contract is the one both sides named, a header outside it is refused rather than ignored, and what the agreement records is what the exchange is held to.*
+**If false.** A peer negotiates one transport contract and is held to another, so a header that decides framing or session identity is honoured under an agreement that never admitted it.
+**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
+**Severity:** `critical`.
+
+## NP-092 — a result is classified once, and never read as terminal by default
+
+**Controls:** `mcp-re-http-profile/src/result_class.rs`.
+**Statement.** *The recognised set is complete — input-required and absent; a body with no result member is terminal; a near-miss discriminator, an unparseable body, and an input-required reply without a usable state are each REFUSED and not read as terminal; a non-string or unadvertised result type is unrecognized, and unrecognized is not terminal; a terminal reply has no continuation state and an input-required one yields its state.*
+**If false.** A continuation is consumed as a completed call. Every clause names a different way to arrive there, and the repeated 'not read as terminal' is the point: the default on doubt must not be the one that ends the exchange.
+**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
+**Severity:** `critical`.
+
+## NP-093 — a response envelope is a JSON-RPC response or it is refused
+
+**Controls:** `mcp-re-http-profile/src/envelope/response.rs`.
+**Statement.** *The version is exactly 2.0; a response carrying both result and error, or neither, is refused; a non-object body, a non-object result, a malformed error member and an unparseable body are each refused; a JSON-RPC error is a VALID response and not a malformed one; an ordinary result response validates; and an arbitrary application payload inside result is not inspected.*
+**If false.** A malformed envelope is interpreted rather than refused — or, in the other direction, a legitimate JSON-RPC error is treated as malformed, which turns a peer's honest refusal into a transport fault. The non-inspection clause is the boundary: the profile validates the envelope and does not read the application's payload.
+**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
+**Severity:** `high`.
+
+## NP-094 — a refusal carries its own provenance and is read only after verification
+
+**Controls:** `mcp-re-http-profile/src/rejection/mod.rs`, `mcp-re-http-profile/src/error/core_projection.rs`, `mcp-re-http-profile/src/error.rs`.
+**Statement.** *A wire code is read ONLY AFTER the signature verifies, an unsigned rejection is untrusted, a bound rejection verifies and exposes its code, an ordinary rejection body gains no new fields, and the indeterminate rejection states that a retry is unsafe; projection preserves the ratified group count and maps each failure class to its precise code, the derived token is the projected verdict's own, absent and malformed evidence are different verdicts, an outage does not project onto an actor-binding failure and is not an untrusted key, and omission and tampering are different failures.*
+**If false.** A refusal an attacker wrote is read as one the peer signed, or two failures with different causes are reported as one — which is how 'the key is untrusted' and 'the network was down' become the same alarm.
+**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
+**Severity:** `critical`.
+
+## NP-095 — delegation verifies the chain it was given
+
+**Controls:** `mcp-re-http-profile/src/delegation/mod.rs`, `mcp-re-http-profile/src/delegation/verify.rs`, `mcp-re-http-profile/tests/delegation_e2e_test.rs`.
+**Statement.** *The delegated credential chain presented is the one verified, end to end.*
+**If false.** A delegated signature is accepted under a chain that was not the one presented.
+**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
+**Severity:** `critical`.
+
+## NP-096 — a PDP decision carries exactly the claims it was issued with
+
+**Controls:** `mcp-re-http-profile/src/pdp_decision/claims.rs`, `mcp-re-http-profile/src/pdp_decision/issue.rs`, `mcp-re-http-profile/src/pdp_decision/mod.rs`, `mcp-re-http-profile/src/pdp_decision/verify.rs`.
+**Statement.** *The claims a decision carries are the ones it was issued with, and verification reads no others.*
+**If false.** An authorization decision is honoured for claims nobody issued it for.
+**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
+**Severity:** `critical`.
+
+## NP-097 — the SCITT value types parse only their own shapes
+
+**Controls:** `mcp-re-http-profile/src/scitt/retained.rs`, `mcp-re-http-profile/src/scitt/cose_key/mod.rs`, `mcp-re-http-profile/src/scitt/merkle.rs`, `mcp-re-http-profile/src/scitt/receipt/mod.rs`, `mcp-re-http-profile/src/scitt/statement/mod.rs`.
+**Statement.** *Each SCITT value — retained record, COSE key, Merkle node, receipt, statement — parses its own shape and refuses another's.*
+**If false.** One SCITT structure is read as another, so an inclusion proof or a key is interpreted under the wrong shape.
+**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
+**Severity:** `high`.
+
+## NP-098 — the cryptographic floor refuses what it cannot state exactly
+
+**Controls:** `mcp-re-http-profile/src/verify/floor/sf_dictionary.rs`, `mcp-re-http-profile/src/verify/floor/signature_input.rs`, `mcp-re-http-profile/src/verify/floor/signature_parameters.rs`, `mcp-re-http-profile/src/verify/bound_request.rs`, `mcp-re-http-profile/tests/proof_path_test.rs`, `mcp-re-http-profile/tests/algorithm_confusion_test.rs`.
+**Statement.** *An empty dictionary member and dictionary-member spacing are REFUSED, NOT normalised or ignored; alternate signature-input spellings are refused rather than normalised, while a space inside a quoted parameter value is kept; negative zero is not an SF integer; a request with no signature-input has no handle; and the proof path admits no algorithm the header did not name.*
+**If false.** A verifier normalises an input into something that verifies, so two different wire forms produce one base — the parser-differential attack again, at the floor rather than at the surface. 'Refused, not normalised' is the same clause NP-088 makes about the body, at the other end of the exchange.
+**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
+**Severity:** `critical`.
+
+## NP-099 — each verifier product states what it established, without an Option
+
+**Controls:** `mcp-re-http-profile/src/verified_request/mod.rs`, `mcp-re-http-profile/src/verified_response/bound.rs`, `mcp-re-http-profile/src/verified_response/facts.rs`, `mcp-re-http-profile/src/verified_response/unbound.rs`.
+**Statement.** *A full product states its audience, a bound one its binding and a delegated one its issuer WITHOUT AN OPTION; a floor product carries the slot trust resolved it in; a seam-authorized floor projects the signer it resolved; the shared facts carry who signed and no authorization; bound and unbound facts are not the same type; an agreement records both handles and not only the verdict; and the unbound products carry no request binding and no trust-seam resolution TO MISREAD.*
+**If false.** A product admits two proof strengths in one type, so a consumer reads an absent fact as a weaker establishment rather than as a different product. The repository has ruled on this exact shape: one Verified type, one proof strength, and an Option documented 'None on the minimal path' is a type admitting two.
+**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
+**Severity:** `critical`.
+
+## NP-100 — the evidence handle is domain-separated and derived, never a bare digest
+
+**Controls:** `mcp-re-http-profile/src/evidence.rs`, `mcp-re-http-profile/src/context.rs`, `mcp-re-http-profile/src/digest.rs`, `mcp-re-http-profile/src/artifact.rs`, `mcp-re-http-profile/src/policy.rs`, `mcp-re-http-profile/src/replay.rs`, `mcp-re-http-profile/src/authoritative_admission/record/currentness.rs`.
+**Statement.** *A handle is split-form and deterministic, is NOT a bare digest of the base, differs when the base differs, cannot confuse a label with an input, and separates roles by domain over IDENTICAL BYTES; the proxy's own meta keys are stripped and application meta preserved, with a meta of only proxy keys removed entirely and a strip without meta a no-op; a digest round-trips, a tampered body fails closed, and an absent sha-256 member of a present header is malformed.*
+**If false.** Two different roles over the same bytes produce the same handle, so evidence for one is evidence for the other — which is NP-087's injectivity failure at the handle rather than at the actor. 'Not a bare digest of the base' is what makes the domain separation structural instead of conventional.
+**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
+**Severity:** `critical`.
+
+## NP-101 — the JSON mode carries the profile and nothing else
+
+**Controls:** `mcp-re-http-profile/tests/json_mode_test.rs`.
+**Statement.** *The JSON carrier admits exactly the profile's own members and refuses a foreign one.*
+**If false.** A JSON-mode exchange carries a member the profile never defined and a reader interprets it.
+**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
+**Severity:** `high`.
+
+## NP-102 — the signer seam takes a preimage in and a signature out
+
+**Controls:** `mcp-re-http-profile/tests/signer_seam_test.rs`.
+**Statement.** *The signer seam accepts a preimage and returns a signature, and carries nothing else across.*
+**If false.** The seam carries key material or a decision across a boundary whose whole purpose is that it does not.
+**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
+**Severity:** `critical`.
+
+## NP-103 — dispatch admits only what verified
+
+**Controls:** `mcp-re-http-profile/tests/dispatch_test.rs`.
+**Statement.** *What reaches dispatch is what verification admitted, with nothing re-derived between.*
+**If false.** An unverified request reaches the backend, or a verified one is dispatched under facts the verifier did not establish.
+**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
+**Severity:** `critical`.
+
+## NP-104 — the profile reproduces the RFC 9421 known-answer vectors
+
+**Controls:** `mcp-re-http-profile/tests/rfc9421_kat.rs`.
+**Statement.** *The implementation reproduces the RFC's own published vectors byte for byte.*
+**If false.** The profile is self-consistent and wrong: every internal control passes and no other RFC 9421 implementation agrees with it.
+**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
+**Severity:** `high`.
+
+## NP-105 — an admission binding names one identifier and binds to it
+
+**Controls:** `mcp-re-http-profile/tests/admission_binding_test.rs`, `mcp-re-http-profile/tests/binding_identifier_test.rs`.
+**Statement.** *An admission binding names exactly one identifier, and the binding it produces is to that identifier.*
+**If false.** A request is admitted against a binding identifier other than the one it named.
+**Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
+**Severity:** `critical`.
+

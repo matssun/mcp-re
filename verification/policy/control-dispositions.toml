@@ -7865,3 +7865,1466 @@ decision = "new-proposition"
 proposition = "NP-090"
 recorded = "2026-09-19"
 
+
+# ---------------------------------------------------------------------------
+# Batch 17 — the rest of the HTTP profile, 2026-09-19
+# ---------------------------------------------------------------------------
+#
+# 165 controls in fifteen propositions grouped by subject. Same pattern as batch 16: files
+# measured by many units and claimed by none.
+
+[[proposition]]
+id = "NP-091"
+title = "The MCP transport contract is agreed and enforced on the wire"
+carrier = "mcp-re-http-profile: tests/mcp_transport_headers_test.rs"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the http_profile units that measure these files"
+record = "docs/architecture/control-dispositions.md#np-091"
+
+[[proposition]]
+id = "NP-092"
+title = "A result is classified once, and never read as terminal by default"
+carrier = "mcp-re-http-profile: src/result_class.rs"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the http_profile units that measure these files"
+record = "docs/architecture/control-dispositions.md#np-092"
+
+[[proposition]]
+id = "NP-093"
+title = "A response envelope is a JSON-RPC response or it is refused"
+carrier = "mcp-re-http-profile: src/envelope/response.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "a premise of the http_profile units that measure these files"
+record = "docs/architecture/control-dispositions.md#np-093"
+
+[[proposition]]
+id = "NP-094"
+title = "A refusal carries its own provenance and is read only after verification"
+carrier = "mcp-re-http-profile: src/rejection/mod.rs"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the http_profile units that measure these files"
+record = "docs/architecture/control-dispositions.md#np-094"
+
+[[proposition]]
+id = "NP-095"
+title = "Delegation verifies the chain it was given"
+carrier = "mcp-re-http-profile: src/delegation/mod.rs"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the http_profile units that measure these files"
+record = "docs/architecture/control-dispositions.md#np-095"
+
+[[proposition]]
+id = "NP-096"
+title = "A PDP decision carries exactly the claims it was issued with"
+carrier = "mcp-re-http-profile: src/pdp_decision/claims.rs"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the http_profile units that measure these files"
+record = "docs/architecture/control-dispositions.md#np-096"
+
+[[proposition]]
+id = "NP-097"
+title = "The SCITT value types parse only their own shapes"
+carrier = "mcp-re-http-profile: src/scitt/retained.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "a premise of the http_profile units that measure these files"
+record = "docs/architecture/control-dispositions.md#np-097"
+
+[[proposition]]
+id = "NP-098"
+title = "The cryptographic floor refuses what it cannot state exactly"
+carrier = "mcp-re-http-profile: src/verify/floor/sf_dictionary.rs"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the http_profile units that measure these files"
+record = "docs/architecture/control-dispositions.md#np-098"
+
+[[proposition]]
+id = "NP-099"
+title = "Each verifier product states what it established, without an Option"
+carrier = "mcp-re-http-profile: src/verified_request/mod.rs"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the http_profile units that measure these files"
+record = "docs/architecture/control-dispositions.md#np-099"
+
+[[proposition]]
+id = "NP-100"
+title = "The evidence handle is domain-separated and derived, never a bare digest"
+carrier = "mcp-re-http-profile: src/evidence.rs"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the http_profile units that measure these files"
+record = "docs/architecture/control-dispositions.md#np-100"
+
+[[proposition]]
+id = "NP-101"
+title = "The JSON mode carries the profile and nothing else"
+carrier = "mcp-re-http-profile: tests/json_mode_test.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "a premise of the http_profile units that measure these files"
+record = "docs/architecture/control-dispositions.md#np-101"
+
+[[proposition]]
+id = "NP-102"
+title = "The signer seam takes a preimage in and a signature out"
+carrier = "mcp-re-http-profile: tests/signer_seam_test.rs"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the http_profile units that measure these files"
+record = "docs/architecture/control-dispositions.md#np-102"
+
+[[proposition]]
+id = "NP-103"
+title = "Dispatch admits only what verified"
+carrier = "mcp-re-http-profile: tests/dispatch_test.rs"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the http_profile units that measure these files"
+record = "docs/architecture/control-dispositions.md#np-103"
+
+[[proposition]]
+id = "NP-104"
+title = "The profile reproduces the RFC 9421 known-answer vectors"
+carrier = "mcp-re-http-profile: tests/rfc9421_kat.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "a premise of the http_profile units that measure these files"
+record = "docs/architecture/control-dispositions.md#np-104"
+
+[[proposition]]
+id = "NP-105"
+title = "An admission binding names one identifier and binds to it"
+carrier = "mcp-re-http-profile: tests/admission_binding_test.rs"
+likely_owner = ""
+consequence = "critical"
+root_relationship = "a premise of the http_profile units that measure these files"
+record = "docs/architecture/control-dispositions.md#np-105"
+
+[[disposition]]
+id = "CD-15001"
+project = "mcp-re-http-profile"
+control = "lib#artifact::tests::bearer_token_extraction"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15002"
+project = "mcp-re-http-profile"
+control = "lib#authoritative_admission::record::currentness::tests::every_class_has_a_distinct_index_inside_the_published_count"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15003"
+project = "mcp-re-http-profile"
+control = "lib#context::tests::a_meta_containing_only_proxy_keys_is_removed_entirely"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15004"
+project = "mcp-re-http-profile"
+control = "lib#context::tests::strip_is_noop_without_meta"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15005"
+project = "mcp-re-http-profile"
+control = "lib#context::tests::strip_removes_proxy_keys_and_preserves_application_meta"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15006"
+project = "mcp-re-http-profile"
+control = "lib#delegation::tests::seam_minted_credential_verifies_to_the_root"
+decision = "new-proposition"
+proposition = "NP-095"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15007"
+project = "mcp-re-http-profile"
+control = "lib#delegation::tests::seam_propagates_a_backend_failure"
+decision = "new-proposition"
+proposition = "NP-095"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15008"
+project = "mcp-re-http-profile"
+control = "lib#delegation::tests::seam_rejects_a_non_64_byte_signature"
+decision = "new-proposition"
+proposition = "NP-095"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15009"
+project = "mcp-re-http-profile"
+control = "lib#delegation::tests::signer_seam_is_wire_identical_to_the_in_process_path"
+decision = "new-proposition"
+proposition = "NP-095"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15010"
+project = "mcp-re-http-profile"
+control = "lib#delegation::verify::tests::a_cnf_that_names_another_key_is_an_invalid_credential"
+decision = "new-proposition"
+proposition = "NP-095"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15011"
+project = "mcp-re-http-profile"
+control = "lib#delegation::verify::tests::a_stale_trust_epoch_is_its_own_refusal"
+decision = "new-proposition"
+proposition = "NP-095"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15012"
+project = "mcp-re-http-profile"
+control = "lib#delegation::verify::tests::each_scope_failure_names_what_it_is"
+decision = "new-proposition"
+proposition = "NP-095"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15013"
+project = "mcp-re-http-profile"
+control = "lib#delegation::verify::tests::revocation_is_consulted_with_every_identifier_the_credential_carries"
+decision = "new-proposition"
+proposition = "NP-095"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15014"
+project = "mcp-re-http-profile"
+control = "lib#digest::tests::digest_round_trip"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15015"
+project = "mcp-re-http-profile"
+control = "lib#digest::tests::sha256_member_absent_from_present_header_is_malformed"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15016"
+project = "mcp-re-http-profile"
+control = "lib#digest::tests::tampered_body_fails_closed"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15017"
+project = "mcp-re-http-profile"
+control = "lib#envelope::response::tests::a_json_rpc_error_is_a_valid_response_not_a_malformed_one"
+decision = "new-proposition"
+proposition = "NP-093"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15018"
+project = "mcp-re-http-profile"
+control = "lib#envelope::response::tests::a_malformed_error_member_is_refused"
+decision = "new-proposition"
+proposition = "NP-093"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15019"
+project = "mcp-re-http-profile"
+control = "lib#envelope::response::tests::a_non_object_body_is_refused"
+decision = "new-proposition"
+proposition = "NP-093"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15020"
+project = "mcp-re-http-profile"
+control = "lib#envelope::response::tests::a_non_object_result_is_refused"
+decision = "new-proposition"
+proposition = "NP-093"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15021"
+project = "mcp-re-http-profile"
+control = "lib#envelope::response::tests::a_response_carrying_both_result_and_error_is_refused"
+decision = "new-proposition"
+proposition = "NP-093"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15022"
+project = "mcp-re-http-profile"
+control = "lib#envelope::response::tests::a_response_carrying_neither_result_nor_error_is_refused"
+decision = "new-proposition"
+proposition = "NP-093"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15023"
+project = "mcp-re-http-profile"
+control = "lib#envelope::response::tests::an_ordinary_result_response_validates"
+decision = "new-proposition"
+proposition = "NP-093"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15024"
+project = "mcp-re-http-profile"
+control = "lib#envelope::response::tests::an_unparseable_body_is_refused"
+decision = "new-proposition"
+proposition = "NP-093"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15025"
+project = "mcp-re-http-profile"
+control = "lib#envelope::response::tests::arbitrary_application_payload_inside_result_is_not_inspected"
+decision = "new-proposition"
+proposition = "NP-093"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15026"
+project = "mcp-re-http-profile"
+control = "lib#envelope::response::tests::the_json_rpc_version_must_be_exactly_two_point_zero"
+decision = "new-proposition"
+proposition = "NP-093"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15027"
+project = "mcp-re-http-profile"
+control = "lib#error::core_projection::tests::absent_evidence_and_malformed_evidence_are_different_verdicts"
+decision = "new-proposition"
+proposition = "NP-094"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15028"
+project = "mcp-re-http-profile"
+control = "lib#error::core_projection::tests::an_outage_does_not_project_onto_an_actor_binding_failure"
+decision = "new-proposition"
+proposition = "NP-094"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15029"
+project = "mcp-re-http-profile"
+control = "lib#error::core_projection::tests::failure_classes_map_to_their_precise_codes"
+decision = "new-proposition"
+proposition = "NP-094"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15030"
+project = "mcp-re-http-profile"
+control = "lib#error::core_projection::tests::the_derived_token_is_the_projected_verdicts_own"
+decision = "new-proposition"
+proposition = "NP-094"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15031"
+project = "mcp-re-http-profile"
+control = "lib#error::core_projection::tests::the_projection_preserves_the_ratified_group_count"
+decision = "new-proposition"
+proposition = "NP-094"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15032"
+project = "mcp-re-http-profile"
+control = "lib#error::tests::a_context_carrying_failure_names_what_was_missing"
+decision = "new-proposition"
+proposition = "NP-094"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15033"
+project = "mcp-re-http-profile"
+control = "lib#error::tests::an_outage_is_not_an_untrusted_key"
+decision = "new-proposition"
+proposition = "NP-094"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15034"
+project = "mcp-re-http-profile"
+control = "lib#error::tests::omission_and_tampering_are_different_failures"
+decision = "new-proposition"
+proposition = "NP-094"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15035"
+project = "mcp-re-http-profile"
+control = "lib#evidence::tests::different_base_different_handle"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15036"
+project = "mcp-re-http-profile"
+control = "lib#evidence::tests::handle_is_not_a_bare_digest_of_the_base"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15037"
+project = "mcp-re-http-profile"
+control = "lib#evidence::tests::handle_is_split_form_and_deterministic"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15038"
+project = "mcp-re-http-profile"
+control = "lib#evidence::tests::label_and_input_cannot_be_confused"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15039"
+project = "mcp-re-http-profile"
+control = "lib#evidence::tests::roles_are_domain_separated_over_identical_bytes"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15040"
+project = "mcp-re-http-profile"
+control = "lib#mcp_transport::agreement::tests::a_conforming_request_passes_every_arm"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15041"
+project = "mcp-re-http-profile"
+control = "lib#mcp_transport::agreement::tests::a_partially_headered_request_is_not_a_legacy_client"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15042"
+project = "mcp-re-http-profile"
+control = "lib#mcp_transport::agreement::tests::a_required_name_with_no_params_member_to_mirror_fails_closed"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15043"
+project = "mcp-re-http-profile"
+control = "lib#mcp_transport::agreement::tests::an_unsupported_version_is_the_deployments_refusal_not_a_disagreement"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15044"
+project = "mcp-re-http-profile"
+control = "lib#mcp_transport::agreement::tests::legacy_omission_waives_presence_and_never_agreement"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15045"
+project = "mcp-re-http-profile"
+control = "lib#mcp_transport::tests::a_conforming_request_passes"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15046"
+project = "mcp-re-http-profile"
+control = "lib#mcp_transport::tests::a_missing_protocol_version_header_is_rejected"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15047"
+project = "mcp-re-http-profile"
+control = "lib#mcp_transport::tests::a_missing_required_header_is_rejected"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15048"
+project = "mcp-re-http-profile"
+control = "lib#mcp_transport::tests::a_params_meta_version_divergence_is_rejected"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15049"
+project = "mcp-re-http-profile"
+control = "lib#mcp_transport::tests::an_unsupported_version_is_rejected"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15050"
+project = "mcp-re-http-profile"
+control = "lib#mcp_transport::tests::header_body_version_divergence_is_rejected"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15051"
+project = "mcp-re-http-profile"
+control = "lib#mcp_transport::tests::legacy_omission_waives_absence_but_never_agreement"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15052"
+project = "mcp-re-http-profile"
+control = "lib#mcp_transport::tests::mcp_name_required_and_must_agree"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15053"
+project = "mcp-re-http-profile"
+control = "lib#mcp_transport::tests::resources_read_binds_mcp_name_to_params_uri"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15054"
+project = "mcp-re-http-profile"
+control = "lib#mcp_transport::tests::resources_read_without_mcp_name_is_rejected"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15055"
+project = "mcp-re-http-profile"
+control = "lib#pdp_decision::claims::tests::a_credential_decision_cannot_lack_its_keyid"
+decision = "new-proposition"
+proposition = "NP-096"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15056"
+project = "mcp-re-http-profile"
+control = "lib#pdp_decision::claims::tests::a_principal_decision_has_no_keyid_to_omit"
+decision = "new-proposition"
+proposition = "NP-096"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15057"
+project = "mcp-re-http-profile"
+control = "lib#pdp_decision::claims::tests::an_unknown_scope_is_refused_rather_than_defaulted"
+decision = "new-proposition"
+proposition = "NP-096"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15058"
+project = "mcp-re-http-profile"
+control = "lib#pdp_decision::claims::tests::the_scope_is_carried_in_the_signed_claims_not_inferred"
+decision = "new-proposition"
+proposition = "NP-096"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15059"
+project = "mcp-re-http-profile"
+control = "lib#pdp_decision::claims::tests::the_two_scopes_share_the_dimensions_they_both_bind"
+decision = "new-proposition"
+proposition = "NP-096"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15060"
+project = "mcp-re-http-profile"
+control = "lib#pdp_decision::issue::tests::a_signer_that_refuses_does_not_yield_a_decision"
+decision = "new-proposition"
+proposition = "NP-096"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15061"
+project = "mcp-re-http-profile"
+control = "lib#pdp_decision::issue::tests::the_header_is_minted_here_and_names_this_profile"
+decision = "new-proposition"
+proposition = "NP-096"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15062"
+project = "mcp-re-http-profile"
+control = "lib#pdp_decision::issue::tests::the_signature_covers_the_header_and_the_claims"
+decision = "new-proposition"
+proposition = "NP-096"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15063"
+project = "mcp-re-http-profile"
+control = "lib#pdp_decision::tests::the_linkage_form_and_the_evidence_form_are_not_interchangeable"
+decision = "new-proposition"
+proposition = "NP-096"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15064"
+project = "mcp-re-http-profile"
+control = "lib#pdp_decision::verify::tests::another_artifacts_typ_cannot_be_presented_as_a_decision"
+decision = "new-proposition"
+proposition = "NP-096"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15065"
+project = "mcp-re-http-profile"
+control = "lib#policy::tests::an_algorithm_without_a_verifier_cannot_be_allowlisted"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15066"
+project = "mcp-re-http-profile"
+control = "lib#policy::tests::the_registry_maps_tokens_to_implemented_verifiers"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15067"
+project = "mcp-re-http-profile"
+control = "lib#rejection::tests::an_ordinary_rejection_body_gains_no_new_fields"
+decision = "new-proposition"
+proposition = "NP-094"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15068"
+project = "mcp-re-http-profile"
+control = "lib#rejection::tests::bound_rejection_verifies_and_exposes_the_wire_code"
+decision = "new-proposition"
+proposition = "NP-094"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15069"
+project = "mcp-re-http-profile"
+control = "lib#rejection::tests::the_indeterminate_rejection_states_that_a_retry_is_unsafe"
+decision = "new-proposition"
+proposition = "NP-094"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15070"
+project = "mcp-re-http-profile"
+control = "lib#rejection::tests::unsigned_rejection_is_untrusted"
+decision = "new-proposition"
+proposition = "NP-094"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15071"
+project = "mcp-re-http-profile"
+control = "lib#rejection::tests::wire_code_is_read_only_after_signature_verifies"
+decision = "new-proposition"
+proposition = "NP-094"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15072"
+project = "mcp-re-http-profile"
+control = "lib#replay::tests::the_principal_slot_is_the_subject_without_its_keyid"
+decision = "new-proposition"
+proposition = "NP-100"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15073"
+project = "mcp-re-http-profile"
+control = "lib#result_class::tests::a_body_with_no_result_member_is_terminal"
+decision = "new-proposition"
+proposition = "NP-092"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15074"
+project = "mcp-re-http-profile"
+control = "lib#result_class::tests::a_near_miss_discriminator_is_refused_not_read_as_terminal"
+decision = "new-proposition"
+proposition = "NP-092"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15075"
+project = "mcp-re-http-profile"
+control = "lib#result_class::tests::a_non_string_result_type_is_unrecognized"
+decision = "new-proposition"
+proposition = "NP-092"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15076"
+project = "mcp-re-http-profile"
+control = "lib#result_class::tests::a_terminal_reply_has_no_continuation_state"
+decision = "new-proposition"
+proposition = "NP-092"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15077"
+project = "mcp-re-http-profile"
+control = "lib#result_class::tests::an_input_required_reply_yields_its_state"
+decision = "new-proposition"
+proposition = "NP-092"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15078"
+project = "mcp-re-http-profile"
+control = "lib#result_class::tests::an_unadvertised_extension_result_type_is_unrecognized"
+decision = "new-proposition"
+proposition = "NP-092"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15079"
+project = "mcp-re-http-profile"
+control = "lib#result_class::tests::an_unparseable_body_is_refused_not_read_as_terminal"
+decision = "new-proposition"
+proposition = "NP-092"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15080"
+project = "mcp-re-http-profile"
+control = "lib#result_class::tests::input_required_without_a_usable_state_is_refused_not_read_as_terminal"
+decision = "new-proposition"
+proposition = "NP-092"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15081"
+project = "mcp-re-http-profile"
+control = "lib#result_class::tests::is_input_required_is_false_for_unrecognized_but_that_is_not_terminal"
+decision = "new-proposition"
+proposition = "NP-092"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15082"
+project = "mcp-re-http-profile"
+control = "lib#result_class::tests::the_recognized_set_is_complete_input_required_and_absent"
+decision = "new-proposition"
+proposition = "NP-092"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15083"
+project = "mcp-re-http-profile"
+control = "lib#scitt::cose_key::tests::a_malformed_p256_key_is_refused_at_construction"
+decision = "new-proposition"
+proposition = "NP-097"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15084"
+project = "mcp-re-http-profile"
+control = "lib#scitt::merkle::tests::the_tree_size_determines_the_leaf_index_within_every_ambiguity_class"
+decision = "new-proposition"
+proposition = "NP-097"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15085"
+project = "mcp-re-http-profile"
+control = "lib#scitt::receipt::tests::a_leaf_index_outside_the_tree_is_refused"
+decision = "new-proposition"
+proposition = "NP-097"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15086"
+project = "mcp-re-http-profile"
+control = "lib#scitt::retained::tests::a_token_names_a_digest_only_when_it_is_one"
+decision = "new-proposition"
+proposition = "NP-097"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15087"
+project = "mcp-re-http-profile"
+control = "lib#scitt::retained::tests::one_digest_has_one_spelling"
+decision = "new-proposition"
+proposition = "NP-097"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15088"
+project = "mcp-re-http-profile"
+control = "lib#scitt::statement::tests::editing_a_decoded_view_does_not_change_what_was_signed"
+decision = "new-proposition"
+proposition = "NP-097"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15089"
+project = "mcp-re-http-profile"
+control = "lib#verified_request::tests::a_full_product_reports_the_floor_facts_it_also_establishes"
+decision = "new-proposition"
+proposition = "NP-099"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15090"
+project = "mcp-re-http-profile"
+control = "lib#verified_request::tests::the_floor_product_carries_the_slot_trust_resolved_it_in"
+decision = "new-proposition"
+proposition = "NP-099"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15091"
+project = "mcp-re-http-profile"
+control = "lib#verified_request::tests::the_full_product_states_its_audience_without_an_option"
+decision = "new-proposition"
+proposition = "NP-099"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15092"
+project = "mcp-re-http-profile"
+control = "lib#verified_response::bound::tests::a_bound_full_response_states_its_binding_without_an_option"
+decision = "new-proposition"
+proposition = "NP-099"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15093"
+project = "mcp-re-http-profile"
+control = "lib#verified_response::bound::tests::a_delegated_response_states_its_issuer_without_an_option"
+decision = "new-proposition"
+proposition = "NP-099"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15094"
+project = "mcp-re-http-profile"
+control = "lib#verified_response::bound::tests::the_seam_authorized_floor_projects_the_signer_it_resolved"
+decision = "new-proposition"
+proposition = "NP-099"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15095"
+project = "mcp-re-http-profile"
+control = "lib#verified_response::facts::tests::an_agreement_records_both_handles_not_only_the_verdict"
+decision = "new-proposition"
+proposition = "NP-099"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15096"
+project = "mcp-re-http-profile"
+control = "lib#verified_response::facts::tests::bound_and_unbound_facts_are_not_the_same_type"
+decision = "new-proposition"
+proposition = "NP-099"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15097"
+project = "mcp-re-http-profile"
+control = "lib#verified_response::facts::tests::the_shared_facts_carry_who_signed_and_no_authorization"
+decision = "new-proposition"
+proposition = "NP-099"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15098"
+project = "mcp-re-http-profile"
+control = "lib#verified_response::unbound::tests::a_delegated_receipt_carries_no_trust_seam_resolution_to_misread"
+decision = "new-proposition"
+proposition = "NP-099"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15099"
+project = "mcp-re-http-profile"
+control = "lib#verified_response::unbound::tests::the_unbound_products_carry_no_request_binding_to_misread"
+decision = "new-proposition"
+proposition = "NP-099"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15100"
+project = "mcp-re-http-profile"
+control = "lib#verify::bound_request::tests::a_request_with_no_signature_input_has_no_handle"
+decision = "new-proposition"
+proposition = "NP-098"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15101"
+project = "mcp-re-http-profile"
+control = "lib#verify::floor::sf_dictionary::tests::an_empty_dictionary_member_is_refused_not_ignored"
+decision = "new-proposition"
+proposition = "NP-098"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15102"
+project = "mcp-re-http-profile"
+control = "lib#verify::floor::sf_dictionary::tests::dictionary_member_spacing_is_refused_not_normalised"
+decision = "new-proposition"
+proposition = "NP-098"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15103"
+project = "mcp-re-http-profile"
+control = "lib#verify::floor::signature_input::tests::a_space_inside_a_quoted_parameter_value_is_kept"
+decision = "new-proposition"
+proposition = "NP-098"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15104"
+project = "mcp-re-http-profile"
+control = "lib#verify::floor::signature_input::tests::alternate_signature_input_spellings_are_refused_not_normalised"
+decision = "new-proposition"
+proposition = "NP-098"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15105"
+project = "mcp-re-http-profile"
+control = "lib#verify::floor::signature_parameters::tests::negative_zero_is_not_an_sf_integer"
+decision = "new-proposition"
+proposition = "NP-098"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15106"
+project = "mcp-re-http-profile"
+control = "tests/admission_binding_test#a_bound_but_stale_generation_is_refused"
+decision = "new-proposition"
+proposition = "NP-105"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15107"
+project = "mcp-re-http-profile"
+control = "tests/admission_binding_test#a_bound_current_admitted_call_passes"
+decision = "new-proposition"
+proposition = "NP-105"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15108"
+project = "mcp-re-http-profile"
+control = "tests/admission_binding_test#no_binding_verifies_when_admission_is_not_enforced"
+decision = "new-proposition"
+proposition = "NP-105"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15109"
+project = "mcp-re-http-profile"
+control = "tests/admission_binding_test#tampering_the_admission_binding_breaks_the_signature"
+decision = "new-proposition"
+proposition = "NP-105"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15110"
+project = "mcp-re-http-profile"
+control = "tests/algorithm_confusion_test#a_policy_enabling_algorithm_confusion_cannot_be_constructed"
+decision = "new-proposition"
+proposition = "NP-098"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15111"
+project = "mcp-re-http-profile"
+control = "tests/algorithm_confusion_test#only_implemented_algorithms_resolve"
+decision = "new-proposition"
+proposition = "NP-098"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15112"
+project = "mcp-re-http-profile"
+control = "tests/algorithm_confusion_test#the_same_signature_declaring_ed25519_verifies"
+decision = "new-proposition"
+proposition = "NP-098"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15113"
+project = "mcp-re-http-profile"
+control = "tests/binding_identifier_test#opaque_binding_carrying_reference_fields_is_malformed"
+decision = "new-proposition"
+proposition = "NP-105"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15114"
+project = "mcp-re-http-profile"
+control = "tests/binding_identifier_test#reference_binding_missing_its_reference_fields_is_malformed"
+decision = "new-proposition"
+proposition = "NP-105"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15115"
+project = "mcp-re-http-profile"
+control = "tests/binding_identifier_test#unknown_artifact_type_fails_closed"
+decision = "new-proposition"
+proposition = "NP-105"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15116"
+project = "mcp-re-http-profile"
+control = "tests/binding_identifier_test#unknown_binding_type_fails_closed"
+decision = "new-proposition"
+proposition = "NP-105"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15117"
+project = "mcp-re-http-profile"
+control = "tests/delegation_e2e_test#custody_signed_response_verifies_via_attestation_chain"
+decision = "new-proposition"
+proposition = "NP-095"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15118"
+project = "mcp-re-http-profile"
+control = "tests/dispatch_test#duplicate_nonce_same_actor_audience_profile_is_replay"
+decision = "new-proposition"
+proposition = "NP-103"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15119"
+project = "mcp-re-http-profile"
+control = "tests/dispatch_test#fleet_strict_admits_durable_cache"
+decision = "new-proposition"
+proposition = "NP-103"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15120"
+project = "mcp-re-http-profile"
+control = "tests/dispatch_test#fleet_strict_rejects_single_process_reference_cache"
+decision = "new-proposition"
+proposition = "NP-103"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15121"
+project = "mcp-re-http-profile"
+control = "tests/dispatch_test#same_nonce_different_audience_does_not_collide"
+decision = "new-proposition"
+proposition = "NP-103"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15122"
+project = "mcp-re-http-profile"
+control = "tests/dispatch_test#same_nonce_different_resolved_actor_does_not_collide"
+decision = "new-proposition"
+proposition = "NP-103"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15123"
+project = "mcp-re-http-profile"
+control = "tests/json_mode_test#json_structured_suffix_types_are_not_json_mode"
+decision = "new-proposition"
+proposition = "NP-101"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15124"
+project = "mcp-re-http-profile"
+control = "tests/json_mode_test#json_with_parameters_is_still_json_mode"
+decision = "new-proposition"
+proposition = "NP-101"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15125"
+project = "mcp-re-http-profile"
+control = "tests/json_mode_test#media_type_comparison_is_case_insensitive"
+decision = "new-proposition"
+proposition = "NP-101"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15126"
+project = "mcp-re-http-profile"
+control = "tests/json_mode_test#other_non_json_media_types_are_rejected_too"
+decision = "new-proposition"
+proposition = "NP-101"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15127"
+project = "mcp-re-http-profile"
+control = "tests/json_mode_test#sse_request_on_a_covered_exchange_is_rejected"
+decision = "new-proposition"
+proposition = "NP-101"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15128"
+project = "mcp-re-http-profile"
+control = "tests/json_mode_test#sse_response_on_a_covered_exchange_is_rejected"
+decision = "new-proposition"
+proposition = "NP-101"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15129"
+project = "mcp-re-http-profile"
+control = "tests/json_mode_test#the_rejected_sse_response_was_genuinely_signed"
+decision = "new-proposition"
+proposition = "NP-101"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15130"
+project = "mcp-re-http-profile"
+control = "tests/mcp_transport_headers_test#a_required_header_absent_is_rejected_through_verify"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15131"
+project = "mcp-re-http-profile"
+control = "tests/mcp_transport_headers_test#a_result_shaped_body_without_the_header_verifies"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15132"
+project = "mcp-re-http-profile"
+control = "tests/mcp_transport_headers_test#absent_headers_are_not_covered_and_still_verify"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15133"
+project = "mcp-re-http-profile"
+control = "tests/mcp_transport_headers_test#absent_headers_verify_when_no_transport_policy_is_attached"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15134"
+project = "mcp-re-http-profile"
+control = "tests/mcp_transport_headers_test#an_mcp_method_header_with_no_body_method_is_rejected"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15135"
+project = "mcp-re-http-profile"
+control = "tests/mcp_transport_headers_test#an_unsupported_protocol_version_is_rejected_through_verify"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15136"
+project = "mcp-re-http-profile"
+control = "tests/mcp_transport_headers_test#conforming_2026_request_verifies_under_the_transport_contract"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15137"
+project = "mcp-re-http-profile"
+control = "tests/mcp_transport_headers_test#header_body_method_divergence_is_rejected"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15138"
+project = "mcp-re-http-profile"
+control = "tests/mcp_transport_headers_test#legacy_omission_serves_bare_client_but_rejects_a_lie_through_verify"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15139"
+project = "mcp-re-http-profile"
+control = "tests/mcp_transport_headers_test#mcp_name_body_divergence_is_rejected_through_verify"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15140"
+project = "mcp-re-http-profile"
+control = "tests/mcp_transport_headers_test#mcp_session_id_is_not_a_coverable_component"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15141"
+project = "mcp-re-http-profile"
+control = "tests/mcp_transport_headers_test#mcp_transport_headers_are_covered_when_present"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15142"
+project = "mcp-re-http-profile"
+control = "tests/mcp_transport_headers_test#present_but_uncovered_mcp_method_is_rejected"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15143"
+project = "mcp-re-http-profile"
+control = "tests/mcp_transport_headers_test#present_but_uncovered_mcp_name_is_rejected"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15144"
+project = "mcp-re-http-profile"
+control = "tests/mcp_transport_headers_test#protocol_version_header_body_divergence_is_rejected_through_verify"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15145"
+project = "mcp-re-http-profile"
+control = "tests/mcp_transport_headers_test#the_component_allowlist_is_still_closed"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15146"
+project = "mcp-re-http-profile"
+control = "tests/mcp_transport_headers_test#the_divergent_request_is_otherwise_valid"
+decision = "new-proposition"
+proposition = "NP-091"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15147"
+project = "mcp-re-http-profile"
+control = "tests/proof_path_test#content_encoding_fails_closed"
+decision = "new-proposition"
+proposition = "NP-098"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15148"
+project = "mcp-re-http-profile"
+control = "tests/proof_path_test#duplicate_authorization_fails_closed"
+decision = "new-proposition"
+proposition = "NP-098"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15149"
+project = "mcp-re-http-profile"
+control = "tests/proof_path_test#foreign_tag_fails_closed"
+decision = "new-proposition"
+proposition = "NP-098"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15150"
+project = "mcp-re-http-profile"
+control = "tests/proof_path_test#same_keyid_different_slots_do_not_collapse_actor_id"
+decision = "new-proposition"
+proposition = "NP-098"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15151"
+project = "mcp-re-http-profile"
+control = "tests/proof_path_test#signer_and_verifier_derive_the_same_evidence_handle"
+decision = "new-proposition"
+proposition = "NP-098"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15152"
+project = "mcp-re-http-profile"
+control = "tests/proof_path_test#unsigned_request_fails_closed"
+decision = "new-proposition"
+proposition = "NP-098"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15153"
+project = "mcp-re-http-profile"
+control = "tests/proof_path_test#verified_request_exposes_resolved_actor_identity"
+decision = "new-proposition"
+proposition = "NP-098"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15154"
+project = "mcp-re-http-profile"
+control = "tests/proof_path_test#verified_response_exposes_resolved_server_actor"
+decision = "new-proposition"
+proposition = "NP-098"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15155"
+project = "mcp-re-http-profile"
+control = "tests/rfc9421_kat#private_key_derives_the_rfc_public_key"
+decision = "new-proposition"
+proposition = "NP-104"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15156"
+project = "mcp-re-http-profile"
+control = "tests/rfc9421_kat#rfc_signature_verifies_under_the_rfc_public_key"
+decision = "new-proposition"
+proposition = "NP-104"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15157"
+project = "mcp-re-http-profile"
+control = "tests/rfc9421_kat#signature_base_matches_rfc9421_b26_byte_for_byte"
+decision = "new-proposition"
+proposition = "NP-104"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15158"
+project = "mcp-re-http-profile"
+control = "tests/rfc9421_kat#signing_the_base_reproduces_the_rfc_signature"
+decision = "new-proposition"
+proposition = "NP-104"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15159"
+project = "mcp-re-http-profile"
+control = "tests/rfc9421_kat#tampered_rfc_base_fails_verification"
+decision = "new-proposition"
+proposition = "NP-104"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15160"
+project = "mcp-re-http-profile"
+control = "tests/signer_seam_test#external_signer_error_propagates"
+decision = "new-proposition"
+proposition = "NP-102"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15161"
+project = "mcp-re-http-profile"
+control = "tests/signer_seam_test#external_signer_is_byte_identical_to_local_key"
+decision = "new-proposition"
+proposition = "NP-102"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15162"
+project = "mcp-re-http-profile"
+control = "tests/signer_seam_test#external_signer_request_verifies"
+decision = "new-proposition"
+proposition = "NP-102"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15163"
+project = "mcp-re-http-profile"
+control = "tests/signer_seam_test#external_signer_response_verifies"
+decision = "new-proposition"
+proposition = "NP-102"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15164"
+project = "mcp-re-http-profile"
+control = "tests/signer_seam_test#external_signer_wrong_key_does_not_verify"
+decision = "new-proposition"
+proposition = "NP-102"
+recorded = "2026-09-19"
+
+[[disposition]]
+id = "CD-15165"
+project = "mcp-re-http-profile"
+control = "tests/signer_seam_test#external_signer_wrong_length_fails_closed"
+decision = "new-proposition"
+proposition = "NP-102"
+recorded = "2026-09-19"
+
