@@ -9767,6 +9767,97 @@ tested_symbols = [
 
 
 
+# ---------------------------------------------------------------------------
+# The measurement apparatus THM-0111's walk rests on — ADR-MCPRE-069 NP-036, NP-037
+# ---------------------------------------------------------------------------
+#
+# THM-0111's scope states the walk in two clauses, and each names a premise this registry
+# did not own: "The control walks every crate's source tree, TAKES EACH FILE'S PRODUCTION
+# HALF, and asserts the set of files holding a verdict literal is exactly the two frozen
+# vocabularies."
+#
+# Both carriers are already inside `conformance.verdict_vocabulary_scope`'s `paths`, and
+# "it is in the paths" is therefore available here as it was for the http-profile's shared
+# bottom. It is not the argument either unit below is justified by, and in this case it
+# could not be: that unit is `measured`, and its description is a COUNT — "how many files
+# in this workspace decide what an `mcp-re.*` verdict token says". A count has no slot for
+# apparatus CORRECTNESS. ADR-MCPRE-068 §4.1 gives a measured unit one apparatus slot,
+# `measurement_control`, and its meaning is the demonstration that the number can still
+# MOVE; a scanner that is wrong in a fixed way still moves. Widening the count's description
+# to cover the scanner would be the quiet widening ADR-069 §5 holds to be strictly worse
+# than leaving a control unregistered.
+#
+# Two units rather than one, and the split is measured rather than inherited. The scan and
+# the corpus are two independently describable authorities: one is a pure lexical function
+# of a source TEXT, the other a declaration table naming which trees exist to be read. They
+# share no state, they fail differently — a scan defect mis-measures a file that WAS read, a
+# table defect means a file is never read at all — and neither falsifier touches the other's
+# file. A single description joining them needs an "and", which ADR-MCPRE-061 §8 question 2
+# calls evidence of a shallow boundary.
+#
+# The fan-out is larger than either control count suggests. `production_half` is the Rust
+# side of the definition `scripts/module_size_gate.py` measures the whole module-size ratchet
+# with, and the file's own documentation says the two must not drift. What is NOT claimed
+# here is that they have not: this unit's `paths` is the Rust half, and a cross-language
+# correspondence between two implementations is a proposition neither unit states.
+
+[[unit]]
+id = "conformance.production_half_definition"
+class = "V0"
+description = "WHICH LINES OF A RUST SOURCE ARE PRODUCTION, DECIDED ONCE FOR EVERY GUARD THAT SCANS SOURCE TEXT: a test region opens at `#[cfg(test` or at the wide `#[cfg(all(test` spelling and closes with the ITEM that attribute introduces — a braced item at its matching close, a `;`-terminated item at that semicolon — and counting RESUMES afterwards, so several regions are each closed, production below a test module survives, and a trailing test module does not end the scan. The brace count that closes a region is LEXICAL and is carried ACROSS lines: a `{` inside a string, a raw string, a character literal or a nested block comment is not a brace, a multi-line raw string cannot close a region early, a raw string closes only on its own hash count, an identifier ending in `r` opens none, a lifetime tick is not a character literal, nested braces do not close a region early, a file with no tests is wholly production, and the 1-indexed line numbers survive the elision so a guard that finds a violation can still name where it is. Says NOTHING about WHICH files are walked: which crates have a source tree and whether a key names one is the corpus, owned next door by `conformance.scanned_tree_declaration`. Says nothing either about the PYTHON side — `scripts/module_size_gate.py::_BraceScan` is the same definition for the module-size ratchet, and that the two have not drifted is a cross-language correspondence no theorem in this registry states."
+paths = [
+  "mcp-re-test-paths/src/rust_source.rs",
+  "mcp-re-test-paths/src/rust_source/brace_scan.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://conformance/test_paths/production_half_definition",
+  "mutation://conformance/test_paths/production_half_definition",
+]
+tested_symbols = [
+  "lib#rust_source::brace_scan::tests::a_lifetime_is_not_a_char_literal",
+  "lib#rust_source::brace_scan::tests::a_nested_block_comment_is_carried_across_lines",
+  "lib#rust_source::brace_scan::tests::a_raw_string_is_carried_across_lines",
+  "lib#rust_source::brace_scan::tests::an_escaped_quote_does_not_end_a_string",
+  "lib#rust_source::brace_scan::tests::an_identifier_tail_does_not_open_a_raw_string",
+  "lib#rust_source::brace_scan::tests::only_code_braces_survive",
+  "lib#rust_source::tests::a_brace_in_a_char_literal_does_not_close_a_region",
+  "lib#rust_source::tests::a_brace_in_a_nested_block_comment_does_not_close_a_region",
+  "lib#rust_source::tests::a_brace_in_a_string_or_comment_does_not_close_a_region",
+  "lib#rust_source::tests::a_file_with_no_tests_is_wholly_production",
+  "lib#rust_source::tests::a_multi_line_raw_string_does_not_close_a_region",
+  "lib#rust_source::tests::a_raw_string_closes_only_on_its_own_hash_count",
+  "lib#rust_source::tests::a_trailing_test_module_does_not_end_the_scan",
+  "lib#rust_source::tests::an_attributed_semicolon_item_is_a_one_line_region",
+  "lib#rust_source::tests::an_identifier_ending_in_r_is_not_a_raw_string_opener",
+  "lib#rust_source::tests::line_numbers_survive_the_elision",
+  "lib#rust_source::tests::nested_braces_do_not_close_a_region_early",
+  "lib#rust_source::tests::several_regions_are_each_closed",
+  "lib#rust_source::tests::the_wide_attribute_opens_a_region_too",
+]
+
+[[unit]]
+id = "conformance.scanned_tree_declaration"
+class = "V0"
+description = "WHICH SOURCE TREES A GUARD WALKS, AND WHETHER A KEY NAMES ONE AT ALL: every declared sentinel is a file that EXISTS in this workspace, no tree is declared twice — a duplicate would make the second entry unreachable and let two spellings disagree indefinitely — and a key naming no tree resolves to NOTHING rather than to a path, while a key that does name one resolves to that tree's own `<crate>/src/lib.rs` sentinel. This is the CORPUS half of THM-0111's walk: the guard walks the sentinel's parent, so a sentinel that resolves to nothing is a guard that walks nothing, finds nothing and reports a clean tree. Says NOTHING about what the walk does with a file once it has read one — that is `conformance.production_half_definition`. Says nothing about whether the declared set IS the workspace either: that is asserted by the consuming guard against the workspace manifest and is `conformance.verdict_vocabulary_scope`'s measured scope, not this table's claim. And nothing about the resolver's OTHER two tables — the individual fixture FILES a guard parses and the traceability witnesses — which serve guards THM-0111 does not run and stay in the ADR-069 census under NP-037."
+paths = ["mcp-re-test-paths/src/source_trees.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://conformance/test_paths/scanned_tree_declaration",
+  "mutation://conformance/test_paths/scanned_tree_declaration",
+]
+tested_symbols = [
+  "lib#source_trees::tests::an_unknown_key_names_no_tree",
+  "lib#source_trees::tests::every_sentinel_exists_in_the_source_tree",
+  "lib#source_trees::tests::no_tree_is_declared_twice",
+]
+
+
+
 
 # ---------------------------------------------------------------------------
 # The http-profile's own premises — ADR-MCPRE-069 NP-087, NP-088, NP-094, NP-103

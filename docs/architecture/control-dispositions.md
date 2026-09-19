@@ -1241,44 +1241,15 @@ HTTP URL is present and has no empty segment, repeated and comma-separated URLs 
 and a fleet-wide target does not erase the per-core default.* If false, the proxy serves an
 endpoint nobody named, or silently drops one an operator did name.
 
-## NP-036 — the shared production-half definition is exact
-
-**Controls:** `mcp-re-test-paths/src/rust_source.rs` (13),
-`mcp-re-test-paths/src/rust_source/brace_scan.rs` (6).
-**Carrier:** `mcp-re-test-paths`'s `production_half` and its brace scanner.
-**Statement.** *A brace inside a string, a char literal, a nested block comment or a raw
-string does not close a `#[cfg(test)]` region; a raw string closes only on its own hash
-count; an identifier ending in `r` opens none; a lifetime is not a char literal; line
-numbers survive the elision; a trailing test module does not end the scan; and a file with
-no tests is wholly production.*
-**If false.** Every consumer of `production_half` measures a different corpus from the one
-it says it measured — `scripts/module_size_gate.py`'s production-line count, the guards that
-scan production text, and `conformance.verdict_vocabulary_scope`'s measured scope. This is
-not hypothetical: the rule's own documentation records that counting "lines before the first
-test module" discarded production code below the tests and measured `trust_plane.rs` at 134
-lines when it is 690.
-**Likely owner:** `conformance.verdict_vocabulary_scope` names these files in its `paths`,
-so its fingerprint already moves when they change — **and it cannot claim these controls.**
-It is a `measured` unit, and ADR-MCPRE-068 §4.1 gives a measured unit one apparatus slot,
-`measurement_control`, whose meaning is *the demonstration that the number can still MOVE*.
-MSR-0001 carries such a control. These are a different thing: a scanner that is wrong in a
-fixed way still moves. **The `measured` class has no slot for apparatus CORRECTNESS**, and
-that is the finding, not a reason to file these anywhere convenient.
-**Root relationship.** Beneath the measured unit rather than beside it: the scope of a
-measurement is a premise of the measurement, and this is the scope's own correctness.
-**Severity:** `high`.
-**What ratification would probably look like:** a `tested` sibling unit over the apparatus,
-which the measured unit depends on — not a widening of the measured unit, and not a
-`measurement_control` this is not.
-
 ## NP-037 — a guard's inputs resolve, or the guard fails loudly
 
-**Controls:** `mcp-re-test-paths/src/lib.rs` (4), `src/source_trees.rs` (3),
+**Controls:** `mcp-re-test-paths/src/lib.rs` (4),
 `src/traceability_sources.rs` (2).
-**Carrier:** `mcp-re-test-paths`'s binary/fixture resolver and its three declaration tables.
+**Carrier:** `mcp-re-test-paths`'s binary/fixture resolver and the two declaration tables it
+falls back through — `SOURCE_FALLBACKS` and `TRACEABILITY_SOURCES` — beside `BINARY_KEYS`.
 **Statement.** *An unknown key is refused rather than resolved to an empty path; no key is
-declared twice; no binary key is also a source fallback; and every declared fallback,
-sentinel and witness names a file that exists.*
+declared twice; no binary key is also a source fallback; and every declared fallback and
+witness names a file that exists.*
 **If false.** A guard resolves its input to an empty path, walks nothing, finds nothing and
 reports a clean tree. That is the exact false-green class this repository has already
 measured twice — a `tests/` glob that silently exempted a crate from the srcs gate for a
@@ -1286,9 +1257,28 @@ whole campaign, and an empty join that read as a clean tree — and the resolver
 first of those enters.
 **Likely owner:** none. The resolver is in no unit's `paths`; the tables it holds decide
 what several guards see.
-**Root relationship.** Not under a product root. It is a premise of the guards, in the same
-place NP-036 sits.
+**Root relationship.** Not under a product root. It is a premise of the guards.
 **Severity:** `high`.
+**Registered in part, ADR-MCPRE-069 RM-S2 — the source-TREE half only, and the record now
+describes exactly the six controls that remain.** The record was filed over nine controls and
+three tables, and ADR-069 RR-002 C5 forbids one disposition over a heterogeneous set. The
+three `src/source_trees.rs` controls are now `unit://conformance.scanned_tree_declaration`
+under **THM-0111**, whose scope states the walk they are a premise of in terms — *"The control
+walks every crate's source tree, takes each file's production half, and asserts the set of
+files holding a verdict literal is exactly the two frozen vocabularies"* — with falsifier
+`M325`, which makes an unknown key resolve to an EMPTY path and turns
+`an_unknown_key_names_no_tree` red. That is this record's own "if false" reproduced in one
+edit, and it is why the sentinel table could be separated from the rest: the walk THM-0111
+runs resolves through `SOURCE_TREES` and through nothing else here.
+**Six rows REMAIN, and they are a second proposition rather than a remainder.** `BINARY_KEYS`,
+`SOURCE_FALLBACKS` and `TRACEABILITY_SOURCES` name a built executable, a fixture FILE a guard
+parses, and a test that witnesses a claim. THM-0111's walk consults none of them, so a
+registration reaching them would have to widen a unit's `paths` past the source it measures —
+the quiet widening ADR-069 §5 holds to be strictly worse than leaving a control unregistered.
+They serve the proxy and auditor integration lanes and the traceability manifest guard, which
+are several theorems rather than one, and no theorem in this registry states that a guard's
+declared inputs resolve. The referral and the shape a ratification would take are recorded in
+[`verification/reviews/packets/adr069-np-037-ratification-2026-09-19.md`](../../verification/reviews/packets/adr069-np-037-ratification-2026-09-19.md).
 
 ## NP-038 — a revoked root's resolver is not obtainable
 
@@ -2036,7 +2026,9 @@ vocabulary a convention rather than a contract.
 **Likely owner:** `conformance.verdict_vocabulary_scope` measures HOW MANY files decide what
 a verdict token says, and its argv claims three of this file's ten controls. The other seven
 are about what the tokens ARE, which that measurement does not say. A `measured` unit has no
-battery to hold them, which is NP-036's finding arriving from the other side.
+battery to hold them — the finding `conformance.production_half_definition` and
+`conformance.scanned_tree_declaration` arrived at from the other side, and were registered under
+THM-0111 for.
 **Severity:** `high`.
 **`guard_inputs_are_non_empty` is registered here rather than dispositioned as apparatus**,
 because it is this proposition's anti-vacuity arm: a guard over an empty input set reports a

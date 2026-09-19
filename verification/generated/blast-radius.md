@@ -44,7 +44,9 @@ attestations this view cannot see.
 | unit://client.transport_server_identity | source, contracts or evidence | THM-0109 | _no consumer_ |
 | unit://client.trust_manifest_lifecycle | source, contracts or evidence | THM-0057, THM-0058 | _no consumer_ |
 | unit://client.verified_outcome | source, contracts or evidence | THM-0126 | _no consumer_ |
+| unit://conformance.production_half_definition | source, contracts or evidence | THM-0111 | _no consumer_ |
 | unit://conformance.retained_corpus | source, contracts or evidence | THM-0042 | http_profile.scitt_retained_correspondence (PROOF_DEPENDENCY) |
+| unit://conformance.scanned_tree_declaration | source, contracts or evidence | THM-0111 | _no consumer_ |
 | unit://conformance.verdict_vocabulary_scope | source, contracts or evidence | THM-0111 | _no consumer_ |
 | unit://core.audit_vocabulary | source, contracts or evidence | THM-0122 | _no consumer_ |
 | unit://core.content_address | source, contracts or evidence | _no theorem_ | _no consumer_ |
