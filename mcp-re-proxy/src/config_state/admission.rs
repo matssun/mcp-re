@@ -584,6 +584,36 @@ mod tests {
         assert!(!violations.is_empty());
     }
 
+    /// The MOST DANGEROUS state, which the refusal above cannot witness.
+    ///
+    /// `a_refused_configuration_recognises_no_state` supplies `"not-a-key"` -- non-empty and
+    /// undecodable -- so it measures the DECODE refusal. A gate naming NOTHING is a different
+    /// configuration and a different clause: the deployment believes it has admission control,
+    /// and the answer must not be the posture of one that asked for none.
+    #[test]
+    fn a_gate_that_names_no_authority_is_refused_rather_than_read_as_off() {
+        for empty in ["", "   "] {
+            let (state, violations) = run(|c| {
+                c.admission =
+                    AdmissionRequest::Required(crate::deployment_request::AdmissionGateRequest {
+                        authority_pubkey_b64url: empty.to_string(),
+                        ..gate()
+                    });
+            });
+            assert!(state.is_none(), "a state was built over {empty:?}");
+            assert!(!violations.is_empty(), "{empty:?} was accepted silently");
+        }
+        let (state, violations) = run(|c| {
+            c.admission =
+                AdmissionRequest::Required(crate::deployment_request::AdmissionGateRequest {
+                    authority_kid: String::new(),
+                    ..gate()
+                });
+        });
+        assert!(state.is_none(), "a state was built over an empty kid");
+        assert!(!violations.is_empty(), "an empty kid was accepted silently");
+    }
+
     #[test]
     fn the_degraded_sub_state_is_accepted_with_a_positive_window() {
         let (_, violations) = run(|c| {

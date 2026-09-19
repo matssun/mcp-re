@@ -6976,3 +6976,477 @@ THIS PROBE EXPOSED A LANE DEFECT before it measured anything: `bin/<name>` is on
 declared Cargo target shapes and the lane held a second, smaller idea of them, so the battery
 never ran and the probe was blamed. Fixed in the lane, not here.
 """
+
+[[probe]]
+id = "M253-proxy-no-production-path-installs-a-node-local-continuation-tier"
+unit = "proxy.continuation_installation"
+theorem = "THM-0091"
+conjunct = "no production path installs a node-local continuation tier — a deployment that selected nothing installs NO store"
+path = "mcp-re-proxy/src/app.rs"
+anchor = """
+    if let Some(store) = continuation_store {
+"""
+weakening = """
+    type _NodeLocal = crate::continuation_store::InMemoryContinuationStore;
+    if let Some(store) = continuation_store {
+"""
+expect_red = [
+  "tests/integration#continuation_installation_test::no_production_path_installs_a_node_local_continuation_tier",
+]
+note = """
+AN ABSENCE AGAIN, so the weakening ADDS the forbidden thing -- the same shape as M246, and the
+same reason only a rule over source can see it: a production path REACHING the node-local tier
+is a fact about what the composition root can do next, not about what it does today.
+
+The ruling this holds is from 2026-09-03. `InMemoryContinuationStore` is a `pub` item of this
+crate, so nothing but PLACEMENT stops a future composition root from reaching for it the next
+time OFF looks inconvenient -- and a node-local tier is a different capability with a different
+scope, which the OFF posture line does not describe. A deployment that selected no correlation
+capability would then hold a store whose correlation does not survive a replica change, while
+its transcript says it holds none.
+"""
+
+[[probe]]
+id = "M254-proxy-the-signing-plane-comes-from-the-materialized-source"
+unit = "proxy.signing_credential_provenance"
+theorem = "THM-0091"
+conjunct = "the signing plane is installed from the key source the materializer opened, not from one the root named itself"
+path = "mcp-re-proxy/src/app.rs"
+anchor = """
+    building.install_signing(crate::signing_plane::SigningPlane::materialize(
+        &signing_plan,
+        key_source,
+        startup_now_unix,
+        Arc::clone(&shutdown),
+    )?);
+"""
+weakening = """
+    let rival = key_source;
+    building.install_signing(crate::signing_plane::SigningPlane::materialize(
+        &signing_plan,
+        rival,
+        startup_now_unix,
+        Arc::clone(&shutdown),
+    )?);
+"""
+expect_red = [
+  "tests/integration#signing_credential_provenance_test::the_signing_plane_is_materialized_from_the_materialized_source",
+]
+note = """
+THE RULE READS THE CALL, NOT THE VALUE, and that is the honest thing for it to read: no test
+can look at a compiled binary and ask which credential a signing plane holds. What it CAN
+establish is that the composition root names the source the materializer opened -- so the
+weakening renames the binding and changes nothing else. The plane still signs with the same
+key today.
+
+That is the point. The rule is about what the root can do NEXT: a plane materialized from
+anything other than the validated source signs with a credential the deployment did not
+validate, on a data plane whose startup transcript describes a different one, and the two
+agreeing today is not a property anything holds.
+
+The first weakening for this unit attacked the rival-constructor rule instead and DID NOT
+BUILD: a bare mention of `FileKeySource::` that compiles has to be a real call, and the
+reachable constructors are feature-gated. The lane refused it as a measurement failure, which
+is correct -- and the rule it was aimed at stays covered by this unit's other controls.
+"""
+
+[[probe]]
+id = "M255-client-the-expectation-comes-from-the-request-that-was-sent"
+unit = "client.proxy_request_correspondence"
+theorem = "THM-0091"
+conjunct = "the SignedRequest handed to the transport and the ResponseExpectation handed to response verification come from ONE owner"
+path = "mcp-re-client-proxy/src/proxy.rs"
+anchor = """
+        let mut expectation = ResponseExpectation::for_signed(signed);
+"""
+weakening = """
+        let mut expectation = ResponseExpectation::for_signed(&signed.clone());
+"""
+expect_red = [
+  "lib#proxy::tests::both_verification_paths_take_the_signed_request_owner",
+]
+note = """
+A CLONE IS THE MILDEST SECOND OWNER, and it is deliberately what this weakening introduces.
+The cloned value is EQUAL today, so no behaviour changes and no behavioural test could see it
+-- which is exactly the class of edit the rule exists to catch, because the next one is a
+reconstruction rather than a copy and the rule cannot tell the two apart from the outside.
+
+What must not be overclaimed: this probe shows the rule is load-bearing over the joint it
+reads, not that a clone is itself a vulnerability. The proposition is that ONE owner produces
+both the request that goes on the wire and the expectation the response is judged against; a
+second value equal by construction today is the first step away from it, and the low-level
+verifier cannot see the joint at all -- which is why this unit exists beside
+`client.response_binding_disposition` rather than inside it.
+"""
+
+[[probe]]
+id = "M256-core-a-content-address-is-parsed-only-from-its-exact-shape"
+unit = "core.content_address"
+theorem = "THM-0091"
+conjunct = "a content address is parsed back only from its exact shape — a missing prefix is refused rather than interpreted"
+path = "mcp-re-core/src/hash.rs"
+anchor = """
+    let body = s
+        .strip_prefix(SHA256_PREFIX)
+        .ok_or(McpReError::SerializationFailed)?;
+"""
+weakening = """
+    let body = s.strip_prefix(SHA256_PREFIX).unwrap_or(s);
+"""
+expect_red = [
+  "lib#hash::tests::parse_rejects_missing_prefix",
+]
+note = """
+THE PREFIX IS THE ALGORITHM, which is what makes accepting a bare digest a security change
+rather than a leniency. `sha256:` names WHICH hash produced the 32 bytes; without it a caller
+holding 32 bytes from anywhere -- a different algorithm, a truncated digest, a value it
+computed itself -- gets an accepted content address. The length check below is not a second
+carrier: every 32-byte input passes it, whatever produced them.
+
+The round-trip control stays green under the weakening, correctly: this widens what parses and
+narrows nothing, so the shapes that worked still work. Only the refusal control can see it.
+"""
+
+[[probe]]
+id = "M257-client-evidence-that-can-never-verify-is-refused-locally"
+unit = "client.request_construction"
+theorem = "THM-0091"
+conjunct = "a request with no artifact binding or a structurally invalid one is refused LOCALLY rather than sent"
+path = "mcp-re-client-core/src/request.rs"
+anchor = """
+    block.validate(PROFILE_TAG)?;
+"""
+weakening = """
+    let _ = block.validate(PROFILE_TAG);
+"""
+expect_red = [
+  "lib#request::evidence_precondition_tests::signing_with_no_artifact_binding_is_refused_locally",
+  "lib#request::evidence_precondition_tests::signing_with_a_structurally_invalid_binding_is_refused_locally",
+]
+note = """
+THE SERVER ALSO REFUSES IT, AND THAT IS WHY THE PROPOSITION IS ABOUT WHERE. An empty or
+structurally invalid `artifact_bindings` is rejected as `malformed_evidence` at the boundary,
+so under the weakening nothing unsafe reaches an executor -- what changes is that the client
+composes it, SIGNS it, spends a round trip, and then reports a local misconfiguration as a
+server-side evidence fault. The operator reads a wire error about the peer for a value in
+their own configuration.
+
+`validate` is reused rather than re-spelled here precisely so the two ends cannot drift, which
+also means this is not defence in depth: one rule, checked at two points in one exchange, and
+the client's is the only one that can name the cause.
+"""
+
+[[probe]]
+id = "M258-http-profile-a-content-type-on-a-bodyless-message-is-refused"
+unit = "http_profile.bodyless_acknowledgement"
+theorem = "THM-0091"
+conjunct = "the named component sets are enforced as sets — a content-type on a bodyless message is a profile violation, not a harmless extra"
+path = "mcp-re-http-profile/src/bodyless/mod.rs"
+anchor = """
+    if single_header(headers, "content-type")?.is_some() {
+"""
+weakening = """
+    if false {
+"""
+expect_red = [
+  "tests/bodyless_202_test#content_type_on_a_bodyless_202_is_rejected",
+]
+note = """
+NAMED SETS, NOT NOTICED ABSENCES, and this refusal is the half that makes the distinction
+observable. If a verifier merely NOTICED that a body was absent and dropped the content
+requirements, then "no content-type because there is no content" and "content-type stripped in
+flight" would be the same observation -- and an attacker who removes a header would be
+indistinguishable from a peer that never sent one.
+
+Under the weakening a bodyless message carrying a content-type verifies, so the message's own
+header set no longer has to match the set the signature was computed over. The
+content-injection control is a sibling conjunct rather than a second carrier: it catches a
+body arriving where none was signed, and says nothing about a header arriving alone.
+"""
+
+[[probe]]
+id = "M259-proxy-a-pkcs11-pin-is-not-printable"
+unit = "proxy.operator_facing_redaction"
+theorem = "THM-0091"
+conjunct = "the PKCS#11 User PIN cannot be printed as configured — not the value, and not its length"
+path = "mcp-re-proxy/src/deployment_request/secret_string.rs"
+anchor = """
+        f.write_str("SecretString(redacted)")
+"""
+weakening = """
+        f.write_str(self.0.as_str())
+"""
+expect_red = [
+  "lib#deployment_request::secret_string::tests::the_debug_rendering_carries_no_part_of_the_secret",
+]
+note = """
+THE TYPE IS THE ONLY THING STOPPING THIS, which is what makes a `Debug` impl a security carrier
+rather than a convenience. A deployment request is derived-`Debug` all the way down and printed
+by ordinary diagnostics; nothing at a call site decides whether this field is safe to render,
+and no reviewer sees the moment it happens. The PIN unlocks a token holding the
+response-signing key, so it sits in the same custody class as the key itself -- and the
+redaction deliberately carries NO LENGTH either, because a PIN's length is worth guessing with.
+
+The sibling control -- the value is still readable where it is needed -- stays green under the
+weakening, correctly: the seal is about the rendering, not about access.
+"""
+
+[[probe]]
+id = "M260-proxy-a-stale-crl-produces-no-evidence-to-install"
+unit = "proxy.client_revocation_currency"
+theorem = "THM-0091"
+conjunct = "a set of CRLs is installable only when every one of them is inside its own nextUpdate window"
+path = "mcp-re-proxy/src/tls_plane/crl_evidence.rs"
+anchor = """
+        CrlFreshness::Stale { next_update_unix } => Err(format!(
+"""
+weakening = """
+        CrlFreshness::Stale { next_update_unix } => Ok(eprintln!(
+"""
+expect_red = [
+  "lib#tls_plane::crl_evidence::tests::a_stale_crl_produces_no_evidence_to_install",
+]
+note = """
+STARTUP IS WHERE A STALE CRL IS STILL A CONFIGURATION FACT. The verifier enforces CRL
+expiration, so a replica that installs a CRL past its `nextUpdate` fails every new client
+handshake closed -- correctly, and with no way for the operator to tell that the cause is their
+own revocation list rather than the clients. Refusing to produce evidence from it is what turns
+a silent outage into a named startup refusal.
+
+The NEAR-EXPIRY arm is not a second carrier: it WARNS and returns Ok, deliberately, so a
+refreshed CRL can be installed before the window closes. The two arms are a graded response to
+one measurement, and only the stale one refuses.
+"""
+
+[[probe]]
+id = "M261-proxy-each-authority-names-its-own-token"
+unit = "proxy.refusal_provenance"
+theorem = "THM-0091"
+conjunct = "the presentation boundary adds no vocabulary and makes no choice — it asks each authority what it says"
+path = "mcp-re-proxy/src/refusal/cause.rs"
+anchor = """
+            RefusalCause::Authorization(r) => r.wire_code(),
+"""
+weakening = """
+            RefusalCause::Authorization(_) => "mcp-re.authorization_denied",
+"""
+expect_red = [
+  "lib#refusal::cause::tests::the_two_authorization_arms_stay_distinguishable",
+]
+note = """
+THE TWO ARMS ARE THE PROPOSITION, and a single substituted token is what collapses them. An
+authorization refusal has two: a POLICY denied this, and the deployment could not establish the
+action to ask about. Both are non-grants and both are served as an `mcp-re.authorization_*`
+token, so a reader that only sees the served code cannot tell them apart -- and the weakening
+serves one token for both.
+
+WHOSE VOCABULARY IT IS matters as much as which token. The subordinate
+`PolicyError -> mcp-re.authorization_*` mapping belongs to `mcp_re_policy::PolicyError` alone;
+this boundary asks each authority what it says and adds nothing. A constant here is this file
+minting vocabulary it does not own, which is the defect whether or not the constant happens to
+be a legal token today.
+
+The first `expect_red` named the core-producer control instead, and it stayed green -- correctly,
+because the weakening touches only the Authorization arm. A probe is adjudicated against the
+control that measures the arm it weakens.
+"""
+
+[[probe]]
+id = "M262-http-profile-the-response-status-is-inside-the-submitted-identity"
+unit = "http_profile.submitted_hop_identity"
+theorem = "THM-0091"
+conjunct = "two retained submitted hops that differ in any retained fact are two submissions — the representation is closed"
+path = "mcp-re-http-profile/src/chain/submitted_identity.rs"
+anchor = """
+        h.update(u64::from(*status).to_be_bytes());
+"""
+weakening = """
+        let _ = status;
+"""
+expect_red = [
+  "lib#chain::submitted_identity::tests::the_response_status_is_inside_the_submitted_identity",
+]
+note = """
+A CURATED FIELD LIST IS HOW AN IDENTITY COMES TO OMIT SOMETHING, and the weakening is exactly
+that edit: one field dropped from the digest, everything else unchanged. The hop is still
+retained whole; only its IDENTITY stops depending on the status.
+
+What that admits is two submissions that are not the same submission answering to one
+commitment -- a 200 and a 409 over identical bytes become indistinguishable to anything that
+identifies a submission by this value. The destructuring in this function is what makes the
+closure checkable: adding a field to `RetainedHop` breaks the pattern rather than silently
+leaving the new field outside the identity.
+
+The other three controls stay green, correctly. Each names a different retained fact, and this
+weakening drops one.
+"""
+
+[[probe]]
+id = "M263-http-profile-a-chain-with-a-hole-is-not-a-complete-record"
+unit = "http_profile.retained_chain_record"
+theorem = "THM-0091"
+conjunct = "per-hop validity does not imply a complete chain — a set with a missing middle hop is Incomplete, not a complete terminal"
+path = "mcp-re-http-profile/src/chain/record.rs"
+anchor = """
+            let links = c.previous_request_evidence.digest_value
+                == prev.request_evidence.digest_value
+                && c.previous_request_evidence.digest_alg == prev.request_evidence.digest_alg
+                && c.input_required_response_evidence.digest_value
+                    == prev.response_evidence.digest_value
+                && c.input_required_response_evidence.digest_alg
+                    == prev.response_evidence.digest_alg;
+"""
+weakening = """
+            let links = true;
+            let _ = (c, prev);
+"""
+expect_red = [
+  "tests/chain_reconstruction_test#missing_middle_hop_is_incomplete_not_a_complete_terminal",
+  "tests/chain_reconstruction_test#per_hop_validity_does_not_imply_a_complete_chain",
+]
+note = """
+PER-TURN BINDING PROVES ONE ANSWER BELONGS TO ONE QUESTION; IT DOES NOT PROVE A CHAIN IS WHOLE.
+That is the whole reason this unit exists, and the weakening is the exact shape it was written
+against: given hops R0->S0 and R2->S2 with R1->S1 missing, every retained message still
+verifies on its own, every signature is genuine, and every per-hop check passes. Only this
+comparison -- each continuation's carried predecessor digests against the hop actually before
+it -- refuses the set as a record.
+
+Under the weakening a chain with a hole reconstructs as COMPLETE, so an auditor reading the
+label is told the call record is whole while the turn that authorized the work is absent from
+it. The signature verification the hops already passed is not a second carrier: it is what
+makes each surviving message trustworthy, which is exactly what makes the gap invisible.
+
+The first weakening for this probe attacked the EMPTY-CHAIN arm instead, and every declared
+control stayed green -- correctly, because no control names that arm. The battery covers the
+holes an attacker can make, not the degenerate input, and the probe moved to where the battery
+actually reaches.
+"""
+
+[[probe]]
+id = "M264-http-profile-an-eddsa-pin-carrying-an-ec2-y-is-not-a-pin"
+unit = "http_profile.scitt_service_pin"
+theorem = "THM-0091"
+conjunct = "an illegal pin document is refused rather than becoming a resolvable service"
+path = "mcp-re-http-profile/src/scitt/trust_pin/document.rs"
+anchor = """
+            if document.public_key.y.is_some() {
+"""
+weakening = """
+            if false {
+"""
+expect_red = [
+  "lib#scitt::trust_pin::tests::an_illegal_pin_document_is_refused_at_deserialization",
+]
+note = """
+AN `EdDSA` PIN CARRYING A `y` IS NOT AN Ed25519 KEY WITH A HARMLESS EXTRA FIELD. It is an ES256
+key mislabelled, or a pin built by something that did not know which curve it had -- and the
+document is what the operator RECORDED AND REVIEWED, so a pin that means two things is a pin
+nobody reviewed.
+
+The algorithm comes from the DOCUMENT and never from a receipt, which is the confusion this
+whole seam avoids: letting an incoming receipt nominate the algorithm it is verified under is
+how a transparency pin stops pinning anything. This refusal is what keeps the document's own
+answer unambiguous, so the key parse below it is not a second carrier -- `from_b64url` accepts
+the `x` coordinate either way and says nothing about the `y` beside it.
+"""
+
+[[probe]]
+id = "M265-proxy-an-unreadable-sts-expiry-is-already-expired"
+unit = "proxy.aws_sts_credentials"
+theorem = "THM-0091"
+conjunct = "an expiry that cannot be read is already-expired rather than unlimited, and a far-future one is truncated to the real session ceiling"
+path = "mcp-re-proxy/src/aws_sts.rs"
+anchor = """
+        .map(|stated| stated.min(now + MAX_SESSION_LIFETIME))
+        .unwrap_or(UNIX_EPOCH);
+"""
+weakening = """
+        .unwrap_or(now + MAX_SESSION_LIFETIME);
+"""
+expect_red = [
+  "lib#aws_sts::tests::an_unparseable_expiration_reads_as_already_expired_not_as_unlimited",
+  "lib#aws_sts::tests::a_missing_expiration_element_reads_as_already_expired",
+  "lib#aws_sts::tests::a_far_future_expiration_is_truncated_to_the_real_session_ceiling",
+]
+note = """
+THE DEFAULT ON AN UNREADABLE FIELD IS A LIFETIME. `UNIX_EPOCH` means already expired, so the
+next use refreshes -- an unreadable expiry costs a BOUNDED window rather than an indefinite
+one. The weakening substitutes the ceiling instead, which reads as a plausible value and means
+the opposite: a credential whose expiry could not be established is held for the maximum.
+
+The truncation travels with it because both are the same `Option` chain, and both are the same
+proposition from opposite ends: `AssumeRoleWithWebIdentity` cannot issue a session longer than
+the role's MaxSessionDuration, whose own ceiling is 12 hours, so a longer claim is not a
+lifetime the peer can honestly promise. Nothing downstream re-reads the expiry -- the cache
+refreshes on this number alone.
+"""
+
+[[probe]]
+id = "M266-proxy-a-profile-missing-its-scope-is-refused-not-defaulted"
+unit = "proxy.authorization_configuration_state"
+theorem = "THM-0091"
+conjunct = "a configured profile carries its scope and its staleness bound together, and one missing either is refused rather than defaulted"
+path = "mcp-re-proxy/src/config_state/authorization.rs"
+anchor = """
+    let (Some(accepted_scope), Some(age)) = (request.decision_scope, request.max_decision_age_secs)
+    else {
+"""
+weakening = """
+    let (accepted_scope, age) = (
+        request.decision_scope.unwrap_or(DecisionScope::Principal),
+        request.max_decision_age_secs.unwrap_or(600),
+    );
+    if false {
+"""
+expect_red = [
+  "lib#config_state::authorization::tests::a_profile_missing_its_scope_is_refused_rather_than_defaulted",
+]
+note = """
+THE DEFAULTS ARE THE PLAUSIBLE ONES, deliberately: `Principal` scope and a ten-minute staleness
+bound are what somebody would reach for. That is what makes the weakening worth measuring -- it
+produces a deployment that runs, decides, and reports an enforcing posture, under an actor
+scope and a staleness window the operator never chose.
+
+ADR-MCPRE-065 §8.3 is the reason neither may be defaulted: the accepted actor scope and the
+staleness bound are what the DEPLOYMENT decides, and a decision cannot supply either about
+itself. A default here would let the document being judged set the terms it is judged under,
+one remove away.
+
+The zero-bound refusal below is a sibling conjunct, not a second carrier: it refuses a value
+the operator DID name, and says nothing about one they never gave.
+"""
+
+[[probe]]
+id = "M267-proxy-a-configuration-that-names-no-authority-is-refused"
+unit = "proxy.admission_configuration_state"
+theorem = "THM-0091"
+conjunct = "a configuration that names no admission authority is refused rather than served as OFF"
+path = "mcp-re-proxy/src/config_state/admission.rs"
+anchor = """
+        return Err(MISSING_ADMISSION_AUTHORITY.to_string());
+"""
+weakening = """
+        return Ok(None);
+"""
+expect_red = [
+  "lib#config_state::admission::tests::a_gate_that_names_no_authority_is_refused_rather_than_read_as_off",
+]
+note = """
+`Ok(None)` IS `--admission off`, WHICH IS WHY THIS WEAKENING IS THE DANGEROUS ONE. An operator
+who asked for admission enforcement and named no authority gets a deployment that STARTS,
+reports the OFF posture, and admits every request -- and the OFF line is a legitimate line, so
+nothing in the transcript reads as wrong. The refusal is the only moment the two are
+distinguishable, exactly as with the continuation seam in slice 18 and the deny-list relation
+in slice 12.
+
+THE EXISTING CONTROL COULD NOT SEE IT. `a_refused_configuration_recognises_no_state` supplies
+`"not-a-key"` -- non-empty and undecodable -- so it measures the DECODE refusal one clause
+further on, and the empty-authority clause had nothing holding it. The written control names
+both spellings of nothing, an empty string and whitespace, and the empty kid beside them.
+
+Three instances of one shape now: a selected security capability that cannot be established
+must never degrade into the posture of a deployment that selected nothing. Recorded as a
+pattern rather than a mechanism -- the three refusals live in three owners and each is
+separately falsifiable, which is the correct arrangement.
+"""

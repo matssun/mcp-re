@@ -93,24 +93,6 @@ root_reachable = false
 status = "unreviewed"
 
 [[obligation]]
-unit = "client.proxy_request_correspondence"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "critical"
-inherited_severity = "critical"
-root_reachable = true
-status = "unreviewed"
-
-[[obligation]]
-unit = "client.request_construction"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "high"
-direct_consequence_severity = "high"
-inherited_severity = "medium"
-root_reachable = false
-status = "unreviewed"
-
-[[obligation]]
 unit = "conformance.retained_corpus"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "high"
@@ -129,65 +111,11 @@ root_reachable = false
 status = "unreviewed"
 
 [[obligation]]
-unit = "core.content_address"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "high"
-direct_consequence_severity = "high"
-inherited_severity = "none"
-root_reachable = false
-status = "unreviewed"
-
-[[obligation]]
-unit = "http_profile.bodyless_acknowledgement"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "high"
-direct_consequence_severity = "high"
-inherited_severity = "none"
-root_reachable = false
-status = "unreviewed"
-
-[[obligation]]
-unit = "http_profile.retained_chain_record"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "high"
-direct_consequence_severity = "high"
-inherited_severity = "none"
-root_reachable = false
-status = "unreviewed"
-
-[[obligation]]
-unit = "http_profile.scitt_service_pin"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "high"
-direct_consequence_severity = "high"
-inherited_severity = "high"
-root_reachable = true
-status = "unreviewed"
-
-[[obligation]]
-unit = "http_profile.submitted_hop_identity"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "high"
-direct_consequence_severity = "high"
-inherited_severity = "high"
-root_reachable = true
-status = "unreviewed"
-
-[[obligation]]
 unit = "policy.authorization_taxonomy"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "medium"
 direct_consequence_severity = "medium"
 inherited_severity = "medium"
-root_reachable = false
-status = "unreviewed"
-
-[[obligation]]
-unit = "proxy.admission_configuration_state"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "high"
-direct_consequence_severity = "high"
-inherited_severity = "none"
 root_reachable = false
 status = "unreviewed"
 
@@ -201,52 +129,12 @@ root_reachable = false
 status = "unreviewed"
 
 [[obligation]]
-unit = "proxy.authorization_configuration_state"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "high"
-direct_consequence_severity = "high"
-inherited_severity = "none"
-root_reachable = false
-status = "unreviewed"
-
-[[obligation]]
-unit = "proxy.aws_sts_credentials"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "high"
-direct_consequence_severity = "high"
-inherited_severity = "high"
-root_reachable = false
-status = "unreviewed"
-
-[[obligation]]
 unit = "proxy.capsule_anchor_registration_leaf"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "medium"
 direct_consequence_severity = "medium"
 inherited_severity = "none"
 root_reachable = false
-status = "unreviewed"
-
-[[obligation]]
-unit = "proxy.client_revocation_currency"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "high"
-direct_consequence_severity = "high"
-inherited_severity = "medium"
-root_reachable = false
-status = "unreviewed"
-
-[[obligation]]
-unit = "proxy.continuation_installation"
-# DERIVATION CORRECTION, ADR-MCPRE-068 Phase 1, 2026-09-18 — the same THM-0074 -> THM-0077
-# edge, reaching this proposition through THM-0077's closure. Same proposition, same carrier,
-# same obligation; `direct_consequence_severity` is untouched, which is what says this is a
-# derivation and not a reclassification.
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "high"
-inherited_severity = "critical"
-root_reachable = true
 status = "unreviewed"
 
 [[obligation]]
@@ -259,29 +147,11 @@ root_reachable = false
 status = "unreviewed"
 
 [[obligation]]
-unit = "proxy.operator_facing_redaction"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "high"
-direct_consequence_severity = "high"
-inherited_severity = "none"
-root_reachable = false
-status = "unreviewed"
-
-[[obligation]]
 unit = "proxy.refusal_audit_emission"
 obligation = "a registered mutation:// falsifier attacking this proposition's production property"
 effective_severity = "medium"
 direct_consequence_severity = "medium"
 inherited_severity = "medium"
-root_reachable = true
-status = "unreviewed"
-
-[[obligation]]
-unit = "proxy.refusal_provenance"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "high"
-direct_consequence_severity = "medium"
-inherited_severity = "high"
 root_reachable = true
 status = "unreviewed"
 
@@ -319,15 +189,6 @@ effective_severity = "medium"
 direct_consequence_severity = "medium"
 inherited_severity = "none"
 root_reachable = false
-status = "unreviewed"
-
-[[obligation]]
-unit = "proxy.signing_credential_provenance"
-obligation = "a registered mutation:// falsifier attacking this proposition's production property"
-effective_severity = "critical"
-direct_consequence_severity = "high"
-inherited_severity = "critical"
-root_reachable = true
 status = "unreviewed"
 
 # ---------------------------------------------------------------------------------------
