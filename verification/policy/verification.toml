@@ -2620,7 +2620,20 @@ tested_symbols = [
   "lib#config_state::trust_revocation::tests::bounded_cache_does_not_require_a_cadence",
   "lib#config_state::trust_revocation::tests::each_state_holds_the_cadence_to_the_window_it_claims",
   "lib#config_state::trust_revocation::tests::a_zero_cadence_is_a_spinning_reloader_in_every_state",
-  "lib#config_state::trust_revocation::tests::a_programmatic_config_cannot_spin_the_trust_reloader",
+  "lib#config_state::trust_revocation::tests::a_programmatic_config_cannot_spin_the_trust_reloader",  # ADR-MCPRE-069 batch 10. Four more in this unit's own file.
+  #
+  # "a ZERO cadence — a spinning reloader — is refused in every state" needs its other arm,
+  # or it is satisfied by a classifier that refuses every cadence.
+  "lib#config_state::trust_revocation::tests::the_smallest_positive_cadence_is_admitted",
+  # "each state holds its cadence to the window it claims", at the narrow end: a push window
+  # narrower than near-zero binds instead of it.
+  "lib#config_state::trust_revocation::tests::a_push_window_narrower_than_near_zero_binds_instead_of_it",
+  # "every legal state form is classified" — the LIVE form declares no bounded window, which
+  # is the form a bounded-window assumption would silently mis-classify.
+  "lib#config_state::trust_revocation::tests::live_declares_no_bounded_window",
+  # "which witnesses each state form requires": the state projects back to the tier the
+  # resolver is built from, so the witness a consumer reads is the one the state named.
+  "lib#config_state::trust_revocation::tests::the_state_projects_back_to_the_tier_the_resolver_is_built_from",
 ]
 
 # THM-0036's owner. A PAIRED locator and key, or not at all — the epoch source is what splits
@@ -6500,7 +6513,18 @@ tested_symbols = [
   "lib#startup_posture::tests::completeness_is_enforced_independently_of_debug_assertions",
   # `Seam::ALL` is what `assert_complete` checks membership against, so a seam missing from
   # it is a capability a deployment can install without the transcript mentioning it.
-  "lib#startup_posture::seam::tests::every_seam_is_in_the_set_the_transcript_is_checked_against",
+  "lib#startup_posture::seam::tests::every_seam_is_in_the_set_the_transcript_is_checked_against",  # ADR-MCPRE-069 batch 10. Three controls in `config_state/continuation_control.rs` — a
+  # file this unit already measures — each answering a clause of this statement, and none
+  # of them previously any unit's evidence.
+  #
+  # "an unselected capability is OFF and produces no artifact": DISABLED is a state, not a
+  # missing value, which is what makes "unselected" a thing the plan can carry.
+  "lib#config_state::continuation_control::tests::disabled_is_a_state_and_not_a_missing_value",
+  # "every legal state form is classified and accepted" — the classifier's own totality,
+  # without which every arm below is about whichever forms someone happened to list.
+  "lib#config_state::continuation_control::tests::every_legal_state_form_is_classified_and_accepted",
+  # "a selected one that CANNOT BE ESTABLISHED" — a locator that names no store.
+  "lib#config_state::continuation_control::tests::a_locator_that_cannot_name_a_store_is_refused",
 ]
 
 # The other build profile's arm of the SAME claim. A separate unit and not a

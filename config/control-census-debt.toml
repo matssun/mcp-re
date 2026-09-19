@@ -62,10 +62,6 @@ path = "mcp-re-proxy/src/app.rs"
 baseline = 15
 
 [[file]]
-path = "mcp-re-proxy/src/config_state/replay.rs"
-baseline = 15
-
-[[file]]
 path = "mcp-re-proxy/src/transport/ingress/v2.rs"
 baseline = 15
 
@@ -83,10 +79,6 @@ baseline = 14
 
 [[file]]
 path = "mcp-re-core/src/crypto.rs"
-baseline = 13
-
-[[file]]
-path = "mcp-re-proxy/src/config_state/delegated_signing.rs"
 baseline = 13
 
 [[file]]
@@ -174,10 +166,6 @@ path = "mcp-re-proxy/src/cli/admission_flags/mod.rs"
 baseline = 9
 
 [[file]]
-path = "mcp-re-proxy/src/config_state/transport.rs"
-baseline = 9
-
-[[file]]
 path = "mcp-re-proxy/src/handshake_quota.rs"
 baseline = 9
 
@@ -262,10 +250,6 @@ path = "mcp-re-proxy/src/authorization/verified_action.rs"
 baseline = 6
 
 [[file]]
-path = "mcp-re-proxy/src/config_state/channel_credential_custody.rs"
-baseline = 6
-
-[[file]]
 path = "mcp-re-proxy/src/delegated_tls.rs"
 baseline = 6
 
@@ -339,18 +323,6 @@ baseline = 5
 
 [[file]]
 path = "mcp-re-http-profile/tests/rfc9421_kat.rs"
-baseline = 5
-
-[[file]]
-path = "mcp-re-proxy/src/config_state/freshness.rs"
-baseline = 5
-
-[[file]]
-path = "mcp-re-proxy/src/config_state/key_file_access.rs"
-baseline = 5
-
-[[file]]
-path = "mcp-re-proxy/src/config_state/server_identity.rs"
 baseline = 5
 
 [[file]]
@@ -482,30 +454,6 @@ path = "mcp-re-proxy/src/config_snapshot.rs"
 baseline = 4
 
 [[file]]
-path = "mcp-re-proxy/src/config_state/continuation_control.rs"
-baseline = 4
-
-[[file]]
-path = "mcp-re-proxy/src/config_state/evidence.rs"
-baseline = 4
-
-[[file]]
-path = "mcp-re-proxy/src/config_state/in_flight_limit.rs"
-baseline = 4
-
-[[file]]
-path = "mcp-re-proxy/src/config_state/mcp_transport_contract.rs"
-baseline = 4
-
-[[file]]
-path = "mcp-re-proxy/src/config_state/topology.rs"
-baseline = 4
-
-[[file]]
-path = "mcp-re-proxy/src/config_state/trust_revocation.rs"
-baseline = 4
-
-[[file]]
 path = "mcp-re-proxy/src/http_profile_serve/inner_plane.rs"
 baseline = 4
 
@@ -623,10 +571,6 @@ baseline = 3
 
 [[file]]
 path = "mcp-re-proxy/src/communication_assurance/credential_currency/x509_adapter.rs"
-baseline = 3
-
-[[file]]
-path = "mcp-re-proxy/src/config_state/validation/mod.rs"
 baseline = 3
 
 [[file]]
@@ -783,10 +727,6 @@ baseline = 2
 
 [[file]]
 path = "mcp-re-proxy/src/communication_assurance/credential_currency/evaluation.rs"
-baseline = 2
-
-[[file]]
-path = "mcp-re-proxy/src/config_state/validation/residue.rs"
 baseline = 2
 
 [[file]]
@@ -999,26 +939,6 @@ baseline = 1
 
 [[file]]
 path = "mcp-re-proxy/src/communication_assurance/peer_identity_provenance.rs"
-baseline = 1
-
-[[file]]
-path = "mcp-re-proxy/src/config_state/channel_key_material.rs"
-baseline = 1
-
-[[file]]
-path = "mcp-re-proxy/src/config_state/mod.rs"
-baseline = 1
-
-[[file]]
-path = "mcp-re-proxy/src/config_state/trust_document.rs"
-baseline = 1
-
-[[file]]
-path = "mcp-re-proxy/src/config_state/validation/machine_violations.rs"
-baseline = 1
-
-[[file]]
-path = "mcp-re-proxy/src/config_state/validation/recognition.rs"
 baseline = 1
 
 [[file]]

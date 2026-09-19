@@ -1352,3 +1352,136 @@ exchanges, or reconstructing a chain from what is stored, sees a call that happe
 there are of it.
 **Severity:** `medium`.
 
+---
+
+## The layer-A legality boundary is half-owned — NP-049 through NP-061
+
+`mcp-re-proxy/src/config_state/` holds sixteen configuration classifiers. **Five have a
+unit** — admission, custody, trust revocation, trust document, continuation control,
+authorization — and **eleven do not**, and the eleven are not the small ones: replay,
+delegated signing, transport and CRL, channel credential custody, freshness, key-file
+access, server identity, evidence retention, in-flight limit, MCP transport contract,
+topology.
+
+The granularity below is the estate's own: one proposition per classifier, which is exactly
+how the five owned ones are units. The decomposition was not chosen — it was read off the
+module boundary the implementation already drew, and the fact that the owned and unowned
+modules are indistinguishable in shape is the finding.
+
+## NP-049 — the replay configuration classifier
+
+**Controls:** `config_state/replay.rs`.
+**Statement.** *Every legal replay state form is classified and accepted; each state names every locator it cannot start without and the feature that could establish it; a shared store with no declared tier, a sub-strict tier, a wait-quorum tier that waits for no acknowledgement and no declared tier at all each name NO state; a locator belonging to the other state is refused; the planned store is the validated locator; the tier is DERIVED from the state rather than stored beside it; and the withdrawn alias names its replacement rather than being reinterpreted.*
+**If false.** A fleet starts on a replay store it cannot reach, or on a durability tier weaker than the one it recorded — and the tier stored beside the state is the shape that lets the two disagree. The withdrawn-alias clause is the sharper one: an alias silently reinterpreted is an operator's old configuration meaning something new.
+**Likely owner:** none. Its five sibling classifiers are units; this one is not.
+**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
+**Severity:** `critical`.
+
+## NP-050 — the delegated-signing configuration classifier
+
+**Controls:** `config_state/delegated_signing.rs`.
+**Statement.** *Every fact a delegated-signing request resolves is present and non-empty however it was produced — a whitespace-minted fact is refused like an empty one, and a one-character fact is not refused by the emptiness guard; a TTL above the ceiling, an overlap outside the rotor range and an overlap outside the TTL are refused or resolve no window; an absent trust epoch names no posture; an explicit value overrides the fallback; the issuer-kid fallback is required only where the resolution reads it; and the two defaults are resolved by this owner.*
+**If false.** A replica signs under a delegated credential whose window, rotor range or issuer identity was defaulted into existence rather than declared — and the whitespace arm is the one that has bitten elsewhere: a value that looks present and resolves to nothing.
+**Likely owner:** none. Its five sibling classifiers are units; this one is not.
+**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
+**Severity:** `critical`.
+
+## NP-051 — the transport, crl and identity-source classifier
+
+**Controls:** `config_state/transport.rs`.
+**Statement.** *Every legal CRL state form and both binding states are classified and accepted; a cadence with no list to re-read and a CRL list holding an empty path are refused; a ZERO cadence is an unbounded reloader and not a disabled one; only an EXACT transport binding becomes a state and every other kind is refused aloud; attested ingress is refused BY NAME rather than passed over; the deprecated identity source names no state; and the identity field names the state while the form decides whether there is one.*
+**If false.** A listener runs with a revocation list it never re-reads, or with a transport binding weaker than exact that was read as acceptable, or with an attested-ingress setting silently ignored. 'Refused aloud' and 'refused by name' are the clauses: a setting passed over is indistinguishable from one honoured.
+**Likely owner:** none. Its five sibling classifiers are units; this one is not.
+**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
+**Severity:** `critical`.
+
+## NP-052 — the channel credential custody classifier
+
+**Controls:** `config_state/channel_credential_custody.rs and channel_key_material.rs`.
+**Statement.** *Both roles answer the custody question with ONE semantic fact; a file key is the exported state and carries the key it exports; the exported state cannot start without that key; the delegated state does not want it; any backend's selector names the same state and records itself; a channel mechanism that does not exist drives the same consumer; and a key object projects its own locator and no neighbours.*
+**If false.** The two roles disagree about whether the channel credential is exported, so one plane protects material the other has already written to disk. 'One semantic fact' is the whole claim: two answers to a custody question is how a key ends up somewhere nobody meant.
+**Likely owner:** none. Its five sibling classifiers are units; this one is not.
+**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
+**Severity:** `critical`.
+
+## NP-053 — the freshness-window classifier
+
+**Controls:** `config_state/freshness.rs`.
+**Statement.** *A skew outside the bound resolves no window; an overflowing expiry saturates rather than wrapping; retention never ends before the verifier stops accepting; the two projections are derived from the same skew; and the public constructor validates too.*
+**If false.** An expiry that wraps is an unbounded acceptance window, and retention ending before the verifier stops accepting is evidence discarded while it is still being relied on. 'The public constructor validates too' is the seal arm: without it the invariant is remembered at one construction site.
+**Likely owner:** none. Its five sibling classifiers are units; this one is not.
+**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
+**Severity:** `high`.
+
+## NP-054 — key-file access policy
+
+**Controls:** `config_state/key_file_access.rs`.
+**Statement.** *Owner-only accepts 0600 and 0400 and nothing else; no policy accepts world access or group write; group read is accepted only for a group this process is IN; the mode predicate flags group and world bits; and the default deployment is owner-only.*
+**If false.** A signing key sits on disk readable by another account on the host. This is the one proposition in the configuration layer whose violation needs no protocol at all to exploit.
+**Likely owner:** none. Its five sibling classifiers are units; this one is not.
+**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
+**Severity:** `critical`.
+
+## NP-055 — the server-identity classifier
+
+**Controls:** `config_state/server_identity.rs`.
+**Statement.** *A legal request yields ONE canonical identity; a missing coordinate leaves no identity and NAMES ITSELF; a request missing both coordinates reports both in one pass; a whitespace coordinate is empty and names itself; and the identity keyid follows the RESOLVED ISSUER rather than the server key id.*
+**If false.** The proxy signs under an identity assembled from a coordinate nobody supplied, or advertises a keyid that is not the one the issuer resolved — which is the identity-not-locator failure at the configuration layer.
+**Likely owner:** none. Its five sibling classifiers are units; this one is not.
+**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
+**Severity:** `critical`.
+
+## NP-056 — the evidence-retention classifier
+
+**Controls:** `config_state/evidence.rs`.
+**Statement.** *Every legal state form is classified; retention is selected by its OWN locator; the ON state carries the directory that selected it; and only the trusted context asserts something configuration cannot check.*
+**If false.** A deployment retains evidence somewhere other than where the operator pointed, or reads as retaining when it is not. The last clause is the boundary: what configuration can check and what only a trusted context can assert are different facts, and collapsing them is how a configuration claim becomes an assurance claim.
+**Likely owner:** none. Its five sibling classifiers are units; this one is not.
+**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
+**Severity:** `high`.
+
+## NP-057 — the in-flight limit classifier
+
+**Controls:** `config_state/in_flight_limit.rs`.
+**Statement.** *Saying nothing resolves to the bounded default; an absent limit is DISTINGUISHABLE from one that equals the default; a stated basis is carried through unchanged; and exactly one projection answers for every basis.*
+**If false.** The in-flight ceiling is unbounded because silence was read as a choice, or an operator's explicit choice is indistinguishable from silence — the provenance collapse this repository has ruled on, in the one setting that bounds concurrent work.
+**Likely owner:** none. Its five sibling classifiers are units; this one is not.
+**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
+**Severity:** `medium`.
+
+## NP-058 — the mcp transport contract classifier
+
+**Controls:** `config_state/mcp_transport_contract.rs`.
+**Statement.** *Every legal state form is classified; the ABSENT contract is a state and not a defect; the enforced state carries the set that selected it; and an unusual accepted set is classified rather than refused.*
+**If false.** A deployment enforces a transport contract it did not select, or refuses a legal one as malformed. 'Absent is a state' is the clause that keeps an unset contract from reading as a bug in the classifier.
+**Likely owner:** none. Its five sibling classifiers are units; this one is not.
+**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
+**Severity:** `high`.
+
+## NP-059 — the topology classifier
+
+**Controls:** `config_state/topology.rs`.
+**Statement.** *The default deployment is a single node; zero is a DEFERRAL and not a count; the runtime projection spells auto as zero; and the topology and the shard request do not constrain each other.*
+**If false.** A fleet-shaped deployment runs single-node, or a zero core count is read as a count of zero rather than as 'decide at runtime' — and the two-machine independence clause is what keeps a shard request from silently deciding the topology.
+**Likely owner:** none. Its five sibling classifiers are units; this one is not.
+**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
+**Severity:** `medium`.
+
+## NP-060 — the validation boundary is total and names what it refused
+
+**Controls:** `config_state/validation/* , config_state/mod.rs and config_state/trust_document.rs`.
+**Statement.** *Every required coordinate is refused when empty HOWEVER the request was built, and a whitespace coordinate is refused like an empty one; a target URI that would disable the reconstruction check is refused; the inventory IS the file rather than a list beside it; a machine with no clauses contributes nothing to the violation list; the internal error names the machine that recognised nothing; a refusal names the flag; and the state carries what the planes would otherwise re-derive.*
+**If false.** A required coordinate reaches a plane empty because the request was built the other way, or an operator gets a refusal that does not say what to change. 'The inventory IS the file' is the anti-drift clause: a hand-maintained list of what must be validated is a list that goes stale.
+**Likely owner:** none. Its five sibling classifiers are units; this one is not.
+**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
+**Severity:** `high`.
+
+## NP-061 — a configuration machine decides only its own subject
+
+**Controls:** `config_state/continuation_control.rs`.
+**Statement.** *The continuation-control machine does not read the replay tier.*
+**If false.** One configuration machine re-derives another's decision from raw fields, so two owners answer the same question and can disagree. `proxy.cross_machine_legality` states exactly this shape — 'every relation reads classified owner states rather than raw request fields', with `the_trust_epoch_posture_is_not_re_derived_here` as its registered control — and it CANNOT claim this one: its paths are `cross_machine.rs` alone, and `verify --manifests` refuses a `lib#` selector whose module the unit does not measure. The third mechanically impossible reattribution this campaign has measured.
+**Likely owner:** none. Its five sibling classifiers are units; this one is not.
+**Root relationship.** Under THM-0077 — *no deployment serves a posture nobody selected* — with the command-line family (NP-025 … NP-035) one layer above it.
+**Severity:** `high`.
+
