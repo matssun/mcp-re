@@ -22,7 +22,6 @@ Run: python3 tools/verification/test_controls.py
 
 from __future__ import annotations
 
-import importlib.machinery
 import sys
 from pathlib import Path
 
@@ -502,7 +501,7 @@ def test_a_resolved_proposition_is_exempt_from_the_citation_check_and_a_broken_o
     holder = [{"id": "NP-TEST", "ratified_as": _CLAIMING_UNIT}]
     censor.propositions = lambda: holder
     censor.units = lambda: [{"id": _CLAIMING_UNIT}]
-    censor._record = lambda anchor: ""
+    censor._record = lambda _anchor: ""
     cited = [p for p in censor.failures(report) if "no control cites it" in p]
     assert cited == [], cited
     holder[0] = {"id": "NP-TEST", "ratified_as": "THM-9999-does-not-exist"}
@@ -515,14 +514,17 @@ def test_a_resolved_proposition_is_exempt_from_the_citation_check_and_a_broken_o
 
 def _load_census_tool():
     """The `control-census` executable as a module — it has no `.py` suffix."""
+    import importlib.machinery
     import importlib.util
 
-    spec = importlib.util.spec_from_loader(
-        "control_census",
-        importlib.machinery.SourceFileLoader("control_census", str(HERE / "control-census")),
+    loader = importlib.machinery.SourceFileLoader(
+        "control_census", str(HERE / "control-census")
     )
+    spec = importlib.util.spec_from_loader("control_census", loader)
+    if spec is None:  # pragma: no cover - the file is in the tree beside this one
+        raise RuntimeError(f"no import spec for {HERE / 'control-census'}")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    loader.exec_module(module)
     return module
 
 
