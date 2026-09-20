@@ -9688,3 +9688,151 @@ through a second store handle and never reaches the encoder. It is the third cla
 unit's proposition and it has no deletable check on this path, which is why the falsifier is
 placed on the header rule rather than on the schema token.
 """
+
+# ADR-MCPRE-069 NP-083 — the audit-vocabulary drift guard and the carrier-minting control.
+#
+# Both units read SOURCE TEXT from disk, so the falsifier for each is a real drift in the
+# production carrier rather than a deleted runtime check. That is the same shape as the
+# gate probes above, one class along: the control is a cargo test rather than a script, but
+# what it reads is still the tree, so the weakening has to be a change the tree would
+# actually acquire.
+
+[[probe]]
+id = "M349-audit-third-success-event"
+unit = "conformance.audit_vocabulary_drift"
+theorem = "THM-0122"
+conjunct = "The net-new surface is exactly five events the error taxonomy cannot express: two successes (`mcp-re.request.accepted`, `mcp-re.response.signed`) and three delegated-key lifecycle events."
+path = "mcp-re-core/src/audit.rs"
+anchor = """
+pub const SUCCESS_EVENT_TYPES: &[&str] =
+    &[event_type::REQUEST_ACCEPTED, event_type::RESPONSE_SIGNED];
+"""
+weakening = """
+pub const SUCCESS_EVENT_TYPES: &[&str] = &[
+    event_type::REQUEST_ACCEPTED,
+    event_type::RESPONSE_SIGNED,
+    "mcp-re.request.queued",
+];
+"""
+expect_red = [
+  "tests/audit_vocabulary_guard_test#success_event_set_is_exactly_the_two_item_allowlist",
+  "tests/audit_vocabulary_guard_test#every_audit_token_is_a_wire_code_or_a_fixed_event_type",
+]
+note = """
+A third success event, minted as a bare literal — the form the allowlist cannot resolve
+through `event_type::` and the form an author reaching for a new event would write first.
+Two controls are named because the weakening is visible from both sides: the set is no
+longer the two-item allowlist, and the token it added is neither a frozen `wire_code()` nor
+a fixed event type. Either alone would leave the other clause unmeasured by this probe.
+"""
+
+[[probe]]
+id = "M350-audit-fourth-lifecycle-event"
+unit = "conformance.audit_vocabulary_drift"
+theorem = "THM-0122"
+conjunct = "three delegated-key lifecycle events"
+path = "mcp-re-core/src/audit.rs"
+anchor = """
+pub const KEY_LIFECYCLE_EVENT_TYPES: &[&str] = &[
+    event_type::DELEGATED_KEY_ISSUED,
+    event_type::DELEGATED_KEY_ROTATED,
+    event_type::DELEGATED_KEY_RETIRED,
+];
+"""
+weakening = """
+pub const KEY_LIFECYCLE_EVENT_TYPES: &[&str] = &[
+    event_type::DELEGATED_KEY_ISSUED,
+    event_type::DELEGATED_KEY_ROTATED,
+    event_type::DELEGATED_KEY_RETIRED,
+    "mcp-re.delegated_key.suspended",
+];
+"""
+expect_red = [
+  "tests/audit_vocabulary_guard_test#key_lifecycle_event_set_is_exactly_the_three_item_allowlist",
+]
+note = """
+The lifecycle set is pinned SEPARATELY from the success set, and the two are probed
+separately for that reason: ADR-MCPRE-052 §7 authorizes three events, and a fourth is an
+ADR's decision rather than an edit's. Named alone, because this is the clause a probe
+against the success slice cannot reach.
+"""
+
+[[probe]]
+id = "M351-core-mints-a-mismatch-verdict"
+unit = "conformance.audit_vocabulary_drift"
+theorem = "THM-0122"
+conjunct = "there is no `authorization_hash_mismatch` reason, because \"mismatch\" would claim Core compared an authorization artifact it only binds"
+path = "mcp-re-core/src/error.rs"
+anchor = """
+            McpReError::AuthorizationHashMissing => "mcp-re.authorization_hash_missing",
+"""
+weakening = """
+            McpReError::AuthorizationHashMissing => "mcp-re.authorization_hash_mismatch",
+"""
+expect_red = [
+  "tests/audit_vocabulary_guard_test#no_authorization_hash_mismatch_audit_reason",
+]
+note = """
+The defect in its true form, and the reason the control reads BOTH files. Core can only
+observe that the binding is absent; rendering that observation as a "mismatch" reports a
+semantic comparison Core never performed, attributing an authorization decision to the layer
+that binds. The weakening keeps the variant and moves only the token, so the tree still
+builds and the lane can tell a red control from one that never ran.
+"""
+
+[[probe]]
+id = "M352-carrier-keeps-a-table-beside-the-projection"
+unit = "conformance.carrier_minting_absence"
+theorem = "THM-0111"
+conjunct = "derives its token from that projection rather than keeping a table beside it"
+path = "mcp-re-http-profile/src/error/core_projection.rs"
+anchor = """
+    pub fn wire_code(&self) -> &'static str {
+        McpReError::from(self).wire_code()
+    }
+"""
+weakening = """
+    pub fn wire_code(&self) -> &'static str {
+        if matches!(self, HttpProfileError::InvalidSignature) {
+            return "mcp-re.invalid_signature";
+        }
+        McpReError::from(self).wire_code()
+    }
+"""
+expect_red = [
+  "tests/audit_vocabulary_guard_test#no_producer_outside_core_mints_a_wire_token",
+]
+note = """
+A SECOND TABLE, at its minimal size and agreeing with the projection on the one variant it
+covers. That agreement is the point: every runtime control in this crate still passes,
+because `wire_code` returns exactly what it returned before. What has changed is that the
+carrier now decides what a string says, which is the parallel namespace ADR-MCPRE-066
+Slice 2 removed and the thing only a source-text read can see.
+"""
+
+[[probe]]
+id = "M353-carrier-projection-wildcard-arm"
+unit = "conformance.carrier_minting_absence"
+theorem = "THM-0111"
+conjunct = "through an exhaustive projection with no wildcard arm"
+path = "mcp-re-http-profile/src/error/core_projection.rs"
+anchor = """
+            DispatchError::Profile(e) => McpReError::from(e),
+        }
+"""
+weakening = """
+            DispatchError::Profile(e) => McpReError::from(e),
+            _ => McpReError::MissingEnvelope,
+        }
+"""
+expect_red = [
+  "tests/audit_vocabulary_guard_test#no_producer_outside_core_mints_a_wire_token",
+]
+note = """
+The clause no runtime control in any crate is positioned to observe. An exhaustive match and
+a defaulted one agree on every input a test can supply — the wildcard is unreachable today —
+so the difference is visible only in the text, and it is the whole difference between a new
+carrier variant being a COMPILE ERROR until it names a Core verdict and it silently
+inheriting one. `unreachable_patterns` is warn-level in this workspace, so the weakened tree
+still builds and the control is measured rather than reported absent.
+"""

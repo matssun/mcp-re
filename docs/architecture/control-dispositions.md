@@ -2175,27 +2175,6 @@ in `unit://sdk_python.correlation_lifecycle` is: half of it is a different claim
 weaker one.
 **Severity:** `high`.
 
-## NP-083 — the audit vocabulary is frozen and minted in one place
-
-**Controls:** `audit_vocabulary_guard_test.rs` (7).
-**Statement.** *Every audit token is a wire code or a fixed event type; event types do not
-collide with frozen wire codes; the success and key-lifecycle event sets are EXACTLY their
-allowlists; no producer outside the Core mints a wire token; there is no authorization
-hash-mismatch audit reason; and the guard's inputs are non-empty.*
-**If false.** An audit record carries a token that means one thing to its producer and
-another to its reader, or a producer outside the frozen taxonomy mints one — which makes the
-vocabulary a convention rather than a contract.
-**Likely owner:** `conformance.verdict_vocabulary_scope` measures HOW MANY files decide what
-a verdict token says, and its argv claims three of this file's ten controls. The other seven
-are about what the tokens ARE, which that measurement does not say. A `measured` unit has no
-battery to hold them — the finding `conformance.production_half_definition` and
-`conformance.scanned_tree_declaration` arrived at from the other side, and were registered under
-THM-0111 for.
-**Severity:** `high`.
-**`guard_inputs_are_non_empty` is registered here rather than dispositioned as apparatus**,
-because it is this proposition's anti-vacuity arm: a guard over an empty input set reports a
-clean vocabulary.
-
 ## NP-084 — the security traceability manifest is derived, not remembered
 
 **Controls:** `security_traceability_guard_test.rs` (10).

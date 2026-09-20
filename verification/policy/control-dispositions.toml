@@ -5194,15 +5194,6 @@ root_relationship = "the published conformance claim surface"
 record = "docs/architecture/control-dispositions.md#np-082"
 
 [[proposition]]
-id = "NP-083"
-title = "The audit vocabulary is frozen and minted in one place"
-carrier = "mcp-re-conformance/tests/audit_vocabulary_guard_test.rs"
-likely_owner = ""
-consequence = "high"
-root_relationship = "the published conformance claim surface"
-record = "docs/architecture/control-dispositions.md#np-083"
-
-[[proposition]]
 id = "NP-084"
 title = "The security traceability manifest is derived, not remembered"
 carrier = "mcp-re-conformance/tests/security_traceability_guard_test.rs"
@@ -5228,62 +5219,6 @@ likely_owner = ""
 consequence = "high"
 root_relationship = "the published conformance claim surface"
 record = "docs/architecture/control-dispositions.md#np-086"
-
-[[disposition]]
-id = "CD-13001"
-project = "mcp-re-conformance"
-control = "tests/audit_vocabulary_guard_test#event_types_do_not_collide_with_frozen_wire_codes"
-decision = "new-proposition"
-proposition = "NP-083"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-13002"
-project = "mcp-re-conformance"
-control = "tests/audit_vocabulary_guard_test#every_audit_token_is_a_wire_code_or_a_fixed_event_type"
-decision = "new-proposition"
-proposition = "NP-083"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-13003"
-project = "mcp-re-conformance"
-control = "tests/audit_vocabulary_guard_test#guard_inputs_are_non_empty"
-decision = "new-proposition"
-proposition = "NP-083"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-13004"
-project = "mcp-re-conformance"
-control = "tests/audit_vocabulary_guard_test#key_lifecycle_event_set_is_exactly_the_three_item_allowlist"
-decision = "new-proposition"
-proposition = "NP-083"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-13005"
-project = "mcp-re-conformance"
-control = "tests/audit_vocabulary_guard_test#no_authorization_hash_mismatch_audit_reason"
-decision = "new-proposition"
-proposition = "NP-083"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-13006"
-project = "mcp-re-conformance"
-control = "tests/audit_vocabulary_guard_test#no_producer_outside_core_mints_a_wire_token"
-decision = "new-proposition"
-proposition = "NP-083"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-13007"
-project = "mcp-re-conformance"
-control = "tests/audit_vocabulary_guard_test#success_event_set_is_exactly_the_two_item_allowlist"
-decision = "new-proposition"
-proposition = "NP-083"
-recorded = "2026-09-19"
 
 [[disposition]]
 id = "CD-13008"

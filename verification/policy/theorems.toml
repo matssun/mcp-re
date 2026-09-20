@@ -6397,6 +6397,7 @@ supported_by = [
   "unit://http_profile.carrier_verdict_projection",
   "unit://policy.authorization_taxonomy",
   "unit://client.binding_spec_refusal",
+  "unit://conformance.carrier_minting_absence",
 ]
 depends_on = ["THM-0046"]
 
@@ -7066,7 +7067,7 @@ Executable, class V0, measured in the default cargo lane.
 """
 owner = "core.audit_vocabulary"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://core.audit_vocabulary"]
+supported_by = ["unit://core.audit_vocabulary", "unit://conformance.audit_vocabulary_drift"]
 depends_on = []
 
 [[theorem]]

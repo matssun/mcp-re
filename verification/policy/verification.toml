@@ -10051,6 +10051,96 @@ tested_symbols = [
   "lib#source_trees::tests::no_tree_is_declared_twice",
 ]
 
+# ---------------------------------------------------------------------------
+# The audit-vocabulary drift guard — ADR-MCPRE-069 NP-083
+# ---------------------------------------------------------------------------
+#
+# Seven controls in `mcp-re-conformance/tests/audit_vocabulary_guard_test.rs` that no unit
+# claimed. The other three controls in that file are MSR-0001's argv and belong to
+# `conformance.verdict_vocabulary_scope`.
+#
+# TWO units, not one, and the split is the file's own. Six controls read the FROZEN AUDIT
+# VOCABULARY out of `audit.rs` and `error.rs` and ask what an audit token may be; the
+# seventh reads six CARRIER files and asks whether anything outside the two frozen
+# taxonomies keeps a vocabulary of its own. They fail differently and they answer to
+# different theorems — THM-0122's own scope says so in one line, "THE TREE-WIDE HALF IS
+# THM-0111'S" — so a single description would need an "and".
+#
+# WHAT EACH ADDS OVER THE UNIT THAT ALREADY HOLDS THE PROPOSITION AT THE TYPE LEVEL. This is
+# the question ADR-069 §5 asks of every registration, and the answer is not "a second
+# opinion":
+#
+#   * `core.audit_vocabulary` establishes the vocabulary BY TYPE, in-crate, from the
+#     compiled constants. It cannot see the frozen `wire_code()` SET, because that set is
+#     the thing its own crate defines. The guard below parses `error.rs`'s `wire_code` arms
+#     from DISK and asserts the audit layer mints nothing outside them — a drift between two
+#     files, which no test inside either file is positioned to observe.
+#   * `http_profile.carrier_verdict_projection` and `client.binding_spec_refusal` establish
+#     that each carrier's projection is total and that `wire_code` is derived from it. NO
+#     RUNTIME TEST CAN SEE A WILDCARD ARM, and none can see a second table that nothing
+#     reaches: both are properties of the SOURCE TEXT. THM-0111 states both — "an exhaustive
+#     projection with no wildcard arm", "rather than keeping a table beside it" — and this
+#     guard is the only control over either.
+#
+# The measurement next door does NOT subsume the carrier control, and the difference is one
+# line of the walk: `verdict_tokens` keeps only `mcp-re.<name>` with no further dot, so a
+# carrier that minted `mcp-re.request.accepted` is invisible to it. The carrier control reads
+# every `mcp-re.*` literal. What IS superseded is the file-set half — which files mint a
+# verdict token is measured over the whole workspace there, not read off this list of six —
+# and that half is not what is claimed below.
+
+[[unit]]
+id = "conformance.audit_vocabulary_drift"
+class = "V0"
+description = "WHAT AN AUDIT TOKEN MAY BE, MEASURED BETWEEN THE TWO FILES ON DISK RATHER THAN INSIDE EITHER: the frozen `McpReError::wire_code()` set is parsed from `error.rs`'s own match arms, the `mcp-re.*` tokens the audit layer names are parsed from `audit.rs`, and every one of the latter is either a member of the former or one of the seven fixed event types. The success set is EXACTLY the two events the error taxonomy cannot express and the key-lifecycle set EXACTLY the three ADR-MCPRE-052 §7 authorizes, both resolved through the `event_type` constants rather than through duplicated literals; no event type is itself a frozen wire token, so a rejection sub-name cannot masquerade as an event; and no `authorization_hash_mismatch` notion exists in either file, because Core binds an authorization artifact it never compares. The anti-vacuity arm is part of the claim and not apparatus around it: a guard whose runfiles wiring is broken parses an empty vocabulary and reports a clean one, so the parse must yield at least fifteen frozen tokens, a representative token by name, and every pinned rejection event. Says NOTHING about the CARRIERS — whether a producer outside the frozen taxonomies keeps a vocabulary of its own is `conformance.carrier_minting_absence`, under THM-0111 rather than THM-0122. Says nothing about emission, about a sink, or about which coordinate an authority writes into, and nothing about whether the type-level containment holds — that is `core.audit_vocabulary`'s, and the two are different evidence for the same clause: one reads the compiled constants, this one reads the two files and asks whether they have drifted apart."
+paths = [
+  "mcp-re-conformance/tests/audit_vocabulary_guard_test.rs",
+  "mcp-re-core/src/audit.rs",
+  "mcp-re-core/src/error.rs",
+]
+test_package = "mcp-re-conformance"
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://conformance/audit_vocabulary/drift_guard",
+  "mutation://conformance/audit_vocabulary/drift_guard",
+]
+tested_symbols = [
+  "tests/audit_vocabulary_guard_test#event_types_do_not_collide_with_frozen_wire_codes",
+  "tests/audit_vocabulary_guard_test#every_audit_token_is_a_wire_code_or_a_fixed_event_type",
+  "tests/audit_vocabulary_guard_test#guard_inputs_are_non_empty",
+  "tests/audit_vocabulary_guard_test#key_lifecycle_event_set_is_exactly_the_three_item_allowlist",
+  "tests/audit_vocabulary_guard_test#no_authorization_hash_mismatch_audit_reason",
+  "tests/audit_vocabulary_guard_test#success_event_set_is_exactly_the_two_item_allowlist",
+]
+
+[[unit]]
+id = "conformance.carrier_minting_absence"
+class = "V0"
+description = "NO CARRIER THAT REACHES THE WIRE KEEPS A VERDICT VOCABULARY OF ITS OWN, READ AS SOURCE TEXT: the production half of the RFC 9421 carrier's taxonomy and its Core projection, the replay-tier dispatch gate's and its projection, and the client seam's binding-spec refusal and its projection hold NO `mcp-re.*` string literal at all — not a verdict token, and not a dotted audit event type either. Each named projection is where that producer's verdicts are actually decided, asserted by the `impl From<&_> for McpReError` signature being present in the file the guard reads, and NEITHER HAS A WILDCARD ARM, so a new carrier variant is a compile error until it names a Core verdict instead of inheriting one. The wildcard clause is a property of the text and of nothing else: an exhaustive match and a defaulted one agree on every input the tests can supply, so no runtime control in any of these crates is positioned to observe it. The parse is its own positive control — the one file that IS supposed to mint tokens still yields at least fifteen — so an empty result reads as absence rather than as a guard that read nothing. Says NOTHING about WHICH files in the workspace mint a verdict token: that is measured over every crate's source tree by `conformance.verdict_vocabulary_scope`, and this control's six-file list is the narrower question of whether these particular carriers kept a table. Says nothing about whether a projection's GROUPING is right — THM-0111's own scope reserves that as a ratified owner decision no guard can see."
+paths = [
+  "mcp-re-conformance/tests/audit_vocabulary_guard_test.rs",
+  "mcp-re-http-profile/src/error.rs",
+  "mcp-re-http-profile/src/error/core_projection.rs",
+  "mcp-re-proxy/src/http_profile_dispatch.rs",
+  "mcp-re-proxy/src/http_profile_dispatch/core_projection.rs",
+  "mcp-re-client-core/src/binding_spec/refusal.rs",
+  "mcp-re-client-core/src/core_projection.rs",
+]
+test_package = "mcp-re-conformance"
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://conformance/audit_vocabulary/carrier_minting_absence",
+  "mutation://conformance/audit_vocabulary/carrier_minting_absence",
+]
+tested_symbols = [
+  "tests/audit_vocabulary_guard_test#no_producer_outside_core_mints_a_wire_token",
+]
+
+
 
 
 
