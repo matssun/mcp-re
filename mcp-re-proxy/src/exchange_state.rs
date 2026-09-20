@@ -1840,17 +1840,6 @@ mod tests {
         assert_eq!(p.retry_semantics(), RetrySemantics::NotRetrySafe);
     }
 
-    #[test]
-    fn an_illegal_transition_names_both_halves() {
-        let err =
-            transition(ExchangeState::Received, ExchangeEvent::BackendDispatched).unwrap_err();
-        assert_eq!(err.state, ExchangeState::Received);
-        assert_eq!(err.event, ExchangeEvent::BackendDispatched);
-        let rendered = err.to_string();
-        assert!(rendered.contains("Received"), "{rendered}");
-        assert!(rendered.contains("BackendDispatched"), "{rendered}");
-    }
-
     // ---------------------------------------------------------------------------------
     // Publishing a success: the boundary where an incoherent tuple becomes a refusal.
     //

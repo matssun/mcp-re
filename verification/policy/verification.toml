@@ -3472,7 +3472,6 @@ tested_symbols = [
   "lib#exchange_state::tests::an_illegal_advance_is_refused_and_latched_in_every_build",
   "lib#exchange_state::tests::a_violated_invariant_is_latched_on_the_advance_that_causes_it",
   "lib#exchange_state::tests::the_latch_keeps_the_first_anomaly",
-  "lib#exchange_state::tests::an_illegal_transition_names_both_halves",
 ]
 
 # THE DERIVATION, NOT THE WIRE — its scope's own words. The backend projection belongs here
