@@ -6641,6 +6641,42 @@ tested_symbols = [
   # commitment and NOTHING ELSE, so "never carries the request or its credentials" is a
   # consequence of what it does carry rather than a separate list to keep in step.
   "lib#transparency::reservation_marker::tests::a_marker_carries_the_commitment_and_nothing_else",
+  # ADR-MCPRE-069 CO-S3-3, NP-154. The two rows of that record whose assertions are this
+  # statement's own, reached end to end rather than at the type. Both compile into the
+  # plain `tests/integration_async` binary — measured, `--test integration_async -- --list`
+  # reports all 23 `transparency_e2e_test` controls with and WITHOUT `--features
+  # async_serve` — so no `test_features` is declared and none would be true, exactly as for
+  # the two `a_post_dispatch_refusal_*` members above.
+  #
+  # "A publication taken before the exchange may dispatch": the ordering itself, counted
+  # rather than inferred from a status. A refused reservation leaves the inner dispatch
+  # count at zero, which is the security consequence's own sentence — "a saturated inner
+  # plane or a refused reservation manufactured indeterminacy for calls that provably never
+  # reached a backend" — asserted on the live path. Nothing else in this battery observes
+  # the backend at all; the lib# twin beside it in `http_profile_serve::retention` asserts
+  # the refusal's CAUSE, never that the backend did not run.
+  "tests/integration_async#transparency_e2e_test::a_retention_store_that_cannot_accept_the_call_refuses_before_the_backend_runs",
+  # "`reserve` publishes `<digest>.reserved` … only `commit_to_dispatch` advances it to
+  # `<digest>.pending`, and it advances by RENAMING": both names observed ON DISK, in
+  # order, through the real writer thread, with the second in place before the side effects
+  # run. The completion is then broken and fails, which the scope already admits — "It does
+  # not establish that the completion write succeeds" — and no hop is retained for it.
+  "tests/integration_async#transparency_e2e_test::a_retention_failure_after_execution_is_indeterminate_and_leaves_its_reservation",
+  # THREE MORE ROWS OF NP-154 ARE DELIBERATELY ABSENT, and each is refused by a different
+  # sentence this theorem already wrote down.
+  #
+  #   an_exchange_whose_evidence_cannot_be_retained_is_refused    asserts a 503 and the
+  #       `mcp-re.evidence_retention_unavailable` code and nothing else. That is the scope's
+  #       own exclusion verbatim: "It says nothing about which HTTP refusal each failure
+  #       earns — that is the serving owner's, under THM-0078." The member above asserts the
+  #       same pair AND the dispatch count; the count is what makes it this unit's.
+  #   retention_is_off_by_default_and_nothing_is_kept             a deployment with NO store
+  #       publishes no stage under either name, so there is no crossing for a claim about
+  #       WHEN one was accepted to be about.
+  #   the_serving_constructor_still_proves_the_archive_writable   `EvidenceRetention::open`
+  #       against a `0555` directory, and the read projection over the same path. Opening is
+  #       not a stage, and the asymmetry is the serving posture's — THM-0077 carries "an
+  #       unopenable retention directory refuses rather than resolving to OFF" in terms.
 ]
 
 [[unit]]
