@@ -375,9 +375,7 @@ pub use trust_plane::InvalidationChannel;
 pub use trust_plane::InvalidationEvent;
 pub use trust_plane::PushInvalidationTrustCache;
 // Kept at the crate root for existing embedders; the provenance is the harness.
-pub use blocking_mtls_harness::serve;
 pub use blocking_mtls_harness::serve_once;
-pub use blocking_mtls_harness::serve_once_with_assertion;
 pub use communication_assurance::peer_identity_provenance::PeerIdentityProvenance;
 pub use tls::ServerLimits;
 pub use tls::ServerOptions;

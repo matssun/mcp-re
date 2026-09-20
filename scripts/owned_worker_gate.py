@@ -82,12 +82,6 @@ ALLOWED = {
         "the bounded-abandonment connect worker is a PER-OPERATION timeout thread, not a "
         "runtime worker; its permit releases the in-flight slot even when it finishes late"
     )),
-    "mcp-re-proxy/src/blocking_mtls_harness/mod.rs": (1, (
-        "the per-connection handler on the BLOCKING harness accept loop lives as long as "
-        "one connection and releases its `in_flight` slot on exit; it is bounded by "
-        "`max_concurrent_connections` rather than by a runtime's lifetime, and the harness "
-        "is not the shipped serving path (MCPRE-138)"
-    )),
     "mcp-re-client/src/startup.rs": (1, (
         "the client binary's SIGTERM bridge, the same process-lifetime signal thread as "
         "the proxy's — it belongs to the process, not to a runtime"

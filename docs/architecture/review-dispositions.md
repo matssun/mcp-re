@@ -763,14 +763,23 @@ path's behaviour changes: the async chain form still does not include the OCSP a
 remains the tracked `async_serve` + `online_ocsp` gap.
 
 The per-connection sequence had been written twice, once per entry point (§8 question 10 at
-harness scale): `serve_once_with_assertion` and `serve_connection` differed only in which
-handler arity they called and where the socket came from. They are one
-`connection::serve_one` now, so a guard cannot be present on one blocking path and absent
-from the other. `serve`'s handler ignores the assertion argument, exactly as before.
+harness scale). They are one `connection::serve_one`, so a guard cannot be present on one
+blocking path and absent from the other.
 
-`serve`, `serve_once` and `serve_once_with_assertion` remain exported from the crate root —
-embedders already import them there — but their provenance is `blocking_mtls_harness`, and
-no test-only consumer forces an export out of `tls`.
+**RA3-002 reduces the three entry points to one.** `serve` (the thread-per-connection
+accept loop) and `serve_once_with_assertion` have zero callers anywhere in the workspace —
+`serve_once_with_assertion`'s only reference was its own crate-root re-export — and
+`serve_once` already delegated to it. The assertion-aware body is folded into `serve_once`,
+whose behaviour is unchanged, and the two crate-root exports go with them. The claim they
+were reached "through the crate façade" by external embedders was not measured and is not
+made here: what makes this a harness is that the transport-crate client tests, the demo
+fixtures and the PKCS#11 end-to-end tests call `serve_once` against a real mTLS
+termination. Its provenance is `blocking_mtls_harness`, and no test-only consumer forces an
+export out of `tls`.
+
+Deleting `serve` deletes the one `std::thread::spawn` the harness had, so
+`scripts/owned_worker_gate.py`'s allowlist entry for it is removed — the gate reports a
+stale entry as loudly as a new spawn, and it did.
 
 ### EX-004 re-census after #574
 
