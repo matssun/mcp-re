@@ -8237,14 +8237,17 @@ would let a future curation of the digest pass as a property of the comparison.
 #
 # WHAT IS DELIBERATELY EXCLUDED, and why the exclusion is the honest half:
 #
-#   * `l1_fast_reject.rs` — DORMANT. `app.rs` installs the L2 directly on every backend,
+#   * `l1_fast_reject.rs` — DORMANT. The async replay store is established at
+#     `replay_plane/backends.rs` and handed over by `replay_plane/materialized.rs`;
 #     nothing outside `async_replay_test` constructs an L1, and no configuration surface
 #     selects one. Excluded from `paths` on the precedent by which
 #     `trust_plane/window_policy.rs` is excluded from `proxy.trust_resolution_window`.
-#   * `tests/async_replay_test.rs` — the named CI release gate "§4 cross-core /
-#     cross-replica replay race". NOT cited: all five of its controls construct an
-#     `L1FastRejectStore`, so however green it is, it measures a two-tier architecture no
-#     deployment runs. Citing it would make this unit's evidence look complete about the
+#   * `tests/async_replay_test.rs` — the named CI release gate "§4 replay race". NOT
+#     cited: two of its five controls construct an `L1FastRejectStore`, a two-tier
+#     architecture no deployment runs, and the other three drive
+#     `InMemoryAsyncAtomicReplayStore` behind a double declaring the durability class
+#     `assert_durable` accepts — the reference store's insert semantics, not a shipped
+#     backend's. Citing it would make this unit's evidence look complete about the
 #     composition that ships when it is not.
 #   * `async_redis_store.rs` / `async_etcd_store.rs` — unowned, and next on the ranked
 #     remainder. They are ASM-0040 / ASM-0041's subjects, which is a different question.

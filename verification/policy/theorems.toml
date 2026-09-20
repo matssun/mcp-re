@@ -5954,11 +5954,13 @@ is precisely that neither bounds anything locally.
 NOTHING ABOUT THE SYNC TWINS. `shared_replay.rs` and `replay_tier.rs` are a separate
 composition with a separate battery; the async path is the architecture (ADR-MCPRE-051 §4).
 
-NOTHING ABOUT THE DORMANT L1. `L1FastRejectStore` is defined and DORMANT — `app.rs` installs
-the L2 directly on every backend, nothing outside `async_replay_test` constructs an L1, and
-no configuration surface selects one. It is excluded from the owning unit's paths, and the
-`async_replay_test` battery is NOT cited here: all five of its controls construct an L1, so
-that battery cannot back a claim about the composition that ships. The L1's own
+NOTHING ABOUT THE DORMANT L1. `L1FastRejectStore` is defined and DORMANT — the async replay
+store is established at `replay_plane/backends.rs` and handed over by
+`replay_plane/materialized.rs`, nothing outside `async_replay_test` constructs an L1, and no
+configuration surface selects one. It is excluded from the owning unit's paths, and the
+`async_replay_test` battery is NOT cited here: two of its five controls construct an L1 and
+the other three drive the reference L2 behind a double declaring the accepted durability
+class, so that battery cannot back a claim about the composition that ships. The L1's own
 never-`Fresh` invariant stays a documented property of dormant code, claimed by nothing.
 
 NOT A LIVENESS CLAIM. It says an unfunded insert is refused, never that a funded one
