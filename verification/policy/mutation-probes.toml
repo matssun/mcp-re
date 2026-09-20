@@ -4457,6 +4457,12 @@ weakening = """
 """
 expect_red = [
   "lib#audit_record::subject::tests::every_constructor_lands_on_the_arm_core_says_it_is_about",
+  # ADR-MCPRE-069 NP-155, CO-S3-2. The same weakening read on the serving path: the control
+  # looks the accepted record up BY `event_type`, so a request record minted with the
+  # response event is not found at all and the lookup fails. It does not replace the row
+  # above -- the constructor's own control stays required -- it establishes that the
+  # integration battery registered beside it is load-bearing rather than merely green.
+  "tests/integration_async#delegated_client_server_e2e_test::an_unconfigured_deployments_records_say_so_rather_than_claiming_an_authorization",
 ]
 
 [[probe]]
@@ -9845,6 +9851,82 @@ so the difference is visible only in the text, and it is the whole difference be
 carrier variant being a COMPILE ERROR until it names a Core verdict and it silently
 inheriting one. `unreachable_patterns` is warn-level in this workspace, so the weakened tree
 still builds and the control is measured rather than reported absent.
+"""
+
+[[probe]]
+id = "M355-proxy-a-bound-rejection-is-served-as-an-unbound-one"
+unit = "proxy.response_signing"
+theorem = "THM-0075"
+conjunct = "bound evidence is bound to the exact request it answers"
+# The weakening routes a rejection the exchange CAN bind through the preflight builder, which
+# is the honest form for a request that never verified. Nothing looks wrong on the wire: the
+# receipt is still delegated-signed, still carries the inline credential, still names the
+# frozen wire code, and still verifies -- through the UNBOUND path. What it no longer carries
+# is the commitment to the request it answers, so an on-path party may present it as the
+# answer to a different request the same deployment refused, and a client cannot tell.
+#
+# This unit owns the choice: `bound` is the only input that decides it, and `receipt/artifact.rs`
+# is where it is read. `Some(_ev)` keeps the arm compiling under the weakening; the binding
+# is what is deleted, not the argument.
+path = "mcp-re-proxy/src/http_profile_serve/receipt/artifact.rs"
+anchor = """
+                    Some(ev) => build_delegated_rejection(
+                        request,
+                        ev,
+                        &reason,
+"""
+weakening = """
+                    Some(_ev) => build_delegated_rejection_preflight(
+                        Some(request),
+                        &reason,
+"""
+expect_red = [
+  "tests/integration_async#delegated_serving_test::delegated_bound_rejection_verifies",
+  "tests/integration_async#delegated_production_wiring_test::delegated_required_wiring_serves_verifies_and_rotates",
+]
+note = """
+THE PREFLIGHT ROW IS DELIBERATELY ABSENT from `expect_red`. Its receipt is already unbound,
+so the weakening cannot reach it -- and it must stay GREEN under this probe, which is what
+keeps the pair from being satisfied by a build that emits preflight receipts for everything.
+The wiring row is named because its replay leg asserts the 409 verifies through the BOUND
+path, which is this conjunct measured through the production composition rather than the
+hand-built rotor; it is also named in M356 for the other conjunct it carries, under
+`proxy.delegated_signing_credential`.
+"""
+
+[[probe]]
+id = "M356-proxy-an-expired-delegated-snapshot-keeps-signing"
+unit = "proxy.delegated_signing_credential"
+theorem = "THM-0062"
+conjunct = "the published snapshot yields none past the published key's expiry, rather than extending it"
+# ADR-MCPRE-069 CO-S3-2, and the falsifier shape the slice was scheduled around: retire the
+# delegated snapshot and a signed 200 still goes out. The weakening deletes the expiry bound
+# from the one read the hot path makes, so a credential the deployment is no longer entitled
+# to sign under keeps signing until something else retires it. Every verifier in the fleet
+# refuses those responses, and the replica reports healthy throughout -- the fail-closed
+# transition is the thing this unit exists to hold, and it must not be deletable.
+path = "mcp-re-proxy/src/delegated_server_signer/mod.rs"
+anchor = """
+            Some(a) if now < a.exp() => Some(Arc::clone(a)),
+"""
+weakening = """
+            Some(a) => Some(Arc::clone(a)),
+"""
+expect_red = [
+  "lib#delegated_server_signer::tests::snapshot_fails_closed_past_expiry",
+  "tests/integration_async#delegated_production_wiring_test::delegated_required_wiring_serves_verifies_and_rotates",
+]
+note = """
+TWO LANES OF ONE UNIT, WHICH IS THE POINT. The lib row establishes that the READER refuses
+past `exp`; the wiring row establishes that a deployment built by the real
+`build_delegated_signing` fails closed 503 and unsigned once its successor's window has
+passed with no further rotation. Under the weakening the wiring row's final leg is served a
+signed 200 instead, which is the defect stated on the wire.
+
+`missing_delegated_key_fails_closed` is NOT named and cannot be: it never rotates, so the
+guard this anchor sits under is `None` and no edit here can manufacture a credential for it.
+That control's registration says so at its own citation rather than leaving the absence to be
+read as an oversight.
 """
 
 [[probe]]
