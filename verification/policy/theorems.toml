@@ -3982,6 +3982,14 @@ supported_by = [
   "unit://proxy.serving_capability_posture",
   "unit://proxy.fleet_topology_provenance",
   "unit://proxy.signing_plane_epoch_read_refusal",
+  # ADR-MCPRE-069 CO-S3-6. The composition root's refusal duty, which no unit held: a
+  # capability the deployment SELECTED and that cannot be established leaves `run` as a
+  # refusal instead of resolving to the OFF posture or a weaker tier. It decomposes the
+  # statement's second sentence — "cannot be silently reinterpreted into a weaker posture
+  # during materialization or serving" — and the scope's own sentence admits the tier case
+  # in terms: "an unavailable tier failing closed is inside the claim". `supported_by` is
+  # the only field this change touches.
+  "unit://proxy.unestablishable_capability_refusal",
 ]
 depends_on = [
   "THM-0067",

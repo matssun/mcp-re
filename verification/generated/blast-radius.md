@@ -238,6 +238,7 @@ attestations this view cannot see.
 | unit://proxy.trust_resolution_window | source, contracts or evidence | THM-0097, THM-0098 | _no consumer_ |
 | unit://proxy.trust_revocation_classification | source, contracts or evidence | THM-0035 | _no consumer_ |
 | unit://proxy.trust_snapshot_swap | source, contracts or evidence | THM-0100 | _no consumer_ |
+| unit://proxy.unestablishable_capability_refusal | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://sdk_python.authorization_binding | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://sdk_python.bounded_read | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://sdk_python.continuation_drive | source, contracts or evidence | THM-0094 | _no consumer_ |

@@ -5936,6 +5936,14 @@ weakening = """
 """
 expect_red = [
   "lib#kms_endpoint_policy::tests::the_host_allowlist_is_exactly_the_characters_a_resolver_can_answer_for",
+  # ADR-MCPRE-069 CO-S3-6 landed
+  # `tests/integration#app_startup_characterization_test::a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host`
+  # into this unit's battery and it is deliberately NOT declared here. It was declared,
+  # MEASURED, and removed: under this weakening the row EXECUTES AND STAYS GREEN. Its five
+  # userinfo cases are refused before the host allowlist is consulted, so deleting the
+  # allowlist does not admit them. Leaving it named would have let this probe report PASS
+  # around a kill it does not make -- `verify-mutations` requires only that ONE declared
+  # control fail.
 ]
 note = """
 The other half of the composition M215 describes. This one refuses the characters whose
@@ -8022,6 +8030,11 @@ anchor = "    } else if requested.ttl_secs > MAX_DELEGATED_TTL_SECS {\n"
 weakening = "    } else if false {\n"
 expect_red = [
   "lib#config_state::delegated_signing::tests::a_ttl_above_the_ceiling_is_refused",
+  # ADR-MCPRE-069 CO-S3-6. The same conjunct at deployment width, over a request built in
+  # code: with the ceiling arm gone, a TTL of `MAX_DELEGATED_TTL_SECS + 1` is admitted and
+  # the row's first assertion loses its refusal. Declared after being MEASURED red, not
+  # because the names correspond.
+  "tests/integration#app_startup_characterization_test::a_programmatic_config_cannot_mint_an_unboundedly_long_lived_delegated_credential",
 ]
 note = """
 THE TTL IS THE EXPOSURE WINDOW OF AN EXFILTRATED HOT-PATH KEY, and it is the ONLY one: advancing
@@ -8044,6 +8057,10 @@ anchor = "    matches!(form, PeerIdentityEvidenceRequest::AttestedIngress(_)).th
 weakening = "    let _ = form;\n    false.then(|| {\n"
 expect_red = [
   "lib#config_state::transport::tests::attested_ingress_is_refused_by_name_rather_than_passed_over",
+  # ADR-MCPRE-069 CO-S3-6. The integration twin, which asserts the BOUNDARY's own wrapper
+  # rather than `is_err()` — so it stays red under this weakening rather than being
+  # satisfied by whatever downstream failure a Mode-C config would then hit.
+  "tests/integration#app_startup_characterization_test::mode_c_attested_ingress_is_refused_at_the_configuration_boundary",
 ]
 note = """
 THE PROBE MEASURES A PRODUCT DECISION, NOT A MISSING FEATURE. Mode-C attested ingress is
@@ -8136,6 +8153,10 @@ anchor = "    if !uri.contains(\"://\") {\n"
 weakening = "    if false {\n"
 expect_red = [
   "lib#config_state::validation::residue::tests::a_target_uri_that_would_disable_the_reconstruction_check_is_refused",
+  # ADR-MCPRE-069 CO-S3-6. The same clause reached through `app::run` over all three illegal
+  # shapes. The scheme-less case is the one this anchor decides; the row is red as soon as
+  # that case is admitted.
+  "tests/integration#app_startup_characterization_test::a_programmatic_config_cannot_disable_the_request_target_reconstruction_check",
 ]
 note = """
 A SCHEME-LESS TARGET DOES NOT WEAKEN THE RECONSTRUCTION CHECK, IT DISABLES IT — for every
@@ -9067,6 +9088,15 @@ weakening = """
 expect_red = [
   "lib#trust_plane::store_cadence_tests::a_bounded_cache_with_no_cadence_names_the_frozen_store",
   "lib#trust_plane::store_cadence_tests::every_posture_names_the_reload_floor_under_its_number",
+  # ADR-MCPRE-069 CO-S3-6 landed
+  # `tests/integration#app_startup_characterization_test::enabling_trust_reload_changes_the_tier_line_and_the_reload_line_together`
+  # into this unit's battery and it is deliberately NOT declared here. It was declared,
+  # MEASURED, and removed: under this weakening the row EXECUTES AND STAYS GREEN. The
+  # reload floor is a suffix of the tier line, and `startup_transcript` reads
+  # `store_change_bounded` from the cadence clause the floor text does not carry -- so the
+  # floor can stop naming the cadence while the transcript still reports the store as
+  # bounded. `verify-mutations` requires only that ONE declared control fail, so leaving it
+  # named would have reported PASS around a kill this probe does not make.
 ]
 note = """
 THE DEFECT THIS LINE EXISTS TO CLOSE IS AN OPERATOR SIZING A REVOCATION SLO FROM A TIER
@@ -10019,3 +10049,88 @@ weakening = """
 expect_red = [
   "tests/integration_async#transparency_e2e_test::a_retention_store_that_cannot_accept_the_call_refuses_before_the_backend_runs",
 ]
+
+[[probe]]
+id = "M358-proxy-a-capability-that-cannot-be-established-serves-anyway"
+unit = "proxy.unestablishable_capability_refusal"
+theorem = "THM-0077"
+conjunct = "Illegal, unsupported or internally contradictory deployment postures cannot be silently reinterpreted into a weaker posture during materialization or serving"
+# ADR-MCPRE-069 CO-S3-6, and the falsifier the unit was written around. The three refusals
+# this unit holds are DECIDED in three different modules -- the authorization evaluator, the
+# replay plane's materialization, `build_key_source` -- and each of those modules keeps its
+# own battery green under this weakening, because none of them is changed. What is deleted
+# is the only thing `app.rs` contributes: that the failure LEAVES `run`. A replica under the
+# weakening exits 0 having established nothing and served nothing, which is the shape an
+# operator reads as a clean start.
+#
+# DELIBERATELY COARSE, and the note says why rather than leaving it to be inferred: the
+# weakening swallows every startup refusal, not only an unestablishable capability's. A
+# narrower anchor on one `?` would measure one of the three establishing modules' call sites
+# and say nothing about the other two, and this unit's proposition is about all three.
+path = "mcp-re-proxy/src/app.rs"
+anchor = """
+    let outcome = crate::config_state::validation::ValidatedDeployment::try_from(config)
+        .and_then(|validated| run_validated(&validated, shutdown));
+"""
+weakening = """
+    let outcome = crate::config_state::validation::ValidatedDeployment::try_from(config)
+        .and_then(|validated| run_validated(&validated, shutdown))
+        .or_else(|_| Ok(()));
+"""
+expect_red = [
+  "tests/integration#app_startup_characterization_test::a_configured_profile_with_no_enrolled_authority_refuses_to_start",
+  "tests/integration#app_startup_characterization_test::an_unopenable_replay_tier_refuses_startup_and_names_why",
+  "tests/integration#app_startup_characterization_test::app_run_refuses_unbuildable_key_sources_and_replay_tiers",
+]
+note = """
+ALL THREE are declared, and all three are expected to go red, which is stronger than this
+registry requires -- `verify-mutations` asks that at least one declared control fail. They
+are named individually because each reaches the root by a different route: two read the
+shipped binary's exit status through `startup_transcript::capture`, one reads `app::run`'s
+`Err` in process. A weakening that turned only the in-process one red would mean the binary
+had acquired a refusal of its own, and that is worth failing over.
+"""
+
+[[probe]]
+id = "M359-proxy-a-disabled-client-credential-bound-resolves-a-window"
+unit = "proxy.client_credential_window"
+theorem = "THM-0102"
+conjunct = "A deployment that disables either bound, or names a lifetime past the ceiling, resolves no window and is refused naming the flag"
+# ADR-MCPRE-069 CO-S3-6. M113 weakens the RELATION between the two bounds and M114 the
+# CEILING; neither touches the arm where a bound is absent altogether, which is the arm the
+# newly landed deployment-width control exercises. Minted rather than left implicit: without
+# it the "disables either bound" half of THM-0102's sentence is protected by nothing, and a
+# battery is not evidence that a check is load-bearing when no probe can delete it.
+#
+# The anchor and the weakening are TOML LITERAL strings. The arm carries a Rust line-ending
+# backslash inside its diagnostic, and in a basic string TOML reads that as its own
+# line-ending escape and trims the newline -- which is why the first adjudication of this
+# probe reported `STALE -- an anchor matches 0 site(s)` against text that is plainly there.
+path = "mcp-re-proxy/src/config_state/client_credential_window.rs"
+anchor = '''
+    let lifetime = match config.max_client_cert_lifetime {
+        None => {
+            violations.push(
+                "--max-client-cert-lifetime none/0 disables client-cert lifetime enforcement; \
+                 set a bounded lifetime (default 1h)"
+                    .to_string(),
+            );
+            None
+        }
+'''
+weakening = '''
+    let lifetime = match config.max_client_cert_lifetime {
+        None => Some(MAX_CLIENT_CERT_LIFETIME),
+'''
+expect_red = [
+  "lib#config_state::client_credential_window::tests::disabling_either_bound_resolves_no_window",
+  "tests/integration#app_startup_characterization_test::a_config_that_skipped_the_parser_still_cannot_bypass_the_safety_guards",
+]
+note = """
+The weakening is the silent reinterpretation THM-0077's statement forbids, written out: an
+operator who disabled the bound gets the CEILING instead of a refusal, so the deployment
+serves, the transcript reports a one-hour exposure window, and nothing names the flag. Both
+lanes are declared because the defect is visible at both widths and they fail for different
+reasons -- the lib row because a window resolves where none should, the integration row
+because the boundary no longer names `--max-client-cert-lifetime`.
+"""

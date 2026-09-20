@@ -2774,6 +2774,12 @@ tested_symbols = [
   "lib#config_state::client_credential_window::tests::the_public_constructor_validates_too",
   "lib#config_state::credential_currency_bound::tests::every_posture_names_what_actually_bounds_the_exposure",
   "lib#config_state::credential_currency_bound::tests::a_mechanism_that_does_not_exist_produces_the_same_posture",
+  # ADR-MCPRE-069 CO-S3-6 (NP-153). The lib members establish that a disabled bound
+  # RESOLVES NO WINDOW. THM-0102's statement says more in the same sentence — "is refused
+  # naming the flag" — and that half is a fact about a DEPLOYMENT, not about the predicate.
+  # This is it, measured on a `DeploymentRequest` that met no parser: the one shape an
+  # embedder has, with `max_client_cert_lifetime` cleared after parsing.
+  "tests/integration#app_startup_characterization_test::a_config_that_skipped_the_parser_still_cannot_bypass_the_safety_guards",
 ]
 
 
@@ -2900,6 +2906,54 @@ tested_symbols = [
   # the inventory permits it to read. Without it the inventory is satisfied by a root that
   # reads only ordinary parameters and then derives a posture from them anyway.
   "lib#app::tests::the_channel_binding_effects_are_a_function_of_the_recognised_state",
+]
+
+# ---------------------------------------------------------------------------
+# ADR-MCPRE-069 CO-S3-6 — the other half of the composition root's legality duty.
+#
+# `proxy.trust_composition_root` above says which of the validated request's facts the root
+# is allowed to READ. This says what it must do when a fact it read cannot be turned into a
+# running capability. The two are separate authorities: a root that reads only projections
+# and then serves without the capability one of them selected satisfies the first and
+# violates THM-0077's statement.
+#
+# Why `app.rs` is the carrier and not the establishing modules. Each of these three
+# refusals is DECIDED elsewhere — by `authorization::capability::evaluator`, by the replay
+# plane's materialization, by `build_key_source`. What is decided HERE is that the failure
+# propagates out of `run` instead of resolving to an OFF posture or a softer tier, and that
+# is a fact about the `?` operators in `run_validated`. M358 weakens exactly that.
+# ---------------------------------------------------------------------------
+
+[[unit]]
+id = "proxy.unestablishable_capability_refusal"
+class = "V0"
+description = "A CAPABILITY THE DEPLOYMENT SELECTED THAT CANNOT BE ESTABLISHED REFUSES STARTUP AND NAMES WHAT IS MISSING, rather than serving without it: an authorization profile whose issuer is enrolled in no authority slot refuses at boot naming the slot the operator has to fill, a shared replay tier that cannot be opened refuses before the listener exists and names why it could not be opened, and a key source or durability tier this build does not carry refuses at construction naming the feature. The refusal is invariant across build profiles; only the reason varies, and the controls distinguish the lanes rather than asserting whichever one they were written in. Says nothing about WHICH postures are legal, which is layer A's and each classifier's own unit; nothing about the ORDER the planes are established in, which no theorem states; and nothing about what an established capability then does."
+paths = ["mcp-re-proxy/src/app.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/app/unestablishable_capability_refusal",
+  # The conjunct a green battery can hold while nothing is load-bearing: that the refusal
+  # LEAVES `run`. Every one of the three controls reads an error or a non-zero exit, and all
+  # three are satisfied by a root that refuses for some other reason — so the falsifier has
+  # to be the propagation itself. M358 asks.
+  "mutation://proxy/app/unestablishable_capability_refusal",
+]
+# All three drive a real startup in the default lane: two through the shipped binary and its
+# exit status, one through `app::run` in process. None of them can be `lib#`: the proposition
+# is about what leaves the composition root, and a unit test of the establishing module
+# stays green when the root swallows its error.
+#
+# LANE NOTE, measured: `app_run_refuses_unbuildable_key_sources_and_replay_tiers` is
+# `#[cfg(not(any(aws_kms_keysource, gcp_kms_keysource, pkcs11_keysource, cpstore_etcd)))]`,
+# so enabling any of those features REMOVES it — the KMS lanes select 146 integration tests
+# where the default lane selects 145, adding two `tls_test` names and subtracting this one.
+# A unit holds one `test_features` set, so this battery is default-lane and cannot move.
+tested_symbols = [
+  "tests/integration#app_startup_characterization_test::a_configured_profile_with_no_enrolled_authority_refuses_to_start",
+  "tests/integration#app_startup_characterization_test::an_unopenable_replay_tier_refuses_startup_and_names_why",
+  "tests/integration#app_startup_characterization_test::app_run_refuses_unbuildable_key_sources_and_replay_tiers",
 ]
 
 [[unit]]
@@ -6587,6 +6641,22 @@ tested_symbols = [
   # refuses everything, and the authority carried into the egress is unmeasured.
   "lib#kms_endpoint_policy::endpoint::tests::an_admitted_endpoint_carries_its_authority_into_the_egress",
   "lib#kms_endpoint_policy::endpoint::tests::the_loopback_plaintext_exception_reaches_egress",
+  # ADR-MCPRE-069 CO-S3-6 (NP-153). THM-0089's statement names three consumers of this one
+  # decision — "the command line, the validation boundary, and the AWS-KMS, AWS-STS and
+  # GCP-KMS key sources alike". The fourteen `lib#` members above measure the DECISION. This
+  # is the validation-boundary consumer, at deployment width, over a `DeploymentRequest`
+  # built in code: nine refusals across all three endpoint fields, each asserted to name both
+  # the flag AND the reason, because three of those fields are also named by unrelated
+  # coherence rules and a flag-only assertion would let another cause stand in. Its eight
+  # negative controls — the public hosts, a VPC endpoint, an emulator with a port and the
+  # loopback lane with and without a port, each under all three fields — are the anti-vacuity
+  # half: a boundary refusing every endpoint would satisfy the positive nine.
+  #
+  # LANE, measured rather than inferred: this unit's battery runs with `aws_kms_keysource`
+  # and `gcp_kms_keysource` both enabled, which selects 148 integration tests, and this
+  # control is among them and passes there. It is NOT feature-gated — it selects in the
+  # default lane too — so joining this battery costs it no coverage.
+  "tests/integration#app_startup_characterization_test::a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host",
 ]
 # The features `endpoint.rs` is compiled by, named rather than taken wholesale.
 test_features = ["aws_kms_keysource", "gcp_kms_keysource"]
@@ -9585,6 +9655,16 @@ tested_symbols = [
   "lib#config_state::delegated_signing::tests::the_epoch_refusal_conditions_the_counter_on_the_source_that_produces_it",
   "lib#config_state::delegated_signing::tests::the_issuer_kid_fallback_is_required_only_where_the_resolution_reads_it",
   "lib#config_state::delegated_signing::tests::the_two_defaults_are_resolved_by_this_owner",
+  # ADR-MCPRE-069 CO-S3-6 (NP-153). The same four clauses — an absent trust epoch, a
+  # non-positive TTL, a non-positive overlap and an overlap at the TTL — reached through
+  # `ValidatedDeployment::try_from` over a request built in code, each carrying the negative
+  # control that a valid `0 < overlap < ttl` IS admitted. The lib battery calls the
+  # resolution directly and stays green if the boundary stops consulting it.
+  "tests/integration#app_startup_characterization_test::a_programmatic_config_cannot_carry_delegated_custody_the_rotor_cannot_honour",
+  # The TTL ceiling clause of the same owner, with its own anti-vacuity half: a TTL exactly
+  # AT `MAX_DELEGATED_TTL_SECS` must NOT be refused. A boundary refusing every delegated TTL
+  # would satisfy the positive assertion alone.
+  "tests/integration#app_startup_characterization_test::a_programmatic_config_cannot_mint_an_unboundedly_long_lived_delegated_credential",
 ]
 
 [[unit]]
@@ -9609,6 +9689,20 @@ tested_symbols = [
   "lib#config_state::transport::tests::only_exact_binding_becomes_a_state_and_every_other_kind_is_refused_aloud",
   "lib#config_state::transport::tests::the_deprecated_identity_source_names_no_state",
   "lib#config_state::transport::tests::the_identity_field_names_the_state_and_the_form_decides_whether_there_is_one",
+  # ADR-MCPRE-069 CO-S3-6 (NP-153). Three clauses this owner already states, measured on a
+  # `DeploymentRequest` that met no parser. The zero-cadence refusal is this module's own
+  # sentence (`transport.rs`: "--client-crl-reload-secs 0 makes the CRL reloader spin"), and
+  # the control carries the two negative cases — a positive cadence and no cadence at all —
+  # so a module that refused every cadence would not satisfy it.
+  "tests/integration#app_startup_characterization_test::a_programmatic_config_cannot_hot_spin_the_crl_reloader",
+  # "attested ingress is refused BY NAME rather than passed over" — the description's own
+  # clause, asserted through the boundary's wrapper rather than `is_err()`, so a refusal
+  # that had migrated to some accidental downstream failure would not stand in for it.
+  "tests/integration#app_startup_characterization_test::mode_c_attested_ingress_is_refused_at_the_configuration_boundary",
+  # "only an EXACT transport binding becomes a state and every other kind is refused aloud",
+  # for the binding whose duplicate refusal in the composition root was deleted: this is what
+  # establishes the prohibition survived the deletion.
+  "tests/integration#app_startup_characterization_test::the_boundary_alone_refuses_an_lb_assertion_binding",
 ]
 
 [[unit]]
@@ -9703,6 +9797,26 @@ tested_symbols = [
   "lib#config_state::validation::required_coordinate_tests::the_fixture_these_controls_mutate_is_otherwise_legal",
   "lib#config_state::validation::residue::tests::a_target_uri_that_would_disable_the_reconstruction_check_is_refused",
   "lib#config_state::validation::residue::tests::the_inventory_is_the_file",
+  # ADR-MCPRE-069 CO-S3-6 (NP-153). Four members, all deciding in `validation/`, all over a
+  # request built in code.
+  #
+  # The description's own clause, at integration width and over all three illegal shapes
+  # (scheme-less, path-only, empty), with the negative control that an absolute target is
+  # NOT refused. `residue.rs` is the deciding file and is in this closure.
+  "tests/integration#app_startup_characterization_test::a_programmatic_config_cannot_disable_the_request_target_reconstruction_check",
+  # The residue inventory exercised on one of its entries: `--authz reference` is an
+  # unaccepted profile, refused by `residue.rs` and by nothing downstream since the
+  # composition root's duplicate went away.
+  "tests/integration#app_startup_characterization_test::a_programmatic_config_cannot_enable_an_unaccepted_authz_profile",
+  # TOTALITY itself, which is what this unit is named for: one control walking the boundary
+  # across the delegated-custody, inner-plane, custody, replay, required-coordinate,
+  # numeric-range and responder-value clauses. It is evidence for the boundary being total
+  # rather than for any one classifier — no single machine's deletion turns it green.
+  "tests/integration#config_legality_characterization_test::refused_at_the_boundary",
+  # Its anti-vacuity half, and the integration twin of
+  # `the_fixture_these_controls_mutate_is_otherwise_legal`: a boundary that refused the
+  # baseline would satisfy every assertion in the row above.
+  "tests/integration#config_legality_characterization_test::the_baseline_is_admitted",
 ]
 
 # ---------------------------------------------------------------------------
@@ -10549,6 +10663,13 @@ tested_symbols = [
   "lib#trust_plane::store_cadence_tests::a_configured_cadence_is_named_on_the_tier_line",
   "lib#trust_plane::store_cadence_tests::a_tier_with_no_reload_cadence_says_the_store_cannot_change",
   "lib#trust_plane::store_cadence_tests::every_posture_names_the_reload_floor_under_its_number",
+  # ADR-MCPRE-069 CO-S3-6 (NP-153). "It is a claim about the TRANSCRIPT the replica prints"
+  # — so the replica is the honest width, and this is the only member that gets one. A
+  # deployment given `--trust-reload-secs 60` must move BOTH reported facts together: the
+  # reload line becomes active and the tier line stops saying the store can never change.
+  # The lib members assert each line from the formatter; this asserts the pair from a real
+  # startup, which is where they could disagree.
+  "tests/integration#app_startup_characterization_test::enabling_trust_reload_changes_the_tier_line_and_the_reload_line_together",
 ]
 
 [[unit]]
