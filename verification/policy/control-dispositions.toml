@@ -408,7 +408,7 @@ record = "docs/architecture/control-dispositions.md#np-005"
 [[proposition]]
 id = "NP-006"
 title = "A deployment runs the artifact that was qualified"
-carrier = "VERSION, deploy/cloudbuild/*.yaml, deploy/k8s/*.yaml, the Helm chart and the deploying runbooks"
+carrier = "VERSION, deploy/cloudbuild/*.yaml, deploy/k8s/*.yaml, deploy/docker/Dockerfile*, the Helm chart and the deploying runbooks (the GKE and EKS SLO baseline runbooks)"
 likely_owner = ""
 consequence = "high"
 root_relationship = "bears on the transparency and release-evidence roots"

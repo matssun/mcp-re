@@ -704,8 +704,9 @@ three-way discriminator itself and says nothing about how many places open-code 
 ## NP-006 — a deployment runs the artifact that was qualified
 
 **Control:** `scripts/deploy_image_tag_gate.py`.
-**Carrier:** `VERSION`, `deploy/cloudbuild/*.yaml`, `deploy/k8s/*.yaml`, the Helm chart, and
-the runbooks and live-validation harnesses that deploy them.
+**Carrier:** `VERSION`, `deploy/cloudbuild/*.yaml`, `deploy/k8s/*.yaml`,
+`deploy/docker/Dockerfile*`, the Helm chart, and the runbooks (`docs/security/`'s GKE and
+EKS SLO baseline runbooks) and live-validation harnesses that deploy them.
 **Statement.** *Every image reference on the deploy surface names the version in `VERSION`,
 so what is built, what is referenced and what is deployed are one artifact.*
 **If false.** A deployment runs an image that is not the one the release evidence is about,

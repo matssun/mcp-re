@@ -81,14 +81,21 @@ Pre-1.0, so the middle number carries the weight:
 ## What the gates check, and what they do not
 
 `scripts/deploy_image_tag_gate.py` (stage 1) asserts that every literal `mcp-re-*:<semver>`
-across `deploy/`, `docs/security/` and `tools/` equals `VERSION`. When it fires, the fix is
-usually **not** to retype the number — it is to read the tag from `VERSION` at run time,
-which the harnesses do (`BENCH_TAG="$(cat VERSION)"`).
+equals `VERSION` across the files its `SCAN_GLOBS` name: all of `deploy/` reachable as
+`*.yaml`, `*.yml`, `*.tpl` or `deploy/docker/Dockerfile*`; under `docs/security/`, the
+`*.sh` harnesses and the two SLO baseline runbooks named individually; `tools/**/*.sh`; and
+`.github/workflows/*.yml`. When it fires, the fix is usually **not** to retype the number —
+it is to read the tag from `VERSION` at run time, which the harnesses do
+(`BENCH_TAG="$(cat VERSION)"`).
+
+It **does** check that some `deploy/cloudbuild/*.yaml` builds every image the deploy
+surface references — `unbuilt_images()`, the deployed-but-never-built defect.
 
 It does **not** check:
 
-* that the images were actually built and pushed at that tag — only `gcloud builds submit`
-  does that, and a bumped tag with no build is an `ImagePullBackOff` waiting to happen;
+* that the build actually ran and the registry holds the tag — only `gcloud builds submit`
+  does that, and a bumped tag with a build config but no run is an `ImagePullBackOff`
+  waiting to happen;
 * the SDK versions, deliberately (see above);
 * the Helm chart's own `version`, which is a human judgement about whether templates moved.
 
