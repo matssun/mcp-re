@@ -10271,7 +10271,7 @@ record = "docs/architecture/control-dispositions.md#np-163"
 
 [[proposition]]
 id = "NP-164"
-title = "A key source is selected, opened and used as configured"
+title = "The file and dev key sources' own load and refusal behaviour, and the PKCS#11 token's second key"
 carrier = "mcp-re-proxy/tests/key_source_test.rs"
 likely_owner = "none — a composition's source is every unit under it"
 consequence = "critical"
@@ -12580,14 +12580,6 @@ recorded = "2026-09-19"
 id = "CD-19316"
 project = "mcp-re-proxy"
 control = "tests/key_source_test#key_errors_never_leak_secret_material"
-decision = "new-proposition"
-proposition = "NP-164"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19317"
-project = "mcp-re-proxy"
-control = "tests/pkcs11_keysource_e2e_test#pkcs11_sign_verifies_against_token_public_key"
 decision = "new-proposition"
 proposition = "NP-164"
 recorded = "2026-09-19"
