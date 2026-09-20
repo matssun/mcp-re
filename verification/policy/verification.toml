@@ -5675,6 +5675,17 @@ tested_symbols = [
   "lib#delegated_server_signer::terminal_retirement_tests::a_mint_landing_after_the_owner_is_gone_cannot_restore_signing",
   "lib#delegated_server_signer::terminal_retirement_tests::a_rotor_retirement_is_still_undone_by_the_next_successful_mint",
   "lib#delegated_server_signer::terminal_retirement_tests::a_poisoned_snapshot_lock_is_recovered_and_retirement_still_dominates",
+  # ADR-MCPRE-069 NP-159, S-10. THM-0062's issuance-failure clause is stated verbatim —
+  # "An issuance failure serves the still-valid key and then fails closed at its expiry
+  # rather than extending it" — and until now only the unit-level twin
+  # (`issuance_failure_serves_the_valid_key_then_fails_closed_at_expiry`, above) stood for
+  # it. This is the same clause driven through the public rotor/signer API with a root
+  # issuer that goes away after the first mint, so what it adds is that the COMPOSITION
+  # fails closed rather than that the reader does. It selects in the DEFAULT cargo lane:
+  # measured, `--test integration_async -- --list` reports all ten `root_key_lifecycle_test`
+  # controls with and without `--features async_serve`, so no `test_features` is declared
+  # and none would be true.
+  "tests/integration_async#root_key_lifecycle_test::root_issuance_failure_serves_until_delegated_key_expiry_then_fails_closed",
 ]
 
 [[unit]]
@@ -10535,4 +10546,84 @@ tested_symbols = [
   "lib#tls::channel_peer_resolution_tests::each_relationship_resolves_its_own_peers_identity",
   "lib#tls::channel_peer_resolution_tests::a_resumed_relationship_resolves_the_same_identity_as_a_full_handshake",
   "lib#tls::channel_peer_resolution_tests::a_leaf_without_the_configured_field_resolves_no_identity",
+]
+
+# ---------------------------------------------------------------------------
+# The KMS key-source lanes — ADR-MCPRE-069 NP-114, NP-158
+# ---------------------------------------------------------------------------
+#
+# NOTHING HERE RUNS IN THE DEFAULT LANE, and that is the first fact about these two units
+# rather than a footnote. Measured on this tree: `cargo test -p mcp-re-proxy --lib -- --list`
+# selects 1498 controls and NOT ONE of them is `gcp_kms_keysource::` or `aws_sts::`; adding
+# `--features gcp_kms_keysource` selects 1565 and brings 39; adding `--features
+# aws_kms_keysource` selects 1569 and brings 26. `cargo test -p mcp-re-proxy --test
+# aws_irsa_web_identity_test -- --list` reports **0 tests** without the feature and 12 with
+# it, and exits 0 either way. So a battery declared without `test_features` here would be a
+# green that measured nothing — the exact shape this repository's standing rule names.
+# THM-0117's own scope already says so: "TWO LANES. The AWS acquirer exists under
+# `aws_kms_keysource` and the metadata acquirer under `gcp_kms_keysource`; neither is in the
+# default lane."
+#
+# Both are twins over files that already carry a unit — `proxy.gcp_kms_adapter` states what
+# the SIGNER does with a credential, `proxy.aws_sts_credentials` states the exchange's own
+# lifetime algebra — and neither existing unit is widened. What is added is the other
+# proposition living in the same file: how the credential is ACQUIRED and how long it may be
+# reused.
+#
+# What is deliberately NOT here, each refused against quoted theorem text in its own packet:
+# the Cloud KMS token-refusal retry and eviction protocol (NP-192), the bearer credential's
+# residency in the parsed document (NP-193), the projected token file's provenance (NP-158,
+# retained) and the IRSA misconfiguration diagnosis (NP-194).
+
+[[unit]]
+id = "proxy.gcp_metadata_token_lifetime"
+class = "V0"
+description = "HOW LONG A METADATA-SERVER ACCESS TOKEN MAY BE USED, AND WHAT IS DONE WHEN THAT CANNOT BE ESTABLISHED: the token response yields a credential and the lifetime its issuer stated and an empty or absent token is refused rather than presented as a bearer credential; a stated expiry is carried through unchanged and is never extended by the reuse floor; a lifetime that cannot be established is reported as that fact rather than read as a stated one, and the token is then reused for a brief floor on churn rather than re-fetched per call, including where no two clock reads agree; concurrent callers perform ONE metadata fetch between them, a failed fetch is not repeated by every waiter, the failure cool-off expires on its own, is cleared by a success and is not extended by a backwards clock step, and each window outlasts what it is measured against; a poisoned token lock is recovered rather than read as an outage; and two token sources share neither a cache nor a flight. It states nothing about what the credential may DO — the Cloud KMS key version's algebra is `proxy.gcp_kms_adapter`'s — and nothing about what a token REFUSAL costs or discards, which is a separate authority at the KMS client."
+paths = ["mcp-re-proxy/src/gcp_kms_keysource.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/gcp_kms/metadata_token_lifetime",
+  "mutation://proxy/gcp_kms/metadata_token_lifetime",
+]
+test_features = ["gcp_kms_keysource"]
+tested_symbols = [
+  "lib#gcp_kms_keysource::tests::a_token_response_yields_the_credential_and_its_lifetime",
+  "lib#gcp_kms_keysource::tests::an_empty_or_absent_access_token_is_refused",
+  "lib#gcp_kms_keysource::tests::a_stated_expiry_is_never_extended_by_the_reuse_floor",
+  "lib#gcp_kms_keysource::tests::a_stated_lifetime_is_never_read_as_an_unestablishable_one",
+  "lib#gcp_kms_keysource::tests::stated_expiry_reports_an_unestablishable_lifetime_as_a_fact",
+  "lib#gcp_kms_keysource::tests::an_unreadable_expires_in_is_reused_briefly_rather_than_refetched_every_call",
+  "lib#gcp_kms_keysource::tests::an_unreadable_expires_in_is_reused_when_every_clock_read_differs",
+  "lib#gcp_kms_keysource::tests::concurrent_callers_perform_one_metadata_fetch_between_them",
+  "lib#gcp_kms_keysource::tests::a_failed_metadata_fetch_is_not_repeated_by_every_waiter",
+  "lib#gcp_kms_keysource::tests::the_failure_cool_off_expires_and_a_success_clears_it",
+  "lib#gcp_kms_keysource::tests::a_backwards_clock_step_does_not_extend_the_failure_cool_off",
+  "lib#gcp_kms_keysource::tests::the_failure_cool_off_must_outlast_the_network_timeout",
+  "lib#gcp_kms_keysource::tests::the_unknown_expiry_floor_must_outlast_the_refresh_margin",
+  "lib#gcp_kms_keysource::tests::a_poisoned_token_lock_still_serves_tokens",
+  "lib#gcp_kms_keysource::tests::two_token_sources_do_not_share_a_cache_or_a_flight",
+]
+
+[[unit]]
+id = "proxy.aws_web_identity_credential_exchange"
+class = "V0"
+description = "THE WEB-IDENTITY EXCHANGE AS A RUNNING EXCHANGE, MEASURED AGAINST A REAL STS PROTOCOL SPEAKER: the projected token is posted as an `AssumeRoleWithWebIdentity` form whose role ARN is percent-encoded and whose answer always carries a session token, the credential it returns is cached rather than re-exchanged per call, a credential inside the refresh margin is re-exchanged rather than served from cache, an answer that is not the document the protocol defines fails closed rather than yielding a partial credential, and the two request fields an operator can make un-sendable — the session name's STS grammar and the regional endpoint the token is posted to — are settled at construction rather than per call. It is the composition twin of `proxy.aws_sts_credentials`, which states the same lifetime algebra over the parser and the cache directly; what is added here is that the wiring in force performs it. It states nothing about where the projected token came from, nor about what the assumed role may do."
+paths = ["mcp-re-proxy/src/aws_sts.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/aws_sts/web_identity_exchange",
+  "mutation://proxy/aws_sts/web_identity_exchange",
+]
+test_features = ["aws_kms_keysource"]
+tested_symbols = [
+  "tests/aws_irsa_web_identity_test#the_projected_token_is_exchanged_for_temporary_credentials",
+  "tests/aws_irsa_web_identity_test#a_live_credential_is_cached_rather_than_re_exchanged_per_call",
+  "tests/aws_irsa_web_identity_test#a_credential_inside_the_refresh_margin_is_re_exchanged",
+  "tests/aws_irsa_web_identity_test#a_malformed_sts_body_fails_closed",
+  "tests/aws_irsa_web_identity_test#an_out_of_grammar_session_name_is_refused_at_construction",
+  "tests/aws_irsa_web_identity_test#the_default_sts_endpoint_is_regional",
 ]

@@ -6762,6 +6762,15 @@ review_requirement = "Owner security-specification review"
 supported_by = [
   "unit://proxy.aws_sts_credentials",
   "unit://proxy.gcp_kms_adapter",
+  # ADR-MCPRE-069 NP-114, S-10. `proxy.gcp_kms_adapter` states what the SIGNER does with a
+  # credential; the metadata ACQUIRER named in this theorem's "TWO LANES" scope clause had
+  # no unit of its own, so fifteen controls over the token's stated lifetime, its
+  # unestablishable-lifetime floor, the single flight and the failure cool-off were
+  # evidence for nothing.
+  "unit://proxy.gcp_metadata_token_lifetime",
+  # ADR-MCPRE-069 NP-158, S-10. The composition twin of `proxy.aws_sts_credentials`: the
+  # same lifetime algebra measured against a protocol speaker rather than over the parser.
+  "unit://proxy.aws_web_identity_credential_exchange",
 ]
 depends_on = []
 

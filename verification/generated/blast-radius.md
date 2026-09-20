@@ -120,6 +120,7 @@ attestations this view cannot see.
 | unit://proxy.authorization_posture | source, contracts or evidence | THM-0056 | _no consumer_ |
 | unit://proxy.aws_kms_adapter | source, contracts or evidence | THM-0116 | _no consumer_ |
 | unit://proxy.aws_sts_credentials | source, contracts or evidence | THM-0117 | _no consumer_ |
+| unit://proxy.aws_web_identity_credential_exchange | source, contracts or evidence | THM-0117 | _no consumer_ |
 | unit://proxy.capsule_anchor_registration_leaf | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.certificate_identity | source, contracts or evidence | THM-0024 | proxy.channel_associated_identity (COMPILE_DEPENDENCY) |
 | unit://proxy.certificate_identity_authority_boundary | source, contracts or evidence | THM-0024 | _no consumer_ |
@@ -169,6 +170,7 @@ attestations this view cannot see.
 | unit://proxy.fleet_topology_provenance | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.freshness_window_state | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.gcp_kms_adapter | source, contracts or evidence | THM-0116, THM-0117 | _no consumer_ |
+| unit://proxy.gcp_metadata_token_lifetime | source, contracts or evidence | THM-0117 | _no consumer_ |
 | unit://proxy.in_flight_limit_basis | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.kms_ed25519_seam | source, contracts or evidence | THM-0108 | _no consumer_ |
 | unit://proxy.kms_endpoint_authority | source, contracts or evidence | THM-0089 | _no consumer_ |
