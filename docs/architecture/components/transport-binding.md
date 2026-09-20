@@ -8,6 +8,8 @@
 
 **Measured on `main` @ `dc9f1c1`: 1268 production lines**, 2227 total, by `scripts/module_size_gate.py::production_lines`.
 
+**The census's measurement is FROZEN at `dc9f1c1`.** Every line count, line-map range and reachability verdict below describes the unit as it was measured, not as it is today; RA3-002 deleted the provider seam and the whole Mode B / v1 format. Rows whose subject no longer exists carry an inline `RA3-002` annotation — a census that silently tracked the tree would stop being the measurement it reports.
+
 Three figures were in circulation and none of them was this one: the campaign index and issue #576 say **1305**, and the debt registry said **1274** at `c81df3e`. Both predate later shrinkage — ADR-MCPRE-064 Slice 4 removed `MappedBinding`, and the ADR-063 facades moved the asserted-identity vocabulary out. **A census states its own measurement**; the index and the registry are corrected in the same change, so the three stop disagreeing.
 
 ## 1. Purpose
@@ -63,9 +65,9 @@ So question 1 needs one "and" — but it is not the same shape as `scitt.rs`'s s
 | B | header view (`RequestHeaders`) | 65 | **yes** — `async_serve` builds one per request |
 | C | routing-header hygiene | 54 | **yes** — via `tls::routing_header_rejection` |
 | D | binding capability (`TransportBindingPolicy`, `ExactMatchBinding`, `TransportBinding`) | 110 | **yes** — the one live binding |
-| E | ingress assertions: Mode B v1 (340) + Mode C v2 (573) | **913** | **no** |
+| E | ingress assertions: Mode B v1 (340) + Mode C v2 (573) | **913** | **no** — **RA3-002 deleted the v1 half**, leaving Mode C v2 |
 
-The provider seam (`TransportBindingProvider`, `StaticIdentityProvider`, 36 lines) is a sixth item with no production implementor at all — see Q8.
+The provider seam (`TransportBindingProvider`, `StaticIdentityProvider`, 36 lines) was a sixth item with no production implementor at all — see Q8. **Deleted by RA3-002.**
 
 ### 3. What does it decide?
 
@@ -105,7 +107,7 @@ The `RequestHeaders` **duplicate-count contract**. `assertion_header` and `valid
 
 - the **MCP routing-header names**, here and in `mcp-re-http-profile/src/ids.rs` (Q6);
 - the **assertion preimage framing**, in `LbAssertion::signing_preimage` and again in `LbAssertionV2`'s v2 layout — deliberately, since v1 and v2 are separately frozen formats and a shared helper would let a v2 change silently alter v1's preimage;
-- the **honesty guarantee string**, as `LbAssertionBinding::GUARANTEE` and `LbAssertionV2Binding::GUARANTEE` — two constants stating two genuinely different downgrades.
+- the **honesty guarantee string**, as `LbAssertionBinding::GUARANTEE` and `LbAssertionV2Binding::GUARANTEE` — two constants stating two genuinely different downgrades. **RA3-002 deleted the v1 constant with its format**; only `LbAssertionV2Binding::GUARANTEE` exists now, so this duplication is resolved.
 
 ### 11. What inconsistent values can callers construct?
 
@@ -137,7 +139,7 @@ Registry: [`verification/policy/theorems.toml`](../../../verification/policy/the
 | Transport identity is derived only from the verified client certificate | system | none | **gap** — named in the TLS blueprint as open, and it is this unit's boundary that would have to state it |
 | Possession of a `TransportBinding` implies the mode was recognised by configuration | local | private representation + `pub(crate)` constructors | **structural, no registry entry** |
 | A duplicated routing header is refused before the handler runs | local | `validate_routing_headers` via `tls::routing_header_rejection` | **structural, no registry entry** |
-| A v1/v2 assertion binds to the in-hand request hash, or is refused | local | `LbAssertionBinding::verify`, `LbAssertionV2Binding::verify` | **structural, no registry entry — and unreachable** |
+| A v1/v2 assertion binds to the in-hand request hash, or is refused | local | `LbAssertionBinding::verify`, `LbAssertionV2Binding::verify` | **structural, no registry entry — and unreachable**. **RA3-002 deleted `LbAssertionBinding` with the v1 format**; the row now has only its v2 half. |
 | Two distinct field tuples cannot share an assertion preimage | local | length-prefixed framing | **structural, no registry entry** |
 
 The third row is the one to draft first, and it cannot be drafted honestly until Q11 is fixed: a theorem saying identity comes only from the verified certificate is false of a type anyone can build from a string.
@@ -164,10 +166,10 @@ The third row is the one to draft first, and it cannot be drafted honestly until
 | 1–29 | module doc + imports | — | — |
 | 30–90 | `IdentitySource`, `IdentityPolicy`, `TransportIdentity` | A | yes |
 | 91–155 | `RequestHeaders` | B | yes |
-| 156–191 | `TransportBindingProvider`, `StaticIdentityProvider` | — | **no production implementor** |
+| 156–191 | `TransportBindingProvider`, `StaticIdentityProvider` | — | **no production implementor** — **deleted by RA3-002** |
 | 192–245 | routing-header constants, `RoutingHeaderRejection`, `validate_routing_headers` | C | yes |
 | 246–355 | `TransportBindingPolicy`, `ExactMatchBinding`, `TransportBinding` | D | yes |
-| 356–695 | Mode B v1: `LbAssertion`, `LbAssertionBinding`, rejections | E | **no** |
+| 356–695 | Mode B v1: `LbAssertion`, `LbAssertionBinding`, rejections | E | **no** — **deleted by RA3-002** |
 | 696–1268 | Mode C v2: verdict enums, `LbAssertionV2`, `AttestedIngressVerified`, `LbAssertionV2Binding` | E | **no** |
 
 ## 8. Outcome — decompose along the reachability boundary, and seal two types

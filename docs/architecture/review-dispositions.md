@@ -1421,7 +1421,7 @@ ended (`tls.rs` was reported 679 and is 674; `response.rs` was reported 367 and 
 
 | unit | production lines | record |
 |---|---:|---|
-| `mcp-re-proxy/src/transport/ingress/v1.rs` | 334 | EX-005 |
+| `mcp-re-proxy/src/transport/ingress/v1.rs` | 334 | EX-005 — **file deleted by RA3-002**; the grant is spent and `config/module-size-debt.toml` no longer carries the entry. The row records a grant that was made, not a current file. |
 | `mcp-re-proxy/src/transport/ingress/v2.rs` | 673 | EX-005 |
 | `mcp-re-proxy/src/tls.rs` | 674 | EX-004 |
 | `mcp-re-client-core/src/response.rs` | 362 | EX-010 |

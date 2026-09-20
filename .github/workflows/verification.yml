@@ -280,8 +280,8 @@ on:
       # reach it.
       - "mcp-re-proxy/src/client_crl_publication.rs"
       # ADR-MCPRE-069 S-08: the peer-identity slice. `transport/mod.rs` carries
-      # `proxy.transport_binding_application` and half of `proxy.asserted_identity_delegation`;
-      # `facades/asserted_identity.rs` carries the other half and M340's weakening site;
+      # `proxy.transport_binding_application`; `facades/asserted_identity.rs` holds the two
+      # vocabulary conversions that unit's callers go through and owns no check of its own;
       # `transport/identity.rs` and the ingress subtree are in the binding unit's source
       # closure by UC-1, because `transport/mod.rs` declares them.
       - "mcp-re-proxy/src/transport/mod.rs"
@@ -650,8 +650,8 @@ on:
       # reach it.
       - "mcp-re-proxy/src/client_crl_publication.rs"
       # ADR-MCPRE-069 S-08: the peer-identity slice. `transport/mod.rs` carries
-      # `proxy.transport_binding_application` and half of `proxy.asserted_identity_delegation`;
-      # `facades/asserted_identity.rs` carries the other half and M340's weakening site;
+      # `proxy.transport_binding_application`; `facades/asserted_identity.rs` holds the two
+      # vocabulary conversions that unit's callers go through and owns no check of its own;
       # `transport/identity.rs` and the ingress subtree are in the binding unit's source
       # closure by UC-1, because `transport/mod.rs` declares them.
       - "mcp-re-proxy/src/transport/mod.rs"

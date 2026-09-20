@@ -335,11 +335,13 @@ The parser boundary is recorded as ASSUMED or UNSUPPORTED under ADR-MCPRE-059 as
 
 ### 8.7 Existing code to migrate
 
-Current semantic source:
+Semantic source **at slice-1 plan time** — §8.14 records what was built, and none of these
+three lines describes the tree today:
 
 - `mcp-re-proxy/src/tls.rs::extract_identity`
-- the `IdentityPolicy` / `IdentitySource` semantics currently in `mcp-re-proxy/src/transport.rs`
-- the generic value-shape rule currently misleadingly named `validate_asserted_identity_value`
+- the `IdentityPolicy` / `IdentitySource` semantics then in `mcp-re-proxy/src/transport.rs`
+- the generic value-shape rule then misleadingly named `validate_asserted_identity_value`,
+  **deleted by RA3-002** once its callers asked `PeerIdentityValue::interpret` directly
 
 The key architectural correction is that the peer-identity value invariant must be owned once. Certificate-derived evidence and asserted ingress evidence may both consume it; neither provenance owns the generic invariant.
 
