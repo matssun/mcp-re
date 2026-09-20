@@ -4946,8 +4946,12 @@ position, which is exactly THM-0081's "no third, unclassified refusal path".
 [[probe]]
 id = "M178-python-aggregate-read-fills"
 unit = "sdk_python.bounded_read"
-theorem = "THM-0094"
-conjunct = "the aggregate deadline this SDK advertises is the deadline it enforces, because no NEW underlying read begins once it has passed"
+# NO `theorem` KEY, and the absence is the record rather than an omission. THM-0094's
+# ratified scope says of this unit's proposition: "THE RESPONSE READ BOUND IS OUTSIDE IT ...
+# The bound keeps its own unit at its own severity." A `theorem` naming THM-0094 asserts the
+# closure that sentence declines, and this probe evidences its unit, which is what the lane
+# reports it under.
+conjunct ="the aggregate deadline this SDK advertises is the deadline it enforces, because no NEW underlying read begins once it has passed"
 path = "sdk/python/python/mcp_re_sdk/mtls.py"
 anchor = """
         chunk = response.read1(want)
@@ -5504,8 +5508,15 @@ direction.
 [[probe]]
 id = "M201-python-the-transport-does-not-open-unchecked"
 unit = "sdk_python.signer_policy"
-theorem = "THM-0094"
-conjunct = "the transport does not open unless the signer satisfies the route's policy, checked before anything is signed"
+# NO `theorem` KEY, and the absence is the record rather than an omission. THM-0094's
+# ratified scope says: "REQUEST-SIDE ATTRIBUTION IS OUTSIDE IT. Which identity may sign, and
+# under which custody class, is `sdk_python.signer_policy`; which authorization artefacts a
+# request is bound to is `sdk_python.authorization_binding`. Remove either and the answer the
+# application receives still binds to the request that was sent, which is why neither is in
+# this closure." A `theorem` naming THM-0094 asserts the closure that sentence declines, so
+# the two registries would state opposite things about the same unit. This probe evidences
+# its unit, which is what the lane reports it under. Same for M202, M211 and M212.
+conjunct ="the transport does not open unless the signer satisfies the route's policy, checked before anything is signed"
 path = "sdk/python/python/mcp_re_sdk/transport.py"
 anchor = """
     if config.policy is not None:
@@ -5530,7 +5541,8 @@ first thing that reveals it is a signed request already on the wire.
 [[probe]]
 id = "M202-python-hardening-refuses-exportable-custody"
 unit = "sdk_python.signer_policy"
-theorem = "THM-0094"
+# NO `theorem` KEY: THM-0094's ratified scope excludes this unit from its closure. M201
+# carries the quotation.
 conjunct = "non-exporting custody is required where the hardening profile demands it"
 path = "sdk/python/python/mcp_re_sdk/custody.py"
 anchor = """
@@ -5760,7 +5772,8 @@ lane reporting FAIL for it was correct both times.
 [[probe]]
 id = "M211-python-only-permitted-binding-types"
 unit = "sdk_python.authorization_binding"
-theorem = "THM-0094"
+# NO `theorem` KEY: THM-0094's ratified scope excludes this unit from its closure. M201
+# carries the quotation.
 conjunct = "the authorization binding specs a request carries are the ones the configured policy permits"
 path = "sdk/python/python/mcp_re_sdk/authorization.py"
 anchor = """
@@ -5783,7 +5796,8 @@ along on every request the route makes.
 [[probe]]
 id = "M212-python-the-binding-serialization-is-canonical"
 unit = "sdk_python.authorization_binding"
-theorem = "THM-0094"
+# NO `theorem` KEY: THM-0094's ratified scope excludes this unit from its closure. M201
+# carries the quotation.
 conjunct = "the binding specs are serialized canonically and byte-identically to the TypeScript twin"
 path = "sdk/python/python/mcp_re_sdk/transport.py"
 anchor = """

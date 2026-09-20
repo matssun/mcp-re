@@ -4624,10 +4624,19 @@ tested_symbols = [
   "pytest#tests/test_correlation.py::TestTheStoreIsBounded::test_a_long_session_of_failed_exchanges_does_not_grow_the_store",
   "pytest#tests/test_correlation.py::TestTheStoreIsBounded::test_consumed_ids_are_dropped_once_they_can_no_longer_answer_anything",
   "pytest#tests/test_correlation.py::TestTheStoreIsBounded::test_pruning_keeps_ids_that_can_still_be_answered",
-  # NOT registered here, and each is recorded as a proposition instead: the peek/take split
-  # (NP-019), the entry as the request's audit record (NP-018), and three store-API
-  # robustness controls (ND-009). Three more are `sdk_python.continuation_drive`'s and are
-  # reattributed there rather than claimed by this window statement.
+  # The peek/take split, and it is ONE proposition rather than two halves: a peek that
+  # retired an entry would make a request unanswerable inside the window it declared, and a
+  # take that did not retire it would leave an answered entry outstanding. Those are this
+  # statement's two clauses, so the split is where they meet at the store's own API. It is
+  # registered as a pair because half of it is a different claim, not a weaker one — and
+  # `sdk_typescript.correlation_lifecycle`, whose description is this description verbatim,
+  # already declares the twin pair.
+  "pytest#tests/test_correlation.py::TestRecordAndTake::test_peek_does_not_consume",
+  "pytest#tests/test_correlation.py::TestRecordAndTake::test_take_consumes_the_outstanding_request",
+  # NOT registered here, and each is recorded as a proposition instead: the entry as the
+  # request's audit record (NP-018), and three store-API robustness controls (ND-009).
+  # Three more are `sdk_python.continuation_drive`'s and are reattributed there rather than
+  # claimed by this window statement.
 ]
 
 # C8. IN THE ROOT'S CHAIN, and the reason is not freshness hygiene: a guessable nonce makes a
