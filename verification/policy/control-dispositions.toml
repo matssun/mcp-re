@@ -10713,7 +10713,7 @@ record = "docs/architecture/control-dispositions.md#np-159"
 
 [[proposition]]
 id = "NP-160"
-title = "Admission currency is enforced on the serving path"
+title = "A presented admission assertion is authentic and bound to the caller presenting it"
 carrier = "mcp-re-proxy/tests/integration_async/admission_currency_serving_test.rs"
 likely_owner = "none — a composition's source is every unit under it"
 consequence = "critical"
@@ -10740,7 +10740,7 @@ record = "docs/architecture/control-dispositions.md#np-162"
 
 [[proposition]]
 id = "NP-163"
-title = "An authorization decision reaches the serving path intact"
+title = "The SDK's authorization producer builds what this enforcement point accepts and cannot build what it refuses"
 carrier = "mcp-re-proxy/tests/integration_async/pdp_authorization_serving_test.rs"
 likely_owner = "none — a composition's source is every unit under it"
 consequence = "critical"
@@ -10755,15 +10755,6 @@ likely_owner = "none — a composition's source is every unit under it"
 consequence = "critical"
 root_relationship = "the composition above the component propositions this campaign recorded"
 record = "docs/architecture/control-dispositions.md#np-164"
-
-[[proposition]]
-id = "NP-165"
-title = "Revocation is consulted per request, not per connection"
-carrier = "mcp-re-proxy/tests/integration_async/per_request_revocation_test.rs"
-likely_owner = "none — a composition's source is every unit under it"
-consequence = "critical"
-root_relationship = "the composition above the component propositions this campaign recorded"
-record = "docs/architecture/control-dispositions.md#np-165"
 
 [[proposition]]
 id = "NP-166"
@@ -10783,21 +10774,12 @@ consequence = "critical"
 root_relationship = "the composition above the component propositions this campaign recorded"
 record = "docs/architecture/control-dispositions.md#np-167"
 
-[[proposition]]
-id = "NP-168"
-title = "No exchange transition is advanced by two owners"
-carrier = "mcp-re-proxy/tests/integration/exchange_transition_ownership_test.rs"
-likely_owner = "none — a composition's source is every unit under it"
-consequence = "critical"
-root_relationship = "the composition above the component propositions this campaign recorded"
-record = "docs/architecture/control-dispositions.md#np-168"
-
 [[disposition]]
 id = "CD-19001"
 project = "mcp-re-proxy"
 control = "tests/admission_propagation_measure_test#a_revocation_reaches_a_sibling_replica_within_the_declared_p_bound"
 decision = "new-proposition"
-proposition = "NP-160"
+proposition = "NP-190"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -11233,14 +11215,6 @@ proposition = "NP-153"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-19056"
-project = "mcp-re-proxy"
-control = "tests/integration#exchange_transition_ownership_test::no_terminal_the_owner_publishes_is_advanced_by_the_serving_path_again"
-decision = "new-proposition"
-proposition = "NP-168"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-19057"
 project = "mcp-re-proxy"
 control = "tests/integration#http_profile_dispatch_test::core_single_process_gate_fires_beneath_an_acceptable_tier"
@@ -11665,27 +11639,11 @@ proposition = "NP-160"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-19110"
-project = "mcp-re-proxy"
-control = "tests/integration_async#admission_currency_serving_test::a_current_admitted_workload_is_served"
-decision = "new-proposition"
-proposition = "NP-160"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-19111"
 project = "mcp-re-proxy"
 control = "tests/integration_async#admission_currency_serving_test::a_generation_ahead_of_the_authority_is_refused"
 decision = "new-proposition"
-proposition = "NP-160"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19112"
-project = "mcp-re-proxy"
-control = "tests/integration_async#admission_currency_serving_test::a_revocation_on_the_shared_source_is_honoured_by_a_replica_that_never_saw_the_workload"
-decision = "new-proposition"
-proposition = "NP-160"
+proposition = "NP-188"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -11693,7 +11651,7 @@ id = "CD-19113"
 project = "mcp-re-proxy"
 control = "tests/integration_async#admission_currency_serving_test::an_admitted_workload_is_still_refused_by_a_denying_policy"
 decision = "new-proposition"
-proposition = "NP-160"
+proposition = "NP-189"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -11708,22 +11666,6 @@ recorded = "2026-09-19"
 id = "CD-19115"
 project = "mcp-re-proxy"
 control = "tests/integration_async#admission_currency_serving_test::an_assertion_issued_to_another_actor_does_not_admit_this_caller"
-decision = "new-proposition"
-proposition = "NP-160"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19116"
-project = "mcp-re-proxy"
-control = "tests/integration_async#admission_currency_serving_test::an_expired_authentic_record_on_a_reachable_store_is_refused_and_never_degraded"
-decision = "new-proposition"
-proposition = "NP-160"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19117"
-project = "mcp-re-proxy"
-control = "tests/integration_async#admission_currency_serving_test::restoring_a_revoked_workloads_old_admitted_record_does_not_restore_service"
 decision = "new-proposition"
 proposition = "NP-160"
 recorded = "2026-09-19"
@@ -11773,7 +11715,7 @@ id = "CD-19123"
 project = "mcp-re-proxy"
 control = "tests/integration_async#authorization_serving_test::enforcing_the_transport_contract_does_not_change_which_action_is_authorized"
 decision = "new-proposition"
-proposition = "NP-163"
+proposition = "NP-191"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -12449,41 +12391,9 @@ proposition = "NP-155"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-19208"
-project = "mcp-re-proxy"
-control = "tests/integration_async#pdp_authorization_serving_test::a_core_verification_failure_still_records_its_frozen_core_reason"
-decision = "new-proposition"
-proposition = "NP-163"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-19209"
 project = "mcp-re-proxy"
 control = "tests/integration_async#pdp_authorization_serving_test::a_decision_attached_through_the_sdk_producer_is_authorized_end_to_end"
-decision = "new-proposition"
-proposition = "NP-163"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19210"
-project = "mcp-re-proxy"
-control = "tests/integration_async#pdp_authorization_serving_test::a_policy_denial_is_recorded_as_a_policy_denial_and_not_merely_as_a_rejection"
-decision = "new-proposition"
-proposition = "NP-163"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19211"
-project = "mcp-re-proxy"
-control = "tests/integration_async#pdp_authorization_serving_test::a_request_refused_before_any_policy_ran_is_not_attributed_to_one"
-decision = "new-proposition"
-proposition = "NP-163"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19212"
-project = "mcp-re-proxy"
-control = "tests/integration_async#pdp_authorization_serving_test::an_authorized_request_records_which_policy_permitted_what"
 decision = "new-proposition"
 proposition = "NP-163"
 recorded = "2026-09-19"
@@ -12494,46 +12404,6 @@ project = "mcp-re-proxy"
 control = "tests/integration_async#pdp_authorization_serving_test::the_sdk_producer_cannot_build_the_half_pair_this_pep_refuses"
 decision = "new-proposition"
 proposition = "NP-163"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19214"
-project = "mcp-re-proxy"
-control = "tests/integration_async#per_request_revocation_test::a_peer_absent_from_the_crl_keeps_being_served_across_the_reload"
-decision = "new-proposition"
-proposition = "NP-165"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19215"
-project = "mcp-re-proxy"
-control = "tests/integration_async#per_request_revocation_test::a_reloaded_crl_refuses_the_next_request_on_an_already_open_connection"
-decision = "new-proposition"
-proposition = "NP-165"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19216"
-project = "mcp-re-proxy"
-control = "tests/integration_async#per_request_revocation_test::an_unrevoked_intermediate_keeps_its_peers_served"
-decision = "new-proposition"
-proposition = "NP-165"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19217"
-project = "mcp-re-proxy"
-control = "tests/integration_async#per_request_revocation_test::every_request_on_a_warm_connection_is_checked_not_just_the_first"
-decision = "new-proposition"
-proposition = "NP-165"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19218"
-project = "mcp-re-proxy"
-control = "tests/integration_async#per_request_revocation_test::revoking_an_intermediate_refuses_the_next_request_on_an_open_connection"
-decision = "new-proposition"
-proposition = "NP-165"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -13532,3 +13402,43 @@ likely_owner = "proxy.operator_facing_redaction owns the subject, and its own cl
 consequence = "critical"
 root_relationship = "a premise of the proxy units above it"
 record = "docs/architecture/control-dispositions.md#np-185"
+
+# ADR-MCPRE-069 S-09/CO-S1 — four residues that were not one proposition each. NP-160 kept
+# the caller-assertion half and NP-163 the SDK-producer half; these four are what neither
+# record could hold without spanning two describable propositions (RR-002 C5).
+
+[[proposition]]
+id = "NP-188"
+title = "An admission call whose generation does not match the authoritative state is refused on the serving path"
+carrier = "mcp-re-proxy/tests/integration_async/admission_currency_serving_test.rs"
+likely_owner = "none — THM-0129's scope assigns the call/state comparison to THM-0004, whose owner is a proved http-profile unit"
+consequence = "critical"
+root_relationship = "the composition above the component propositions this campaign recorded"
+record = "docs/architecture/control-dispositions.md#np-188"
+
+[[proposition]]
+id = "NP-189"
+title = "Admission is not authorization"
+carrier = "mcp-re-proxy/tests/integration_async/admission_currency_serving_test.rs"
+likely_owner = "none — the nearest unit, proxy.authorization_capability, carries no theorem"
+consequence = "critical"
+root_relationship = "the composition above the component propositions this campaign recorded"
+record = "docs/architecture/control-dispositions.md#np-189"
+
+[[proposition]]
+id = "NP-190"
+title = "Cross-replica admission-revocation propagation is measured against the declared bound"
+carrier = "mcp-re-proxy/tests/admission_propagation_measure_test.rs"
+likely_owner = "none — a propagation-delay measurement is on an axis no theorem here claims"
+consequence = "critical"
+root_relationship = "the composition above the component propositions this campaign recorded"
+record = "docs/architecture/control-dispositions.md#np-190"
+
+[[proposition]]
+id = "NP-191"
+title = "Enforcing the transport contract does not change which action is authorized"
+carrier = "mcp-re-proxy/tests/integration_async/authorization_serving_test.rs"
+likely_owner = "none — the nearest unit, proxy.authorization_capability, carries no theorem"
+consequence = "critical"
+root_relationship = "the composition above the component propositions this campaign recorded"
+record = "docs/architecture/control-dispositions.md#np-191"

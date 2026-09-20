@@ -1791,7 +1791,7 @@ under THM-0028 and THM-0030. This claim consumes their conclusions and restates 
 """
 owner = "proxy.credential_currency"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.credential_currency", "unit://proxy.credential_currency_evidence_reporting", "unit://proxy.currency_policy_classification"]
+supported_by = ["unit://proxy.credential_currency", "unit://proxy.credential_currency_evidence_reporting", "unit://proxy.currency_policy_classification", "unit://proxy.per_request_revocation_serving"]
 depends_on = ["THM-0028", "THM-0030"]
 
 [[theorem]]

@@ -181,6 +181,7 @@ attestations this view cannot see.
 | unit://proxy.pdp_decision_relation | source, contracts or evidence | THM-0040, THM-0052 | _no consumer_ |
 | unit://proxy.peer_identity_value | source, contracts or evidence | THM-0023 | proxy.certificate_identity (COMPILE_DEPENDENCY) |
 | unit://proxy.peer_identity_value_sole_producer | source, contracts or evidence | THM-0023 | _no consumer_ |
+| unit://proxy.per_request_revocation_serving | source, contracts or evidence | THM-0032 | _no consumer_ |
 | unit://proxy.pkcs11_adapter | source, contracts or evidence | THM-0116 | _no consumer_ |
 | unit://proxy.pre_dispatch_refusal_precedence | source, contracts or evidence | THM-0078 | _no consumer_ |
 | unit://proxy.redis_replay_adapter | source, contracts or evidence | THM-0106 | _no consumer_ |

@@ -177,6 +177,7 @@ not an omission to hide.
 | proxy.pdp_decision_relation | V0 | THM-0040 | 0 |
 | proxy.peer_identity_value | V0 | THM-0023 | 0 |
 | proxy.peer_identity_value_sole_producer | V0 | _none_ | 0 |
+| proxy.per_request_revocation_serving | V0 | _none_ | 0 |
 | proxy.pkcs11_adapter | V0 | _none_ | 0 |
 | proxy.pre_dispatch_refusal_precedence | V0 | _none_ | 0 |
 | proxy.redis_replay_adapter | V0 | THM-0106 | 0 |

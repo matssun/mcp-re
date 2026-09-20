@@ -228,6 +228,10 @@ on:
       - "mcp-re-proxy/src/http_profile_dispatch.rs"
       - "mcp-re-proxy/src/http_profile_dispatch/**"
       - "mcp-re-proxy/src/async_serve/**"
+      # ADR-MCPRE-069 S-09: joined `proxy.per_request_revocation_serving`'s closure beside
+      # `async_serve/`, because the per-request revocation verdict rules live here and the
+      # request loop only calls them.
+      - "mcp-re-proxy/src/client_revocation.rs"
       - "mcp-re-proxy/src/blocking_mtls_harness/**"
       - "mcp-re-proxy/src/capability_materialization/key_source/**"
       - "mcp-re-proxy/src/signing_plane/**"
@@ -570,6 +574,10 @@ on:
       - "mcp-re-proxy/src/http_profile_dispatch.rs"
       - "mcp-re-proxy/src/http_profile_dispatch/**"
       - "mcp-re-proxy/src/async_serve/**"
+      # ADR-MCPRE-069 S-09: joined `proxy.per_request_revocation_serving`'s closure beside
+      # `async_serve/`, because the per-request revocation verdict rules live here and the
+      # request loop only calls them.
+      - "mcp-re-proxy/src/client_revocation.rs"
       - "mcp-re-proxy/src/blocking_mtls_harness/**"
       - "mcp-re-proxy/src/capability_materialization/key_source/**"
       - "mcp-re-proxy/src/signing_plane/**"
