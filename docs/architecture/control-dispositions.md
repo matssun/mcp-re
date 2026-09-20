@@ -3107,13 +3107,29 @@ the merge path checks.
 **Likely owner:** none — a composition's source is every unit under it.
 **Severity:** `critical`.
 
-## NP-160 — admission currency is enforced on the serving path
+## NP-160 — a presented admission assertion is authentic and bound to the caller presenting it
 
-**Controls:** `mcp-re-proxy/tests/integration_async/admission_currency_serving_test.rs` and its siblings.
-**Statement.** *Over a real serving path: an admission record past its authorized window does not admit, a current one does, and the propagation delay between the source and the serving decision is bounded and measured.*
-**If false.** A workload keeps being admitted after its admission was withdrawn. NP-144 establishes the record's addressing and window at the source; this establishes that the serving path honours them.
+**Controls:** `mcp-re-proxy/tests/integration_async/admission_currency_serving_test.rs` (3) —
+`an_assertion_from_an_untrusted_authority_is_refused`,
+`an_assertion_issued_to_another_actor_does_not_admit_this_caller`,
+`a_binding_naming_another_workload_does_not_borrow_its_admission`.
+**Statement.** *An admission assertion the CALLER presents admits only where it was issued by an
+authority this deployment enrolled for admission, was issued to this caller, and names a binding
+this caller can hold.*
+**If false.** A borrowed or foreign-signed assertion admits its holder, so §7 measures the
+presenter's copy of somebody else's admission.
 **Likely owner:** none — a composition's source is every unit under it.
 **Severity:** `critical`.
+**Root relationship.** The record's other seven rows left in ADR-MCPRE-069 S-09/CO-S1; this is what
+is left, and it is the half THM-0129 excludes in terms. Four rows are now registered evidence under
+THM-0129 in `proxy.admission_state_source`, and three became NP-188, NP-189 and NP-190 because they
+are three further propositions rather than this one. THM-0129's ratified scope refuses these three
+by name: *"Says nothing about the assertion the CALLER presents (ASM-0012), nor about whether the
+call matches the state — that is THM-0004."* The nearest claim is THM-0006 (presenter binding),
+whose owner is `http_profile.admission_currency`, a PROVED unit whose battery is a Verus
+specification and not a place a serving-path integration control can join without substituting a
+probe class. Packet at
+`verification/reviews/packets/adr069-np-160-np-188-np-189-np-190-ratification-2026-09-20.md`.
 
 ## NP-161 — dispatch carries the request the caller signed, unchanged
 
@@ -3131,27 +3147,34 @@ the merge path checks.
 **Likely owner:** none — a composition's source is every unit under it.
 **Severity:** `high`.
 
-## NP-163 — an authorization decision reaches the serving path intact
+## NP-163 — the SDK's authorization producer builds what this enforcement point accepts and cannot build what it refuses
 
-**Controls:** `mcp-re-proxy/tests/integration_async/pdp_authorization_serving_test.rs` and its siblings.
-**Statement.** *Over a real serving path: the PDP decision the request carried is the one the policy evaluated, and a request whose decision does not authorize its action is refused before dispatch.*
-**If false.** An unauthorized call reaches the backend. NP-131 establishes the pairing at the authorization plane's API; this establishes that the serving path does not reopen it.
+**Controls:** `mcp-re-proxy/tests/integration_async/pdp_authorization_serving_test.rs` (2) —
+`a_decision_attached_through_the_sdk_producer_is_authorized_end_to_end`,
+`the_sdk_producer_cannot_build_the_half_pair_this_pep_refuses`.
+**Statement.** *The decision block `mcp_re_client_core`'s producer emits is authorized end to end by
+this enforcement point, and the half-pair the enforcement point refuses cannot be built by that
+producer at all.*
+**If false.** The shipped producer and the shipped enforcement point disagree about what a decision
+binding is, so either a well-formed client is refused or a client can build a shape the PEP has to
+reject at serving time.
 **Likely owner:** none — a composition's source is every unit under it.
 **Severity:** `critical`.
+**Root relationship.** The record's other five rows left in ADR-MCPRE-069 S-09/CO-S1: four are now
+registered evidence under THM-0069 in `proxy.audit_authority_coordinates`, and one became NP-191.
+This residue is refused for two independent reasons and needs only the first. THE PRODUCER IS IN
+ANOTHER CRATE: the proposition is about `mcp-re-client-core`'s `build_authorization` and
+`build_signed_request`, which is in no proxy unit's `paths`, and a unit's `paths` may not be widened
+to reach a control. And THM-0040 excludes the second row's subject in terms — *"The reference
+binding form produces no authorization at all and is outside this claim"* — so the construction this
+control proves impossible is one the theorem already declines to reason about. Packet at
+`verification/reviews/packets/adr069-np-163-np-191-ratification-2026-09-20.md`.
 
 ## NP-164 — a key source is selected, opened and used as configured
 
 **Controls:** `mcp-re-proxy/tests/key_source_test.rs` and its siblings.
 **Statement.** *End to end for each source: a PKCS#11 token signs without exporting, a development environment source is refused in a production build, and the source the configuration selected is the source that signs.*
 **If false.** The process signs under a different key source from the one configured — the one case where every other custody argument is about the wrong object. NP-125 states the delegation rule; this establishes it over each real source.
-**Likely owner:** none — a composition's source is every unit under it.
-**Severity:** `critical`.
-
-## NP-165 — revocation is consulted per request, not per connection
-
-**Controls:** `mcp-re-proxy/tests/integration_async/per_request_revocation_test.rs` and its siblings.
-**Statement.** *A peer revoked after its connection was established is refused on its next request rather than served for the life of the connection.*
-**If false.** A revoked client keeps being served until it disconnects. NP-140 states the bound on established connections; this is that bound measured on the serving path.
 **Likely owner:** none — a composition's source is every unit under it.
 **Severity:** `critical`.
 
@@ -3168,14 +3191,6 @@ the merge path checks.
 **Controls:** `mcp-re-proxy/tests/async_drain_test.rs` and its siblings.
 **Statement.** *Teardown drains in-flight work within a bound, in the documented order, and nothing is accepted after the drain begins.*
 **If false.** A shutdown either hangs on work that never completes or abandons work that had been accepted. Only the Bazel lane runs this file — it is `#![cfg(feature = "async_serve")]` and `cargo test --workspace` compiles it to zero tests — which is a fact any ratification inherits.
-**Likely owner:** none — a composition's source is every unit under it.
-**Severity:** `critical`.
-
-## NP-168 — no exchange transition is advanced by two owners
-
-**Controls:** `mcp-re-proxy/tests/integration/exchange_transition_ownership_test.rs` and its siblings.
-**Statement.** *Every exchange-lifecycle transition an assembly stage establishes is advanced by that stage alone, and no serving-path step advances one a stage owns.*
-**If false.** Two owners advance one transition, so the exchange lifecycle records a step that happened twice or a step nobody took. This is `proxy.cross_machine_legality`'s rule for the exchange lifecycle, and its three registered siblings in the same file are already claimed while this one is not.
 **Likely owner:** none — a composition's source is every unit under it.
 **Severity:** `critical`.
 
@@ -3451,6 +3466,85 @@ is itself one of the twenty units no theorem supports, so an R1 there is a re-fi
 discharge. No theorem in the estate claims redaction. Split out of NP-143 under RR-002 C5 in
 ADR-MCPRE-069 S-06. Packet at
 `verification/reviews/packets/adr069-np-123-np-143-np-147-np-148-np-184-np-185-ratification-2026-09-19.md`.
+
+## NP-188 — an admission call whose generation does not match the authoritative state is refused on the serving path
+
+**Control:** `mcp-re-proxy/tests/integration_async/admission_currency_serving_test.rs` —
+`a_generation_ahead_of_the_authority_is_refused`.
+**Statement.** *The currency rule is EQUALITY and not "at least": a call claiming an admission
+generation the authority has not issued is refused, not treated as a fresher client.*
+**If false.** A caller can admit itself by naming a generation nobody published.
+**Likely owner:** none — THM-0129's scope assigns the call/state comparison to THM-0004.
+**Severity:** `critical`.
+**Root relationship.** Split out of NP-160 under RR-002 C5 in ADR-MCPRE-069 S-09/CO-S1, because it
+is a different proposition from the four that landed and from the three NP-160 keeps. Its four
+siblings are about what the authoritative STATE is; this is about whether the CALL matches it, and
+THM-0129 draws exactly that line: *"Says nothing about the assertion the CALLER presents (ASM-0012),
+nor about whether the call matches the state — that is THM-0004."* THM-0004's owner is
+`http_profile.admission_currency`, whose evidence class is `proved`; joining a serving-path
+integration control to a Verus battery is the probe-class substitution ADR-MCPRE-068 N4 forbids.
+Packet at
+`verification/reviews/packets/adr069-np-160-np-188-np-189-np-190-ratification-2026-09-20.md`.
+
+## NP-189 — admission is not authorization
+
+**Control:** `mcp-re-proxy/tests/integration_async/admission_currency_serving_test.rs` —
+`an_admitted_workload_is_still_refused_by_a_denying_policy`.
+**Statement.** *A caller admitted on every axis §7 measures is still refused by a denying policy,
+before the backend runs, and the refusal carries the POLICY's token rather than admission's.*
+**If false.** The strongest admission statement a deployment can make is read as an application
+authority it never granted.
+**Likely owner:** none — the nearest unit, `proxy.authorization_capability`, carries no theorem.
+**Severity:** `critical`.
+**Root relationship.** Split out of NP-160 under RR-002 C5 in ADR-MCPRE-069 S-09/CO-S1. It sits in
+the admission carrier and is not an admission proposition: nothing in THM-0129 mentions policy, and
+the theorem that does — THM-0040 — is about a PDP DECISION's relation to a request, while this
+control drives an ADR-MCPRE-065 Slice 1 evaluator. The unit that holds the Slice 1 serving battery,
+`proxy.authorization_capability`, is one of the twenty units no theorem supports, so registering
+there would be a re-filing dressed as a discharge. Packet at
+`verification/reviews/packets/adr069-np-160-np-188-np-189-np-190-ratification-2026-09-20.md`.
+
+## NP-190 — cross-replica admission-revocation propagation is measured against the declared bound
+
+**Control:** `mcp-re-proxy/tests/admission_propagation_measure_test.rs` —
+`a_revocation_reaches_a_sibling_replica_within_the_declared_p_bound`.
+**Statement.** *A revocation written to the shared store becomes visible to a replica that performed
+it within the declared P bound, and the interval is measured and printed.*
+**If false.** The declared propagation bound is a number nobody has ever observed the mechanism
+meet.
+**Likely owner:** none — a propagation-delay measurement is on an axis no theorem here claims.
+**Severity:** `critical`.
+**Root relationship.** Split out of NP-160 under RR-002 C5 in ADR-MCPRE-069 S-09/CO-S1, and refused
+twice over. THE AXIS: what it asserts is a wall-clock interval against `DECLARED_P_MS`, and
+THM-0129 — the only theorem over authoritative admission state — disclaims that axis in two words,
+*"AVAILABILITY is not claimed."* Registering it would widen a ratified claim along a
+latency/propagation axis, which is the one widening this slice may not make. THE LANE: the control
+is `#![cfg(feature = "redis_replay")]` AND returns early with a `SKIP` line when
+`MCP_RE_TEST_REDIS_URL` is unset, so in every lane this repository runs by default it reports
+success having measured nothing. A registered member that green-passes without executing is the
+false green this project has a gate against; it is not evidence and must not be recorded as some.
+Packet at
+`verification/reviews/packets/adr069-np-160-np-188-np-189-np-190-ratification-2026-09-20.md`.
+
+## NP-191 — enforcing the transport contract does not change which action is authorized
+
+**Control:** `mcp-re-proxy/tests/integration_async/authorization_serving_test.rs` —
+`enforcing_the_transport_contract_does_not_change_which_action_is_authorized`.
+**Statement.** *Law A-1 as a measurement: with the MCP transport contract enforced a self-
+contradictory request is refused before any policy runs, and with it unconstrained the policy sees
+the SIGNED BODY's action — never the header's, in either configuration.*
+**If false.** Turning an unrelated consistency policy on or off silently changes which action a
+deployment authorizes.
+**Likely owner:** none — the nearest unit, `proxy.authorization_capability`, carries no theorem.
+**Severity:** `critical`.
+**Root relationship.** Split out of NP-163 under RR-002 C5 in ADR-MCPRE-069 S-09/CO-S1. The
+sentence that looks like its home is THM-0040's — *"the decided operation equals the operation the
+SIGNED BODY named"* — and it is not one: THM-0040 is a claim about `PdpDecisionEvaluator::evaluate`
+and an authenticated PDP decision, while this control drives an ADR-MCPRE-065 Slice 1 policy with no
+decision document at all. The Slice 1 serving battery lives in `proxy.authorization_capability`,
+which no theorem supports, so an R1 there closes nothing. Packet at
+`verification/reviews/packets/adr069-np-163-np-191-ratification-2026-09-20.md`.
+
 ## NP-186 — a static identity provider yields its identity ignoring the request
 
 **Controls:** `mcp-re-proxy/src/transport/mod.rs` (1).

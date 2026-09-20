@@ -1431,6 +1431,18 @@ tested_symbols = [
   # A REVOCATION arrives as state rather than as a failure to obtain state. Routed to the
   # degraded fork it would serve the caller it revokes.
   "lib#admission_source::answer::tests::a_signed_revocation_is_state_and_not_a_failure_to_obtain_state",
+  # ADR-MCPRE-069 NP-160 — the same four facts, measured over a real serving path rather
+  # than over the source in isolation. They are not a second authority: each is the
+  # end-to-end instance of a row above it, and what they add is that the enforcement point
+  # acts on the state this source hands it. The unit's `test_features` select them: all
+  # four appear in `cargo test -p mcp-re-proxy --features redis_replay --test
+  # integration_async -- --list` (168 tests). What is deliberately NOT here is anything
+  # about whether the CALL matches the state — THM-0129's scope assigns that to THM-0004 —
+  # so the generation-comparison control beside them in the same file stays unregistered.
+  "tests/integration_async#admission_currency_serving_test::a_current_admitted_workload_is_served",
+  "tests/integration_async#admission_currency_serving_test::an_expired_authentic_record_on_a_reachable_store_is_refused_and_never_degraded",
+  "tests/integration_async#admission_currency_serving_test::restoring_a_revoked_workloads_old_admitted_record_does_not_restore_service",
+  "tests/integration_async#admission_currency_serving_test::a_revocation_on_the_shared_source_is_honoured_by_a_replica_that_never_saw_the_workload",
 ]
 # WHAT IS STRUCTURAL HERE RATHER THAN TESTED. That no source can route an answer to the
 # degraded fork is not carried by the battery above: `AnsweredAs` has no outage inhabitant,
@@ -3493,6 +3505,20 @@ tested_symbols = [
   "tests/integration#exchange_transition_ownership_test::the_rule_would_catch_a_reintroduced_advance",
   "tests/integration#exchange_transition_ownership_test::every_assembly_owned_transition_states_why_no_stage_carries_it",
   "tests/integration#exchange_transition_ownership_test::the_carrier_has_no_reader_but_establish",
+  # ADR-MCPRE-069 NP-168 — the sixth control in the same file, and the disjointness
+  # conjunct's other direction. `EvidenceRetained`, `TerminalResponseServed` and
+  # `OpenLegResponseServed` are now driven from `ServedSuccess::tail()` in
+  # `exchange_state.rs`, so an `advance` for any of them reappearing under
+  # `http_profile_serve/` would be a second way to reach a success terminal — one the
+  # publication decision never saw. NO EXISTING PROBE KILLS IT: M110 deletes an advance and
+  # M111 reintroduces `ResponseObserved`, which is in neither relocated set, so both leave
+  # this control green. M343 is the falsifier that does. A drift measured while establishing
+  # the containment — THM-0101's statement and this description both say the assembly states
+  # SIX events by direct advance, where the tree states three and publishes three from
+  # `ServedSuccess::tail()` — is recorded in
+  # `verification/reviews/packets/adr069-np-168-thm-0101-inventory-drift-2026-09-20.md`. It is
+  # pre-existing, already witnessed by the sibling above, and fixing it is a §28 event.
+  "tests/integration#exchange_transition_ownership_test::no_terminal_the_owner_publishes_is_advanced_by_the_serving_path_again",
 ]
 
 [[unit]]
@@ -6117,6 +6143,18 @@ tested_symbols = [
   "lib#audit_record::subject::tests::the_admission_and_authorization_coordinates_are_both_present_and_distinct",
   "lib#http_profile_serve::authority_verdicts::tests::the_two_verdicts_start_absent_and_are_set_independently",
   "lib#audit_record::tests::the_two_coordinates_stay_separate_on_one_record",
+  # ADR-MCPRE-069 NP-163 — the coordinate algebra read off a record the PRODUCTION PEP
+  # emitted, rather than off a record the battery above constructs. Each is the serving-path
+  # instance of a row above it: an authorized request carries the authorized arm, a policy
+  # denial carries the policy arm and no Core reason, a refusal the profile reached is not
+  # the before-policy arm, and a Core verdict keeps its frozen token while the authorization
+  # coordinate says no policy ran. They are in the DEFAULT lane — all four appear in
+  # `cargo test -p mcp-re-proxy --test integration_async -- --list` (167 tests) — so this
+  # unit declares no `test_features`.
+  "tests/integration_async#pdp_authorization_serving_test::an_authorized_request_records_which_policy_permitted_what",
+  "tests/integration_async#pdp_authorization_serving_test::a_policy_denial_is_recorded_as_a_policy_denial_and_not_merely_as_a_rejection",
+  "tests/integration_async#pdp_authorization_serving_test::a_request_refused_before_any_policy_ran_is_not_attributed_to_one",
+  "tests/integration_async#pdp_authorization_serving_test::a_core_verification_failure_still_records_its_frozen_core_reason",
 ]
 
 # THM-0071's HALF of the old unit — *recorded as the audit-vocabulary authority the refusal
@@ -10344,6 +10382,57 @@ evidence = [
 test_features = ["redis_replay"]
 tested_symbols = [
   "lib#signing_plane::rotation_owner_tests::materialize_refuses_when_the_configured_shared_epoch_cannot_be_read",
+]
+
+# ---------------------------------------------------------------------------
+# The per-request revocation slice — ADR-MCPRE-069 NP-165
+# ---------------------------------------------------------------------------
+#
+# THE LANE IS THE FIRST FACT ABOUT THIS UNIT, AND IT IS MEASURED. Its carrier,
+# `tests/integration_async/per_request_revocation_test.rs`, is `#![cfg(feature =
+# "async_serve")]`. Measured on this tree: `cargo test -p mcp-re-proxy --test
+# integration_async -- --list` reports 167 tests and ZERO of them are
+# `per_request_revocation_test::…`; the same command with `--features async_serve`
+# reports 197 and all five. So a plain `cargo test --workspace` compiles this whole
+# battery away and exits 0 having measured nothing about it. The lanes that select it are
+# Bazel's `//mcp-re-proxy:integration_async_test`, which sets `crate_features =
+# ["async_serve"]`, and any cargo invocation carrying that feature — which is what
+# `test_features` below makes `verify-tests` and `verify-mutations` do.
+#
+# WHY A TWIN AND NOT A `paths` WIDENING. `proxy.credential_currency` owns the PREDICATE and
+# already carries eleven `per_request_revocation_tests::…` controls over
+# `credential_currency/evaluation.rs`. Those decide what the rule concludes about one
+# credential at one instant. These five decide something the predicate cannot: that the
+# serving path asks it AGAIN on a connection the peer is already holding. Widening the
+# predicate owner to reach `async_serve/` would make every edit to the async request loop
+# dirty the predicate's evidence while measuring nothing new about the predicate.
+
+[[unit]]
+id = "proxy.per_request_revocation_serving"
+class = "V0"
+description = "THE SERVING PATH CONSULTS REVOCATION ON EVERY REQUEST, NOT ONCE PER CONNECTION: a peer whose certificate is published on a reloaded CRL stops being served on the connection it is already holding rather than at its next handshake, the check runs on every request of a warm connection and not only the first, and it walks the whole presented chain — so a peer whose ISSUING CA is revoked is refused too, while a peer the reloaded index does not name and a peer under an untouched intermediate both keep being served. It states nothing the predicate states: WHICH certificates the index refuses, the leaf/issuer strength asymmetry and the one-snapshot-per-request rule are `proxy.credential_currency`'s, and what the handshake verifier does is `proxy.client_certificate_posture`'s."
+# The connection half is here because the chain the request check walks is captured ONCE,
+# at the establishment boundary in `connection.rs`: a capture that kept only the leaf would
+# leave the two intermediate controls unreachable, and the file says so in its own comment.
+paths = [
+  "mcp-re-proxy/src/async_serve/request.rs",
+  "mcp-re-proxy/src/async_serve/connection.rs",
+  "mcp-re-proxy/src/client_revocation.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/async_serve/per_request_revocation",
+  "mutation://proxy/async_serve/per_request_revocation",
+]
+test_features = ["async_serve"]
+tested_symbols = [
+  "tests/integration_async#per_request_revocation_test::a_reloaded_crl_refuses_the_next_request_on_an_already_open_connection",
+  "tests/integration_async#per_request_revocation_test::every_request_on_a_warm_connection_is_checked_not_just_the_first",
+  "tests/integration_async#per_request_revocation_test::revoking_an_intermediate_refuses_the_next_request_on_an_open_connection",
+  "tests/integration_async#per_request_revocation_test::a_peer_absent_from_the_crl_keeps_being_served_across_the_reload",
+  "tests/integration_async#per_request_revocation_test::an_unrevoked_intermediate_keeps_its_peers_served",
 ]
 
 # ---------------------------------------------------------------------------

@@ -9246,6 +9246,93 @@ into a READER at all, one step before the read this weakening defeats. Two refus
 units, and only the second is measured here.
 """
 
+# --- ADR-MCPRE-069 composition slice (NP-165, NP-168) -----------------------------------
+#
+# Two falsifiers over two different failures of the same shape: a security fact that is
+# stated once and then has to be stated AGAIN at the right moment — per request for
+# revocation, and never a second time for a published terminal.
+
+[[probe]]
+id = "M342-proxy-the-per-request-currency-refusal-never-reaches-the-reply"
+unit = "proxy.per_request_revocation_serving"
+theorem = "THM-0032"
+conjunct = "a revocation published after a handshake reaches a peer that already holds a connection — the per-request refusal is what the reply is made of, not a value computed and discarded"
+path = "mcp-re-proxy/src/async_serve/request.rs"
+anchor = """    let served = match channel_peer
+        .as_ref()
+        .err()
+        .cloned()
+        .or_else(|| routing_header_rejection(&headers, &body_bytes))
+    {
+"""
+weakening = """    let served = match routing_header_rejection(&headers, &body_bytes)
+    {
+"""
+expect_red = [
+  "tests/integration_async#per_request_revocation_test::a_reloaded_crl_refuses_the_next_request_on_an_already_open_connection",
+  "tests/integration_async#per_request_revocation_test::every_request_on_a_warm_connection_is_checked_not_just_the_first",
+  "tests/integration_async#per_request_revocation_test::revoking_an_intermediate_refuses_the_next_request_on_an_open_connection",
+]
+note = """
+THE WEAKENING KEEPS THE CHECK AND DROPS ITS ANSWER, which is the failure this battery is
+about. `served_channel_peer` still runs on every request, still snapshots the revocation
+index, still concludes that the peer is revoked — and the reply is assembled from the
+routing-header verdict alone, so the peer holding the connection is served exactly as it was
+before the CRL reload. A weakening that deleted the call instead would be caught by the
+handshake battery next door; this one is invisible to everything except a control that drives
+a SECOND request over the SAME connection.
+
+The two positive controls stay green by construction, and that asymmetry is the evidence:
+`a_peer_absent_from_the_crl_keeps_being_served_across_the_reload` and
+`an_unrevoked_intermediate_keeps_its_peers_served` assert a 200 that this weakening also
+produces, so they cannot distinguish a working check from a deleted one. Only the three
+refusals can, which is why they and not the battery are what `expect_red` names.
+
+This probe runs under `--features async_serve` and nowhere else. The carrier is
+`#![cfg(feature = "async_serve")]`, so the default battery compiles to zero tests here; the
+unit declares `test_features = ["async_serve"]` and this probe inherits it.
+"""
+
+[[probe]]
+id = "M343-proxy-a-published-terminal-is-advanced-by-the-serving-path-again"
+unit = "proxy.exchange_transition_ownership"
+theorem = "THM-0101"
+conjunct = "the two sets are disjoint: no event a stage establishes is also advanced by the serving path, so no stage's fact is stated twice or remembered beside the carrier"
+path = "mcp-re-proxy/src/http_profile_serve/reply_assembly/mod.rs"
+anchor = """            progress.advance(ExchangeEvent::ContinuationNotRequired);
+            return Ok(());
+"""
+weakening = """            progress.advance(ExchangeEvent::ContinuationNotRequired);
+            progress.advance(ExchangeEvent::TerminalResponseServed);
+            return Ok(());
+"""
+expect_red = [
+  "tests/integration#exchange_transition_ownership_test::no_terminal_the_owner_publishes_is_advanced_by_the_serving_path_again",
+  "tests/integration#exchange_transition_ownership_test::the_serving_path_states_only_the_assembly_s_own_transitions",
+]
+note = """
+WHY THIS PROBE EXISTS AT ALL, AND WHY THE TWO BESIDE IT DO NOT ANSWER FOR IT. M110 DELETES an
+assembly-owned advance and M111 REINTRODUCES `ResponseObserved` beside a stage. Measured
+against the control this probe names: `ResponseObserved` is in neither `ASSEMBLY_OWNED` nor
+`RELOCATED_TO_THE_OWNER`, and a deletion adds no `advance` at all, so both weakenings leave
+`no_terminal_the_owner_publishes_is_advanced_by_the_serving_path_again` GREEN. An anchor that
+matches a file the control also reads is not a kill set, and registering the control on the
+strength of the two existing probes would have claimed a falsifier that falsifies nothing
+about it.
+
+WHAT THE WEAKENING IS. `EvidenceRetained`, `TerminalResponseServed` and
+`OpenLegResponseServed` are driven from `ServedSuccess::tail()` in `exchange_state.rs`, where
+the sequence is written once and read twice — once to decide whether the success may be
+published, once to publish it. The weakening states one of the three directly from the
+serving path, which is a second route to a success terminal that the publication decision
+never sees. That is the defect the relocation removed, reintroduced as one line.
+
+Both named controls are source-text controls over the production half of
+`http_profile_serve/`, so the weakening is detected by what the tree SAYS rather than by what
+a run does — which is the honest instrument here, because a second `advance` is a compiling,
+running, type-correct statement and no type refuses it.
+"""
+
 # --- ADR-MCPRE-069 peer-identity slice (NP-075, NP-076, NP-116) -------------------------
 #
 # Three falsifiers for three twin units whose controls consume an authority living in
