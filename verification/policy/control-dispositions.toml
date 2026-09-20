@@ -10163,7 +10163,7 @@ record = "docs/architecture/control-dispositions.md#np-151"
 
 [[proposition]]
 id = "NP-152"
-title = "The TLS listener admits exactly the peers it was configured for"
+title = "The listener's own admission, the historical identity facade's returns, and the delegated TLS handshakes"
 carrier = "mcp-re-proxy/tests/integration/tls_test.rs"
 likely_owner = "none — a composition's source is every unit under it"
 consequence = "critical"
@@ -10857,14 +10857,6 @@ proposition = "NP-152"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-19085"
-project = "mcp-re-proxy"
-control = "tests/integration#tls_test::crl_freshness_rejects_malformed_der"
-decision = "new-proposition"
-proposition = "NP-152"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-19086"
 project = "mcp-re-proxy"
 control = "tests/integration#tls_test::crl_posture_reports_canonical_digest_and_dates"
@@ -11012,22 +11004,6 @@ recorded = "2026-09-19"
 id = "CD-19104"
 project = "mcp-re-proxy"
 control = "tests/integration#tls_test::uri_san_with_nul_control_char_fails_closed"
-decision = "new-proposition"
-proposition = "NP-152"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19105"
-project = "mcp-re-proxy"
-control = "tests/integration#tls_test::validated_delegated_build_rejects_cert_signer_key_mismatch"
-decision = "new-proposition"
-proposition = "NP-152"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19106"
-project = "mcp-re-proxy"
-control = "tests/integration#tls_test::validated_delegated_build_rejects_non_ed25519_leaf"
 decision = "new-proposition"
 proposition = "NP-152"
 recorded = "2026-09-19"
