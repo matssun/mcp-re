@@ -9846,3 +9846,42 @@ carrier variant being a COMPILE ERROR until it names a Core verdict and it silen
 inheriting one. `unreachable_patterns` is warn-level in this workspace, so the weakened tree
 still builds and the control is measured rather than reported absent.
 """
+
+[[probe]]
+id = "M354-proxy-the-pre-dispatch-reserve-is-skipped"
+unit = "proxy.retention_commitment"
+theorem = "THM-0088"
+conjunct = "A publication taken before the exchange may dispatch"
+# The reserve refusal is what stands between an unwritable store and an executed call. The
+# weakening swallows the store fault and reports the exchange as one this deployment never
+# agreed to account for, which is the ONE answer `reserve` may give without a reservation:
+# the serving path then dispatches, and the backend runs behind a store that can accept
+# nothing.
+#
+# What this probe measures that nothing else did: the refusal's CAUSE is already defended
+# where it is decided, by `no_pre_dispatch_fault_claims_the_backend_ran` in
+# `http_profile_serve::retention` — a lib# control over `pre_dispatch_refusal` alone, which
+# this weakening does not touch and which stays green while the backend runs. Only a control
+# that COUNTS inner dispatches goes red, and there is exactly one.
+path = "mcp-re-proxy/src/http_profile_serve/retention/mod.rs"
+anchor = """
+        match store.reserve(request).await {
+            Ok(reservation) => Ok(PreDispatchRetention::Reserved {
+                store: Arc::clone(store),
+                reservation,
+            }),
+            Err(e) => Err(Self::pre_dispatch_refusal(&e, "accept the exchange")),
+        }
+"""
+weakening = """
+        match store.reserve(request).await {
+            Ok(reservation) => Ok(PreDispatchRetention::Reserved {
+                store: Arc::clone(store),
+                reservation,
+            }),
+            Err(_) => Ok(PreDispatchRetention::NotConfigured),
+        }
+"""
+expect_red = [
+  "tests/integration_async#transparency_e2e_test::a_retention_store_that_cannot_accept_the_call_refuses_before_the_backend_runs",
+]
