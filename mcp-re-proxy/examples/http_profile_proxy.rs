@@ -9,7 +9,8 @@
 //!   1. reconstruct the `HttpRequest` (method, `@target-uri`, headers, body);
 //!   2. `verify_request_full` — RFC 9421 signature + RFC 9530 Content-Digest +
 //!      the request evidence block (audience/artifact bindings);
-//!   3. `dispatch_request_with_tier_gate` — replay admission (fail-closed);
+//!   3. `dispatch_request_with_async_tier` — replay admission (fail-closed), the same
+//!      entry point the shipped serving path's `answering_commitment` awaits;
 //!   4. strip the proxy-owned top-level `_meta` and forward the clean JSON-RPC to
 //!      the Streamable-HTTP backend through the proxy's real `HttpInnerPool`;
 //!   5. `sign_delegated_response_full` — sign the backend's reply with the DELEGATED
@@ -45,8 +46,6 @@ use hyper::Response;
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 
-use mcp_re_core::InMemoryReplayCache;
-use mcp_re_core::ReplayCache;
 use mcp_re_http_profile::build_delegated_rejection;
 use mcp_re_http_profile::build_delegated_rejection_preflight;
 use mcp_re_http_profile::sign_delegated_accepted_202;
@@ -63,33 +62,34 @@ use mcp_re_http_profile::result_class::input_required_state;
 use mcp_re_http_profile::RetainedContinuation;
 
 use mcp_re_proxy::async_inner::AsyncInnerServer;
+use mcp_re_proxy::async_replay::AsyncReplayTier;
+use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
+use mcp_re_proxy::config_state::FreshnessWindow;
 use mcp_re_proxy::continuation_store::continuation_key;
 use mcp_re_proxy::continuation_store::AsyncContinuationStore;
 use mcp_re_proxy::continuation_store::Creation;
 use mcp_re_proxy::continuation_store::InMemoryContinuationStore;
 use mcp_re_proxy::continuation_store::RetainedBases;
 use mcp_re_proxy::http_inner::HttpInnerPool;
-use mcp_re_proxy::http_profile_dispatch::dispatch_request_with_tier_gate;
+use mcp_re_proxy::http_profile_dispatch::dispatch_request_with_async_tier;
 use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
 use mcp_re_proxy::http_profile_serve::extract_request_state;
-#[cfg(feature = "redis_replay")]
-use mcp_re_proxy::redis_store::RedisAtomicReplayStore;
 use mcp_re_proxy::replay_tier::ReplayDurabilityTier;
 #[cfg(feature = "redis_replay")]
-use mcp_re_proxy::shared_replay::SharedReplayCache;
+use mcp_re_proxy::RedisAsyncAtomicReplayStore;
 
 // Shared demo material; each example uses a different subset, so allow dead code.
 #[allow(dead_code)]
 #[path = "hpp_common/mod.rs"]
 mod hpp_common;
 
-/// Shared proxy state: the inner-plane client pool, the replay cache (in-memory
+/// Shared proxy state: the inner-plane client pool, the async replay tier (in-memory
 /// single-process OR a shared Redis tier), and the dispatch policy. All shared
 /// across connections — replay must be detected across requests AND, with a shared
 /// tier, across replicas.
 struct ProxyState {
     inner: HttpInnerPool,
-    replay: Box<dyn ReplayCache + Send + Sync>,
+    replay: AsyncReplayTier,
     dispatch_cfg: ProxyDispatchConfig,
     /// The ADR-MCPS-047 continuation correlation store. In-memory, because this front is
     /// one process: it carries a multi-round-trip call across its two legs, and makes no
@@ -116,7 +116,7 @@ async fn main() {
     // (the multi-replica production posture — a nonce admitted on one replica is
     // rejected on any other sharing the store); otherwise a single-process
     // in-memory cache (fleet_strict off).
-    let (replay, dispatch_cfg): (Box<dyn ReplayCache + Send + Sync>, ProxyDispatchConfig) =
+    let (replay, dispatch_cfg): (AsyncReplayTier, ProxyDispatchConfig) =
         match std::env::var("HPP_REDIS_URL") {
             Ok(url) => {
                 let tier_str = std::env::var("HPP_REPLAY_TIER")
@@ -124,15 +124,27 @@ async fn main() {
                 let tier = ReplayDurabilityTier::parse(&tier_str).expect("HPP_REPLAY_TIER");
                 #[cfg(feature = "redis_replay")]
                 {
-                    let mut store = RedisAtomicReplayStore::connect(&url)
-                        .unwrap_or_else(|e| panic!("connect redis {url}: {e:?}"));
-                    if let ReplayDurabilityTier::QuorumAcknowledged { quorum, timeout_ms } = tier {
+                    // The order is the shipped one (`replay_plane::backends::establish_redis`):
+                    // the client-side response timeout is sized for the DECLARED wait timeout
+                    // BEFORE connecting, and the quorum is applied to the store that serves —
+                    // otherwise the startup line advertises a window the store never waits.
+                    let wait_timeout_ms = tier.wait_quorum_params().map(|(_, ms)| ms);
+                    let mut store = RedisAsyncAtomicReplayStore::connect_with_wait_timeout(
+                        &url,
+                        mcp_re_proxy::redis_store::system_clock(),
+                        wait_timeout_ms,
+                    )
+                    .await
+                    .unwrap_or_else(|e| panic!("connect redis {url}: {e:?}"));
+                    if let Some((quorum, timeout_ms)) = tier.wait_quorum_params() {
                         store = store.with_wait_quorum(quorum, timeout_ms);
                     }
                     eprintln!("{}", tier.startup_audit_line("redis"));
                     (
-                        Box::new(SharedReplayCache::new(Box::new(store), 5))
-                            as Box<dyn ReplayCache + Send + Sync>,
+                        AsyncReplayTier::new(
+                            Arc::new(store),
+                            FreshnessWindow::new(5).expect("5s is inside the §5.1 skew bound"),
+                        ),
                         ProxyDispatchConfig {
                             fleet_strict: true,
                             tier: Some(tier),
@@ -150,7 +162,10 @@ async fn main() {
                 }
             }
             Err(_) => (
-                Box::new(InMemoryReplayCache::new(0)),
+                AsyncReplayTier::new(
+                    Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+                    FreshnessWindow::new(0).expect("0s is inside the §5.1 skew bound"),
+                ),
                 ProxyDispatchConfig {
                     fleet_strict: false,
                     tier: None,
@@ -290,16 +305,21 @@ async fn handle(
         _ => None,
     };
 
-    // Step 3 — replay admission (fail-closed) through the configured tier: a shared
-    // Redis tier detects a replay across ALL replicas; the fleet-strict gate refuses
-    // a sub-minimum/undeclared tier before touching the store. A continuation, when
-    // present, is verified here against the retained bases before the nonce is burned.
-    if let Err(e) = dispatch_request_with_tier_gate(
+    // Step 3 — replay admission (fail-closed) through the configured tier, on the entry
+    // point the shipped serving path awaits: a shared Redis tier detects a replay across
+    // ALL replicas; the fleet-strict gate refuses a sub-minimum/undeclared tier, and a
+    // store that self-reports the single-process class, before the store is touched. A
+    // continuation, when present, is verified here against the retained bases before the
+    // nonce is burned, and the awaited atomic admission is the last step.
+    if let Err(e) = dispatch_request_with_async_tier(
         &verified,
-        state.replay.as_ref(),
+        &state.replay,
         continuation_ctx,
         &state.dispatch_cfg,
-    ) {
+        now,
+    )
+    .await
+    {
         // Verified, then refused by replay admission: bind the receipt to its evidence.
         return Ok(to_hyper(rejection(
             Some(&http_req),
