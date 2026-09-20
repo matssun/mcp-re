@@ -43,10 +43,11 @@ The remaining ADR-MCPRE-068 producer paths, answered:
   the `pub(super)` one above. No third exists in the crate.
 - **generated-or-deserialization** — the type derives `Debug, Clone, PartialEq, Eq` and
   nothing else. No `Serialize`/`Deserialize`, no `Default`, no `From`, no `FromStr`.
-- **test-only-construction** — no `#[cfg(test)]` constructor widens anything. The two test
-  call sites (`identity.rs`'s own module and `transport/mod.rs`'s `spiffe` helper) are both
-  inside the set privacy already admits, so they are attacked by the in-crate probe rather
-  than exempted from it.
+- **test-only-construction** — no `#[cfg(test)]` constructor widens anything. The one test
+  call site (`identity.rs`'s own module) is inside the set privacy already admits, so it is
+  attacked by the in-crate probe rather than exempted from it. RA3-002 deleted
+  `transport/mod.rs`'s `spiffe` helper along with the provider fixture that was its only
+  caller.
 
 **The seal holds.** That is the measurement, and it is recorded whichever way it went.
 

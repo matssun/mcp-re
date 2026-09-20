@@ -299,11 +299,9 @@ impl TransportBinding {
 #[cfg(test)]
 mod tests {
     use super::ExactMatchBinding;
-    use super::IdentitySource;
     use super::RequestHeaders;
     use super::TransportBinding;
     use super::TransportBindingPolicy;
-    use super::TransportIdentity;
     use mcp_re_core::McpReError;
 
     use super::AuthenticatedChannelPeer;
@@ -355,11 +353,6 @@ mod tests {
                 slot: SignerSlot::Request,
             },
         )
-    }
-
-    #[allow(dead_code)]
-    fn spiffe(value: &str) -> TransportIdentity {
-        TransportIdentity::attested_by_verified_ingress(value, IdentitySource::UriSan)
     }
 
     // --- Issue #21 (cluster 2): ADR-MCPS-023 strict rules on the XFCC value -----
