@@ -91,9 +91,13 @@ status = "unreviewed"
 # ADR-MCPRE-063 Slice 2 moved credential/key correspondence to its own authority: 1042 ->
 # 1013. The SHA moves with the number, because this field records where a measurement was
 # ESTABLISHED and c81df3e never contained a 1013-line tls.rs.
+# RA3-002 shrank this entry from 674 to 670: the asserted-identity vocabulary left the file
+# and the correspondence refusal's rendering landed at its own owner. An ordinary ratchet
+# decrease, not a measurement correction — the bytes changed, so the origin/main-identical
+# precondition does not hold and the entry is pinned at what it now measures.
 [[debt]]
 path = "mcp-re-proxy/src/tls.rs"
-baseline_prod_loc = 674
+baseline_prod_loc = 670
 baseline_sha = "b142a7a"
 status = "reviewed-exception"
 review_ref = "EX-004 in docs/architecture/review-dispositions.md"
@@ -530,9 +534,12 @@ baseline_prod_loc = 429
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
+# RA3-002 shrank this entry from 420 to 407 by removing eight crate-root `pub use` lines
+# for deleted items. An ordinary ratchet decrease, not a measurement correction: the bytes
+# changed, so the entry is pinned at what it now measures and may not grow back.
 [[debt]]
 path = "mcp-re-proxy/src/lib.rs"
-baseline_prod_loc = 420
+baseline_prod_loc = 407
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
