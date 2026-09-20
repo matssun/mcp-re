@@ -1299,6 +1299,13 @@ weakening = """
 expect_red = [
   "lib#delegated_tls::resolver::correspondence_gate::a_mismatched_credential_and_signer_cannot_materialize_a_resolver",
   "lib#delegated_tls::resolver::correspondence_gate::tls_facade_cannot_bypass_the_materialization_gate",
+  # DEMONSTRATED, not assumed: making the relation vacuous turns this control red, which is
+  # the reason it is in the battery. Its sibling
+  # `validated_delegated_build_rejects_non_ed25519_leaf` is deliberately NOT declared here —
+  # it was run under this weakening and stayed GREEN, because a leaf whose SPKI is not
+  # Ed25519 is refused before the correspondence comparison is reached. Declaring it would
+  # be a claim the lane contradicts.
+  "tests/integration#tls_test::validated_delegated_build_rejects_cert_signer_key_mismatch",
 ]
 
 [[probe]]
@@ -8987,6 +8994,51 @@ revocation is enforced.
 touches only the absent branch, and a battery holding the positive case alone would see no
 change. Accepting a CRL that states a window and refusing one that states none are two
 clauses, and this probe falsifies the second.
+"""
+
+[[probe]]
+id = "M357-proxy-an-undecodable-crl-is-not-a-fresh-one"
+unit = "proxy.client_crl_next_update_gate"
+theorem = "THM-0131"
+conjunct = "A set of client CRLs is installable only when every one of them is inside its own `nextUpdate` window and states one at all"
+path = "mcp-re-proxy/src/client_crl_publication.rs"
+# The anchor carries the `next_update` line because the same two-line parse appears
+# VERBATIM in `crl_posture` directly below, and the adjudicator refuses an anchor that
+# matches twice — correctly: a weakening applied to the wrong one of two identical sites
+# measures a different function.
+anchor = """
+    let crl = CertificateList::from_der(crl_der)
+        .map_err(|e| TlsError::Verifier(format!("malformed client CRL: {e}")))?;
+    let next_update = match crl.tbs_cert_list.next_update {
+"""
+weakening = """
+    let crl = match CertificateList::from_der(crl_der) {
+        Ok(crl) => crl,
+        Err(_) => return Ok(CrlFreshness::Fresh),
+    };
+    let next_update = match crl.tbs_cert_list.next_update {
+"""
+expect_red = [
+  "tests/integration#tls_test::crl_freshness_rejects_malformed_der",
+]
+note = """
+M326'S SIBLING ARM, AND THE ONE THE `lib#` BATTERY CANNOT SEE. M326 weakens the branch for a
+CRL that PARSED and carried no `nextUpdate`; this one weakens the branch for bytes that are
+not a CRL at all. Both of this unit's `lib#` controls mint a real CRL with `rcgen`, so both
+stay GREEN under this weakening — the parse they perform succeeds — and the conjunct would
+be protected by nothing on the undecodable side.
+
+The weakening is the plausible one rather than a contrived one: reading an unparseable
+document as "nothing is wrong yet" is the shape a reviewer waves through, and it is the one
+that cannot be recovered from. `require_in_force` admits `Fresh` without so much as a
+warning, so the replica installs a document whose `nextUpdate` nothing in the stack can
+compare against — rustls' expiration enforcement has no field, the per-request index answers
+`Good` for the issuer at any instant — while the startup transcript reports revocation as
+enforced. That is THM-0131's statement read backwards.
+
+The control that goes red is an integration-lane one, and deliberately: the arm exists to be
+driven with bytes no certificate toolchain would emit, which is a thing a suite that mints
+its vectors does not naturally produce.
 """
 
 [[probe]]

@@ -2208,6 +2208,19 @@ tested_symbols = [
   "lib#delegated_tls::resolver::correspondence_gate::corresponding_material_materializes_and_installs_the_listener_budget",
   "lib#delegated_tls::resolver::correspondence_gate::tls_facade_cannot_bypass_the_materialization_gate",
   "lib#delegated_tls::resolver::budget_continuity::resolvers_sharing_a_budget_share_one_bucket",
+  # THE SAME GATE, REACHED THE WAY AN EMBEDDER REACHES IT. Every `lib#` name above calls
+  # `materialize` or the facade from INSIDE the crate, over operands the test built beside
+  # the call. These two enter at `TlsListenerSecurityState::build_delegated_config` — the
+  # published entrance named in the scope's sentence *"Within the API this crate publishes,
+  # delegated-resolver materialization has no route that bypasses the validated
+  # correspondence gate"* — with a leaf minted by a real CA through `rcgen` and a signer
+  # keyed independently of it, and assert the refusal is `TlsError::DelegatedKeyMismatch`
+  # rather than an opaque later failure. The second is the SPKI direction of the same
+  # comparison: an ECDSA P-256 leaf cannot equal any Ed25519 signer's exported key, which
+  # is the security consequence's *"a certificate and a signer whose exported public key
+  # differs from the certificate's leaf public key"* taken at the algorithm boundary.
+  "tests/integration#tls_test::validated_delegated_build_rejects_cert_signer_key_mismatch",
+  "tests/integration#tls_test::validated_delegated_build_rejects_non_ed25519_leaf",
 ]
 pilot = "verus-candidate"
 
@@ -10396,6 +10409,17 @@ evidence = [
 tested_symbols = [
   "lib#client_crl_publication::crl_next_update_tests::a_crl_that_never_falls_out_of_force_is_refused",
   "lib#client_crl_publication::crl_next_update_tests::a_crl_that_states_its_next_update_is_accepted",
+  # THE GATE'S TOTALITY, WHICH THE TWO NAMES ABOVE DO NOT REACH. Both of them hand
+  # `crl_freshness` a CRL that PARSED; neither says what happens to bytes that are not a
+  # CRL. That arm is the one where a weakening is invisible: a classifier that answered
+  # `Fresh` for undecodable DER would leave both controls green while `require_in_force`
+  # installed a document nothing in the stack can age out — the exact negation of
+  # THM-0131's *"installable only when every one of them is inside its own `nextUpdate`
+  # window and states one at all"*, since such a CRL is demonstrably inside no window.
+  # Deliberately NOT the sibling `crl_freshness_classifies_fresh_near_and_stale`: its
+  # `NearExpiry` band is an ADMITTED class with a warn window this unit does not claim and
+  # no theorem states, and it is refused in the ADR-069 census rather than absorbed here.
+  "tests/integration#tls_test::crl_freshness_rejects_malformed_der",
 ]
 
 [[unit]]
