@@ -1909,34 +1909,6 @@ verify perfectly and still be described as more than it is.
 **Likely owner:** none.
 **Severity:** `critical`.
 
-## NP-075 — the transport binding is exact match, and no policy can manufacture it
-
-**Controls:** `transport/mod.rs` (7).
-**Statement.** *The installable binding is EXACT MATCH; it binds a channel peer and a
-request actor that name ONE principal and refuses two different ones; an absent channel peer
-fails closed; a permissive policy cannot manufacture the binding fact; the composite actor
-id is NOT the binding coordinate; and a static provider yields its identity ignoring the
-request.*
-**If false.** The proxy treats a request as bound to the channel it arrived on when the two
-name different principals — the substitution the binding exists to prevent — or a permissive
-policy produces the binding fact without any correspondence being checked. "A permissive
-policy cannot MANUFACTURE the fact" is the seal clause: the fact is produced by the
-correspondence, not by the policy that decides whether it is required.
-**Likely owner:** none. `proxy.certificate_identity` owns what the INTERPRETER decides about
-a certificate field; this is what the binding does with the identity once interpreted, in
-`transport/`, which that unit does not measure.
-**Severity:** `critical`.
-
-## NP-076 — an asserted identity is a bounded, printable, non-empty value
-
-**Controls:** `transport/mod.rs` (4).
-**Statement.** *An asserted identity accepts a well-formed value and trims it, and rejects
-an empty one, an oversized one, and one carrying control characters.*
-**If false.** A peer-supplied identity carrying control characters reaches a log, an audit
-record or a comparison — and an unbounded one is a memory cost a peer chooses.
-**Likely owner:** none.
-**Severity:** `high`.
-
 ## NP-077 — a routing header is well-formed and singular, or the request fails closed
 
 **Controls:** `transport/mod.rs` (6), `mcp-re-proxy/src/tls.rs` (1).
@@ -1949,29 +1921,61 @@ keeps "fails closed" from meaning "refuses everything".
 **Likely owner:** none.
 **Severity:** `critical`.
 
-## NP-078 — a certificate identity is readable only through its projections
+## NP-078 — the historical identity facade refuses, and its product cannot be manufactured
 
 **Controls:** `transport/identity.rs` (2).
-**Statement.** *A certificate that does not carry the configured field yields NOTHING, and
-the projections are the only way to read an identity from one.*
+**Statement.** *A certificate that does not carry the configured field yields NOTHING at the
+historical `extract_identity` surface; and a `TransportIdentity` cannot be built outside the
+module that owns it, so a value of that type exists only where a verification put it there.*
 **If false.** A consumer reads a certificate field directly and gets an identity the
-interpreter would have refused — the fallback `proxy.certificate_identity` exists to make
-impossible, arriving through a second reader instead of through the interpreter.
-**Likely owner:** `proxy.certificate_identity` states exactly this (*no fallback to another
-field*) and `proxy.certificate_identity_authority_boundary` seals the pairing. Neither can
-claim these controls: both units' `paths` are `communication_assurance/*` files, and
-`transport/identity.rs` is in neither. The fifth mechanically impossible reattribution this
-campaign has measured.
+interpreter would have refused, or asserts one it never read — the manufactured
+`spiffe://…/admin` the module's own note names.
+**Likely owner:** none. Measured in this slice rather than argued, and the measurement
+overturns the earlier record on both halves.
+
+**THE SEAL HOLDS, AND IT IS MEASURED.** ADR-MCPRE-068 §12.1 says a passing `cargo check`
+witnesses nothing, so the hostile constructions were written FIRST and the compiler's
+refusals are the result:
+
+| route | site | verdict |
+|---|---|---|
+| struct literal, downstream crate | `mcp-re-proxy/tests/` | `E0451: fields value and source of struct TransportIdentity are private` |
+| `attested_by_verified_ingress`, downstream crate | `mcp-re-proxy/tests/` | `E0624: associated function attested_by_verified_ingress is private` |
+| struct literal, sibling module of `transport` | `mcp-re-proxy/src/` | `E0451` |
+| `attested_by_verified_ingress`, sibling module of `transport` | `mcp-re-proxy/src/` | `E0624` |
+
+The in-crate pair is the load-bearing one: `pub(crate)` seals nothing against this crate's
+own composition root, and the lever that works here is module privacy. `value` and `source`
+are bare-private to `transport::identity`, and `attested_by_verified_ingress` is
+`pub(super)`, so the set privacy admits is `transport` and its descendants — which is
+exactly the documented producer list, `transport::ingress::v1` and `v2`. The other producer
+paths are answered too: no `Default`, `From`, `FromStr` or derived `Deserialize` exists on
+the type, and no `#[cfg(test)]` constructor widens it.
+
+**WHY IT IS STILL NOT REGISTERED, AND THIS IS THE FINDING.** A measured seal is not a
+theorem. THM-0024 is the only candidate and it excludes the claim in terms — *"It
+characterizes values successfully returned by the interpretation operation. It says nothing
+about arbitrary possession of a `CertificatePeerIdentityEvidence` value, whose construction
+closure is the module boundary rather than a proved postcondition."* — and the type here is
+not even that one. THM-0080 names the historical extractor only to say the serving paths do
+not take it: *"the historical extractor is a published API with its own X.509 conformance
+suite over real DER, so it cannot be removed to make the wrong call unavailable"*. Neither
+claims what `extract_identity` returns, and neither claims who may build a
+`TransportIdentity`.
+
+The owner already ruled on this, and the ruling is in the source: *"It is deliberately NOT
+written down as a theorem here. The proposition is an open gap in
+`docs/architecture/components/transport-binding.md`, and closing it in prose ahead of the
+deployment reachability that makes it true is the over-claim ADR-MCPRE-061 exists to prevent
+(EX-005, ruling 5)."* Registering a unit for it now would be that over-claim arriving through
+the assurance registry instead of through prose. ADR-069 §5 holds an unregistered control
+strictly better than a unit whose declared proposition no ratified theorem contains.
+
+**What is missing, precisely.** A `[[theorem]]` over the transport identity product, which
+this slice may not add. Its two conjuncts are already measured and its structural half is
+already true; what does not exist is a ratified sentence to attach them to.
+**Packet:** `verification/reviews/packets/adr069-np-078-ratification-2026-09-20.md`.
 **Severity:** `critical`.
-
----
-
-## The conformance claim surface — NP-079 through NP-086
-
-`mcp-re-conformance/` holds 97 unclaimed controls across seventeen test files, and **two
-units**. Conformance is what MCP-RE tells an auditor it implements, so these controls are
-the evidence behind a product-facing claim surface — the same subject NP-008 approaches
-from the gate side, arriving here as the claims themselves.
 
 ## NP-079 — a third party's receipt verifies offline, and only for its own statement
 
@@ -2682,12 +2686,24 @@ instance**, still unclaimed on main.
 **Likely owner:** none.
 **Severity:** `critical`.
 
-## NP-116 — channel peer resolution yields the identity the relationship authenticated as
+## NP-116 — channel peer resolution yields nothing where the channel carries no identity
 
-**Controls:** `mcp-re-proxy/src/tls.rs`.
-**Statement.** *Direct TLS resolves the identity the relationship AUTHENTICATED AS; each relationship resolves its own peer's identity and a resumed one resolves the same identity as a full handshake; a leaf without the configured field and an absent acceptance each resolve NO identity; an issuer in the accepted chain never becomes the transport identity; and an LB-assertion deployment resolves no transport identity at all.*
-**If false.** The proxy attributes a request to a peer that did not authenticate as that peer — by promoting an issuer out of the chain, by resolving an identity from a resumed session that differs from the handshake's, or by producing a transport identity in a deployment where the channel is terminated in front of it. The last is the sharpest: under an LB assertion there IS no transport identity, and producing one would let NP-074's guarantee be read as end-to-end.
-**Likely owner:** none.
+**Controls:** `mcp-re-proxy/src/tls.rs` (2).
+**Statement.** *An absent acceptance resolves NO identity, and an LB-assertion deployment
+resolves no transport identity at all even while a live accepted credential is in hand.*
+**If false.** The proxy produces a transport identity in a deployment where the channel is
+terminated in front of it, which would let NP-074's guarantee be read as end-to-end; or it
+answers from something other than an acceptance.
+**Likely owner:** none, and the reason is the same on both arms. THM-0031 takes an acceptance
+BY VALUE — *"a free function taking a `MechanismVerifiedCredentialEvidence` by value and a
+`CertificateIdentityPolicy`, and nothing else"* — so an ABSENT acceptance is outside its
+domain rather than a case it decides. And no theorem states the provenance switch: THM-0080
+is about the route both direct-TLS paths take, not about a deployment in which neither takes
+it. The nearest statement is NP-074's, which is itself unratified.
+
+The other five controls of this record landed: `proxy.channel_peer_resolution` under
+THM-0031, falsifier `M341`.
+**Packet:** `verification/reviews/packets/adr069-np-116-ratification-2026-09-20.md`.
 **Severity:** `critical`.
 
 ## NP-119 — a continuation leg is established exactly once
@@ -2931,12 +2947,25 @@ without_a_cadence_the_bound_is_the_crls_own_expiry, without_a_crl_the_bound_is_t
 **Severity:** `high`.
 **Registered in part, ADR-MCPRE-069 S1.** The addressing and non-mintability clauses are `unit://proxy.admission_record_addressing` under THM-0129 (`M287`). The three per-class refusal-latch rows remain: report-once-per-class is diagnosis hygiene, and THM-0129 says nothing about how often a class is reported. Packet at `verification/reviews/packets/adr069-np-144-ratification-2026-09-19.md`.
 
-## NP-145 — the operator-facing vocabularies agree and render distinctly
+## NP-145 — every correspondence refusal renders to its own operator sentence
 
-**Controls:** `mcp-re-proxy/src/facades`.
-**Statement.** *Every fact renders to a DISTINCT SENTENCE; the two vocabularies agree FIELD FOR FIELD; every owner refusal maps to the historical rejection it replaced; an unsupported algorithm tells the operator WHICH algorithm was given; and a valid value comes back trimmed and borrowed.*
-**If false.** Two different facts render the same sentence, so an operator cannot tell them apart — or the two vocabularies drift and the same deployment is described differently depending on which one is read.
-**Likely owner:** none.
+**Controls:** `mcp-re-proxy/src/facades/delegated_key_correspondence.rs` (2).
+**Statement.** *Seven distinct correspondence facts render to seven distinct sentences, and
+an unsupported algorithm tells the operator WHICH algorithm was given.*
+**If false.** An operator reading two different incidents reads the same sentence, and
+cannot tell an empty chain from an unreachable signer.
+**Likely owner:** none. THM-0026 is the authority and it stops one level above the rendering:
+its statement is about the returned refusal value — *"the refusal names which authority
+failed — the credential side, the signing-key side, or the relation"* — a three-way
+distinction, while these controls measure a seven-way one over a `String` the theorem never
+mentions. Its consequence reaches the operator once, with *"an operator is told which half of
+the deployment to look at"*, and naming the OID is not naming a half. A unit declaring seven
+distinct sentences under a theorem that states three distinguishable refusal values would be
+the registration ADR-069 §5 calls strictly worse than none.
+
+Two other controls of this record landed, in `facades/asserted_identity.rs`, under THM-0023
+as part of `proxy.asserted_identity_delegation`; the third is separated as NP-187.
+**Packet:** `verification/reviews/packets/adr069-np-145-np-186-np-187-ratification-2026-09-20.md`.
 **Severity:** `medium`.
 
 ## NP-146 — refusal reporting is bounded, counted in full, and never panics
@@ -3515,3 +3544,51 @@ and an authenticated PDP decision, while this control drives an ADR-MCPRE-065 Sl
 decision document at all. The Slice 1 serving battery lives in `proxy.authorization_capability`,
 which no theorem supports, so an R1 there closes nothing. Packet at
 `verification/reviews/packets/adr069-np-163-np-191-ratification-2026-09-20.md`.
+
+## NP-186 — a static identity provider yields its identity ignoring the request
+
+**Controls:** `mcp-re-proxy/src/transport/mod.rs` (1).
+**Statement.** *`StaticIdentityProvider` answers with the identity it was built with
+whatever headers the request carries, and with `None` when it was built with none.*
+**If false.** A degenerate provider would vary its answer with request content — but no
+serving path holds one: direct-TLS identity is resolved functionally by
+`tls::resolve_channel_peer`, and the `TransportBindingProvider` seam is reached by no
+production configuration.
+**Likely owner:** none, and probably none ever. This is the one control of NP-075 that is
+not about the binding relation. It measures a fixture: the type's own documentation says
+*"Useful in tests and as a degenerate provider"*, and what it asserts is that a constant
+function is constant.
+
+**Why it is not dispositioned `not-evidence` here.** It very likely is not evidence, but
+none of the thirteen recorded families covers it — the nearest, ND-009, is scoped to
+data-structure API robustness, and stretching a family's scope to absorb a control is the
+same defect as widening a unit's proposition to absorb one. Minting a fourteenth family is
+excluded from this slice, so the control is carried as an identified proposition until a
+slice that may mint one reaches it.
+
+The other six controls of NP-075 landed as `proxy.transport_binding_application` under
+THM-0034, falsifier `M339`.
+**Packet:** `verification/reviews/packets/adr069-np-145-np-186-np-187-ratification-2026-09-20.md`.
+**Severity:** `medium`.
+
+## NP-187 — the legacy and authority identity vocabularies convert field for field
+
+**Controls:** `mcp-re-proxy/src/facades/asserted_identity.rs` (1).
+**Statement.** *`IdentityPolicy -> CertificateIdentityPolicy` and
+`CertificateIdentitySource -> IdentitySource` are enumerated in both directions and neither
+drops nor reassigns a case.*
+**If false.** A deployment that configured URI SANs is pointed at another certificate field
+by the conversion, before the interpreter is ever asked — the silent downgrade THM-0024's
+consequence names, arriving one step upstream of everything THM-0024 quantifies over.
+**Likely owner:** none, and the gap is structural rather than accidental. THM-0024 takes the
+policy as an INPUT: *"Interpretation is total and deterministic over the interpreted field
+set and the policy."* Every clause of its statement is conditioned on *the field the policy
+configures*, so a conversion that produces the WRONG policy satisfies the theorem exactly
+and violates the deployment's intent. THM-0023 is about the value, not the field.
+
+This is the sharpest thing this slice measured that it could not land: a critical-shaped
+premise sitting immediately above a `critical` theorem, unclaimed because the theorem begins
+after it.
+**Packet:** `verification/reviews/packets/adr069-np-145-np-186-np-187-ratification-2026-09-20.md`.
+**Severity:** `high`.
+

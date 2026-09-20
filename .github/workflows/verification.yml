@@ -272,6 +272,15 @@ on:
       # beside the plane rather than inside it, so the subtree pattern above does not
       # reach it.
       - "mcp-re-proxy/src/client_crl_publication.rs"
+      # ADR-MCPRE-069 S-08: the peer-identity slice. `transport/mod.rs` carries
+      # `proxy.transport_binding_application` and half of `proxy.asserted_identity_delegation`;
+      # `facades/asserted_identity.rs` carries the other half and M340's weakening site;
+      # `transport/identity.rs` and the ingress subtree are in the binding unit's source
+      # closure by UC-1, because `transport/mod.rs` declares them.
+      - "mcp-re-proxy/src/transport/mod.rs"
+      - "mcp-re-proxy/src/transport/identity.rs"
+      - "mcp-re-proxy/src/transport/ingress/**"
+      - "mcp-re-proxy/src/facades/asserted_identity.rs"
       # ADR-MCPRE-069 S-06: three new fingerprint inputs, each also a probe site.
       # `replay_tier.rs` carries the strict-production minimum
       # (`proxy.replay_tier_production_minimum`, M335), `serving_capabilities.rs` the
@@ -618,6 +627,15 @@ on:
       # beside the plane rather than inside it, so the subtree pattern above does not
       # reach it.
       - "mcp-re-proxy/src/client_crl_publication.rs"
+      # ADR-MCPRE-069 S-08: the peer-identity slice. `transport/mod.rs` carries
+      # `proxy.transport_binding_application` and half of `proxy.asserted_identity_delegation`;
+      # `facades/asserted_identity.rs` carries the other half and M340's weakening site;
+      # `transport/identity.rs` and the ingress subtree are in the binding unit's source
+      # closure by UC-1, because `transport/mod.rs` declares them.
+      - "mcp-re-proxy/src/transport/mod.rs"
+      - "mcp-re-proxy/src/transport/identity.rs"
+      - "mcp-re-proxy/src/transport/ingress/**"
+      - "mcp-re-proxy/src/facades/asserted_identity.rs"
       # ADR-MCPRE-069 S-06: three new fingerprint inputs, each also a probe site.
       # `replay_tier.rs` carries the strict-production minimum
       # (`proxy.replay_tier_production_minimum`, M335), `serving_capabilities.rs` the

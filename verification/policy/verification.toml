@@ -10434,3 +10434,105 @@ tested_symbols = [
   "tests/integration_async#per_request_revocation_test::a_peer_absent_from_the_crl_keeps_being_served_across_the_reload",
   "tests/integration_async#per_request_revocation_test::an_unrevoked_intermediate_keeps_its_peers_served",
 ]
+
+# ---------------------------------------------------------------------------
+# The peer-identity slice — ADR-MCPRE-069 NP-075, NP-076, NP-116, NP-145
+# ---------------------------------------------------------------------------
+#
+# Three units over files that are NOT the owning authorities' files. Each authority here —
+# the peer-identity value, the request/peer relation, the authenticated relationship peer —
+# already has a unit, and each of those units declares a `paths` inside
+# `communication_assurance/`. The controls below live in `transport/mod.rs`,
+# `facades/asserted_identity.rs` and `tls.rs`, so appending them to the owner is refused by
+# `_manifest._validate_in_crate_selectors`: an in-crate test whose source the unit does not
+# measure can be rewritten under the same name without moving the fingerprint.
+#
+# The resolution is a TWIN — a second unit over the consuming file, attached to the same
+# ratified theorem — and never a `paths` widening. Two reasons, and only one of them is the
+# one an earlier brief gave. It is NOT that widening `paths` would move THM-0023's
+# fingerprint: `paths` is a unit field and `_fingerprint.fingerprint_theorem` has five
+# components, none of which reads it. It is that ADR-069 §5 forbids widening a unit to
+# swallow a control, and that a unit's `paths` is its SOURCE CLOSURE — the set of files
+# whose bytes its fingerprint covers — so widening the peer-identity value owner to reach
+# `transport/mod.rs` would make every edit to the transport module dirty the value owner's
+# evidence while measuring nothing new about the value.
+#
+# What is deliberately NOT here: the historical `extract_identity` facade and the
+# `TransportIdentity` seal (NP-078), the resolver's two NOTHING arms (NP-116), the
+# correspondence RENDERING (NP-145), the static provider fixture (NP-186) and the
+# policy/source vocabulary conversion (NP-187). Each is refused against quoted theorem text
+# in its own packet under `verification/reviews/packets/`.
+
+[[unit]]
+id = "proxy.transport_binding_application"
+class = "V0"
+description = "THE INSTALLABLE BINDING APPLIES THE RELATION AND REFUSES AN ABSENCE: the policy the serving path can hold relates an authenticated channel peer to a verified request subject and succeeds only where the two name one principal, the coordinate is the resolved actor's SUBJECT rather than the `role:trust_domain:subject:keyid` composite, an absent channel peer is refused rather than treated as nothing to compare, and a policy written to admit everything cannot manufacture the binding fact because the only producer of `RequestPeerBindingFacts` is the authority's own relation. It states nothing the relation itself states — what the comparison DECIDES and why the subject is the coordinate are `proxy.request_peer_binding`'s — and nothing about WHICH binding modes a deployment may select, which the configuration owner decides."
+# UC-1: `transport/mod.rs` declares `mod identity;` and `pub mod ingress;`, so both
+# resolve inside this unit's source closure and must be measured with it — a unit that
+# fingerprinted only the declaring file could have either body rewritten under it without
+# moving anything. They are NOT part of the proposition: the historical identity product is
+# NP-078's and the deferred ingress verifiers are NP-074's, and neither is claimed here.
+paths = [
+  "mcp-re-proxy/src/transport/mod.rs",
+  "mcp-re-proxy/src/transport/identity.rs",
+  "mcp-re-proxy/src/transport/ingress/**/*.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/transport/binding_application",
+  "mutation://proxy/transport/binding_application",
+]
+tested_symbols = [
+  "lib#transport::tests::exact_match_binds_a_peer_and_a_request_actor_that_name_one_principal",
+  "lib#transport::tests::exact_match_refuses_two_different_principals",
+  "lib#transport::tests::the_composite_actor_id_is_not_the_binding_coordinate",
+  "lib#transport::tests::an_absent_channel_peer_fails_closed",
+  "lib#transport::tests::the_installable_binding_is_exact_match",
+  "lib#transport::tests::a_permissive_policy_cannot_manufacture_the_binding_fact",
+]
+
+[[unit]]
+id = "proxy.asserted_identity_delegation"
+class = "V0"
+description = "THE TRUSTED-INGRESS VOCABULARY DELEGATES THE VALUE RULE INSTEAD OF REIMPLEMENTING IT: `validate_asserted_identity_value` accepts a well-formed value and hands back the TRIMMED form, and refuses an empty one, one past the length bound and every shape of control character — each refusal being the owner's own refusal carried into the historical spelling, one family for one family, rather than a second set of rules that currently agrees. This is the caller side of the peer-identity value claim and nothing more: WHICH strings the rule accepts is `proxy.peer_identity_value`'s, that no other inhabitant can exist is `proxy.peer_identity_value_sole_producer`'s, and the single-valued header rule belongs to the caller that counts the header."
+paths = [
+  "mcp-re-proxy/src/facades/asserted_identity.rs",
+  "mcp-re-proxy/src/transport/mod.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/facades/asserted_identity_delegation",
+  "mutation://proxy/facades/asserted_identity_delegation",
+]
+tested_symbols = [
+  "lib#transport::tests::asserted_identity_accepts_a_well_formed_value_and_trims",
+  "lib#transport::tests::asserted_identity_rejects_empty",
+  "lib#transport::tests::asserted_identity_rejects_oversized",
+  "lib#transport::tests::asserted_identity_rejects_control_characters",
+  "lib#facades::asserted_identity::tests::every_owner_refusal_maps_to_the_historical_rejection_it_replaced",
+  "lib#facades::asserted_identity::tests::a_valid_value_comes_back_trimmed_and_borrowed",
+]
+
+[[unit]]
+id = "proxy.channel_peer_resolution"
+class = "V0"
+description = "WHAT THE SERVING RESOLVER ANSWERS ABOUT THE RELATIONSHIP IN HAND: the identity it yields is the one interpreted from the leaf of the credential THIS relationship authenticated with, under the field the deployment configured — so an issuer that also answers the policy from further up the accepted chain never becomes the peer, two live relationships resolve their own peers rather than one another's, a resumed relationship resolves the same identity as a full handshake while its establishment path stays distinct, and a leaf carrying no value in the configured field resolves NO identity rather than a weaker field's. It restates nothing the authority decides: the interpretation's own refusal algebra is `proxy.certificate_identity`'s, the composition that makes the pairing unconstructible is `proxy.authenticated_relationship_peer`'s, and the ROUTE each serving path takes to this resolver is `proxy.serving_identity_provenance`'s."
+paths = ["mcp-re-proxy/src/tls.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/tls/channel_peer_resolution",
+  "mutation://proxy/tls/channel_peer_resolution",
+]
+tested_symbols = [
+  "lib#tls::channel_peer_resolution_tests::direct_tls_resolves_the_identity_the_relationship_authenticated_as",
+  "lib#tls::channel_peer_resolution_tests::an_issuer_in_the_accepted_chain_never_becomes_the_transport_identity",
+  "lib#tls::channel_peer_resolution_tests::each_relationship_resolves_its_own_peers_identity",
+  "lib#tls::channel_peer_resolution_tests::a_resumed_relationship_resolves_the_same_identity_as_a_full_handshake",
+  "lib#tls::channel_peer_resolution_tests::a_leaf_without_the_configured_field_resolves_no_identity",
+]
