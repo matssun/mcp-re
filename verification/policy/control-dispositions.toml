@@ -10181,7 +10181,7 @@ record = "docs/architecture/control-dispositions.md#np-153"
 
 [[proposition]]
 id = "NP-154"
-title = "Transparency retention and publication hold on the serving path"
+title = "The shipped auditor over a served archive, and the retention posture the serving path refuses under"
 carrier = "mcp-re-proxy/tests/integration_async/transparency_e2e_test.rs"
 likely_owner = "none — a composition's source is every unit under it"
 consequence = "critical"
@@ -11972,22 +11972,6 @@ recorded = "2026-09-19"
 id = "CD-19246"
 project = "mcp-re-proxy"
 control = "tests/integration_async#transparency_e2e_test::a_hop_the_archive_does_not_hold_is_refused_and_writes_nothing"
-decision = "new-proposition"
-proposition = "NP-154"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19247"
-project = "mcp-re-proxy"
-control = "tests/integration_async#transparency_e2e_test::a_retention_failure_after_execution_is_indeterminate_and_leaves_its_reservation"
-decision = "new-proposition"
-proposition = "NP-154"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19248"
-project = "mcp-re-proxy"
-control = "tests/integration_async#transparency_e2e_test::a_retention_store_that_cannot_accept_the_call_refuses_before_the_backend_runs"
 decision = "new-proposition"
 proposition = "NP-154"
 recorded = "2026-09-19"
