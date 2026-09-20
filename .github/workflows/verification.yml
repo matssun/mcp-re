@@ -184,6 +184,13 @@ on:
       - "mcp-re-proxy/src/aws_sts.rs"
       - "mcp-re-proxy/src/gcp_kms_keysource.rs"
       - "mcp-re-proxy/src/pkcs11_keysource/**"
+      # ADR-MCPRE-069 CO-S3-4: `proxy.pkcs11_adapter` now names a
+      # `tests/pkcs11_keysource_e2e_test#` selector, so this file's BYTES are one of the
+      # unit's fingerprint inputs — the token adapter's only control taken over a real
+      # Cryptoki surface. Without the filter the body could change under the same name
+      # and no verification lane would re-run.
+      - "mcp-re-proxy/tests/pkcs11_keysource_e2e_test.rs"
+      - "mcp-re-proxy/tests/pkcs11_keysource_e2e_test/**"
       - "mcp-re-client/Cargo.toml"
       # #740: the retained-evidence corpus this implementation produced. The ARTIFACTS are in
       # the fingerprint, not just the test that reads them — a frozen vector whose bytes can
@@ -547,6 +554,13 @@ on:
       - "mcp-re-proxy/src/aws_sts.rs"
       - "mcp-re-proxy/src/gcp_kms_keysource.rs"
       - "mcp-re-proxy/src/pkcs11_keysource/**"
+      # ADR-MCPRE-069 CO-S3-4: `proxy.pkcs11_adapter` now names a
+      # `tests/pkcs11_keysource_e2e_test#` selector, so this file's BYTES are one of the
+      # unit's fingerprint inputs — the token adapter's only control taken over a real
+      # Cryptoki surface. Without the filter the body could change under the same name
+      # and no verification lane would re-run.
+      - "mcp-re-proxy/tests/pkcs11_keysource_e2e_test.rs"
+      - "mcp-re-proxy/tests/pkcs11_keysource_e2e_test/**"
       - "mcp-re-client/Cargo.toml"
       # #740: the retained-evidence corpus this implementation produced. The ARTIFACTS are in
       # the fingerprint, not just the test that reads them — a frozen vector whose bytes can

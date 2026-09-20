@@ -8897,6 +8897,17 @@ tested_symbols = [
   "lib#pkcs11_keysource::tests::failed_retry_does_not_cache_the_session",
   "lib#pkcs11_keysource::tests::the_tls_session_pool_signs_several_handshakes_at_once",
   "lib#pkcs11_keysource::tests::the_tls_session_pool_amortizes_one_login_per_session",
+  # THE ANTI-VACUITY HALF, AND THE ONLY ONE TAKEN OVER A REAL CRYPTOKI SURFACE. Every
+  # `lib#` name above drives a fake device inside the crate, and all of them are
+  # REFUSALS — `unverifiable_64byte_signature_is_rejected_before_emit` is satisfied by
+  # an adapter that refuses everything. This one takes the opposite direction of the
+  # same conjunct: a signature the token produced over `CKM_EDDSA` through a
+  # dynamically loaded PKCS#11 module VERIFIES under the `CKA_EC_POINT` that same token
+  # exported, checked with the unmodified `mcp_re_core` verifier a relying party uses,
+  # and a tampered preimage under that signature does not. Without it the emit guard's
+  # declared battery states only what the adapter rejects, and an adapter that had
+  # stopped reaching the token at all would keep it green.
+  "tests/pkcs11_keysource_e2e_test#pkcs11_sign_verifies_against_token_public_key",
 ]
 
 # The two credential acquirers, which are a different authority from the signers above: what
