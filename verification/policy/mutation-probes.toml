@@ -2912,6 +2912,16 @@ weakening = """
 expect_red = [
   "lib#http_profile_dispatch::tests::the_serving_path_refuses_an_undeclared_tier_before_the_store_is_touched",
   "lib#http_profile_dispatch::tests::the_serving_path_refuses_a_sub_minimum_tier_before_the_store_is_touched",
+  # ADR-MCPRE-069 NP-161. The same weakening, read at the adapter the integration lane
+  # drives through the real profile seam. These do not replace the two above — the serving
+  # path stays required — they establish that the `tests/integration` battery registered
+  # with them is load-bearing rather than merely green. `fleet_strict_admits_*` is
+  # deliberately absent: a gate that always returns `Ok` admits, so the admitting direction
+  # cannot see this weakening and naming it would make the probe unsatisfiable for the
+  # wrong reason.
+  "tests/integration#http_profile_dispatch_test::fleet_strict_refuses_undeclared_tier",
+  "tests/integration#http_profile_dispatch_test::fleet_strict_refuses_redis_async_tier",
+  "tests/integration#http_profile_dispatch_test::fleet_strict_refuses_single_store_fail_closed_tier",
 ]
 
 [[probe]]

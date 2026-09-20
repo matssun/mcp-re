@@ -7310,6 +7310,31 @@ tested_symbols = [
   "lib#http_profile_dispatch::tests::a_strong_declared_tier_does_not_excuse_a_single_process_async_store",
   "lib#http_profile_dispatch::tests::neither_serving_path_gate_fires_outside_fleet_strict",
   "lib#http_profile_dispatch::tests::the_serving_path_admits_a_strict_minimum_tier_over_a_durable_store",
+  # ADR-MCPRE-069 NP-161. The same conjuncts driven through the REAL profile sign/verify
+  # seam rather than through a hand-built `VerifiedMcpRequest`: `signed_and_verified` signs
+  # with `sign_request_full` and verifies with `Verifier`, so the tier gate is reached by a
+  # request the profile itself admitted. Same lane as everything above — the unit declares
+  # no `test_features` and these compile into the plain `tests/integration` binary — and
+  # each one is the integration twin of a `lib#` conjunct already here, which is why this is
+  # a battery addition and not a widening: no line below asserts anything the description
+  # does not already claim.
+  #
+  # The three refusals are named in M139's `expect_red`, so the integration lane is measured
+  # rather than merely listed. The two admissions are the mirrors, and they must stay green
+  # under that weakening — a gate that refuses everything would satisfy the refusals alone.
+  "tests/integration#http_profile_dispatch_test::fleet_strict_refuses_undeclared_tier",
+  "tests/integration#http_profile_dispatch_test::fleet_strict_refuses_redis_async_tier",
+  "tests/integration#http_profile_dispatch_test::fleet_strict_refuses_single_store_fail_closed_tier",
+  "tests/integration#http_profile_dispatch_test::fleet_strict_admits_redis_wait_quorum_tier",
+  "tests/integration#http_profile_dispatch_test::fleet_strict_admits_linearizable_tier",
+  # Defense in depth beneath the deployment gate, and the outside-fleet-strict mirror. The
+  # production arm both of these reach is `mcp-re-http-profile/src/dispatch.rs`, which is
+  # not this unit's `paths`: its falsifier is M323, under `http_profile.fleet_strict_store_class`.
+  # They are here because the conjunct they measure — a strong declaration does not excuse a
+  # single-process store, and the tier gate does not fire outside fleet-strict — is this
+  # unit's description, measured at the adapter that composes both gates.
+  "tests/integration#http_profile_dispatch_test::core_single_process_gate_fires_beneath_an_acceptable_tier",
+  "tests/integration#http_profile_dispatch_test::non_fleet_strict_skips_the_tier_gate_but_keeps_core_admission",
 ]
 
 [[unit]]
