@@ -1999,21 +1999,21 @@ about what the deployment may say.
 
 ## NP-073 — an ingress assertion binds to the request in hand
 
-**Controls:** `transport/ingress/v1.rs` (11), `transport/ingress/v2.rs` (14),
-`transport/ingress/mod.rs` (1), across both frozen formats.
+**Controls:** `transport/ingress/v2.rs` (14), `transport/ingress/mod.rs` (1), over the one
+frozen format.
 **Statement.** *An accepted ingress assertion carries a signature that verifies under a
 KNOWN key id, over a length-prefixed and unambiguous preimage, binds to the hash of the
 request in hand, is inside its window — stale and implausibly-future rejected, a future
-expiry accepted — and, on v2, names this audience and a trusted ingress identity; a
-tampered field, a malformed framing, a malformed identity shape, a malformed enum
-discriminant and a cross-request binding are each rejected; recorded-facts admission fails
-closed; the wire form round-trips through parse; and the two frozen formats have DISJOINT
-PREIMAGES.*
+expiry accepted — names this audience and a trusted ingress identity; a tampered field, a
+malformed framing, a malformed identity shape, a malformed enum discriminant and a
+cross-request binding are each rejected; recorded-facts admission fails closed; the wire
+form round-trips through parse; and the preimage is domain-separated by a VERSION-QUALIFIED
+tag.*
 **If false.** A peer replays one request's ingress assertion onto another — the
 cross-request arm — or an assertion signed for one audience is accepted by another
-deployment, and the proxy believes a hop it never verified. The disjoint-preimages clause is
-the cross-format version of the same attack: one format's signature must not verify as the
-other's.
+deployment, and the proxy believes a hop it never verified. The domain-tag clause is the
+cross-version version of the same attack: a signature produced under another version of this
+mechanism must not verify as one of these.
 **Likely owner:** none. NP-033 is the CONFIGURATION side — attested ingress configured whole
 or not at all; this is the verification the configuration turns on.
 **Root relationship.** Under the peer-identity roots.
@@ -2025,10 +2025,9 @@ for the wrong one.
 
 ## NP-074 — each ingress format publishes the guarantee it actually gives
 
-**Controls:** `transport/ingress/v1.rs::lb_assertion_guarantee_is_not_end_to_end_mtls`,
-`transport/ingress/v2.rs::v2_guarantee_is_attested_delegation_not_end_to_end`.
-**Statement.** *The guarantee each ingress format publishes is what it gives: v1's LB
-assertion is not end-to-end mTLS, and v2's is attested delegation and not end-to-end.*
+**Controls:** `transport/ingress/v2.rs::v2_guarantee_is_attested_delegation_not_end_to_end`.
+**Statement.** *The guarantee the ingress format publishes is what it gives: v2's is
+attested delegation and not end-to-end.*
 **If false.** A deployment reads an ingress assertion as end-to-end channel evidence and
 stops requiring the thing that would have been end-to-end. This is NP-063's shape at a
 different layer — a mechanism publishing a guarantee it does not have — and it is separated
@@ -2076,7 +2075,7 @@ The in-crate pair is the load-bearing one: `pub(crate)` seals nothing against th
 own composition root, and the lever that works here is module privacy. `value` and `source`
 are bare-private to `transport::identity`, and `attested_by_verified_ingress` is
 `pub(super)`, so the set privacy admits is `transport` and its descendants — which is
-exactly the documented producer list, `transport::ingress::v1` and `v2`. The other producer
+exactly the documented producer list, `transport::ingress::v2`. The other producer
 paths are answered too: no `Default`, `From`, `FromStr` or derived `Deserialize` exists on
 the type, and no `#[cfg(test)]` constructor widens it.
 

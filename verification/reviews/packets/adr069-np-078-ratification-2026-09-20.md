@@ -36,8 +36,8 @@ The remaining ADR-MCPRE-068 producer paths, answered:
 
 - **module-tree-visibility** — `value` and `source` are bare-private to `transport::identity`,
   and `attested_by_verified_ingress` is `pub(super)`, so privacy admits `transport` and its
-  descendants. That set is exactly the documented producer list: `transport::ingress::v1`
-  and `transport::ingress::v2`, both refused at Layer-A configuration validation.
+  descendants. That set is exactly the documented producer list:
+  `transport::ingress::v2`, refused at Layer-A configuration validation.
 - **alternate-constructors** — two, both named in the module's own table:
   `extract_identity`, which owns nothing and delegates to the ADR-MCPRE-063 authority, and
   the `pub(super)` one above. No third exists in the crate.

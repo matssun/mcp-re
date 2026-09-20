@@ -31,9 +31,9 @@ pub enum PeerIdentityProvenance {
     /// [`crate::tls::MCP_INGRESS_ASSERTION_HEADER`]. The identity CANNOT be resolved at
     /// the connection seam — the assertion binds the request hash, known only after object
     /// verification — so under this provenance `resolve_identity` yields `None` and the
-    /// serve loop instead extracts the raw assertion header and hands it to the
-    /// post-verification check (`Proxy::with_lb_assertion`). The channel credential is NOT
-    /// consulted for identity.
+    /// serve loop instead extracts the raw assertion header and carries it on the served
+    /// request for the handler that consumes it. The channel credential is NOT consulted
+    /// for identity.
     IngressAssertion,
 }
 

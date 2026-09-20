@@ -87,9 +87,8 @@ where
 /// As [`serve_once`], but the handler ALSO receives the raw Tier-3 ingress-assertion
 /// header value (issue #71) when the `LbAssertion` identity strategy is active. Under any
 /// other strategy the third argument is always `None`. This is the entry point an embedder
-/// uses so the assertion can reach the proxy's post-verification LB check
-/// (`Proxy::with_lb_assertion`); a duplicated assertion header yields `None` (fail closed
-/// at the proxy's required-header guard).
+/// uses so the assertion can reach the handler that consumes it; a duplicated assertion
+/// header yields `None` (fail closed at the proxy's required-header guard).
 pub fn serve_once_with_assertion<H>(
     listener: &TcpListener,
     config: Arc<ServerConfig>,
