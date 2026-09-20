@@ -133,7 +133,7 @@ impl RetainedEvidenceStore for FsRetainedEvidenceStore {
     type Error = std::io::Error;
 
     /// One object, fully durable on return: stage it, then take the directory barrier
-    /// immediately. The serving path uses [`FsRetainedEvidenceStore::stage`] plus a
+    /// immediately. The serving path uses [`FsRetainedEvidenceStore::stage_at`] plus a
     /// shared [`FsRetainedEvidenceStore::sync_root`] instead, so a batch of writes pays
     /// one directory barrier rather than one each.
     fn put(&mut self, evidence: &[u8]) -> Result<EvidenceDigest, Self::Error> {

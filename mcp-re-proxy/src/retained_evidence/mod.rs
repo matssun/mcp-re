@@ -3,9 +3,9 @@
 //!
 //! The SCITT commitment (`mcp-re-http-profile::scitt`) names evidence it does not
 //! carry: the receipt is small and portable, the request/response bytes stay retained.
-//! `mcp-re-http-profile` is pure — no fs — so it declares the
-//! [`mcp_re_http_profile::scitt::RetainedEvidenceStore`] interface and this module
-//! supplies the implementation.
+//! `mcp-re-http-profile` is pure — no fs — so the bytes live here: this module owns the
+//! directory, and the profile crate contributes only the digest type
+//! ([`mcp_re_http_profile::scitt::EvidenceDigest`]) and the commitment check over it.
 //!
 //! **Scope, stated so nobody mistakes it for a platform.** This is an immutable
 //! content-addressed object store, sufficient for the SCITT vertical: `put` and `get`
@@ -14,8 +14,9 @@
 //! has, and inventing them here to close an interoperability issue would be building
 //! the wrong thing.
 //!
-//! The interface is the seam that keeps an object-store implementation possible later:
-//! nothing in the SCITT path knows a filesystem is behind it.
+//! Nothing in the SCITT path goes through an interface to reach it. The write side holds
+//! [`FsRetainedEvidenceStore`] concretely (`transparency::durable_writer`) and the audit
+//! side reads through [`FsRetainedArchive`] (`transparency::attestation`).
 //!
 //! ## Two authorities, and the reason the boundary is where it is
 //!
