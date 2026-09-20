@@ -39,7 +39,7 @@
 //! corrupting a file, and an ephemeral client sidecar loses the volume on every
 //! restart, so "0 after deletion" would hand back the whole rollback window for free.
 //!
-//! [`FileManifestFloor::with_bootstrap`] is the answer: an operator-declared minimum
+//! [`FileManifestFloor::with_bounds`]'s `bootstrap` is the answer: an operator-declared minimum
 //! the floor can never read below, whatever the filesystem says. It costs one config
 //! value and it is the only part of this that an attacker cannot reach.
 //!
@@ -104,30 +104,16 @@ pub struct FileManifestFloor {
 }
 
 impl FileManifestFloor {
-    /// Open (or create) the floor directory at `path`, with no declared minimum.
-    ///
-    /// Deleting the directory then resets the floor to 0. Prefer
-    /// [`with_bootstrap`](Self::with_bootstrap) anywhere the storage is not both
-    /// persistent and better-protected than the manifest itself.
-    pub fn open(path: impl Into<PathBuf>) -> Result<Self, TrustManifestError> {
-        Self::with_bootstrap(path, 0)
-    }
-
-    /// Open the floor with an operator-declared minimum version.
+    /// Open (or create) the floor directory at `path`, with an operator-declared
+    /// minimum AND maximum.
     ///
     /// `bootstrap` is a floor under the floor: whatever the directory says, no
     /// manifest below this version is ever accepted. It is what makes the durable
     /// floor safe on ephemeral storage, where "the file is gone" and "nothing has
     /// been accepted yet" are indistinguishable to the code and very different in
-    /// fact.
-    pub fn with_bootstrap(
-        path: impl Into<PathBuf>,
-        bootstrap: u64,
-    ) -> Result<Self, TrustManifestError> {
-        Self::with_bounds(path, bootstrap, None)
-    }
-
-    /// Open the floor with an operator-declared minimum AND maximum.
+    /// fact. A `bootstrap` of 0 declares no minimum, and deleting the directory then
+    /// resets the floor to 0 — so declare one anywhere the storage is not both
+    /// persistent and better-protected than the manifest itself.
     ///
     /// `ceiling` bounds what a writer of the floor directory can ADD. Exceeding it is
     /// [`TrustManifestError::FloorAboveCeiling`] — the client stops rather than serving
@@ -137,6 +123,13 @@ impl FileManifestFloor {
     ///
     /// A `bootstrap` above the `ceiling` is that same contradiction declared in one
     /// place, so it is refused here rather than at the first verification.
+    ///
+    /// This is the type's only constructor and the only place a `FileManifestFloor`
+    /// is built, so what it checks is what holding one means: the declared bounds are
+    /// consistent, the directory exists or was created, and it read once within those
+    /// bounds. What it does NOT establish is anything about the directory's contents —
+    /// the markers are unauthenticated by construction, so a later read can still
+    /// fail-stop against the `ceiling`.
     pub fn with_bounds(
         path: impl Into<PathBuf>,
         bootstrap: u64,

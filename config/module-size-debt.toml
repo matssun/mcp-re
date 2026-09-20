@@ -618,7 +618,7 @@ review_ref = "EX-008 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "mcp-re-client-proxy/src/manifest_floor.rs"
-baseline_prod_loc = 342
+baseline_prod_loc = 335
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
