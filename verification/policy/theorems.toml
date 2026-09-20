@@ -1128,8 +1128,7 @@ It bounds LENGTH, not content: a well-formed value may be an attacker-chosen str
 the theorem is not a claim that the value is meaningful, resolvable, or issued to anyone.
 
 The claim is over inhabitants of the type. Callers that reimplement the rules instead of
-constructing the type are outside it — so the way this theorem reaches the trusted-ingress
-path is that no caller reimplements: every one of them asks `interpret` for the value.
+constructing the type are outside it.
 """
 owner = "proxy.peer_identity_value"
 review_requirement = "Owner security-specification review"
