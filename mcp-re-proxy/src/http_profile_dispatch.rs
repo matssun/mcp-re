@@ -216,6 +216,7 @@ mod tests {
     use crate::async_replay::ReplayDecisionFuture;
     use crate::async_replay::ReplayInsert;
     use crate::config_state::FreshnessWindow;
+    use crate::shared_replay::ReplayStoreError;
     use std::sync::atomic::AtomicBool;
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
@@ -511,6 +512,9 @@ mod tests {
     struct WitnessStore {
         touched: Arc<AtomicBool>,
         class: ReplayDurabilityClass,
+        /// When set, the store CANNOT establish the state: the insert fails the way an
+        /// unreachable or non-acknowledging backend fails, after being reached.
+        unavailable: bool,
     }
 
     impl AsyncAtomicReplayStore for WitnessStore {
@@ -519,7 +523,15 @@ mod tests {
             _insert: ReplayInsert<'a>,
         ) -> ReplayDecisionFuture<'a> {
             self.touched.store(true, Ordering::SeqCst);
-            Box::pin(async { Ok(ReplayDecision::Fresh) })
+            let unavailable = self.unavailable;
+            Box::pin(async move {
+                if unavailable {
+                    return Err(ReplayStoreError::Unavailable {
+                        details: "the acknowledgement never arrived".into(),
+                    });
+                }
+                Ok(ReplayDecision::Fresh)
+            })
         }
 
         fn durability_class(&self) -> ReplayDurabilityClass {
@@ -530,10 +542,23 @@ mod tests {
     /// An async tier over a witness store self-reporting `class`, and the flag that store
     /// sets when the admission step reaches it.
     fn async_tier(class: ReplayDurabilityClass) -> (AsyncReplayTier, Arc<AtomicBool>) {
+        async_tier_inner(class, false)
+    }
+
+    /// The same tier over a store that is reached and then does not answer.
+    fn async_tier_unreachable() -> (AsyncReplayTier, Arc<AtomicBool>) {
+        async_tier_inner(ReplayDurabilityClass::Durable, true)
+    }
+
+    fn async_tier_inner(
+        class: ReplayDurabilityClass,
+        unavailable: bool,
+    ) -> (AsyncReplayTier, Arc<AtomicBool>) {
         let touched = Arc::new(AtomicBool::new(false));
         let store = WitnessStore {
             touched: Arc::clone(&touched),
             class,
+            unavailable,
         };
         let freshness = FreshnessWindow::new(5).expect("5s is inside the §5.1 skew bound");
         (AsyncReplayTier::new(Arc::new(store), freshness), touched)
@@ -692,6 +717,39 @@ mod tests {
         assert!(
             touched.load(Ordering::SeqCst),
             "the admission step was not reached"
+        );
+    }
+
+    /// THE SERVING PATH: an async tier that cannot establish the state the request
+    /// requires refuses rather than dispatching, and the verdict is an outage.
+    ///
+    /// The four refusals above are about a POSTURE that is wrong before anything is spent.
+    /// This is the other half, and it is the one that decides the proposition on the path
+    /// `answering_commitment` runs: the posture is fine, the store is the selected one,
+    /// and the acknowledgement does not arrive. The awaited admission is the last step
+    /// precisely because there is nothing after it to undo, so its failure must be a
+    /// refusal and never a fall-through — and it must not read as a replay, because
+    /// "already served" and "nothing was established" are opposite advice to a caller.
+    #[test]
+    fn the_serving_path_refuses_a_store_that_cannot_establish_the_state() {
+        let (tier, touched) = async_tier_unreachable();
+        let err = block(dispatch_request_with_async_tier(
+            &verified(),
+            &tier,
+            None,
+            &strict(Some(ReplayDurabilityTier::Linearizable)),
+            1,
+        ))
+        .expect_err("an unestablished replay state must not dispatch");
+
+        assert!(
+            touched.load(Ordering::SeqCst),
+            "this control is only about the admission step, which must have been reached"
+        );
+        assert_eq!(
+            err,
+            ProxyDispatchError::Dispatch(DispatchError::ReplayCacheUnavailable),
+            "an outage must not be reported as a replay: {err:?}"
         );
     }
 }

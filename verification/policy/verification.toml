@@ -7514,7 +7514,7 @@ tested_symbols = [
   "lib#http_profile_dispatch::core_projection::tests::a_delegated_failure_keeps_the_dispatchers_verdict",
   # THE SERVING PATH. Everything above drives `dispatch_request_with_tier_gate`, which no
   # production caller reaches — it is the reference reading of the profile pipeline. These
-  # five drive `dispatch_request_with_async_tier`, which `answering_commitment` calls, and
+  # six drive `dispatch_request_with_async_tier`, which `answering_commitment` calls, and
   # they are listed separately because a test property includes the FUNCTION the test
   # exists in: the two entry points share the deployment tier gate but not their shape, and
   # the store-class refusal the sync path inherits from `dispatch_request` is carried by the
@@ -7524,6 +7524,11 @@ tested_symbols = [
   "lib#http_profile_dispatch::tests::a_strong_declared_tier_does_not_excuse_a_single_process_async_store",
   "lib#http_profile_dispatch::tests::neither_serving_path_gate_fires_outside_fleet_strict",
   "lib#http_profile_dispatch::tests::the_serving_path_admits_a_strict_minimum_tier_over_a_durable_store",
+  # The admission step on the serving path: the store is reached, does not answer, and the
+  # exchange does not dispatch. The last of the six, and the twin of
+  # `a_store_that_cannot_establish_the_state_refuses_rather_than_dispatching` above, which
+  # establishes the same fact only about the entry point no production caller reaches.
+  "lib#http_profile_dispatch::tests::the_serving_path_refuses_a_store_that_cannot_establish_the_state",
   # ADR-MCPRE-069 NP-161. The same conjuncts driven through the REAL profile sign/verify
   # seam rather than through a hand-built `VerifiedMcpRequest`: `signed_and_verified` signs
   # with `sign_request_full` and verifies with `Verifier`, so the tier gate is reached by a
