@@ -39,11 +39,9 @@ use crate::communication_assurance::credential_currency::CredentialCurrencyOutco
 use crate::communication_assurance::credential_currency::CredentialCurrencyPolicy;
 use crate::communication_assurance::credential_currency::CredentialCurrencyRefusal;
 use crate::communication_assurance::credential_key_correspondence::CredentialKeyCorrespondenceRefusal;
-use crate::communication_assurance::credential_public_key_evidence::CredentialKeyRefusal;
 use crate::communication_assurance::current_authenticated_peer::current_authenticated_peer;
 use crate::communication_assurance::current_authenticated_peer::CurrentPeerRefusal;
 use crate::communication_assurance::peer_identity_provenance::PeerIdentityProvenance;
-use crate::communication_assurance::signing_key_evidence::SigningKeyRefusal;
 use crate::communication_assurance::AuthenticatedChannelPeer;
 use crate::communication_assurance::MechanismVerifiedCredentialEvidence;
 use crate::transport::IdentityPolicy;
@@ -273,39 +271,8 @@ pub enum TlsError {
     /// Ed25519-only), OR the delegated signer's public key does not match the leaf
     /// certificate's public key. Either is a deployment error and FAILS CLOSED at
     /// config construction — no server is started.
-    #[error("delegated TLS credential mismatch: {}", correspondence_sentence(.0))]
+    #[error("delegated TLS credential mismatch: {0}")]
     DelegatedKeyMismatch(CredentialKeyCorrespondenceRefusal),
-}
-
-/// The sentence an operator reads for a credential/key correspondence refusal.
-///
-/// Reached only through [`TlsError`]'s `Display`: the variant carries the authority's
-/// ALGEBRA, which is what a caller matches on, and this is the rendering of it. Every arm
-/// names WHICH side failed and WHY, so two different incidents never read the same.
-fn correspondence_sentence(refusal: &CredentialKeyCorrespondenceRefusal) -> String {
-    match refusal {
-        CredentialKeyCorrespondenceRefusal::Credential(CredentialKeyRefusal::Absent) => {
-            "delegated TLS server certificate chain is empty".to_string()
-        }
-        CredentialKeyCorrespondenceRefusal::Credential(
-            CredentialKeyRefusal::UninterpretableCredential,
-        ) => "leaf certificate is not parseable DER".to_string(),
-        CredentialKeyCorrespondenceRefusal::Credential(CredentialKeyRefusal::Key(reason)) => {
-            format!("delegated TLS leaf certificate public key: {reason}")
-        }
-        CredentialKeyCorrespondenceRefusal::SigningKey(SigningKeyRefusal::Unavailable) => {
-            "delegated TLS signer did not yield an exportable public key".to_string()
-        }
-        CredentialKeyCorrespondenceRefusal::SigningKey(SigningKeyRefusal::Key(reason)) => {
-            format!("delegated TLS signer public key: {reason}")
-        }
-        CredentialKeyCorrespondenceRefusal::Mismatch(_) => {
-            "the delegated TLS signer's Ed25519 public key does not match the leaf \
-             certificate's SubjectPublicKeyInfo; the signer signs for a different key than \
-             the certificate presents"
-                .to_string()
-        }
-    }
 }
 
 /// Produce the delegated TLS certificate resolver for a credential and its signer, in the
@@ -823,9 +790,8 @@ mod delegated_credential_key_correspondence_tests {
     //! What these controls pin is that each of the six vectors REFUSES, and which fact
     //! each refusal reports: `TlsError::DelegatedKeyMismatch` carries the authority's
     //! hierarchical refusal, so an empty credential chain and a genuine key mismatch are
-    //! distinguishable by matching rather than by reading prose. The last two controls
-    //! hold the rendering honest — a caller matches on the fact, an operator reads the
-    //! sentence, and both have to keep the facts apart.
+    //! distinguishable by matching rather than by reading prose. How a refusal READS is
+    //! the algebra's own concern and is controlled at its owner.
 
     use x509_parser::certificate::X509Certificate;
     use x509_parser::prelude::FromDer;
@@ -1102,57 +1068,6 @@ mod delegated_credential_key_correspondence_tests {
             facts.corresponding_key().raw_point().as_slice(),
             &spki[spki.len() - 32..],
             "the corresponding key is the key, not a re-derivation of it"
-        );
-    }
-
-    #[test]
-    fn every_fact_renders_to_a_distinct_sentence() {
-        // The rendering is lossy by nature — one error variant, many facts — but it must
-        // not be lossy HERE: an operator reading two different incidents must not read the
-        // same sentence. The algebra is what a caller matches on; this is what a human
-        // reads, and both have to keep the facts apart.
-        let facts = [
-            CredentialKeyCorrespondenceRefusal::Credential(CredentialKeyRefusal::Absent),
-            CredentialKeyCorrespondenceRefusal::Credential(
-                CredentialKeyRefusal::UninterpretableCredential,
-            ),
-            CredentialKeyCorrespondenceRefusal::Credential(CredentialKeyRefusal::Key(
-                Rfc8410SpkiRefusal::Uninterpretable,
-            )),
-            CredentialKeyCorrespondenceRefusal::Credential(CredentialKeyRefusal::Key(
-                Rfc8410SpkiRefusal::UnsupportedAlgorithm {
-                    oid: "1.2.840.113549.1.1.1".to_string(),
-                },
-            )),
-            CredentialKeyCorrespondenceRefusal::SigningKey(SigningKeyRefusal::Unavailable),
-            CredentialKeyCorrespondenceRefusal::SigningKey(SigningKeyRefusal::Key(
-                Rfc8410SpkiRefusal::NonCanonicalEd25519Encoding,
-            )),
-            CredentialKeyCorrespondenceRefusal::Mismatch(CorrespondenceMismatch),
-        ];
-        let rendered: std::collections::BTreeSet<String> = facts
-            .iter()
-            .map(|fact| TlsError::DelegatedKeyMismatch(fact.clone()).to_string())
-            .collect();
-        assert_eq!(
-            rendered.len(),
-            facts.len(),
-            "two different facts rendered to the same sentence"
-        );
-    }
-
-    #[test]
-    fn an_unsupported_algorithm_tells_the_operator_which_algorithm_was_given() {
-        let message =
-            TlsError::DelegatedKeyMismatch(CredentialKeyCorrespondenceRefusal::Credential(
-                CredentialKeyRefusal::Key(Rfc8410SpkiRefusal::UnsupportedAlgorithm {
-                    oid: "1.2.840.113549.1.1.1".to_string(),
-                }),
-            ))
-            .to_string();
-        assert!(
-            message.contains("1.2.840.113549.1.1.1"),
-            "an operator who configured an RSA key must be told so: {message}"
         );
     }
 }

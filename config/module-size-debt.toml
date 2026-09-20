@@ -123,31 +123,24 @@ review_ref = "EX-004 in docs/architecture/review-dispositions.md"
 # capability. The debt moves WITH the two halves, and the sum rises from 1268 to 1350
 # because each half now carries the module note stating which reachability rule governs it
 # — which is precisely what the census found missing, and is not headroom: neither entry
-# may grow from here.
+# may grow from here. RA3-002 shrank this entry from 338 to 298 by deleting the provider
+# seam, the asserted-identity re-export block and the historical-vocabulary controls.
 [[debt]]
 path = "mcp-re-proxy/src/transport/mod.rs"
-baseline_prod_loc = 338
+baseline_prod_loc = 298
 baseline_sha = "94fcc0a"
 status = "reviewed-exception"
 review_ref = "EX-005 in docs/architecture/review-dispositions.md"
 
 # EX-005's ingress disposition is implemented. `ingress.rs` split along the boundary its own
-# source already drew: two FROZEN wire formats, `mcp-re/lb-ingress-assertion/v1` (Mode B /
-# Tier 3) and `.../v2` (Mode C / Tier 4), which share no preimage, no field layout and no
-# verifier order. The facade (`ingress/mod.rs`, 74 lines) is under the threshold and holds
-# no entry; the debt moves WITH the two formats, because dropping it on a path change would
-# launder 1012 registered lines as progress.
+# source already drew: the FROZEN wire format `mcp-re/lb-ingress-assertion/v2` (Mode C /
+# Tier 4) owns its preimage, field layout and verifier order. The facade (`ingress/mod.rs`)
+# is under the threshold and holds no entry; the debt moves WITH the format, because
+# dropping it on a path change would launder registered lines as progress.
 #
-# 1012 -> 334 + 673, plus the facade's 74. Each version now carries the module note stating
-# which frozen format it owns, and the facade carries the disjointness test neither version
-# can state alone. Neither entry may grow from here.
-[[debt]]
-path = "mcp-re-proxy/src/transport/ingress/v1.rs"
-baseline_prod_loc = 334
-baseline_sha = "b142a7a"
-status = "reviewed-exception"
-review_ref = "EX-005 in docs/architecture/review-dispositions.md"
-
+# RA3-002 deleted the Mode B / v1 format on the ruling that put the load balancer outside
+# the trusted computing base, so its 334-line entry is REMOVED: a debt whose file no longer
+# exists is paid, and the registry may only shrink. The v2 entry may not grow from here.
 [[debt]]
 path = "mcp-re-proxy/src/transport/ingress/v2.rs"
 baseline_prod_loc = 673

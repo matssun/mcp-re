@@ -25,10 +25,10 @@ conversion that reassigns a case repoints a deployment at another certificate fi
 
 ## NP-145's residue: the correspondence RENDERING
 
-**2 controls**, carrier `mcp-re-proxy/src/tls.rs`:
+**2 controls**, carrier `mcp-re-proxy/src/communication_assurance/credential_key_correspondence.rs`:
 
-- `lib#tls::delegated_credential_key_correspondence_tests::every_fact_renders_to_a_distinct_sentence`
-- `lib#tls::delegated_credential_key_correspondence_tests::an_unsupported_algorithm_tells_the_operator_which_algorithm_was_given`
+- `lib#communication_assurance::credential_key_correspondence::tests::every_fact_renders_to_a_distinct_sentence`
+- `lib#communication_assurance::credential_key_correspondence::tests::an_unsupported_algorithm_tells_the_operator_which_algorithm_was_given`
 
 THM-0026, statement, verbatim:
 

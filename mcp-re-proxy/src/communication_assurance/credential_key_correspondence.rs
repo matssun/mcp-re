@@ -59,6 +59,38 @@ pub enum CredentialKeyCorrespondenceRefusal {
     Mismatch(CorrespondenceMismatch),
 }
 
+/// The sentence an operator reads for a refusal.
+///
+/// It lives on the algebra so a new fact cannot be added without a sentence: every arm
+/// names WHICH side failed and WHY, and two different incidents never read the same. What
+/// a caller matches on is the value; this is only how it reads.
+impl std::fmt::Display for CredentialKeyCorrespondenceRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CredentialKeyCorrespondenceRefusal::Credential(CredentialKeyRefusal::Absent) => {
+                f.write_str("delegated TLS server certificate chain is empty")
+            }
+            CredentialKeyCorrespondenceRefusal::Credential(
+                CredentialKeyRefusal::UninterpretableCredential,
+            ) => f.write_str("leaf certificate is not parseable DER"),
+            CredentialKeyCorrespondenceRefusal::Credential(CredentialKeyRefusal::Key(reason)) => {
+                write!(f, "delegated TLS leaf certificate public key: {reason}")
+            }
+            CredentialKeyCorrespondenceRefusal::SigningKey(SigningKeyRefusal::Unavailable) => {
+                f.write_str("delegated TLS signer did not yield an exportable public key")
+            }
+            CredentialKeyCorrespondenceRefusal::SigningKey(SigningKeyRefusal::Key(reason)) => {
+                write!(f, "delegated TLS signer public key: {reason}")
+            }
+            CredentialKeyCorrespondenceRefusal::Mismatch(_) => f.write_str(
+                "the delegated TLS signer's Ed25519 public key does not match the leaf \
+                 certificate's SubjectPublicKeyInfo; the signer signs for a different key \
+                 than the certificate presents",
+            ),
+        }
+    }
+}
+
 /// Both sides presented the same public key, of the required profile.
 ///
 /// Sealed. The corresponding key is the ONE key both sides agreed on, and there is
@@ -346,5 +378,53 @@ mod tests {
         // cannot be lost in a later edit that helpfully adds the expected key to it.
         let mismatch = CorrespondenceMismatch;
         assert_eq!(std::mem::size_of_val(&mismatch), 0);
+    }
+
+    #[test]
+    fn every_fact_renders_to_a_distinct_sentence() {
+        // The rendering is lossy by nature — one error variant carries many facts — but it
+        // must not be lossy HERE: an operator reading two different incidents must not read
+        // the same sentence. The algebra is what a caller matches on; this is what a human
+        // reads, and both have to keep the facts apart.
+        let facts = [
+            CredentialKeyCorrespondenceRefusal::Credential(CredentialKeyRefusal::Absent),
+            CredentialKeyCorrespondenceRefusal::Credential(
+                CredentialKeyRefusal::UninterpretableCredential,
+            ),
+            CredentialKeyCorrespondenceRefusal::Credential(CredentialKeyRefusal::Key(
+                Rfc8410SpkiRefusal::Uninterpretable,
+            )),
+            CredentialKeyCorrespondenceRefusal::Credential(CredentialKeyRefusal::Key(
+                Rfc8410SpkiRefusal::UnsupportedAlgorithm {
+                    oid: "1.2.840.113549.1.1.1".to_string(),
+                },
+            )),
+            CredentialKeyCorrespondenceRefusal::SigningKey(SigningKeyRefusal::Unavailable),
+            CredentialKeyCorrespondenceRefusal::SigningKey(SigningKeyRefusal::Key(
+                Rfc8410SpkiRefusal::NonCanonicalEd25519Encoding,
+            )),
+            CredentialKeyCorrespondenceRefusal::Mismatch(CorrespondenceMismatch),
+        ];
+        let rendered: std::collections::BTreeSet<String> =
+            facts.iter().map(ToString::to_string).collect();
+        assert_eq!(
+            rendered.len(),
+            facts.len(),
+            "two different facts rendered to the same sentence"
+        );
+    }
+
+    #[test]
+    fn an_unsupported_algorithm_tells_the_operator_which_algorithm_was_given() {
+        let message = CredentialKeyCorrespondenceRefusal::Credential(CredentialKeyRefusal::Key(
+            Rfc8410SpkiRefusal::UnsupportedAlgorithm {
+                oid: "1.2.840.113549.1.1.1".to_string(),
+            },
+        ))
+        .to_string();
+        assert!(
+            message.contains("1.2.840.113549.1.1.1"),
+            "an operator who configured an RSA key must be told so: {message}"
+        );
     }
 }
