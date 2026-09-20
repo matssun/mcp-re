@@ -366,7 +366,7 @@ mod tests {
     #[test]
     fn a_missing_floor_is_zero() {
         let scratch = Scratch::new("missing");
-        let floor = FileManifestFloor::open(&scratch.0).expect("open");
+        let floor = FileManifestFloor::with_bounds(&scratch.0, 0, None).expect("open");
         assert_eq!(
             floor.min_version().unwrap(),
             0,
@@ -379,17 +379,17 @@ mod tests {
         // The whole point: the floor outlives the process that recorded it.
         let scratch = Scratch::new("survives");
         {
-            let mut floor = FileManifestFloor::open(&scratch.0).expect("open");
+            let mut floor = FileManifestFloor::with_bounds(&scratch.0, 0, None).expect("open");
             floor.record(7).expect("record");
         }
-        let reopened = FileManifestFloor::open(&scratch.0).expect("reopen");
+        let reopened = FileManifestFloor::with_bounds(&scratch.0, 0, None).expect("reopen");
         assert_eq!(reopened.min_version().unwrap(), 7, "the floor is durable");
     }
 
     #[test]
     fn the_floor_is_monotonic() {
         let scratch = Scratch::new("monotonic");
-        let mut floor = FileManifestFloor::open(&scratch.0).expect("open");
+        let mut floor = FileManifestFloor::with_bounds(&scratch.0, 0, None).expect("open");
         floor.record(9).expect("record 9");
         floor
             .record(4)
@@ -417,7 +417,7 @@ mod tests {
     #[test]
     fn an_equal_version_record_still_establishes_durability() {
         let scratch = Scratch::new("equal-durable");
-        let mut floor = FileManifestFloor::open(&scratch.0).expect("open");
+        let mut floor = FileManifestFloor::with_bounds(&scratch.0, 0, None).expect("open");
         // A marker another writer created, never routed through this handle.
         persist(&scratch.0, 5).expect("the sidecar records 5");
         floor
@@ -445,7 +445,7 @@ mod tests {
     #[test]
     fn a_concurrent_raise_makes_the_accepted_version_unrecordable() {
         let scratch = Scratch::new("raced");
-        let mut floor = FileManifestFloor::open(&scratch.0).expect("open");
+        let mut floor = FileManifestFloor::with_bounds(&scratch.0, 0, None).expect("open");
         // The load read floor 0 and verified manifest v6. Meanwhile a sidecar accepted
         // v10 — the manifest that revoked a root.
         persist(&scratch.0, 10).expect("the sidecar records 10");
@@ -469,11 +469,12 @@ mod tests {
     fn a_declared_bootstrap_does_not_suppress_the_durable_record() {
         let scratch = Scratch::new("bootstrap-record");
         {
-            let mut floor = FileManifestFloor::with_bootstrap(&scratch.0, 100).expect("open");
+            let mut floor = FileManifestFloor::with_bounds(&scratch.0, 100, None).expect("open");
             floor.record(100).expect("record the accepted version");
         }
         // A second process on the same volume, with no bootstrap of its own.
-        let other = FileManifestFloor::open(&scratch.0).expect("reopen without a bootstrap");
+        let other = FileManifestFloor::with_bounds(&scratch.0, 0, None)
+            .expect("reopen without a bootstrap");
         assert_eq!(
             other.min_version().unwrap(),
             100,
@@ -488,7 +489,7 @@ mod tests {
     #[test]
     fn a_late_lower_write_cannot_walk_the_floor_back() {
         let scratch = Scratch::new("interleaved");
-        FileManifestFloor::open(&scratch.0).expect("open");
+        FileManifestFloor::with_bounds(&scratch.0, 0, None).expect("open");
         // Both writers act as though the floor were still 5.
         persist(&scratch.0, 10).expect("writer A records 10");
         persist(&scratch.0, 7).expect("writer B records 7, having read the older floor");
@@ -507,7 +508,7 @@ mod tests {
     #[test]
     fn a_non_marker_entry_is_ignored_and_does_not_lower_the_floor() {
         let scratch = Scratch::new("junk");
-        let mut floor = FileManifestFloor::open(&scratch.0).expect("open");
+        let mut floor = FileManifestFloor::with_bounds(&scratch.0, 0, None).expect("open");
         floor.record(12).expect("record");
         std::fs::write(scratch.0.join("not-a-number"), b"").expect("write garbage");
         std::fs::write(scratch.0.join(".DS_Store"), b"x").expect("write a dev artefact");
@@ -515,7 +516,8 @@ mod tests {
         std::fs::write(scratch.0.join("0099"), b"").expect("write a padded near-miss");
         std::fs::create_dir(scratch.0.join("lost+found")).expect("an ext4 mount root");
 
-        let reopened = FileManifestFloor::open(&scratch.0).expect("the floor is still readable");
+        let reopened = FileManifestFloor::with_bounds(&scratch.0, 0, None)
+            .expect("the floor is still readable");
         assert_eq!(
             reopened.min_version().unwrap(),
             12,
@@ -530,12 +532,12 @@ mod tests {
     fn the_bootstrap_minimum_survives_deleting_the_whole_floor() {
         let scratch = Scratch::new("bootstrap");
         {
-            let mut floor = FileManifestFloor::with_bootstrap(&scratch.0, 4).expect("open");
+            let mut floor = FileManifestFloor::with_bounds(&scratch.0, 4, None).expect("open");
             floor.record(9).expect("record 9");
             assert_eq!(floor.min_version().unwrap(), 9);
         }
         std::fs::remove_dir_all(&scratch.0).expect("an attacker unlinks the floor");
-        let reopened = FileManifestFloor::with_bootstrap(&scratch.0, 4).expect("reopen");
+        let reopened = FileManifestFloor::with_bounds(&scratch.0, 4, None).expect("reopen");
         assert_eq!(
             reopened.min_version().unwrap(),
             4,
@@ -544,7 +546,7 @@ mod tests {
         );
         // Without a bootstrap the same deletion does reset to 0 — which is why the
         // bootstrap exists, and why this asymmetry is worth pinning.
-        let bare = FileManifestFloor::open(&scratch.0).expect("reopen bare");
+        let bare = FileManifestFloor::with_bounds(&scratch.0, 0, None).expect("reopen bare");
         assert_eq!(bare.min_version().unwrap(), 0);
     }
 
@@ -554,9 +556,9 @@ mod tests {
         // enforced by the first handle too — it re-reads rather than trusting a cache,
         // so a sidecar that fetched a newer manifest cannot be undercut.
         let scratch = Scratch::new("concurrent");
-        let mut first = FileManifestFloor::open(&scratch.0).expect("open first");
+        let mut first = FileManifestFloor::with_bounds(&scratch.0, 0, None).expect("open first");
         first.record(2).expect("record 2");
-        let mut second = FileManifestFloor::open(&scratch.0).expect("open second");
+        let mut second = FileManifestFloor::with_bounds(&scratch.0, 0, None).expect("open second");
         second.record(11).expect("record 11");
         assert_eq!(
             first.min_version().unwrap(),
@@ -568,7 +570,7 @@ mod tests {
             .record(5)
             .expect_err("a version the shared floor has passed is refused, not silently ok");
         assert_eq!(
-            FileManifestFloor::open(&scratch.0)
+            FileManifestFloor::with_bounds(&scratch.0, 0, None)
                 .unwrap()
                 .min_version()
                 .unwrap(),
@@ -708,7 +710,7 @@ mod tests {
     #[test]
     fn without_a_ceiling_the_floor_is_unbounded_upward() {
         let scratch = Scratch::new("ceiling-absent");
-        let floor = FileManifestFloor::open(&scratch.0).expect("open");
+        let floor = FileManifestFloor::with_bounds(&scratch.0, 0, None).expect("open");
         persist(&scratch.0, u64::MAX).expect("write the fast-forward marker");
         assert_eq!(
             floor.min_version().unwrap(),
@@ -722,7 +724,7 @@ mod tests {
     #[test]
     fn superseded_markers_are_pruned() {
         let scratch = Scratch::new("prune");
-        let mut floor = FileManifestFloor::open(&scratch.0).expect("open");
+        let mut floor = FileManifestFloor::with_bounds(&scratch.0, 0, None).expect("open");
         floor.record(1).expect("record 1");
         floor.record(2).expect("record 2");
         floor.record(3).expect("record 3");
