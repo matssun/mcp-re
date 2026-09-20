@@ -405,7 +405,8 @@ fn issuers_from_signed_manifest(
         expires_at: NOW + 100_000,
     };
     let signed = mcp_re_client_core::sign_manifest(&manifest, &org, org_kid);
-    let mut floor = mcp_re_client_proxy::FileManifestFloor::open(floor_path).expect("open floor");
+    let mut floor = mcp_re_client_proxy::FileManifestFloor::with_bounds(floor_path, 0, None)
+        .expect("open floor");
     let org_public = org.public_key();
     mcp_re_client_core::load_signed_manifest_with_floor(
         &signed,
@@ -1013,7 +1014,8 @@ fn a_replayed_older_manifest_cannot_un_revoke_a_root() {
         expires_at: NOW + 100_000,
     };
     let signed = mcp_re_client_core::sign_manifest(&manifest, &org, "org-admin-1");
-    let mut reopened = mcp_re_client_proxy::FileManifestFloor::open(&floor.0).expect("reopen");
+    let mut reopened =
+        mcp_re_client_proxy::FileManifestFloor::with_bounds(&floor.0, 0, None).expect("reopen");
     assert_eq!(
         reopened.min_version().expect("floor readable"),
         2,
