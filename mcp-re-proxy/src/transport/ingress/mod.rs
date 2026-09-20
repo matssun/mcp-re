@@ -94,27 +94,18 @@ mod tests {
     use super::*;
     use test_support::in_hand_request_hash;
 
-    /// The two frozen formats are DISJOINT, which is the one property neither version can
-    /// establish alone and the reason they are two modules rather than one with a flag.
-    ///
-    /// For identical shared field values the preimages must differ, because the domain tag
-    /// is the leading bytes — so a v1 signature can never be re-framed as a v2 assertion.
+    /// The frozen format's preimage is domain-separated by a VERSION-QUALIFIED tag,
+    /// which is what keeps a signature produced under one version of the ingress
+    /// assertion from being re-framed as another. The tag is the leading bytes, so the
+    /// separation holds for every field assignment rather than for a chosen one.
     #[test]
-    fn the_two_frozen_formats_have_disjoint_preimages() {
+    fn the_frozen_format_is_domain_separated_by_its_version_tag() {
         let now = 1_000_000;
-        let rh = in_hand_request_hash();
-        let client = "spiffe://example.org/agent-1";
-        let v1 = LbAssertion {
-            key_id: "k".to_string(),
-            asserted_client_identity: client.to_string(),
-            request_hash: rh.clone(),
-            validation_time: now,
-        };
         let v2 = LbAssertionV2 {
             key_id: "k".to_string(),
             ingress_identity: "spiffe://example.org/ingress-attestor-1".to_string(),
-            asserted_client_identity: client.to_string(),
-            request_hash: rh,
+            asserted_client_identity: "spiffe://example.org/agent-1".to_string(),
+            request_hash: in_hand_request_hash(),
             audience: "did:example:server-1".to_string(),
             cert_verification_result: AttestedCertVerification::Verified,
             revocation_result: AttestedRevocation::Good,
@@ -122,14 +113,10 @@ mod tests {
             crl_next_update: now + 3600,
             expires_at: None,
         };
-        assert_ne!(v1.signing_preimage(), v2.signing_preimage());
         assert!(v2
             .signing_preimage()
             .starts_with(b"mcp-re/lb-ingress-assertion/v2"));
         assert!(!v2
-            .signing_preimage()
-            .starts_with(b"mcp-re/lb-ingress-assertion/v1"));
-        assert!(v1
             .signing_preimage()
             .starts_with(b"mcp-re/lb-ingress-assertion/v1"));
     }

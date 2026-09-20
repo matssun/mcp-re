@@ -1289,6 +1289,26 @@ additional agreement seams rather than another semantic owner. The v1/v2 split i
 correct decomposition, the cross-version disjointness control stays at the facade, and
 neither mode becomes selectable. Measured at `b142a7a`: v1 **334**, v2 **673**.
 
+### The cross-format disjointness clause — RETIRED, and what replaced it
+
+**RA3-002 (cohort A) deletes the v1 module**, and with it the counterparty of the one
+control the facade held that neither version could state alone. The facade's test is
+rewritten as `the_frozen_format_is_domain_separated_by_its_version_tag`, which asserts that
+the surviving format's preimage begins with its own version-qualified domain tag and not
+with the sibling version's spelling.
+
+**What is lost is stated rather than quietly narrowed.** The retired clause was *for
+identical shared field values the two preimages differ* — a statement quantified over two
+live preimage functions, established by constructing one of each. The replacement is
+quantified over one: it fixes the leading bytes of the surviving preimage and pins the tag
+to a version, which is what makes a future second format non-colliding by construction, but
+it can no longer witness a disagreement between two implementations because only one is
+implemented here.
+
+A test that silently weakened would be the defect; this record is the reason it did not.
+Should a second frozen format ever be added, the cross-format clause is re-established at
+the facade, against the two preimages then in the tree.
+
 ## EX-009 — `mcp-re-client-core/src/response.rs` — **census re-run, disposition: decompose the classification half**
 
 **Status:** `unreviewed` in the registry, and this record does not change that on its own —
