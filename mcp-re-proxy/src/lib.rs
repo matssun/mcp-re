@@ -105,7 +105,6 @@ pub mod key_source;
 /// Whether an operator-supplied KMS/STS endpoint may be used at all — a security rule
 /// the command line, the validation boundary and the key sources all consume.
 pub mod kms_endpoint_policy;
-pub mod log_sink;
 #[cfg(any(feature = "aws_kms_keysource", feature = "gcp_kms_keysource"))]
 pub(crate) mod remote_signer_call;
 // Test / embedding helpers that drive the async serving path synchronously
@@ -333,9 +332,6 @@ pub use audit_sink::StderrAuditSink;
 pub use gcp_kms_keysource::GcpKmsConfig;
 #[cfg(feature = "gcp_kms_keysource")]
 pub use gcp_kms_keysource::GcpKmsEd25519Backend;
-pub use log_sink::InnerLogEvent;
-pub use log_sink::InnerLogSink;
-pub use log_sink::StderrLogSink;
 // MCPS-076 (audit gap G-3): EnvKeySource is dev/CI-only and exists only when the
 // non-default `dev_env_key_source` feature is enabled.
 #[cfg(feature = "dev_env_key_source")]

@@ -3516,26 +3516,6 @@ refuses.
 nothing else — which is what "one `test_features` set per battery" makes the only shape
 available.
 
-## NP-173 — every inner-process log event renders under the brief's own tag
-
-**Control:** `mcp-re-proxy/src/log_sink.rs::log_event_tags_match_the_brief`.
-**Carrier:** `mcp-re-proxy/src/log_sink.rs` — `InnerLogEvent::tag`.
-**Statement.** *Each `InnerLogEvent` variant's `tag()` is the brief's string name for it:
-`inner_spawned`, `inner_spawn_failed`, `inner_exited`, `inner_killed`,
-`inner_stderr_truncated`, `inner_protocol_error`, `inner_request_forwarded`,
-`inner_response_signed`.*
-**If false.** The inner-process event stream renames a fact, so an operator's filter or an
-alert keyed on a tag silently stops matching the event it was written for.
-**Likely owner:** none. `log_sink.rs` is in no unit's `paths`.
-**Root relationship.** None — no theorem reaches the inner-event log vocabulary.
-**Severity:** `medium`.
-**Why this record exists at all.** The control was filed under NP-066, *no record enqueued
-before teardown is lost*, and it touches no queue, no drain and no teardown path: delete the
-entire drain and it stays green. A control filed under a proposition it cannot falsify is a
-registry saying a proposition has evidence it does not have, and no gate over this registry
-reads a control's body — every existing check is about shape. This one was found by a human
-reading the test.
-
 ## NP-174 — the client posture line reports the floor the deployment actually has
 
 **Controls:** `mcp-re-client/src/main.rs` (2).
