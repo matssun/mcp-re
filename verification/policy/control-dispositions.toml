@@ -381,10 +381,10 @@ record = "docs/architecture/control-dispositions.md#np-002"
 [[proposition]]
 id = "NP-003"
 title = "Every long-lived worker's lifetime is an owned value"
-carrier = "mcp-re-proxy/src/managed_worker/mod.rs and every library source in the workspace"
+carrier = "mcp-re-proxy/src/managed_worker"
 likely_owner = ""
 consequence = "high"
-root_relationship = "bears on THM-0012 without being what it states"
+root_relationship = "bears on THM-0012 without being what it states; measured in S-11, no ratified theorem contains it"
 record = "docs/architecture/control-dispositions.md#np-003"
 
 [[proposition]]
@@ -486,8 +486,8 @@ recorded = "2026-09-19"
 id = "CD-0007"
 project = ""
 control = "gate#scripts/owned_worker_gate.py"
-decision = "new-proposition"
-proposition = "NP-003"
+decision = "not-evidence"
+reason_family = "ND-007"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -3802,36 +3802,15 @@ recorded = "2026-09-19"
 
 [[proposition]]
 id = "NP-048"
-title = "The retention store enforces the record contract at the storage boundary"
-carrier = "mcp-re-proxy/src/transparency/durability.rs and retained_archive.rs"
-likely_owner = "proxy.retained_record_content states the contract and cannot claim controls outside its measured source"
+title = "A stored object that is not a retained record is refused by the read-only archive"
+carrier = "mcp-re-proxy/src/transparency/retained_archive.rs"
+likely_owner = ""
 consequence = "high"
-root_relationship = "the storage-boundary twin of proxy.retained_record_content; the second mechanically impossible reattribution"
+root_relationship = "the archive's own read authority, which its carrier separates from the writer's in terms"
 record = "docs/architecture/control-dispositions.md#np-048"
 
-[[disposition]]
-id = "CD-7101"
-project = "mcp-re-proxy"
-control = "lib#transparency::durability::tests::only_the_signed_headers_are_retained"
-decision = "new-proposition"
-proposition = "NP-048"
-recorded = "2026-09-19"
 
-[[disposition]]
-id = "CD-7102"
-project = "mcp-re-proxy"
-control = "lib#transparency::durability::tests::a_record_without_the_schema_token_is_refused"
-decision = "new-proposition"
-proposition = "NP-048"
-recorded = "2026-09-19"
 
-[[disposition]]
-id = "CD-7103"
-project = "mcp-re-proxy"
-control = "lib#transparency::durability::tests::a_retained_exchange_comes_back_byte_identical"
-decision = "new-proposition"
-proposition = "NP-048"
-recorded = "2026-09-19"
 
 [[disposition]]
 id = "CD-7104"
@@ -3957,11 +3936,11 @@ recorded = "2026-09-19"
 
 [[proposition]]
 id = "NP-062"
-title = "The CRL index answers revocation exactly"
+title = "A malformed client CRL is refused at construction rather than skipped"
 carrier = "mcp-re-proxy/src/client_revocation.rs"
-likely_owner = "proxy.client_certificate_posture and proxy.client_revocation_currency both state it; neither measures this file"
+likely_owner = ""
 consequence = "critical"
-root_relationship = "under the client-certificate roots"
+root_relationship = "the constructor's refusal, which neither of THM-0032's two index clauses reaches"
 record = "docs/architecture/control-dispositions.md#np-062"
 
 [[proposition]]
@@ -3981,21 +3960,7 @@ carrier = "mcp-re-proxy/src/ocsp.rs"
 reason_family = "ND-011"
 recorded = "2026-09-19"
 
-[[disposition]]
-id = "CD-9101"
-project = "mcp-re-proxy"
-control = "lib#client_revocation::tests::a_crl_revokes_a_leaf_of_the_same_ca_and_says_nothing_about_another_ca"
-decision = "new-proposition"
-proposition = "NP-062"
-recorded = "2026-09-19"
 
-[[disposition]]
-id = "CD-9102"
-project = "mcp-re-proxy"
-control = "lib#client_revocation::tests::a_listed_serial_is_revoked_and_an_unlisted_one_is_good"
-decision = "new-proposition"
-proposition = "NP-062"
-recorded = "2026-09-19"
 
 [[disposition]]
 id = "CD-9103"
@@ -4005,77 +3970,14 @@ decision = "new-proposition"
 proposition = "NP-062"
 recorded = "2026-09-19"
 
-[[disposition]]
-id = "CD-9104"
-project = "mcp-re-proxy"
-control = "lib#client_revocation::tests::a_poisoned_lock_still_yields_the_last_good_index_and_still_accepts_a_swap"
-decision = "new-proposition"
-proposition = "NP-062"
-recorded = "2026-09-19"
 
-[[disposition]]
-id = "CD-9105"
-project = "mcp-re-proxy"
-control = "lib#client_revocation::tests::a_stale_crl_certifies_nothing_but_still_revokes"
-decision = "new-proposition"
-proposition = "NP-062"
-recorded = "2026-09-19"
 
-[[disposition]]
-id = "CD-9106"
-project = "mcp-re-proxy"
-control = "lib#client_revocation::tests::a_zero_padded_serial_still_matches"
-decision = "new-proposition"
-proposition = "NP-062"
-recorded = "2026-09-19"
 
-[[disposition]]
-id = "CD-9107"
-project = "mcp-re-proxy"
-control = "lib#client_revocation::tests::an_empty_index_admits_everything"
-decision = "new-proposition"
-proposition = "NP-062"
-recorded = "2026-09-19"
 
-[[disposition]]
-id = "CD-9108"
-project = "mcp-re-proxy"
-control = "lib#client_revocation::tests::an_expired_crl_refuses_its_issuer_rather_than_admitting_it"
-decision = "new-proposition"
-proposition = "NP-062"
-recorded = "2026-09-19"
 
-[[disposition]]
-id = "CD-9109"
-project = "mcp-re-proxy"
-control = "lib#client_revocation::tests::an_uncovered_issuer_is_unknown_and_refused"
-decision = "new-proposition"
-proposition = "NP-062"
-recorded = "2026-09-19"
 
-[[disposition]]
-id = "CD-9110"
-project = "mcp-re-proxy"
-control = "lib#client_revocation::tests::the_snapshot_swaps_atomically"
-decision = "new-proposition"
-proposition = "NP-062"
-recorded = "2026-09-19"
 
-[[disposition]]
-id = "CD-9111"
-project = "mcp-re-proxy"
-control = "lib#client_revocation::tests::two_crls_for_one_issuer_union_their_serials_and_keep_the_earliest_next_update"
-decision = "new-proposition"
-proposition = "NP-062"
-recorded = "2026-09-19"
 
-[[disposition]]
-id = "CD-9112"
-project = "mcp-re-proxy"
-control = "lib#client_revocation::tests::unknown_status_is_refused_with_no_policy_input_that_could_admit_it"
-decision = "new-proposition"
-proposition = "NP-062"
-recorded = "2026-09-19"
 
 [[disposition]]
 id = "CD-9113"
@@ -8732,10 +8634,10 @@ record = "docs/architecture/control-dispositions.md#np-130"
 [[proposition]]
 id = "NP-132"
 title = "Each authorization refusal is its own token"
-carrier = "mcp-re-proxy/src/authorization"
+carrier = "mcp-re-proxy/src/authorization/pdp/refusal.rs and verified_action.rs"
 likely_owner = ""
 consequence = "high"
-root_relationship = "a premise of the proxy units above it"
+root_relationship = "THM-0040's scope declines it in terms; a premise of the proxy units above it"
 record = "docs/architecture/control-dispositions.md#np-132"
 
 [[proposition]]
@@ -8820,15 +8722,6 @@ root_relationship = "a premise of the proxy units above it"
 record = "docs/architecture/control-dispositions.md#np-141"
 
 [[proposition]]
-id = "NP-142"
-title = "The stage timers index and name every stage"
-carrier = "mcp-re-proxy/src/stage_timers"
-likely_owner = ""
-consequence = "medium"
-root_relationship = "a premise of the proxy units above it"
-record = "docs/architecture/control-dispositions.md#np-142"
-
-[[proposition]]
 id = "NP-143"
 title = "The retained Mode-C ingress verifier refuses rather than defaulting"
 carrier = "mcp-re-proxy/src/capability_materialization/ingress.rs"
@@ -8857,11 +8750,11 @@ record = "docs/architecture/control-dispositions.md#np-145"
 
 [[proposition]]
 id = "NP-146"
-title = "Refusal reporting is bounded, counted in full, and never panics"
-carrier = "mcp-re-proxy/src/async_replay"
+title = "A budget refusal is diagnosable without the reporter being able to take the tier down"
+carrier = "mcp-re-proxy/src/async_replay/budget_report.rs and retention_ledger.rs"
 likely_owner = ""
 consequence = "high"
-root_relationship = "a premise of the proxy units above it"
+root_relationship = "beside THM-0105, which states the account and not how a refusal is reported"
 record = "docs/architecture/control-dispositions.md#np-146"
 
 [[proposition]]
@@ -8935,7 +8828,7 @@ id = "CD-18009"
 project = "mcp-re-proxy"
 control = "lib#async_replay::l1_fast_reject::tests::l1_fast_reject_never_fresh_and_evicts_fifo"
 decision = "new-proposition"
-proposition = "NP-146"
+proposition = "NP-197"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -9034,20 +8927,13 @@ decision = "new-proposition"
 proposition = "NP-141"
 recorded = "2026-09-19"
 
-[[disposition]]
-id = "CD-18025"
-project = "mcp-re-proxy"
-control = "lib#authorization::pdp::evidence::tests::a_request_carrying_no_decision_is_not_a_refusal"
-decision = "new-proposition"
-proposition = "NP-132"
-recorded = "2026-09-19"
 
 [[disposition]]
 id = "CD-18028"
 project = "mcp-re-proxy"
 control = "lib#authorization::pdp::policy::tests::a_resolver_that_trusts_nobody_is_a_deployment_that_authorizes_nothing"
 decision = "new-proposition"
-proposition = "NP-132"
+proposition = "NP-196"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -9103,7 +8989,7 @@ id = "CD-18036"
 project = "mcp-re-proxy"
 control = "lib#authorization::request::tests::an_unbound_deployment_says_not_claimed_rather_than_asserting_a_binding"
 decision = "new-proposition"
-proposition = "NP-132"
+proposition = "NP-195"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -9114,13 +9000,6 @@ decision = "new-proposition"
 proposition = "NP-132"
 recorded = "2026-09-19"
 
-[[disposition]]
-id = "CD-18041"
-project = "mcp-re-proxy"
-control = "lib#authorization::verified_action::tests::a_method_that_names_no_target_is_not_the_same_as_one_missing_its_target"
-decision = "new-proposition"
-proposition = "NP-132"
-recorded = "2026-09-19"
 
 [[disposition]]
 id = "CD-18042"
@@ -9130,13 +9009,6 @@ decision = "new-proposition"
 proposition = "NP-132"
 recorded = "2026-09-19"
 
-[[disposition]]
-id = "CD-18047"
-project = "mcp-re-proxy"
-control = "lib#authorization::verified_actor::tests::every_verified_dimension_is_projected_separately"
-decision = "new-proposition"
-proposition = "NP-132"
-recorded = "2026-09-19"
 
 [[disposition]]
 id = "CD-18049"
@@ -10126,56 +9998,56 @@ recorded = "2026-09-19"
 id = "CD-18194"
 project = "mcp-re-proxy"
 control = "lib#stage_timers::tests::a_timer_started_while_disabled_reads_no_clock"
-decision = "new-proposition"
-proposition = "NP-142"
+decision = "not-evidence"
+reason_family = "ND-014"
 recorded = "2026-09-19"
 
 [[disposition]]
 id = "CD-18195"
 project = "mcp-re-proxy"
 control = "lib#stage_timers::tests::an_inflight_guard_taken_while_disabled_is_inert"
-decision = "new-proposition"
-proposition = "NP-142"
+decision = "not-evidence"
+reason_family = "ND-014"
 recorded = "2026-09-19"
 
 [[disposition]]
 id = "CD-18196"
 project = "mcp-re-proxy"
 control = "lib#stage_timers::tests::each_stage_slot_carries_its_own_name"
-decision = "new-proposition"
-proposition = "NP-142"
+decision = "not-evidence"
+reason_family = "ND-014"
 recorded = "2026-09-19"
 
 [[disposition]]
 id = "CD-18197"
 project = "mcp-re-proxy"
 control = "lib#stage_timers::tests::every_stage_indexes_within_the_accumulator"
-decision = "new-proposition"
-proposition = "NP-142"
+decision = "not-evidence"
+reason_family = "ND-014"
 recorded = "2026-09-19"
 
 [[disposition]]
 id = "CD-18198"
 project = "mcp-re-proxy"
 control = "lib#stage_timers::tests::stage_discriminants_are_distinct_and_cover_every_slot"
-decision = "new-proposition"
-proposition = "NP-142"
+decision = "not-evidence"
+reason_family = "ND-014"
 recorded = "2026-09-19"
 
 [[disposition]]
 id = "CD-18199"
 project = "mcp-re-proxy"
 control = "lib#stage_timers::tests::the_name_table_covers_every_slot"
-decision = "new-proposition"
-proposition = "NP-142"
+decision = "not-evidence"
+reason_family = "ND-014"
 recorded = "2026-09-19"
 
 [[disposition]]
 id = "CD-18200"
 project = "mcp-re-proxy"
 control = "lib#stage_timers::tests::the_rewrite_period_cannot_divide_by_zero"
-decision = "new-proposition"
-proposition = "NP-142"
+decision = "not-evidence"
+reason_family = "ND-014"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -13155,3 +13027,30 @@ likely_owner = "none — a composition's source is every unit under it"
 consequence = "critical"
 root_relationship = "the composition above the component propositions this campaign recorded"
 record = "docs/architecture/control-dispositions.md#np-194"
+
+[[proposition]]
+id = "NP-195"
+title = "An unbound deployment says not-claimed rather than asserting a channel binding"
+carrier = "mcp-re-proxy/src/authorization/request.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "THM-0040's scope excludes channel binding by name; split out of NP-132 under RR-002 C5"
+record = "docs/architecture/control-dispositions.md#np-195"
+
+[[proposition]]
+id = "NP-196"
+title = "The authorization-authority seam is populated separately from the request-signer seam"
+carrier = "mcp-re-proxy/src/authorization/pdp/policy.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "a deployment-configuration fact under the authorization roots; split out of NP-132 under RR-002 C5"
+record = "docs/architecture/control-dispositions.md#np-196"
+
+[[proposition]]
+id = "NP-197"
+title = "The dormant L1 fast reject is never fresh and evicts FIFO"
+carrier = "mcp-re-proxy/src/async_replay/l1_fast_reject.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "THM-0105's scope excludes the dormant L1 in terms; split out of NP-146 under RR-002 C5"
+record = "docs/architecture/control-dispositions.md#np-197"

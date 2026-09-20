@@ -134,6 +134,8 @@ attestations this view cannot see.
 | unit://proxy.client_credential_window_sole_producer | source, contracts or evidence | THM-0102 | _no consumer_ |
 | unit://proxy.client_crl_next_update_gate | source, contracts or evidence | THM-0131 | _no consumer_ |
 | unit://proxy.client_revocation_currency | source, contracts or evidence | THM-0131 | _no consumer_ |
+| unit://proxy.client_revocation_index_verdict | source, contracts or evidence | THM-0032 | _no consumer_ |
+| unit://proxy.client_revocation_snapshot | source, contracts or evidence | THM-0032 | _no consumer_ |
 | unit://proxy.continuation_control_subject_boundary | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.continuation_correlation_store | source, contracts or evidence | THM-0087 | _no consumer_ |
 | unit://proxy.continuation_installation | source, contracts or evidence | THM-0096 | _no consumer_ |
@@ -201,6 +203,7 @@ attestations this view cannot see.
 | unit://proxy.replay_tier_production_minimum | source, contracts or evidence | THM-0092 | _no consumer_ |
 | unit://proxy.request_peer_binding | source, contracts or evidence | THM-0034 | _no consumer_ |
 | unit://proxy.response_signing | source, contracts or evidence | THM-0063, THM-0075 | _no consumer_ |
+| unit://proxy.retained_record_at_the_store | source, contracts or evidence | THM-0112 | _no consumer_ |
 | unit://proxy.retained_record_content | source, contracts or evidence | THM-0112 | _no consumer_ |
 | unit://proxy.retention_commitment | source, contracts or evidence | THM-0088 | _no consumer_ |
 | unit://proxy.retired_plane_cadence_retraction | source, contracts or evidence | THM-0131 | _no consumer_ |

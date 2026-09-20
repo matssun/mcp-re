@@ -130,6 +130,8 @@ not an omission to hide.
 | proxy.client_credential_window_sole_producer | V0 | _none_ | 0 |
 | proxy.client_crl_next_update_gate | V0 | _none_ | 0 |
 | proxy.client_revocation_currency | V0 | THM-0131 | 0 |
+| proxy.client_revocation_index_verdict | V0 | _none_ | 0 |
+| proxy.client_revocation_snapshot | V0 | _none_ | 0 |
 | proxy.continuation_control_subject_boundary | V0 | _none_ | 0 |
 | proxy.continuation_correlation_store | V0 | THM-0087 | 2 |
 | proxy.continuation_installation | V0 | _none_ | 0 |
@@ -197,6 +199,7 @@ not an omission to hide.
 | proxy.replay_tier_production_minimum | V0 | _none_ | 0 |
 | proxy.request_peer_binding | V0 | THM-0034 | 0 |
 | proxy.response_signing | V0 | THM-0063, THM-0075 | 0 |
+| proxy.retained_record_at_the_store | V0 | _none_ | 0 |
 | proxy.retained_record_content | V0 | THM-0112 | 0 |
 | proxy.retention_commitment | V0 | THM-0088 | 0 |
 | proxy.retired_plane_cadence_retraction | V0 | _none_ | 0 |
