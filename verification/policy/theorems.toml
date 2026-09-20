@@ -1795,7 +1795,21 @@ under THM-0028 and THM-0030. This claim consumes their conclusions and restates 
 """
 owner = "proxy.credential_currency"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.credential_currency", "unit://proxy.credential_currency_evidence_reporting", "unit://proxy.currency_policy_classification", "unit://proxy.per_request_revocation_serving"]
+supported_by = [
+  "unit://proxy.credential_currency",
+  "unit://proxy.credential_currency_evidence_reporting",
+  "unit://proxy.currency_policy_classification",
+  "unit://proxy.per_request_revocation_serving",
+  # ADR-MCPRE-069 NP-062, S-11. The four units above measure the PREDICATE, the policy that
+  # captures the index and the serving composition; none measures the index itself. These two
+  # do, on the two clauses this statement already carries — "leaf revocation `admits`: an
+  # empty index admits, otherwise Revoked AND Unknown refuse", and the snapshot rule that
+  # the index carried "is the SNAPSHOT in force for the request, not the atomic cell".
+  # THM-0054 cannot take them: its own scope says it "establishes nothing about the
+  # per-request revocation check, which is a separate authority holding the same invariant."
+  "unit://proxy.client_revocation_index_verdict",
+  "unit://proxy.client_revocation_snapshot",
+]
 depends_on = ["THM-0028", "THM-0030"]
 
 [[theorem]]
@@ -6509,7 +6523,16 @@ Executable, class V0, measured in the default cargo lane.
 """
 owner = "proxy.retained_record_content"
 review_requirement = "Owner security-specification review"
-supported_by = ["unit://proxy.retained_record_content"]
+supported_by = [
+  "unit://proxy.retained_record_content",
+  # ADR-MCPRE-069 NP-048, S-11. The same contract measured where a record is STORED rather
+  # than where it is encoded. `proxy.retained_record_content` could not cite these three —
+  # `transparency/durability.rs` is not in its `paths` and a unit may not select a control
+  # whose source it does not measure — and its own battery comment records that refusal.
+  # The scope's "NOT A CLAIM ABOUT THE STORE" enumerates content addressing, durability,
+  # capacity and the fail-closed serving posture; this unit claims none of those four.
+  "unit://proxy.retained_record_at_the_store",
+]
 depends_on = []
 
 [[theorem]]

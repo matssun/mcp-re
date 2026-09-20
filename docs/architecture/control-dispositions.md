@@ -459,6 +459,69 @@ words: *a demo runner, not a control*.
 **What would move a control out.** A fixture that becomes a conformance vector. Then its
 pinning is NP-080's subject and it is claimed there.
 
+## ND-014 — an inert measurement apparatus no production path reads
+
+**Covers:** `mcp-re-proxy` `lib#stage_timers::tests::` (7):
+`stage_discriminants_are_distinct_and_cover_every_slot`,
+`every_stage_indexes_within_the_accumulator`, `the_name_table_covers_every_slot`,
+`each_stage_slot_carries_its_own_name`, `a_timer_started_while_disabled_reads_no_clock`,
+`an_inflight_guard_taken_while_disabled_is_inert`,
+`the_rewrite_period_cannot_divide_by_zero`.
+**Recorded:** 2026-09-20, ADR-MCPRE-069 S-11/PX-STORE.
+
+**The admission test, and it has three conjuncts because two would admit too much.** A
+control belongs here when its carrier is a MEASUREMENT APPARATUS, meaning all three of:
+
+1. its entire output is elapsed-time or count numbers about this process's own execution;
+2. **no production path reads or branches on that output** — the numbers leave through a
+   file or a stream and re-enter no decision; and
+3. it is **INERT unless an operator switches it on**, so a deployment that configures
+   nothing carries the apparatus and none of its behaviour.
+
+**Why controls of that kind are not evidence.** Apply the register's own criterion — does a
+violation change what the SHIPPED SYSTEM admits, emits, signs or exposes? Transpose two
+stage discriminants and the system admits the same requests, emits the same bytes, signs
+them under the same key and exposes the same surface; what changes is a number in a report
+nobody's code reads. The boundary is not new and this family only transcribes it. THM-0012's
+scope draws it in as many words about a value in the runtime record: *"RuntimeState::admits_requests
+is a DESCRIPTIVE value, not a control: no production path consumes it"* — the distinction is
+the consumer, not the subject. THM-0040's scope draws the same line for a whole vocabulary,
+and reaches the same disposition: *"the refusal algebra is tested and deliberately carries no
+theorem, because its vocabulary has no production reader today."* A family over apparatus
+with no production reader is those two sentences applied to a carrier neither of them names.
+
+**RR-002's ban does not reach this family, and the reason is stated rather than left to a
+reader.** That review forbids creating or widening a family whose ADMISSION TEST turns on
+availability, throughput, concurrency, latency, a resource ceiling or scheduling. This test
+turns on none of the six: it turns on what the carrier IS (a measurement apparatus), on who
+reads its output (nobody, in production), and on whether it is inert by default. That the
+apparatus HAPPENS to measure latency is the subject of the numbers, not a term in the
+admission test — the same seven controls would be admitted if the accumulator counted bytes
+— and a test that admitted a control because a violation cost throughput would be the banned
+shape. `a_timer_started_while_disabled_reads_no_clock` is the control that makes this worth
+saying: its motivation is cost, and it is admitted here for conjunct 3, that the apparatus is
+inert when off, which is a fact about the apparatus rather than a bound on anything.
+
+**No standing unit declares a proposition this test would admit, and it was checked rather
+than assumed.** The near miss is `proxy.client_revocation_currency` under THM-0131, whose
+whole subject is operator-facing reporting — *"An operator reading this replica's revocation
+posture is reading what it is doing"*, reaching the operator *"through stderr"*. It fails
+conjunct 1: its output is not elapsed time or counts, it is a statement about whether a
+SECURITY CONTROL is being enforced and at what cadence, and the theorem exists because a
+replica went on advertising a hot reload while nothing re-read the files. It fails conjunct 3
+as well — the posture is not something an operator switches on. `proxy.async_replay_retention`
+is the other near miss and fails conjunct 1 for the same reason. No unit in the estate has
+`stage_timers` in its `paths`, and the seven controls here are the whole of that carrier's
+battery.
+
+**What would move a control out.** The day a production path READS a stage timer's output:
+if an accumulator is ever consulted by an admission, shedding, routing, retry or refusal
+decision, the numbers stop being a report and become an input, and the control becomes
+evidence for whatever that decision claims. Conjunct 3 gives a second exit — an apparatus
+that stops being inert by default is running on every deployment, and a divide-by-zero or an
+out-of-range slot in it is then a live refusal path rather than a report's arithmetic. Either
+one makes this the wrong family, and the disposition becomes `new-proposition`.
+
 ## ND-008 — not a control: drivers, runners, reports and demos
 
 **Covers:** `bump_version.sh`, `coverage.sh`, `demo-gcp-kms.sh`, `demo-local.sh`,
@@ -552,28 +615,52 @@ nowhere.
 
 ## NP-003 — every long-lived worker's lifetime is an owned value
 
-**Controls:** `scripts/owned_worker_gate.py` (1), `mcp-re-proxy/src/managed_worker` (8).
-**Carrier:** `managed_worker/mod.rs` and every library source in the workspace, the
-`sdk/python` and `sdk/typescript` native bindings included.
-**Statement.** *No production source outside `managed_worker` starts an OS thread except at
-the reviewed sites, so every long-lived worker's lifetime is represented by an owned value.*
-**If false.** A bare `thread::spawn` whose `JoinHandle` is dropped outlives every value it
-was conceptually part of: nothing can stop it and nothing can observe that it stopped. This
-is the historical defect, not a hypothetical — startup had four, each looping on a SIGTERM
-flag no error path sets, so a `run` that failed after the first spawn returned `Err` with
-threads still reading files and minting keys. The fourth was found by accident, days after a
-survey that swept one file and concluded there were three.
+**Controls:** `mcp-re-proxy/src/managed_worker` (8).
+**Carrier:** `managed_worker/mod.rs` and `managed_worker/halt.rs`.
+**Statement.** *A long-lived worker's lifetime is represented by an owned value: a structural
+halt is raised for every worker the set owns and by either source alone, it stays raised
+after the set is gone so a straggler that wakes exits rather than resuming, reclamation is
+bounded rather than guaranteed and a worker that does not stop in time is surfaced BY NAME
+rather than silently detached, an interrupted sleep reports that it was cut short, and
+reclaiming twice is harmless.*
+**If false.** A worker outlives every value it was conceptually part of: nothing can stop it
+and nothing can observe that it stopped. This is the historical defect, not a hypothetical —
+startup had four, each looping on a SIGTERM flag no error path sets, so a `run` that failed
+after the first spawn returned `Err` with threads still reading files and minting keys. The
+fourth was found by accident, days after a survey that swept one file and concluded there
+were three.
 **Likely owner:** a new unit over `managed_worker`.
 **Root relationship.** ADR-MCPRE-056 §9. Bears on the lifecycle roots — a recorded terminal
 `Stopped` that leaves threads minting keys is the thing THM-0012 is about — without being
 what THM-0012 states.
 **Severity:** `high`.
-**What the control does NOT establish, and the record says so:** that no detached runtime
-worker exists. A helper that wraps the spawn, a type alias, a `tokio::spawn`, or a thread
-started inside a dependency all pass it. The real enforcement is that runtime-owned work goes
-through `WorkerSet`; the gate makes the common bypass loud. Any ratification inherits that
-limit rather than quietly dropping it.
 
+**Narrowed and re-measured, ADR-MCPRE-069 S-11.** Two changes, and the second is the one that
+matters.
+
+**`scripts/owned_worker_gate.py` left this record for ND-007.** It is a SHAPE rule and its own
+docstring says so: *"That is a syntactic check on two spellings, and the claim stops there."*
+Apply the register's secondary test — can it go red on a weakening that leaves runtime
+behaviour unchanged? — and the answer is yes twice over. It refuses the spelling wherever it
+appears, including a spawn whose `JoinHandle` IS owned and joined, which is why its
+allowlist has to carry the sound sites by hand; and it passes a helper that wraps the spawn,
+a type alias, a `tokio::spawn` or a thread started inside a dependency, which the record
+above already said. What it protects is the reviewability of the ownership argument, not an
+admission the system makes.
+
+**The eight behavioural controls stay, and S-11 measured why rather than inheriting it.** The
+slice's plan expected them registered under THM-0104. They cannot be. THM-0104 is about
+REQUESTS in the async serving path — *"ADMISSION STOPS. The accept loop exits before the drain
+begins, so no request admitted after the signal exists."* — and its scope closes the door in
+terms: *"ONE core, and the async path."* A background OS thread owned by a `WorkerSet` is
+neither an admitted request nor a per-core runtime task, and the carrier says the two are
+different lifetime questions: *"Tokio tasks on the per-core serving runtimes are a different
+lifetime question — the fleet owns its runtimes and joins them on drain — and are
+deliberately out of scope."* No other ratified theorem reaches it either: a sweep of all 130
+`[[theorem]]` rows for worker, thread or teardown vocabulary returns THM-0012, whose scope is
+*"Establishes what the RECORD can say"*, and this record already said that is not it.
+Subsumption clause 2 needs a proposition contained in a ratified claim, and there is none.
+**Packet:** `verification/reviews/packets/adr069-np-003-ratification-2026-09-20.md`.
 ## NP-004 — every optional capability states ON or OFF, in every lane
 
 **Control:** `scripts/seam_posture_gate.py`.
@@ -1474,32 +1561,40 @@ mechanically impossible, and it is recorded in the unit itself as well as here.
 NP-014 and NP-015 one crate over.
 **Severity:** `high`.
 
-## NP-048 — the retention store enforces the record contract at the storage boundary
+## NP-048 — a stored object that is not a retained record is refused by the read-only archive
 
-**Controls:** `mcp-re-proxy/src/transparency/durability.rs::only_the_signed_headers_are_retained`,
-`::a_record_without_the_schema_token_is_refused`,
-`::a_retained_exchange_comes_back_byte_identical`,
-`mcp-re-proxy/src/transparency/retained_archive.rs::an_object_that_is_not_a_retained_record_is_refused`.
-**Carrier:** `transparency/durability.rs` and `transparency/retained_archive.rs`.
-**Statement.** *What the store writes and what the archive accepts obey the retained-record
-contract: only the headers the signature base names are retained, a record without the
-schema token is refused, a retained exchange comes back byte-identical, and an object that
-is not a retained record is refused at the archive.*
-**If false.** The record contract holds where a record is ENCODED and not where it is
-STORED — so a live credential reaches the store, or a record the encoder would refuse is
-read back as one.
-**Likely owner:** `proxy.retained_record_content` states this contract, **and it cannot
-claim these controls.** `verify --manifests` refuses a `lib#` selector whose module is not
-under that unit's `paths`, for a reason this campaign agrees with: *an in-crate test whose
-source the unit does not measure can be rewritten under the same name without moving the
-fingerprint.* Widening its `paths` to reach `durability.rs` would pull the whole
-retention-commitment machinery into a unit about record CONTENT.
-**Root relationship.** The storage-boundary twin of `proxy.retained_record_content`, the
-same shape as NP-045 one unit over — and the second mechanically impossible reattribution
-this campaign has measured. Both come from the same place: **a unit's battery can only
-select controls inside the source it measures, in the project it measures it in.**
+**Control:** `mcp-re-proxy/src/transparency/retained_archive.rs::an_object_that_is_not_a_retained_record_is_refused`.
+**Carrier:** `transparency/retained_archive.rs`.
+**Statement.** *An object in the evidence directory that is not a retained record at all is
+refused by the read-only archive, as `Malformed`, rather than read as one.*
+**If false.** An auditor's reconstruction is built from bytes nothing wrote as a hop, and the
+chain it produces is about something else with no way for the reader to tell.
+**Likely owner:** none.
+**Root relationship.** The archive's own read authority.
 **Severity:** `high`.
 
+**Narrowed, ADR-MCPRE-069 S-11.** Three of the original four are REGISTERED as
+`unit://proxy.retained_record_at_the_store` under THM-0112 — `only_the_signed_headers_are_retained`,
+`a_record_without_the_schema_token_is_refused` and `a_retained_exchange_comes_back_byte_identical`,
+all three in `transparency/durability.rs`, with `M348` as the demonstrated-red falsifier. The
+scope sentence that had to be reconciled is THM-0112's *"NOT A CLAIM ABOUT THE STORE"*, and
+the reading taken is recorded beside the unit rather than by editing a fingerprinted field:
+that sentence ENUMERATES what is elsewhere — *"Content addressing, durability, capacity and
+the fail-closed serving posture"* — and the new unit claims none of the four. It claims that
+the contract the statement already carries is what the store PERFORMS, which the statement's
+own last clause is about: *"A record this implementation writes reads back as the bytes it
+was written from."*
+
+**This one is not reachable from there, and the carrier is why.** Registering it would need
+`retained_archive.rs` in that unit's `paths`, and the file's own header refuses the merge
+before any registry does: *"One fact, and it is not the one [`super::durability`] owns."* It
+records the split as an ADR-MCPRE-061 §8 question 2 finding — *"independently describable, and the second one's consumer needs none of the first's"* — and the consequence was
+concrete, an auditor that could not run against a read-only mount. A unit about what the
+WRITER performs may not swallow the reader. Its two in-file siblings
+(`a_read_only_archive_opens_where_the_retention_authority_refuses`,
+`a_missing_hop_is_absent_rather_than_an_error`) are the rest of that authority and no theorem
+states it.
+**Packet:** `verification/reviews/packets/adr069-np-048-ratification-2026-09-20.md`.
 ## NP-046 — no durable write blocks a runtime worker
 
 **Control:** `mcp-re-proxy/src/transparency/durability.rs::the_fsync_does_not_run_on_the_runtime_worker`.
@@ -1523,8 +1618,24 @@ exchanges, or reconstructing a chain from what is stored, sees a call that happe
 there are of it.
 **Severity:** `medium`.
 
----
+**Re-measured and RETAINED WHOLE, ADR-MCPRE-069 S-11.** The slice's plan expected this under
+THM-0088, and the file makes it look easy — `transparency/durability.rs` is in
+`proxy.retention_commitment`'s `paths`, so the selector would resolve and the battery would
+start. It is refused on the claim rather than on the mechanism.
 
+The control asserts that two `retain` calls over one exchange return the SAME
+`EvidenceDigest`, which is content addressing. THM-0112 names that as somebody else's in
+terms — *"NOT A CLAIM ABOUT THE STORE. Content addressing, durability, capacity and the
+fail-closed serving posture are elsewhere."* — and measured, the *elsewhere* it points at is
+`core.content_address`, which is one of the twenty units carrying NO ratified theorem, and
+which is over `mcp-re-core/src/hash.rs` rather than over this store. THM-0088 is the other
+axis again: its subject is WHEN, two stages under two names, and its own scope says *"It is
+about WHEN responsibility was accepted and crossed, never about WHAT the retained record
+contains."* Neither *when* nor *what* is *how many*.
+
+So a theorem-shaped gap is exactly what this is, and the honest state is the one it is
+already in.
+**Packet:** `verification/reviews/packets/adr069-np-047-ratification-2026-09-20.md`.
 ## The layer-A legality boundary is half-owned — NP-049 through NP-061
 
 `mcp-re-proxy/src/config_state/` holds sixteen configuration classifiers. **Five have a
@@ -1679,38 +1790,55 @@ subject. `mcp-re-proxy/src/cli/runtime_flags.rs` is in no unit's `paths` and the
 has no ratified theorem, so they are R6. The prepared packet is
 [`verification/reviews/packets/adr069-np-061-ratification-2026-09-19.md`](../../verification/reviews/packets/adr069-np-061-ratification-2026-09-19.md).
 
-## NP-062 — the CRL index answers revocation exactly
+## NP-062 — a malformed client CRL is refused at construction rather than skipped
 
-**Controls:** `mcp-re-proxy/src/client_revocation.rs` (12).
-**Carrier:** the client-revocation index and its snapshot.
-**Statement.** *A listed serial is revoked and an unlisted one is good, with zero padding
-normalised; a CRL revokes only leaves of its own CA and says nothing about another; an
-uncovered issuer is UNKNOWN and refused; a malformed CRL is refused rather than skipped; an
-expired CRL refuses its issuer rather than admitting it, and a stale one certifies nothing
-but still revokes; two CRLs for one issuer union their serials and keep the earliest
-nextUpdate; an empty index admits everything; unknown status is refused with no policy input
-that could admit it; and the snapshot swaps atomically, with a poisoned lock still yielding
-the last good index and still accepting a swap.*
-**If false.** A revoked client certificate is admitted — by a CRL that was skipped because it
-was malformed, by an issuer nobody covered being read as good, by an expired list being
-trusted, or by a serial that did not match because of its padding. Each of those is a
-different route to the same outcome, which is why the clauses are enumerated rather than
-summarised.
-**Likely owner:** `proxy.client_certificate_posture` states that every production verifier
-*denies unknown revocation status, enforces revocation over the full chain and enforces CRL
-expiration*, and `proxy.client_revocation_currency` states that a set of CRLs is installable
-only inside its own nextUpdate window. **Neither can claim these controls**: their `paths`
-are the `tls_plane` and `tls_listener_state` files, and `client_revocation.rs` — the index
-those propositions are ABOUT — is in neither. The fourth mechanically impossible
-reattribution this campaign has measured, and the first where TWO units state the
-proposition and neither owns the carrier.
+**Control:** `mcp-re-proxy/src/client_revocation.rs::a_malformed_crl_is_refused_rather_than_skipped`.
+**Carrier:** `ClientRevocationIndex::from_crl_ders`.
+**Statement.** *A malformed CRL among the bytes an index is built from is a hard error, so no
+index exists, rather than being skipped and leaving the request path enforcing a smaller
+revoked set than the handshake.*
+**If false.** A CRL the handshake verifier refuses is silently absent from the per-request
+index, so a serial published only on that list stops being enforced between requests while
+rustls goes on refusing it at each new handshake — the two disagreeing about what is
+enforced, in the direction that admits.
+**Likely owner:** none.
 **Root relationship.** Under the client-certificate roots.
 **Severity:** `critical`.
-**The stale/expired pair is the clause worth reading twice.** *A stale CRL certifies nothing
-but still revokes*, and *an expired CRL refuses its issuer rather than admitting it*. Those
-are opposite directions on purpose: age must never turn a revocation into an admission, and
-must never turn an absence of evidence into one either.
 
+**Narrowed, and the plan's theorem was the one theorem that refuses this file,
+ADR-MCPRE-069 S-11.** Eleven of the twelve are REGISTERED under **THM-0032** as two units —
+`proxy.client_revocation_index_verdict` (9 controls, `M346`) and
+`proxy.client_revocation_snapshot` (2, `M347`). Three things were measured on the way and
+each changed the answer.
+
+**THM-0054 cannot take any of them, and says so.** Its scope: *"it establishes nothing about
+the per-request revocation check, which is a separate authority holding the same invariant."*
+`client_revocation.rs` IS that separate authority — its header opens *"PER-REQUEST
+client-certificate revocation, so a warm connection is not a hole."* THM-0131 closes the same
+door from the other side: *"It says nothing about whether a revoked peer is refused — that is
+THM-0054's handshake half and the per-request index beside it"*. So the plan's 6/12 split
+inside THM-0054's statement is 0/12.
+
+**THM-0032 states the index's answer twice, in its own words.** *"leaf revocation `admits`: an
+empty index admits, otherwise Revoked AND Unknown refuse"*, and *"The revocation index it
+carries is the SNAPSHOT in force for the request, not the atomic cell: the leaf check and the
+issuer check therefore cannot read two different indexes across a reload."* Its family
+already measures the consumer — the predicate, the policy that captures the index, the
+serving composition — and `proxy.per_request_revocation_serving`'s own description points
+here: *"It states nothing the predicate states: WHICH certificates the index refuses, the
+leaf/issuer strength asymmetry and the one-snapshot-per-request rule are
+`proxy.credential_currency`'s"*. That unit could not have taken them anyway: it declares
+`test_features = ["async_serve"]`, and all twelve are default-lane `lib#` controls.
+
+**TWO units, on a different axis from the plan's.** Not *inside THM-0054* versus *index
+algebra*, but ADR-MCPRE-061 §8 question 2: WHAT the index answers about one certificate, and
+WHICH index a request reads. One unit over both would need an "and".
+
+**This control is in neither, and the reason is not its subject.** It is a CONSTRUCTOR
+refusal — `from_crl_ders` returns `Err` and no index is built — and both of THM-0032's
+clauses are about a value that exists. A theorem clause about what an index answers cannot be
+falsified by an index that was never made.
+**Packet:** `verification/reviews/packets/adr069-np-062-ratification-2026-09-20.md`.
 ## NP-063 — a revocation tier's published guarantee is its own
 
 **Controls:** `mcp-re-proxy/src/revocation_tier.rs` (9).
@@ -2812,12 +2940,55 @@ is called*, and the trust plane separates *the cache* from *the posture*.
 
 ## NP-132 — each authorization refusal is its own token
 
-**Controls:** `mcp-re-proxy/src/authorization`.
-**Statement.** *An actor mismatch and an action mismatch are DIFFERENT TOKENS; no configured authority and an untrusted issuer are different tokens; a digest mismatch is not reported as a malformed artifact; a scope the deployment does not accept is not an actor mismatch; a signed body that is not JSON and one with no method are different facts; a request carrying no decision is NOT A REFUSAL and one presenting nothing says so RATHER THAN BORROWING A DENIAL; an unbound deployment says not-claimed rather than asserting a binding; a malformed request is reported rather than refused by THIS authority; every verified dimension is projected separately; an explicit deny and an action mismatch deliberately collapse onto one token; and a resolver that trusts nobody is a deployment that authorizes nothing.*
-**If false.** An operator reading a refusal is sent to the wrong place, or a request that presented nothing is recorded as having been denied — which is a denial nobody made. The one deliberate collapse is stated as a control rather than left as a coincidence, which is what makes the other separations claims instead of accidents.
+**Controls:** `mcp-re-proxy/src/authorization/pdp/refusal.rs` (6),
+`authorization/verified_action.rs` (2).
+**Statement.** *An actor mismatch and an action mismatch are DIFFERENT TOKENS; no configured
+authority and an untrusted issuer are different tokens; a digest mismatch is not reported as
+a malformed artifact; a scope the deployment does not accept is not an actor mismatch; a
+request presenting nothing says so RATHER THAN BORROWING A DENIAL; an explicit deny and an
+action mismatch deliberately collapse onto one token; a signed body that is not JSON and one
+with no method are different facts; and a malformed request is REPORTED rather than refused
+by this authority.*
+**If false.** An operator reading a refusal is sent to the wrong place, or a request that
+presented nothing is recorded as having been denied — which is a denial nobody made. The one
+deliberate collapse is stated as a control rather than left as a coincidence, which is what
+makes the other separations claims instead of accidents.
 **Likely owner:** none.
 **Severity:** `high`.
 
+**Narrowed and split, ADR-MCPRE-069 S-11.** Thirteen controls, three propositions, and one
+ratified sentence that decides the largest of them.
+
+**Three are REGISTERED**, appended to `unit://proxy.authorization_coordinate_provenance`'s
+battery under THM-0040 — no new unit, no `paths` change, no new falsifier owed, because that
+unit already measures all three files. `a_method_that_names_no_target_is_not_the_same_as_one_missing_its_target`
+is the statement's own clause, verbatim: *"a decision naming no target matches only a
+not-applicable one and an absent signed target matches neither"*.
+`every_verified_dimension_is_projected_separately` carries three of the four projections the
+comparison reads one at a time: *"the decided actor's trust domain and subject equal the
+request's VERIFIED actor's, and under credential scope its keyid does too"*.
+`a_request_carrying_no_decision_is_not_a_refusal` is the arm that must NOT be a refusal in
+that unit's own description — *"none, two, or a reference-form binding produce no candidate
+at all"* — whose two other arms were already in the battery.
+
+**Eight stay, and THM-0040 declines them in terms.** Its scope: *"Nor does it establish that
+a refusal is reported faithfully to an operator; the refusal algebra is tested and
+deliberately carries no theorem, because its vocabulary has no production reader today."*
+That is a ratified authority saying this exact population is deliberately unclaimed, so
+registering it under any theorem would contradict a fingerprinted scope sentence rather than
+decompose one. THM-0069 does not rescue it: THM-0069 is about what a RECORD may say, its
+authorization clause stops at *"the two authorization refusal arms stay distinguishable"* —
+already `proxy.refusal_provenance`'s `the_two_authorization_arms_stay_distinguishable` — and
+these eight are one altitude below that, inside the PDP's own token set.
+`a_malformed_request_is_reported_rather_than_refused_by_this_authority` is here with them: it
+adds nothing to the target algebra that the registered control does not already assert, and
+what it is FOR — which authority owns the refusal — is the axis the scope sentence names.
+
+**Two are split out under RR-002 C5**, because they are not this proposition at all:
+**NP-195** (an unbound deployment says not-claimed rather than asserting a channel binding)
+and **NP-196** (the authorization-authority seam is populated separately from the
+request-signer seam).
+**Packet:** `verification/reviews/packets/adr069-np-132-np-195-np-196-ratification-2026-09-20.md`.
 ## NP-133 — a request form carries only its own material
 
 **Controls:** `mcp-re-proxy/src/deployment_request`.
@@ -2902,14 +3073,6 @@ without_a_cadence_the_bound_is_the_crls_own_expiry, without_a_crl_the_bound_is_t
 **Likely owner:** none.
 **Severity:** `high`.
 
-## NP-142 — the stage timers index and name every stage
-
-**Controls:** `mcp-re-proxy/src/stage_timers`.
-**Statement.** *Stage discriminants are DISTINCT AND COVER EVERY SLOT, every stage indexes within the accumulator, the name table covers every slot and each slot carries its own name; a timer started while disabled READS NO CLOCK and an in-flight guard taken while disabled is inert; and the rewrite period cannot divide by zero.*
-**If false.** Two stages share a slot, so the timing an operator reads belongs to a stage that did not run. The disabled clauses are the cost argument: instrumentation that is off must not read a clock.
-**Likely owner:** none.
-**Severity:** `medium`.
-
 ## NP-143 — the retained Mode-C ingress verifier refuses rather than defaulting
 
 **Controls:** `mcp-re-proxy/src/capability_materialization/ingress.rs` (4).
@@ -2951,14 +3114,41 @@ as part of `proxy.asserted_identity_delegation`; the third is separated as NP-18
 **Packet:** `verification/reviews/packets/adr069-np-145-np-186-np-187-ratification-2026-09-20.md`.
 **Severity:** `medium`.
 
-## NP-146 — refusal reporting is bounded, counted in full, and never panics
+## NP-146 — a budget refusal is diagnosable without the reporter being able to take the tier down
 
-**Controls:** `mcp-re-proxy/src/async_replay`.
-**Statement.** *A budget refusal is rendered WITHOUT THE LEDGER LOCK; refusals are paced by the process and COUNTED IN FULL; the L1 fast reject is never fresh and evicts FIFO; and reporting NEVER PANICS.*
-**If false.** The path that reports a refusal takes the lock the refusal is about, or panics — so the mechanism that exists to survive overload is the one that fails under it. 'Paced but counted in full' is the pair: suppressing output must not suppress the count.
+**Controls:** `mcp-re-proxy/src/async_replay/budget_report.rs` (2),
+`async_replay/retention_ledger.rs` (1).
+**Statement.** *The line that tells an operator a refusal was a BUDGET refusal and not a store
+outage is rendered OUTSIDE the ledger guard, is paced by the process while every refusal is
+COUNTED IN FULL, and never panics — including on an actor name carrying control bytes.*
+**If false.** The mechanism that exists to make one over-quota peer visible is the one that
+fails under it: a blocking write inside the guard serialises every serving core behind a file
+descriptor the proxy does not control, and a panicking write unwinds with the guard held,
+poisoning the mutex so every reserve on the replica refuses for the process lifetime.
+'Paced but counted in full' is the pair: suppressing output must not suppress the count.
 **Likely owner:** none.
 **Severity:** `high`.
 
+**Narrowed and split, ADR-MCPRE-069 S-11, and nothing landed.** The slice's plan expected
+these three appended to `proxy.async_replay_retention`, on the stated premise that *both
+carrier files are already in its `paths`*. Measured, one is not: that unit's `paths` are
+`mod.rs`, `bounds.rs`, `charge.rs`, `in_memory.rs`, `local_refusals.rs`, `retained_set.rs`
+and `retention_ledger.rs`, and `budget_report.rs` is absent. Two of the three selectors would
+be refused by `verify --manifests`, and widening the `paths` is outside this campaign's
+authority. So it is not that shape, exactly as the plan said to check.
+
+**And the third would not have landed either.** THM-0105's statement is the retention ACCOUNT
+— charged first and to the principal, a share that leaves a reserve, handed back only by an
+authoritative `Replay`, and *"Every refusal on this path — over budget, over ceiling, an
+already-stale `retain_until`, a poisoned lock — is `Unavailable`, never `Fresh`"*. Which lock a DIAGNOSTIC is rendered outside of is not a conjunct of any of those
+four, and the operational test settles it: every clause of THM-0105 holds under an
+implementation that renders its line inside the guard. That the refusal happened, and that it
+was `Unavailable`, is the theorem's; that an operator can tell it from a store outage without
+the reporter being able to stall or poison the tier is this record's.
+
+**One is split out under RR-002 C5.** `l1_fast_reject_never_fresh_and_evicts_fifo` is
+**NP-197**: THM-0105's scope excludes it by name — *"NOTHING ABOUT THE DORMANT L1."*
+**Packet:** `verification/reviews/packets/adr069-np-146-np-197-ratification-2026-09-20.md`.
 ## NP-147 — the automatic fleet topology is at least one shard of one worker
 
 **Controls:** `mcp-re-proxy/src/async_fleet` (2) —
@@ -3639,3 +3829,58 @@ after it.
 **Root relationship.** The composition above the component propositions this campaign recorded.
 **Packet:** `verification/reviews/packets/adr069-np-159-np-194-ratification-2026-09-20.md`.
 **Severity:** `critical`.
+
+## NP-195 — an unbound deployment says not-claimed rather than asserting a channel binding
+
+**Control:** `mcp-re-proxy/src/authorization/request.rs::an_unbound_deployment_says_not_claimed_rather_than_asserting_a_binding`.
+**Statement.** *An authorization request composed on a deployment that binds no channel
+carries NO channel binding, rather than a value a policy could read as one.*
+**If false.** A policy conditioned on the channel a request arrived over is handed a binding
+the deployment never established, so a condition an operator wrote to be restrictive is
+satisfied by a deployment that cannot satisfy it.
+**Likely owner:** none.
+**Root relationship.** Split out of NP-132 under RR-002 C5 in ADR-MCPRE-069 S-11. It is not
+the refusal-token proposition NP-132 states, and THM-0040 — the theorem over the file's own
+unit — excludes the subject by name in its scope: *"It is authorization, and not admission,
+authentication, channel binding or transport identity."* That is an exclusion of the topic,
+not a silence about it, so no decomposition of THM-0040 reaches it.
+**Severity:** `high`.
+**Packet:** `verification/reviews/packets/adr069-np-132-np-195-np-196-ratification-2026-09-20.md`.
+
+## NP-196 — the authorization-authority seam is populated separately from the request-signer seam
+
+**Control:** `mcp-re-proxy/src/authorization/pdp/policy.rs::a_resolver_that_trusts_nobody_is_a_deployment_that_authorizes_nothing`.
+**Statement.** *A `PdpDecisionPolicy` whose authority resolver answers for no kid is a
+deployment that authorizes nothing: the authorization-authority seam is not populated by
+whatever the request-signer seam happens to trust.*
+**If false.** A deployment that enrolled no authorization authority silently inherits the
+request-signer trust set, so a key trusted to SIGN a request becomes a key trusted to ISSUE
+the decision that authorizes it — the two seams collapsed into one.
+**Likely owner:** none.
+**Root relationship.** Split out of NP-132 under RR-002 C5 in ADR-MCPRE-069 S-11. THM-0039
+is about a decision that verified *"under the key the AUTHORIZATION trust seam resolved"* and
+says in its scope *"It does not establish that the authority SHOULD be trusted — only that
+the seam answered for that kid, which is the deployment's configuration speaking rather than
+this claim."* THM-0040 consumes that and states relevance. Neither states that the seam is
+populated separately from the signer's, which is what this control is about, and it is a
+different question from every refusal token NP-132 enumerates.
+**Severity:** `high`.
+**Packet:** `verification/reviews/packets/adr069-np-132-np-195-np-196-ratification-2026-09-20.md`.
+
+## NP-197 — the dormant L1 fast reject is never fresh and evicts FIFO
+
+**Control:** `mcp-re-proxy/src/async_replay/l1_fast_reject.rs::l1_fast_reject_never_fresh_and_evicts_fifo`.
+**Statement.** *`L1FastRejectStore` never answers `Fresh` — it refuses or defers, never
+admits — and it evicts in FIFO order.*
+**If false.** A tier fronted by an L1 that could answer `Fresh` would admit a nonce the
+authoritative store never saw, which is an unrecorded nonce and therefore a replayable one.
+**Likely owner:** none.
+**Root relationship.** Split out of NP-146 under RR-002 C5 in ADR-MCPRE-069 S-11. THM-0105
+excludes it by name and explains the exclusion: *"NOTHING ABOUT THE DORMANT L1.
+`L1FastRejectStore` is defined and DORMANT — `app.rs` installs the L2 directly on every
+backend, nothing outside `async_replay_test` constructs an L1, and no configuration surface
+selects one."* It adds *"The L1's own never-`Fresh` invariant stays a documented property of
+dormant code, claimed by nothing."* This record is that documented property, held where the register
+can see it, and it stays a proposition for exactly as long as the code stays dormant.
+**Severity:** `high`.
+**Packet:** `verification/reviews/packets/adr069-np-146-np-197-ratification-2026-09-20.md`.

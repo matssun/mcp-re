@@ -9584,6 +9584,121 @@ adjudicator would report the expectation ABSENT — a measurement failure, corre
 than a pass.
 """
 
+# --- ADR-MCPRE-069 S-11: the per-request revocation index and the retained record at the
+# --- store (NP-062, NP-048) -------------------------------------------------------------
+#
+# All three run in the DEFAULT cargo lane and none of the three units declares
+# `test_features`. Measured on this tree: `cargo test -p mcp-re-proxy --lib -- --list`
+# selects 1498 controls, and every control named below is among them. A feature declared
+# here would enter a build configuration into the fingerprint that measures nothing, which
+# is what `_validate_test_features` exists to refuse.
+
+[[probe]]
+id = "M346-proxy-unknown-revocation-status-is-admitted"
+unit = "proxy.client_revocation_index_verdict"
+theorem = "THM-0032"
+conjunct = "leaf revocation `admits`: an empty index admits, otherwise Revoked AND Unknown refuse"
+path = "mcp-re-proxy/src/client_revocation.rs"
+anchor = """            RevocationVerdict::Good => true,
+            RevocationVerdict::Revoked => false,
+            RevocationVerdict::Unknown => false,
+"""
+weakening = """            RevocationVerdict::Good => true,
+            RevocationVerdict::Revoked => false,
+            RevocationVerdict::Unknown => true,
+"""
+expect_red = [
+  "lib#client_revocation::tests::an_uncovered_issuer_is_unknown_and_refused",
+  "lib#client_revocation::tests::unknown_status_is_refused_with_no_policy_input_that_could_admit_it",
+  "lib#client_revocation::tests::an_expired_crl_refuses_its_issuer_rather_than_admitting_it",
+]
+note = """
+THE WEAKENING IS THE HISTORICAL OPT-OUT, PUT BACK. `ClientRevocationIndex::admits`
+documents the arm this probe flips as the whole of the fail-closed property — "the arm
+below is a literal `false`, so fail-closed is a property of the type rather than of what a
+caller remembered to pass. Restoring an operator opt-out means changing this function, which
+is the point." This probe changes that function and nothing else, so what goes red is
+exactly what a restored opt-out would cost.
+
+THE THREE REDS ARE THREE DIFFERENT ROUTES TO `Unknown`, which is why all three are listed
+rather than one. An issuer no CRL covers, an issuer whose only CRL has passed its
+`nextUpdate`, and the combined property control that drives both through a real leaf's
+production coordinate. A weakening that only one of them caught would mean the other two
+were asserting something narrower than their names say.
+
+`a_stale_crl_certifies_nothing_but_still_revokes` is deliberately NOT expected red: it asserts `verdict()` values, and `verdict` is untouched here. The split
+between the verdict and what is done with it is the reason the weakening is placed in
+`admits`: a probe in `verdict` would move both and prove nothing about which layer owns the
+refusal.
+"""
+
+[[probe]]
+id = "M347-proxy-a-poisoned-revocation-lock-yields-an-empty-index"
+unit = "proxy.client_revocation_snapshot"
+theorem = "THM-0032"
+conjunct = "The revocation index it carries is the SNAPSHOT in force for the request, not the atomic cell"
+path = "mcp-re-proxy/src/client_revocation.rs"
+anchor = """            Err(poisoned) => Arc::clone(&poisoned.into_inner()),
+"""
+weakening = """            Err(_) => Arc::new(ClientRevocationIndex::empty()),
+"""
+expect_red = [
+  "lib#client_revocation::tests::a_poisoned_lock_still_yields_the_last_good_index_and_still_accepts_a_swap",
+]
+note = """
+THE DEFECT THIS WEAKENING WRITES OUT IS A PROCESS-WIDE SILENT DISABLE, and it is the one the
+control's own comment names: "A `load` that answered with a default index instead of the
+last-good one would silently disable revocation process-wide." An empty index admits
+everything by construction — `admits` returns `true` for an `is_empty()` index, deliberately,
+because a deployment configuring no CRLs must not be refused — so the substitution turns a
+reloader panic into universal admission rather than into an outage. Nothing else in the file
+changes and `store`'s own poisoned arm is untouched, so the swap the control performs
+afterwards still lands; what fails is the read.
+
+`the_snapshot_swaps_atomically` is NOT expected red: it never poisons the lock, so it reads
+through the `Ok` arm and the weakening is invisible to it. That is the correct outcome and
+it is stated rather than left to be noticed — the two controls in this unit measure the two
+halves of "which index a request reads", and a probe that reddened both would mean one of
+them was not measuring its own half.
+"""
+
+[[probe]]
+id = "M348-proxy-an-uncovered-credential-header-reaches-the-store"
+unit = "proxy.retained_record_at_the_store"
+theorem = "THM-0112"
+conjunct = "A retained request or response keeps the headers named inside the ONE `Signature-Input` dictionary member the verifier checked"
+path = "mcp-re-proxy/src/transparency/retained_record.rs"
+anchor = """        headers: covered_headers(&request.headers, mcp_re_http_profile::REQUEST_LABEL),
+"""
+weakening = """        headers: request.headers.clone(),
+"""
+expect_red = [
+  "lib#transparency::durability::tests::only_the_signed_headers_are_retained",
+  "lib#transparency::durability::tests::a_retained_exchange_comes_back_byte_identical",
+]
+note = """
+THE WEAKENING IS DELIBERATELY IN THE ENCODER AND THE REDS ARE DELIBERATELY AT THE STORE, and
+that is the whole point of this unit. `proxy.retained_record_content` already measures the
+covered-set rule over `retained_record.rs`; what was unmeasured is that the live retention
+authority is what performs it. A probe placed in `durability.rs` would prove the store has
+some filter of its own, which is false and would be the wrong claim. Weakening the filter
+one module away and watching the STORE's controls go red is what establishes that the two
+are the same rule and that the store did not acquire a second one.
+
+TWO REDS, AND THEY FAIL IN OPPOSITE DIRECTIONS, which is what makes the pair non-vacuous.
+`only_the_signed_headers_are_retained` fails because `cookie` is now in the loaded record
+AND in the bytes on disk — it asserts both, so a filter that only cleaned the in-memory
+projection would not satisfy it. `a_retained_exchange_comes_back_byte_identical` fails
+because the loaded headers no longer equal `covered(&request.headers, REQUEST_LABEL)` — the
+round trip is what stops "no uncovered credential is retained" from being satisfiable by
+retaining nothing at all.
+
+`a_record_without_the_schema_token_is_refused` is NOT expected red: it writes an alien object
+through a second store handle and never reaches the encoder. It is the third clause of this
+unit's proposition and it has no deletable check on this path, which is why the falsifier is
+placed on the header rule rather than on the schema token.
+"""
+
 # ADR-MCPRE-069 NP-083 — the audit-vocabulary drift guard and the carrier-minting control.
 #
 # Both units read SOURCE TEXT from disk, so the falsifier for each is a real drift in the

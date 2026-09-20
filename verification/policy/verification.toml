@@ -9608,6 +9608,27 @@ tested_symbols = [
   "lib#authorization::verified_actor::tests::a_rotated_key_is_the_same_subject_and_a_different_canonical_actor",
   "lib#authorization::verified_actor::tests::distinct_trust_domains_are_distinct_actors_under_the_same_subject",
   "lib#authorization::verified_actor::tests::the_canonical_id_is_the_identity_owner_s_join_not_a_second_one",
+  # ADR-MCPRE-069 NP-132, S-11. Three of that record's thirteen, and only three. THM-0040
+  # contains each one in its own words and this unit already measures all three files, so
+  # there is no new unit, no `paths` change and no §5 widening.
+  #
+  #   the target algebra, quoted verbatim from the statement: "a decision naming no target
+  #   matches only a not-applicable one and an absent signed target matches neither". The
+  #   control is the NotApplicable/Absent distinction that clause quantifies over, and
+  #   without it the clause is about a distinction the reader cannot make.
+  "lib#authorization::verified_action::tests::a_method_that_names_no_target_is_not_the_same_as_one_missing_its_target",
+  #   the actor's dimensions, which the statement's comparison reads one at a time: "the
+  #   decided actor's trust domain and subject equal the request's VERIFIED actor's, and
+  #   under credential scope its keyid does too". Three of the four projections this control
+  #   asserts are those three; a joined string a policy had to parse is how `actor_id()`
+  #   became an operand of a relation it was never the coordinate for.
+  "lib#authorization::verified_actor::tests::every_verified_dimension_is_projected_separately",
+  #   the no-candidate arm of the evidence pairing, which this unit's own description states:
+  #   "none, two, or a reference-form binding produce no candidate at all". The two other
+  #   arms are already here (`a_decision_with_no_binding_at_all_is_refused`,
+  #   `two_evidence_bindings_leave_the_pairing_ambiguous_and_are_refused`); this is the arm
+  #   that must NOT be a refusal, and it is the one that was unclaimed.
+  "lib#authorization::pdp::evidence::tests::a_request_carrying_no_decision_is_not_a_refusal",
 ]
 
 [[unit]]
@@ -10741,4 +10762,134 @@ tested_symbols = [
   "tests/aws_irsa_web_identity_test#a_malformed_sts_body_fails_closed",
   "tests/aws_irsa_web_identity_test#an_out_of_grammar_session_name_is_refused_at_construction",
   "tests/aws_irsa_web_identity_test#the_default_sts_endpoint_is_regional",
+]
+
+# ---------------------------------------------------------------------------
+# The per-request client-revocation index — ADR-MCPRE-069 NP-062, S-11
+# ---------------------------------------------------------------------------
+#
+# THE THEOREM THE PLAN NAMED IS THE ONE THEOREM THAT REFUSES THESE CONTROLS, and it refuses
+# them in terms. THM-0054 is the handshake verifier's posture, and its own scope says: "It
+# does not establish that the CRLs a deployment loads are current or complete, and it
+# establishes nothing about the per-request revocation check, which is a separate authority
+# holding the same invariant." `client_revocation.rs` IS that separate authority — its module
+# header opens "PER-REQUEST client-certificate revocation, so a warm connection is not a
+# hole." So no part of this file can be registered under THM-0054 without contradicting a
+# ratified scope sentence, and none of it is. THM-0131 says the same thing from the other
+# side: "It says nothing about whether a revoked peer is refused — that is THM-0054's
+# handshake half and the per-request index beside it".
+#
+# THM-0032 is where the index's own answer is stated, and it states it twice. The consumer
+# side is already registered — `proxy.credential_currency` measures
+# `evaluate_credential_currency`, `proxy.currency_policy_classification` measures the policy
+# that captures the snapshot, and `proxy.per_request_revocation_serving` measures the serving
+# composition. What none of the three measures is the INDEX, and
+# `proxy.per_request_revocation_serving` says so in its own description: "It states nothing
+# the predicate states: WHICH certificates the index refuses, the leaf/issuer strength
+# asymmetry and the one-snapshot-per-request rule are `proxy.credential_currency`'s". That unit could not take these controls anyway — it declares
+# `test_features = ["async_serve"]`, and all twelve of these are DEFAULT-lane `lib#` tests.
+# Measured: `cargo test -p mcp-re-proxy --lib -- --list` selects 1498 controls and all twelve
+# `client_revocation::tests::` are among them, so neither unit here declares `test_features`
+# and neither would be true if it did.
+#
+# TWO UNITS, NOT ONE, and the axis is not the one the plan drew. The plan split 6/6 on
+# "inside THM-0054's statement" / "index algebra"; with THM-0054 out, the honest question is
+# ADR-MCPRE-061 §8 question 2, and the answer is two independently describable authorities:
+# WHAT the index answers about one certificate, and WHICH index a request reads. A single
+# unit would need an "and" in its answer to question 1.
+#
+# ONE CONTROL IS IN NEITHER, deliberately.
+# `a_malformed_crl_is_refused_rather_than_skipped` is a CONSTRUCTOR refusal —
+# `from_crl_ders` returns `Err` and no index exists — and neither of THM-0032's two clauses
+# reaches a value that was never built. It stays NP-062.
+
+[[unit]]
+id = "proxy.client_revocation_index_verdict"
+class = "V0"
+description = "WHAT THE PER-REQUEST CLIENT-REVOCATION INDEX ANSWERS ABOUT ONE CERTIFICATE, by its raw issuer `Name` DER and its raw serial: a listed serial is Revoked and an unlisted one under an in-force list is Good, with the two DER spellings of one serial normalised so a zero pad cannot miss a revocation; a CRL speaks only for its own issuer and says nothing about another CA's leaves; several CRLs for one issuer union their serials and keep the EARLIEST nextUpdate, so a fresher sibling cannot hold a lapsed list in force; an issuer no in-force CRL covers is Unknown and Unknown is refused, with no parameter, field or policy object through which a caller could admit it; a CRL past its nextUpdate certifies nothing and its issuer's certificates become Unknown, while a revocation it already carries is still honoured; and an index carrying no CRLs at all admits everything, which is the one admission granted without a Good verdict. It says nothing about WHICH index a request reads, and nothing about what the handshake verifier does."
+paths = ["mcp-re-proxy/src/client_revocation.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/client_revocation/index_verdict",
+  "mutation://proxy/client_revocation/index_verdict",
+]
+tested_symbols = [
+  "lib#client_revocation::tests::a_listed_serial_is_revoked_and_an_unlisted_one_is_good",
+  "lib#client_revocation::tests::a_zero_padded_serial_still_matches",
+  "lib#client_revocation::tests::a_crl_revokes_a_leaf_of_the_same_ca_and_says_nothing_about_another_ca",
+  "lib#client_revocation::tests::two_crls_for_one_issuer_union_their_serials_and_keep_the_earliest_next_update",
+  "lib#client_revocation::tests::an_empty_index_admits_everything",
+  "lib#client_revocation::tests::an_uncovered_issuer_is_unknown_and_refused",
+  "lib#client_revocation::tests::unknown_status_is_refused_with_no_policy_input_that_could_admit_it",
+  "lib#client_revocation::tests::a_stale_crl_certifies_nothing_but_still_revokes",
+  "lib#client_revocation::tests::an_expired_crl_refuses_its_issuer_rather_than_admitting_it",
+]
+
+[[unit]]
+id = "proxy.client_revocation_snapshot"
+class = "V0"
+description = "WHICH REVOCATION INDEX A REQUEST READS: the shared cell publishes a rebuilt index so the next `load` sees it rather than the one read at boot, and a `load` over a lock a reloader poisoned mid-swap still yields the LAST GOOD index — never a default one — and the cell still accepts a later swap. It says nothing about what the index it yields then answers."
+paths = ["mcp-re-proxy/src/client_revocation.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/client_revocation/snapshot_in_force",
+  "mutation://proxy/client_revocation/snapshot_in_force",
+]
+tested_symbols = [
+  "lib#client_revocation::tests::the_snapshot_swaps_atomically",
+  "lib#client_revocation::tests::a_poisoned_lock_still_yields_the_last_good_index_and_still_accepts_a_swap",
+]
+
+# ---------------------------------------------------------------------------
+# The retained-record contract at the storage boundary — ADR-MCPRE-069 NP-048, S-11
+# ---------------------------------------------------------------------------
+#
+# THM-0112's own statement ends "A record this implementation writes reads back as the bytes
+# it was written from." — a claim about a WRITE and a READ — and `proxy.retained_record_
+# content` measures it over the encoder alone, because `verify --manifests` refuses a `lib#`
+# selector whose module a unit does not measure and `transparency/durability.rs` is not in
+# its `paths`. Its own battery comment records that refusal and names these controls NP-048.
+#
+# THE SCOPE SENTENCE THAT HAS TO BE RECONCILED, and the reading taken, stated here rather
+# than by editing a fingerprinted field. THM-0112's scope says "NOT A CLAIM ABOUT THE STORE.
+# Content addressing, durability, capacity and the fail-closed serving posture are
+# elsewhere." That sentence ENUMERATES what is elsewhere, and the enumeration is the store's
+# STORAGE properties — how an object is named, whether the write survives, how many fit, and
+# what a full volume does. It does not say that the record contract stops holding at the
+# point the record is written, and it could not: the statement's own last clause is about a
+# write and a read. This unit claims the enumerated four for nobody. It claims that the
+# contract THM-0112 states — covered headers only, the schema token, byte-identical
+# round trip — is what `EvidenceRetention::retain` actually performs and what
+# `EvidenceRetention::archive().load` actually accepts.
+#
+# THE FOURTH CONTROL IS NOT HERE AND IS NOT REACHABLE FROM HERE.
+# `transparency::retained_archive::tests::an_object_that_is_not_a_retained_record_is_refused`
+# would need `retained_archive.rs` in these `paths`, and that file's own header refuses the
+# merge in terms: "One fact, and it is not the one [`super::durability`] owns." It goes on to
+# record the split as an ADR-MCPRE-061 §8 question 2 finding — "*the archive holds these
+# bytes* and *this deployment may become answerable for more of them* are independently
+# describable, and the second one's consumer needs none of the first's authority." Pulling
+# the read-only archive into a unit about what the WRITER performs would undo a separation
+# the carrier argues for. It stays NP-048.
+
+[[unit]]
+id = "proxy.retained_record_at_the_store"
+class = "V0"
+description = "THAT THE RETAINED-RECORD CONTRACT IS WHAT THE STORE PERFORMS, not only what the encoder can perform: an exchange retained through the live retention authority keeps the headers its own signature base named and no others — an uncovered credential header reaches neither the loaded record nor the bytes on disk — the covered `authorization` header is kept because the signature is over it, a record naming a schema token this implementation does not write is refused at load rather than reinterpreted, and an exchange retained and loaded back comes out with the method, target, covered headers, status and both bodies it went in with. It claims nothing about how the object is NAMED, whether the write is durable, how many objects fit, or what a full volume does."
+paths = ["mcp-re-proxy/src/transparency/durability.rs"]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/transparency/retained_record_at_the_store",
+  "mutation://proxy/transparency/retained_record_at_the_store",
+]
+tested_symbols = [
+  "lib#transparency::durability::tests::only_the_signed_headers_are_retained",
+  "lib#transparency::durability::tests::a_record_without_the_schema_token_is_refused",
+  "lib#transparency::durability::tests::a_retained_exchange_comes_back_byte_identical",
 ]
