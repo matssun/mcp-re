@@ -3242,11 +3242,68 @@ the merge path checks.
 
 ## NP-155 — the delegated client-server composition works end to end
 
-**Controls:** `mcp-re-proxy/tests/integration_async/delegated_client_server_e2e_test.rs` and its siblings.
-**Statement.** *A real client, a real proxy and a real backend over delegated signing and mTLS: the request is signed, the response is verified as bound to it, the delegated credential chains to a trusted root, and the production wiring is the wiring that runs.*
-**If false.** Every delegated-path unit is established over a component; this is the only evidence that the components compose. It is the proxy-side twin of NP-009 — and unlike NP-009, this one does run, in the Bazel `async_serve` lane.
+**Controls:** `mcp-re-proxy/tests/integration_async/delegated_client_server_e2e_test.rs` (14);
+`mcp-re-proxy/tests/integration_async/delegated_serving_test.rs` (4) —
+`a_notification_is_served_a_verifiable_delegated_202`,
+`the_client_cores_own_notification_envelope_earns_a_202`,
+`the_client_facing_crate_can_verify_the_202_the_server_emits`,
+`direct_root_response_rejected_in_delegated_required_mode`;
+`mcp-re-proxy/tests/integration_async/mtls_client_leg_e2e_test.rs` (3).
+**Statement.** *A real client, a real proxy and a real backend over delegated signing and mTLS: the request is signed, the response is verified as bound to it, the delegated credential chains to a trusted root, the root manifest's publication and revocation govern the round trip, and an accepted notification is answered with a signed bodyless 202 both ends agree on.*
+**If false.** Every delegated-path unit is established over a component; this is the only evidence that the components compose. It is the proxy-side twin of NP-009 — and unlike NP-009, this one does run.
 **Likely owner:** none — a composition's source is every unit under it.
 **Severity:** `critical`.
+**Lane, corrected.** This record said the controls run "in the Bazel `async_serve` lane".
+Measured at ADR-MCPRE-069 CO-S3-2: `cargo test -p mcp-re-proxy --test integration_async --
+--list` selects 167 tests and `--features async_serve` selects 197, and every control this
+record has ever held is in BOTH listings. They run in the plain default cargo lane as well,
+and every registration taken off this record declares no `test_features` for that reason.
+The claim was not false about Bazel; it was silent about the lane that also runs them, which
+is the form that makes a feature-gated battery look measured when it is not.
+**Root relationship.** Eight of the record's twenty-nine rows left in ADR-MCPRE-069 CO-S3-2,
+registered as evidence under THM-0045, THM-0062, THM-0069, THM-0070 and THM-0075 in
+`proxy.dispatch_commitment`, `proxy.delegated_signing_credential`,
+`proxy.audit_authority_coordinates`, `proxy.audit_delivery` and `proxy.response_signing`.
+`delegated_required_wiring_serves_verifies_and_rotates` is cited by TWO units — the serving
+and bound-rejection halves under THM-0075, the expiry and rotation halves under THM-0062 —
+because one control asserting four properties is evidence for two propositions, and splitting
+the control would have measured neither half in the order the wiring imposes. M355 and M356
+name it for its two conjuncts separately, so the double citation is measured twice.
+
+What is left here is three propositions and one residue, and the residue was examined and
+refused rather than deferred.
+
+`direct_root_response_rejected_in_delegated_required_mode` never constructs a proxy. It
+builds a pre-052 direct-root response from a test-only fixture and asserts that
+`mcp_re_http_profile::Verifier::verify_delegated_bound_response` returns
+`DelegationCredentialMissing` — a claim about the VERIFIER, whose production carrier is in
+`mcp-re-http-profile` and in no path of the proxy-side signer unit the analysis proposed for
+it. THM-0062's scope excludes it in terms: *"The credential's existence, not its content: it
+does not establish that the credential chains to the deployment's root, that its scope is
+right, or that a verifier will accept it."* A verifier's acceptance is the axis the theorem
+wrote down that it does not reach. The row stays, and the candidate direction —
+THM-0076 and the http-profile verification units — is recorded in the packet rather than
+acted on here.
+
+The three signed-202 rows stay together and stay whole. The EMISSION half is inside
+THM-0075 — a signed 202 is signed response evidence, produced by the delegated capability
+and bound to the notification it acknowledges — but the controls do not measure only that
+half. Each asserts the wire contract: status 202, a bodyless response, and the credential in
+a covered `mcp-re-delegation` HEADER rather than in the body's evidence block. THM-0075's
+scope declines that subject in terms — *"SECURITY-BEARING SIGNED evidence only. Unsigned
+transport and error responses exist ... and they are outside this claim, which is why it does
+not say every response carries evidence."* A theorem that deliberately does not say WHICH
+responses carry evidence does not contain a claim fixing it for the notification class, so
+clause 2 fails; and *an accepted notification is answered with a signed bodyless 202* is an
+externally meaningful promise between two ends, settled by the #424 owner ruling, so clause 3
+fails independently. `the_client_cores_own_notification_envelope_earns_a_202` fails a third
+way: it asserts that `mcp_re_client_core::build_signed_notification`'s PRODUCER and the
+proxy's classifier agree on the absence of `id`, a cross-crate correspondence whose client
+half is THM-0125's and whose server half no theorem states.
+
+The fourteen `delegated_client_server_e2e_test` rows that remain are the manifest, issuer-pin
+and revocation round trips, blocked behind NP-009, plus the two audit-surface rows CO-S3-2 did
+not reach.
 
 ## NP-156 — the inner-backend health machinery works under a real serving load
 

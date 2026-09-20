@@ -11217,14 +11217,6 @@ proposition = "NP-155"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-19134"
-project = "mcp-re-proxy"
-control = "tests/integration_async#delegated_client_server_e2e_test::an_unconfigured_deployments_records_say_so_rather_than_claiming_an_authorization"
-decision = "new-proposition"
-proposition = "NP-155"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-19135"
 project = "mcp-re-proxy"
 control = "tests/integration_async#delegated_client_server_e2e_test::non_revoked_client_still_round_trips"
@@ -11257,25 +11249,9 @@ proposition = "NP-155"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-19139"
-project = "mcp-re-proxy"
-control = "tests/integration_async#delegated_client_server_e2e_test::serving_without_an_audit_sink_still_round_trips"
-decision = "new-proposition"
-proposition = "NP-155"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-19140"
 project = "mcp-re-proxy"
 control = "tests/integration_async#delegated_client_server_e2e_test::the_issuer_pin_survives_a_delegated_key_rotation"
-decision = "new-proposition"
-proposition = "NP-155"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19141"
-project = "mcp-re-proxy"
-control = "tests/integration_async#delegated_production_wiring_test::delegated_required_wiring_serves_verifies_and_rotates"
 decision = "new-proposition"
 proposition = "NP-155"
 recorded = "2026-09-19"
@@ -11289,49 +11265,9 @@ proposition = "NP-155"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-19143"
-project = "mcp-re-proxy"
-control = "tests/integration_async#delegated_serving_test::a_request_that_cannot_be_answered_never_reaches_the_backend"
-decision = "new-proposition"
-proposition = "NP-155"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19144"
-project = "mcp-re-proxy"
-control = "tests/integration_async#delegated_serving_test::delegated_bound_rejection_verifies"
-decision = "new-proposition"
-proposition = "NP-155"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19145"
-project = "mcp-re-proxy"
-control = "tests/integration_async#delegated_serving_test::delegated_preflight_rejection_verifies_unbound"
-decision = "new-proposition"
-proposition = "NP-155"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19146"
-project = "mcp-re-proxy"
-control = "tests/integration_async#delegated_serving_test::delegated_success_response_verifies_and_root_touched_once"
-decision = "new-proposition"
-proposition = "NP-155"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-19147"
 project = "mcp-re-proxy"
 control = "tests/integration_async#delegated_serving_test::direct_root_response_rejected_in_delegated_required_mode"
-decision = "new-proposition"
-proposition = "NP-155"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19148"
-project = "mcp-re-proxy"
-control = "tests/integration_async#delegated_serving_test::missing_delegated_key_fails_closed"
 decision = "new-proposition"
 proposition = "NP-155"
 recorded = "2026-09-19"

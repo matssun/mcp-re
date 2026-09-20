@@ -3598,6 +3598,25 @@ tested_symbols = [
   # control alone passes against a proxy that refuses every dispatch it ever makes.
   "tests/integration_async#delegated_serving_test::a_credential_that_cannot_outlive_the_dispatch_refuses_before_the_backend_runs",
   "tests/integration_async#delegated_serving_test::a_credential_with_room_for_the_dispatch_still_reaches_the_backend",
+  # ADR-MCPRE-069 NP-155, CO-S3-2. The fourth control from this file, and the one that
+  # measures the prerequisite's ABSENCE rather than its insufficiency. THM-0045's
+  # security_consequence is matched in terms — "not a proxy that quietly serves unjudged
+  # requests or DISCOVERS A MISSING CREDENTIAL AFTER THE TOOL HAS ALREADY RUN" — and the
+  # control asserts exactly that: with no credential ever published, the counting backend
+  # records zero dispatches and the client gets 503. Without a `SigningWindow` there is no
+  # `ReadyForDispatch` to assemble, which is this unit's whole proposition read from the
+  # outside.
+  #
+  # WHERE IT REFUSES IS NOT IN THIS UNIT'S PATHS, and that is recorded rather than repaired
+  # here: the refusal is `answering_commitment.rs::answerable_stage`, which belongs to NO
+  # unit in the registry. Widening `paths` is outside this slice's authority, so the gap is
+  # filed as a residue in the NP-155 packet. The window that would have been handed over is
+  # `signing_window.rs`, which IS this unit's, and the three siblings above — M160/M161's
+  # `expect_red` — already measure this file's integration controls red in the same lane.
+  #
+  # LANE: measured, default cargo. Present in the 167-test default listing and the 197-test
+  # `async_serve` listing alike.
+  "tests/integration_async#delegated_serving_test::a_request_that_cannot_be_answered_never_reaches_the_backend",
   "tests/integration_async#delegated_serving_test::an_inner_plane_that_states_no_completion_bound_is_refused_before_the_backend_runs",
 ]
 
@@ -5685,6 +5704,35 @@ tested_symbols = [
   # measured, `--test integration_async -- --list` reports all ten `root_key_lifecycle_test`
   # controls with and without `--features async_serve`, so no `test_features` is declared
   # and none would be true.
+  # ADR-MCPRE-069 NP-155, CO-S3-2. The NEVER-ISSUED transition, read on the serving path.
+  # THM-0062 states the signer "yields none before the first rotation", and its
+  # security_consequence states what the caller gets instead — "there is no longer-lived or
+  # root credential to fall back to, because no such mode exists ... an unsigned last-resort
+  # receipt, which it can tell from a signature". The lib twin
+  # (`no_key_before_first_rotate_fails_closed`, above) establishes the reader's answer; this
+  # establishes that a production `HttpProfileProxy` over that reader emits no signed 200,
+  # renders the frozen `mcp-re.delegated_signing_unavailable` token, and carries no
+  # `signature-input` header at all.
+  #
+  # It is not named in a probe below, and the reason is structural rather than an omission: a
+  # weakening that would make it green has to MANUFACTURE a credential for a signer that
+  # never rotated, and no edit to this unit's paths can do that. M355's expiry bound is the
+  # nearest reachable falsifier and it names the wiring row instead.
+  #
+  # LANE: measured. Both names appear in `--test integration_async -- --list` at 167 tests
+  # (default) and at 197 with `--features async_serve`, so no `test_features` is declared.
+  "tests/integration_async#delegated_serving_test::missing_delegated_key_fails_closed",
+  # ONE CONTROL, TWO UNITS — see the twin citation in `proxy.response_signing`. What it takes
+  # HERE is the credential-lifecycle half, which is this theorem's and not that one's: past
+  # the successor's expiry WITH NO FURTHER ROTATION serving fails closed 503 and unsigned —
+  # THM-0062's "past the published key's expiry" and "rather than extending it" — and a
+  # rotation inside the overlap window publishes a SUCCESSOR under a different kid, which is
+  # "publishes a credential snapshot only from a successful rotation". Driven through the
+  # real `build_delegated_signing` from a parser-produced `DeploymentRequest`, so what it
+  # adds over the lib battery is that the PRODUCTION WIRING — `delegated_wiring.rs`, this
+  # unit's path — composes those transitions, not that the reader reports them. M356 is its
+  # falsifier for exactly this conjunct.
+  "tests/integration_async#delegated_production_wiring_test::delegated_required_wiring_serves_verifies_and_rotates",
   "tests/integration_async#root_key_lifecycle_test::root_issuance_failure_serves_until_delegated_key_expiry_then_fails_closed",
 ]
 
@@ -5944,6 +5992,37 @@ tested_symbols = [
   "lib#http_profile_serve::receipt::artifact::last_resort_receipt_tests::a_spent_approval_last_resort_receipt_names_the_consumed_continuation",
   "lib#http_profile_serve::receipt::artifact::last_resort_receipt_tests::a_retention_indeterminate_last_resort_receipt_still_names_the_failed_obligation",
   "lib#http_profile_serve::receipt::artifact::last_resort_receipt_tests::an_ordinary_post_dispatch_failure_claims_no_retention_status",
+  # ADR-MCPRE-069 NP-155, CO-S3-2. The same owner read at the PRODUCTION PEP rather than at
+  # its own API. THM-0075's statement is matched word for word by the two rejection rows —
+  # "bound evidence is bound to the exact request it answers, and evidence produced before a
+  # request can be established is explicitly unbound and cannot be interpreted as bound" —
+  # and `receipt/artifact.rs`, already this unit's path, is where that choice is made: the
+  # `bound` argument selects `build_delegated_rejection` or
+  # `build_delegated_rejection_preflight`. The preflight row additionally asserts the
+  # unbound receipt does NOT verify through the bound path, which is the half that makes
+  # "cannot be interpreted as bound" a refusal rather than a label.
+  #
+  # The success row is the other end of the same owner — the unit description's "so the
+  # reply path and the refusal path cannot drift apart" — signed under a window this unit's
+  # `signing_window.rs` opened, verified through the credential-to-root chain, and asserted
+  # NOT to carry the root's kid.
+  #
+  # LANE: measured, not assumed. `cargo test -p mcp-re-proxy --test integration_async --
+  # --list` selects 167 tests and `--features async_serve` selects 197; all four names below
+  # are in BOTH. They compile in the DEFAULT cargo lane, so this unit declares no
+  # `test_features` and declaring `async_serve` would have been false.
+  "tests/integration_async#delegated_serving_test::delegated_bound_rejection_verifies",
+  "tests/integration_async#delegated_serving_test::delegated_preflight_rejection_verifies_unbound",
+  "tests/integration_async#delegated_serving_test::delegated_success_response_verifies_and_root_touched_once",
+  # ONE CONTROL, TWO UNITS, AND THE SPLIT IS NAMED. This row asserts four properties, and
+  # `proxy.delegated_signing_credential` carries it too. What it takes HERE is the first
+  # two: the served response verifies via the credential-to-root chain, and the replayed
+  # request earns a request-BOUND receipt that verifies bound. The expiry and rotation halves
+  # are THM-0062's and are cited there. Splitting the control was refused — it is one
+  # sequential scenario over one wiring, and cutting it would measure neither half in the
+  # order the wiring imposes. Each unit's own probe below names it for its own conjunct, so
+  # the double citation is measured twice rather than claimed twice.
+  "tests/integration_async#delegated_production_wiring_test::delegated_required_wiring_serves_verifies_and_rotates",
   "lib#http_profile_serve::receipt::artifact::last_resort_receipt_tests::an_unstated_disposition_adds_no_claim",
 ]
 
@@ -6165,6 +6244,22 @@ tested_symbols = [
   "tests/integration_async#pdp_authorization_serving_test::an_authorized_request_records_which_policy_permitted_what",
   "tests/integration_async#pdp_authorization_serving_test::a_policy_denial_is_recorded_as_a_policy_denial_and_not_merely_as_a_rejection",
   "tests/integration_async#pdp_authorization_serving_test::a_request_refused_before_any_policy_ran_is_not_attributed_to_one",
+  # ADR-MCPRE-069 NP-155, CO-S3-2. The fifth serving-path instance, reached through the
+  # two-proxy round trip rather than the PDP fixture. THM-0069's statement is matched word
+  # for word — "an unconfigured deployment is not rendered as an authorized one" — and the
+  # control asserts the whole subject value, `request_accepted(NotConfigured,
+  # NotConfigured)`, so an arm that drifted to `Authorized` fails rather than a substring
+  # check passing. Its second half is the statement's next clause, "a response record carries
+  # none, because there is nothing after the dispatch for a policy to have decided": the
+  # signed-response record's authorization coordinate is asserted absent.
+  #
+  # Named in M165's `expect_red`, so the added lane is measured rather than listed: under
+  # that weakening the accepted record carries the response event type and the lookup this
+  # control performs finds nothing.
+  #
+  # LANE: measured, DEFAULT cargo — the same 167-test listing the four rows above were
+  # measured into. This unit declares no `test_features`.
+  "tests/integration_async#delegated_client_server_e2e_test::an_unconfigured_deployments_records_say_so_rather_than_claiming_an_authorization",
   "tests/integration_async#pdp_authorization_serving_test::a_core_verification_failure_still_records_its_frozen_core_reason",
 ]
 
@@ -7482,6 +7577,21 @@ tested_symbols = [
   "lib#audit_sink::drain::tests::a_writer_that_never_acknowledges_returns_bounded_and_unknown",
   "lib#audit_sink::drain::tests::an_acknowledged_drain_with_a_failed_write_behind_it_is_unknown",
   "lib#audit_sink::drain::tests::an_acknowledged_drain_with_no_failed_write_is_drained",
+  # ADR-MCPRE-069 NP-155, CO-S3-2. The no-sink posture read on the serving path. Its
+  # containment is the unit's OWN existing conjunct rather than a clause of THM-0070's
+  # statement: `the_no_audit_sink_records_nothing_and_does_not_panic`, above, already stands
+  # for "no sink installed is the explicit no-emission posture", and the description's
+  # "bounded and non-blocking" is the property being read at its degenerate end. This is that
+  # same conjunct driven through a real client-proxy-backend round trip, so what it adds is
+  # that the SERVING path is undisturbed by the absent sink, not that the sink records
+  # nothing — it has no sink to inspect and asserts nothing about emission.
+  #
+  # It is a MIRROR and is named in no probe, deliberately: any weakening that turned it red
+  # would have broken serving outright, which every other control in this file also reports.
+  # A probe naming it would be satisfied by the lane's own breakage.
+  #
+  # LANE: measured, default cargo (167-test listing), not `async_serve`.
+  "tests/integration_async#delegated_client_server_e2e_test::serving_without_an_audit_sink_still_round_trips",
   "lib#audit_sink::drain::tests::the_unknown_outcome_is_its_own_case",
 ]
 
