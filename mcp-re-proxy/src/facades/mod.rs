@@ -11,6 +11,6 @@
 //!
 //! | module | historical vocabulary | authority behind it |
 //! |---|---|---|
-//! | [`asserted_identity`] | `validate_asserted_identity_value`, `AssertedIdentityRejection`, `MAX_ASSERTED_IDENTITY_LEN`, `IdentityPolicy`/`IdentitySource` | the peer-identity value and certificate identity authorities (Slice 1) |
+//! | [`asserted_identity`] | `validate_asserted_identity_value`, `AssertedIdentityRejection`, `IdentityPolicy`/`IdentitySource` | the peer-identity value and certificate identity authorities (Slice 1) |
 
 pub mod asserted_identity;

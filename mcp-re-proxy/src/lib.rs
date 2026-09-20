@@ -401,7 +401,6 @@ pub use transport::StaticIdentityProvider;
 pub use transport::TransportBindingPolicy;
 pub use transport::TransportBindingProvider;
 pub use transport::TransportIdentity;
-pub use transport::MAX_ASSERTED_IDENTITY_LEN;
 pub use transport::MCP_METHOD_HEADER;
 pub use transport::MCP_NAME_HEADER;
 #[cfg(feature = "redis_replay")]

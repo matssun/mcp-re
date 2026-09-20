@@ -28,7 +28,7 @@ use mcp_re_proxy::communication_assurance::CertificateIdentityPolicy;
 use mcp_re_proxy::communication_assurance::CertificateIdentityRefusal;
 use mcp_re_proxy::communication_assurance::LeafIdentityRefusal;
 use mcp_re_proxy::communication_assurance::PeerIdentityValueRefusal;
-use mcp_re_proxy::transport::MAX_ASSERTED_IDENTITY_LEN;
+use mcp_re_proxy::communication_assurance::MAX_PEER_IDENTITY_LEN;
 
 use rcgen::BasicConstraints;
 use rcgen::CertificateParams;
@@ -208,7 +208,7 @@ fn empty_first_uri_san_does_not_fall_back_to_a_valid_later_uri_san() {
 fn oversized_first_uri_san_does_not_fall_back_to_a_valid_later_uri_san() {
     let ca = make_ca();
     let mut oversized = String::from("spiffe://example.org/");
-    oversized.push_str(&"a".repeat(MAX_ASSERTED_IDENTITY_LEN));
+    oversized.push_str(&"a".repeat(MAX_PEER_IDENTITY_LEN));
     let cert = leaf(
         &ca,
         vec![uri(&oversized), uri("spiffe://example.org/agent-SECOND")],

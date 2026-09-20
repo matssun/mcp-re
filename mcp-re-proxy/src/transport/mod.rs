@@ -170,14 +170,13 @@ impl TransportBindingProvider for StaticIdentityProvider {
     }
 }
 
-// The trusted-ingress identity vocabulary — `MAX_ASSERTED_IDENTITY_LEN`,
-// `AssertedIdentityRejection`, `validate_asserted_identity_value` — is a compatibility
+// The trusted-ingress identity vocabulary — `AssertedIdentityRejection`,
+// `validate_asserted_identity_value` — is a compatibility
 // facade over the peer-identity value owner (ADR-MCPRE-063 Slice 1) and lives in
 // `asserted_identity_facade`. Re-exported here so this module's own callers, and the
 // crate root, keep their existing paths.
 pub use crate::facades::asserted_identity::validate_asserted_identity_value;
 pub use crate::facades::asserted_identity::AssertedIdentityRejection;
-pub use crate::facades::asserted_identity::MAX_ASSERTED_IDENTITY_LEN;
 
 /// The SEP-2243 transport routing header naming the JSON-RPC method (ADR-MCPS-025).
 /// Lowercased for case-insensitive [`RequestHeaders`] lookup.
@@ -568,13 +567,13 @@ mod tests {
 
     #[test]
     fn asserted_identity_rejects_oversized() {
-        let huge = "a".repeat(super::MAX_ASSERTED_IDENTITY_LEN + 1);
+        let huge = "a".repeat(crate::communication_assurance::MAX_PEER_IDENTITY_LEN + 1);
         assert_eq!(
             super::validate_asserted_identity_value(&huge),
             Err(super::AssertedIdentityRejection::TooLong)
         );
         // Exactly at the bound is accepted.
-        let at_bound = "a".repeat(super::MAX_ASSERTED_IDENTITY_LEN);
+        let at_bound = "a".repeat(crate::communication_assurance::MAX_PEER_IDENTITY_LEN);
         assert!(super::validate_asserted_identity_value(&at_bound).is_ok());
     }
 

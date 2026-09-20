@@ -3,10 +3,9 @@
 //! authority.
 //!
 //! Everything here is compatibility surface for ADR-MCPRE-063 Slice 1. The names predate
-//! the authority — `MAX_ASSERTED_IDENTITY_LEN` names a bound that belongs to an identity
-//! value rather than to an ingress mechanism, and `validate_asserted_identity_value` names
-//! a rule that is not specific to an assertion — and they survive so their callers can
-//! migrate one at a time instead of in this slice.
+//! the authority — `validate_asserted_identity_value` names a rule that is not specific to
+//! an assertion — and they survive so their callers can migrate one at a time instead of
+//! in this slice.
 //!
 //! **Nothing here owns anything.** Every item is a projection, a conversion, or a mapping
 //! of the owner's refusal into a caller's existing vocabulary. Deleting a check in this
@@ -17,21 +16,12 @@
 //! last consumer of these names is gone, this file is deleted whole, and nothing else has
 //! to be untangled first.
 
-use crate::communication_assurance::peer_identity_value::MAX_PEER_IDENTITY_LEN;
 use crate::communication_assurance::CertificateIdentityPolicy;
 use crate::communication_assurance::CertificateIdentitySource;
 use crate::communication_assurance::PeerIdentityValue;
 use crate::communication_assurance::PeerIdentityValueRefusal;
 use crate::transport::IdentityPolicy;
 use crate::transport::IdentitySource;
-
-/// Maximum accepted length (bytes) of an asserted trusted-ingress identity value
-/// (ADR-MCPS-023: asserted-identity metadata MUST be length-bounded — oversized values
-/// fail closed).
-///
-/// This is [`MAX_PEER_IDENTITY_LEN`] under its historical name. One number, not two that
-/// currently agree.
-pub const MAX_ASSERTED_IDENTITY_LEN: usize = MAX_PEER_IDENTITY_LEN;
 
 /// Why a trusted-ingress asserted-identity value was rejected (ADR-MCPS-023).
 ///
@@ -41,7 +31,7 @@ pub const MAX_ASSERTED_IDENTITY_LEN: usize = MAX_PEER_IDENTITY_LEN;
 pub enum AssertedIdentityRejection {
     /// Empty after trimming.
     Empty,
-    /// Longer than [`MAX_ASSERTED_IDENTITY_LEN`].
+    /// Longer than [`crate::communication_assurance::MAX_PEER_IDENTITY_LEN`].
     TooLong,
     /// Contains a control character (CR / LF / NUL / …) — a header-smuggling and
     /// log-injection risk; a well-formed identity value has none.
@@ -126,7 +116,7 @@ mod tests {
             validate_asserted_identity_value("bad\rvalue"),
             Err(AssertedIdentityRejection::Malformed)
         );
-        let huge = "a".repeat(super::MAX_ASSERTED_IDENTITY_LEN + 1);
+        let huge = "a".repeat(crate::communication_assurance::MAX_PEER_IDENTITY_LEN + 1);
         assert_eq!(
             validate_asserted_identity_value(&huge),
             Err(AssertedIdentityRejection::TooLong)
