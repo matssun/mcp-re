@@ -144,6 +144,17 @@ jobs:
           python3 scripts/slo_invocation_gate.py --selftest
           python3 scripts/slo_invocation_gate.py
 
+      # Doc-path gate: refuses a path-like token in current text that does not resolve
+      # to a file of this repository, and — the rule the whole class turns on — one that
+      # resolves ONLY to a gitignored path. Fifteen citations of a `work/`-local design
+      # note shipped inside production source that way: correct on the author's disk and
+      # nowhere else. `config/doc-path-debt.toml` holds the population it landed over and
+      # may only shrink. Fast, python-only.
+      - name: Doc-path gate (current text names no path the repository lacks)
+        run: |
+          python3 scripts/doc_path_gate.py --selftest
+          python3 scripts/doc_path_gate.py
+
       # Bazel srcs gate: mcp-re-proxy hand-lists its library sources (three feature
       # flavors share one list) while every other crate globs. A hand-list drifts —
       # `src/audit_sink.rs` shipped with the ADR-MCPS-035 audit surface and was never

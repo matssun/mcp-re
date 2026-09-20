@@ -3965,3 +3965,29 @@ dormant code, claimed by nothing."* This record is that documented property, hel
 can see it, and it stays a proposition for exactly as long as the code stays dormant.
 **Severity:** `high`.
 **Packet:** `verification/reviews/packets/adr069-np-146-np-197-ratification-2026-09-20.md`.
+
+## NP-198 — current documentation names no path this repository does not contain
+
+**Control:** `scripts/doc_path_gate.py`.
+**Carrier:** `config/doc-path-debt.toml`, and the in-scope set the gate derives from
+`git ls-files --cached --others --exclude-standard`.
+**Statement.** *Every path-like token in current documentation resolves to a path this
+repository contains, and a token resolving only to a path outside it is a failure.*
+**If false.** A guide instructs an integrator to open a file that is not there. The reader
+does not learn that the sentence is stale — they learn that they cannot find the file, and
+the surrounding claims inherit that doubt. The second half of the statement is the sharper
+one: a citation that resolves on the author's disk and nowhere else reads as correct to
+everyone who wrote it and to no one who uses it.
+**Likely owner:** none. No unit's `paths` name documentation, and no theorem is created to
+justify a gate — an unratified proposition with a gate carrier is the honest state, and it
+is the state NP-002 and NP-006 are already in.
+**Root relationship.** None claimed. The property is about the repository's text rather
+than about its execution, so it bears on no production root.
+**Severity:** `medium`.
+
+**What the control does not reach, stated because the gate is not the class.** It resolves
+paths. It reaches none of the statements that name something which exists and describe it
+wrongly, and it does not resolve symbols: a symbol sweep over this repository produced
+roughly 60% noise before hand-triage, which makes it a review instrument and not a
+merge-path control. A control that covers one class and is recorded as covering the
+category is the same defect one level up.

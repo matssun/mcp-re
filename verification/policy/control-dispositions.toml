@@ -12491,6 +12491,14 @@ decision = "new-proposition"
 proposition = "NP-169"
 recorded = "2026-09-19"
 
+[[disposition]]
+id = "CD-20003"
+project = ""
+control = "gate#scripts/doc_path_gate.py"
+decision = "new-proposition"
+proposition = "NP-198"
+recorded = "2026-09-21"
+
 [[proposition]]
 id = "NP-173"
 title = "Every inner-process log event renders under the brief's own tag"
@@ -12701,3 +12709,12 @@ likely_owner = ""
 consequence = "high"
 root_relationship = "THM-0105's scope excludes the dormant L1 in terms; split out of NP-146 under RR-002 C5"
 record = "docs/architecture/control-dispositions.md#np-197"
+
+[[proposition]]
+id = "NP-198"
+title = "Current documentation names no path this repository does not contain"
+carrier = "config/doc-path-debt.toml"
+likely_owner = ""
+consequence = "medium"
+root_relationship = "no root; a dead path in a current guide is instruction to an integrator, and no unit's paths name documentation"
+record = "docs/architecture/control-dispositions.md#np-198"
