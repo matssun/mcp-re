@@ -3109,8 +3109,10 @@ the deployment to look at"*, and naming the OID is not naming a half. A unit dec
 distinct sentences under a theorem that states three distinguishable refusal values would be
 the registration ADR-069 §5 calls strictly worse than none.
 
-Two other controls of this record landed, in `facades/asserted_identity.rs`, under THM-0023
-as part of `proxy.asserted_identity_delegation`; the third is separated as NP-187.
+Two other controls of this record measured the trusted-ingress facade's delegation to the
+peer-identity value owner. RA3-002 deletes that facade — its callers construct
+`PeerIdentityValue` directly — so both controls and `proxy.asserted_identity_delegation`
+are retired with it. The third is separated as NP-187.
 **Packet:** `verification/reviews/packets/adr069-np-145-np-186-np-187-ratification-2026-09-20.md`.
 **Severity:** `medium`.
 

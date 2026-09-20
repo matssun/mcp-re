@@ -117,9 +117,8 @@ production caller left** — it survives for its published X.509 conformance sui
 DER, and `scripts/serving_identity_provenance_gate.py` fails the build if a serving path
 calls it again. It parses nothing,
 selects nothing and validates nothing; the historical vocabulary it converts —
-`IdentityPolicy`, `IdentitySource`, `TransportIdentity`, `validate_asserted_identity_value`
-— is named and dated in `asserted_identity_facade.rs` so the migration surface is
-countable and can be deleted whole.
+`IdentityPolicy` and `IdentitySource` — is named in `facades/asserted_identity.rs`, which
+after RA3-002 is two conversions and nothing else, so the migration surface is countable.
 
 The arrow that used to read `TLS certificate verification -> verified transport identity`
 collapsed two authorities into one name, and the split survives the migration: identity
@@ -127,8 +126,8 @@ interpretation still does NOT establish that the chain was verified. What closed
 a THIRD fact — the mechanism's own acceptance — composed with the identity over ONE
 credential. `TransportIdentity` remains freely constructible and is therefore explicitly a
 RENDERING, never the authority: a value of it proves nothing about where it came from,
-which is why it is produced only in `facades::asserted_identity` from a product whose
-provenance THM-0031 states.
+which is why its constructors live in `transport::identity`, behind a module boundary whose
+admitted producer set NP-078 enumerates.
 
 ## 7. Connection credential window
 

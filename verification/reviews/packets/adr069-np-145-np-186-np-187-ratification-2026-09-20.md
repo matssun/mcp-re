@@ -2,10 +2,12 @@
 
 # NP-145, NP-186, NP-187 — R6 ratification packet: three residues, three different reasons
 
-**Disposition:** R6 for all three. NP-145 closes in part — two of its five controls landed
-as part of `unit://proxy.asserted_identity_delegation` under THM-0023 — and its remaining
-three controls are TWO propositions, so one stays under NP-145 and one is separated as
-NP-187 under RR-002 C5. NP-186 is NP-075's residue: six of NP-075's seven controls landed as
+**Disposition:** R6 for all three. NP-145 closes in part — two of its five controls measured
+the trusted-ingress facade's delegation, which RA3-002 removes by deleting the facade: its
+callers now construct `PeerIdentityValue` directly, so the delegation is a fact about the
+call sites rather than a property to keep honest, and `unit://proxy.asserted_identity_delegation`
+is retired with it. Its remaining three controls are TWO propositions, so one stays under
+NP-145 and one is separated as NP-187 under RR-002 C5. NP-186 is NP-075's residue: six of NP-075's seven controls landed as
 `unit://proxy.transport_binding_application` under THM-0034, and the seventh is not about
 the binding at all.
 

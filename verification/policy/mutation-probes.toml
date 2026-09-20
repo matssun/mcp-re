@@ -9493,53 +9493,6 @@ a check, and a mutation probe is the wrong instrument for it.
 """
 
 [[probe]]
-id = "M340-proxy-the-ingress-vocabulary-reimplements-the-value-rule"
-unit = "proxy.asserted_identity_delegation"
-theorem = "THM-0023"
-conjunct = "the trusted-ingress facade delegates to the peer-identity value owner rather than reimplementing the well-formedness rules"
-path = "mcp-re-proxy/src/facades/asserted_identity.rs"
-anchor = """pub fn validate_asserted_identity_value(value: &str) -> Result<&str, AssertedIdentityRejection> {
-    match PeerIdentityValue::interpret(value) {
-        Ok(_) => Ok(value.trim()),
-        Err(refusal) => Err(refusal.into()),
-    }
-}
-"""
-weakening = """pub fn validate_asserted_identity_value(value: &str) -> Result<&str, AssertedIdentityRejection> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Err(AssertedIdentityRejection::Empty);
-    }
-    if trimmed.len() > MAX_ASSERTED_IDENTITY_LEN {
-        return Err(AssertedIdentityRejection::TooLong);
-    }
-    Ok(trimmed)
-}
-"""
-expect_red = [
-  "lib#transport::tests::asserted_identity_rejects_control_characters",
-  "lib#facades::asserted_identity::tests::every_owner_refusal_maps_to_the_historical_rejection_it_replaced",
-]
-note = """
-THE WEAKENING IS THE SECOND IMPLEMENTATION THE MIGRATION REMOVED, restored as it would
-plausibly come back: a short local rule that handles the two cases whoever wrote it
-remembered. It agrees with the owner on the empty value and on the bound, and drops the
-control-character clause — so a CR/LF-laced header value reaches a log, an audit record and a
-comparison, which is the exact drift THM-0023's consequence names ("neither provenance can
-drift into a weaker definition of well-formed than the other").
-
-`MAX_ASSERTED_IDENTITY_LEN` is still the owner's constant under its historical name, so the
-weakening does not even look like a divergence at the point of the edit. That is the shape
-the twin exists to catch, and both halves of the twin catch it: one control in
-`transport/mod.rs`, one in the facade's own file.
-
-`asserted_identity_rejects_empty`, `_rejects_oversized`, `_accepts_a_well_formed_value_and_trims`
-and `a_valid_value_comes_back_trimmed_and_borrowed` stay green, which is the point — a battery
-measuring only the clauses a reimplementation happens to keep would report a facade that had
-stopped being one.
-"""
-
-[[probe]]
 id = "M341-proxy-the-resolver-reads-a-field-the-deployment-did-not-configure"
 unit = "proxy.channel_peer_resolution"
 theorem = "THM-0031"

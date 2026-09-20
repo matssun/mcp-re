@@ -117,7 +117,7 @@ review_ref = "EX-004 in docs/architecture/review-dispositions.md"
 # names, plus the wire vocabulary, the composition, and the prototype the rulings retain.
 
 # Same migration, same rule: 1305 -> 1274 when the identity-value invariant moved to its
-# owner and the historical vocabulary moved to `asserted_identity_facade`.
+# owner and the historical vocabulary moved to `facades/asserted_identity.rs`.
 # MCPRE-156 implemented EX-005's disposition: `transport.rs` split at the REACHABILITY
 # boundary into the live channel-binding authority and the deferred ingress-attestation
 # capability. The debt moves WITH the two halves, and the sum rises from 1268 to 1350

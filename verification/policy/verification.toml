@@ -1807,14 +1807,13 @@ evidence = [
 ]
 # The battery is over the OWNER and stops there.
 #
-# The trusted-ingress facade (`transport::validate_asserted_identity_value`) delegates to
-# this owner, and its own tests go red when the owner's rules are weakened — but they are
-# NOT listed here. THM-0023 is a claim about inhabitants of the type, and a caller that
-# stopped constructing the type would leave every inhabitant well-formed while leaving the
-# ingress path unprotected. Listing those tests would make this unit's evidence closure
-# wider than its claim, and the manifest gate refuses it for the sharper reason that this
-# unit does not measure `transport.rs`: an in-crate test whose source is not measured can
-# be rewritten under the same name without moving the fingerprint.
+# The callers that need the value rule CONSTRUCT the type — `transport::validate_routing_headers`
+# and the Mode-C wire parser both call `PeerIdentityValue::interpret` — so there is no second
+# implementation to keep honest and no caller-side battery to list. THM-0023 is a claim about
+# inhabitants of the type; listing a caller's tests here would make this unit's evidence
+# closure wider than its claim, and the manifest gate refuses it for the sharper reason that
+# this unit does not measure `transport/mod.rs`: an in-crate test whose source is not measured
+# can be rewritten under the same name without moving the fingerprint.
 #
 # What pins the delegation is therefore an OPEN item, not a silent one: it belongs to the
 # trusted-ingress authority, which this slice deliberately did not build.
@@ -10940,30 +10939,6 @@ tested_symbols = [
   "lib#transport::tests::an_absent_channel_peer_fails_closed",
   "lib#transport::tests::the_installable_binding_is_exact_match",
   "lib#transport::tests::a_permissive_policy_cannot_manufacture_the_binding_fact",
-]
-
-[[unit]]
-id = "proxy.asserted_identity_delegation"
-class = "V0"
-description = "THE TRUSTED-INGRESS VOCABULARY DELEGATES THE VALUE RULE INSTEAD OF REIMPLEMENTING IT: `validate_asserted_identity_value` accepts a well-formed value and hands back the TRIMMED form, and refuses an empty one, one past the length bound and every shape of control character — each refusal being the owner's own refusal carried into the historical spelling, one family for one family, rather than a second set of rules that currently agrees. This is the caller side of the peer-identity value claim and nothing more: WHICH strings the rule accepts is `proxy.peer_identity_value`'s, that no other inhabitant can exist is `proxy.peer_identity_value_sole_producer`'s, and the single-valued header rule belongs to the caller that counts the header."
-paths = [
-  "mcp-re-proxy/src/facades/asserted_identity.rs",
-  "mcp-re-proxy/src/transport/mod.rs",
-]
-exported_contracts = []
-evidence_class = "tested"
-direct_consequence_severity = "high"
-evidence = [
-  "test://proxy/facades/asserted_identity_delegation",
-  "mutation://proxy/facades/asserted_identity_delegation",
-]
-tested_symbols = [
-  "lib#transport::tests::asserted_identity_accepts_a_well_formed_value_and_trims",
-  "lib#transport::tests::asserted_identity_rejects_empty",
-  "lib#transport::tests::asserted_identity_rejects_oversized",
-  "lib#transport::tests::asserted_identity_rejects_control_characters",
-  "lib#facades::asserted_identity::tests::every_owner_refusal_maps_to_the_historical_rejection_it_replaced",
-  "lib#facades::asserted_identity::tests::a_valid_value_comes_back_trimmed_and_borrowed",
 ]
 
 [[unit]]

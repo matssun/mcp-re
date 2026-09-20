@@ -105,7 +105,6 @@ not an omission to hide.
 | proxy.admission_currency_gate | V0 | _none_ | 0 |
 | proxy.admission_record_addressing | V0 | _none_ | 0 |
 | proxy.admission_state_source | V0 | _none_ | 0 |
-| proxy.asserted_identity_delegation | V0 | _none_ | 0 |
 | proxy.async_replay_retention | V0 | THM-0105 | 0 |
 | proxy.audit_authority_coordinates | V0 | THM-0069 | 0 |
 | proxy.audit_delivery | V0 | THM-0070 | 0 |

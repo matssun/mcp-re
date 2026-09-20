@@ -170,14 +170,6 @@ impl TransportBindingProvider for StaticIdentityProvider {
     }
 }
 
-// The trusted-ingress identity vocabulary — `AssertedIdentityRejection`,
-// `validate_asserted_identity_value` — is a compatibility
-// facade over the peer-identity value owner (ADR-MCPRE-063 Slice 1) and lives in
-// `asserted_identity_facade`. Re-exported here so this module's own callers, and the
-// crate root, keep their existing paths.
-pub use crate::facades::asserted_identity::validate_asserted_identity_value;
-pub use crate::facades::asserted_identity::AssertedIdentityRejection;
-
 /// The SEP-2243 transport routing header naming the JSON-RPC method (ADR-MCPS-025).
 /// Lowercased for case-insensitive [`RequestHeaders`] lookup.
 pub const MCP_METHOD_HEADER: &str = "mcp-method";
@@ -202,7 +194,8 @@ pub enum RoutingHeaderRejection {
         header: &'static str,
     },
     /// The header's lone value failed the strict shape rules (empty, oversized, or
-    /// containing a control character) — see [`validate_asserted_identity_value`].
+    /// containing a control character) — see
+    /// [`PeerIdentityValue::interpret`](crate::communication_assurance::PeerIdentityValue::interpret).
     Malformed {
         /// The offending header name (`mcp-method` / `mcp-name`).
         header: &'static str,
@@ -221,7 +214,7 @@ pub fn validate_routing_headers(headers: &RequestHeaders) -> Result<(), RoutingH
             0 => continue,
             1 => {
                 let value = headers.first(header).unwrap_or("");
-                if validate_asserted_identity_value(value).is_err() {
+                if crate::communication_assurance::PeerIdentityValue::interpret(value).is_err() {
                     return Err(RoutingHeaderRejection::Malformed { header });
                 }
             }
@@ -547,51 +540,6 @@ mod tests {
                 subject("spiffe://example.org/agent-2")
             )
             .is_err());
-    }
-
-    #[test]
-    fn asserted_identity_accepts_a_well_formed_value_and_trims() {
-        assert_eq!(
-            super::validate_asserted_identity_value("  spiffe://example.org/agent-1  "),
-            Ok("spiffe://example.org/agent-1")
-        );
-    }
-
-    #[test]
-    fn asserted_identity_rejects_empty() {
-        assert_eq!(
-            super::validate_asserted_identity_value("   "),
-            Err(super::AssertedIdentityRejection::Empty)
-        );
-    }
-
-    #[test]
-    fn asserted_identity_rejects_oversized() {
-        let huge = "a".repeat(crate::communication_assurance::MAX_PEER_IDENTITY_LEN + 1);
-        assert_eq!(
-            super::validate_asserted_identity_value(&huge),
-            Err(super::AssertedIdentityRejection::TooLong)
-        );
-        // Exactly at the bound is accepted.
-        let at_bound = "a".repeat(crate::communication_assurance::MAX_PEER_IDENTITY_LEN);
-        assert!(super::validate_asserted_identity_value(&at_bound).is_ok());
-    }
-
-    #[test]
-    fn asserted_identity_rejects_control_characters() {
-        // CR/LF (header smuggling / log injection), NUL, and a bare control char.
-        for bad in [
-            "agent\r\nX-Spoof: y",
-            "agent\nid",
-            "agent\0id",
-            "ag\u{7}ent",
-        ] {
-            assert_eq!(
-                super::validate_asserted_identity_value(bad),
-                Err(super::AssertedIdentityRejection::Malformed),
-                "control characters must fail closed: {bad:?}"
-            );
-        }
     }
 
     // ---- ADR-MCPS-025 routing-header hygiene ----------------------------------
