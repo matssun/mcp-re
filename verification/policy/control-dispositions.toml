@@ -7962,10 +7962,10 @@ recorded = "2026-09-19"
 
 [[proposition]]
 id = "NP-114"
-title = "A KMS access token is fetched once, reused honestly, and never extended"
+title = "What a Cloud KMS token refusal costs, and what it discards"
 carrier = "mcp-re-proxy/src/gcp_kms_keysource.rs"
 likely_owner = ""
-consequence = "critical"
+consequence = "high"
 root_relationship = "a premise of the proxy units above it"
 record = "docs/architecture/control-dispositions.md#np-114"
 
@@ -8262,14 +8262,6 @@ proposition = "NP-114"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-17026"
-project = "mcp-re-proxy"
-control = "lib#gcp_kms_keysource::tests::a_backwards_clock_step_does_not_extend_the_failure_cool_off"
-decision = "new-proposition"
-proposition = "NP-114"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-17027"
 project = "mcp-re-proxy"
 control = "lib#gcp_kms_keysource::tests::a_cloud_kms_401_discards_the_token_and_retries_once"
@@ -8286,81 +8278,9 @@ proposition = "NP-114"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-17029"
-project = "mcp-re-proxy"
-control = "lib#gcp_kms_keysource::tests::a_failed_metadata_fetch_is_not_repeated_by_every_waiter"
-decision = "new-proposition"
-proposition = "NP-114"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-17030"
 project = "mcp-re-proxy"
 control = "lib#gcp_kms_keysource::tests::a_persistent_401_stops_costing_a_refetch_per_call"
-decision = "new-proposition"
-proposition = "NP-114"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-17031"
-project = "mcp-re-proxy"
-control = "lib#gcp_kms_keysource::tests::a_poisoned_token_lock_still_serves_tokens"
-decision = "new-proposition"
-proposition = "NP-114"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-17032"
-project = "mcp-re-proxy"
-control = "lib#gcp_kms_keysource::tests::a_stated_expiry_is_never_extended_by_the_reuse_floor"
-decision = "new-proposition"
-proposition = "NP-114"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-17033"
-project = "mcp-re-proxy"
-control = "lib#gcp_kms_keysource::tests::a_stated_lifetime_is_never_read_as_an_unestablishable_one"
-decision = "new-proposition"
-proposition = "NP-114"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-17034"
-project = "mcp-re-proxy"
-control = "lib#gcp_kms_keysource::tests::a_token_response_yields_the_credential_and_its_lifetime"
-decision = "new-proposition"
-proposition = "NP-114"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-17035"
-project = "mcp-re-proxy"
-control = "lib#gcp_kms_keysource::tests::an_empty_or_absent_access_token_is_refused"
-decision = "new-proposition"
-proposition = "NP-114"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-17036"
-project = "mcp-re-proxy"
-control = "lib#gcp_kms_keysource::tests::an_unreadable_expires_in_is_reused_briefly_rather_than_refetched_every_call"
-decision = "new-proposition"
-proposition = "NP-114"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-17037"
-project = "mcp-re-proxy"
-control = "lib#gcp_kms_keysource::tests::an_unreadable_expires_in_is_reused_when_every_clock_read_differs"
-decision = "new-proposition"
-proposition = "NP-114"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-17038"
-project = "mcp-re-proxy"
-control = "lib#gcp_kms_keysource::tests::concurrent_callers_perform_one_metadata_fetch_between_them"
 decision = "new-proposition"
 proposition = "NP-114"
 recorded = "2026-09-19"
@@ -8390,51 +8310,11 @@ proposition = "NP-114"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-17042"
-project = "mcp-re-proxy"
-control = "lib#gcp_kms_keysource::tests::stated_expiry_reports_an_unestablishable_lifetime_as_a_fact"
-decision = "new-proposition"
-proposition = "NP-114"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-17043"
 project = "mcp-re-proxy"
 control = "lib#gcp_kms_keysource::tests::the_access_token_is_moved_out_of_the_parsed_document"
 decision = "new-proposition"
-proposition = "NP-114"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-17044"
-project = "mcp-re-proxy"
-control = "lib#gcp_kms_keysource::tests::the_failure_cool_off_expires_and_a_success_clears_it"
-decision = "new-proposition"
-proposition = "NP-114"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-17045"
-project = "mcp-re-proxy"
-control = "lib#gcp_kms_keysource::tests::the_failure_cool_off_must_outlast_the_network_timeout"
-decision = "new-proposition"
-proposition = "NP-114"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-17046"
-project = "mcp-re-proxy"
-control = "lib#gcp_kms_keysource::tests::the_unknown_expiry_floor_must_outlast_the_refresh_margin"
-decision = "new-proposition"
-proposition = "NP-114"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-17047"
-project = "mcp-re-proxy"
-control = "lib#gcp_kms_keysource::tests::two_token_sources_do_not_share_a_cache_or_a_flight"
-decision = "new-proposition"
-proposition = "NP-114"
+proposition = "NP-192"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -10530,7 +10410,7 @@ record = "docs/architecture/control-dispositions.md#np-157"
 
 [[proposition]]
 id = "NP-158"
-title = "AWS web identity is exchanged, cached and refreshed correctly"
+title = "The projected token file is the pod's only credential, and it is read fresh"
 carrier = "mcp-re-proxy/tests/aws_irsa_web_identity_test.rs"
 likely_owner = "none — a composition's source is every unit under it"
 consequence = "critical"
@@ -10539,7 +10419,7 @@ record = "docs/architecture/control-dispositions.md#np-158"
 
 [[proposition]]
 id = "NP-159"
-title = "A root key rotates without a gap and without a restart"
+title = "Which roots a verifier admits, at each instant of a rotation"
 carrier = "mcp-re-proxy/tests/integration_async/root_key_lifecycle_test.rs"
 likely_owner = "none — a composition's source is every unit under it"
 consequence = "critical"
@@ -10660,30 +10540,6 @@ proposition = "NP-167"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-19005"
-project = "mcp-re-proxy"
-control = "tests/aws_irsa_web_identity_test#a_credential_inside_the_refresh_margin_is_re_exchanged"
-decision = "new-proposition"
-proposition = "NP-158"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19006"
-project = "mcp-re-proxy"
-control = "tests/aws_irsa_web_identity_test#a_live_credential_is_cached_rather_than_re_exchanged_per_call"
-decision = "new-proposition"
-proposition = "NP-158"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19007"
-project = "mcp-re-proxy"
-control = "tests/aws_irsa_web_identity_test#a_malformed_sts_body_fails_closed"
-decision = "new-proposition"
-proposition = "NP-158"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-19008"
 project = "mcp-re-proxy"
 control = "tests/aws_irsa_web_identity_test#a_missing_token_file_fails_closed_rather_than_falling_back_to_the_environment"
@@ -10696,7 +10552,7 @@ id = "CD-19009"
 project = "mcp-re-proxy"
 control = "tests/aws_irsa_web_identity_test#a_pod_that_is_not_under_irsa_is_told_which_variable_is_missing"
 decision = "new-proposition"
-proposition = "NP-158"
+proposition = "NP-193"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -10704,7 +10560,7 @@ id = "CD-19010"
 project = "mcp-re-proxy"
 control = "tests/aws_irsa_web_identity_test#an_empty_role_arn_is_refused_rather_than_posted_as_a_blank_role"
 decision = "new-proposition"
-proposition = "NP-158"
+proposition = "NP-193"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -10716,35 +10572,11 @@ proposition = "NP-158"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-19012"
-project = "mcp-re-proxy"
-control = "tests/aws_irsa_web_identity_test#an_out_of_grammar_session_name_is_refused_at_construction"
-decision = "new-proposition"
-proposition = "NP-158"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-19013"
 project = "mcp-re-proxy"
 control = "tests/aws_irsa_web_identity_test#an_sts_rejection_fails_closed_and_names_the_role"
 decision = "new-proposition"
-proposition = "NP-158"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19014"
-project = "mcp-re-proxy"
-control = "tests/aws_irsa_web_identity_test#the_default_sts_endpoint_is_regional"
-decision = "new-proposition"
-proposition = "NP-158"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19015"
-project = "mcp-re-proxy"
-control = "tests/aws_irsa_web_identity_test#the_projected_token_is_exchanged_for_temporary_credentials"
-decision = "new-proposition"
-proposition = "NP-158"
+proposition = "NP-193"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -12496,7 +12328,7 @@ id = "CD-19234"
 project = "mcp-re-proxy"
 control = "tests/integration_async#root_authority_manifest_test::root_rotation_via_signed_manifest_with_auto_provisioned_roots"
 decision = "new-proposition"
-proposition = "NP-159"
+proposition = "NP-194"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -12559,14 +12391,6 @@ recorded = "2026-09-19"
 id = "CD-19242"
 project = "mcp-re-proxy"
 control = "tests/integration_async#root_key_lifecycle_test::root_a_credential_accepted_while_a_is_current"
-decision = "new-proposition"
-proposition = "NP-159"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19243"
-project = "mcp-re-proxy"
-control = "tests/integration_async#root_key_lifecycle_test::root_issuance_failure_serves_until_delegated_key_expiry_then_fails_closed"
 decision = "new-proposition"
 proposition = "NP-159"
 recorded = "2026-09-19"
@@ -13385,3 +13209,39 @@ likely_owner = ""
 consequence = "high"
 root_relationship = "a premise of the certificate-identity root, upstream of the interpreter"
 record = "docs/architecture/control-dispositions.md#np-187"
+
+# ---------------------------------------------------------------------------
+# Batch 24 — the KMS key-source lanes, 2026-09-20
+# ---------------------------------------------------------------------------
+#
+# Three ids minted from records ADR-MCPRE-069 S-10 measured and found to span more than one
+# describable proposition (RR-002 C5). Every one of them is a residue: the landable halves of
+# NP-114, NP-158 and NP-159 are registered evidence under THM-0117 and THM-0062, and these
+# are what those theorems do not say.
+
+[[proposition]]
+id = "NP-192"
+title = "The bearer credential is left in no second place after it is read"
+carrier = "mcp-re-proxy/src/gcp_kms_keysource.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "a premise of the proxy units above it"
+record = "docs/architecture/control-dispositions.md#np-192"
+
+[[proposition]]
+id = "NP-193"
+title = "An IRSA deployment's misconfiguration is refused at the earliest point and named"
+carrier = "mcp-re-proxy/tests/aws_irsa_web_identity_test.rs"
+likely_owner = "none — a composition's source is every unit under it"
+consequence = "high"
+root_relationship = "the composition above the component propositions this campaign recorded"
+record = "docs/architecture/control-dispositions.md#np-193"
+
+[[proposition]]
+id = "NP-194"
+title = "A root rotation is carried by a signed manifest over roots no human created"
+carrier = "mcp-re-proxy/tests/integration_async/root_authority_manifest_test.rs"
+likely_owner = "none — a composition's source is every unit under it"
+consequence = "critical"
+root_relationship = "the composition above the component propositions this campaign recorded"
+record = "docs/architecture/control-dispositions.md#np-194"

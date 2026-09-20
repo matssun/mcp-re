@@ -2670,13 +2670,17 @@ terms. Four more attach to propositions this campaign already recorded.
 The rest are fifteen propositions, and one of them is **ADR-MCPRE-069 §3's own worked
 instance**, still unclaimed on main.
 
-## NP-114 — a KMS access token is fetched once, reused honestly, and never extended
+## NP-114 — what a Cloud KMS token refusal costs, and what it discards
 
-**Controls:** `mcp-re-proxy/src/gcp_kms_keysource.rs`.
-**Statement.** *A token response yields the credential and its lifetime and an empty or absent access token is refused; a STATED expiry is never extended by the reuse floor and an unestablishable lifetime is reported as a fact rather than read as a stated one; an unreadable `expires_in` is reused briefly rather than refetched every call, including when every clock read differs; concurrent callers perform ONE metadata fetch between them and a failed fetch is not repeated by every waiter; a 401 discards the token and retries once, a persistent 401 stops costing a refetch per call, a 403 does NOT discard a valid token, and only a refusal with a token to discard costs a second call; the failure cool-off expires, a success clears it, a backwards clock step does not extend it, and it must outlast the network timeout as the unknown-expiry floor must outlast the refresh margin; invalidating a token another thread already replaced is a no-op and invalidating the source forces a re-fetch; a poisoned token lock still serves tokens; the access token is MOVED out of the parsed document; and two token sources share neither a cache nor a flight.*
-**If false.** The response signer cannot sign — because a 403 threw away a good token, because a persistent 401 turned every call into a metadata fetch, or because a cool-off outlived its own reason — or it signs with a credential past its stated expiry because a reuse floor extended it. `proxy.gcp_kms_adapter` states what the SIGNER does; this is how it gets the credential to do it, and it is a different authority with twenty-three controls and no claim.
+**Controls:** `mcp-re-proxy/src/gcp_kms_keysource.rs` (7).
+**Statement.** *A Cloud KMS 401 means the bearer token was not honoured, so that token is discarded and the call retried exactly once, and a 401 a fresh token fixes self-heals every time; a 403 says nothing about the token and discards none, and costs one call rather than two; a PERSISTENT 401 stops costing a metadata round trip per call and probes again only past the cool-off; only a refusal with a token to discard costs a second call, so a success, a quota refusal and a source that caches nothing each cost one; and eviction is keyed on the token that was PRESENTED, so a refusal about a superseded token does not discard the successor another thread just minted, while invalidating the source really does force the next call to re-fetch.*
+**If false.** The response signer stops signing for a reason that was never about the token — a 403 threw away a good credential, or a permanently unbound identity turned every unauthenticated peer's handshake into a metadata fetch plus a second Cloud KMS call. Or the other direction: a rotation stops self-healing, and a stale token fails every signature for the whole reuse window.
 **Likely owner:** none.
-**Severity:** `critical`.
+**Severity:** `high`.
+**Registered in part, ADR-MCPRE-069 S-10.** Fifteen of this record's original twenty-three rows are now `unit://proxy.gcp_metadata_token_lifetime` under **THM-0117**, falsified by `M344-proxy-the-reuse-floor-extends-a-stated-token-lifetime`, and a sixteenth is NP-192. THM-0117's statement contains each of the fifteen by name: *"A credential acquired from AWS STS or from the GCE/GKE metadata server carries the expiry its issuer stated, and that expiry is never extended"*, *"An expiry that CANNOT be read — absent, unparseable, or a lifetime the issuer did not establish — is treated as already expired, never as unlimited."*, *"The credential is still reused briefly rather than re-exchanged per call, and that brief window is a floor on churn rather than an extension of a stated lifetime."*, and *"Concurrent callers perform ONE exchange between them, a failed exchange is not repeated by every waiter, and the cool-off after a failure expires on its own and is cleared by a success."* Its scope names the lane as well: *"TWO LANES. The AWS acquirer exists under `aws_kms_keysource` and the metadata acquirer under `gcp_kms_keysource`; neither is in the default lane."*
+**These seven are not, and the theorem's own text is why.** THM-0117's scope opens *"THE LIFETIME, NOT THE CREDENTIAL'S POWER."* and adds *"NOT A CLAIM ABOUT THE ISSUER."* — what is established is that this implementation *"never reads more lifetime out of an answer than the answer states"*. A 401 or a 403 is the issuer's RUNTIME VERDICT on a credential whose stated lifetime has not lapsed; honouring it, bounding what it costs and keying the eviction on identity are a second authority over the same value, and nothing in the statement reaches them. Nor can they be absorbed as the theorem's admitted availability conjuncts: it names exactly two — *"The single-flight and cool-off conjuncts are availability with a security edge"* — and these are neither. **Under review RR-002 they also cannot be dispositioned `not-evidence`**: the admission test would turn on cost and amplification, which is the availability axis that review forbids a family to be created or widened along. So they stay a proposition.
+**A correction to the plan this slice worked from, and it goes the other way.** The brief said two of the twenty-three clauses were availability. Measured against the tree there are seven controls in this authority, on two sides of one seam — five driving `UreqGcpClient::with_token_retry` and two driving `MetadataServerTokenSource::invalidate` — and the plan counted record-statement clauses rather than controls.
+**Packet:** `verification/reviews/packets/adr069-np-114-ratification-2026-09-20.md`.
 
 ## NP-115 — the delegated TLS signer offers Ed25519 and nothing else
 
@@ -3091,21 +3095,35 @@ the merge path checks.
 **Likely owner:** none — a composition's source is every unit under it.
 **Severity:** `critical`.
 
-## NP-158 — AWS web identity is exchanged, cached and refreshed correctly
+## NP-158 — the projected token file is the pod's only credential, and it is read fresh
 
-**Controls:** `mcp-re-proxy/tests/aws_irsa_web_identity_test.rs` and its siblings.
-**Statement.** *The IRSA web-identity token is read from its projected file, exchanged for credentials, cached for its stated lifetime and re-exchanged when the file rotates or the credentials expire.*
-**If false.** The proxy signs with expired credentials, or re-exchanges on every call and is throttled out of signing at all. NP-114 is the same authority for GCP's metadata token, and the two are separate because the mechanisms differ in what can go wrong.
+**Controls:** `mcp-re-proxy/tests/aws_irsa_web_identity_test.rs` (3).
+**Statement.** *The projected token is re-read from its mount on EVERY exchange rather than captured at construction, so a `kubelet` rewrite in place is picked up; and where the mount cannot supply one — the file is gone, or it exists and is still empty — the exchange is refused with nothing posted and nothing substituted, never falling back to whatever ambient AWS credentials the process environment happens to hold.*
+**If false.** Either the pod keeps presenting a projected token STS has stopped accepting, and the failure reads as an IAM problem; or, worse, a missing mount silently promotes the process environment to the credential source, so the proxy signs under an identity nobody granted it for this workload.
 **Likely owner:** none — a composition's source is every unit under it.
 **Severity:** `critical`.
+**Registered in part, ADR-MCPRE-069 S-10.** Six of this record's original twelve rows are now `unit://proxy.aws_web_identity_credential_exchange` under **THM-0117**, falsified by `M345-proxy-the-refresh-margin-is-dropped-from-the-cache-hit`. Three more are NP-193.
+**These three are not, and the reason is where the statement begins.** THM-0117 is about *"A credential acquired from AWS STS or from the GCE/GKE metadata server"* — the projected web-identity token is the INPUT to that acquisition, not the credential acquired by it. The one place the scope mentions it is about destination and nothing else: *"WHERE THE TOKEN IS SENT is a conjunct of the AWS unit and not of the metadata one: a projected web-identity token handed to a re-pointed STS endpoint is a credential leak, and it is refused at construction."* Where the token is READ FROM, how often, and what happens when the mount is empty are a different authority, and it is the one that decides whether this pod's credentials are the workload's at all.
+**Packet:** `verification/reviews/packets/adr069-np-158-ratification-2026-09-20.md`.
 
-## NP-159 — a root key rotates without a gap and without a restart
+## NP-159 — which roots a verifier admits, at each instant of a rotation
 
-**Controls:** `mcp-re-proxy/tests/integration_async/root_key_lifecycle_test.rs` and its siblings.
-**Statement.** *Over a live rotation: the new root is published before the old one is withdrawn, the manifest names the set in force, and a verifier following the manifest never sees a window with no acceptable root.*
-**If false.** A rotation leaves a window in which nothing verifies, or the old root stays acceptable after it was meant to be withdrawn — the two failure directions of every key rotation.
+**Controls:** `mcp-re-proxy/tests/integration_async/root_key_lifecycle_test.rs` (9).
+**Statement.** *Across a root rotation driven through the same issuer seam a KMS root plugs into: a credential under the current root is accepted; during the overlap BOTH roots are accepted and after it the old root is rejected while the new one is accepted; the retirement window's boundary is inclusive and then closes; an unknown issuer is rejected and an EMPTY trust-anchor set trusts no root at all; revoking one root leaves the other undisturbed, a revoked root fails closed with its split seam gone, and a revoked issuer invalidates every descendant before that descendant's own `exp`.*
+**If false.** A rotation leaves a window in which nothing verifies, or the old root stays acceptable after it was meant to be withdrawn — the two failure directions of every key rotation. The revocation half is the sharper one: a descendant that outlives its revoked issuer is a credential the ceremony believes it withdrew.
 **Likely owner:** none — a composition's source is every unit under it.
 **Severity:** `critical`.
+**Registered in part, ADR-MCPRE-069 S-10.** One of this record's original eleven rows — `root_issuance_failure_serves_until_delegated_key_expiry_then_fails_closed` — joins `unit://proxy.delegated_signing_credential`'s battery under **THM-0062**, whose statement contains it verbatim: *"An issuance failure serves the still-valid key and then fails closed at its expiry rather than extending it, and the retry schedule never sleeps past a still-valid key."* A second is NP-194.
+**THE QUESTION `PKT-COMPOSITION` §11.3 LEFT OPEN IS CLOSED HERE, AND THE ANSWER IS NO.** It asked whether the rotation ceremony is `http_profile.delegated_signing_custody`'s authority, so that the other ten rows could land with it. Three independent measurements say it is not.
+
+*First, that unit carries no ratified theorem at all.* It is one of the twenty units no `[[theorem]]` names as `owner` or in `supported_by` — the count this campaign holds at 20. Clause 2 of the subsumption test requires a proposition *already contained in the ratified theorem's claim*, and there is no claim. Registering here would mean minting a theorem, which is outside every slice's authority.
+
+*Second, the unit's declared proposition is the opposite axis.* Its description reads, in full: *"The delegated-signing credential lifecycle: the root is never touched within a key's life, a successor is minted in the overlap window and under an advanced trust epoch, a signature window never outlives the credential it was issued under, and an issuance that fails after expiry fails closed rather than continuing on the predecessor."* Every clause is about the DELEGATED key under a root held fixed — the first one says so in terms. These ten rows change the root. The carrier's own header states the same division: *"The complement to the delegated-KEY lifecycle: a delegated key rotates every few minutes under ONE root (the hot path, covered elsewhere); this proves the RARE, high-stakes ceremony of rotating the ROOT the whole fleet chains to."*
+
+*Third, the lane could not run it.* That unit's `paths` are four files under `mcp-re-http-profile/src/custody/`, so `test_package_for` resolves to `mcp-re-http-profile`, and a `tests/integration_async#` selector names a `mcp-re-proxy` target that package does not have. The battery would refuse to start. This is the weakest of the three reasons and is recorded last on purpose: a mechanical refusal is not a judgement, and the judgement is the second reason.
+
+**And no other ratified theorem takes them either.** The verification side of all ten is `mcp_re_client_core::verify_delegated_response` against a `TrustedIssuerSet`. The nearest statement is THM-0057, whose scope is *"Establishes what the document says and for how long."* — the manifest as a document, at rest, and not which roots a live exchange is admitted under at each instant of a ceremony; its owner's paths are in `mcp-re-client-core`, so the same package refusal applies. The question does not need asking a third time.
+**Packet:** `verification/reviews/packets/adr069-np-159-np-194-ratification-2026-09-20.md`.
 
 ## NP-160 — admission currency is enforced on the serving path
 
@@ -3498,3 +3516,34 @@ after it.
 **Packet:** `verification/reviews/packets/adr069-np-145-np-186-np-187-ratification-2026-09-20.md`.
 **Severity:** `high`.
 
+## NP-192 — the bearer credential is left in no second place after it is read
+
+**Control:** `mcp-re-proxy/src/gcp_kms_keysource.rs` — `tests::the_access_token_is_moved_out_of_the_parsed_document`.
+**Carrier:** `take_access_token`, asserted over the parsed `serde_json::Value` after the read.
+**Statement.** *The access token is MOVED out of the parsed metadata response, so the document is left holding no copy of it — reading it out by cloning would leave the `Value`'s own owned `String` to drop unscrubbed.*
+**If false.** A second copy of a credential that authorizes Cloud KMS `asymmetricSign` on the root key sits in freed heap for the process lifetime, where a core dump or a heap-reading defect reaches it. The credential still works; nothing observable changes; and that is what makes it a residency defect rather than a lifetime one.
+**Likely owner:** none, and the reason is a scope sentence rather than an omission. THM-0117 governs this exact file and this exact function's caller, and its scope is *"THE LIFETIME, NOT THE CREDENTIAL'S POWER."* — where a copy of the credential RESIDES is neither. Its companion clause, *"NOT A CLAIM ABOUT THE ISSUER."*, points the same way: everything the theorem establishes is about reading an answer, not about what is left behind afterwards. `proxy.aws_sts_credentials`, the theorem's own owner unit, has no counterpart control, so there is not even a twin to argue from.
+**Root relationship.** A premise of the proxy units above it. No theorem in this tree states a memory-residency property for secret material.
+**Packet:** `verification/reviews/packets/adr069-np-192-ratification-2026-09-20.md`.
+**Severity:** `high`.
+
+## NP-193 — an IRSA deployment's misconfiguration is refused at the earliest point and named
+
+**Controls:** `mcp-re-proxy/tests/aws_irsa_web_identity_test.rs` (3).
+**Statement.** *A pod that is not under IRSA is told WHICH variable is missing, one at a time, rather than being handed a generic failure; an empty `AWS_ROLE_ARN` is refused at construction rather than posted as a blank role; and an STS rejection fails closed carrying the status, the role it was refused for and the provider's own code.*
+**If false.** A deployment misconfiguration presents as an opaque signing failure at the first request instead of a named refusal at startup, and the operator debugging it cannot tell an unbound role from an absent token mount from a genuine STS outage.
+**Likely owner:** none. Two of the three are excluded by THM-0117's scope in terms: *"Nothing here is about what the credential is permitted to do, which role it assumes, or whether the assumed role is least-privileged."* A blank role and a rejection naming the role are both about the role. The third is operator-facing prose about the process environment, and the theorem states no rendering clause at all — its nearest control, `each_missing_credential_field_is_named`, is about the STS response document and not about a deployment's variables.
+**Root relationship.** The composition above the component propositions this campaign recorded. This is the same axis as NP-123's OFF-line prose and NP-145's rendering agreement, both of which this campaign referred, and it is referred for the same reason: what a refusal TELLS an operator is an operator-facing product promise, not a decomposition of the security claim the refusal enforces.
+**Packet:** `verification/reviews/packets/adr069-np-193-ratification-2026-09-20.md`.
+**Severity:** `high`.
+
+## NP-194 — a root rotation is carried by a signed manifest over roots no human created
+
+**Control:** `mcp-re-proxy/tests/integration_async/root_authority_manifest_test.rs` — `root_rotation_via_signed_manifest_with_auto_provisioned_roots`.
+**Carrier:** `common::run_rotation_scenario`, driven by an `InMemoryTestRootAuthorityProvider` and an org manifest-signing key.
+**Statement.** *A root-authority PROVIDER mints the successor root on the fly with no human or console step; an org-signed trust-anchor manifest carries the rotation A → A+B → B and then A's revocation; credentials verify and reject exactly per that manifest; and a rolled-back manifest is refused.*
+**If false.** Either the rotation needs a human to create a root — which is the operational failure the auto-provisioning path exists to remove, and the point at which a root's private material passes through somebody's hands — or the document governing which roots are trusted can be replaced by an older one, so a revocation is undone by replaying the manifest that predates it.
+**Likely owner:** none, and it is a different authority from NP-159's, which is why it is split out of it. NP-159 is about which roots a verifier ADMITS at each instant; this is about the higher authority that decides the set — an org key a serving proxy cannot forge, a version floor, and a provider that mints roots. THM-0057 states the document half — *"Anchors are released only from a manifest whose signature verified under a trusted signer kid that the signature itself covers"* — but its scope stops at the document: *"Establishes what the document says and for how long."* It says nothing about a provider that creates the root the document then names, and its owner's paths are in `mcp-re-client-core`, so this `mcp-re-proxy` integration target is outside the lane that would run it.
+**Root relationship.** The composition above the component propositions this campaign recorded.
+**Packet:** `verification/reviews/packets/adr069-np-159-np-194-ratification-2026-09-20.md`.
+**Severity:** `critical`.

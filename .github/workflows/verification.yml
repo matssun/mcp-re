@@ -373,6 +373,14 @@ on:
       # integration target. Same shape as the `integration` pair above.
       - "mcp-re-proxy/tests/integration_async/**"
       - "mcp-re-proxy/tests/integration_async.rs"
+      # ADR-MCPRE-069 NP-158. `proxy.aws_web_identity_credential_exchange`'s battery is this
+      # target, and the target is `#![cfg(feature = "aws_kms_keysource")]` — so without the
+      # feature it compiles to zero tests and exits 0. The lane supplies the feature from the
+      # unit's `test_features`; what this pair supplies is the re-run, because the file's
+      # BYTES are a fingerprint component and a change to them that did not re-measure would
+      # leave an attestation standing over a battery that had moved.
+      - "mcp-re-proxy/tests/aws_irsa_web_identity_test/**"
+      - "mcp-re-proxy/tests/aws_irsa_web_identity_test.rs"
       # The build inputs every ReviewFingerprint reads. A dependency bump moves
       # Cargo.lock, which dirties every declared unit — so a lane that did not
       # re-run on it would leave `main` carrying attestations over a dependency
@@ -724,6 +732,14 @@ on:
       # integration target. Same shape as the `integration` pair above.
       - "mcp-re-proxy/tests/integration_async/**"
       - "mcp-re-proxy/tests/integration_async.rs"
+      # ADR-MCPRE-069 NP-158. `proxy.aws_web_identity_credential_exchange`'s battery is this
+      # target, and the target is `#![cfg(feature = "aws_kms_keysource")]` — so without the
+      # feature it compiles to zero tests and exits 0. The lane supplies the feature from the
+      # unit's `test_features`; what this pair supplies is the re-run, because the file's
+      # BYTES are a fingerprint component and a change to them that did not re-measure would
+      # leave an attestation standing over a battery that had moved.
+      - "mcp-re-proxy/tests/aws_irsa_web_identity_test/**"
+      - "mcp-re-proxy/tests/aws_irsa_web_identity_test.rs"
       # The build inputs every ReviewFingerprint reads. A dependency bump moves
       # Cargo.lock, which dirties every declared unit — so a lane that did not
       # re-run on it would leave `main` carrying attestations over a dependency

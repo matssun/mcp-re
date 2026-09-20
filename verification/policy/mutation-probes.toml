@@ -9396,3 +9396,93 @@ purpose: it already drives the DnsSan policy, so the weakening is invisible to i
 whose every declared control went red would not have shown that this battery distinguishes
 the configured field from the answered one.
 """
+
+# --- ADR-MCPRE-069 KMS key-source lanes (NP-114, NP-158) --------------------------------
+#
+# BOTH PROBES RUN IN A NON-DEFAULT FEATURE LANE, and that is load-bearing rather than
+# incidental. The controls below do not merely fail to run without their feature — they do
+# not EXIST: `cargo test -p mcp-re-proxy --lib -- --list` selects none of the fifteen
+# `gcp_kms_keysource::tests::` controls, and `--test aws_irsa_web_identity_test -- --list`
+# reports 0 tests and exits 0. `_battery_of` takes each unit's `test_features` with the
+# battery for exactly this reason, so the lane compiles the crate these controls live in.
+# A probe run in the default lane here would report the lane's own blindness, and this
+# campaign has already had two runs that selected nothing and read as passes.
+
+[[probe]]
+id = "M344-proxy-the-reuse-floor-extends-a-stated-token-lifetime"
+unit = "proxy.gcp_metadata_token_lifetime"
+theorem = "THM-0117"
+conjunct = "a stated expiry is never extended by the reuse floor that keeps an unreadable one from being re-fetched on every call"
+path = "mcp-re-proxy/src/gcp_kms_keysource.rs"
+anchor = """        let expires_at = match fresh.expires_at {
+            Some(stated) => stated,
+            None => now + UNKNOWN_EXPIRY_REUSE,
+        };
+"""
+weakening = """        let expires_at = match fresh.expires_at {
+            Some(stated) => stated + UNKNOWN_EXPIRY_REUSE,
+            None => now + UNKNOWN_EXPIRY_REUSE,
+        };
+"""
+expect_red = [
+  "lib#gcp_kms_keysource::tests::a_stated_expiry_is_never_extended_by_the_reuse_floor",
+  "lib#gcp_kms_keysource::tests::a_stated_lifetime_is_never_read_as_an_unestablishable_one",
+]
+note = """
+THE WEAKENING IS THE THEOREM'S NAMED FAILURE, WRITTEN OUT. THM-0117 says the acquired
+credential's expiry "is never extended: neither by the reuse floor that keeps an unreadable
+one from being re-exchanged on every call, nor by a stated value beyond the real session
+ceiling". This applies the floor to a STATED lifetime instead of only to an unestablishable
+one, which is the first of those two.
+
+The direction matters and is why the weakening adds the floor rather than replacing the
+stated value with it. A `max(stated, now + UNKNOWN_EXPIRY_REUSE)` — the shape one reaches
+for first — does NOT falsify these controls: `a_stated_expiry_is_never_extended_by_the_reuse_floor`
+states 100 seconds and reads again at +60, and a 120-second floor still leaves the second
+read outside the 60-second refresh margin, so the re-fetch happens and the control stays
+green while the defect is present. The floor has to be ADDED to the stated value for the
+extension to become visible at the margin the controls measure at. A probe that looked
+plausible and selected nothing is exactly what this lane exists to catch.
+
+The unreadable-expiry arm is untouched, so
+`an_unreadable_expires_in_is_reused_briefly_rather_than_refetched_every_call` and
+`an_unreadable_expires_in_is_reused_when_every_clock_read_differs` stay green. That is the
+point: the two arms are separate conjuncts and only one is weakened here.
+"""
+
+[[probe]]
+id = "M345-proxy-the-refresh-margin-is-dropped-from-the-cache-hit"
+unit = "proxy.aws_web_identity_credential_exchange"
+theorem = "THM-0117"
+conjunct = "a credential inside the refresh margin is re-exchanged rather than served from cache, so the stated expiry is honoured against an in-flight call rather than at the instant of the read"
+path = "mcp-re-proxy/src/aws_sts.rs"
+anchor = """        state.credentials.as_ref().and_then(|c| {
+            (now + CREDENTIAL_REFRESH_MARGIN < c.expires_at).then(|| c.credentials.clone())
+        })
+"""
+weakening = """        state.credentials.as_ref().and_then(|c| {
+            (now < c.expires_at).then(|| c.credentials.clone())
+        })
+"""
+expect_red = [
+  "tests/aws_irsa_web_identity_test#a_credential_inside_the_refresh_margin_is_re_exchanged",
+]
+note = """
+NOT-YET-EXPIRED IS NOT THE SAME AS SAFE TO SIGN WITH, and the margin is the whole difference.
+THM-0117's security consequence is about a credential used past the lifetime its issuer
+stated; a cache hit decided at the instant of the READ hands out a credential that expires
+during the KMS call it was fetched for, so the signature is attempted under a credential
+whose stated window closed in flight. The weakening keeps every other property intact —
+the exchange still happens, the credential still parses, the expiry is still read — and
+moves only the comparison.
+
+`a_live_credential_is_cached_rather_than_re_exchanged_per_call` deliberately stays green:
+its credential states an hour, so the margin never decides its answer, and a probe that
+turned it red would be weakening the cache rather than the margin. One control is red here
+and the reason it is only one is the reason it is the right one.
+
+The lane runs this with `--features aws_kms_keysource`, from the unit's `test_features`.
+Without it `tests/aws_irsa_web_identity_test` compiles to zero tests and exits 0, and the
+adjudicator would report the expectation ABSENT — a measurement failure, correctly, rather
+than a pass.
+"""
