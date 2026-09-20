@@ -10817,65 +10817,9 @@ proposition = "NP-153"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-19057"
-project = "mcp-re-proxy"
-control = "tests/integration#http_profile_dispatch_test::core_single_process_gate_fires_beneath_an_acceptable_tier"
-decision = "new-proposition"
-proposition = "NP-161"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19058"
-project = "mcp-re-proxy"
-control = "tests/integration#http_profile_dispatch_test::fleet_strict_admits_linearizable_tier"
-decision = "new-proposition"
-proposition = "NP-161"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19059"
-project = "mcp-re-proxy"
-control = "tests/integration#http_profile_dispatch_test::fleet_strict_admits_redis_wait_quorum_tier"
-decision = "new-proposition"
-proposition = "NP-161"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19060"
-project = "mcp-re-proxy"
-control = "tests/integration#http_profile_dispatch_test::fleet_strict_refuses_redis_async_tier"
-decision = "new-proposition"
-proposition = "NP-161"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19061"
-project = "mcp-re-proxy"
-control = "tests/integration#http_profile_dispatch_test::fleet_strict_refuses_single_store_fail_closed_tier"
-decision = "new-proposition"
-proposition = "NP-161"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19062"
-project = "mcp-re-proxy"
-control = "tests/integration#http_profile_dispatch_test::fleet_strict_refuses_undeclared_tier"
-decision = "new-proposition"
-proposition = "NP-161"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-19063"
 project = "mcp-re-proxy"
 control = "tests/integration#http_profile_dispatch_test::http_profile_request_flows_verify_dispatch_serve_end_to_end"
-decision = "new-proposition"
-proposition = "NP-161"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19064"
-project = "mcp-re-proxy"
-control = "tests/integration#http_profile_dispatch_test::non_fleet_strict_skips_the_tier_gate_but_keeps_core_admission"
 decision = "new-proposition"
 proposition = "NP-161"
 recorded = "2026-09-19"

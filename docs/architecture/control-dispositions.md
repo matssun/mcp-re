@@ -3130,11 +3130,30 @@ probe class. Packet at
 
 ## NP-161 — dispatch carries the request the caller signed, unchanged
 
-**Controls:** `mcp-re-proxy/tests/integration/http_profile_dispatch_test.rs` and its siblings.
-**Statement.** *Over a real dispatch: the body forwarded to the backend is the body the signature covered, byte for byte; an RFC 9421 round trip through the proxy verifies at both ends; and body fidelity survives forwarding.*
+**Controls:** `mcp-re-proxy/tests/integration/http_profile_dispatch_test.rs` (1) —
+`http_profile_request_flows_verify_dispatch_serve_end_to_end`;
+`mcp-re-proxy/tests/integration_async/forwarded_body_fidelity_test.rs` (3);
+`mcp-re-proxy/tests/integration_async/rfc9421_round_trip_test.rs` (2) —
+`replayed_request_is_rejected`, `rfc9421_round_trip_zero_object_evidence`.
+**Statement.** *Over a real dispatch: the body forwarded to the backend is the body the signature covered, byte for byte; an RFC 9421 round trip through the proxy verifies at both ends; a second presentation of the same signed request is rejected on the async serving path; and the wire carries no legacy object-profile evidence.*
 **If false.** The proxy forwards something other than what it verified, so the backend acts on bytes no signature covered. NP-088 says the composer does not rewrite; this says the forwarder does not either.
 **Likely owner:** none — a composition's source is every unit under it.
 **Severity:** `critical`.
+**Root relationship.** The record's other seven rows left in ADR-MCPRE-069 CO-S3-1: all seven are
+now registered evidence under THM-0092 in `proxy.replay_admission_gate`, as the integration twins of
+conjuncts that unit's description already carried, and three of them are named in M139's `expect_red`
+so the added lane is measured rather than listed. What is left here is three separate propositions,
+and one of them was examined and refused rather than deferred.
+`replayed_request_is_rejected` is a positive replay DETECTION on the async serving path, and no
+ratified theorem contains it. THM-0092's scope declines the direction in terms — *"It is
+one-directional and is not a liveness claim: it says an unestablished replay state does not dispatch,
+never that an established one does"* — and the refusal here is not that an unestablished state failed
+to dispatch but that an ALREADY-established one was recognised, which is the other proposition.
+THM-0079 states *"a key admitted once is reported as a replay thereafter"*, and its scope then
+excludes exactly what this control adds: *"It does not establish that the cache is consulted on every
+path reaching dispatch."* Driving `HttpProfileProxy::handle` twice establishes that consultation, so
+joining THM-0079's owner would make a battery claim what that theorem wrote down that it does not.
+THM-0086 is *"CONFIGURATION PROJECTION ONLY"* and reaches no request. The row stays.
 
 ## NP-162 — a configuration reachback and hot reload change what is served and nothing else
 
