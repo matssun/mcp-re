@@ -121,10 +121,10 @@ impl FsRetainedArchive {
 
 #[cfg(test)]
 mod tests {
+    use super::super::fixtures::stage_durably;
     use super::super::fixtures::TempDir;
     use super::super::FsRetainedEvidenceStore;
     use super::*;
-    use mcp_re_http_profile::scitt::RetainedEvidenceStore;
 
     /// The property the whole split rests on: an archive nobody may write to still reads.
     #[test]
@@ -134,8 +134,8 @@ mod tests {
         let dir = TempDir::new();
         let root = dir.path().join("archive");
         let digest = {
-            let mut store = FsRetainedEvidenceStore::open(&root).expect("open for writing");
-            store.put(b"a retained hop").expect("put")
+            let store = FsRetainedEvidenceStore::open(&root).expect("open for writing");
+            stage_durably(&store, &root, b"a retained hop").expect("stage")
         };
         std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o555)).expect("chmod");
 
@@ -185,8 +185,8 @@ mod tests {
         let dir = TempDir::new();
         let root = dir.path().join("archive");
         let digest = {
-            let mut store = FsRetainedEvidenceStore::open(&root).expect("open");
-            store.put(b"authentic").expect("put")
+            let store = FsRetainedEvidenceStore::open(&root).expect("open");
+            stage_durably(&store, &root, b"authentic").expect("stage")
         };
         std::fs::write(root.join(digest.as_str()), b"swapped").expect("tamper");
         let archive = FsRetainedArchive::open_read_only(&root).expect("open read-only");

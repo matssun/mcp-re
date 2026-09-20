@@ -63,6 +63,30 @@ mod fixtures {
     use std::path::Path;
     use std::path::PathBuf;
 
+    use mcp_re_http_profile::scitt::EvidenceDigest;
+
+    use super::FsRetainedArchive;
+    use super::FsRetainedEvidenceStore;
+
+    /// Write `bytes` into the archive rooted at `root` the way the serving path does:
+    /// `stage_at` under the archive's own name for the digest, then the directory
+    /// barrier. Returns the digest the bytes are stored under.
+    ///
+    /// `transparency::durable_writer::run_batch` is the production pairing — one
+    /// `stage_at` per job, one `sync_root` per batch — so a fixture built this way is
+    /// arranged by the primitives the deployment runs.
+    pub(super) fn stage_durably(
+        store: &FsRetainedEvidenceStore,
+        root: &Path,
+        bytes: &[u8],
+    ) -> std::io::Result<EvidenceDigest> {
+        let digest = EvidenceDigest::of(bytes);
+        let path = FsRetainedArchive::open_read_only(root)?.object_path(&digest)?;
+        store.stage_at(&path, bytes)?;
+        store.sync_root()?;
+        Ok(digest)
+    }
+
     /// A unique temporary directory that removes itself.
     pub(super) struct TempDir(PathBuf);
 
