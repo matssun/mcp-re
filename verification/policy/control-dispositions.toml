@@ -5053,14 +5053,6 @@ decision = "new-proposition"
 proposition = "NP-077"
 recorded = "2026-09-19"
 
-[[disposition]]
-id = "CD-12045"
-project = "mcp-re-proxy"
-control = "lib#transport::tests::static_provider_yields_its_identity_ignoring_request"
-decision = "new-proposition"
-proposition = "NP-186"
-recorded = "2026-09-19"
-
 [[proposition]]
 id = "NP-079"
 title = "A third party's receipt verifies offline, and only for its own statement"
@@ -12507,15 +12499,6 @@ likely_owner = "none — the nearest unit, proxy.authorization_capability, carri
 consequence = "critical"
 root_relationship = "the composition above the component propositions this campaign recorded"
 record = "docs/architecture/control-dispositions.md#np-191"
-
-[[proposition]]
-id = "NP-186"
-title = "A static identity provider yields its identity ignoring the request"
-carrier = "mcp-re-proxy/src/transport/mod.rs"
-likely_owner = ""
-consequence = "medium"
-root_relationship = "none — the degenerate provider is reachable from no serving path"
-record = "docs/architecture/control-dispositions.md#np-186"
 
 [[proposition]]
 id = "NP-187"

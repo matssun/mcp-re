@@ -89,7 +89,7 @@ The `RequestHeaders` **duplicate-count contract**. `assertion_header` and `valid
 
 ### 8. What public interface exists only because tests need it?
 
-**`TransportBindingProvider` and `StaticIdentityProvider`.** Both `pub` and re-exported at the crate root. `StaticIdentityProvider` is the only implementor of the trait anywhere in the workspace, its doc says "Useful in tests and as a degenerate provider", and no production path calls `verified_identity`. A seam with one test-only implementor is a seam nothing crosses.
+**`TransportBindingProvider` and `StaticIdentityProvider`.** Both `pub` and re-exported at the crate root. `StaticIdentityProvider` is the only implementor of the trait anywhere in the workspace, its doc says "Useful in tests and as a degenerate provider", and no production path calls `verified_identity`. A seam with one test-only implementor is a seam nothing crosses. **CLOSED by RA3-002:** both are deleted, with the crate-root exports and the single fixture control; NP-186 is retired with them.
 
 `LbAssertionV2Binding` is also `pub` and crate-root re-exported with no production constructor — but it is a **deferred capability**, not a test artefact, and is classified as such below.
 
@@ -190,7 +190,7 @@ transport/ingress.rs  E        Mode B v1 + Mode C v2, with the retention rule
 
 1. `TransportIdentity` — private fields; construct only from a verified certificate interpretation or a verified assertion; a named constructor per provenance so the `source` field cannot disagree with where the value came from. This is also the prerequisite for the open *transport identity is derived only from the verified client certificate* theorem.
 2. `AttestedIngressVerified` — private fields, produced only by `LbAssertionV2Binding::verify`. A `Verified`-shaped type anything can construct is the same defect the SCITT census found in `EvidenceCommitment`.
-3. `TransportBindingProvider` + `StaticIdentityProvider` — classify. One test-only implementor and no production caller; the ruling in #657 applies by analogy — zero production callers is not by itself a deletion argument, and the right answer may be `#[cfg(test)]`, a test-support feature, or removal once the seam is confirmed dead.
+3. `TransportBindingProvider` + `StaticIdentityProvider` — classify. One test-only implementor and no production caller; the ruling in #657 applies by analogy — zero production callers is not by itself a deletion argument, and the right answer may be `#[cfg(test)]`, a test-support feature, or removal once the seam is confirmed dead. **CLOSED by RA3-002: removal.** The classification was done on the seam's own terms rather than on the caller count — the trait names no theorem, THM-0034 states nothing about any provider, and the unselected-second-contract test finds no second implementor a `#[cfg(test)]` or test-support shape would serve.
 4. The routing-header constants — one definition. `mcp-re-http-profile::ids` already owns the vocabulary and has the production consumer.
 5. A `SingleValuedHeader` projection to own the duplicate-count contract three call sites currently remember (Q7).
 
@@ -202,7 +202,7 @@ transport/ingress.rs  E        Mode B v1 + Mode C v2, with the retention rule
 |---|---|
 | 72% of the unit is unreachable deferred capability sharing a file with the live binding | **this census's finding**; split proposed |
 | `TransportIdentity` and `AttestedIngressVerified` admit values their names claim are verified | **this census's finding**; sealing proposed |
-| `TransportBindingProvider`/`StaticIdentityProvider`: seam with one test-only implementor | recorded; classify before deleting |
+| `TransportBindingProvider`/`StaticIdentityProvider`: seam with one test-only implementor | **closed by RA3-002** — classified, then deleted |
 | MCP routing-header names defined in two crates | recorded; the http-profile copy has the production consumer |
 | Duplicate-count contract held by caller discipline | recorded |
 | No theorem entry owned by this unit; two neighbours' entries are easily mistaken for coverage | recorded; §5 is the drafting list, and row 3 is blocked on the sealing work |

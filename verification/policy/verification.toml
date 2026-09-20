@@ -10907,8 +10907,7 @@ tested_symbols = [
 #
 # What is deliberately NOT here: the historical `extract_identity` facade and the
 # `TransportIdentity` seal (NP-078), the resolver's two NOTHING arms (NP-116), the
-# correspondence RENDERING (NP-145), the static provider fixture (NP-186) and the
-# policy/source vocabulary conversion (NP-187). Each is refused against quoted theorem text
+# correspondence RENDERING (NP-145) and the policy/source vocabulary conversion (NP-187). Each is refused against quoted theorem text
 # in its own packet under `verification/reviews/packets/`.
 
 [[unit]]

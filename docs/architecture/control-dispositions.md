@@ -3813,32 +3813,6 @@ decision document at all. The Slice 1 serving battery lives in `proxy.authorizat
 which no theorem supports, so an R1 there closes nothing. Packet at
 `verification/reviews/packets/adr069-np-163-np-191-ratification-2026-09-20.md`.
 
-## NP-186 — a static identity provider yields its identity ignoring the request
-
-**Controls:** `mcp-re-proxy/src/transport/mod.rs` (1).
-**Statement.** *`StaticIdentityProvider` answers with the identity it was built with
-whatever headers the request carries, and with `None` when it was built with none.*
-**If false.** A degenerate provider would vary its answer with request content — but no
-serving path holds one: direct-TLS identity is resolved functionally by
-`tls::resolve_channel_peer`, and the `TransportBindingProvider` seam is reached by no
-production configuration.
-**Likely owner:** none, and probably none ever. This is the one control of NP-075 that is
-not about the binding relation. It measures a fixture: the type's own documentation says
-*"Useful in tests and as a degenerate provider"*, and what it asserts is that a constant
-function is constant.
-
-**Why it is not dispositioned `not-evidence` here.** It very likely is not evidence, but
-none of the thirteen recorded families covers it — the nearest, ND-009, is scoped to
-data-structure API robustness, and stretching a family's scope to absorb a control is the
-same defect as widening a unit's proposition to absorb one. Minting a fourteenth family is
-excluded from this slice, so the control is carried as an identified proposition until a
-slice that may mint one reaches it.
-
-The other six controls of NP-075 landed as `proxy.transport_binding_application` under
-THM-0034, falsifier `M339`.
-**Packet:** `verification/reviews/packets/adr069-np-145-np-186-np-187-ratification-2026-09-20.md`.
-**Severity:** `medium`.
-
 ## NP-187 — the legacy and authority identity vocabularies convert field for field
 
 **Controls:** `mcp-re-proxy/src/facades/asserted_identity.rs` (1).

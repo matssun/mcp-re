@@ -115,3 +115,16 @@ from each other: both assert that the historical `String` keeps facts apart, and
 the same way.
 
 **Severities:** NP-145 `medium`, NP-186 `medium`, NP-187 `high`.
+
+## NP-186 — RETIRED by RA3-002
+
+The proposition's subject is deleted: `StaticIdentityProvider` and the
+`TransportBindingProvider` trait it was the only implementor of. A seam with one test-only
+implementor is a seam nothing crosses — no production path called `verified_identity`,
+THM-0034 says nothing about any provider, and the single control asserted that a constant
+function is constant.
+
+The compile replaces it, and says more than it did: a surviving consumer would be a path
+expression naming a deleted item. The `not-evidence` family question this record left open —
+that none of the thirteen recorded families covered a fixture control — does not need
+answering, because there is no longer a control to classify.

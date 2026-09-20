@@ -1232,12 +1232,15 @@ client certificate* is now TRUE of the live path and true by construction rather
 convention — but it is deliberately not written down. Ruling 5 of this record stands, and
 the campaign that did this work was instructed not to draft the transport theorem.
 
-**What was NOT done, and why.** `TransportBindingProvider` and `StaticIdentityProvider`
-have **zero production consumers** — nothing in the crate calls `verified_identity`. They
-are no longer a soundness problem, because the seal means the only identity they can carry
-is one a verification produced. Removing them is a public-API narrowing outside this
-slice's remit ("do not expand this into general transport cleanup"), so it is recorded here
-rather than done.
+**What was NOT done then, and is done now.** `TransportBindingProvider` and
+`StaticIdentityProvider` had **zero production consumers** — nothing in the crate called
+`verified_identity`. They were no longer a soundness problem, because the seal meant the
+only identity they could carry was one a verification produced. Removing them was a
+public-API narrowing outside that slice's remit ("do not expand this into general transport
+cleanup"), so it was recorded here rather than done. **RA3-002 discharges it:** both are
+deleted with their crate-root exports and the single fixture control, and NP-186 retires.
+The compile is what replaces the control, and it says more — a surviving consumer would be
+a path expression naming a deleted item.
 
 ~~**Status stays `reviewed-action-required`** on both halves.~~ — **both resolved by owner
 ruling, 2026-08-29.** See the two subsections below.

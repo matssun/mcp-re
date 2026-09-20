@@ -71,11 +71,10 @@ pub enum IdentityPolicy {
     CnLegacy,
 }
 
-/// The parsed HTTP request headers of an inbound connection, the only request
-/// context a [`TransportBindingProvider`] is given. This is a thin, case-
-/// insensitive view over the already-parsed header block — providers never see
-/// the socket, the body, or the TLS connection, so a header-reading provider
-/// cannot accidentally reach for connection state it must not trust.
+/// The parsed HTTP request headers of an inbound connection. This is a thin,
+/// case-insensitive view over the already-parsed header block — a reader of it never
+/// sees the socket, the body, or the TLS connection, so header hygiene cannot
+/// accidentally reach for connection state it must not trust.
 ///
 /// Header names compare ASCII-case-insensitively (per RFC 7230). The FIRST
 /// occurrence of a name wins.
@@ -136,37 +135,6 @@ impl RequestHeaders {
             .iter()
             .filter(|(header_name, _)| *header_name == lowered)
             .count()
-    }
-}
-
-/// Produces the verified client identity for an inbound request, or `None` when
-/// no identity is available (fail closed: a binding that requires identity then
-/// rejects). The request headers are the ONLY context — direct-TLS identity is
-/// extracted functionally by the serve loop (see `tls::connection_identity`) and
-/// does not go through this trait. `StaticIdentityProvider` ignores the request
-/// and is used in tests.
-pub trait TransportBindingProvider {
-    /// The verified client identity for this request, if any.
-    fn verified_identity(&self, request: &RequestHeaders) -> Option<TransportIdentity>;
-}
-
-/// A fixed identity (or none). Useful in tests and as a degenerate provider; it
-/// ignores the request entirely and always yields the identity it was built with.
-#[derive(Debug, Clone, Default)]
-pub struct StaticIdentityProvider {
-    identity: Option<TransportIdentity>,
-}
-
-impl StaticIdentityProvider {
-    /// A provider that yields `identity` (or `None`).
-    pub fn new(identity: Option<TransportIdentity>) -> Self {
-        StaticIdentityProvider { identity }
-    }
-}
-
-impl TransportBindingProvider for StaticIdentityProvider {
-    fn verified_identity(&self, _request: &RequestHeaders) -> Option<TransportIdentity> {
-        self.identity.clone()
     }
 }
 
@@ -333,10 +301,8 @@ mod tests {
     use super::ExactMatchBinding;
     use super::IdentitySource;
     use super::RequestHeaders;
-    use super::StaticIdentityProvider;
     use super::TransportBinding;
     use super::TransportBindingPolicy;
-    use super::TransportBindingProvider;
     use super::TransportIdentity;
     use mcp_re_core::McpReError;
 
@@ -394,26 +360,6 @@ mod tests {
     #[allow(dead_code)]
     fn spiffe(value: &str) -> TransportIdentity {
         TransportIdentity::attested_by_verified_ingress(value, IdentitySource::UriSan)
-    }
-
-    /// A request carrying a single header.
-    fn req_with(name: &str, value: &str) -> RequestHeaders {
-        RequestHeaders::from_pairs([(name, value)])
-    }
-
-    #[test]
-    fn static_provider_yields_its_identity_ignoring_request() {
-        let id = spiffe("spiffe://example.org/agent-1");
-        let provider = StaticIdentityProvider::new(Some(id.clone()));
-        // The request argument is ignored: same identity regardless of headers.
-        let empty = RequestHeaders::default();
-        let populated = req_with("x-forwarded-client-cert", "URI=spiffe://other");
-        assert_eq!(provider.verified_identity(&empty), Some(id.clone()));
-        assert_eq!(provider.verified_identity(&populated), Some(id));
-        assert_eq!(
-            StaticIdentityProvider::new(None).verified_identity(&empty),
-            None
-        );
     }
 
     // --- Issue #21 (cluster 2): ADR-MCPS-023 strict rules on the XFCC value -----
