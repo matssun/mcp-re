@@ -595,17 +595,21 @@ here is that it is now machine-visible in the census instead of living in a pack
 
 **Control:** `scripts/es256_containment_gate.py`.
 **Carrier:** the `p256` dependency edge, the SCITT receipt verifier's modules, and
-`mcp-re-core`'s `ensure_ed25519_alg`.
+`mcp-re-http-profile/src/policy.rs`'s `ProfileAlgorithm` registry with `VerifierPolicy::new`'s
+construction-time refusal.
 **Statement.** *ECDSA P-256 is reachable only from receipt verification: `p256` is a
 dependency of exactly one crate, referenced from exactly the COSE-key owner and its verifier
-inside it, absent from `mcp-re-core`, and `ES256` stays refused by name for MCP-RE's own
-request and response signatures.*
+inside it, absent from `mcp-re-core`, and no `ProfileAlgorithm` variant exists for ECDSA
+P-256, so `ecdsa-p256-sha256` resolves to no verifier and cannot enter a `VerifierPolicy`.*
 **If false.** MCP-RE's message-signing policy widens to admit ECDSA P-256 for the signatures
 its authorization decisions rest on, without any decision being recorded — by someone
 reaching for the P-256 verifier already sitting in the workspace. An algorithm accepted for a
 third party's countersignature is not thereby accepted for MCP-RE's own.
-**Likely owner:** a new unit over the containment edge; `core.*` owns the refusal and no unit
-owns the reachability.
+**Likely owner:** a new unit over the containment edge. The refusal half is owned:
+`an_algorithm_without_a_verifier_cannot_be_allowlisted` (`mcp-re-http-profile/src/policy.rs:293`)
+is `unit://http_profile.request_floor_result`'s registered control at
+`verification/policy/verification.toml:271`, under THM-0014 clause 2. No unit owns the
+reachability half.
 **Root relationship.** Under the signing roots. THM-0072's statement already says both
 signatures are attempted "only under an algorithm the protected header names and the resolved
 key agrees with, out of EdDSA and ES256 and nothing else" — which is the VERIFICATION
@@ -2550,7 +2554,8 @@ It is a conditional over SUCCESSFUL returns, and its security consequence is sta
 - `tamper_preimage_fails` — **contained**, same clause and the same probe. A tampered signature base that still verifies is a floor-verified request whose signature covered different bytes.
 - `malformed_signature_base64_fails` — **contained**, clause 2. `verify_ed25519_with` returning Ok on input it never decoded is a floor-verified request under a signature that was never checked at all. It refuses at the decode arm rather than at `verify_strict`, which is why M312 leaves it green: a different arm of the same clause.
 - `wrong_length_signature_fails` — **contained**, clause 2, at the `try_into` arm. Sixty-four bytes is what an Ed25519 signature IS; accepting fewer is accepting a value the clause's verb cannot be true of.
-- `ensure_ed25519_alg_rejects_unknown_alg_with_supplied_error` — **contained**, by clause 2's qualifier *"under an algorithm the verifier's policy accepts"* and by the security consequence's second limb in terms. If the gate admitted `RS256` or `ES256`, an envelope declaring an algorithm the deployment does not accept would reach the raw primitive and could be floor-verified. It is also NP-002's other half — the refusal that keeps ES256 out of MCP-RE's own signing.
+- `an_algorithm_without_a_verifier_cannot_be_allowlisted` (`mcp-re-http-profile/src/policy.rs:293`) — **contained**, by clause 2's qualifier *"under an algorithm the verifier's policy accepts"* and by the security consequence's second limb in terms. A token with no `ProfileAlgorithm` variant cannot enter a `VerifierPolicy` at all, so an envelope declaring `ecdsa-p256-sha256` never reaches a verifier and cannot be floor-verified. It is also NP-002's other half — the refusal that keeps ES256 out of MCP-RE's own signing — and it is where that refusal actually lives: it is already `unit://http_profile.request_floor_result`'s registered control (`verification/policy/verification.toml:271`) over a file already in that unit's `paths` (`:220`).
+- `ensure_ed25519_alg_rejects_unknown_alg_with_supplied_error` — **contained** by the same clause, over a function with no production caller. `ensure_ed25519_alg` (`mcp-re-core/src/crypto.rs:50`) is called from nothing but its own two tests, so the refusal it states quantifies over zero paths that reach the floor; the clause-2 obligation is carried by the control above it.
 
 And the eight that did not leave, with the clause that decides each:
 

@@ -372,7 +372,7 @@ record = "docs/architecture/control-dispositions.md#np-001"
 [[proposition]]
 id = "NP-002"
 title = "P-256 is confined to receipt verification"
-carrier = "the p256 dependency edge, the SCITT receipt verifier's modules, and mcp-re-core's ensure_ed25519_alg"
+carrier = "the p256 dependency edge, the SCITT receipt verifier's modules, and mcp-re-http-profile/src/policy.rs's ProfileAlgorithm registry with VerifierPolicy::new's construction-time refusal"
 likely_owner = ""
 consequence = "critical"
 root_relationship = "THM-0072 states the verification direction; the containment direction is stated nowhere"
