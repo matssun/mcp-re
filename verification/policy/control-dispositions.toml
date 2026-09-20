@@ -4942,24 +4942,6 @@ root_relationship = "under the peer-identity roots"
 record = "docs/architecture/control-dispositions.md#np-074"
 
 [[proposition]]
-id = "NP-075"
-title = "The transport binding is exact match, and no policy can manufacture it"
-carrier = "mcp-re-proxy/src/transport/mod.rs"
-likely_owner = ""
-consequence = "critical"
-root_relationship = "under the peer-identity roots"
-record = "docs/architecture/control-dispositions.md#np-075"
-
-[[proposition]]
-id = "NP-076"
-title = "An asserted identity is a bounded, printable, non-empty value"
-carrier = "mcp-re-proxy/src/transport/mod.rs"
-likely_owner = ""
-consequence = "high"
-root_relationship = "under the peer-identity roots"
-record = "docs/architecture/control-dispositions.md#np-076"
-
-[[proposition]]
 id = "NP-077"
 title = "A routing header is well-formed and singular, or the request fails closed"
 carrier = "mcp-re-proxy/src/transport/mod.rs"
@@ -4970,9 +4952,9 @@ record = "docs/architecture/control-dispositions.md#np-077"
 
 [[proposition]]
 id = "NP-078"
-title = "A certificate identity is readable only through its projections"
+title = "The historical identity facade refuses, and its product cannot be manufactured"
 carrier = "mcp-re-proxy/src/transport/identity.rs"
-likely_owner = "proxy.certificate_identity states it and cannot claim controls outside communication_assurance"
+likely_owner = ""
 consequence = "critical"
 root_relationship = "under the peer-identity roots"
 record = "docs/architecture/control-dispositions.md#np-078"
@@ -5218,54 +5200,6 @@ proposition = "NP-073"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-12031"
-project = "mcp-re-proxy"
-control = "lib#transport::tests::a_permissive_policy_cannot_manufacture_the_binding_fact"
-decision = "new-proposition"
-proposition = "NP-075"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-12032"
-project = "mcp-re-proxy"
-control = "lib#transport::tests::an_absent_channel_peer_fails_closed"
-decision = "new-proposition"
-proposition = "NP-075"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-12033"
-project = "mcp-re-proxy"
-control = "lib#transport::tests::asserted_identity_accepts_a_well_formed_value_and_trims"
-decision = "new-proposition"
-proposition = "NP-076"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-12034"
-project = "mcp-re-proxy"
-control = "lib#transport::tests::asserted_identity_rejects_control_characters"
-decision = "new-proposition"
-proposition = "NP-076"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-12035"
-project = "mcp-re-proxy"
-control = "lib#transport::tests::asserted_identity_rejects_empty"
-decision = "new-proposition"
-proposition = "NP-076"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-12036"
-project = "mcp-re-proxy"
-control = "lib#transport::tests::asserted_identity_rejects_oversized"
-decision = "new-proposition"
-proposition = "NP-076"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-12037"
 project = "mcp-re-proxy"
 control = "lib#transport::tests::duplicate_routing_header_fails_closed"
@@ -5279,22 +5213,6 @@ project = "mcp-re-proxy"
 control = "lib#transport::tests::empty_routing_header_fails_closed"
 decision = "new-proposition"
 proposition = "NP-077"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-12039"
-project = "mcp-re-proxy"
-control = "lib#transport::tests::exact_match_binds_a_peer_and_a_request_actor_that_name_one_principal"
-decision = "new-proposition"
-proposition = "NP-075"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-12040"
-project = "mcp-re-proxy"
-control = "lib#transport::tests::exact_match_refuses_two_different_principals"
-decision = "new-proposition"
-proposition = "NP-075"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -5334,35 +5252,8 @@ id = "CD-12045"
 project = "mcp-re-proxy"
 control = "lib#transport::tests::static_provider_yields_its_identity_ignoring_request"
 decision = "new-proposition"
-proposition = "NP-075"
+proposition = "NP-186"
 recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-12046"
-project = "mcp-re-proxy"
-control = "lib#transport::tests::the_composite_actor_id_is_not_the_binding_coordinate"
-decision = "new-proposition"
-proposition = "NP-075"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-12047"
-project = "mcp-re-proxy"
-control = "lib#transport::tests::the_installable_binding_is_exact_match"
-decision = "new-proposition"
-proposition = "NP-075"
-recorded = "2026-09-19"
-
-
-# ---------------------------------------------------------------------------
-# Batch 15 — the conformance claim surface, 2026-09-19
-# ---------------------------------------------------------------------------
-#
-# 97 unclaimed controls across seventeen files, and TWO units. Conformance is what MCP-RE
-# tells an auditor it implements, so these are the evidence behind a product-facing claim
-# surface — the subject NP-008 approaches from the gate side, arriving here as the claims.
-#
-# Five of the 97 are not controls at all: fixture and report GENERATORS (ND-012).
 
 [[proposition]]
 id = "NP-079"
@@ -8089,7 +7980,7 @@ record = "docs/architecture/control-dispositions.md#np-115"
 
 [[proposition]]
 id = "NP-116"
-title = "Channel peer resolution yields the identity the relationship authenticated as"
+title = "Channel peer resolution yields nothing where the channel carries no identity"
 carrier = "mcp-re-proxy/src/tls.rs"
 likely_owner = ""
 consequence = "critical"
@@ -8907,22 +8798,6 @@ proposition = "NP-176"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-17104"
-project = "mcp-re-proxy"
-control = "lib#tls::channel_peer_resolution_tests::a_leaf_without_the_configured_field_resolves_no_identity"
-decision = "new-proposition"
-proposition = "NP-116"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-17105"
-project = "mcp-re-proxy"
-control = "lib#tls::channel_peer_resolution_tests::a_resumed_relationship_resolves_the_same_identity_as_a_full_handshake"
-decision = "new-proposition"
-proposition = "NP-116"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-17106"
 project = "mcp-re-proxy"
 control = "lib#tls::channel_peer_resolution_tests::an_absent_acceptance_resolves_no_identity"
@@ -8931,33 +8806,9 @@ proposition = "NP-116"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-17107"
-project = "mcp-re-proxy"
-control = "lib#tls::channel_peer_resolution_tests::an_issuer_in_the_accepted_chain_never_becomes_the_transport_identity"
-decision = "new-proposition"
-proposition = "NP-116"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-17108"
 project = "mcp-re-proxy"
 control = "lib#tls::channel_peer_resolution_tests::an_lb_assertion_deployment_resolves_no_transport_identity"
-decision = "new-proposition"
-proposition = "NP-116"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-17109"
-project = "mcp-re-proxy"
-control = "lib#tls::channel_peer_resolution_tests::direct_tls_resolves_the_identity_the_relationship_authenticated_as"
-decision = "new-proposition"
-proposition = "NP-116"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-17110"
-project = "mcp-re-proxy"
-control = "lib#tls::channel_peer_resolution_tests::each_relationship_resolves_its_own_peers_identity"
 decision = "new-proposition"
 proposition = "NP-116"
 recorded = "2026-09-19"
@@ -9117,8 +8968,8 @@ record = "docs/architecture/control-dispositions.md#np-144"
 
 [[proposition]]
 id = "NP-145"
-title = "The operator-facing vocabularies agree and render distinctly"
-carrier = "mcp-re-proxy/src/facades"
+title = "Every correspondence refusal renders to its own operator sentence"
+carrier = "mcp-re-proxy/src/facades/delegated_key_correspondence.rs"
 likely_owner = ""
 consequence = "medium"
 root_relationship = "a premise of the proxy units above it"
@@ -9792,27 +9643,11 @@ proposition = "NP-133"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-18107"
-project = "mcp-re-proxy"
-control = "lib#facades::asserted_identity::tests::a_valid_value_comes_back_trimmed_and_borrowed"
-decision = "new-proposition"
-proposition = "NP-145"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18108"
-project = "mcp-re-proxy"
-control = "lib#facades::asserted_identity::tests::every_owner_refusal_maps_to_the_historical_rejection_it_replaced"
-decision = "new-proposition"
-proposition = "NP-145"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-18109"
 project = "mcp-re-proxy"
 control = "lib#facades::asserted_identity::tests::the_two_vocabularies_agree_field_for_field"
 decision = "new-proposition"
-proposition = "NP-145"
+proposition = "NP-187"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -13532,3 +13367,21 @@ likely_owner = "proxy.operator_facing_redaction owns the subject, and its own cl
 consequence = "critical"
 root_relationship = "a premise of the proxy units above it"
 record = "docs/architecture/control-dispositions.md#np-185"
+
+[[proposition]]
+id = "NP-186"
+title = "A static identity provider yields its identity ignoring the request"
+carrier = "mcp-re-proxy/src/transport/mod.rs"
+likely_owner = ""
+consequence = "medium"
+root_relationship = "none — the degenerate provider is reachable from no serving path"
+record = "docs/architecture/control-dispositions.md#np-186"
+
+[[proposition]]
+id = "NP-187"
+title = "The legacy and authority identity vocabularies convert field for field"
+carrier = "mcp-re-proxy/src/facades/asserted_identity.rs"
+likely_owner = ""
+consequence = "high"
+root_relationship = "a premise of the certificate-identity root, upstream of the interpreter"
+record = "docs/architecture/control-dispositions.md#np-187"
