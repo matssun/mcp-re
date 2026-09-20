@@ -28,12 +28,6 @@ use crate::transport::TransportIdentity;
 /// trailing version byte (`v1`) lets the preimage format evolve without ambiguity.
 const LB_ASSERTION_DOMAIN_TAG: &[u8] = b"mcp-re/lb-ingress-assertion/v1";
 
-/// The default freshness window (seconds) for a Tier-3 LB assertion: how far the
-/// assertion's `validation_time` may lag behind the node's `now_unix` and still be
-/// accepted. Small by design — the LB signs the assertion at the moment it admits
-/// the request, so a legitimate assertion reaches the node within seconds.
-pub const DEFAULT_LB_ASSERTION_MAX_AGE_SECS: i64 = 30;
-
 /// The parsed fields of a Tier-3 LB-signed ingress assertion (ADR-MCPS-023).
 ///
 /// The assertion ties a **specific MCP-RE request** (by its `request_hash`) to the
@@ -158,13 +152,13 @@ impl LbAssertionBinding {
 
     /// Build a verifier with no trusted keys yet (every assertion fails closed
     /// until a key is added) and the default freshness window
-    /// ([`DEFAULT_LB_ASSERTION_MAX_AGE_SECS`]). `source` is the [`IdentitySource`]
+    /// ([`super::DEFAULT_LB_ASSERTION_MAX_AGE_SECS`]). `source` is the [`IdentitySource`]
     /// stamped on the yielded identity (mirrors the configured identity policy).
     pub fn new(source: IdentitySource) -> Self {
         LbAssertionBinding {
             keys: Vec::new(),
             source,
-            max_age_secs: DEFAULT_LB_ASSERTION_MAX_AGE_SECS,
+            max_age_secs: super::DEFAULT_LB_ASSERTION_MAX_AGE_SECS,
         }
     }
 
@@ -449,7 +443,7 @@ mod tests {
         );
         // The inclusive boundary (exactly max_age old) is still accepted, proving
         // it is a bounded window and not a blanket rejection.
-        let at_bound = signed_at + super::DEFAULT_LB_ASSERTION_MAX_AGE_SECS;
+        let at_bound = signed_at + crate::transport::ingress::DEFAULT_LB_ASSERTION_MAX_AGE_SECS;
         assert!(binding.verify(&assertion, &rh, at_bound).is_ok());
     }
 

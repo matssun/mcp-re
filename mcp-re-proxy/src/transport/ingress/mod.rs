@@ -48,7 +48,6 @@ mod v2_wire;
 pub use v1::LbAssertion;
 pub use v1::LbAssertionBinding;
 pub use v1::LbAssertionRejection;
-pub use v1::DEFAULT_LB_ASSERTION_MAX_AGE_SECS;
 pub use v2::AttestedCertVerification;
 pub use v2::AttestedIngressVerified;
 pub use v2::AttestedRevocation;
@@ -57,6 +56,12 @@ pub use v2::LbAssertionV2Binding;
 pub use v2::LbAssertionV2Rejection;
 
 use mcp_re_core::VerificationKey;
+
+/// The default freshness window (seconds) for an LB ingress assertion: how far the
+/// assertion's `validation_time` may lag behind the node's `now_unix` and still be
+/// accepted. Small by design — the attestor signs the assertion at the moment it admits
+/// the request, so a legitimate assertion reaches the node within seconds.
+pub const DEFAULT_LB_ASSERTION_MAX_AGE_SECS: i64 = 30;
 
 /// A trusted LB verification key, addressed by its key id, used to verify Tier-3
 /// LB-signed assertions. The key id is the opaque label the LB stamps into the
