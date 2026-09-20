@@ -135,9 +135,6 @@ pub struct AdmissionClaims {
 ///
 /// `opaque-digest`: the digest is over the admitted-state digest the assertion
 /// carries, so the binding is checkable against the assertion offline.
-/// `reference-digest`: the digest is produced by an external admission authority
-/// named by the reference fields, so the record stays verifiable independent of
-/// that authority's live state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AdmissionBinding {
@@ -149,12 +146,6 @@ pub struct AdmissionBinding {
     pub digest_alg: String,
     /// `base64url(SHA-256(admitted_state_digest_bytes))` for the opaque form.
     pub digest_value: String,
-    /// External authority namespace (reference form only).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub authority_id: Option<String>,
-    /// The authority's decision handle (reference form only).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reference_value: Option<String>,
 }
 
 impl AdmissionBinding {
@@ -171,8 +162,6 @@ impl AdmissionBinding {
             digest_value: b64url_encode(&Sha256::digest(
                 assertion.mcp_re_admitted_state_digest.as_bytes(),
             )),
-            authority_id: None,
-            reference_value: None,
         }
     }
 
