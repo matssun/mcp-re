@@ -234,6 +234,7 @@ not an omission to hide.
 | proxy.trust_resolution_window | V0 | THM-0097 | 0 |
 | proxy.trust_revocation_classification | V0 | THM-0035 | 0 |
 | proxy.trust_snapshot_swap | V0 | _none_ | 0 |
+| proxy.unestablishable_capability_refusal | V0 | _none_ | 0 |
 | sdk_python.authorization_binding | V0 | _none_ | 0 |
 | sdk_python.bounded_read | V0 | _none_ | 0 |
 | sdk_python.continuation_drive | V0 | _none_ | 0 |

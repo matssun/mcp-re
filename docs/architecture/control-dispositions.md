@@ -3226,11 +3226,21 @@ the merge path checks.
 
 ## NP-153 — the startup transcript is what the deployment actually did
 
-**Controls:** `mcp-re-proxy/tests/integration/app_startup_characterization_test.rs` and its siblings.
-**Statement.** *Over a real startup: the transcript names every posture the deployment took, a refusal precedence is stable and names the first thing wrong, the legality characterization matches the classifiers, and the documented CLI is the CLI that ran.*
-**If false.** An operator reads a transcript that describes a deployment other than the one running. This is the composition above NP-004, NP-123 and the argv family: each of those says a posture is stated; this says the statement is true of this process.
+**Controls:** 21 — `app_startup_characterization_test` (8), `config_refusal_precedence_test` (5), `startup_transcript::normalize_tests` (5), `documented_cli_test` (2), `config_legality_characterization_test` (1). All in `mcp-re-proxy/tests/integration`, all in the default lane.
+**Statement.** *Over a real startup: a refusal precedence is stable and names the first thing wrong rather than merely refusing; the startup-transcript normalizer reads every state-carrying seam in both directions and fails rather than guessing; the authorization seam declares both of its postures; the documented sidecar command line is a configuration the proxy will start with; and the boundary's recommended replay backend is not a state the next stage will start.*
+**If false.** An operator reads a transcript that describes a deployment other than the one running, or follows a remedy the next stage refuses. This is the composition above NP-004, NP-123 and the argv family: each of those says a posture is stated; this says the statement is true of this process.
 **Likely owner:** none — a composition's source is every unit under it.
 **Severity:** `critical`.
+
+**Registered in part (ADR-MCPRE-069 CO-S3-6).** Fifteen of this record's original thirty-six rows left it as attached evidence and are no longer dispositions: the layer-A legality rows into `proxy.client_credential_window` (THM-0102), `proxy.delegated_signing_configuration_state`, `proxy.transport_binding_and_crl_state` and `proxy.legality_boundary_totality` (THM-0077), the root-key endpoint row into `proxy.kms_endpoint_authority` (THM-0089, whose statement names the validation boundary as one of the decision's three consumers), the tier/reload transcript pair's surviving half into `proxy.trust_posture_declaration` (THM-0100), and the three unestablishable-capability refusals into a new unit, `proxy.unestablishable_capability_refusal`, added to THM-0077's `supported_by`. No theorem fingerprint field moved.
+
+**Six rows were examined and REFUSED, and the reasons are not interchangeable.**
+
+* **Two rows reach a classifier whose theorem declines the conjunct they carry.** `a_programmatic_config_cannot_carry_a_dangling_custody_or_ingress_selector` and `a_programmatic_config_cannot_carry_a_deny_list_nothing_enforces` decide in `config_state/cross_machine.rs`, under THM-0049, whose `scope` says in terms: *"It does not establish that the classifier is consulted on every startup path."* Both rows reach X2a and X6 through the boundary's clause list, which is not in that unit's closure, and deleting the list's entry turns them red while THM-0049 stays true.
+* **Two rows are owned by units that carry no theorem.** `a_programmatic_config_cannot_carry_a_decision_scope_that_selects_nothing` decides in `config_state/authorization.rs`, whose unit `proxy.authorization_configuration_state` is theorem-less; `a_deployment_can_install_the_authorization_authority_and_the_transcript_declares_it` and its OFF twin are decided by `authorization::capability::evaluator`, whose unit `proxy.authorization_capability` is theorem-less and `critical`. Attaching to a theorem-less unit attaches to nothing.
+* **One row asserts a presentation adjacency no theorem states.** `a_push_tier_without_an_event_source_is_qualified_where_it_is_declared` asserts `emits_in_order(tier, caveat)` — *the caveat must follow the claim it weakens*. THM-0100 states the arithmetic the line prints, not where the qualification sits, and that is the same clause-3 shape as the refusal-ORDER rows still in this record.
+
+Packet: [`../../verification/reviews/packets/adr069-np-153-ratification-2026-09-20.md`](../../verification/reviews/packets/adr069-np-153-ratification-2026-09-20.md).
 
 ## NP-154 — the shipped auditor over a served archive, and the retention posture the serving path refuses under
 
