@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The DEFERRED ingress-attestation capability (ADR-MCPS-023 Tier 3, issue #71).
+//! The DEFERRED ingress-attestation capability (ADR-MCPS-023 Tier 4, issue #71).
 //!
 //! # Unreachable, on purpose
 //!
 //! Nothing in this module can be reached from a serving path. `--transport-binding
-//! lb-assertion` and `--transport-binding attested-ingress` are refused at Layer-A
-//! validation, and [`TransportBinding`](super::TransportBinding) has exactly one
-//! constructor — the Mode-A exact match. EX-005 measured this half as 913 of the
-//! pre-split file's 1268 production lines.
+//! attested-ingress` is refused at Layer-A validation, and
+//! [`TransportBinding`](super::TransportBinding) has exactly one constructor — the Mode-A
+//! exact match.
 //!
 //! **That is an intentional deployment fact and this module is not the place to change
 //! it.** The capability is not deleted, because the Mode-C verifier is a correct
@@ -15,39 +14,29 @@
 //! selectable, because the rebinding of an attestation onto the RFC 9421 request evidence
 //! is not yet specified. `docs/AGENT_INSTRUCTIONS.md` §9 names both mistakes.
 //!
-//! Mode B (`LbAssertion`) is refused for a different reason, and it is a RULING rather
-//! than a gap: the load balancer belongs outside the trusted computing base.
-//!
 //! # What changes here
 //!
 //! Its change rule is the opposite of the live half's: nothing here is exercised by a
 //! deployment, so the only thing that keeps it correct is its own test suite. Keep the
 //! suite exhaustive, and do not weaken a check on the grounds that nothing reaches it.
 //!
-//! # Two frozen formats, one capability
+//! # One frozen format, one capability
 //!
 //! ```text
-//! ingress capability          this module — what these mechanisms ARE, and the
-//!     |                       attestor keys a node trusts for either of them
-//!     +-- v1  Mode B / Tier 3  mcp-re/lb-ingress-assertion/v1
+//! ingress capability          this module — what the mechanism IS, and the
+//!     |                       attestor keys a node trusts for it
 //!     +-- v2  Mode C / Tier 4  mcp-re/lb-ingress-assertion/v2
 //! ```
 //!
-//! v2 is a NEW frozen format rather than an extension of v1 — a distinct
-//! domain-separation tag, a distinct field layout and a distinct verifier order — so each
-//! version owns its own wire vocabulary, preimage, parser, verifier and rejections.
-//! Nothing here abstracts over the two: an abstraction that made the formats
-//! interchangeable would erase the property their separation exists to guarantee, and the
-//! disjointness test below is what pins it.
+//! The format is FROZEN: it owns its wire vocabulary, preimage, parser, verifier and
+//! rejections as one definition, and its preimage is domain-separated by a
+//! version-qualified tag, so a signature produced under another version of this mechanism
+//! can never be re-framed as one of these. The domain-separation test below is what pins
+//! that.
 
-mod v1;
-mod v1_wire;
 mod v2;
 mod v2_wire;
 
-pub use v1::LbAssertion;
-pub use v1::LbAssertionBinding;
-pub use v1::LbAssertionRejection;
 pub use v2::AttestedCertVerification;
 pub use v2::AttestedIngressVerified;
 pub use v2::AttestedRevocation;
@@ -63,8 +52,8 @@ use mcp_re_core::VerificationKey;
 /// the request, so a legitimate assertion reaches the node within seconds.
 pub const DEFAULT_LB_ASSERTION_MAX_AGE_SECS: i64 = 30;
 
-/// A trusted LB verification key, addressed by its key id, used to verify Tier-3
-/// LB-signed assertions. The key id is the opaque label the LB stamps into the
+/// A trusted attestor verification key, addressed by its key id, used to verify
+/// attestor-signed ingress assertions. The key id is the opaque label the LB stamps into the
 /// assertion's `key_id` field; the node looks the verification key up by it.
 #[derive(Debug, Clone)]
 struct LbKeyEntry {

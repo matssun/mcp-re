@@ -606,9 +606,7 @@ _PROXY_LIB_SRCS = [
     "src/redis_admission_source/refusal_report.rs",
     "src/transport/mod.rs",
     "src/transport/ingress/mod.rs",
-    "src/transport/ingress/v1.rs",
     "src/transport/ingress/v2.rs",
-    "src/transport/ingress/v1_wire.rs",
     "src/transport/ingress/v2_wire.rs",
     "src/transport/identity.rs",
     # ADR-MCPS-021: bounded trust-propagation cache (revocation window T).
