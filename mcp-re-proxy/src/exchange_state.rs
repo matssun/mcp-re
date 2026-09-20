@@ -377,23 +377,9 @@ impl ServedSuccess {
 
 /// An event the current state has no transition for.
 ///
-/// Carries both halves because the pair is the diagnosis. A caller must not recover by
-/// picking a nearby legal transition (ADR-MCPRE-057 §12.2).
+/// A caller must not recover by picking a nearby legal transition (ADR-MCPRE-057 §12.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct InvalidExchangeTransition {
-    pub(crate) state: ExchangeState,
-    pub(crate) event: ExchangeEvent,
-}
-
-impl std::fmt::Display for InvalidExchangeTransition {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "illegal request transition: {:?} has no transition for {:?}",
-            self.state, self.event
-        )
-    }
-}
+pub(crate) struct InvalidExchangeTransition;
 
 impl ExchangeState {
     /// Whether the inner server can have acted by this state.
@@ -468,7 +454,7 @@ pub(crate) fn transition(
     use ExchangeEvent as E;
     use ExchangeState as S;
 
-    let illegal = Err(InvalidExchangeTransition { state, event });
+    let illegal = Err(InvalidExchangeTransition);
 
     if state.is_terminal() {
         return illegal;
