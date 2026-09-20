@@ -377,9 +377,14 @@ fn gcp_kms_delegated_tls_wrong_key_binding_fails_closed() {
             "a server leaf NOT bound to the KMS TLS key must be rejected at construction \
              (fail closed)"
         ),
-        Err(TlsError::DelegatedKeyMismatch(msg)) => assert!(
-            msg.contains("does not match"),
-            "expected a cert<->signer key-mismatch error, got: {msg}"
+        Err(TlsError::DelegatedKeyMismatch(refusal)) => assert!(
+            matches!(
+                refusal,
+                mcp_re_proxy::communication_assurance::CredentialKeyCorrespondenceRefusal::Mismatch(
+                    _
+                )
+            ),
+            "expected a cert<->signer key-mismatch fact, got: {refusal:?}"
         ),
         Err(other) => panic!(
             "expected TlsError::DelegatedKeyMismatch (leaf does not bind the KMS key), \

@@ -3094,9 +3094,10 @@ without_a_cadence_the_bound_is_the_crls_own_expiry, without_a_crl_the_bound_is_t
 
 ## NP-145 — every correspondence refusal renders to its own operator sentence
 
-**Controls:** `mcp-re-proxy/src/facades/delegated_key_correspondence.rs` (2).
-**Statement.** *Seven distinct correspondence facts render to seven distinct sentences, and
-an unsupported algorithm tells the operator WHICH algorithm was given.*
+**Controls:** `mcp-re-proxy/src/tls.rs` (2).
+**Statement.** *Seven distinct correspondence facts render to seven distinct sentences
+through `TlsError::DelegatedKeyMismatch`'s `Display`, and an unsupported algorithm tells the
+operator WHICH algorithm was given.*
 **If false.** An operator reading two different incidents reads the same sentence, and
 cannot tell an empty chain from an unreachable signer.
 **Likely owner:** none. THM-0026 is the authority and it stops one level above the rendering:

@@ -123,7 +123,6 @@ _PROXY_LIB_SRCS = [
     # decides nothing.
     "src/facades/mod.rs",
     "src/facades/asserted_identity.rs",
-    "src/facades/delegated_key_correspondence.rs",
     "src/communication_assurance/certificate_chain_evidence.rs",
     "src/communication_assurance/certificate_identity_fields.rs",
     "src/communication_assurance/certificate_identity_interpreter.rs",

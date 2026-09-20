@@ -12,7 +12,5 @@
 //! | module | historical vocabulary | authority behind it |
 //! |---|---|---|
 //! | [`asserted_identity`] | `validate_asserted_identity_value`, `AssertedIdentityRejection`, `MAX_ASSERTED_IDENTITY_LEN`, `IdentityPolicy`/`IdentitySource` | the peer-identity value and certificate identity authorities (Slice 1) |
-//! | [`delegated_key_correspondence`] | `TlsError::DelegatedKeyMismatch`'s single message | credential/key correspondence (Slice 2) |
 
 pub mod asserted_identity;
-pub mod delegated_key_correspondence;
