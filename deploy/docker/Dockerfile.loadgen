@@ -10,7 +10,7 @@
 # (a direct tunnel to ONE pinned pod) cannot exercise: when the rollout deletes the
 # pinned pod, the tunnel dies and every subsequent request fails regardless of drain.
 #
-#   docker build -f deploy/docker/Dockerfile.loadgen --target loadgen -t mcp-re-loadgen:0.12.0 .
+#   docker build -f deploy/docker/Dockerfile.loadgen --target loadgen -t mcp-re-loadgen:0.17.0 .
 #
 # The client needs only the compiled mcp_re_sdk core + the stdlib; the KMS root pubkey
 # and client fixtures are mounted at runtime from a Secret (never baked in).

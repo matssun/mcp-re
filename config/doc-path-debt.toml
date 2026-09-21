@@ -1,0 +1,445 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Doc-path debt registry — the population `scripts/doc_path_gate.py` lands over.
+#
+# A row says: this file names N paths that do not resolve in this repository. It is a
+# DEBT REGISTER, not an exception mechanism, and it carries the same three states as
+# `config/module-size-debt.toml`, because investigation status and disposition are
+# separate facts:
+#
+#   unreviewed                 a dead path nobody has investigated
+#   reviewed-action-required   investigated; the repair is identified and not yet made
+#   reviewed-exception         investigated, and the text is correct as written
+#
+# Both reviewed states carry a `review_ref` naming a record in
+# `docs/architecture/review-dispositions.md`, and the gate fails if the named document
+# does not exist: a completed review points at a record rather than at a memory of one.
+#
+# `dead_tokens` must EQUAL the measurement. A registered file that gains a token fails —
+# an entry pins a file, it does not exempt one — and a file whose tokens are repaired
+# fails until its count is lowered or its entry removed, so the registry cannot keep
+# describing debt that has been paid.
+#
+# Re-measure with `python3 scripts/doc_path_gate.py --emit-registry`. That emitter writes
+# every row as `unreviewed`; a status is a review's output and is never regenerated.
+#
+# The counts here were measured at 9e0ba722 by the gate that enforces them. They are NOT
+# the figures in the census that proposed the gate: that census reported ~70 tokens and
+# 49 hits over a scope it did not re-derive after its second sweep, and its 40/9
+# mechanical/human split does not sum against its own table.
+
+schema_version = 1
+
+
+
+[[debt]]
+path = ".dockerignore"
+dead_tokens = 1
+status = "reviewed-exception"
+review_ref = "DP-002 in docs/architecture/review-dispositions.md"
+
+[[debt]]
+path = ".gcloudignore"
+dead_tokens = 1
+status = "reviewed-exception"
+review_ref = "DP-002 in docs/architecture/review-dispositions.md"
+
+[[debt]]
+path = ".github/workflows/ci.yml"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = ".github/workflows/cloud-kms-live.yml"
+dead_tokens = 1
+status = "reviewed-exception"
+review_ref = "DP-001 in docs/architecture/review-dispositions.md"
+
+[[debt]]
+path = ".github/workflows/verification.yml"
+dead_tokens = 6
+status = "unreviewed"
+
+[[debt]]
+path = "BUILD.bazel"
+dead_tokens = 1
+status = "reviewed-exception"
+review_ref = "DP-003 in docs/architecture/review-dispositions.md"
+
+[[debt]]
+path = "CLAUDE.md"
+dead_tokens = 2
+status = "reviewed-exception"
+review_ref = "DP-003 in docs/architecture/review-dispositions.md"
+
+[[debt]]
+path = "CONTEXT.md"
+dead_tokens = 2
+status = "unreviewed"
+
+[[debt]]
+path = "MODULE.bazel"
+dead_tokens = 1
+status = "reviewed-exception"
+review_ref = "DP-001 in docs/architecture/review-dispositions.md"
+
+[[debt]]
+path = "config/module-size-debt.toml"
+dead_tokens = 2
+status = "unreviewed"
+
+[[debt]]
+path = "config/ports.toml"
+dead_tokens = 2
+status = "reviewed-exception"
+review_ref = "DP-001 in docs/architecture/review-dispositions.md"
+
+[[debt]]
+path = "deploy/codebuild/mcp-re-slo-bench.yaml"
+dead_tokens = 2
+status = "reviewed-exception"
+review_ref = "DP-002 in docs/architecture/review-dispositions.md"
+
+[[debt]]
+path = "docs/architecture/README.md"
+dead_tokens = 3
+status = "unreviewed"
+
+[[debt]]
+path = "docs/architecture/admission-facet.md"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "docs/architecture/communication-assurance.md"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "docs/architecture/components/client-response-verification.md"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "docs/architecture/components/exchange-lifecycle.md"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "docs/architecture/components/scitt-transparency.md"
+dead_tokens = 4
+status = "unreviewed"
+
+[[debt]]
+path = "docs/architecture/components/tls-and-transport-identity.md"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "docs/architecture/components/transport-binding.md"
+dead_tokens = 3
+status = "unreviewed"
+
+[[debt]]
+path = "docs/architecture/components/trust-and-revocation.md"
+dead_tokens = 5
+status = "unreviewed"
+
+[[debt]]
+path = "docs/architecture/control-dispositions.md"
+dead_tokens = 3
+status = "unreviewed"
+
+[[debt]]
+path = "docs/architecture/review-dispositions.md"
+dead_tokens = 10
+status = "unreviewed"
+
+[[debt]]
+path = "docs/architecture/semantic-altitude-sweep.md"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "docs/design/active-profile-and-legacy-quarantine.md"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "docs/design/http-evidence-carrier-cutover.md"
+dead_tokens = 5
+status = "unreviewed"
+
+[[debt]]
+path = "docs/dev/cli-responsibility-map.md"
+dead_tokens = 4
+status = "unreviewed"
+
+[[debt]]
+path = "docs/dev/port-registry.md"
+dead_tokens = 2
+status = "reviewed-exception"
+review_ref = "DP-001 in docs/architecture/review-dispositions.md"
+
+[[debt]]
+path = "docs/dev/sealed-owners.md"
+dead_tokens = 2
+status = "unreviewed"
+
+[[debt]]
+path = "docs/dogfood-runbook.md"
+dead_tokens = 4
+status = "unreviewed"
+
+[[debt]]
+path = "docs/grilling-seed/mcp-re-next-grill-decisions.md"
+dead_tokens = 3
+status = "unreviewed"
+
+[[debt]]
+path = "docs/grilling-seed/mcp-re-next-grill-transcript.md"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "docs/grilling-seed/mcp-re-v0.13-seed.md"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "docs/host-integration-guide.md"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "docs/mode-c-attested-ingress-gcp-cookbook.md"
+dead_tokens = 2
+status = "unreviewed"
+
+[[debt]]
+path = "docs/quickstart-gcp-kms.md"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "docs/sidecar-deployment-guide.md"
+dead_tokens = 2
+status = "unreviewed"
+
+[[debt]]
+path = "docs/spec/delegated-required-validation-matrix.md"
+dead_tokens = 2
+status = "unreviewed"
+
+[[debt]]
+path = "docs/spec/http-profile-open-questions.md"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "docs/spec/layered-security-architecture.md"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "docs/spec/root-authority-rotation.md"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "docs/spec/v0.5-claim-matrix.md"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "docs/transport-hardening-guide.md"
+dead_tokens = 2
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-conformance/tests/security_traceability_guard_test.rs"
+dead_tokens = 1
+status = "reviewed-exception"
+review_ref = "DP-001 in docs/architecture/review-dispositions.md"
+
+[[debt]]
+path = "mcp-re-demo/Cargo.toml"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/BUILD.bazel"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/examples/hpp_common/mod.rs"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/aws_kms_keysource.rs"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/config_state/admission.rs"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/config_state/channel_credential_custody.rs"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/config_state/continuation_control.rs"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/config_state/cross_machine.rs"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/config_state/custody.rs"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/config_state/delegated_signing.rs"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/config_state/evidence.rs"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/config_state/in_flight_limit.rs"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/config_state/mcp_transport_contract.rs"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/config_state/mod.rs"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/config_state/replay.rs"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/config_state/transport.rs"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/config_state/trust_revocation.rs"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/config_state/validation/mod.rs"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/gcp_kms_keysource.rs"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/http_inner/mod.rs"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/ocsp.rs"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/src/replay_plane/materialized.rs"
+dead_tokens = 2
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/tests/integration/config_refusal_precedence_test.rs"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/tests/integration_async/root_key_lifecycle_test.rs"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/tests/integration_live/aws_kms_root_rotation_live_test.rs"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-proxy/tests/integration_live/gcp_kms_delegated_required_live_test.rs"
+dead_tokens = 1
+status = "reviewed-exception"
+review_ref = "DP-002 in docs/architecture/review-dispositions.md"
+
+[[debt]]
+path = "mcp-re-proxy/tests/integration_live/gcp_kms_root_rotation_live_test.rs"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "mcp-re-transport/tests/mtls_client_test.rs"
+dead_tokens = 1
+status = "unreviewed"
+
+[[debt]]
+path = "scripts/bazel_srcs_gate.py"
+dead_tokens = 1
+status = "reviewed-exception"
+review_ref = "DP-003 in docs/architecture/review-dispositions.md"
+
+[[debt]]
+path = "scripts/test-aws-cloud.sh.example"
+dead_tokens = 2
+status = "reviewed-exception"
+review_ref = "DP-002 in docs/architecture/review-dispositions.md"
+
+[[debt]]
+path = "scripts/test-gcp-cloud.sh.example"
+dead_tokens = 2
+status = "reviewed-exception"
+review_ref = "DP-002 in docs/architecture/review-dispositions.md"
+
+[[debt]]
+path = "scripts/tracked_secrets_gate.py"
+dead_tokens = 1
+status = "reviewed-exception"
+review_ref = "DP-002 in docs/architecture/review-dispositions.md"
+
+[[debt]]
+path = "sdk/typescript/README.md"
+dead_tokens = 2
+status = "unreviewed"
+
+[[debt]]
+path = "tools/slo/host_gate.py"
+dead_tokens = 1
+status = "reviewed-exception"
+review_ref = "DP-001 in docs/architecture/review-dispositions.md"
+
+[[debt]]
+path = "tools/slo/job_identity.py"
+dead_tokens = 1
+status = "reviewed-exception"
+review_ref = "DP-003 in docs/architecture/review-dispositions.md"

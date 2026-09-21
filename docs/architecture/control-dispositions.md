@@ -595,17 +595,21 @@ here is that it is now machine-visible in the census instead of living in a pack
 
 **Control:** `scripts/es256_containment_gate.py`.
 **Carrier:** the `p256` dependency edge, the SCITT receipt verifier's modules, and
-`mcp-re-core`'s `ensure_ed25519_alg`.
+`mcp-re-http-profile/src/policy.rs`'s `ProfileAlgorithm` registry with `VerifierPolicy::new`'s
+construction-time refusal.
 **Statement.** *ECDSA P-256 is reachable only from receipt verification: `p256` is a
 dependency of exactly one crate, referenced from exactly the COSE-key owner and its verifier
-inside it, absent from `mcp-re-core`, and `ES256` stays refused by name for MCP-RE's own
-request and response signatures.*
+inside it, absent from `mcp-re-core`, and no `ProfileAlgorithm` variant exists for ECDSA
+P-256, so `ecdsa-p256-sha256` resolves to no verifier and cannot enter a `VerifierPolicy`.*
 **If false.** MCP-RE's message-signing policy widens to admit ECDSA P-256 for the signatures
 its authorization decisions rest on, without any decision being recorded — by someone
 reaching for the P-256 verifier already sitting in the workspace. An algorithm accepted for a
 third party's countersignature is not thereby accepted for MCP-RE's own.
-**Likely owner:** a new unit over the containment edge; `core.*` owns the refusal and no unit
-owns the reachability.
+**Likely owner:** a new unit over the containment edge. The refusal half is owned:
+`an_algorithm_without_a_verifier_cannot_be_allowlisted` (`mcp-re-http-profile/src/policy.rs:293`)
+is `unit://http_profile.request_floor_result`'s registered control at
+`verification/policy/verification.toml:271`, under THM-0014 clause 2. No unit owns the
+reachability half.
 **Root relationship.** Under the signing roots. THM-0072's statement already says both
 signatures are attempted "only under an algorithm the protected header names and the resolved
 key agrees with, out of EdDSA and ES256 and nothing else" — which is the VERIFICATION
@@ -704,8 +708,9 @@ three-way discriminator itself and says nothing about how many places open-code 
 ## NP-006 — a deployment runs the artifact that was qualified
 
 **Control:** `scripts/deploy_image_tag_gate.py`.
-**Carrier:** `VERSION`, `deploy/cloudbuild/*.yaml`, `deploy/k8s/*.yaml`, the Helm chart, and
-the runbooks and live-validation harnesses that deploy them.
+**Carrier:** `VERSION`, `deploy/cloudbuild/*.yaml`, `deploy/k8s/*.yaml`,
+`deploy/docker/Dockerfile*`, the Helm chart, and the runbooks (`docs/security/`'s GKE and
+EKS SLO baseline runbooks) and live-validation harnesses that deploy them.
 **Statement.** *Every image reference on the deploy surface names the version in `VERSION`,
 so what is built, what is referenced and what is deployed are one artifact.*
 **If false.** A deployment runs an image that is not the one the release evidence is about,
@@ -2550,7 +2555,8 @@ It is a conditional over SUCCESSFUL returns, and its security consequence is sta
 - `tamper_preimage_fails` — **contained**, same clause and the same probe. A tampered signature base that still verifies is a floor-verified request whose signature covered different bytes.
 - `malformed_signature_base64_fails` — **contained**, clause 2. `verify_ed25519_with` returning Ok on input it never decoded is a floor-verified request under a signature that was never checked at all. It refuses at the decode arm rather than at `verify_strict`, which is why M312 leaves it green: a different arm of the same clause.
 - `wrong_length_signature_fails` — **contained**, clause 2, at the `try_into` arm. Sixty-four bytes is what an Ed25519 signature IS; accepting fewer is accepting a value the clause's verb cannot be true of.
-- `ensure_ed25519_alg_rejects_unknown_alg_with_supplied_error` — **contained**, by clause 2's qualifier *"under an algorithm the verifier's policy accepts"* and by the security consequence's second limb in terms. If the gate admitted `RS256` or `ES256`, an envelope declaring an algorithm the deployment does not accept would reach the raw primitive and could be floor-verified. It is also NP-002's other half — the refusal that keeps ES256 out of MCP-RE's own signing.
+- `an_algorithm_without_a_verifier_cannot_be_allowlisted` (`mcp-re-http-profile/src/policy.rs:293`) — **contained**, by clause 2's qualifier *"under an algorithm the verifier's policy accepts"* and by the security consequence's second limb in terms. A token with no `ProfileAlgorithm` variant cannot enter a `VerifierPolicy` at all, so an envelope declaring `ecdsa-p256-sha256` never reaches a verifier and cannot be floor-verified. It is also NP-002's other half — the refusal that keeps ES256 out of MCP-RE's own signing — and it is where that refusal actually lives: it is already `unit://http_profile.request_floor_result`'s registered control (`verification/policy/verification.toml:271`) over a file already in that unit's `paths` (`:220`).
+- `ensure_ed25519_alg_rejects_unknown_alg_with_supplied_error` — **contained** by the same clause, over a function with no production caller. `ensure_ed25519_alg` (`mcp-re-core/src/crypto.rs:50`) is called from nothing but its own two tests, so the refusal it states quantifies over zero paths that reach the floor; the clause-2 obligation is carried by the control above it.
 
 And the eight that did not leave, with the clause that decides each:
 
@@ -2606,7 +2612,7 @@ And the eight that did not leave, with the clause that decides each:
 **If false.** The carrier advertises an extension identifier, an algorithm token or a digest token a peer does not recognise — or recognises as something else. These are defined once and referenced everywhere precisely so no site can re-spell them; the control is what makes "once" a measured fact.
 **Likely owner:** none. `mcp-re-core/src/ids.rs` is in no unit's `paths`, so no existing battery can take the selector and giving it one means a `paths` widening.
 **Severity:** `critical`.
-**Narrowed from the frozen error taxonomy, ADR-MCPRE-069 RM-S1.** This record used to cover eleven controls spanning two propositions, and ADR-069 RR-002 C5 forbids filing a heterogeneous record whole. The ten `mcp-re-core/src/error.rs` controls are the VERDICT TAXONOMY and are now `unit://core.verification_taxonomy` under THM-0111, whose statement names that file and says of it *"Each owns its own mapping totally — one variant per token, rendered by `wire_code()` and by `Display` alike"*. This one is not a verdict token: an extension identifier, an algorithm name and a digest algorithm name are carrier vocabulary, and THM-0111's *"A **verdict token** is `mcp-re.<name>` with no further dot"* excludes all three by construction. ND-005 (*mirrored and documented values*) was tested and declines it: a mirrored value fails by changing what a READER is told, while re-spelling `SIG_ALG_ED25519` changes the `alg` token the system emits and admits. It stays an unratified proposition with one control.
+**Narrowed from the frozen error taxonomy, ADR-MCPRE-069 RM-S1.** This record used to cover eleven controls spanning two propositions, and ADR-069 RR-002 C5 forbids filing a heterogeneous record whole. The ten `mcp-re-core/src/error.rs` controls are the VERDICT TAXONOMY and are now `unit://core.verification_taxonomy` under THM-0111, whose statement names that file and says of it *"Each owns its own mapping totally — one variant per token, rendered by `wire_code()` and by `Display` alike"*. This one is not a verdict token: an extension identifier, an algorithm name and a digest algorithm name are carrier vocabulary, and THM-0111's *"A **verdict token** is `mcp-re.<name>` with no further dot"* excludes all three by construction. ND-005 (*mirrored and documented values*) was tested, and the premise its decline rested on does not hold across all three constants. Re-spelling `SIG_ALG_ED25519` changes no `alg` token the system emits or admits: the RFC 9421 carrier's algorithm token is `mcp-re-http-profile/src/ids.rs:34` `ALG_ED25519 = "ed25519"`, `mcp-re-http-profile/src/policy.rs:275-287` (`default_is_ed25519_only_with_bounded_skew`) pins that `accepted_algorithm("Ed25519")` is `None` because *"the profile token is lowercase"*, and `SIG_ALG_ED25519`'s only reader is `mcp-re-core/src/crypto.rs:51` inside `ensure_ed25519_alg`, which has no production caller. Whether ND-005 still declines this record over `EXTENSION_ID` and `DIGEST_ALG_SHA256`, whose values the carrier does use, is therefore a re-derivation and an owner decision rather than a rewrite. It stays an unratified proposition with one control, its ND-005 decline pending that re-derivation.
 
 ## NP-109 — the formatter inverts the parser across the admitted era, and the parser's fixed-width helper is total beyond the widths it is called with
 
@@ -3964,3 +3970,29 @@ dormant code, claimed by nothing."* This record is that documented property, hel
 can see it, and it stays a proposition for exactly as long as the code stays dormant.
 **Severity:** `high`.
 **Packet:** `verification/reviews/packets/adr069-np-146-np-197-ratification-2026-09-20.md`.
+
+## NP-198 — current documentation names no path this repository does not contain
+
+**Control:** `scripts/doc_path_gate.py`.
+**Carrier:** `config/doc-path-debt.toml`, and the in-scope set the gate derives from
+`git ls-files --cached --others --exclude-standard`.
+**Statement.** *Every path-like token in current documentation resolves to a path this
+repository contains, and a token resolving only to a path outside it is a failure.*
+**If false.** A guide instructs an integrator to open a file that is not there. The reader
+does not learn that the sentence is stale — they learn that they cannot find the file, and
+the surrounding claims inherit that doubt. The second half of the statement is the sharper
+one: a citation that resolves on the author's disk and nowhere else reads as correct to
+everyone who wrote it and to no one who uses it.
+**Likely owner:** none. No unit's `paths` name documentation, and no theorem is created to
+justify a gate — an unratified proposition with a gate carrier is the honest state, and it
+is the state NP-002 and NP-006 are already in.
+**Root relationship.** None claimed. The property is about the repository's text rather
+than about its execution, so it bears on no production root.
+**Severity:** `medium`.
+
+**What the control does not reach, stated because the gate is not the class.** It resolves
+paths. It reaches none of the statements that name something which exists and describe it
+wrongly, and it does not resolve symbols: a symbol sweep over this repository produced
+roughly 60% noise before hand-triage, which makes it a review instrument and not a
+merge-path control. A control that covers one class and is recorded as covering the
+category is the same defect one level up.

@@ -56,7 +56,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import re
+import subprocess
 import tomllib
+from functools import lru_cache
 from pathlib import Path
 
 from _ecosystems import REPO_ROOT
@@ -114,7 +116,56 @@ class Control:
         }
 
 
+@lru_cache(maxsize=1)
+def _repository_files() -> frozenset[Path] | None:
+    """Every path a COMMIT of this repository could contain — tracked, plus untracked and
+    not ignored. `None` when git cannot answer, and the walk then falls back to pruning.
+
+    A control that is not in the repository is not a control OF the repository, and the
+    directory-name prune cannot express that: it prunes a fixed list of names and has no
+    idea what `.gitignore` says. Measured consequence at `9e0ba722` — this repository's own
+    `/work/` tree is gitignored, an investigation left Python files there, and
+    `scripts/control_census_gate.py` went **red locally on files that are in no commit and
+    that CI therefore never sees**. A merge-path gate whose verdict depends on what happens
+    to be lying in a developer's ignored directories is a gate with two different answers.
+
+    `--cached --others --exclude-standard` is the exact set, not an approximation of it: it
+    is what `git status` would offer to commit. Scanning only tracked files would be the
+    other error — a newly written control would go uncensused until someone committed it,
+    which is precisely when a census is most useful.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+            capture_output=True, check=True, text=True, timeout=60,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    names = [n for n in out.split("\0") if n]
+    if not names:
+        return None
+    return frozenset((REPO_ROOT / n).resolve() for n in names)
+
+
+def _in_repository(path: Path) -> bool:
+    known = _repository_files()
+    if known is None:
+        return True
+    try:
+        return path.resolve() in known
+    except OSError:
+        return False
+
+
 def _skipped(path: Path) -> bool:
+    """Name-based pruning only.
+
+    `_in_repository` deliberately does NOT belong here: `doctest_controls` calls this with a
+    path RELATIVE to a crate's `src/`, which resolves against the process's working directory
+    and is in no repository listing. Adding the membership test here silently emptied the
+    `rust-doctest` kind — three of `test_controls.py`'s cases caught it, which is why touching
+    anything under `tools/verification/` means running all of them.
+    """
     return any(_prune(part) for part in path.parts)
 
 
@@ -152,7 +203,7 @@ def walk(suffix: str, root: Path | None = None) -> list[Path]:
             if entry.is_dir():
                 if not _prune(entry.name):
                     stack.append(entry)
-            elif entry.suffix == suffix or entry.name == suffix:
+            elif (entry.suffix == suffix or entry.name == suffix) and _in_repository(entry):
                 found.append(entry)
     return sorted(found)
 
