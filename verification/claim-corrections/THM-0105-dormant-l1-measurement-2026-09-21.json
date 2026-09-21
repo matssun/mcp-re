@@ -1,0 +1,26 @@
+{
+  "authority": "adr-068-phase1",
+  "changed_components": [
+    "theorem_claim"
+  ],
+  "corrections": [
+    {
+      "field": "scope",
+      "id": "C1",
+      "new": "NOTHING ABOUT THE DORMANT L1. `L1FastRejectStore` is defined and DORMANT — the async replay store is established at `replay_plane/backends.rs` and handed over by `replay_plane/materialized.rs`, nothing outside `async_replay_test` constructs an L1, and no configuration surface selects one. It is excluded from the owning unit's paths, and the `async_replay_test` battery is NOT cited here: two of its five controls construct an L1 and the other three drive the reference L2 behind a double declaring the accepted durability class, so that battery cannot back a claim about the composition that ships.",
+      "old": "NOTHING ABOUT THE DORMANT L1. `L1FastRejectStore` is defined and DORMANT — `app.rs` installs the L2 directly on every backend, nothing outside `async_replay_test` constructs an L1, and no configuration surface selects one. It is excluded from the owning unit's paths, and the `async_replay_test` battery is NOT cited here: all five of its controls construct an L1, so that battery cannot back a claim about the composition that ships.",
+      "reason": "Two false clauses inside the NOTHING ABOUT THE DORMANT L1 disclaimer. (1) `app.rs` does not install the L2; app.rs:567 says in its own words that `replay_plane` only establishes it, with establishment at replay_plane/backends.rs and hand-over at replay_plane/materialized.rs. (2) `all five of its controls construct an L1` is false: grep over async_replay_test.rs returns exactly TWO construction sites (:125 and :158); the other three drive DurableL2, a double over InMemoryAsyncAtomicReplayStore overriding durability_class() to Durable, which the file itself documents as the reference L2 declaring the posture the production composition accepts. Every operative sentence of the disclaimer is byte-identical; only the measurement offered in support of it moved."
+    }
+  ],
+  "dependency_correction": "No edge added or removed. No dependent theorem is affected: THM-0105 appears in no other theorem's theorem_dependencies component.",
+  "from_fingerprint": "sha256:259d868c82a894487b6f7d1dfdc6b75ecb06fe5493b137e8e68af6ee8128ec27",
+  "packet": "verification/reviews/packets/thm-0105-dormant-l1-measurement-2026-09-21.md",
+  "product_behavior_unchanged": true,
+  "reason": "THE SECOND CLASS-A MOVEMENT ON THIS BRANCH, investigated separately rather than covered by a dependency record. THM-0105 is in NO other theorem's dependency closure -- measured across all 130 registry theorems -- so it moves only itself and starts no cascade. THE RISK WORTH NAMING IS THAT NARROWING A DISCLAIMER EXPANDS THE CLAIM, and it does not happen here: `NOTHING ABOUT THE DORMANT L1`, `It is excluded from the owning unit's paths`, `the async_replay_test battery is NOT cited here`, `so that battery cannot back a claim about the composition that ships`, and `The L1's own never-Fresh invariant stays a documented property of dormant code, claimed by nothing` are all byte-identical. The conclusion is now reached by a true route instead of a false one. The corrected text is if anything a STRONGER disclaimer: it concedes that three controls do drive the reference L2 and still declines to cite them -- it admits more and claims less. statement, security_consequence, depends_on, review_requirement, severity and supported_by are byte-identical.",
+  "root_consequence_unchanged": true,
+  "ruling": "ADR-MCPRE-068 Phase-1 campaign ruling, 2026-09-18, item 5, on its narrowest reading: Phase 1 authorizes correcting wording that OVERSTATES OR MISDESCRIBES what production establishes, provided the accepted promise is not weakened, removed or materially expanded. Both corrected clauses were measurably false of the tree. The owner did not individually review this fingerprint; the authority recorded here is that ruling.",
+  "severity_after": "medium",
+  "severity_before": "medium",
+  "subject": "THM-0105",
+  "to_fingerprint": "sha256:eca4e8b35367b05ba8766922229ecc05f2a540bcc15bebcc6ac9f7eb175b0e68"
+}
