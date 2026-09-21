@@ -616,9 +616,21 @@ baseline_sha = "b142a7a"
 status = "reviewed-exception"
 review_ref = "EX-008 in docs/architecture/review-dispositions.md"
 
+# RA3-003 shrank this entry from 342 to 335: `open` and `with_bootstrap` were deleted and
+# `with_bounds` became the floor's only constructor, carrying the two doc facts they held. An
+# ordinary ratchet decrease, not a measurement correction — the bytes changed, so the
+# origin/main-identical precondition does not hold and the entry is pinned at what it now
+# measures, with zero headroom.
+#
+# `baseline_sha` is deliberately NOT moved, and that is a departure from the convention stated
+# at :86-93. For an entry a PR changes, the commit where the measurement is ESTABLISHED is the
+# squash commit, which does not exist while the PR is open; a branch SHA is discarded by the
+# squash and would claim provenance for a commit that will never be on main. The convention is
+# unsatisfiable at authoring time, and d1fc5fa/b142a7a are stale on three entries for that one
+# reason, not three oversights. Recorded rather than papered over.
 [[debt]]
 path = "mcp-re-client-proxy/src/manifest_floor.rs"
-baseline_prod_loc = 342
+baseline_prod_loc = 335
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
