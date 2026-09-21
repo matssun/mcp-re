@@ -207,6 +207,39 @@ def test_an_unresolved_component_still_derives_unknown_and_says_why():
         assert why in reason, (name, reason)
 
 
+def test_an_empty_context_closure_says_WHICH_empty_it_is():
+    """`review-frontier` prints "(none)" under Context-only on this machine, and will keep
+    printing it however the graph is edited — because with no attestation store every unit
+    is dirty, and context closure is the neighbours of the dirty set MINUS the dirty set.
+    There is no outside.
+
+    "(none)" reads as "the dirty set reaches no context", which is a different fact. Four
+    causes are materially different and the note names which one holds. Measured on the real
+    tree: 244 units, all UNKNOWN, context closure 0."""
+    from _load_tool import load_tool
+
+    frontier = load_tool("review-frontier", "review_frontier_cli")
+    note = frontier.context_note
+    edges = [{"kind": "COMPILE_DEPENDENCY"}, {"kind": "REVIEW_CONTEXT"}]
+
+    no_relation = note({"review_closure": ["a"]}, [], 10)
+    assert "no edge of any kind is declared" in no_relation
+
+    nothing_dirty = note({"review_closure": []}, edges, 10)
+    assert "nothing is dirty" in nothing_dirty
+
+    # The case that actually holds here, and the one "(none)" hid: everything is dirty, so
+    # the closure is empty for a reason that is about the evidence store, not the graph.
+    all_dirty = note({"review_closure": list("abcdefghij")}, edges, 10)
+    assert "all 10 units are dirty" in all_dirty
+    assert "not the graph" in all_dirty
+
+    neighbours_dirty = note({"review_closure": ["a", "b"]}, edges, 10)
+    assert "is itself dirty" in neighbours_dirty
+
+    assert len({no_relation, nothing_dirty, all_dirty, neighbours_dirty}) == 4
+
+
 def test_a_failed_proof_blocks_rather_than_dirties():
     """BLOCKED, not dirty: a failed proof is not 'review it again', it is 'no freshness may
     be issued from here, and nothing downstream may inherit any' (§Case C)."""

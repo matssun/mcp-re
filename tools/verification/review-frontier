@@ -47,6 +47,38 @@ from _fingerprint import fingerprint_unit  # noqa: E402
 DEFAULT_STORE = REPO_ROOT / ".verification" / "attestations"
 
 
+def context_note(result: dict, edges: list[dict], total_units: int) -> str:
+    """WHICH empty the context closure is, because "(none)" says none of them.
+
+    Context closure is every neighbour of a dirty unit, over EVERY edge kind, minus the
+    dirty set itself (§3). So an empty one has four materially different causes, and the
+    one that holds on a machine with no attestation store is the least obvious: when every
+    unit is dirty there is no outside, and the section can only ever print nothing — a
+    property of the evidence store, not of the graph.
+
+    Same rule the repository applies to a lane that compiles to zero tests: a result is only
+    a result over a population that exists.
+    """
+    dirty = len(result["review_closure"])
+    if not edges:
+        return (
+            "  (none — and no edge of any kind is declared, so this section ranges over an\n"
+            "   empty relation rather than over a dirty set whose neighbours are elsewhere.)"
+        )
+    if not dirty:
+        return f"  (none — nothing is dirty, over {len(edges)} declared edge(s))"
+    if dirty >= total_units:
+        return (
+            f"  (none — all {total_units} units are dirty, so no neighbour lies OUTSIDE the\n"
+            "   dirty set. This section cannot report anything until some unit is\n"
+            "   established fresh; it is empty because of the evidence store, not the graph.)"
+        )
+    return (
+        f"  (none — every neighbour of the {dirty} dirty unit(s), over {len(edges)} declared\n"
+        "   edge(s), is itself dirty and therefore review work rather than context.)"
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -108,7 +140,7 @@ def main() -> int:
     for unit_id in result["context_closure"]:
         print(f"  {unit_id}")
     if not result["context_closure"]:
-        print("  (none)")
+        print(context_note(result, edges, len(units)))
     print()
     print("Still fresh (supply as context, not as work):")
     for unit_id in result["fresh"]:
