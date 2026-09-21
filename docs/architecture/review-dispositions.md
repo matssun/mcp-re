@@ -764,14 +764,23 @@ path's behaviour changes: the async chain form still does not include the OCSP a
 remains the tracked `async_serve` + `online_ocsp` gap.
 
 The per-connection sequence had been written twice, once per entry point (§8 question 10 at
-harness scale): `serve_once_with_assertion` and `serve_connection` differed only in which
-handler arity they called and where the socket came from. They are one
-`connection::serve_one` now, so a guard cannot be present on one blocking path and absent
-from the other. `serve`'s handler ignores the assertion argument, exactly as before.
+harness scale). They are one `connection::serve_one`, so a guard cannot be present on one
+blocking path and absent from the other.
 
-`serve`, `serve_once` and `serve_once_with_assertion` remain exported from the crate root —
-embedders already import them there — but their provenance is `blocking_mtls_harness`, and
-no test-only consumer forces an export out of `tls`.
+**RA3-002 reduces the three entry points to one.** `serve` (the thread-per-connection
+accept loop) and `serve_once_with_assertion` have zero callers anywhere in the workspace —
+`serve_once_with_assertion`'s only reference was its own crate-root re-export — and
+`serve_once` already delegated to it. The assertion-aware body is folded into `serve_once`,
+whose behaviour is unchanged, and the two crate-root exports go with them. The claim they
+were reached "through the crate façade" by external embedders was not measured and is not
+made here: what makes this a harness is that the transport-crate client tests, the demo
+fixtures and the PKCS#11 end-to-end tests call `serve_once` against a real mTLS
+termination. Its provenance is `blocking_mtls_harness`, and no test-only consumer forces an
+export out of `tls`.
+
+Deleting `serve` deletes the one `std::thread::spawn` the harness had, so
+`scripts/owned_worker_gate.py`'s allowlist entry for it is removed — the gate reports a
+stale entry as loudly as a new spawn, and it did.
 
 ### EX-004 re-census after #574
 
@@ -1233,12 +1242,15 @@ client certificate* is now TRUE of the live path and true by construction rather
 convention — but it is deliberately not written down. Ruling 5 of this record stands, and
 the campaign that did this work was instructed not to draft the transport theorem.
 
-**What was NOT done, and why.** `TransportBindingProvider` and `StaticIdentityProvider`
-have **zero production consumers** — nothing in the crate calls `verified_identity`. They
-are no longer a soundness problem, because the seal means the only identity they can carry
-is one a verification produced. Removing them is a public-API narrowing outside this
-slice's remit ("do not expand this into general transport cleanup"), so it is recorded here
-rather than done.
+**What was NOT done then, and is done now.** `TransportBindingProvider` and
+`StaticIdentityProvider` had **zero production consumers** — nothing in the crate called
+`verified_identity`. They were no longer a soundness problem, because the seal meant the
+only identity they could carry was one a verification produced. Removing them was a
+public-API narrowing outside that slice's remit ("do not expand this into general transport
+cleanup"), so it was recorded here rather than done. **RA3-002 discharges it:** both are
+deleted with their crate-root exports and the single fixture control, and NP-186 retires.
+The compile is what replaces the control, and it says more — a surviving consumer would be
+a path expression naming a deleted item.
 
 ~~**Status stays `reviewed-action-required`** on both halves.~~ — **both resolved by owner
 ruling, 2026-08-29.** See the two subsections below.
@@ -1289,6 +1301,26 @@ vocabulary must agree as one definition; splitting either purely for LOC would c
 additional agreement seams rather than another semantic owner. The v1/v2 split itself is the
 correct decomposition, the cross-version disjointness control stays at the facade, and
 neither mode becomes selectable. Measured at `b142a7a`: v1 **334**, v2 **673**.
+
+### The cross-format disjointness clause — RETIRED, and what replaced it
+
+**RA3-002 (cohort A) deletes the v1 module**, and with it the counterparty of the one
+control the facade held that neither version could state alone. The facade's test is
+rewritten as `the_frozen_format_is_domain_separated_by_its_version_tag`, which asserts that
+the surviving format's preimage begins with its own version-qualified domain tag and not
+with the sibling version's spelling.
+
+**What is lost is stated rather than quietly narrowed.** The retired clause was *for
+identical shared field values the two preimages differ* — a statement quantified over two
+live preimage functions, established by constructing one of each. The replacement is
+quantified over one: it fixes the leading bytes of the surviving preimage and pins the tag
+to a version, which is what makes a future second format non-colliding by construction, but
+it can no longer witness a disagreement between two implementations because only one is
+implemented here.
+
+A test that silently weakened would be the defect; this record is the reason it did not.
+Should a second frozen format ever be added, the cross-format clause is re-established at
+the facade, against the two preimages then in the tree.
 
 ## EX-009 — `mcp-re-client-core/src/response.rs` — **census re-run, disposition: decompose the classification half**
 
@@ -1390,7 +1422,7 @@ ended (`tls.rs` was reported 679 and is 674; `response.rs` was reported 367 and 
 
 | unit | production lines | record |
 |---|---:|---|
-| `mcp-re-proxy/src/transport/ingress/v1.rs` | 334 | EX-005 |
+| `mcp-re-proxy` module `transport::ingress::v1` (**deleted**) | 334 | EX-005 — the file was deleted by RA3-002; the grant is spent and `config/module-size-debt.toml` no longer carries the entry. The row records a grant that was made, not a current file — which is why it names the module rather than a source path: a path token for a file this repository no longer has is exactly what `scripts/doc_path_gate.py` exists to refuse, and a historical record must not claim a live path to state a dead fact. |
 | `mcp-re-proxy/src/transport/ingress/v2.rs` | 673 | EX-005 |
 | `mcp-re-proxy/src/tls.rs` | 674 | EX-004 |
 | `mcp-re-client-core/src/response.rs` | 362 | EX-010 |
@@ -2565,7 +2597,7 @@ is a measurement of the tree it ships with, not an estimate made when the record
 
 ## DP-001 — paths belonging to another repository — **reviewed exception**
 
-Cited by `config/doc-path-debt.toml` for six files. `scripts/doc_path_gate.py` resolves a
+Cited by `config/doc-path-debt.toml` for seven files. `scripts/doc_path_gate.py` resolves a
 path-like token against this repository and reports the ones that do not resolve. A token
 naming **another** repository's tree cannot resolve here and is not supposed to: it is a
 correct statement about a system this one is deployed beside.
@@ -2577,6 +2609,7 @@ correct statement about a system this one is deployed beside.
 | `.github/workflows/cloud-kms-live.yml` | a LocalStack source file, quoted to say which upstream behaviour the KMS live lane works around |
 | `tools/slo/host_gate.py` | the retention script that runs on the verification host, which is administered outside this repository |
 | `mcp-re-conformance/tests/security_traceability_guard_test.rs` | the manifest's path as the enclosing monorepo sees it |
+| `docs/dogfood-runbook.md` | the inner MCP server's own entry point (`intelli_code_mcp`), which the dogfood is run AGAINST and which is a separate project |
 
 **Disposition: keep as written.** The alternative is to delete a true statement because a
 resolver cannot follow it. The obligation the rows carry instead is the ratchet: a file in
@@ -2616,3 +2649,132 @@ are dispositioned once and pinned.
 document and cites a dozen live gate scripts and registries, so it is the single file
 whose dead path would be most expensive. Excluding it to absorb one `e.g.` token would buy
 one registry row at the cost of that file's coverage forever.
+
+---
+
+## EX-014 — `unit://core.ed25519_primitive` gives up its algorithm-gate clause — **correspondence correction, not a narrowing**
+
+**Unit:** `core.ed25519_primitive` — `V0`, `direct_consequence_severity = "critical"`.
+**Change:** the description loses its algorithm-gate clause, `tested_symbols` goes 5 → 4, and
+`CD-16003` is retired. `mcp-re-core`'s `ensure_ed25519_alg` is deleted.
+
+### Why this is not a narrowing
+
+A deletion that removes a `tested_symbol` normally narrows a claim, and narrowing a ratified
+claim is not a cleanup decision. This one does not, and the difference is measurable rather than
+argued.
+
+The description asserted *"…and the algorithm gate rejects any token other than `Ed25519` with
+the caller's supplied error, so an envelope declaring something else never reaches the raw
+primitive."* **The trailing consequence was already false of the tree:**
+
+| fact | measurement |
+|---|---|
+| `ensure_ed25519_alg` production callers | **zero** — called only from its own two tests |
+| the token it gated on | `SIG_ALG_ED25519` = `"Ed25519"` |
+| the RFC 9421 carrier's token | `ALG_ED25519` = `"ed25519"` (`mcp-re-http-profile/src/ids.rs:34`) |
+| what the live policy does with `"Ed25519"` | **refuses it** — `mcp-re-http-profile/src/policy.rs` pins `accepted_algorithm("Ed25519")` as `None`, *"the profile token is lowercase"* |
+
+No envelope-verification path called the gate, so nothing established the containment the unit
+claimed. The clause is removed because it was not true, not because the tree is giving something
+up.
+
+### THM-0014 is untouched, and that is asserted rather than assumed
+
+THM-0014's clause *"under an algorithm the verifier's policy accepts"* is owned by
+`http_profile.request_floor_result` and carried there by **six** registered controls: the four
+`tests/algorithm_confusion_test` cases, plus `lib#policy::tests::an_algorithm_without_a_verifier_cannot_be_allowlisted`
+and `…the_registry_maps_tokens_to_implemented_verifiers`. The production carrier is
+`VerifierPolicy::accepted_algorithm`, a one-arm match with `_ => None`, whose single production
+caller is `mcp-re-http-profile/src/verify/floor/params.rs` inside `verify_request_floor` —
+THM-0014's own subject.
+
+THM-0014 carries `review_requirement = "Owner security-specification review"` and an approval
+signed `mats@sundvall.name` at `sha256:f88e7b44…`. Its approval components are
+`encoding_version`, `theorem_claim`, `theorem_dependencies`, `theorem_id` and
+`theorem_review_requirement` — **no unit data of any kind**. Measured with
+`tools/verification/review --fingerprint` before and after this change:
+
+```
+THM-0014   sha256:f88e7b44fb0fe96e8f4d05e7b702ff69c1e0af87f430504c1dd9a0a4d350f94b   unchanged
+THM-0114   sha256:be2f1062ca45b298872154e0ba8a0f31feb746185af74e1b02a6d27b034c0b9a   unchanged
+```
+
+The owner's signature is intact. No theorem statement, consequence, scope, dependency,
+assumption or review requirement is edited anywhere in this change.
+
+### What is deliberately NOT taken
+
+`SIG_ALG_ED25519` loses its last reader here and is **kept**. Its record under NP-145
+states that whether ND-005 still declines over `EXTENSION_ID` and `DIGEST_ALG_SHA256` *"is a
+re-derivation and an owner decision rather than a rewrite"*. The now-zero-reader fact is recorded
+for that re-derivation; the deletion is not pre-executed.
+
+The NP-106 ratification packet is **annotated, not rewritten** — a review record states what was
+decided on the day it was decided.
+
+
+---
+
+## EX-015 — `unit://http_profile.response_emission_binding` measures its property over the emitter that was removed — **census complete, disposition: RECORDED, owner decision required**
+
+Raised by the ADR-MCPRE-052 cleanup that relocated the pre-052 direct-root emitters into
+`mcp-re-http-profile/src/rejection/pre_052_direct_root.rs` and
+`mcp-re-http-profile/src/bodyless/pre_052_fixtures.rs`. The cleanup did not create this
+fact; it made it visible by giving the code a name that says what it is.
+
+### What was measured
+
+`unit://http_profile.response_emission_binding` is **V0, `direct_consequence_severity =
+"critical"`**. It declares eight `tested_symbols`. Sorting them by which emitter they
+actually sign through:
+
+| controls | emitter they drive | what they establish |
+|---|---|---|
+| the five `tests/full_profile_test#…` round trips | the **pre-052 root** emitter, now `sign_pre_052_direct_root_response_for_negative_test` | the emission binding over a response-signing mode the product **refuses** |
+| the three `tests/delegated_202_test#…` controls | `sign_delegated_accepted_202` | the emission binding over the shipped mode |
+
+The same split appears one level down. `M241-http-profile-the-response-carries-the-handle-over-this-request`
+is this unit's mutation probe for the conjunct *the response evidence block's
+request-evidence handle is over the request being answered*. Its anchor moved with the
+code; its single `expect_red` control is one of the five.
+
+Two further batteries were found stating the same shape in prose, and their headnotes now
+say so rather than drawing a pipeline that does not exist:
+`mcp-re-proxy/tests/integration/http_profile_dispatch_test.rs` (whose response leg is the
+pre-052 emitter, so what it proves is the **dispatch** path) and
+`mcp-re-conformance/tests/full_profile_parity_test.rs` (which pins the SDK byte-parity
+corpus, not the shipped emission mode).
+
+### Why this is recorded and not repaired
+
+Repointing the five controls at `sign_delegated_response_full` would change **what they
+prove**, and several of them are the generators for committed conformance bytes — `h18`,
+`h19` and the SDK parity corpus exist precisely because a directly root-signed response is
+the message the required mode must refuse. Rewriting them would either move published bytes
+or quietly delete the negative half of the proposition. Neither is a cleanup's decision:
+
+> A campaign plan is not authority over current invariants.
+
+Deleting the pre-052 emitters outright is not available either, for the same reason — the
+refusal cannot be exercised without the ability to produce the thing refused.
+
+### What the owner decides
+
+Whether `http_profile.response_emission_binding` is **one** unit whose evidence happens to
+run mostly over a retained fixture, or **two** propositions — *what a root-signed emission
+binds* (the thing the product refuses, and the thing the vectors pin) and *what a delegated
+emission binds* (the shipped path) — that a single V0 critical unit is currently stating as
+one. [[a-claim-may-not-exceed-its-evidence-closure]] is the governing rule and points at the
+second reading, but splitting a V0 unit moves theorem fingerprints and is owner work.
+
+Until then the unit's `paths` names both files, so the registry says where its evidence
+actually runs rather than implying it all lives in `sign.rs`.
+
+### Not affected
+
+`unit://http_profile.bodyless_acknowledgement` has the same relocation but not the same
+hazard: nine of its `bodyless_202_test` controls drive the pre-052 pair and the rest drive
+`delegated_202_test` and the bodyless-REQUEST half, and its claim is about the **named
+component sets**, which both modes share. Its `paths` gained the fixture file; nothing else
+about it moved.

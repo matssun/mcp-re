@@ -17,10 +17,9 @@
 //! `HttpProfileProxy` owns the status and the headers.
 //!
 //! It is retained, not deleted, because it has consumers: the transport crate's client
-//! tests and the demo/PKCS#11 end-to-end tests run against a real mTLS termination, and
-//! external embedders reach [`serve`], [`serve_once`] and [`serve_once_with_assertion`]
-//! through the crate façade. ADR-MCPRE-061 §2 class 4 — zero PRODUCTION callers is a
-//! naming problem, not a deletion argument.
+//! tests and the demo/PKCS#11 end-to-end tests run against a real mTLS termination through
+//! [`serve_once`], which the crate façade exports. ADR-MCPRE-061 §2 class 4 — zero
+//! PRODUCTION callers is a naming problem, not a deletion argument.
 //!
 //! # What this module does NOT own
 //!
@@ -34,9 +33,8 @@
 //! [`assertion_header`](crate::tls::assertion_header) for the header guards. The adapters
 //! in `connection` turn a connection into those inputs; they do not decide anything.
 //!
-//! This module is the accept policy — one connection ([`serve_once`],
-//! [`serve_once_with_assertion`]) or a thread-per-connection loop under a concurrency cap
-//! ([`serve`]). Everything after the socket is `connection::serve_one`, once, for all three.
+//! This module is the accept policy — one connection, one handler invocation
+//! ([`serve_once`]). Everything after the socket is `connection::serve_one`.
 
 mod connection;
 mod deadline_stream;
@@ -45,9 +43,6 @@ mod http1_framing;
 
 use std::io;
 use std::net::TcpListener;
-use std::net::TcpStream;
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use rustls::ServerConfig;
@@ -63,7 +58,7 @@ use crate::communication_assurance::AuthenticatedChannelPeer;
 /// invoke `handler(request_bytes, identity)`, and write the response. Returns the verified
 /// client identity that was observed (for test assertions).
 ///
-/// Blocking; the caller owns the accept-loop policy (see [`serve`]).
+/// Blocking; the caller owns the accept-loop policy.
 pub fn serve_once<H>(
     listener: &TcpListener,
     config: Arc<ServerConfig>,
@@ -73,32 +68,6 @@ pub fn serve_once<H>(
 where
     H: FnOnce(&[u8], Option<AuthenticatedChannelPeer>) -> Vec<u8>,
 {
-    // Adapt the 2-arg handler to the assertion-aware form (the assertion header is
-    // ignored — this entry point predates Tier-3 and stays byte-for-byte for its
-    // many callers). The Tier-3 serve path uses [`serve_once_with_assertion`].
-    serve_once_with_assertion(
-        listener,
-        config,
-        options,
-        |request, identity, _assertion| handler(request, identity),
-    )
-}
-
-/// As [`serve_once`], but the handler ALSO receives the raw Tier-3 ingress-assertion
-/// header value (issue #71) when the `LbAssertion` identity strategy is active. Under any
-/// other strategy the third argument is always `None`. This is the entry point an embedder
-/// uses so the assertion can reach the proxy's post-verification LB check
-/// (`Proxy::with_lb_assertion`); a duplicated assertion header yields `None` (fail closed
-/// at the proxy's required-header guard).
-pub fn serve_once_with_assertion<H>(
-    listener: &TcpListener,
-    config: Arc<ServerConfig>,
-    options: &ServerOptions,
-    handler: H,
-) -> io::Result<Option<AuthenticatedChannelPeer>>
-where
-    H: FnOnce(&[u8], Option<AuthenticatedChannelPeer>, Option<&str>) -> Vec<u8>,
-{
     let (tcp, _peer) = listener.accept()?;
     // MCPS-88: a caller may set the LISTENER non-blocking so it can poll for a shutdown
     // signal between connections. Accepted connection sockets inherit O_NONBLOCK on some
@@ -106,53 +75,7 @@ where
     // the bounded read/write phase relies on blocking semantics (plus the socket timeouts
     // applied next). Harmless when the listener is already blocking.
     tcp.set_nonblocking(false)?;
-    serve_one(tcp, config, options, handler)
-}
-
-/// Accept loop: handle each connection on its own thread (blocking, no async). Each
-/// connection runs `handler` once. The number of simultaneously-served connections is
-/// capped at `options.limits.max_concurrent_connections`; connections beyond the cap are
-/// accepted and immediately dropped (fail closed against connection exhaustion) rather
-/// than queued without bound. Runs until `listener` errors.
-pub fn serve<H>(
-    listener: TcpListener,
-    config: Arc<ServerConfig>,
-    options: ServerOptions,
-    handler: H,
-) where
-    H: Fn(&[u8], Option<AuthenticatedChannelPeer>) -> Vec<u8> + Send + Sync + 'static,
-{
-    let handler = Arc::new(handler);
-    let options = Arc::new(options);
-    let in_flight = Arc::new(AtomicUsize::new(0));
-    for incoming in listener.incoming() {
-        let Ok(tcp) = incoming else { continue };
-        let max = options.limits.max_concurrent_connections;
-        // Reserve a slot; if the server is saturated, drop the connection.
-        if in_flight.fetch_add(1, Ordering::AcqRel) >= max {
-            in_flight.fetch_sub(1, Ordering::AcqRel);
-            drop(tcp); // close immediately — do not serve beyond the cap
-            continue;
-        }
-        let config = Arc::clone(&config);
-        let handler = Arc::clone(&handler);
-        let options = Arc::clone(&options);
-        let in_flight = Arc::clone(&in_flight);
-        std::thread::spawn(move || {
-            serve_worker(tcp, config, &options, handler.as_ref());
-            in_flight.fetch_sub(1, Ordering::AcqRel);
-        });
-    }
-}
-
-/// One worker thread's whole job: serve the connection with the 2-arg handler adapted to
-/// the assertion-aware form, and swallow the per-connection error — the accept loop must
-/// outlive any one peer.
-fn serve_worker<H>(tcp: TcpStream, config: Arc<ServerConfig>, options: &ServerOptions, handler: &H)
-where
-    H: Fn(&[u8], Option<AuthenticatedChannelPeer>) -> Vec<u8>,
-{
-    let _ = serve_one(tcp, config, options, |request, identity, _assertion| {
+    serve_one(tcp, config, options, |request, identity, _assertion| {
         handler(request, identity)
-    });
+    })
 }

@@ -16,8 +16,8 @@ use mcp_re_core::verify_ed25519_with;
 use mcp_re_core::McpReError;
 use mcp_re_core::VerificationKey;
 
-use super::v1::DEFAULT_LB_ASSERTION_MAX_AGE_SECS;
 use super::LbKeyEntry;
+use super::DEFAULT_LB_ASSERTION_MAX_AGE_SECS;
 use crate::transport::IdentitySource;
 use crate::transport::TransportIdentity;
 

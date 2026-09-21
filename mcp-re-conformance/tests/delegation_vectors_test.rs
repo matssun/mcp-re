@@ -30,9 +30,9 @@ use serde::Serialize;
 
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::issue_delegation_credential;
+use mcp_re_http_profile::rejection::pre_052_direct_root::sign_pre_052_direct_root_response_for_negative_test;
 use mcp_re_http_profile::sign_delegated_response_full;
 use mcp_re_http_profile::sign_request_full;
-use mcp_re_http_profile::sign_response_full;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -602,7 +602,7 @@ fn build_fixtures() -> Vec<Fixture> {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_response_full(
+    sign_pre_052_direct_root_response_for_negative_test(
         &mut direct,
         &req,
         &ev,
@@ -672,7 +672,7 @@ fn build_fixtures() -> Vec<Fixture> {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_response_full(
+    sign_pre_052_direct_root_response_for_negative_test(
         &mut stripped,
         &req,
         &ev,

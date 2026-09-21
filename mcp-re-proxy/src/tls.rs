@@ -38,6 +38,7 @@ use crate::communication_assurance::credential_currency::evaluation::evaluate_cr
 use crate::communication_assurance::credential_currency::CredentialCurrencyOutcome;
 use crate::communication_assurance::credential_currency::CredentialCurrencyPolicy;
 use crate::communication_assurance::credential_currency::CredentialCurrencyRefusal;
+use crate::communication_assurance::credential_key_correspondence::CredentialKeyCorrespondenceRefusal;
 use crate::communication_assurance::current_authenticated_peer::current_authenticated_peer;
 use crate::communication_assurance::current_authenticated_peer::CurrentPeerRefusal;
 use crate::communication_assurance::peer_identity_provenance::PeerIdentityProvenance;
@@ -271,7 +272,7 @@ pub enum TlsError {
     /// certificate's public key. Either is a deployment error and FAILS CLOSED at
     /// config construction — no server is started.
     #[error("delegated TLS credential mismatch: {0}")]
-    DelegatedKeyMismatch(String),
+    DelegatedKeyMismatch(CredentialKeyCorrespondenceRefusal),
 }
 
 /// Produce the delegated TLS certificate resolver for a credential and its signer, in the
@@ -293,13 +294,8 @@ pub(crate) fn validated_delegated_resolver(
     signer: Arc<dyn crate::delegated_tls::RawEd25519TlsSigner>,
     budget: Arc<crate::delegated_tls::TlsHandshakeSignBudget>,
 ) -> Result<Arc<crate::delegated_tls::DelegatedCertResolver>, TlsError> {
-    crate::delegated_tls::DelegatedCertResolver::materialize(server_chain, signer, budget).map_err(
-        |refusal| {
-            TlsError::DelegatedKeyMismatch(
-                crate::facades::delegated_key_correspondence::correspondence_message(&refusal),
-            )
-        },
-    )
+    crate::delegated_tls::DelegatedCertResolver::materialize(server_chain, signer, budget)
+        .map_err(TlsError::DelegatedKeyMismatch)
 }
 
 /// The authenticated channel peer of this relationship, with whatever currency assurance
@@ -791,12 +787,11 @@ mod delegated_credential_key_correspondence_tests {
     //! the order Slice 1 established: a control written after a migration proves the
     //! migration self-consistent, not the property.
     //!
-    //! What these controls pin is that each of the six vectors REFUSES. What they cannot
-    //! pin — and the reason this slice exists — is which fact each refusal reports: all
-    //! six arrive as `TlsError::DelegatedKeyMismatch(String)`, so the only thing telling
-    //! an empty credential chain apart from a genuine key mismatch is prose. A caller,
-    //! an audit record and a test can all match on the variant; none of them can match on
-    //! the sentence.
+    //! What these controls pin is that each of the six vectors REFUSES, and which fact
+    //! each refusal reports: `TlsError::DelegatedKeyMismatch` carries the authority's
+    //! hierarchical refusal, so an empty credential chain and a genuine key mismatch are
+    //! distinguishable by matching rather than by reading prose. How a refusal READS is
+    //! the algebra's own concern and is controlled at its owner.
 
     use x509_parser::certificate::X509Certificate;
     use x509_parser::prelude::FromDer;

@@ -347,7 +347,25 @@ def main() -> int:
 
         argv = [str(cargo_verus), "verify", "-p", crate]
         for feature in features:
-            argv += ["--features", f"{crate}/{feature}"]
+            # UNQUALIFIED, and `-p crate` above is why that is unambiguous.
+            #
+            # This used to pass `--features {crate}/{feature}`. Cargo resolves the
+            # `pkg/feat` form against the selected package's DEPENDENCIES, so the
+            # qualification is silently wrong for any crate that declares a dependency of
+            # its own name — the `mcp-re-host` self dev-dependency pattern, which
+            # `mcp-re-http-profile` adopted for the ADR-MCPRE-052 fixture feature. The
+            # feature then lands on the dev-dependency copy, the library Verus actually
+            # processes is built WITHOUT it, and `mcp-re-core/verify` is never enabled —
+            # so `vstd::prelude::*` is cfg'd out and every unit in the crate fails with
+            # "The verus_builtin crate was not imported", pointing at mcp-re-core rather
+            # than at the crate under test. Measured, with the lane's own flag:
+            #
+            #   --features mcp-re-http-profile/verify  -> vstd in the non-dev closure: 0
+            #   --features verify                      -> vstd in the non-dev closure: 7
+            #
+            # Every unit's `features` names a feature of its OWN crate, so dropping the
+            # qualification changes nothing else and removes the ambiguity for good.
+            argv += ["--features", feature]
         # Everything after `--` goes to the prover itself. The structured report is what
         # this lane reads; the human-readable log is kept only for the failure message.
         argv += ["--", "--output-json"]

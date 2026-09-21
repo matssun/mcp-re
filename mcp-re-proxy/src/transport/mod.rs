@@ -71,11 +71,10 @@ pub enum IdentityPolicy {
     CnLegacy,
 }
 
-/// The parsed HTTP request headers of an inbound connection, the only request
-/// context a [`TransportBindingProvider`] is given. This is a thin, case-
-/// insensitive view over the already-parsed header block — providers never see
-/// the socket, the body, or the TLS connection, so a header-reading provider
-/// cannot accidentally reach for connection state it must not trust.
+/// The parsed HTTP request headers of an inbound connection. This is a thin,
+/// case-insensitive view over the already-parsed header block — a reader of it never
+/// sees the socket, the body, or the TLS connection, so header hygiene cannot
+/// accidentally reach for connection state it must not trust.
 ///
 /// Header names compare ASCII-case-insensitively (per RFC 7230). The FIRST
 /// occurrence of a name wins.
@@ -139,46 +138,6 @@ impl RequestHeaders {
     }
 }
 
-/// Produces the verified client identity for an inbound request, or `None` when
-/// no identity is available (fail closed: a binding that requires identity then
-/// rejects). The request headers are the ONLY context — direct-TLS identity is
-/// extracted functionally by the serve loop (see `tls::connection_identity`) and
-/// does not go through this trait. `StaticIdentityProvider` ignores the request
-/// and is used in tests.
-pub trait TransportBindingProvider {
-    /// The verified client identity for this request, if any.
-    fn verified_identity(&self, request: &RequestHeaders) -> Option<TransportIdentity>;
-}
-
-/// A fixed identity (or none). Useful in tests and as a degenerate provider; it
-/// ignores the request entirely and always yields the identity it was built with.
-#[derive(Debug, Clone, Default)]
-pub struct StaticIdentityProvider {
-    identity: Option<TransportIdentity>,
-}
-
-impl StaticIdentityProvider {
-    /// A provider that yields `identity` (or `None`).
-    pub fn new(identity: Option<TransportIdentity>) -> Self {
-        StaticIdentityProvider { identity }
-    }
-}
-
-impl TransportBindingProvider for StaticIdentityProvider {
-    fn verified_identity(&self, _request: &RequestHeaders) -> Option<TransportIdentity> {
-        self.identity.clone()
-    }
-}
-
-// The trusted-ingress identity vocabulary — `MAX_ASSERTED_IDENTITY_LEN`,
-// `AssertedIdentityRejection`, `validate_asserted_identity_value` — is a compatibility
-// facade over the peer-identity value owner (ADR-MCPRE-063 Slice 1) and lives in
-// `asserted_identity_facade`. Re-exported here so this module's own callers, and the
-// crate root, keep their existing paths.
-pub use crate::facades::asserted_identity::validate_asserted_identity_value;
-pub use crate::facades::asserted_identity::AssertedIdentityRejection;
-pub use crate::facades::asserted_identity::MAX_ASSERTED_IDENTITY_LEN;
-
 /// The SEP-2243 transport routing header naming the JSON-RPC method (ADR-MCPS-025).
 /// Lowercased for case-insensitive [`RequestHeaders`] lookup.
 pub const MCP_METHOD_HEADER: &str = "mcp-method";
@@ -203,7 +162,8 @@ pub enum RoutingHeaderRejection {
         header: &'static str,
     },
     /// The header's lone value failed the strict shape rules (empty, oversized, or
-    /// containing a control character) — see [`validate_asserted_identity_value`].
+    /// containing a control character) — see
+    /// [`PeerIdentityValue::interpret`](crate::communication_assurance::PeerIdentityValue::interpret).
     Malformed {
         /// The offending header name (`mcp-method` / `mcp-name`).
         header: &'static str,
@@ -222,7 +182,7 @@ pub fn validate_routing_headers(headers: &RequestHeaders) -> Result<(), RoutingH
             0 => continue,
             1 => {
                 let value = headers.first(header).unwrap_or("");
-                if validate_asserted_identity_value(value).is_err() {
+                if crate::communication_assurance::PeerIdentityValue::interpret(value).is_err() {
                     return Err(RoutingHeaderRejection::Malformed { header });
                 }
             }
@@ -339,13 +299,9 @@ impl TransportBinding {
 #[cfg(test)]
 mod tests {
     use super::ExactMatchBinding;
-    use super::IdentitySource;
     use super::RequestHeaders;
-    use super::StaticIdentityProvider;
     use super::TransportBinding;
     use super::TransportBindingPolicy;
-    use super::TransportBindingProvider;
-    use super::TransportIdentity;
     use mcp_re_core::McpReError;
 
     use super::AuthenticatedChannelPeer;
@@ -397,31 +353,6 @@ mod tests {
                 slot: SignerSlot::Request,
             },
         )
-    }
-
-    #[allow(dead_code)]
-    fn spiffe(value: &str) -> TransportIdentity {
-        TransportIdentity::attested_by_verified_ingress(value, IdentitySource::UriSan)
-    }
-
-    /// A request carrying a single header.
-    fn req_with(name: &str, value: &str) -> RequestHeaders {
-        RequestHeaders::from_pairs([(name, value)])
-    }
-
-    #[test]
-    fn static_provider_yields_its_identity_ignoring_request() {
-        let id = spiffe("spiffe://example.org/agent-1");
-        let provider = StaticIdentityProvider::new(Some(id.clone()));
-        // The request argument is ignored: same identity regardless of headers.
-        let empty = RequestHeaders::default();
-        let populated = req_with("x-forwarded-client-cert", "URI=spiffe://other");
-        assert_eq!(provider.verified_identity(&empty), Some(id.clone()));
-        assert_eq!(provider.verified_identity(&populated), Some(id));
-        assert_eq!(
-            StaticIdentityProvider::new(None).verified_identity(&empty),
-            None
-        );
     }
 
     // --- Issue #21 (cluster 2): ADR-MCPS-023 strict rules on the XFCC value -----
@@ -548,51 +479,6 @@ mod tests {
                 subject("spiffe://example.org/agent-2")
             )
             .is_err());
-    }
-
-    #[test]
-    fn asserted_identity_accepts_a_well_formed_value_and_trims() {
-        assert_eq!(
-            super::validate_asserted_identity_value("  spiffe://example.org/agent-1  "),
-            Ok("spiffe://example.org/agent-1")
-        );
-    }
-
-    #[test]
-    fn asserted_identity_rejects_empty() {
-        assert_eq!(
-            super::validate_asserted_identity_value("   "),
-            Err(super::AssertedIdentityRejection::Empty)
-        );
-    }
-
-    #[test]
-    fn asserted_identity_rejects_oversized() {
-        let huge = "a".repeat(super::MAX_ASSERTED_IDENTITY_LEN + 1);
-        assert_eq!(
-            super::validate_asserted_identity_value(&huge),
-            Err(super::AssertedIdentityRejection::TooLong)
-        );
-        // Exactly at the bound is accepted.
-        let at_bound = "a".repeat(super::MAX_ASSERTED_IDENTITY_LEN);
-        assert!(super::validate_asserted_identity_value(&at_bound).is_ok());
-    }
-
-    #[test]
-    fn asserted_identity_rejects_control_characters() {
-        // CR/LF (header smuggling / log injection), NUL, and a bare control char.
-        for bad in [
-            "agent\r\nX-Spoof: y",
-            "agent\nid",
-            "agent\0id",
-            "ag\u{7}ent",
-        ] {
-            assert_eq!(
-                super::validate_asserted_identity_value(bad),
-                Err(super::AssertedIdentityRejection::Malformed),
-                "control characters must fail closed: {bad:?}"
-            );
-        }
     }
 
     // ---- ADR-MCPS-025 routing-header hygiene ----------------------------------

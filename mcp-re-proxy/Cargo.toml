@@ -166,6 +166,10 @@ online_ocsp = []
 async_serve = []
 
 [dev-dependencies]
+# ADR-MCPRE-052: the pre-052 direct-root emitters compile only for negative tests. A
+# DEV-dependency edge, never a normal one — cargo unifies normal-dependency features across
+# the whole invocation, which would put the fixtures back into the production closure.
+mcp-re-http-profile = { path = "../mcp-re-http-profile", features = ["pre_052_fixtures"] }
 # In-process test cert generation for the mTLS round-trip tests.
 rcgen = { workspace = true }
 # Now-relative certificate validity windows for fixtures that must mint a client
@@ -180,10 +184,6 @@ mcp-re-transport = { path = "../mcp-re-transport" }
 # (the Bazel ocsp test target wires this same crate); a dev-dep so the ocsp unit
 # tests build + run under `cargo test --features online_ocsp`, not only Bazel.
 ed25519-dalek = { workspace = true }
-# The proxy's integration tests drive the host-side signer end to end. They use
-# the deterministic `FixedClock` / `SeededNonceSource` fixtures, which mcp-re-host
-# compiles only under its `test-fixtures` feature (audit #81); enable it here as a
-# DEV-dependency feature so it never reaches the production proxy closure.
 # The draft-02 serving test signs a real draft-02 request via the client seam.
 mcp-re-client-core = { path = "../mcp-re-client-core" }
 # MCPRE-122 client↔server e2e: the delegated_client_server_e2e test drives the REAL

@@ -386,8 +386,8 @@ evidence = [
 tested_symbols = [
   "tests/proof_path_test#response_roundtrip_bound_to_request_verifies",
   "tests/proof_path_test#response_splice_fails_closed",
-  "lib#rejection::tests::tampered_message_does_not_change_the_trusted_wire_code",
-  "lib#rejection::tests::spliced_rejection_onto_a_different_request_fails",
+  "lib#rejection::pre_052_direct_root::tests::tampered_message_does_not_change_the_trusted_wire_code",
+  "lib#rejection::pre_052_direct_root::tests::spliced_rejection_onto_a_different_request_fails",
   "tests/delegation_e2e_test#body_tamper_is_caught_by_content_digest",
 ]
 
@@ -490,7 +490,7 @@ tested_symbols = [
   "tests/proof_path_test#a_req_component_is_refused_on_the_unbound_floor",
   "tests/proof_path_test#the_unbound_floor_signature_check_is_load_bearing",
   "tests/proof_path_test#the_unbound_floor_content_digest_check_is_load_bearing",
-  "lib#rejection::tests::unbound_rejection_verifies_without_request_context",
+  "lib#rejection::pre_052_direct_root::tests::unbound_rejection_verifies_without_request_context",
   "tests/delegation_e2e_test#a_req_component_is_refused_on_the_delegated_unbound_path",
   "tests/delegation_e2e_test#an_unbound_receipt_body_tamper_is_caught_by_content_digest",
 ]
@@ -1807,14 +1807,13 @@ evidence = [
 ]
 # The battery is over the OWNER and stops there.
 #
-# The trusted-ingress facade (`transport::validate_asserted_identity_value`) delegates to
-# this owner, and its own tests go red when the owner's rules are weakened — but they are
-# NOT listed here. THM-0023 is a claim about inhabitants of the type, and a caller that
-# stopped constructing the type would leave every inhabitant well-formed while leaving the
-# ingress path unprotected. Listing those tests would make this unit's evidence closure
-# wider than its claim, and the manifest gate refuses it for the sharper reason that this
-# unit does not measure `transport.rs`: an in-crate test whose source is not measured can
-# be rewritten under the same name without moving the fingerprint.
+# The callers that need the value rule CONSTRUCT the type — `transport::validate_routing_headers`
+# and the Mode-C wire parser both call `PeerIdentityValue::interpret` — so there is no second
+# implementation to keep honest and no caller-side battery to list. THM-0023 is a claim about
+# inhabitants of the type; listing a caller's tests here would make this unit's evidence
+# closure wider than its claim, and the manifest gate refuses it for the sharper reason that
+# this unit does not measure `transport/mod.rs`: an in-crate test whose source is not measured
+# can be rewritten under the same name without moving the fingerprint.
 #
 # What pins the delegation is therefore an OPEN item, not a silent one: it belongs to the
 # trusted-ingress authority, which this slice deliberately did not build.
@@ -3472,7 +3471,6 @@ tested_symbols = [
   "lib#exchange_state::tests::an_illegal_advance_is_refused_and_latched_in_every_build",
   "lib#exchange_state::tests::a_violated_invariant_is_latched_on_the_advance_that_causes_it",
   "lib#exchange_state::tests::the_latch_keeps_the_first_anomaly",
-  "lib#exchange_state::tests::an_illegal_transition_names_both_halves",
 ]
 
 # THE DERIVATION, NOT THE WIRE — its scope's own words. The backend projection belongs here
@@ -6161,7 +6159,15 @@ evidence = [
 id = "http_profile.response_emission_binding"
 class = "V0"
 description = "What an emitted response signature binds: the `;req` components resolved against the request being answered, and the response evidence block's request-evidence handle over that same request."
-paths = ["mcp-re-http-profile/src/sign.rs"]
+paths = [
+  "mcp-re-http-profile/src/sign.rs",
+  # ADR-MCPRE-052 cleanup: five of the eight controls below sign through the PRE-052
+  # root emitter, which now lives here rather than in `sign.rs`. Recorded, not repaired —
+  # that those five measure the emission binding over a REMOVED mode, while only the
+  # `delegated_202_test` three measure the shipped one, is a disposition for the unit's
+  # owner. See EX-015 in docs/architecture/review-dispositions.md.
+  "mcp-re-http-profile/src/rejection/pre_052_direct_root.rs",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -7514,7 +7520,7 @@ tested_symbols = [
   "lib#http_profile_dispatch::core_projection::tests::a_delegated_failure_keeps_the_dispatchers_verdict",
   # THE SERVING PATH. Everything above drives `dispatch_request_with_tier_gate`, which no
   # production caller reaches — it is the reference reading of the profile pipeline. These
-  # five drive `dispatch_request_with_async_tier`, which `answering_commitment` calls, and
+  # six drive `dispatch_request_with_async_tier`, which `answering_commitment` calls, and
   # they are listed separately because a test property includes the FUNCTION the test
   # exists in: the two entry points share the deployment tier gate but not their shape, and
   # the store-class refusal the sync path inherits from `dispatch_request` is carried by the
@@ -7524,6 +7530,11 @@ tested_symbols = [
   "lib#http_profile_dispatch::tests::a_strong_declared_tier_does_not_excuse_a_single_process_async_store",
   "lib#http_profile_dispatch::tests::neither_serving_path_gate_fires_outside_fleet_strict",
   "lib#http_profile_dispatch::tests::the_serving_path_admits_a_strict_minimum_tier_over_a_durable_store",
+  # The admission step on the serving path: the store is reached, does not answer, and the
+  # exchange does not dispatch. The last of the six, and the twin of
+  # `a_store_that_cannot_establish_the_state_refuses_rather_than_dispatching` above, which
+  # establishes the same fact only about the entry point no production caller reaches.
+  "lib#http_profile_dispatch::tests::the_serving_path_refuses_a_store_that_cannot_establish_the_state",
   # ADR-MCPRE-069 NP-161. The same conjuncts driven through the REAL profile sign/verify
   # seam rather than through a hand-built `VerifiedMcpRequest`: `signed_and_verified` signs
   # with `sign_request_full` and verifies with `Verifier`, so the tier gate is reached by a
@@ -7730,6 +7741,9 @@ description = "What a bodyless message signs and what its acknowledgement establ
 paths = [
   "mcp-re-http-profile/src/bodyless/mod.rs",
   "mcp-re-http-profile/src/bodyless/acknowledged.rs",
+  # The pre-052 ROOT-signed acknowledgement pair, which nine of the `bodyless_202_test`
+  # controls below drive. It left `bodyless/mod.rs` in the ADR-MCPRE-052 cleanup.
+  "mcp-re-http-profile/src/bodyless/pre_052_fixtures.rs",
   "mcp-re-http-profile/src/bodyless/delegated_ack.rs",
   "mcp-re-http-profile/src/bodyless/delegated_credential.rs",
 ]
@@ -8237,14 +8251,17 @@ would let a future curation of the digest pass as a property of the comparison.
 #
 # WHAT IS DELIBERATELY EXCLUDED, and why the exclusion is the honest half:
 #
-#   * `l1_fast_reject.rs` — DORMANT. `app.rs` installs the L2 directly on every backend,
+#   * `l1_fast_reject.rs` — DORMANT. The async replay store is established at
+#     `replay_plane/backends.rs` and handed over by `replay_plane/materialized.rs`;
 #     nothing outside `async_replay_test` constructs an L1, and no configuration surface
 #     selects one. Excluded from `paths` on the precedent by which
 #     `trust_plane/window_policy.rs` is excluded from `proxy.trust_resolution_window`.
-#   * `tests/async_replay_test.rs` — the named CI release gate "§4 cross-core /
-#     cross-replica replay race". NOT cited: all five of its controls construct an
-#     `L1FastRejectStore`, so however green it is, it measures a two-tier architecture no
-#     deployment runs. Citing it would make this unit's evidence look complete about the
+#   * `tests/async_replay_test.rs` — the named CI release gate "§4 replay race". NOT
+#     cited: two of its five controls construct an `L1FastRejectStore`, a two-tier
+#     architecture no deployment runs, and the other three drive
+#     `InMemoryAsyncAtomicReplayStore` behind a double declaring the durability class
+#     `assert_durable` accepts — the reference store's insert semantics, not a shipped
+#     backend's. Citing it would make this unit's evidence look complete about the
 #     composition that ships when it is not.
 #   * `async_redis_store.rs` / `async_etcd_store.rs` — unowned, and next on the ranked
 #     remainder. They are ASM-0040 / ASM-0041's subjects, which is a different question.
@@ -10227,7 +10244,7 @@ tested_symbols = [
 [[unit]]
 id = "core.ed25519_primitive"
 class = "V0"
-description = "WHAT THE ED25519 FLOOR REFUSES ON THE REQUEST PATH: a wrong key and a tampered preimage each fail at `verify_strict`, a wrong-length signature and a malformed Base64URL signature each fail structurally before the curve is touched at all, and the algorithm gate rejects any token other than `Ed25519` with the caller's supplied error, so an envelope declaring something else never reaches the raw primitive. This unit is the refusing direction only, because that is the direction THM-0014 claims: it says NOTHING about what the primitive accepts, nothing about signing being deterministic for a fixed seed, nothing about which variant a malformed KEY renders as, nothing about the response-path sentinel, and nothing about a verification key round-tripping through its encodings — each of those is a separate proposition carrying its own census record. It also says nothing about which keys are enrolled, which slot a key answers for, or whether a deployment was right to trust the actor."
+description = "WHAT THE ED25519 FLOOR REFUSES ON THE REQUEST PATH: a wrong key and a tampered preimage each fail at `verify_strict`, and a wrong-length signature and a malformed Base64URL signature each fail structurally before the curve is touched at all. It says NOTHING about which declared algorithm is acceptable: this crate defines no carrier, so it owns no algorithm gate, and THM-0014's clause `under an algorithm the verifier's policy accepts` is carried at its own owner, `http_profile.request_floor_result`, by `VerifierPolicy::accepted_algorithm` and the `algorithm_confusion_test` battery. This unit is the refusing direction only, because that is the direction THM-0014 claims: it says NOTHING about what the primitive accepts, nothing about signing being deterministic for a fixed seed, nothing about which variant a malformed KEY renders as, nothing about the response-path sentinel, and nothing about a verification key round-tripping through its encodings — each of those is a separate proposition carrying its own census record. It also says nothing about which keys are enrolled, which slot a key answers for, or whether a deployment was right to trust the actor."
 paths = ["mcp-re-core/src/crypto.rs"]
 exported_contracts = []
 evidence_class = "tested"
@@ -10237,7 +10254,6 @@ evidence = [
   "mutation://core/ed25519_primitive/refuses_forged_and_malformed_material",
 ]
 tested_symbols = [
-  "lib#crypto::tests::ensure_ed25519_alg_rejects_unknown_alg_with_supplied_error",
   "lib#crypto::tests::malformed_signature_base64_fails",
   "lib#crypto::tests::tamper_preimage_fails",
   "lib#crypto::tests::wrong_key_fails",
@@ -10908,8 +10924,7 @@ tested_symbols = [
 #
 # What is deliberately NOT here: the historical `extract_identity` facade and the
 # `TransportIdentity` seal (NP-078), the resolver's two NOTHING arms (NP-116), the
-# correspondence RENDERING (NP-145), the static provider fixture (NP-186) and the
-# policy/source vocabulary conversion (NP-187). Each is refused against quoted theorem text
+# correspondence RENDERING (NP-145) and the policy/source vocabulary conversion (NP-187). Each is refused against quoted theorem text
 # in its own packet under `verification/reviews/packets/`.
 
 [[unit]]
@@ -10940,30 +10955,6 @@ tested_symbols = [
   "lib#transport::tests::an_absent_channel_peer_fails_closed",
   "lib#transport::tests::the_installable_binding_is_exact_match",
   "lib#transport::tests::a_permissive_policy_cannot_manufacture_the_binding_fact",
-]
-
-[[unit]]
-id = "proxy.asserted_identity_delegation"
-class = "V0"
-description = "THE TRUSTED-INGRESS VOCABULARY DELEGATES THE VALUE RULE INSTEAD OF REIMPLEMENTING IT: `validate_asserted_identity_value` accepts a well-formed value and hands back the TRIMMED form, and refuses an empty one, one past the length bound and every shape of control character — each refusal being the owner's own refusal carried into the historical spelling, one family for one family, rather than a second set of rules that currently agrees. This is the caller side of the peer-identity value claim and nothing more: WHICH strings the rule accepts is `proxy.peer_identity_value`'s, that no other inhabitant can exist is `proxy.peer_identity_value_sole_producer`'s, and the single-valued header rule belongs to the caller that counts the header."
-paths = [
-  "mcp-re-proxy/src/facades/asserted_identity.rs",
-  "mcp-re-proxy/src/transport/mod.rs",
-]
-exported_contracts = []
-evidence_class = "tested"
-direct_consequence_severity = "high"
-evidence = [
-  "test://proxy/facades/asserted_identity_delegation",
-  "mutation://proxy/facades/asserted_identity_delegation",
-]
-tested_symbols = [
-  "lib#transport::tests::asserted_identity_accepts_a_well_formed_value_and_trims",
-  "lib#transport::tests::asserted_identity_rejects_empty",
-  "lib#transport::tests::asserted_identity_rejects_oversized",
-  "lib#transport::tests::asserted_identity_rejects_control_characters",
-  "lib#facades::asserted_identity::tests::every_owner_refusal_maps_to_the_historical_rejection_it_replaced",
-  "lib#facades::asserted_identity::tests::a_valid_value_comes_back_trimmed_and_borrowed",
 ]
 
 [[unit]]

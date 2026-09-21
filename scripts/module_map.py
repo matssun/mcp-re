@@ -72,7 +72,7 @@ PLANES: dict[str, list[str]] = {
         "delegated_server_signer",
     ],
     "tls": ["tls", "tls_plane", "tls_auth_epoch", "delegated_tls", "transport"],
-    "evidence": ["audit_sink", "log_sink", "transparency", "retained_evidence"],
+    "evidence": ["audit_sink", "transparency", "retained_evidence"],
     "time": ["clock"],
 }
 PLANE_OF = {m: p for p, ms in PLANES.items() for m in ms}

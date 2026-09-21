@@ -260,7 +260,17 @@ def parse_per_file(diff: str) -> dict[str, list[tuple[str, str]]]:
 # (MCPS-69): gazelle's `resolve` points `use mcp_re_host` at `:mcp_re_host`, but the
 # target already carries `:mcp_re_host_test_fixtures  # keep`, so a proposed plain
 # edge is a flavor artifact, not a missing edge.
-FLAVOR_PLAIN = {"mcp_re_host", "mcp_re_proxy", "mcp_re_transport"}
+FLAVOR_PLAIN = {
+    "mcp_re_host",
+    "mcp_re_proxy",
+    "mcp_re_transport",
+    # ADR-MCPRE-052: the pre-052 fixture chain. Each of these publishes a `_pre052`
+    # flavor beside its plain target, so a proposed plain edge on a target that already
+    # carries the flavor edge is the same artifact this set exists for.
+    "mcp_re_http_profile",
+    "mcp_re_client_core",
+    "mcp_re_client_proxy",
+}
 ATTR_OPEN_RE = re.compile(r"^\w+ = \[$")  # e.g. `deps = [`, `srcs = [`
 
 

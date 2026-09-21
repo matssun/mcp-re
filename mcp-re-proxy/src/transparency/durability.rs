@@ -496,7 +496,6 @@ impl EvidenceRetention {
 mod tests {
     use super::*;
     use crate::transparency::covered_set::covered_headers;
-    use mcp_re_http_profile::scitt::RetainedEvidenceStore;
 
     struct TempDir(std::path::PathBuf);
 
@@ -650,8 +649,15 @@ mod tests {
         // owned outright by its writer thread, which is what removed the lock from the
         // request path.
         let digest = {
-            let mut store = FsRetainedEvidenceStore::open(&dir.0).expect("open");
-            store.put(alien).expect("put")
+            let store = FsRetainedEvidenceStore::open(&dir.0).expect("open");
+            let digest = EvidenceDigest::of(alien);
+            let path = FsRetainedArchive::open_read_only(&dir.0)
+                .expect("open read-only")
+                .object_path(&digest)
+                .expect("object path");
+            store.stage_at(&path, alien).expect("stage");
+            store.sync_root().expect("sync root");
+            digest
         };
         assert!(
             matches!(

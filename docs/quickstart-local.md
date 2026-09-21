@@ -24,36 +24,41 @@ infra). Expected final line:
 OK: MCP-RE local demo completed
 ```
 
-You can also run the underlying tests directly (Bazel or Cargo — no env setup):
+You can also run the underlying suites directly. Each is a MODULE inside a merged
+test binary, so it is selected by a name filter rather than by being its own
+`--test` target:
 
 ```sh
-bazel test //mcp-re-proxy:full_stack_test //mcp-re-demo:demo_mtls_client_test
-# or:
-cargo test -p mcp-re-proxy --test full_stack_test
-cargo test -p mcp-re-demo  --test demo_mtls_client_test
+cargo test -p mcp-re-proxy --test integration -- mtls_transport_binding_test::
+cargo test -p mcp-re-proxy --test integration_async --features async_serve -- mtls_client_leg_e2e_test::
+cargo test -p mcp-re-proxy --test integration_async --features async_serve -- delegated_client_server_e2e_test::
+cargo test -p mcp-re-proxy --test integration_async --features async_serve -- verified_context_carrier_test::
 ```
+
+A name filter that matches nothing exits **0**, so a typo in one of these reports
+success having run no test. `demo-local.sh` routes every lane through
+`scripts/run_test_lane.sh`, which reads libtest's own count back and fails on zero —
+which is why the script, not this list, is the entry point to prefer.
 
 ## What it proves
 
-**`full_stack_test`** spawns the REAL `mcp_re_proxy_cli` process (TLS-terminating
-PEP) over real mTLS in front of an in-process Streamable-HTTP inner MCP echo
-backend, and drives the security matrix:
+**`mtls_transport_binding_test`** performs a REAL rustls mutual-TLS handshake and
+binds the verified request actor to the peer certificate. A mismatched binding —
+signer ≠ cert identity — **fails closed**; a valid mTLS channel never downgrades
+envelope verification.
 
-- a valid client cert + signed request round-trips: the proxy verifies the
-  envelope, checks freshness/replay, strips the external envelope, injects the
-  sidecar-owned verified context, forwards over HTTP, signs the response, and the
-  response binds to the request hash;
-- **no client certificate** → rejected at the mTLS handshake (fail closed);
-- **untrusted client certificate** → rejected at the handshake (fail closed);
-- valid cert + **tampered object signature** → `mcp-re.invalid_signature` (a valid
-  mTLS channel never downgrades object verification);
-- valid cert + **wrong transport binding** (signer ≠ cert identity) →
-  `mcp-re.transport_binding_failed`.
+**`mtls_client_leg_e2e_test`** drives the client leg over a real network hop: the
+client proxy signs RFC 9421/9530, the verifying mTLS transport presents a client
+certificate and pins the server, and a **forged response signature fails closed**
+on the client side.
 
-**`demo_mtls_client_test`** drives the host-side HostSession client + the verifying
-mTLS transport against a real proxy server: a signed request round-trips and the
-client verifies the response against the **stored** request hash; a wrong response
-hash and a forged response signature each fail closed on the client side.
+**`delegated_client_server_e2e_test`** runs the full delegated-required round trip,
+including the **replay refusal** and the **signed rejection** — delegated-required
+is MCP-RE's only response-signing mode.
+
+**`verified_context_carrier_test`** covers the reserved-field guard and the injected
+verified context: the sidecar-owned context the proxy injects cannot be forged by a
+caller supplying the reserved field itself.
 
 The broader per-`mcp-re.*`-token vector matrix (tampered body/id, replay, expiry,
 wrong audience, missing envelope, authorization scope, response binding) is the

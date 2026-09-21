@@ -32,5 +32,11 @@ dev-probe = []
 name = "mcp_re_client_core"
 path = "src/lib.rs"
 
+[dev-dependencies]
+# ADR-MCPRE-052: the pre-052 direct-root emitters compile only for negative tests. A
+# DEV-dependency edge, never a normal one — cargo unifies normal-dependency features across
+# the whole invocation, which would put the fixtures back into the production closure.
+mcp-re-http-profile = { path = "../mcp-re-http-profile", features = ["pre_052_fixtures"] }
+
 [lints]
 workspace = true

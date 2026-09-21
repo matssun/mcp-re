@@ -105,7 +105,6 @@ pub mod key_source;
 /// Whether an operator-supplied KMS/STS endpoint may be used at all — a security rule
 /// the command line, the validation boundary and the key sources all consume.
 pub mod kms_endpoint_policy;
-pub mod log_sink;
 #[cfg(any(feature = "aws_kms_keysource", feature = "gcp_kms_keysource"))]
 pub(crate) mod remote_signer_call;
 // Test / embedding helpers that drive the async serving path synchronously
@@ -333,9 +332,6 @@ pub use audit_sink::StderrAuditSink;
 pub use gcp_kms_keysource::GcpKmsConfig;
 #[cfg(feature = "gcp_kms_keysource")]
 pub use gcp_kms_keysource::GcpKmsEd25519Backend;
-pub use log_sink::InnerLogEvent;
-pub use log_sink::InnerLogSink;
-pub use log_sink::StderrLogSink;
 // MCPS-076 (audit gap G-3): EnvKeySource is dev/CI-only and exists only when the
 // non-default `dev_env_key_source` feature is enabled.
 #[cfg(feature = "dev_env_key_source")]
@@ -379,9 +375,7 @@ pub use trust_plane::InvalidationChannel;
 pub use trust_plane::InvalidationEvent;
 pub use trust_plane::PushInvalidationTrustCache;
 // Kept at the crate root for existing embedders; the provenance is the harness.
-pub use blocking_mtls_harness::serve;
 pub use blocking_mtls_harness::serve_once;
-pub use blocking_mtls_harness::serve_once_with_assertion;
 pub use communication_assurance::peer_identity_provenance::PeerIdentityProvenance;
 pub use tls::ServerLimits;
 pub use tls::ServerOptions;
@@ -391,9 +385,6 @@ pub use transport::extract_identity;
 pub use transport::ingress::AttestedCertVerification;
 pub use transport::ingress::AttestedIngressVerified;
 pub use transport::ingress::AttestedRevocation;
-pub use transport::ingress::LbAssertion;
-pub use transport::ingress::LbAssertionBinding;
-pub use transport::ingress::LbAssertionRejection;
 pub use transport::ingress::LbAssertionV2;
 pub use transport::ingress::LbAssertionV2Binding;
 pub use transport::ingress::LbAssertionV2Rejection;
@@ -404,11 +395,8 @@ pub use transport::IdentityPolicy;
 pub use transport::IdentitySource;
 pub use transport::RequestHeaders;
 pub use transport::RoutingHeaderRejection;
-pub use transport::StaticIdentityProvider;
 pub use transport::TransportBindingPolicy;
-pub use transport::TransportBindingProvider;
 pub use transport::TransportIdentity;
-pub use transport::MAX_ASSERTED_IDENTITY_LEN;
 pub use transport::MCP_METHOD_HEADER;
 pub use transport::MCP_NAME_HEADER;
 #[cfg(feature = "redis_replay")]

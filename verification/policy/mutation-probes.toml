@@ -250,7 +250,7 @@ weakening = """
     )?;
 """
 expect_red = [
-  "lib#rejection::tests::tampered_message_does_not_change_the_trusted_wire_code",
+  "lib#rejection::pre_052_direct_root::tests::tampered_message_does_not_change_the_trusted_wire_code",
 ]
 
 [[probe]]
@@ -282,7 +282,7 @@ weakening = """
     Ok(CryptographicFloorVerifiedBoundResponse {
 """
 expect_red = [
-  "lib#rejection::tests::spliced_rejection_onto_a_different_request_fails",
+  "lib#rejection::pre_052_direct_root::tests::spliced_rejection_onto_a_different_request_fails",
 ]
 
 [[probe]]
@@ -6657,7 +6657,7 @@ id = "M241-http-profile-the-response-carries-the-handle-over-this-request"
 unit = "http_profile.response_emission_binding"
 theorem = "THM-0091"
 conjunct = "the response evidence block's request-evidence handle is over the request being answered"
-path = "mcp-re-http-profile/src/sign.rs"
+path = "mcp-re-http-profile/src/rejection/pre_052_direct_root.rs"
 anchor = """
         request_evidence: RequestEvidenceDigest {
             digest_alg: request_evidence.digest_alg.clone(),
@@ -6665,7 +6665,9 @@ anchor = """
         },
     };
     response.body = insert_meta_block(&response.body, RESPONSE_EVIDENCE_BLOCK_KEY, &block)?;
-    sign_response(response, request, key, key_id, created, expires)
+    sign_pre_052_direct_root_response_base_for_negative_test(
+        response, request, key, key_id, created, expires,
+    )
 """
 weakening = """
         request_evidence: RequestEvidenceDigest {
@@ -6674,12 +6676,20 @@ weakening = """
         },
     };
     response.body = insert_meta_block(&response.body, RESPONSE_EVIDENCE_BLOCK_KEY, &block)?;
-    sign_response(response, request, key, key_id, created, expires)
+    sign_pre_052_direct_root_response_base_for_negative_test(
+        response, request, key, key_id, created, expires,
+    )
 """
 expect_red = [
   "tests/full_profile_test#full_response_roundtrip_binds_request_evidence",
 ]
 note = """
+RE-ADJUDICATED at the ADR-MCPRE-052 cleanup. This conjunct's code left `sign.rs` for the
+pre-052 fixture module, byte-identical except for the renamed tail call, so the probe
+follows it. What that makes visible is worth stating: the conjunct is measured over the
+REMOVED direct-root emission mode. Recorded, not repaired -- see EX-015 in
+docs/architecture/review-dispositions.md.
+
 TWO BINDINGS, AND THE SIGNATURE CARRIES ONLY ONE OF THEM. The `;req` components bind this
 response to the request's SIGNATURE BASE; the evidence block's handle binds it to the
 request's evidence. The weakening corrupts the handle and leaves `;req` untouched, so the
@@ -9490,53 +9500,6 @@ through the weakened arm. `an_absent_channel_peer_fails_closed` stays green for 
 reason — `TransportBinding::bind` cannot be weakened into admitting an absence at all,
 because the return type gives an absent peer nothing to produce. That refusal is a seal, not
 a check, and a mutation probe is the wrong instrument for it.
-"""
-
-[[probe]]
-id = "M340-proxy-the-ingress-vocabulary-reimplements-the-value-rule"
-unit = "proxy.asserted_identity_delegation"
-theorem = "THM-0023"
-conjunct = "the trusted-ingress facade delegates to the peer-identity value owner rather than reimplementing the well-formedness rules"
-path = "mcp-re-proxy/src/facades/asserted_identity.rs"
-anchor = """pub fn validate_asserted_identity_value(value: &str) -> Result<&str, AssertedIdentityRejection> {
-    match PeerIdentityValue::interpret(value) {
-        Ok(_) => Ok(value.trim()),
-        Err(refusal) => Err(refusal.into()),
-    }
-}
-"""
-weakening = """pub fn validate_asserted_identity_value(value: &str) -> Result<&str, AssertedIdentityRejection> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Err(AssertedIdentityRejection::Empty);
-    }
-    if trimmed.len() > MAX_ASSERTED_IDENTITY_LEN {
-        return Err(AssertedIdentityRejection::TooLong);
-    }
-    Ok(trimmed)
-}
-"""
-expect_red = [
-  "lib#transport::tests::asserted_identity_rejects_control_characters",
-  "lib#facades::asserted_identity::tests::every_owner_refusal_maps_to_the_historical_rejection_it_replaced",
-]
-note = """
-THE WEAKENING IS THE SECOND IMPLEMENTATION THE MIGRATION REMOVED, restored as it would
-plausibly come back: a short local rule that handles the two cases whoever wrote it
-remembered. It agrees with the owner on the empty value and on the bound, and drops the
-control-character clause — so a CR/LF-laced header value reaches a log, an audit record and a
-comparison, which is the exact drift THM-0023's consequence names ("neither provenance can
-drift into a weaker definition of well-formed than the other").
-
-`MAX_ASSERTED_IDENTITY_LEN` is still the owner's constant under its historical name, so the
-weakening does not even look like a divergence at the point of the edit. That is the shape
-the twin exists to catch, and both halves of the twin catch it: one control in
-`transport/mod.rs`, one in the facade's own file.
-
-`asserted_identity_rejects_empty`, `_rejects_oversized`, `_accepts_a_well_formed_value_and_trims`
-and `a_valid_value_comes_back_trimmed_and_borrowed` stay green, which is the point — a battery
-measuring only the clauses a reimplementation happens to keep would report a facade that had
-stopped being one.
 """
 
 [[probe]]

@@ -1,10 +1,10 @@
-//! Injected wall-clock abstraction for the host session (MCPS-033, ADR-MCPS-015).
+//! Injected wall-clock abstraction for host-side signing (MCPS-033, ADR-MCPS-015).
 //!
 //! The host — unlike pure `mcp-re-core` — is allowed to read time, but it reads it
 //! through an injected [`Clock`] so signing is deterministic under test. Core
-//! itself never reads the clock (ADR-MCPS-006 "push timestamps to callers"); the
-//! session is exactly such a caller, stamping `issued_at`/`expires_at` from the
-//! injected clock and formatting them with `mcp_re_core::unix_to_rfc3339_utc`.
+//! itself never reads the clock (ADR-MCPS-006 "push timestamps to callers"), so a
+//! caller supplies it: `mcp-re-client`'s `ServeContext::for_local_config` reads
+//! [`SystemClock`]'s `now_unix` when it builds the serving context.
 
 /// A source of the current time as Unix seconds (UTC).
 ///
@@ -43,12 +43,11 @@ impl Clock for SystemClock {
 
 /// Deterministic test clock: always returns a fixed Unix-second value.
 ///
-/// A TEST fixture, reused as an injectable clock by integration tests (and the
-/// deterministic demo binaries) in this and dependent crates. It is compiled
-/// only under `cfg(test)` or the explicit `test-fixtures` cargo feature — an
-/// *enforced* boundary, so a default (production) build of `mcp-re-host` does not
-/// compile or export `FixedClock` at all. That fixture therefore cannot be used
-/// to pin a `HostSession` to a frozen clock unless `test-fixtures` is enabled.
+/// A TEST fixture, reused as an injectable clock by integration tests in this and
+/// dependent crates. It is compiled only under `cfg(test)` or the explicit
+/// `test-fixtures` cargo feature — an *enforced* boundary, so a default
+/// (production) build of `mcp-re-host` does not compile or export `FixedClock` at
+/// all, and no deployment can serve on a frozen clock from it.
 /// (This scopes only this fixture; a consumer remains free to provide its own
 /// [`Clock`] implementation.)
 #[cfg(any(test, feature = "test-fixtures"))]

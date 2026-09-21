@@ -117,9 +117,8 @@ production caller left** — it survives for its published X.509 conformance sui
 DER, and `scripts/serving_identity_provenance_gate.py` fails the build if a serving path
 calls it again. It parses nothing,
 selects nothing and validates nothing; the historical vocabulary it converts —
-`IdentityPolicy`, `IdentitySource`, `TransportIdentity`, `validate_asserted_identity_value`
-— is named and dated in `asserted_identity_facade.rs` so the migration surface is
-countable and can be deleted whole.
+`IdentityPolicy` and `IdentitySource` — is named in `facades/asserted_identity.rs`, which
+after RA3-002 is two conversions and nothing else, so the migration surface is countable.
 
 The arrow that used to read `TLS certificate verification -> verified transport identity`
 collapsed two authorities into one name, and the split survives the migration: identity
@@ -127,8 +126,8 @@ interpretation still does NOT establish that the chain was verified. What closed
 a THIRD fact — the mechanism's own acceptance — composed with the identity over ONE
 credential. `TransportIdentity` remains freely constructible and is therefore explicitly a
 RENDERING, never the authority: a value of it proves nothing about where it came from,
-which is why it is produced only in `facades::asserted_identity` from a product whose
-provenance THM-0031 states.
+which is why its constructors live in `transport::identity`, behind a module boundary whose
+admitted producer set NP-078 enumerates.
 
 ## 7. Connection credential window
 
@@ -140,9 +139,9 @@ The TLS authority must preserve the established relation that a connection canno
 
 The blocking mTLS + hand-rolled HTTP/1 harness is not the shipped MCP-RE serving path. It lives in `mcp-re-proxy/src/blocking_mtls_harness/`, outside the TLS security authority — **done, MCPRE-138 (#574)**.
 
-Relocation was justified by ownership, not by LOC reduction. `serve`, `serve_once` and `serve_once_with_assertion` have no in-crate production caller — every caller is a test or an external embedder — which is what makes them a harness rather than a serving path. It is not on its own a reason to delete them (ADR-061 §2 class 4 — zero production callers is not a deletion argument), so they are retained and still exported from the crate root, with `blocking_mtls_harness` as their provenance.
+Relocation was justified by ownership, not by LOC reduction. `serve_once` has no in-crate production caller — every caller is a test — which is what makes it a harness rather than a serving path. It is not on its own a reason to delete it (ADR-061 §2 class 4 — zero production callers is not a deletion argument), so it is retained and still exported from the crate root, with `blocking_mtls_harness` as its provenance. Its two former siblings, `serve` and `serve_once_with_assertion`, had no caller of ANY kind and are deleted by RA3-002; the accept loop went with `serve`.
 
-What moved is the capability, whole: the entry points, the accept loop, the per-connection sequence, the deadline wrapper and the HTTP/1 framing. What did **not** move is any authentication policy. The harness holds the live `ServerConnection`, so it is the only code that can produce a peer chain from one, but every decision taken from that chain is called here: `cert_lifetime_rejection_for_chain`, `ocsp_rejection_for_chain`, `routing_header_rejection`, `assertion_header`. `ocsp_rejection` was reshaped to its chain form rather than moved, precisely so the online-OCSP fail-closed policy stayed in the authority.
+What moved is the capability, whole: the entry point, the per-connection sequence, the deadline wrapper and the HTTP/1 framing. What did **not** move is any authentication policy. The harness holds the live `ServerConnection`, so it is the only code that can produce a peer chain from one, but every decision taken from that chain is called here: `cert_lifetime_rejection_for_chain`, `ocsp_rejection_for_chain`, `routing_header_rejection`, `assertion_header`. `ocsp_rejection` was reshaped to its chain form rather than moved, precisely so the online-OCSP fail-closed policy stayed in the authority.
 
 Every per-request decision in this component now takes the chain as an argument, so the blocking and async paths reach the same verdict from the same input, and who holds the connection is not part of the decision. The measurement is EX-004's post-#574 re-census.
 
@@ -200,7 +199,7 @@ listener lifetime the production composition does not have.
 | Delegated credential/key correspondence, over real certificates and a real signer seam | `src/tls.rs` `delegated_credential_key_correspondence_tests` | `//mcp-re-proxy:proxy_unit_test` | **the algorithm-confusion vector** — a signing key declaring another algorithm whose trailing bytes ARE the credential's public point; only the profile rule can refuse it |
 | Correspondence gates delegated resolver construction | `src/delegated_tls/resolver.rs` `correspondence_gate` | `//mcp-re-proxy:proxy_unit_test` | **mismatched material cannot produce a resolver at all** — asserted on construction, never on a later handshake failure |
 | Certificate identity: the pure selector and its refusal algebra | `src/communication_assurance/` module tests, probes M25–M29 | `//mcp-re-proxy:proxy_unit_test`; `tools/verification/verify-mutations` | four refusals stay distinguishable; each probe turns a declared control red |
-| Channel binding to transport identity | `tests/integration/mtls_transport_binding_test.rs` | `//mcp-re-proxy:integration_test` (uses the `test-fixtures` dev feature) | binding mismatch refused |
+| Channel binding to transport identity | `tests/integration/mtls_transport_binding_test.rs` | `//mcp-re-proxy:integration_test` | binding mismatch refused |
 | Client leg end to end | `tests/integration_async/mtls_client_leg_e2e_test.rs` | `async_serve`; `//mcp-re-proxy:integration_async_test` | — |
 | Per-request revocation | `tests/integration_async/per_request_revocation_test.rs` | `async_serve` | revoked client refused |
 | CRL freshness / posture | unit tests in `mcp-re-proxy/src/tls.rs` | `//mcp-re-proxy:proxy_unit_test` | stale CRL refused |
@@ -230,11 +229,11 @@ Re-measured by the ADR-061 §5.1 rule after MCPRE-138 (`scripts/module_size_gate
 | file | prod | current role | target role |
 |---|---:|---|---|
 | `mcp-re-proxy/src/tls.rs` | 1068 | the six authorities EX-004's re-census names | TLS authority facade over a private subtree |
-| `mcp-re-proxy/src/blocking_mtls_harness/` | 554 | the blocking mTLS + HTTP/1 harness, four modules, all under the threshold | as-is — a consumer of the authority, not part of it |
+| `mcp-re-proxy/src/blocking_mtls_harness/` | 525 | the blocking mTLS + HTTP/1 harness, four modules, all under the threshold | as-is — a consumer of the authority, not part of it |
 | `mcp-re-proxy/src/tls_listener_state/auth_epoch.rs` | 270 | `TlsAuthEpoch`, `SharedTlsAuthEpoch`, `EpochBoundSessionStore` | private subordinate of the listener-lifetime state — pre-existing debt, still unreviewed |
 | ~~`mcp-re-proxy/src/tls_plane.rs`~~ | ~~623~~ | **gone** — became the `tls_plane/` subtree in MCPRE-175 (`mod.rs`, `client_revocation_posture.rs`, `crl_reload_worker.rs`) | as-is |
 | `mcp-re-proxy/src/delegated_tls.rs` | 313 | delegated server-credential resolver | private subordinate |
-| `mcp-re-proxy/src/transport.rs` | 1305 | transport binding and identity | separate authority; band-3 hotspot in its own right |
+| `mcp-re-proxy/src/transport/mod.rs` | 298 | transport binding and identity, the live half | separate authority; the deferred ingress capability is `transport/ingress/` |
 | `mcp-re-proxy/src/handshake_quota.rs` | 178 | handshake admission quota | private subordinate |
 | `mcp-re-proxy/src/client_revocation.rs` | 263 | CRL plan consumption | private subordinate |
 | `mcp-re-proxy/src/ocsp.rs` | 1271 | full RFC 6960 responder + client | separate authority behind `online_ocsp`; band-3 hotspot |
@@ -276,7 +275,7 @@ Re-measured by the ADR-061 §5.1 rule after MCPRE-138 (`scripts/module_size_gate
 
 3. **`tls.rs` no longer owns credential/key correspondence.** ADR-MCPRE-063 Slice 2 moved the proposition — that the delegated signer's key and the served leaf's key are the same key, of the required profile — to `communication_assurance`. `validated_delegated_resolver` remains as the composition that obtains the two evidence products and, on success, materializes the resolver and attaches the listener's signing budget. That budget is a listener capability, not a property of the credential, and it is deliberately outside what correspondence establishes.
 
-4. **The trusted-ingress facade's delegation is pinned by nothing this graph declares.** `transport::validate_asserted_identity_value` delegates to the `PeerIdentityValue` owner, and its own tests go red when the owner's rules weaken — but they are not evidence for THM-0023, whose claim is over inhabitants of the type. A caller that stopped constructing the type would leave every inhabitant well-formed and the ingress path unprotected. Closing this needs the trusted-ingress authority that ADR-063 Slice 1 deliberately did not build.
+4. ~~**The trusted-ingress facade's delegation is pinned by nothing this graph declares.**~~ — **SUBJECT DELETED by RA3-002**, not closed. `transport::validate_asserted_identity_value` and its unit `proxy.asserted_identity_delegation` no longer exist; the two surviving caller-side sites (`transport/mod.rs:185`, `transport/ingress/v2_wire.rs:112`) ask `PeerIdentityValue::interpret` directly and the two vectors the retired controls uniquely carried are folded into the owner. The underlying gap is unchanged and still unowned: nothing in this graph pins that a FUTURE caller constructs the type rather than reimplementing the rules, THM-0023's scope explicitly scopes such callers out, and `verification/policy/verification.toml` still records the pinning as an OPEN item. Closing it still needs the trusted-ingress authority ADR-063 Slice 1 deliberately did not build.
 
 5. ~~**Three properties in §10 have no theorem.**~~ — **CLOSED** (2026-09-06). Row five was already THM-0080 when #581 was written; rows one and two are now THM-0103 and THM-0102. Structural and tested is still not the same as stated, which is why each carries a scope sentence naming what it does not establish.
 
@@ -285,7 +284,7 @@ Re-measured by the ADR-061 §5.1 rule after MCPRE-138 (`scripts/module_size_gate
 - ~~listener-lifetime security state is explicitly owned by a type~~ — done, `TlsListenerSecurityState` (MCPRE-137);
 - ~~one-shot vs rebuildable semantics are impossible to confuse in the API~~ — done, by removing the one-shot family the census found had no production caller (MCPRE-137);
 - ~~blocking harness is outside the TLS authority if retained~~ — done, `blocking_mtls_harness` (MCPRE-138);
-- ~~no test-only consumer forces a misleading production export~~ — done, the harness entry points are exported from their own module (MCPRE-138);
+- ~~no test-only consumer forces a misleading production export~~ — done, the harness entry point is exported from its own module (MCPRE-138), and RA3-002 removed the two exports no consumer used at all;
 - TLS authority has a narrow facade and private subordinate implementation tree;
 - ~~the resumption property and the credential-window relation are stated in the theorem registry with correct scope~~ — done, THM-0103 and THM-0102 (#581 slice, 2026-09-06); under ADR-062 the resumption row is the STORE's contract and the safety property across an anchor change is listener/store NON-CONTINUITY, not live epoch advancement;
 - exact cargo/Bazel feature lanes cover exported-key, delegated-key, revocation, resumption, and async serving paths, each named per §11.

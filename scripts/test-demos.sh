@@ -8,8 +8,10 @@
 # fallback is caught here rather than by an evaluator. MCP-RE is HTTP-profile only;
 # the local demo runs the hermetic HTTP-profile end-to-end proofs. It asserts:
 #
-#   1. ./scripts/demo-local.sh exits 0 and prints the completion line (the HTTP
-#      full_stack_test + client mTLS proofs pass — no stdio, no external infra);
+#   1. ./scripts/demo-local.sh exits 0 and prints the completion line (the four
+#      hermetic HTTP-profile suites pass — the mTLS transport binding, the client
+#      leg, the delegated round trip and the verified-context carrier; no stdio,
+#      no external infra);
 #   2. ./scripts/demo-gcp-kms.sh fails closed (exit 2) when PROJECT_ID is unset,
 #      WITHOUT contacting any cloud — the guard is testable offline.
 #

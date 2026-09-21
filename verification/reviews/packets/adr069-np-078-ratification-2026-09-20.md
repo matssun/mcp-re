@@ -36,17 +36,18 @@ The remaining ADR-MCPRE-068 producer paths, answered:
 
 - **module-tree-visibility** — `value` and `source` are bare-private to `transport::identity`,
   and `attested_by_verified_ingress` is `pub(super)`, so privacy admits `transport` and its
-  descendants. That set is exactly the documented producer list: `transport::ingress::v1`
-  and `transport::ingress::v2`, both refused at Layer-A configuration validation.
+  descendants. That set is exactly the documented producer list:
+  `transport::ingress::v2`, refused at Layer-A configuration validation.
 - **alternate-constructors** — two, both named in the module's own table:
   `extract_identity`, which owns nothing and delegates to the ADR-MCPRE-063 authority, and
   the `pub(super)` one above. No third exists in the crate.
 - **generated-or-deserialization** — the type derives `Debug, Clone, PartialEq, Eq` and
   nothing else. No `Serialize`/`Deserialize`, no `Default`, no `From`, no `FromStr`.
-- **test-only-construction** — no `#[cfg(test)]` constructor widens anything. The two test
-  call sites (`identity.rs`'s own module and `transport/mod.rs`'s `spiffe` helper) are both
-  inside the set privacy already admits, so they are attacked by the in-crate probe rather
-  than exempted from it.
+- **test-only-construction** — no `#[cfg(test)]` constructor widens anything. The one test
+  call site (`identity.rs`'s own module) is inside the set privacy already admits, so it is
+  attacked by the in-crate probe rather than exempted from it. RA3-002 deleted
+  `transport/mod.rs`'s `spiffe` helper along with the provider fixture that was its only
+  caller.
 
 **The seal holds.** That is the measurement, and it is recorded whichever way it went.
 

@@ -11,8 +11,8 @@
 //! message.
 
 use mcp_re_core::SigningKey;
+use mcp_re_http_profile::rejection::pre_052_direct_root::sign_pre_052_direct_root_response_for_negative_test;
 use mcp_re_http_profile::sign_request_full;
-use mcp_re_http_profile::sign_response_full;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -366,7 +366,7 @@ fn response_bound_to_the_wrong_request_is_rejected() {
         headers: vec![("content-type".into(), "application/json".into())],
         body: br#"{"jsonrpc":"2.0","id":2,"result":{"ok":true}}"#.to_vec(),
     };
-    sign_response_full(
+    sign_pre_052_direct_root_response_for_negative_test(
         &mut resp,
         &req_b,
         verified_b.evidence(),

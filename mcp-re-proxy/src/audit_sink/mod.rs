@@ -15,11 +15,8 @@
 //! verifier already RESOLVED, not a claim from the wire.
 //!
 //! Emissions go to the proxy's own diagnostic channel, never onto an inner server's
-//! protocol stream and never as MCP content — the same boundary
-//! [`crate::log_sink`] observes for inner-server lifecycle events. The two are distinct
-//! surfaces: this one is the normative security record documented in
-//! `docs/spec/security-boundary.md` S9; `log_sink` is the proxy's inner-plane
-//! diagnostic channel.
+//! protocol stream and never as MCP content. This is the normative security record
+//! documented in `docs/spec/security-boundary.md` S9.
 
 /// Discharging the writer's teardown obligation at shutdown, and saying which of the two
 /// things happened. Holds the bound, the wait, and the outcome — they are one authority.

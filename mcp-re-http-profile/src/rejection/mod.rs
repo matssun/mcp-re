@@ -26,6 +26,11 @@ use serde_json::json;
 /// projects. A separate authority from how a body is framed and signed.
 pub mod retry_contract;
 
+/// The pre-ADR-MCPRE-052 direct-root emitters, kept only so the refusal of that mode
+/// can be exercised. Absent from a product build; see the module's own documentation.
+#[cfg(any(test, feature = "pre_052_fixtures"))]
+pub mod pre_052_direct_root;
+
 pub use retry_contract::retry_semantics;
 pub use retry_contract::ExecutionDisposition;
 use serde_json::Value;
@@ -41,8 +46,6 @@ use crate::message::HttpRequest;
 use crate::message::HttpResponse;
 use crate::sign::sign_delegated_response_full;
 use crate::sign::sign_delegated_response_unbound;
-use crate::sign::sign_response;
-use crate::sign::sign_response_unbound;
 
 /// The JSON-RPC error code MCP-RE rejections carry. The wire code in `data`,
 /// not this integer, is the stable signal.
@@ -127,32 +130,6 @@ fn request_id(request: &HttpRequest) -> Value {
         .ok()
         .and_then(|v| v.get("id").cloned())
         .unwrap_or(Value::Null)
-}
-
-/// Build a signed rejection response. When `request` is `Some`, the response is
-/// bound to it via `;req` (and echoes its id); when `None`, it is signed
-/// response-only (a failure before request context).
-#[allow(clippy::too_many_arguments)]
-pub fn build_signed_rejection(
-    request: Option<&HttpRequest>,
-    reason: &RejectionReason,
-    status: u16,
-    key: &SigningKey,
-    key_id: &str,
-    created: i64,
-    expires: i64,
-) -> Result<HttpResponse, HttpProfileError> {
-    let id = request.map(request_id).unwrap_or(Value::Null);
-    let mut response = HttpResponse {
-        status,
-        headers: vec![("Content-Type".into(), "application/json".into())],
-        body: rejection_body(id, reason),
-    };
-    match request {
-        Some(req) => sign_response(&mut response, req, key, key_id, created, expires)?,
-        None => sign_response_unbound(&mut response, key, key_id, created, expires)?,
-    }
-    Ok(response)
 }
 
 /// Build a **request-bound delegated** rejection (ADR-MCPRE-052 required mode,
@@ -327,22 +304,22 @@ mod tests {
     }
     use super::*;
 
-    const CLIENT_SEED: [u8; 32] = [11u8; 32];
-    const SERVER_SEED: [u8; 32] = [22u8; 32];
-    const NOW: i64 = 1_700_000_100;
-    const CREATED: i64 = 1_700_000_000;
-    const EXPIRES: i64 = 1_700_000_300;
+    pub(super) const CLIENT_SEED: [u8; 32] = [11u8; 32];
+    pub(super) const SERVER_SEED: [u8; 32] = [22u8; 32];
+    pub(super) const NOW: i64 = 1_700_000_100;
+    pub(super) const CREATED: i64 = 1_700_000_000;
+    pub(super) const EXPIRES: i64 = 1_700_000_300;
 
-    fn server_key() -> SigningKey {
+    pub(super) fn server_key() -> SigningKey {
         SigningKey::from_seed_bytes(&SERVER_SEED)
     }
-    fn client_key() -> SigningKey {
+    pub(super) fn client_key() -> SigningKey {
         SigningKey::from_seed_bytes(&CLIENT_SEED)
     }
 
     /// Slot-aware trust seam: the server key is trusted only for the Response
     /// slot, the client key only for the Request slot (MCPRE-100).
-    fn resolver() -> impl Fn(&str, SignerSlot) -> Option<crate::block::ResolvedActor> {
+    pub(super) fn resolver() -> impl Fn(&str, SignerSlot) -> Option<crate::block::ResolvedActor> {
         move |key_id: &str, slot: SignerSlot| {
             let (role, key) = match (key_id, slot) {
                 ("server-key-1", SignerSlot::Response) => ("server", server_key()),
@@ -362,7 +339,7 @@ mod tests {
         }
     }
 
-    fn request() -> HttpRequest {
+    pub(super) fn request() -> HttpRequest {
         // A received MCP-RE HTTP request always carries Content-Digest (it is a
         // required covered component), so a rejection can bind it via `;req`.
         let body = br#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{}}"#.to_vec();
@@ -380,122 +357,11 @@ mod tests {
         }
     }
 
-    fn reason() -> RejectionReason {
+    pub(super) fn reason() -> RejectionReason {
         RejectionReason::new(
             "mcp-re.invalid_audience",
             "audience did not match this verifier (do not trust this text)",
         )
-    }
-
-    #[test]
-    fn bound_rejection_verifies_and_exposes_the_wire_code() {
-        let req = request();
-        let rejection = build_signed_rejection(
-            Some(&req),
-            &reason(),
-            403,
-            &server_key(),
-            "server-key-1",
-            CREATED,
-            EXPIRES,
-        )
-        .expect("build");
-        let verdict = verify_signed_rejection(
-            &rejection,
-            Some(&req),
-            &Verifier::new(&VerifierPolicy::default(), &resolver()),
-            NOW,
-        )
-        .expect("verify");
-        assert_eq!(verdict.wire_code, "mcp-re.invalid_audience");
-        assert_eq!(verdict.status, 403);
-        // The body must carry Content-Digest + Signature (label mcp-re-response).
-        assert!(rejection
-            .headers
-            .iter()
-            .any(|(k, _)| k.eq_ignore_ascii_case("content-digest")));
-        let sig = rejection
-            .headers
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case("signature-input"))
-            .unwrap();
-        assert!(sig.1.starts_with("mcp-re-response="));
-    }
-
-    #[test]
-    fn unbound_rejection_verifies_without_request_context() {
-        let rejection = build_signed_rejection(
-            None,
-            &reason(),
-            400,
-            &server_key(),
-            "server-key-1",
-            CREATED,
-            EXPIRES,
-        )
-        .expect("build");
-        let verdict = verify_signed_rejection(
-            &rejection,
-            None,
-            &Verifier::new(&VerifierPolicy::default(), &resolver()),
-            NOW,
-        )
-        .expect("verify");
-        assert_eq!(verdict.wire_code, "mcp-re.invalid_audience");
-        assert_eq!(verdict.status, 400);
-    }
-
-    #[test]
-    fn spliced_rejection_onto_a_different_request_fails() {
-        let req_a = request();
-        let mut req_b = request();
-        req_b.target_uri = "https://mcp.example.com/mcp?route=b".into();
-        let rejection = build_signed_rejection(
-            Some(&req_a),
-            &reason(),
-            403,
-            &server_key(),
-            "server-key-1",
-            CREATED,
-            EXPIRES,
-        )
-        .expect("build");
-        // Bound to req_a; presenting it as the answer to req_b must fail.
-        let err = verify_signed_rejection(
-            &rejection,
-            Some(&req_b),
-            &Verifier::new(&VerifierPolicy::default(), &resolver()),
-            NOW,
-        )
-        .unwrap_err();
-        assert_eq!(err, HttpProfileError::ResponseSignatureInvalid);
-    }
-
-    #[test]
-    fn tampered_message_does_not_change_the_trusted_wire_code() {
-        // The human message is not authoritative; tampering it breaks the
-        // signature (it is under Content-Digest), so a client can never be
-        // fooled by an edited message either.
-        let req = request();
-        let mut rejection = build_signed_rejection(
-            Some(&req),
-            &reason(),
-            403,
-            &server_key(),
-            "server-key-1",
-            CREATED,
-            EXPIRES,
-        )
-        .expect("build");
-        rejection.body = br#"{"jsonrpc":"2.0","id":7,"error":{"code":-31000,"message":"LIES","data":{"mcp_re_error":{"wire_code":"mcp-re.expired_request"}}}}"#.to_vec();
-        let err = verify_signed_rejection(
-            &rejection,
-            Some(&req),
-            &Verifier::new(&VerifierPolicy::default(), &resolver()),
-            NOW,
-        )
-        .unwrap_err();
-        assert_eq!(err, HttpProfileError::ContentDigestMismatch);
     }
 
     #[test]
@@ -514,30 +380,5 @@ mod tests {
             NOW
         )
         .is_err());
-    }
-
-    #[test]
-    fn wire_code_is_read_only_after_signature_verifies() {
-        // A rejection signed by an UNTRUSTED key must fail before the body's
-        // wire code is ever surfaced.
-        let req = request();
-        let rejection = build_signed_rejection(
-            Some(&req),
-            &reason(),
-            403,
-            &client_key(),
-            "rogue-key",
-            CREATED,
-            EXPIRES,
-        )
-        .expect("build");
-        let err = verify_signed_rejection(
-            &rejection,
-            Some(&req),
-            &Verifier::new(&VerifierPolicy::default(), &resolver()),
-            NOW,
-        )
-        .unwrap_err();
-        assert_eq!(err, HttpProfileError::UnresolvedKeyId);
     }
 }

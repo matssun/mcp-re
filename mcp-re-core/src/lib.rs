@@ -76,7 +76,6 @@ mod verus_std_specs;
 pub mod wire;
 
 // Re-export the profile-agnostic public surface at the crate root.
-pub use crypto::ensure_ed25519_alg;
 pub use crypto::verify_ed25519;
 pub use crypto::verify_ed25519_with;
 pub use crypto::SigningKey;

@@ -596,7 +596,9 @@ here is that it is now machine-visible in the census instead of living in a pack
 **Control:** `scripts/es256_containment_gate.py`.
 **Carrier:** the `p256` dependency edge, the SCITT receipt verifier's modules, and
 `mcp-re-http-profile/src/policy.rs`'s `ProfileAlgorithm` registry with `VerifierPolicy::new`'s
-construction-time refusal.
+construction-time refusal. `mcp-re-core`'s `ensure_ed25519_alg` was named here until it was
+deleted: it gated on `SIG_ALG_ED25519` = `"Ed25519"`, a token the carrier never emits and the
+live policy explicitly refuses, and it had no production caller.
 **Statement.** *ECDSA P-256 is reachable only from receipt verification: `p256` is a
 dependency of exactly one crate, referenced from exactly the COSE-key owner and its verifier
 inside it, absent from `mcp-re-core`, and no `ProfileAlgorithm` variant exists for ECDSA
@@ -2004,21 +2006,21 @@ about what the deployment may say.
 
 ## NP-073 — an ingress assertion binds to the request in hand
 
-**Controls:** `transport/ingress/v1.rs` (11), `transport/ingress/v2.rs` (14),
-`transport/ingress/mod.rs` (1), across both frozen formats.
+**Controls:** `transport/ingress/v2.rs` (14), `transport/ingress/mod.rs` (1), over the one
+frozen format.
 **Statement.** *An accepted ingress assertion carries a signature that verifies under a
 KNOWN key id, over a length-prefixed and unambiguous preimage, binds to the hash of the
 request in hand, is inside its window — stale and implausibly-future rejected, a future
-expiry accepted — and, on v2, names this audience and a trusted ingress identity; a
-tampered field, a malformed framing, a malformed identity shape, a malformed enum
-discriminant and a cross-request binding are each rejected; recorded-facts admission fails
-closed; the wire form round-trips through parse; and the two frozen formats have DISJOINT
-PREIMAGES.*
+expiry accepted — names this audience and a trusted ingress identity; a tampered field, a
+malformed framing, a malformed identity shape, a malformed enum discriminant and a
+cross-request binding are each rejected; recorded-facts admission fails closed; the wire
+form round-trips through parse; and the preimage is domain-separated by a VERSION-QUALIFIED
+tag.*
 **If false.** A peer replays one request's ingress assertion onto another — the
 cross-request arm — or an assertion signed for one audience is accepted by another
-deployment, and the proxy believes a hop it never verified. The disjoint-preimages clause is
-the cross-format version of the same attack: one format's signature must not verify as the
-other's.
+deployment, and the proxy believes a hop it never verified. The domain-tag clause is the
+cross-version version of the same attack: a signature produced under another version of this
+mechanism must not verify as one of these.
 **Likely owner:** none. NP-033 is the CONFIGURATION side — attested ingress configured whole
 or not at all; this is the verification the configuration turns on.
 **Root relationship.** Under the peer-identity roots.
@@ -2030,10 +2032,9 @@ for the wrong one.
 
 ## NP-074 — each ingress format publishes the guarantee it actually gives
 
-**Controls:** `transport/ingress/v1.rs::lb_assertion_guarantee_is_not_end_to_end_mtls`,
-`transport/ingress/v2.rs::v2_guarantee_is_attested_delegation_not_end_to_end`.
-**Statement.** *The guarantee each ingress format publishes is what it gives: v1's LB
-assertion is not end-to-end mTLS, and v2's is attested delegation and not end-to-end.*
+**Controls:** `transport/ingress/v2.rs::v2_guarantee_is_attested_delegation_not_end_to_end`.
+**Statement.** *The guarantee the ingress format publishes is what it gives: v2's is
+attested delegation and not end-to-end.*
 **If false.** A deployment reads an ingress assertion as end-to-end channel evidence and
 stops requiring the thing that would have been end-to-end. This is NP-063's shape at a
 different layer — a mechanism publishing a guarantee it does not have — and it is separated
@@ -2081,7 +2082,7 @@ The in-crate pair is the load-bearing one: `pub(crate)` seals nothing against th
 own composition root, and the lever that works here is module privacy. `value` and `source`
 are bare-private to `transport::identity`, and `attested_by_verified_ingress` is
 `pub(super)`, so the set privacy admits is `transport` and its descendants — which is
-exactly the documented producer list, `transport::ingress::v1` and `v2`. The other producer
+exactly the documented producer list, `transport::ingress::v2`. The other producer
 paths are answered too: no `Default`, `From`, `FromStr` or derived `Deserialize` exists on
 the type, and no `#[cfg(test)]` constructor widens it.
 
@@ -2535,7 +2536,7 @@ them. Four of the eleven are the RR-002 C5 split of the original NP-106.
 ## NP-106 — the Ed25519 floor accepts the material it is supposed to accept
 
 **Controls:** `mcp-re-core/src/crypto.rs`.
-**Statement.** *A signature this system's own signer produces over a preimage verifies under the matching verification key — through the request wrapper `verify_ed25519` and through the raw primitive with no envelope algorithm gate in front of it — and `ensure_ed25519_alg` ADMITS the one supported token, `Ed25519`.*
+**Statement.** *A signature this system's own signer produces over a preimage verifies under the matching verification key — through the request wrapper `verify_ed25519` and through the raw primitive, neither of which inspects a declared algorithm.*
 **If false.** MCP-RE cannot verify what MCP-RE signed. Nothing is forged and nothing is admitted that should not be: the floor simply refuses everything, the proxy admits no request, and the deployment is down. That is the whole reason this is a separate record from the refusals — the two halves fail in opposite directions and only one of them is a soundness fact.
 **Likely owner:** none. `core.ed25519_primitive` is the unit over this file, and THM-0014 is its theorem; the accepting direction is outside that theorem, for the reason stated below.
 **Severity:** `critical`.
@@ -2556,11 +2557,11 @@ It is a conditional over SUCCESSFUL returns, and its security consequence is sta
 - `malformed_signature_base64_fails` — **contained**, clause 2. `verify_ed25519_with` returning Ok on input it never decoded is a floor-verified request under a signature that was never checked at all. It refuses at the decode arm rather than at `verify_strict`, which is why M312 leaves it green: a different arm of the same clause.
 - `wrong_length_signature_fails` — **contained**, clause 2, at the `try_into` arm. Sixty-four bytes is what an Ed25519 signature IS; accepting fewer is accepting a value the clause's verb cannot be true of.
 - `an_algorithm_without_a_verifier_cannot_be_allowlisted` (`mcp-re-http-profile/src/policy.rs:293`) — **contained**, by clause 2's qualifier *"under an algorithm the verifier's policy accepts"* and by the security consequence's second limb in terms. A token with no `ProfileAlgorithm` variant cannot enter a `VerifierPolicy` at all, so an envelope declaring `ecdsa-p256-sha256` never reaches a verifier and cannot be floor-verified. It is also NP-002's other half — the refusal that keeps ES256 out of MCP-RE's own signing — and it is where that refusal actually lives: it is already `unit://http_profile.request_floor_result`'s registered control (`verification/policy/verification.toml:271`) over a file already in that unit's `paths` (`:220`).
-- `ensure_ed25519_alg_rejects_unknown_alg_with_supplied_error` — **contained** by the same clause, over a function with no production caller. `ensure_ed25519_alg` (`mcp-re-core/src/crypto.rs:50`) is called from nothing but its own two tests, so the refusal it states quantifies over zero paths that reach the floor; the clause-2 obligation is carried by the control above it.
+- `ensure_ed25519_alg_rejects_unknown_alg_with_supplied_error` — **RETIRED with its subject.** This record already measured that `ensure_ed25519_alg` had no production caller, so the refusal it stated quantified over zero paths reaching the floor and the clause-2 obligation was carried by the control above it. The function is now deleted, and the obligation stays exactly where this record already put it.
 
 And the eight that did not leave, with the clause that decides each:
 
-- `ensure_ed25519_alg_accepts_the_supported_alg` — **not contained.** Falsify it and `ensure_ed25519_alg` rejects `Ed25519` too; `verify_request_floor` then returns Ok for nothing and the conditional holds vacuously over an empty set of successful returns. No clause is false of any request. The theorem names no algorithm, so it does not pin WHICH token the policy accepts, only that a floor-verified request used one it did. Here, under NP-106.
+- `ensure_ed25519_alg_accepts_the_supported_alg` — **not contained, and RETIRED with its subject.** The vacuity argument stood and still does: falsify it and `ensure_ed25519_alg` rejects `Ed25519` too, `verify_request_floor` returns Ok for nothing, and the conditional holds vacuously over an empty set of successful returns. The theorem names no algorithm, so it never pinned WHICH token the policy accepts. Its disposition `CD-16003` is retired with the control rather than left pointing at a control that no longer exists.
 - `raw_primitive_verifies_without_any_alg_plumbing` — **not contained**, identically. Its single assertion is `verify_ed25519(preimage, &sig, &vk).is_ok()`. A primitive that refuses genuine material produces no successful return to be a counterexample. What it protects is the ADR-MCPS-02 layering split staying ergonomic for fixed-Ed25519 callers with no envelope — KMS self-checks, LB assertions, conformance vectors — which is a statement about this module's API and not about `verify_request_floor`. Here, under NP-106.
 - `sign_then_verify_round_trip` — **not contained**, identically, and this is the control whose registration the review named first. It is the completeness half of the primitive. THM-0014 has no completeness clause. Here, under NP-106.
 - `signature_is_deterministic_for_fixed_seed` — **not contained.** It asserts `sk.sign(m) == sk.sign(m)`, a property of SIGNING; THM-0014 constrains a VERIFIER and mentions no signer. A randomised Ed25519 signer falsifies this control and leaves every clause of THM-0014 true, because every signature it emits still verifies. NP-170.
@@ -3101,9 +3102,10 @@ without_a_cadence_the_bound_is_the_crls_own_expiry, without_a_crl_the_bound_is_t
 
 ## NP-145 — every correspondence refusal renders to its own operator sentence
 
-**Controls:** `mcp-re-proxy/src/facades/delegated_key_correspondence.rs` (2).
-**Statement.** *Seven distinct correspondence facts render to seven distinct sentences, and
-an unsupported algorithm tells the operator WHICH algorithm was given.*
+**Controls:** `mcp-re-proxy/src/communication_assurance/credential_key_correspondence.rs` (2).
+**Statement.** *Seven distinct correspondence facts render to seven distinct sentences
+through `CredentialKeyCorrespondenceRefusal`'s `Display`, and an unsupported algorithm tells
+the operator WHICH algorithm was given.*
 **If false.** An operator reading two different incidents reads the same sentence, and
 cannot tell an empty chain from an unreachable signer.
 **Likely owner:** none. THM-0026 is the authority and it stops one level above the rendering:
@@ -3115,8 +3117,10 @@ the deployment to look at"*, and naming the OID is not naming a half. A unit dec
 distinct sentences under a theorem that states three distinguishable refusal values would be
 the registration ADR-069 §5 calls strictly worse than none.
 
-Two other controls of this record landed, in `facades/asserted_identity.rs`, under THM-0023
-as part of `proxy.asserted_identity_delegation`; the third is separated as NP-187.
+Two other controls of this record measured the trusted-ingress facade's delegation to the
+peer-identity value owner. RA3-002 deletes that facade — its callers construct
+`PeerIdentityValue` directly — so both controls and `proxy.asserted_identity_delegation`
+are retired with it. The third is separated as NP-187.
 **Packet:** `verification/reviews/packets/adr069-np-145-np-186-np-187-ratification-2026-09-20.md`.
 **Severity:** `medium`.
 
@@ -3522,26 +3526,6 @@ refuses.
 nothing else — which is what "one `test_features` set per battery" makes the only shape
 available.
 
-## NP-173 — every inner-process log event renders under the brief's own tag
-
-**Control:** `mcp-re-proxy/src/log_sink.rs::log_event_tags_match_the_brief`.
-**Carrier:** `mcp-re-proxy/src/log_sink.rs` — `InnerLogEvent::tag`.
-**Statement.** *Each `InnerLogEvent` variant's `tag()` is the brief's string name for it:
-`inner_spawned`, `inner_spawn_failed`, `inner_exited`, `inner_killed`,
-`inner_stderr_truncated`, `inner_protocol_error`, `inner_request_forwarded`,
-`inner_response_signed`.*
-**If false.** The inner-process event stream renames a fact, so an operator's filter or an
-alert keyed on a tag silently stops matching the event it was written for.
-**Likely owner:** none. `log_sink.rs` is in no unit's `paths`.
-**Root relationship.** None — no theorem reaches the inner-event log vocabulary.
-**Severity:** `medium`.
-**Why this record exists at all.** The control was filed under NP-066, *no record enqueued
-before teardown is lost*, and it touches no queue, no drain and no teardown path: delete the
-entire drain and it stays green. A control filed under a proposition it cannot falsify is a
-registry saying a proposition has evidence it does not have, and no gate over this registry
-reads a control's body — every existing check is about shape. This one was found by a human
-reading the test.
-
 ## NP-174 — the client posture line reports the floor the deployment actually has
 
 **Controls:** `mcp-re-client/src/main.rs` (2).
@@ -3837,32 +3821,6 @@ decision document at all. The Slice 1 serving battery lives in `proxy.authorizat
 which no theorem supports, so an R1 there closes nothing. Packet at
 `verification/reviews/packets/adr069-np-163-np-191-ratification-2026-09-20.md`.
 
-## NP-186 — a static identity provider yields its identity ignoring the request
-
-**Controls:** `mcp-re-proxy/src/transport/mod.rs` (1).
-**Statement.** *`StaticIdentityProvider` answers with the identity it was built with
-whatever headers the request carries, and with `None` when it was built with none.*
-**If false.** A degenerate provider would vary its answer with request content — but no
-serving path holds one: direct-TLS identity is resolved functionally by
-`tls::resolve_channel_peer`, and the `TransportBindingProvider` seam is reached by no
-production configuration.
-**Likely owner:** none, and probably none ever. This is the one control of NP-075 that is
-not about the binding relation. It measures a fixture: the type's own documentation says
-*"Useful in tests and as a degenerate provider"*, and what it asserts is that a constant
-function is constant.
-
-**Why it is not dispositioned `not-evidence` here.** It very likely is not evidence, but
-none of the thirteen recorded families covers it — the nearest, ND-009, is scoped to
-data-structure API robustness, and stretching a family's scope to absorb a control is the
-same defect as widening a unit's proposition to absorb one. Minting a fourteenth family is
-excluded from this slice, so the control is carried as an identified proposition until a
-slice that may mint one reaches it.
-
-The other six controls of NP-075 landed as `proxy.transport_binding_application` under
-THM-0034, falsifier `M339`.
-**Packet:** `verification/reviews/packets/adr069-np-145-np-186-np-187-ratification-2026-09-20.md`.
-**Severity:** `medium`.
-
 ## NP-187 — the legacy and authority identity vocabularies convert field for field
 
 **Controls:** `mcp-re-proxy/src/facades/asserted_identity.rs` (1).
@@ -3996,3 +3954,41 @@ wrongly, and it does not resolve symbols: a symbol sweep over this repository pr
 roughly 60% noise before hand-triage, which makes it a review instrument and not a
 merge-path control. A control that covers one class and is recorded as covering the
 category is the same defect one level up.
+
+
+## NP-199 — a test-only cargo feature is enabled by no normal or build dependency
+
+**Control:** `scripts/fixture_feature_gate.py`.
+**Carrier:** `mcp-re-demo/Cargo.toml`, and every workspace member manifest the gate reads.
+**Statement.** *No normal or build dependency in this workspace enables a feature declared
+test-only; only a dev-dependency table may.*
+**If false.** Cargo unifies features across normal dependencies within one invocation, so a
+single sibling line puts the feature on **every** build whose graph contains that sibling —
+including the library a production consumer links. This was measured, not imagined:
+`mcp-re-demo` is a default workspace member under `resolver = "2"` and carried
+
+```toml
+mcp-re-host = { path = "../mcp-re-host", features = ["test-fixtures"] }
+```
+
+so `cargo tree -e features,no-dev --workspace` found `test-fixtures` **enabled in the
+production closure**. `SeededNonceSource` has no entropy and `FixedClock` has no clock behind
+it; a deployment that could construct either could be given predictable nonces or pinned to a
+frozen `created`/`expires`, by configuration alone, with every request still well-formed and
+correctly signed.
+
+**Why `fixture_boundary.rs`'s three controls did not catch it.** They were not weak, they were
+scoped. All three read `mcp-re-host/Cargo.toml` through `include_str!` — the right instrument
+for the two halves they own (the `#[cfg]` on each item, the feature not defaulted) and for the
+third way in they name (the **self** dev-dependency, which was correct throughout). The
+offending line is in a **sibling's** file, and `include_str!` cannot reach it — under Bazel the
+sibling manifest is not even in the sandbox. A control in the owning crate is structurally
+incapable of stating this property, which is why the carrier is a repository-scoped gate.
+
+Three doors of four. The fourth is the one that was open.
+
+**Likely owner:** `host.request_freshness_inputs`, whose theorem THM-0114 claims the
+deterministic fixtures cannot reach a production build. This proposition is a **premise** of
+that claim rather than a restatement of it: the theorem is about the items and their gate, and
+this is about whether any consumer turns the gate on. The claim was not narrowed and no fixture
+was deleted to satisfy this gate — what changed is that the claim became true of the workspace.

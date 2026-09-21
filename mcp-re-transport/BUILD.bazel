@@ -125,6 +125,24 @@ nt_rust_test(
 # `:mcp_re_transport` above is never built with this feature; production and the
 # production binaries link only the verifying instance. Built on every
 # `bazel test //...` (NOT `manual`) so it can never silently fail to compile.
+# ADR-MCPRE-052: `MtlsRemoteTransport` implements `RemoteTransport`, a trait owned by
+# `mcp_re_client_proxy`. An impl is tied to the rlib that defines the trait, so a battery
+# on the pre-052 chain needs this crate on that chain too or the impl does not apply —
+# measured as "the trait bound `MtlsRemoteTransport: RemoteTransport` is not satisfied".
+nt_rust_library(
+    name = "mcp_re_transport_pre052",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "mcp_re_transport",
+    edition = "2021",
+    deps = [
+        "//mcp-re-client-core:mcp_re_client_core_pre052",  # keep
+        "//mcp-re-client-proxy:mcp_re_client_proxy_pre052",  # keep
+        "@crates_mcp_re//:rustls",
+        "@crates_mcp_re//:rustls-pki-types",
+        "@crates_mcp_re//:thiserror",
+    ],
+)
+
 nt_rust_library(
     name = "mcp_re_transport_fault",
     srcs = glob(["src/**/*.rs"]),

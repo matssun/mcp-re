@@ -91,9 +91,13 @@ status = "unreviewed"
 # ADR-MCPRE-063 Slice 2 moved credential/key correspondence to its own authority: 1042 ->
 # 1013. The SHA moves with the number, because this field records where a measurement was
 # ESTABLISHED and c81df3e never contained a 1013-line tls.rs.
+# RA3-002 shrank this entry from 674 to 670: the asserted-identity vocabulary left the file
+# and the correspondence refusal's rendering landed at its own owner. An ordinary ratchet
+# decrease, not a measurement correction — the bytes changed, so the origin/main-identical
+# precondition does not hold and the entry is pinned at what it now measures.
 [[debt]]
 path = "mcp-re-proxy/src/tls.rs"
-baseline_prod_loc = 674
+baseline_prod_loc = 670
 baseline_sha = "b142a7a"
 status = "reviewed-exception"
 review_ref = "EX-004 in docs/architecture/review-dispositions.md"
@@ -117,37 +121,30 @@ review_ref = "EX-004 in docs/architecture/review-dispositions.md"
 # names, plus the wire vocabulary, the composition, and the prototype the rulings retain.
 
 # Same migration, same rule: 1305 -> 1274 when the identity-value invariant moved to its
-# owner and the historical vocabulary moved to `asserted_identity_facade`.
+# owner and the historical vocabulary moved to `facades/asserted_identity.rs`.
 # MCPRE-156 implemented EX-005's disposition: `transport.rs` split at the REACHABILITY
 # boundary into the live channel-binding authority and the deferred ingress-attestation
 # capability. The debt moves WITH the two halves, and the sum rises from 1268 to 1350
 # because each half now carries the module note stating which reachability rule governs it
 # — which is precisely what the census found missing, and is not headroom: neither entry
-# may grow from here.
+# may grow from here. RA3-002 shrank this entry from 338 to 298 by deleting the provider
+# seam, the asserted-identity re-export block and the historical-vocabulary controls.
 [[debt]]
 path = "mcp-re-proxy/src/transport/mod.rs"
-baseline_prod_loc = 338
+baseline_prod_loc = 298
 baseline_sha = "94fcc0a"
 status = "reviewed-exception"
 review_ref = "EX-005 in docs/architecture/review-dispositions.md"
 
 # EX-005's ingress disposition is implemented. `ingress.rs` split along the boundary its own
-# source already drew: two FROZEN wire formats, `mcp-re/lb-ingress-assertion/v1` (Mode B /
-# Tier 3) and `.../v2` (Mode C / Tier 4), which share no preimage, no field layout and no
-# verifier order. The facade (`ingress/mod.rs`, 74 lines) is under the threshold and holds
-# no entry; the debt moves WITH the two formats, because dropping it on a path change would
-# launder 1012 registered lines as progress.
+# source already drew: the FROZEN wire format `mcp-re/lb-ingress-assertion/v2` (Mode C /
+# Tier 4) owns its preimage, field layout and verifier order. The facade (`ingress/mod.rs`)
+# is under the threshold and holds no entry; the debt moves WITH the format, because
+# dropping it on a path change would launder registered lines as progress.
 #
-# 1012 -> 334 + 673, plus the facade's 74. Each version now carries the module note stating
-# which frozen format it owns, and the facade carries the disjointness test neither version
-# can state alone. Neither entry may grow from here.
-[[debt]]
-path = "mcp-re-proxy/src/transport/ingress/v1.rs"
-baseline_prod_loc = 334
-baseline_sha = "b142a7a"
-status = "reviewed-exception"
-review_ref = "EX-005 in docs/architecture/review-dispositions.md"
-
+# RA3-002 deleted the Mode B / v1 format on the ruling that put the load balancer outside
+# the trusted computing base, so its 334-line entry is REMOVED: a debt whose file no longer
+# exists is paid, and the registry may only shrink. The v2 entry may not grow from here.
 [[debt]]
 path = "mcp-re-proxy/src/transport/ingress/v2.rs"
 baseline_prod_loc = 673
@@ -295,7 +292,7 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-proxy/src/exchange_state.rs"
-baseline_prod_loc = 906
+baseline_prod_loc = 892
 baseline_sha = "a15fc1e"
 status = "reviewed-exception"
 review_ref = "EX-001 in docs/architecture/review-dispositions.md"
@@ -345,7 +342,7 @@ status = "unreviewed"
 # progress — and the number falls to 707 because the actor projection left with it.
 [[debt]]
 path = "mcp-re-http-profile/src/bodyless/mod.rs"
-baseline_prod_loc = 529
+baseline_prod_loc = 408
 baseline_sha = "255465e"
 status = "unreviewed"
 
@@ -446,7 +443,7 @@ status = "unreviewed"
 # because the path changed would launder 522 registered lines as progress.
 [[debt]]
 path = "mcp-re-http-profile/src/admission/mod.rs"
-baseline_prod_loc = 520
+baseline_prod_loc = 509
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
@@ -494,7 +491,7 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-http-profile/src/sign.rs"
-baseline_prod_loc = 462
+baseline_prod_loc = 408
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
@@ -537,9 +534,12 @@ baseline_prod_loc = 429
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
+# RA3-002 shrank this entry from 420 to 407 by removing eight crate-root `pub use` lines
+# for deleted items. An ordinary ratchet decrease, not a measurement correction: the bytes
+# changed, so the entry is pinned at what it now measures and may not grow back.
 [[debt]]
 path = "mcp-re-proxy/src/lib.rs"
-baseline_prod_loc = 420
+baseline_prod_loc = 407
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
@@ -599,7 +599,7 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-http-profile/src/rejection/mod.rs"
-baseline_prod_loc = 290
+baseline_prod_loc = 267
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
@@ -616,9 +616,21 @@ baseline_sha = "b142a7a"
 status = "reviewed-exception"
 review_ref = "EX-008 in docs/architecture/review-dispositions.md"
 
+# RA3-003 shrank this entry from 342 to 335: `open` and `with_bootstrap` were deleted and
+# `with_bounds` became the floor's only constructor, carrying the two doc facts they held. An
+# ordinary ratchet decrease, not a measurement correction — the bytes changed, so the
+# origin/main-identical precondition does not hold and the entry is pinned at what it now
+# measures, with zero headroom.
+#
+# `baseline_sha` is deliberately NOT moved, and that is a departure from the convention stated
+# at :86-93. For an entry a PR changes, the commit where the measurement is ESTABLISHED is the
+# squash commit, which does not exist while the PR is open; a branch SHA is discarded by the
+# squash and would claim provenance for a commit that will never be on main. The convention is
+# unsatisfiable at authoring time, and d1fc5fa/b142a7a are stale on three entries for that one
+# reason, not three oversights. Recorded rather than papered over.
 [[debt]]
 path = "mcp-re-client-proxy/src/manifest_floor.rs"
-baseline_prod_loc = 342
+baseline_prod_loc = 335
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
@@ -720,7 +732,7 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-http-profile/src/lib.rs"
-baseline_prod_loc = 237
+baseline_prod_loc = 232
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
@@ -760,12 +772,6 @@ status = "unreviewed"
 [[debt]]
 path = "mcp-re-proxy/src/replay_tier.rs"
 baseline_prod_loc = 215
-baseline_sha = "d1fc5fa"
-status = "unreviewed"
-
-[[debt]]
-path = "mcp-re-core/src/crypto.rs"
-baseline_prod_loc = 213
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 

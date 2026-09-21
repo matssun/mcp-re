@@ -8,8 +8,8 @@
 //! cryptographic `;req` floor.
 
 use mcp_re_core::SigningKey;
+use mcp_re_http_profile::rejection::pre_052_direct_root::sign_pre_052_direct_root_response_for_negative_test;
 use mcp_re_http_profile::sign_request_full;
-use mcp_re_http_profile::sign_response_full;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -164,7 +164,7 @@ fn full_response_roundtrip_binds_request_evidence() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec(),
     };
-    sign_response_full(
+    sign_pre_052_direct_root_response_for_negative_test(
         &mut rsp,
         &req,
         &ev,
@@ -447,7 +447,7 @@ fn response_request_evidence_mismatch_emits_request_binding_mismatch() {
         body: br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec(),
     };
     // ;req is bound to req_a, but the body block advertises req_b's evidence.
-    sign_response_full(
+    sign_pre_052_direct_root_response_for_negative_test(
         &mut rsp,
         &req_a,
         &ev_b,
@@ -504,7 +504,7 @@ fn a_valid_exchange_cannot_be_verified_as_the_answer_to_a_different_request() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: br#"{"jsonrpc":"2.0","id":2,"result":{"ok":true}}"#.to_vec(),
     };
-    sign_response_full(
+    sign_pre_052_direct_root_response_for_negative_test(
         &mut rsp_b,
         &req_b,
         &ev_b,
@@ -588,7 +588,7 @@ fn cryptographic_req_splice_still_fails_at_the_floor() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: br#"{"jsonrpc":"2.0","id":2,"result":{"ok":true}}"#.to_vec(),
     };
-    sign_response_full(
+    sign_pre_052_direct_root_response_for_negative_test(
         &mut rsp_b,
         &req_b,
         &ev_b,
@@ -670,7 +670,7 @@ fn a_block_declaring_a_signer_it_did_not_sign_as_fails() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec(),
     };
-    sign_response_full(
+    sign_pre_052_direct_root_response_for_negative_test(
         &mut rsp,
         &req,
         verified.evidence(),

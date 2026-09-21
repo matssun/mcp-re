@@ -8,7 +8,9 @@
 //!     (redis-async / single-store-fail-closed);
 //!  2. under fleet-strict it admits redis-wait-quorum / linearizable;
 //!  3. an HTTP-profile request flows verify_request_full → (adapter) dispatch →
-//!     sign_response_full → verify_response_full end-to-end;
+//!     response signing → verify_response_full end-to-end. The response leg here is
+//!     signed by the pre-052 ROOT emitter, so what this proves is the DISPATCH path,
+//!     not the shipped emission mode — the proxy emits `sign_delegated_response_full`;
 //!  4. beneath the tier gate, the dispatcher's core is_single_process_reference
 //!     refusal still fires (defense in depth) even with an acceptable declared tier.
 
@@ -19,8 +21,8 @@ use mcp_re_core::ReplayDecision;
 use mcp_re_core::ReplayDurabilityClass;
 use mcp_re_core::SigningKey;
 
+use mcp_re_http_profile::rejection::pre_052_direct_root::sign_pre_052_direct_root_response_for_negative_test;
 use mcp_re_http_profile::sign_request_full;
-use mcp_re_http_profile::sign_response_full;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -348,7 +350,7 @@ fn http_profile_request_flows_verify_dispatch_serve_end_to_end() {
         subject: "did:example:server-1".into(),
         keyid: SERVER_KEY_ID.into(),
     };
-    sign_response_full(
+    sign_pre_052_direct_root_response_for_negative_test(
         &mut resp,
         &req,
         &req_evidence,

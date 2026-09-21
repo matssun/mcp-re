@@ -6,8 +6,12 @@
 //!
 //! ```text
 //! sign_request_full → verify_request_full → dispatch_request
-//!                                          → sign_response_full → verify_response_full
+//!                                          → (pre-052 root response signing) → verify_response_full
 //! ```
+//!
+//! The response leg is the PRE-052 root-signed emitter, retained as a fixture: this
+//! battery pins the body-evidence and continuation bytes, not the shipped emission
+//! mode, which is `sign_delegated_response_full`.
 //!
 //! — and proves the `se.syncom/mcp-re.http.request` / `.response` body evidence
 //! blocks, the five-tuple replay key, and the MRTR continuation binding are
@@ -39,8 +43,8 @@ use mcp_re_core::ReplayDecision;
 use mcp_re_core::ReplayDurabilityClass;
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::dispatch_request;
+use mcp_re_http_profile::rejection::pre_052_direct_root::sign_pre_052_direct_root_response_for_negative_test;
 use mcp_re_http_profile::sign_request_full;
-use mcp_re_http_profile::sign_response_full;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -240,7 +244,7 @@ fn full_exchange_activates_all_blocks() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_response_full(
+    sign_pre_052_direct_root_response_for_negative_test(
         &mut rsp,
         &req,
         &ev,
@@ -308,7 +312,7 @@ fn response_splice_fails_in_integrated_path() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_response_full(
+    sign_pre_052_direct_root_response_for_negative_test(
         &mut rsp_b,
         &req_b,
         &ev_b,
@@ -347,7 +351,7 @@ fn response_evidence_mismatch_emits_request_binding_mismatch() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_response_full(
+    sign_pre_052_direct_root_response_for_negative_test(
         &mut rsp,
         &req_a,
         &ev_b,

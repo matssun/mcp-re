@@ -1,22 +1,18 @@
-//! `mcp-re-demo` — the MCP-RE single-node demo harness crate (MCP-RE-EPIC-P6.5).
+//! `mcp-re-demo` — the MCP-RE demo's certificate material (MCP-RE-EPIC-P6.5).
 //!
-//! This umbrella crate holds the host/ambassador side of the demo. For MCPS-046
-//! (Child Issue 2) it provides [`DemoHostClient`], a thin demo client built on
-//! the EXISTING `mcp-re-host` [`HostSession`](mcp_re_host::HostSession): it signs
-//! MCP-RE requests (nonce from an injected RNG, freshness from an injected clock +
-//! configured lifetime), tracks the `request_hash` by JSON-RPC id, and verifies a
-//! signed server response against the STORED hash. The language model never holds
-//! keys — the client exposes the signer identity but NO private-key accessor.
+//! One crate, one job: [`DemoFixtures`] mints the demo's mTLS material — a server CA
+//! and leaf, a client CA and leaf, a mismatched client identity, `trust.json`, and a
+//! signing seed — as the SINGLE source of truth the proxy/client round-trip tests are
+//! wired from. Two tests reading two independently minted material sets prove nothing
+//! about each other; that is why the set is generated once, here.
+//!
+//! [`DemoFixtureSpec`] is the request and [`DemoFixtureFiles`] the materialized paths.
 //!
 //! Crate boundary (ADR-MCPS-001): this crate lives INSIDE the `components/mcp-re`
-//! workspace and depends only on its sibling in-workspace crates (`mcp-re-host`,
-//! `mcp-re-core`) plus the pure serde subset already pinned by the workspace — no
-//! crate outside the workspace and no Python component.
-//!
-//! Transport: the demo client produces and consumes raw JSON-RPC bytes and drives
-//! them to a remote `mcp-re-proxy` over the mTLS transport ([`MtlsClientRunner`]).
-//! MCP-RE is HTTP-profile only — stdio is out of scope; a stdio-only host uses an
-//! external plain-MCP adapter (e.g. FastMCP) that speaks HTTP to MCP-RE.
+//! workspace and depends only on `mcp-re-core` plus rcgen/time/serde_json. It holds no
+//! client, no session and no transport — MCP-RE is HTTP-profile only, and the stdio demo
+//! servers, the bridge and the runnable client binaries were removed with that decision.
+//! A stdio-only host uses an external plain-MCP adapter (e.g. FastMCP) speaking HTTP.
 
 // ADR-MCPRE-061 Amendment 1 §3.1 — this crate holds no production `unsafe`, and `forbid`
 // (unlike `deny`) cannot be overridden by an inner `#[allow]` anywhere in it. Acquiring

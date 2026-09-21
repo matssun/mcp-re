@@ -127,6 +127,11 @@ mod tests {
             "spiffe://example.org/a\nb",
             "spiffe://example.org/a\0b",
             "spiffe://example.org/a\tb",
+            // The header-smuggling shape itself: a CRLF followed by what would become a
+            // second header if the value ever reached a header writer.
+            "agent\r\nX-Spoof: y",
+            // A bare control character that is neither CR, LF, NUL nor TAB.
+            "ag\u{7}ent",
         ] {
             assert_eq!(
                 PeerIdentityValue::interpret(candidate),

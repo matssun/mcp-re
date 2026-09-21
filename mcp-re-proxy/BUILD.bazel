@@ -123,7 +123,6 @@ _PROXY_LIB_SRCS = [
     # decides nothing.
     "src/facades/mod.rs",
     "src/facades/asserted_identity.rs",
-    "src/facades/delegated_key_correspondence.rs",
     "src/communication_assurance/certificate_chain_evidence.rs",
     "src/communication_assurance/certificate_identity_fields.rs",
     "src/communication_assurance/certificate_identity_interpreter.rs",
@@ -356,10 +355,6 @@ _PROXY_LIB_SRCS = [
     # The writer's teardown obligation: the bound, the wait, and the two-valued outcome.
     "src/audit_sink/drain.rs",
     "src/audit_sink/writer.rs",
-    # Inner-server lifecycle logging seam (transport-agnostic; used by the async
-    # dispatch path). Split out of inner_launch so it stays in the PEP when the
-    # stdio subprocess machinery relocates to mcp-re-stdio-bridge.
-    "src/log_sink.rs",
     # Issue #4034: PKCS#11/HSM-backed KeySource (behind #[cfg(feature =
     # "pkcs11_keysource")]; cfg'd out of the default build).
     "src/pkcs11_keysource/mod.rs",
@@ -610,9 +605,7 @@ _PROXY_LIB_SRCS = [
     "src/redis_admission_source/refusal_report.rs",
     "src/transport/mod.rs",
     "src/transport/ingress/mod.rs",
-    "src/transport/ingress/v1.rs",
     "src/transport/ingress/v2.rs",
-    "src/transport/ingress/v1_wire.rs",
     "src/transport/ingress/v2_wire.rs",
     "src/transport/identity.rs",
     # ADR-MCPS-021: bounded trust-propagation cache (revocation window T).
@@ -709,6 +702,35 @@ _PROXY_EXT_CRATES = [
     # (part of the online_ocsp module; linked by every ext flavor).
     "@crates_mcp_re//:asn1-rs",
 ]
+
+# ADR-MCPRE-052: the same dependency list with the http-profile's pre-052 fixture flavor
+# in place of the plain one. A test target that links BOTH a proxy built on the plain
+# profile and the fixture flavor gets two rlibs of one crate name and 37 type errors
+# ("multiple different versions of crate `mcp_re_http_profile`"), measured. So a battery
+# that needs the fixtures takes the whole chain from this list.
+_PROXY_LIB_DEPS_PRE052 = [
+    d if d != "//mcp-re-http-profile:mcp_re_http_profile" else "//mcp-re-http-profile:mcp_re_http_profile_pre052"
+    for d in _PROXY_LIB_DEPS
+]
+
+# The plain-profile proxy is what ships; this flavor exists only so the batteries that
+# exercise the REFUSAL of direct-root response signing can construct one.
+nt_rust_library(
+    name = "mcp_re_proxy_pre052",
+    srcs = _PROXY_LIB_SRCS,
+    crate_name = "mcp_re_proxy",
+    edition = "2021",
+    deps = _PROXY_LIB_DEPS_PRE052,
+)
+
+nt_rust_library(
+    name = "mcp_re_proxy_async_pre052",
+    srcs = _PROXY_LIB_SRCS,
+    crate_features = ["async_serve"],
+    crate_name = "mcp_re_proxy",
+    edition = "2021",
+    deps = _PROXY_LIB_DEPS_PRE052,
+)
 
 _PROXY_EXT_DEPS = _PROXY_LIB_DEPS + _PROXY_EXT_CRATES
 
@@ -1039,10 +1061,10 @@ nt_rust_test(
         "MCP_RE_TRUST_PLANE_SRC": "$(rlocationpath src/trust_plane/mod.rs)",
     },
     deps = [
-        ":mcp_re_proxy",
+        ":mcp_re_proxy_pre052",  # keep
         ":mcp_re_proxy_cli",
         "//mcp-re-core:mcp_re_core",
-        "//mcp-re-http-profile:mcp_re_http_profile",
+        "//mcp-re-http-profile:mcp_re_http_profile_pre052",  # keep
         "//mcp-re-test-paths:mcp_re_test_paths",
         "//mcp-re-transport:mcp_re_transport",
         "@crates_mcp_re//:libc",
@@ -1151,17 +1173,17 @@ nt_rust_test(
         # The hermetic capsule-anchor service in `transparency_e2e_test` reads and writes
         # that contract's STANDARD-base64 JSON envelope, the way the real one does.
         "@crates_mcp_re//:base64",
-        "//mcp-re-client-core:mcp_re_client_core",
-        "//mcp-re-client-proxy:mcp_re_client_proxy",
+        "//mcp-re-client-core:mcp_re_client_core_pre052",  # keep
+        "//mcp-re-client-proxy:mcp_re_client_proxy_pre052",  # keep
         "//mcp-re-core:mcp_re_core",
-        "//mcp-re-http-profile:mcp_re_http_profile",
+        "//mcp-re-http-profile:mcp_re_http_profile_pre052",  # keep
         # ADR-MCPRE-065 Slice 1: the frozen `mcp-re.authorization_*` denial taxonomy the
         # authorization controls refuse in.
         "//mcp-re-policy:mcp_re_policy",
         # Resolves the auditor binary under Bazel runfiles OR a plain cargo build.
         "//mcp-re-test-paths:mcp_re_test_paths",
-        "//mcp-re-transport:mcp_re_transport",
-        ":mcp_re_proxy_async",
+        "//mcp-re-transport:mcp_re_transport_pre052",  # keep
+        ":mcp_re_proxy_async_pre052",  # keep
         "@crates_mcp_re//:bytes",
         "@crates_mcp_re//:http-body-util",
         "@crates_mcp_re//:hyper",

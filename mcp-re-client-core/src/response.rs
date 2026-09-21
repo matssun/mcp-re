@@ -372,7 +372,7 @@ mod delegated_tests {
     use mcp_re_http_profile::build_delegated_rejection;
     use mcp_re_http_profile::build_delegated_rejection_preflight;
     use mcp_re_http_profile::custody::DelegatedKeyWindow;
-    use mcp_re_http_profile::sign_response_full;
+    use mcp_re_http_profile::rejection::pre_052_direct_root::sign_pre_052_direct_root_response_for_negative_test;
     use mcp_re_http_profile::ActorIdentity;
     use mcp_re_http_profile::AudienceTuple;
     use mcp_re_http_profile::CustodyConfig;
@@ -1030,7 +1030,7 @@ mod delegated_tests {
             headers: vec![("content-type".into(), "application/json".into())],
             body: success_body(),
         };
-        sign_response_full(
+        sign_pre_052_direct_root_response_for_negative_test(
             &mut resp,
             signed.request(),
             signed.evidence(),

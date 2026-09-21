@@ -2,10 +2,12 @@
 
 # NP-145, NP-186, NP-187 — R6 ratification packet: three residues, three different reasons
 
-**Disposition:** R6 for all three. NP-145 closes in part — two of its five controls landed
-as part of `unit://proxy.asserted_identity_delegation` under THM-0023 — and its remaining
-three controls are TWO propositions, so one stays under NP-145 and one is separated as
-NP-187 under RR-002 C5. NP-186 is NP-075's residue: six of NP-075's seven controls landed as
+**Disposition:** R6 for all three. NP-145 closes in part — two of its five controls measured
+the trusted-ingress facade's delegation, which RA3-002 removes by deleting the facade: its
+callers now construct `PeerIdentityValue` directly, so the delegation is a fact about the
+call sites rather than a property to keep honest, and `unit://proxy.asserted_identity_delegation`
+is retired with it. Its remaining three controls are TWO propositions, so one stays under
+NP-145 and one is separated as NP-187 under RR-002 C5. NP-186 is NP-075's residue: six of NP-075's seven controls landed as
 `unit://proxy.transport_binding_application` under THM-0034, and the seventh is not about
 the binding at all.
 
@@ -23,10 +25,10 @@ conversion that reassigns a case repoints a deployment at another certificate fi
 
 ## NP-145's residue: the correspondence RENDERING
 
-**2 controls**, carrier `mcp-re-proxy/src/facades/delegated_key_correspondence.rs`:
+**2 controls**, carrier `mcp-re-proxy/src/communication_assurance/credential_key_correspondence.rs`:
 
-- `lib#facades::delegated_key_correspondence::tests::every_fact_renders_to_a_distinct_sentence`
-- `lib#facades::delegated_key_correspondence::tests::an_unsupported_algorithm_tells_the_operator_which_algorithm_was_given`
+- `lib#communication_assurance::credential_key_correspondence::tests::every_fact_renders_to_a_distinct_sentence`
+- `lib#communication_assurance::credential_key_correspondence::tests::an_unsupported_algorithm_tells_the_operator_which_algorithm_was_given`
 
 THM-0026, statement, verbatim:
 
@@ -113,3 +115,16 @@ from each other: both assert that the historical `String` keeps facts apart, and
 the same way.
 
 **Severities:** NP-145 `medium`, NP-186 `medium`, NP-187 `high`.
+
+## NP-186 — RETIRED by RA3-002
+
+The proposition's subject is deleted: `StaticIdentityProvider` and the
+`TransportBindingProvider` trait it was the only implementor of. A seam with one test-only
+implementor is a seam nothing crosses — no production path called `verified_identity`,
+THM-0034 says nothing about any provider, and the single control asserted that a constant
+function is constant.
+
+The compile replaces it, and says more than it did: a surviving consumer would be a path
+expression naming a deleted item. The `not-evidence` family question this record left open —
+that none of the thirteen recorded families covered a fixture control — does not need
+answering, because there is no longer a control to classify.

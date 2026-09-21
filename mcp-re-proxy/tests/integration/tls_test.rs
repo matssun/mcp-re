@@ -377,15 +377,18 @@ fn crlf_in_dns_san_and_cn_fails_closed_like_the_header_path() {
 
 #[test]
 fn oversized_uri_san_fails_closed_at_the_same_bound_as_the_header_path() {
-    // Length is bounded by MAX_ASSERTED_IDENTITY_LEN for BOTH identity provenances:
+    // Length is bounded by MAX_PEER_IDENTITY_LEN for BOTH identity provenances:
     // an issuer-minted SAN is no more trustworthy as to size than a forwarded
     // header. At the bound it is admitted; one byte over, it is not.
     let ca = make_ca();
     let prefix = "spiffe://example.org/";
-    let pad = mcp_re_proxy::MAX_ASSERTED_IDENTITY_LEN - prefix.len();
+    let pad = mcp_re_proxy::communication_assurance::MAX_PEER_IDENTITY_LEN - prefix.len();
 
     let at_bound = format!("{prefix}{}", "a".repeat(pad));
-    assert_eq!(at_bound.len(), mcp_re_proxy::MAX_ASSERTED_IDENTITY_LEN);
+    assert_eq!(
+        at_bound.len(),
+        mcp_re_proxy::communication_assurance::MAX_PEER_IDENTITY_LEN
+    );
     let san: SanType = SanType::URI(at_bound.as_str().try_into().expect("ascii is IA5"));
     let (leaf, _key) = make_leaf(&ca, vec![san], None, true);
     let id = extract_identity(leaf.as_ref(), IdentityPolicy::UriSan)

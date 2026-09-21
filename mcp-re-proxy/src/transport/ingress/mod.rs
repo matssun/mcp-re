@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The DEFERRED ingress-attestation capability (ADR-MCPS-023 Tier 3, issue #71).
+//! The DEFERRED ingress-attestation capability (ADR-MCPS-023 Tier 4, issue #71).
 //!
 //! # Unreachable, on purpose
 //!
 //! Nothing in this module can be reached from a serving path. `--transport-binding
-//! lb-assertion` and `--transport-binding attested-ingress` are refused at Layer-A
-//! validation, and [`TransportBinding`](super::TransportBinding) has exactly one
-//! constructor — the Mode-A exact match. EX-005 measured this half as 913 of the
-//! pre-split file's 1268 production lines.
+//! attested-ingress` is refused at Layer-A validation, and
+//! [`TransportBinding`](super::TransportBinding) has exactly one constructor — the Mode-A
+//! exact match.
 //!
 //! **That is an intentional deployment fact and this module is not the place to change
 //! it.** The capability is not deleted, because the Mode-C verifier is a correct
@@ -15,40 +14,29 @@
 //! selectable, because the rebinding of an attestation onto the RFC 9421 request evidence
 //! is not yet specified. `docs/AGENT_INSTRUCTIONS.md` §9 names both mistakes.
 //!
-//! Mode B (`LbAssertion`) is refused for a different reason, and it is a RULING rather
-//! than a gap: the load balancer belongs outside the trusted computing base.
-//!
 //! # What changes here
 //!
 //! Its change rule is the opposite of the live half's: nothing here is exercised by a
 //! deployment, so the only thing that keeps it correct is its own test suite. Keep the
 //! suite exhaustive, and do not weaken a check on the grounds that nothing reaches it.
 //!
-//! # Two frozen formats, one capability
+//! # One frozen format, one capability
 //!
 //! ```text
-//! ingress capability          this module — what these mechanisms ARE, and the
-//!     |                       attestor keys a node trusts for either of them
-//!     +-- v1  Mode B / Tier 3  mcp-re/lb-ingress-assertion/v1
+//! ingress capability          this module — what the mechanism IS, and the
+//!     |                       attestor keys a node trusts for it
 //!     +-- v2  Mode C / Tier 4  mcp-re/lb-ingress-assertion/v2
 //! ```
 //!
-//! v2 is a NEW frozen format rather than an extension of v1 — a distinct
-//! domain-separation tag, a distinct field layout and a distinct verifier order — so each
-//! version owns its own wire vocabulary, preimage, parser, verifier and rejections.
-//! Nothing here abstracts over the two: an abstraction that made the formats
-//! interchangeable would erase the property their separation exists to guarantee, and the
-//! disjointness test below is what pins it.
+//! The format is FROZEN: it owns its wire vocabulary, preimage, parser, verifier and
+//! rejections as one definition, and its preimage is domain-separated by a
+//! version-qualified tag, so a signature produced under another version of this mechanism
+//! can never be re-framed as one of these. The domain-separation test below is what pins
+//! that.
 
-mod v1;
-mod v1_wire;
 mod v2;
 mod v2_wire;
 
-pub use v1::LbAssertion;
-pub use v1::LbAssertionBinding;
-pub use v1::LbAssertionRejection;
-pub use v1::DEFAULT_LB_ASSERTION_MAX_AGE_SECS;
 pub use v2::AttestedCertVerification;
 pub use v2::AttestedIngressVerified;
 pub use v2::AttestedRevocation;
@@ -58,8 +46,14 @@ pub use v2::LbAssertionV2Rejection;
 
 use mcp_re_core::VerificationKey;
 
-/// A trusted LB verification key, addressed by its key id, used to verify Tier-3
-/// LB-signed assertions. The key id is the opaque label the LB stamps into the
+/// The default freshness window (seconds) for an LB ingress assertion: how far the
+/// assertion's `validation_time` may lag behind the node's `now_unix` and still be
+/// accepted. Small by design — the attestor signs the assertion at the moment it admits
+/// the request, so a legitimate assertion reaches the node within seconds.
+pub const DEFAULT_LB_ASSERTION_MAX_AGE_SECS: i64 = 30;
+
+/// A trusted attestor verification key, addressed by its key id, used to verify
+/// attestor-signed ingress assertions. The key id is the opaque label the LB stamps into the
 /// assertion's `key_id` field; the node looks the verification key up by it.
 #[derive(Debug, Clone)]
 struct LbKeyEntry {
@@ -89,27 +83,18 @@ mod tests {
     use super::*;
     use test_support::in_hand_request_hash;
 
-    /// The two frozen formats are DISJOINT, which is the one property neither version can
-    /// establish alone and the reason they are two modules rather than one with a flag.
-    ///
-    /// For identical shared field values the preimages must differ, because the domain tag
-    /// is the leading bytes — so a v1 signature can never be re-framed as a v2 assertion.
+    /// The frozen format's preimage is domain-separated by a VERSION-QUALIFIED tag,
+    /// which is what keeps a signature produced under one version of the ingress
+    /// assertion from being re-framed as another. The tag is the leading bytes, so the
+    /// separation holds for every field assignment rather than for a chosen one.
     #[test]
-    fn the_two_frozen_formats_have_disjoint_preimages() {
+    fn the_frozen_format_is_domain_separated_by_its_version_tag() {
         let now = 1_000_000;
-        let rh = in_hand_request_hash();
-        let client = "spiffe://example.org/agent-1";
-        let v1 = LbAssertion {
-            key_id: "k".to_string(),
-            asserted_client_identity: client.to_string(),
-            request_hash: rh.clone(),
-            validation_time: now,
-        };
         let v2 = LbAssertionV2 {
             key_id: "k".to_string(),
             ingress_identity: "spiffe://example.org/ingress-attestor-1".to_string(),
-            asserted_client_identity: client.to_string(),
-            request_hash: rh,
+            asserted_client_identity: "spiffe://example.org/agent-1".to_string(),
+            request_hash: in_hand_request_hash(),
             audience: "did:example:server-1".to_string(),
             cert_verification_result: AttestedCertVerification::Verified,
             revocation_result: AttestedRevocation::Good,
@@ -117,14 +102,10 @@ mod tests {
             crl_next_update: now + 3600,
             expires_at: None,
         };
-        assert_ne!(v1.signing_preimage(), v2.signing_preimage());
         assert!(v2
             .signing_preimage()
             .starts_with(b"mcp-re/lb-ingress-assertion/v2"));
         assert!(!v2
-            .signing_preimage()
-            .starts_with(b"mcp-re/lb-ingress-assertion/v1"));
-        assert!(v1
             .signing_preimage()
             .starts_with(b"mcp-re/lb-ingress-assertion/v1"));
     }

@@ -4,42 +4,28 @@ version = "0.17.0"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "MCP-RE mTLS/fixtures demo surface: the host-side HostSession demo client + DemoFixtures cert material (HTTP-profile only; the model never holds keys)."
+description = "MCP-RE demo certificate material: the DemoFixtures mTLS fixture generator (one source-of-truth material set for the proxy/client round-trip tests)."
 
-# MCPS-046 (MCP-RE-EPIC-P6.5): the demo client drives the EXISTING mcp-re-host
-# HostSession to sign requests and verify the bound responses. It depends only on
-# sibling in-workspace crates (mcp-re-host, mcp-re-core) plus serde_json for building
-# request params — no crate outside the workspace, no async runtime. Transport
-# stays in this crate; mcp-re-host remains networking-free (ADR-MCPS-015).
+# The library is `demo_fixtures` and nothing else. It mints the demo's security
+# material — server/client CAs and leaves, trust.json, a signing seed — and every
+# dependency below is one that `src/demo_fixtures.rs` names.
 [dependencies]
-# The deterministic demo binary (src/bin/demo_mtls_client.rs) and the integration
-# tests use mcp-re-host's `FixedClock` / `SeededNonceSource` fixtures, compiled only
-# under its `test-fixtures` feature (audit #81). Because the consumer is a normal
-# (non-test) bin target, the feature is enabled on the NORMAL dependency here.
-# mcp-re-demo is itself the demo/test harness crate (not a production-deployable),
-# so this does not widen any production surface; the demo lib uses only
-# SystemClock/SystemNonceSource.
-mcp-re-host = { path = "../mcp-re-host", features = ["test-fixtures"] }
 mcp-re-core = { path = "../mcp-re-core" }
-mcp-re-policy = { path = "../mcp-re-policy" }
-mcp-re-proxy = { path = "../mcp-re-proxy" }
-mcp-re-transport = { path = "../mcp-re-transport" }
 serde_json = { workspace = true }
-thiserror = { workspace = true }
-# MCPS-055 (MCP-RE-EPIC-P6.6): the shared demo fixtures helper mints the demo's
-# security material (server/client CAs + leaves, trust.json, signing seed) with
-# rcgen. It is a NORMAL (non-dev) dependency because the demo bin generates certs
-# at RUNTIME for `bazel run`. rcgen stays OUT of mcp-re-core/mcp-re-host (pure /
-# transport-free).
+# MCPS-055 (MCP-RE-EPIC-P6.6): the fixture generator mints certificates with rcgen,
+# which stays OUT of mcp-re-core/mcp-re-host (pure / transport-free).
 rcgen = { workspace = true }
 # `now`-relative validity for the short-lived (< strict 3600s) client leaf that
 # lets a `--strict` fleet be driven live (see demo_fixtures::make_leaf_windowed).
 time = { workspace = true }
 
-# Integration tests build a real rustls TLS stack against the proxy, so the
-# transport-layer crates are dev-dependencies of the test binaries even though
-# the library itself never imports rustls directly.
+# The integration test drives a real rustls TLS stack against the proxy. These are
+# the test binary's dependencies, not the library's: the library never names them,
+# and this crate is a default workspace member, so a normal-dependency edge here
+# would unify their features into every build in the workspace.
 [dev-dependencies]
+mcp-re-proxy = { path = "../mcp-re-proxy" }
+mcp-re-transport = { path = "../mcp-re-transport" }
 rustls = { workspace = true }
 rustls-pki-types = { workspace = true }
 mcp-re-test-paths = { path = "../mcp-re-test-paths" }

@@ -17,7 +17,7 @@ use super::v2::AttestedCertVerification;
 use super::v2::AttestedRevocation;
 use super::v2::LbAssertionV2;
 use super::v2::LbAssertionV2Rejection;
-use crate::transport::validate_asserted_identity_value;
+use crate::communication_assurance::PeerIdentityValue;
 
 /// Ceiling on a presented assertion's total wire length, before any field is decoded.
 const MAX_V2_ASSERTION_WIRE_LEN: usize = 64 * 1024;
@@ -108,8 +108,9 @@ pub(super) fn parse(value: &str) -> Result<(LbAssertionV2, String), LbAssertionV
         return Err(LbAssertionV2Rejection::Malformed);
     }
     // Strict shape on the delegated identity (length-bound, no control chars,
-    // non-empty), mirroring the Tier-2/Tier-3 header paths.
-    if validate_asserted_identity_value(&asserted_client_identity).is_err() {
+    // non-empty), mirroring the Tier-2 header path — the rule belongs to the
+    // peer-identity value owner, which is asked rather than re-stated.
+    if PeerIdentityValue::interpret(&asserted_client_identity).is_err() {
         return Err(LbAssertionV2Rejection::Malformed);
     }
     // key_id / ingress_identity / request_hash / audience must be non-empty and

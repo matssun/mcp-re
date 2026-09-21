@@ -1,9 +1,9 @@
-//! Injected nonce-byte source for the host session (MCPS-033, ADR-MCPS-015).
+//! Injected nonce-byte source for host-side signing (MCPS-033, ADR-MCPS-015).
 //!
-//! The session generates each request `nonce` from an injected [`NonceSource`]
-//! and Base64URL-encodes it (MCP_RE_SPEC §2/§5: opaque, Base64URL-safe, ≥128 bits
-//! of entropy). Injection keeps signing deterministic under test while the
-//! production default draws from the OS CSPRNG.
+//! A caller draws each request `nonce` from an injected [`NonceSource`] and
+//! Base64URL-encodes it (MCP_RE_SPEC §2/§5: opaque, Base64URL-safe, ≥128 bits of
+//! entropy). `mcp-re-client`'s `next_nonce` is that caller, over
+//! [`SystemNonceSource`]; injection is what lets a consumer supply its own.
 //!
 //! `getrandom` is the production entropy source: it is already in the mcp-re-host
 //! dependency closure (transitively, via `ed25519-dalek`), is a thin wrapper over
@@ -79,12 +79,11 @@ impl NonceSource for SystemNonceSource {
 /// advancing per byte so successive nonces differ while remaining reproducible.
 ///
 /// It is a TEST provider with NO real entropy and must never reach a production
-/// binary. Because it is reused as an injectable fixture by integration tests
-/// (and the deterministic demo binaries) in this and dependent crates, it is
-/// compiled only under `cfg(test)` or the explicit `test-fixtures` cargo feature
-/// — an *enforced* boundary, not a doc-comment one. A default (production) build
-/// of `mcp-re-host` does not compile this type at all, so a misconfigured
-/// deployment cannot construct a `HostSession` with predictable nonces from it.
+/// binary. Because it is reused as an injectable fixture by integration tests in
+/// this and dependent crates, it is compiled only under `cfg(test)` or the explicit
+/// `test-fixtures` cargo feature — an *enforced* boundary, not a doc-comment one. A
+/// default (production) build of `mcp-re-host` does not compile this type at all, so
+/// a misconfigured deployment cannot draw predictable nonces from it.
 #[cfg(any(test, feature = "test-fixtures"))]
 #[derive(Debug, Clone)]
 pub struct SeededNonceSource {

@@ -111,6 +111,12 @@ stage_static() {
     && python3 scripts/deploy_image_tag_gate.py \
     && python3 scripts/slo_invocation_gate.py --selftest \
     && python3 scripts/slo_invocation_gate.py \
+    `# Fixture-feature gate: a test-only cargo feature enabled by a NORMAL dependency` \
+    `# unifies onto every build in the workspace, including the library a production` \
+    `# consumer links. mcp-re-host's own three controls read its own manifest and are` \
+    `# structurally blind to a sibling's line, which is how this shipped.` \
+    && python3 scripts/fixture_feature_gate.py --selftest \
+    && python3 scripts/fixture_feature_gate.py \
     `# Doc-path gate: a path in current text that the repository does not contain is` \
     `# instruction, not dead code — the reader does not learn the sentence is stale,` \
     `# they learn they cannot find the file. A token resolving ONLY to a gitignored` \

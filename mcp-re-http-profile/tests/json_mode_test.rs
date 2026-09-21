@@ -12,8 +12,8 @@
 //! unattested — evidence that looks complete and covers nothing that matters.
 
 use mcp_re_core::SigningKey;
+use mcp_re_http_profile::rejection::pre_052_direct_root::sign_pre_052_direct_root_response_base_for_negative_test;
 use mcp_re_http_profile::sign_request;
-use mcp_re_http_profile::sign_response;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
@@ -86,7 +86,7 @@ fn signed_sse_response() -> (HttpRequest, HttpResponse) {
         headers: vec![("Content-Type".into(), "text/event-stream".into())],
         body: b"event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n\n".to_vec(),
     };
-    sign_response(
+    sign_pre_052_direct_root_response_base_for_negative_test(
         &mut rsp,
         &req,
         &server_key(),

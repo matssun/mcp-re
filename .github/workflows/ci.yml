@@ -132,6 +132,8 @@ jobs:
         run: |
           python3 scripts/deploy_image_tag_gate.py --selftest
           python3 scripts/deploy_image_tag_gate.py
+          python3 scripts/fixture_feature_gate.py --selftest
+          python3 scripts/fixture_feature_gate.py
 
       # SLO-harness invocation gate: `tls_load_harness_bench` is NOT an #[ignore]
       # test (the file is gated to the redis_replay feature lane), so a documented
@@ -959,8 +961,20 @@ jobs:
       # a missing BINARY exits 101, but a missing FILTER prints `0 passed` and exits
       # 0, which would make a release gate green having measured nothing.
 
-      # §4 — cross-core / cross-replica replay race: exactly one Fresh, N-1 Replay,
-      # zero Fresh when the store is Unavailable (fail-closed). (#314)
+      # §4 — replay race: exactly one Fresh, N-1 Replay, zero Fresh when the store is
+      # Unavailable (fail-closed). (#314)
+      #
+      # In-process, and the gate claims nothing more. The three requirement controls
+      # drive the L2 seam over `InMemoryAsyncAtomicReplayStore` behind a double that
+      # declares the durability class `replay_plane::materialized::assert_durable`
+      # accepts, so the gate no longer measures an arrangement the composition root
+      # refuses; it still does not measure a shipped backend. CROSS-REPLICA is
+      # `replay_race_harness_test.rs` over live Redis and etcd, in
+      # `live-infra-e2e.yml`, not here.
+      #
+      # `--features async_serve` is load-bearing: `async_replay_test.rs` is
+      # `#![cfg(feature = "async_serve")]`, so without it the module compiles to zero
+      # tests and libtest exits 0. `run_test_lane.sh` refuses a zero-count lane.
       - name: Release gate — replay race
         run: >-
           scripts/run_test_lane.sh cargo test -p mcp-re-proxy --features async_serve

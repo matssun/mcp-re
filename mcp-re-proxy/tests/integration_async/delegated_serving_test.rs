@@ -24,8 +24,8 @@ use std::sync::Arc;
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::custody::DelegatedKeyWindow;
 use mcp_re_http_profile::issue_delegation_credential;
+use mcp_re_http_profile::rejection::pre_052_direct_root::sign_pre_052_direct_root_response_for_negative_test;
 use mcp_re_http_profile::sign_request_full;
-use mcp_re_http_profile::sign_response_full;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -214,7 +214,7 @@ fn sign_legacy_direct_root_response_for_negative_test(
         subject: "did:example:server".into(),
         keyid: ROOT_KID.into(),
     };
-    sign_response_full(
+    sign_pre_052_direct_root_response_for_negative_test(
         &mut resp,
         req,
         request_evidence,

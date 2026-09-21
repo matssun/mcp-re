@@ -27,33 +27,9 @@ use ed25519_dalek::VerifyingKey as DalekVerifyingKey;
 use crate::encoding::b64url_decode;
 use crate::encoding::b64url_encode;
 use crate::error::McpReError;
-use crate::ids::SIG_ALG_ED25519;
 
 /// Raw Ed25519 signature length in bytes.
 const SIGNATURE_LEN: usize = 64;
-
-/// Envelope signature-algorithm gate (MCPS-02): assert that a signed envelope
-/// declares the only algorithm MCP-RE v1 accepts, `Ed25519`.
-///
-/// This is the algorithm-DISPATCH layer that belongs ABOVE the raw Ed25519
-/// primitives below: it inspects envelope metadata (the `signature.alg` string,
-/// which is attacker-controlled wire data) and rejects anything other than
-/// [`SIG_ALG_ED25519`]. The raw primitives ([`verify_ed25519`] /
-/// [`verify_ed25519_with`]) do NOT perform this check — they ARE the Ed25519
-/// algorithm — so every envelope-verification path MUST call this gate first.
-///
-/// It is error-agnostic in the same way as [`verify_ed25519_with`]: an unknown
-/// alg is a signature failure in v1 (MCP_RE_SPEC §3), and the concrete sentinel
-/// differs by path (request → [`McpReError::InvalidSignature`], response →
-/// [`McpReError::ResponseSigInvalid`]), so the caller supplies `on_error` rather
-/// than this helper inventing a new variant.
-pub fn ensure_ed25519_alg(alg: &str, on_error: McpReError) -> Result<(), McpReError> {
-    if alg == SIG_ALG_ED25519 {
-        Ok(())
-    } else {
-        Err(on_error)
-    }
-}
 
 /// An Ed25519 verification (public) key.
 ///
@@ -166,12 +142,11 @@ impl SigningKey {
 /// # Layering (MCPS-02)
 /// This is a raw Ed25519 PRIMITIVE, not an algorithm-dispatch layer: it inspects
 /// no envelope metadata and will verify any well-formed Ed25519 signature
-/// regardless of what `signature.alg` an envelope declares. Callers that verify
-/// a signed MCP-RE envelope MUST gate the declared algorithm with
-/// [`ensure_ed25519_alg`] BEFORE calling this function. Callers that operate on
-/// fixed-Ed25519 material with no envelope alg (sign-then-verify self-checks,
-/// LB-assertion verification, conformance vectors) use it directly — that is the
-/// intended raw use and needs no alg plumbing.
+/// regardless of what algorithm a carrier declares. Deciding whether a declared
+/// algorithm is acceptable belongs to the verifier policy that owns the carrier's
+/// vocabulary — `mcp_re_http_profile::VerifierPolicy::accepted_algorithm`, whose
+/// registry maps a token to an implemented verifier and answers `None` for
+/// everything else. This crate holds no such gate, because it defines no carrier.
 pub fn verify_ed25519_with(
     preimage: &[u8],
     signature_b64url: &str,
@@ -197,7 +172,7 @@ pub fn verify_ed25519_with(
 /// Request-path Ed25519 verification: any failure → [`McpReError::InvalidSignature`].
 ///
 /// Raw Ed25519 primitive — see [`verify_ed25519_with`] for the layering contract:
-/// envelope callers MUST gate `signature.alg` with [`ensure_ed25519_alg`] first.
+/// the carrier's verifier policy decides which declared algorithm is acceptable.
 pub fn verify_ed25519(
     preimage: &[u8],
     signature_b64url: &str,
@@ -213,43 +188,14 @@ pub fn verify_ed25519(
 
 #[cfg(test)]
 mod tests {
-    use super::ensure_ed25519_alg;
     use super::verify_ed25519;
     use super::verify_ed25519_with;
     use super::SigningKey;
     use super::VerificationKey;
     use crate::error::McpReError;
-    use crate::ids::SIG_ALG_ED25519;
 
     // A fixed, documented test seed so signatures are reproducible.
     const SEED: [u8; 32] = [7u8; 32];
-
-    #[test]
-    fn ensure_ed25519_alg_accepts_the_supported_alg() {
-        assert_eq!(
-            ensure_ed25519_alg(SIG_ALG_ED25519, McpReError::InvalidSignature),
-            Ok(())
-        );
-    }
-
-    #[test]
-    fn ensure_ed25519_alg_rejects_unknown_alg_with_supplied_error() {
-        // Unknown alg → the caller-supplied sentinel, preserving the per-path
-        // mapping (request → InvalidSignature, response → ResponseSigInvalid).
-        assert_eq!(
-            ensure_ed25519_alg("RS256", McpReError::InvalidSignature),
-            Err(McpReError::InvalidSignature)
-        );
-        assert_eq!(
-            ensure_ed25519_alg("ES256", McpReError::ResponseSigInvalid),
-            Err(McpReError::ResponseSigInvalid)
-        );
-        // Case-sensitive: "ed25519" is not the canonical "Ed25519".
-        assert_eq!(
-            ensure_ed25519_alg("ed25519", McpReError::InvalidSignature),
-            Err(McpReError::InvalidSignature)
-        );
-    }
 
     #[test]
     fn raw_primitive_verifies_without_any_alg_plumbing() {

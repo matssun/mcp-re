@@ -96,9 +96,11 @@ signature, and a wrong transport binding — no cloud credentials, no external i
 ./scripts/demo-local.sh
 ```
 
-Expected final line: `OK: MCP-RE local demo completed`. The underlying proofs also
-run directly: `bazel test //mcp-re-proxy:full_stack_test //mcp-re-demo:demo_mtls_client_test`
-(or the `cargo test --test …` equivalents). See [`docs/quickstart-local.md`](docs/quickstart-local.md).
+Expected final line: `OK: MCP-RE local demo completed`. That script is the entry
+point to prefer: each underlying suite is a module inside a merged test binary, and
+the script selects them through a wrapper that fails on a filter matching zero
+tests. See [`docs/quickstart-local.md`](docs/quickstart-local.md) for the
+individual commands and what each suite establishes.
 
 Full walkthrough and what each case proves:
 [`docs/quickstart-local.md`](docs/quickstart-local.md). For the live Google Cloud
@@ -374,7 +376,7 @@ mcp-re-client-core/          Client-side shared seam (signed RFC 9421 requests, 
 mcp-re-client-proxy/         Client-side MCP-RE proxy library — transport-agnostic seam (plain-MCP -> sign -> forward -> verify).
 mcp-re-client/               Client-side ambassador BINARY — the deployable that loads the signed trust-anchor manifest against a durable rollback floor and refreshes it in place.
 mcp-re-conformance/          Black-box conformance harness (object + HTTP; MCP-RE is HTTP-profile only).
-mcp-re-demo/                 mTLS/fixtures demo surface (host-side HostSession client + DemoFixtures).
+mcp-re-demo/                 Demo certificate material: the `DemoFixtures` mTLS fixture generator.
 mcp-re-test-paths/           Test-only: resolve binaries + fixtures under Bazel OR Cargo.
 
 sdk/python/                Python SDK — maturin/PyO3 binding to mcp-re-client-core (ADR-MCPS-044).

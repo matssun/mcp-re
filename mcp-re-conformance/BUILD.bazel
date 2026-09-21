@@ -273,7 +273,7 @@ nt_rust_test(
     },
     deps = [
         "//mcp-re-core:mcp_re_core",
-        "//mcp-re-http-profile:mcp_re_http_profile",
+        "//mcp-re-http-profile:mcp_re_http_profile_pre052",  # keep
         "@crates_mcp_re//:serde",
         "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:sha2",
@@ -415,7 +415,7 @@ nt_rust_test(
     },
     deps = [
         "//mcp-re-core:mcp_re_core",
-        "//mcp-re-http-profile:mcp_re_http_profile",
+        "//mcp-re-http-profile:mcp_re_http_profile_pre052",  # keep
         "@crates_mcp_re//:serde",
         "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:sha2",
@@ -462,7 +462,7 @@ nt_rust_test(
     edition = "2021",
     deps = [
         "//mcp-re-core:mcp_re_core",
-        "//mcp-re-http-profile:mcp_re_http_profile",
+        "//mcp-re-http-profile:mcp_re_http_profile_pre052",  # keep
     ],
 )
 
@@ -477,7 +477,7 @@ nt_rust_test(
     edition = "2021",
     deps = [
         "//mcp-re-core:mcp_re_core",
-        "//mcp-re-http-profile:mcp_re_http_profile",
+        "//mcp-re-http-profile:mcp_re_http_profile_pre052",  # keep
     ],
 )
 

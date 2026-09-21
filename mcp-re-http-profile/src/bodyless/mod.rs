@@ -75,6 +75,11 @@ mod delegated_ack;
 /// The credential that 202 is signed under: read, chained to a root, and scoped to the key
 /// that actually signed.
 mod delegated_credential;
+
+/// The pre-ADR-MCPRE-052 ROOT-signed acknowledgement, kept only so the required mode's
+/// refusal of it can be exercised. Absent from a product build.
+#[cfg(any(test, feature = "pre_052_fixtures"))]
+pub mod pre_052_fixtures;
 use crate::block::ResolverOutcome;
 use crate::block::SignerSlot;
 use crate::digest::content_digest_sha256;
@@ -82,7 +87,6 @@ use crate::digest::verify_content_digest_sha256;
 use crate::error::HttpProfileError;
 use crate::evidence::RequestEvidence;
 use crate::ids::BODYLESS_REQUEST_COMPONENTS;
-use crate::ids::BODYLESS_RESPONSE_COMPONENTS;
 use crate::ids::MCP_RE_REQUEST_EVIDENCE_HEADER;
 use crate::ids::PROFILE_TAG;
 use crate::ids::REQUEST_LABEL;
@@ -218,135 +222,10 @@ fn check_request_evidence(
     Ok(())
 }
 
-/// Sign a bodyless `202 Accepted` acknowledging `request` (§3.4, #418).
-///
-/// `request` is the originating notification/response POST — an ordinary bodied,
-/// signed request. The 202 binds to it via the mandatory `;req` components, so
-/// the acknowledgement cannot be lifted onto a different notification.
-///
-/// The emitted response has NO body and NO `content-type`; its `content-digest`
-/// commits to empty content.
-pub fn sign_accepted_202(
-    request: &HttpRequest,
-    key: &mcp_re_core::SigningKey,
-    key_id: &str,
-    created: i64,
-    expires: i64,
-) -> Result<HttpResponse, HttpProfileError> {
-    let mut response = HttpResponse {
-        status: STATUS_ACCEPTED,
-        headers: vec![
-            ("Content-Digest".to_owned(), content_digest_sha256(&[])),
-            // C019b: the per-instance coordinate. Covered below, so the
-            // acknowledgement binds to THIS transmission.
-            request_evidence_header(request)?,
-        ],
-        body: Vec::new(),
-    };
-    let mut components: Vec<CoveredComponent> = BODYLESS_RESPONSE_COMPONENTS
-        .iter()
-        .map(|n| CoveredComponent::new(n))
-        .collect();
-    components.extend(
-        REQUIRED_RESPONSE_REQ_COMPONENTS
-            .iter()
-            .map(|n| CoveredComponent::req(n)),
-    );
-    let params = params_for(key_id, created, expires, None);
-    let base = signature_base(
-        &components,
-        &params,
-        &SourceMessage::Response {
-            response: &response,
-            request,
-        },
-    )?;
-    emit(
-        &mut response.headers,
-        RESPONSE_LABEL,
-        &components,
-        &params,
-        &base,
-        key,
-    )?;
-    Ok(response)
-}
-
-/// Verify a signed bodyless `202 Accepted` against the exact request it
-/// acknowledges (§3.4, #418).
-///
-/// On success the caller learns EXACTLY this: the enforcement boundary
-/// authenticated and accepted that request. Nothing about what happened next.
-pub fn verify_accepted_202<R: Into<ResolverOutcome>>(
-    response: &HttpResponse,
-    request: &HttpRequest,
-    verifier: &crate::verifier::Verifier<'_, R>,
-    now: i64,
-) -> Result<ResolvedActor, HttpProfileError> {
-    reject_content_encoding(&response.headers)?;
-    require_bodyless(&response.headers, &response.body)?;
-    if response.status != STATUS_ACCEPTED {
-        return Err(HttpProfileError::MalformedEvidence(
-            "bodyless acknowledgement status",
-        ));
-    }
-
-    // The digest of empty content is checked like any other: it is a signed
-    // statement that there is no body, so it must be true of the bytes received.
-    let digest_header = required_header(&response.headers, "content-digest")
-        .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;
-    verify_content_digest_sha256(digest_header, &response.body)?;
-
-    // C019b: the acknowledgement names the exact request TRANSMISSION it answers, and
-    // the verifier re-derives that name from the request rather than trusting it.
-    check_request_evidence(&response.headers, request)?;
-
-    let parsed = parse_signature_input_for(
-        &response.headers,
-        RESPONSE_LABEL,
-        "response signature-input",
-    )?;
-    // The NAMED bodyless response set, enforced exactly: `@status` and
-    // `content-digest`, plus the full `;req` binding. `content-type` is absent
-    // from the set and rejected as a covered component below.
-    require_components(
-        &parsed.components,
-        &BODYLESS_RESPONSE_COMPONENTS,
-        &REQUIRED_RESPONSE_REQ_COMPONENTS,
-    )?;
-    if parsed
-        .components
-        .iter()
-        .any(|c| !c.req && c.name == "content-type")
-    {
-        return Err(HttpProfileError::MalformedEvidence(
-            "content-type covered on a bodyless message",
-        ));
-    }
-    let (_c, _e, _n, key_id, algorithm) =
-        check_params(&parsed.params, verifier.policy(), now, false)?;
-    let seam = verifier.resolve_actor();
-    let actor = resolve_actor_for_slot(seam, &key_id, SignerSlot::Response)?;
-
-    let base = signature_base(
-        &parsed.components,
-        &parsed.params,
-        &SourceMessage::Response { response, request },
-    )?;
-    let sig = signature_value_b64url(&response.headers, "signature", RESPONSE_LABEL)?;
-    verify_under(
-        algorithm,
-        &base,
-        &sig,
-        &actor.verification_key,
-        McpReError::ResponseSigInvalid,
-    )?;
-    Ok(actor)
-}
-
 /// Sign a DELEGATED bodyless `202 Accepted` (§3.4/§424, owner ruling 2026-07-17).
 ///
-/// Same bodyless shape as [`sign_accepted_202`], but signed by a DELEGATED key and
+/// Same bodyless shape as the pre-052 root-signed acknowledgement, but signed by a
+/// DELEGATED key and
 /// carrying the compact-JWS delegation credential in the `mcp-re-delegation`
 /// header. The header is a COVERED component of the response signature, so the
 /// credential is exactly as protected as a body-carried one — it just cannot ride

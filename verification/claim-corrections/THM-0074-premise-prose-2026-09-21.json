@@ -1,0 +1,26 @@
+{
+  "authority": "adr-068-phase1",
+  "changed_components": [
+    "theorem_dependencies"
+  ],
+  "corrections": [
+    {
+      "field": "scope",
+      "id": "C1",
+      "new": "constructing the type are outside it.",
+      "old": "constructing the type are outside it — which is why the trusted-ingress facade delegating rather than reimplementing is part of this unit's battery.",
+      "reason": "THM-0023. The trailing clause is justification prose naming unit://proxy.asserted_identity_delegation, the battery for the transport::ingress::v1 seam this branch deletes. It stated no conjunct, so dropping it leaves the scope weaker than or equal to the reviewed text; keeping it would have stated a present-tense fact about a retired battery member."
+    }
+  ],
+  "dependency_correction": "No edge added or removed. THM-0074's depends_on is unchanged by this branch; the closure's premise claim digest moved because premise scope prose was corrected.",
+  "from_fingerprint": "sha256:7f350985cb9bc68fe7a981365740fa318fb863dba18cb3c8d015fb459bf59d03",
+  "packet": "verification/reviews/packets/thm-0074-premise-prose-2026-09-21.md",
+  "product_behavior_unchanged": true,
+  "reason": "A premise's scope prose was corrected where a deletion left it naming a unit that no longer exists, and THM-0074's theorem_dependencies digest moved with it. Exactly one of THM-0074's component entries differs from origin/main -- theorem_dependencies[THM-0023], sha256:5e77ea10 -> sha256:f64459a6 -- and every other premise, the encoding version and the root's own claim digest are identical. This is the third instance of one shape: a root's fingerprint is sensitive to prose throughout its closure, so retiring a unit obliges every sentence in that closure which named it to stop naming it. The correction was also checked in the strengthening direction, and that check found a defect: an intermediate cohort state had replaced the clause with a positive universal over all callers, which would have been STRONGER than the reviewed text at the moment the only caller-side edge was deleted. That was corrected at 225d77a4 before this measurement, and the text recorded here is weaker than both.",
+  "root_consequence_unchanged": true,
+  "ruling": "ADR-MCPRE-068 Phase-1 campaign ruling, 2026-09-18, item 5: claim precision corrections that preserve the ratified promise, and moving evidence to its correct owner, are explicitly NOT owner escalations. The owner did not individually review this fingerprint; the authority recorded here is that ruling. No root statement, security_consequence or scope is edited -- THM-0074's own theorem_claim digest is sha256:9f4cc66a on both sides of this transition, as it was on both sides of the two records before it. The movement is entirely in theorem_dependencies, inherited from one premise whose scope prose named a unit this branch deletes.",
+  "severity_after": "critical",
+  "severity_before": "critical",
+  "subject": "THM-0074",
+  "to_fingerprint": "sha256:f2ea5dd15b779fdf6df1d4716edfe1bc1dc37625231e38ac2d7c21cdf04447e6"
+}
