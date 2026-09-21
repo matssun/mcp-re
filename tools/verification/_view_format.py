@@ -4,7 +4,7 @@
 One responsibility: what a generated file looks like, independent of what it says. The
 banner is the security-relevant half — a reader who finds a wrong line in a generated file
 must be sent to the source that decides it, and an editor who ignores the banner is caught
-by `check-generated`, which regenerates and compares.
+by `check-views`, which regenerates and compares.
 
 Separated from the renderers because the banner and the source list are the one thing every
 view must agree on, and a contract stated once in a small file cannot drift between five
@@ -37,7 +37,7 @@ def header(title: str, what: str) -> str:
         f"<!-- SPDX-License-Identifier: Apache-2.0 -->\n"
         f"<!-- GENERATED FILE — DO NOT EDIT.\n"
         f"     Regenerate with: tools/verification/generate-views\n"
-        f"     Gated by:        tools/verification/check-generated\n"
+        f"     Gated by:        tools/verification/check-views\n"
         f"     Derived from:\n{sources}\n"
         f"-->\n\n"
         f"# {title}\n\n"

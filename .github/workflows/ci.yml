@@ -580,6 +580,18 @@ jobs:
           python3 scripts/assurance_obligation_gate.py --selftest
           python3 scripts/assurance_obligation_gate.py --base origin/main
 
+      # ADR-MCPRE-059 §9, Phase T3. Every generated view carries `Gated by:` in its own
+      # banner, and until this step existed that line named a control reachable only
+      # through `verify --phase extraction` — the pinned Linux container, behind a step
+      # condition on `image.outputs.resolved && required`. Six pure Markdown comparisons
+      # had inherited the Lean model's preconditions and were checked by nothing whenever
+      # the container was unresolved. Split out and run here, unconditionally, because the
+      # proposition needs no toolchain and the banner already published the promise.
+      - name: Assurance-view freshness (generated views ↔ catalogues)
+        run: |
+          ./tools/verification/check-views --selftest
+          ./tools/verification/check-views
+
       # ADR-MCPRE-059 §28 + the ratified security boundary. The registry's `root_theorems`
       # and `docs/spec/security-boundary.md` §2 are ONE fact — what MCP-RE promises —
       # written down twice, and they had diverged: twelve declared roots against nine

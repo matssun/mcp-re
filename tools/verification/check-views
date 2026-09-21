@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""Assurance-view freshness gate — one proposition, answerable anywhere.
+
+    Every file under `verification/generated/` is what the catalogues render RIGHT NOW.
+
+A generated view that disagrees with its sources says something no authority states, and it
+says it to a reader who has no way to tell. This is also what makes a hand-edit detectable:
+an edit survives review by looking like ordinary Markdown, and is caught here by not
+surviving regeneration.
+
+WHY IT IS ITS OWN CONTROL, which is the whole reason this file exists.
+
+Until 2026-09-21 this proposition lived inside `check-generated`, beside a second and
+entirely different one — that the extracted Lean model under `verification/lean/generated/`
+reproduces from the pinned pipeline. The two were one gate because §16 gives staleness
+enforcement a single OWNER, and that is a good reason for one owner and a bad reason for one
+EXECUTABLE. They differ in the only dimension that decides where a control can run:
+
+    this one        pure, cheap, needs a Markdown renderer and four TOML files
+    the model one   needs Charon inside the pinned Linux container, a regeneration stamp
+                    from that run, and git over the regenerated tree
+
+So the bundle inherited the harder half's preconditions. `check-generated` is the
+`generated-model` lane of `tools/verification/verify`, it is in `PHASES["extraction"]`
+alone, and the only job that runs `verify --phase extraction` is conditional:
+
+    if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true'
+
+Every one of those is legitimate for a model that cannot be produced without the container.
+None of them is true of six Markdown files. The measured consequence was that when the
+extraction container is unresolved or not required, the workflow prints an explanation about
+the LEAN lane and the view-freshness proposition is carried off with it — checked by
+nothing, while all six views carry `Gated by:` in their own banners.
+
+That is this repository's recurring class arriving inside its own instrument: a control's
+silence is evidence only over the conditions under which it can execute, and those were the
+other proposition's.
+
+WHAT IT DOES NOT DO. It says nothing about the Lean model — `check-generated` owns that, and
+owns it alone now. It is a PRECONDITION for trusting the documents, never evidence about
+code, so it declares no lane verdict and writes no evidence record: a `VERDICT: PASS` here
+would let a formal lane's aggregate rest on a Markdown comparison.
+
+Run:  tools/verification/check-views
+      tools/verification/check-views --selftest
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import sys
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+
+from _manifest import ManifestError  # noqa: E402
+
+_loader = SourceFileLoader("generate_views", str(HERE / "generate-views"))
+_spec = importlib.util.spec_from_loader("generate_views", _loader)
+generate_views = importlib.util.module_from_spec(_spec)
+_loader.exec_module(generate_views)
+
+
+def empty_scope_is_failure(rendered: int) -> bool:
+    """A renderer that produced NO view must not report the tree current.
+
+    Named rather than inlined so the selftest can assert the contract instead of
+    re-implementing it. Zero views is what a generator losing its renderer table looks
+    like, and comparing an empty set against the tree agrees with it perfectly.
+    """
+    return rendered == 0
+
+
+def selftest() -> int:
+    """A gate whose only evidence is that a clean tree passes has never been shown to fail."""
+    if not empty_scope_is_failure(0):
+        print("SELFTEST FAIL: zero rendered views read as a pass", file=sys.stderr)
+        return 1
+    if empty_scope_is_failure(6):
+        print("SELFTEST FAIL: a non-empty render read as an empty one", file=sys.stderr)
+        return 1
+
+    # The comparison is half the gate. A `differences` that stopped matching would report a
+    # stale tree as a current one, which is "exits 0 having measured nothing" wearing this
+    # gate's name. Both directions are asserted against the REAL renderer output.
+    try:
+        views = generate_views.rendered()
+    except ManifestError as exc:
+        print(f"SELFTEST FAIL: the catalogues do not load: {exc}", file=sys.stderr)
+        return 1
+    if empty_scope_is_failure(len(views)):
+        print("SELFTEST FAIL: the renderer produced no views", file=sys.stderr)
+        return 1
+    if generate_views.differences(views):
+        print(
+            "SELFTEST FAIL: the tree is not current, so the negative case below would be "
+            "indistinguishable from it",
+            file=sys.stderr,
+        )
+        return 1
+    relative = sorted(views)[0]
+    mutated = dict(views)
+    mutated[relative] = views[relative] + "\nA LINE NO RENDERER PRODUCES.\n"
+    drift = generate_views.differences(mutated)
+    if not any(relative in entry for entry in drift):
+        print(
+            f"SELFTEST FAIL: a view whose rendered bytes moved was reported current: {drift}",
+            file=sys.stderr,
+        )
+        return 1
+
+    print("check-views selftest: OK")
+    return 0
+
+
+def main() -> int:
+    if "--selftest" in sys.argv:
+        return selftest()
+    try:
+        views = generate_views.rendered()
+    except ManifestError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 1
+
+    if empty_scope_is_failure(len(views)):
+        print(
+            "check-views: FAIL — the generators produced 0 views. A comparison against an "
+            "empty render agrees with every tree, which is a gate that measured nothing.",
+            file=sys.stderr,
+        )
+        return 1
+
+    drift = generate_views.differences(views)
+    if drift:
+        print(f"check-views: FAIL — {len(drift)} generated view(s) not current", file=sys.stderr)
+        for entry in drift:
+            print(f"  - {entry}", file=sys.stderr)
+        print(
+            "Regenerate with tools/verification/generate-views. A generated view is a "
+            "reading of the catalogues; one that disagrees with them is a document that "
+            "says something no authority states.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"check-views: OK — {len(views)} assurance view(s) current")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

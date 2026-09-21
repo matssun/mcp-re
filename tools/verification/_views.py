@@ -8,7 +8,7 @@ these are a reading of them.
 Two rules decide what may be generated here at all, and they are the reason the live
 blast-radius and frontier views are NOT in this file's output:
 
-  * A generated file is checked in and gated by `check-generated`, so it must be
+  * A generated file is checked in and gated by `check-views`, so it must be
     **byte-reproducible from the catalogues alone**. Anything that reads the attestation
     store depends on local machine state, so committing it would make the gate fail for
     everyone whose `.verification/` differs — which is everyone.
