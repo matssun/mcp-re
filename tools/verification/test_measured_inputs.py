@@ -292,6 +292,114 @@ def test_the_probe_set_is_measured_so_the_suite_cannot_silently_shrink():
     assert set(lane) == {"tools/verification/verify-mutations"}
 
 
+def test_the_extraction_lane_instruments_are_part_of_the_evidence_identity():
+    """SF-011. Four lanes carried their runner in the fingerprint and the two extraction
+    lanes carried nothing, so `verify-lean`, `check-generated` and the model predicate could
+    be narrowed with no `lean://` unit deriving DIRTY.
+
+    The set is the JUDGEMENT cone, not the import closure: `verify-lean` transitively
+    imports fourteen modules and most decide nothing about the verdict. The criterion each
+    entry passes is whether changing it can alter whether the lane reports valid Lean
+    evidence, what theorem population was activated, or whether a run that elaborated
+    nothing is accepted."""
+    c = components("core.time_civil_from_days")
+    assert set(c["lean_lane_identity"]) == {
+        "tools/verification/verify-lean",
+        "tools/verification/_lean_axioms.py",
+        "tools/verification/_lean_query.py",
+        "tools/verification/_lean_model.py",
+        "tools/verification/_extraction_identity.py",
+        "tools/verification/_manifest.py",
+    }
+    assert set(c["generated_model_lane_identity"]) == {
+        "tools/verification/check-generated",
+        "tools/verification/regenerate-lean",
+        "tools/verification/_lean_model.py",
+        "tools/verification/_extraction_identity.py",
+    }
+    assert all(d.startswith("sha256:") for d in c["lean_lane_identity"].values())
+    assert all(d.startswith("sha256:") for d in c["generated_model_lane_identity"].values())
+    # The probe is excluded BY THE CRITERION, not by topic: it runs only under
+    # `--activation-probe`, which returns before any unit is looked at and writes no record.
+    both = set(c["lean_lane_identity"]) | set(c["generated_model_lane_identity"])
+    assert "tools/verification/_lean_probe.py" not in both
+
+
+def test_a_unit_without_lean_evidence_carries_no_extraction_identity_key_at_all():
+    """ABSENT, not empty — the `gate_controls` precedent rather than the four host lanes'.
+
+    One unit declares `lean://` today. An always-present key would have moved the other 243
+    fingerprints, dropping every standing attestation in the tree to record the absence of a
+    thing none of those units has."""
+    c = components("http_profile.keyid")
+    assert "lean_lane_identity" not in c
+    assert "generated_model_lane_identity" not in c
+    carrying = [
+        unit_id
+        for unit_id in UNITS
+        if "lean_lane_identity" in components(unit_id)
+    ]
+    assert carrying == ["core.time_civil_from_days"], carrying
+
+
+def _perturbed(path: str, unit_ids):
+    """Fingerprints of `unit_ids` with one extra byte in `path`, restored afterwards.
+
+    A real edit to a real file, because the property under test is that the DIGEST of that
+    file reaches the fingerprint. Asserting the component's key set proves the intention;
+    only moving the bytes proves the wiring."""
+    from _manifest import REPO_ROOT as ROOT
+
+    target = ROOT / path
+    original = target.read_bytes()
+    try:
+        target.write_bytes(original + b"\n# falsifier\n")
+        return {
+            unit_id: fingerprint_unit(UNITS[unit_id], DOC, TOOLCHAINS, ASSUMPTIONS)[
+                "fingerprint"
+            ]
+            for unit_id in unit_ids
+        }
+    finally:
+        target.write_bytes(original)
+        assert target.read_bytes() == original
+
+
+def test_editing_a_lean_instrument_moves_the_lean_unit_and_nothing_else():
+    """Both directions, which is the whole point: before this component existed, editing
+    `_lean_model.py` moved ZERO fingerprints while editing `verify-tests` moved one on this
+    same unit. Cohort O was its own witness — it edited two of these files and dirtied
+    nothing."""
+    watched = ["core.time_civil_from_days", "http_profile.keyid", "core.time_rfc3339"]
+    before = {
+        unit_id: fingerprint_unit(UNITS[unit_id], DOC, TOOLCHAINS, ASSUMPTIONS)[
+            "fingerprint"
+        ]
+        for unit_id in watched
+    }
+
+    for instrument in (
+        "tools/verification/_lean_axioms.py",
+        "tools/verification/_lean_query.py",
+        "tools/verification/check-generated",
+        "tools/verification/regenerate-lean",
+    ):
+        after = _perturbed(instrument, watched)
+        assert after["core.time_civil_from_days"] != before["core.time_civil_from_days"], (
+            f"{instrument} decides what a lean record means and moved nothing"
+        )
+        for bystander in ("http_profile.keyid", "core.time_rfc3339"):
+            assert after[bystander] == before[bystander], (
+                f"{instrument} dirtied {bystander}, which asks no extraction lane for evidence"
+            )
+
+    # The control. A lane instrument this unit does not consult must not dirty it, or the
+    # component is measuring "somebody edited the platform" rather than "this unit's
+    # instrument changed".
+    after = _perturbed("tools/verification/_structural.py", watched)
+    assert after["core.time_civil_from_days"] == before["core.time_civil_from_days"]
+
+
 def test_a_unit_without_mutation_evidence_measures_no_mutation_components():
     """Empty, and measured as empty: a unit with no probe suite must not be dirtied by
     another unit's probes, and the component must not become a sentinel.

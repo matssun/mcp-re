@@ -111,6 +111,7 @@ from _ecosystems import formal_source_patterns
 from _ecosystems import unit_ecosystem
 from _ecosystems import unit_projects
 from _manifest import (
+    claims_lean_evidence,
     claims_measured_evidence,
     claims_mutation_evidence,
     claims_structural_evidence,
@@ -483,6 +484,70 @@ MEASURED_LANE_INPUTS = (
 )
 
 
+#: The lane that decides what "the extracted-model theorem STANDS" means.
+#:
+#: The judgement cone, not the import closure — `verify-lean` transitively imports fourteen
+#: modules and most of them decide nothing about the verdict. Each entry answers yes to one
+#: question: can changing this file alter whether the lane reports valid Lean evidence, what
+#: theorem population was activated, or whether a run that elaborated nothing is accepted?
+LEAN_LANE_INPUTS = (
+    # The runner: which units are in scope, what PASS / FAIL / UNAVAILABLE mean, and when a
+    # record is written at all — including the `external_termination` path that deliberately
+    # writes NONE.
+    "tools/verification/verify-lean",
+    # What "the theorem stands" means: the kernel baseline, which axioms are permissible,
+    # and what a registered premise excuses. Softening it widens every standing PASS without
+    # touching a theorem.
+    "tools/verification/_lean_axioms.py",
+    # What "asking the prover" is: elaboration, the `lake` invocation, and the rule that
+    # decides whether a non-zero exit is evidence or an OOM kill.
+    "tools/verification/_lean_query.py",
+    # Whether the model the theorems were elaborated against corresponds to this tree, and
+    # (since the stamp split) whether an observation is a FAIL or an UNAVAILABLE.
+    "tools/verification/_lean_model.py",
+    # Whether the pinned image IS a build of the toolchain the tree declares.
+    # `toolchain_identity` digests the recorded pins; this decides whether the record is an
+    # identity at all, which is the check that was one-directional until issue #541.
+    "tools/verification/_extraction_identity.py",
+    # `selection(doc)` — which symbols and theorems the lane is asked about — and the V2/V3
+    # class rules. It rides in on `test_lane_identity` today only because the one lean unit
+    # ALSO claims `test://`; a lean-only unit would have it measured by nobody.
+    "tools/verification/_manifest.py",
+)
+
+#: `_lean_probe.py` is deliberately NOT above, and the reason is the criterion rather than
+#: the topic. The probe runs only under `verify-lean --activation-probe`, which returns
+#: before any unit is looked at, writes no evidence record and names nothing the manifest
+#: declares. So changing it cannot alter whether the lane reports valid Lean evidence, which
+#: theorems were activated, or whether a run that elaborated nothing is accepted — it can
+#: only weaken the separate proof that the lane's refusals still fire. That is a control ON
+#: the lane, gated by its own CI step, not part of what a `lean` record MEANS. The two files
+#: it depends on to make its judgement, `_lean_axioms.py` and `_lean_query.py`, are in the
+#: cone above, so excluding the probe drops no judging code.
+
+#: The lane that decides what "the committed model IS the model this tree extracts" means.
+GENERATED_MODEL_LANE_INPUTS = (
+    "tools/verification/check-generated",
+    # How the model is DERIVED from source. The pinned Charon and Aeneas are in
+    # `toolchain_identity`; the invocation is not, and it decides what the model means
+    # relative to the Rust it came from.
+    "tools/verification/regenerate-lean",
+    "tools/verification/_lean_model.py",
+    "tools/verification/_extraction_identity.py",
+)
+
+
+#: Unlike the four lane identities above, these two carry no `claims_…` guard: they are
+#: added to the component map only where the unit declares the scheme, so an empty return
+#: would be an unreachable second answer to a question the call site has already asked.
+def _lean_lane_identity() -> dict[str, str]:
+    return _digest_paths(list(LEAN_LANE_INPUTS))
+
+
+def _generated_model_lane_identity() -> dict[str, str]:
+    return _digest_paths(list(GENERATED_MODEL_LANE_INPUTS))
+
+
 def _structural_lane_identity(unit: dict) -> dict[str, str]:
     if not claims_structural_evidence(unit):
         return {}
@@ -633,6 +698,20 @@ def fingerprint_unit(
     # the absence of a thing none of them has.
     if unit.get("gate_controls"):
         components["gate_controls"] = _digest_paths(sorted(unit["gate_controls"]))
+    # The extraction lanes' identity, ADDED ONLY WHERE THE UNIT DECLARES `lean://`, for the
+    # reason `gate_controls` is conditional: one unit declares the scheme today, and an
+    # always-present key would move the other 243 fingerprints to record the absence of a
+    # thing none of them has. The four host lanes' identities are unconditional because each
+    # landed while its population was being established and paid that cost once.
+    #
+    # Two components rather than one shared list. `lean` and `generated-model` answer
+    # different propositions — *do the theorems stand* and *is the committed model the one
+    # this tree extracts* — and a unit could in principle come to claim one without the
+    # other. They overlap in `_lean_model.py` and `_extraction_identity.py`, and the overlap
+    # is the honest statement that those two decide something for both.
+    if claims_lean_evidence(unit):
+        components["lean_lane_identity"] = _lean_lane_identity()
+        components["generated_model_lane_identity"] = _generated_model_lane_identity()
     return {
         "unit_id": unit["id"],
         "fingerprint": canonical_digest(components),
