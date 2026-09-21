@@ -174,6 +174,9 @@ def test_each_refinement_derives_the_state_of_what_it_refines():
         "measured_lane_identity": "DIRTY_EVIDENCE",
         "extracted_symbols": "DIRTY_EVIDENCE",
         "lean_theorems": "DIRTY_EVIDENCE",
+        "lean_lane_identity": "DIRTY_EVIDENCE",
+        "generated_model_lane_identity": "DIRTY_EVIDENCE",
+        "lean_theorem_sources": "DIRTY_EVIDENCE",
         "proved_symbols": "DIRTY_EVIDENCE",
         "governing_boundaries": "DIRTY_ASSUMPTION",
     }

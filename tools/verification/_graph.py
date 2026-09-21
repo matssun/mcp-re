@@ -96,6 +96,15 @@ COMPONENT_STATE = {
     # --- v8: the extracted-model SELECTION, "for the reason v3 added the test selection"
     "extracted_symbols": "DIRTY_EVIDENCE",
     "lean_theorems": "DIRTY_EVIDENCE",
+    # --- the extraction lanes' own identity, and the theorem TEXT ---------------------
+    # The same three sentences the four host lane identities already carry, for the two
+    # lanes that had none: the code deciding what a `lean://` or generated-model result
+    # MEANS is part of that result's identity, and the theorem the prover resolves is the
+    # claim rather than its label. All three refine the extraction evidence, so they take
+    # the classification of what they refine.
+    "lean_lane_identity": "DIRTY_EVIDENCE",
+    "generated_model_lane_identity": "DIRTY_EVIDENCE",
+    "lean_theorem_sources": "DIRTY_EVIDENCE",
     # The theorems a formal unit claims, by prover-reported name. Same shape as
     # `test_evidence_definition`: it states WHAT is claimed, and deleting one is a reduction
     # in evidence that the source digest would not report.
