@@ -526,6 +526,65 @@ def _require(where: str, got: dict, required: set[str]) -> None:
         raise ManifestError(f"{where}: missing required key(s) {missing}")
 
 
+def validate_edges(
+    where: str, edges: list[dict], unit_ids: set[str], exports: dict[str, set[str]]
+) -> None:
+    """The admission rules for typed edges — ADR-MCPRE-059 §4.
+
+    Separate from `load_verification` because the rules below are a proposition about what
+    an edge kind MEANS, and a proposition whose only exercise is that the committed manifest
+    happens to satisfy it has never been shown to refuse anything.
+
+    The contract rule, and why it is stated for every contract edge rather than only for a
+    sealed one: `CONTRACT_CONSUMES` asserts a relation to the producer's PUBLISHED INTERFACE,
+    which is a stronger claim than "this consumer compiles against that producer". Nine edges
+    carried the kind while naming no contract, and none of their producers exported one — so
+    the graph said "contract relation" about nine compile-time dependencies, and
+    `consumed_contracts` had no relation to derive itself from. An edge that cannot name a
+    contract its own producer exports is a `COMPILE_DEPENDENCY`; the fix is never to invent
+    the contract.
+
+    `sealed` is an ADDITIONAL property of an already-valid contract relation — the claim that
+    the contract is the WHOLE of the consumer's reasoning — not what makes the relation a
+    contract relation. So an unsealed contract edge is legitimate, and the contract is
+    required either way.
+    """
+    for index, edge in enumerate(edges):
+        ewhere = f"{where} [[edge]] #{index}"
+        _reject_unknown(ewhere, edge, _EDGE_KEYS)
+        _require(ewhere, edge, {"kind", "from", "to"})
+        if edge["kind"] not in EDGE_KINDS:
+            raise ManifestError(
+                f"{ewhere}: kind {edge['kind']!r} not one of {sorted(EDGE_KINDS)}"
+            )
+        for endpoint in ("from", "to"):
+            if edge[endpoint] not in unit_ids:
+                raise ManifestError(
+                    f"{ewhere}: {endpoint} {edge[endpoint]!r} is not a declared unit"
+                )
+        if edge["kind"] == "CONTRACT_CONSUMES":
+            _require(ewhere, edge, {"contract"})
+            # Exported by THIS edge's `from`, not by some unit somewhere. The previous check
+            # ran only under `sealed` and compared against the union of every unit's exports,
+            # so a seal could name a contract an unrelated unit published — a relation
+            # between two units justified by a third.
+            if edge["contract"] not in exports.get(edge["from"], set()):
+                raise ManifestError(
+                    f"{ewhere}: CONTRACT_CONSUMES names contract {edge['contract']!r}, "
+                    f"which {edge['from']!r} does not export. A contract edge is a relation "
+                    f"to the PRODUCER's published interface; if this dependency is real but "
+                    f"no such contract exists, it is a COMPILE_DEPENDENCY."
+                )
+        if edge.get("sealed"):
+            if edge["kind"] != "CONTRACT_CONSUMES":
+                raise ManifestError(
+                    f"{ewhere}: only a CONTRACT_CONSUMES edge may be sealed. Sealing "
+                    f"means source-only dirtiness stops at a proved unchanged contract, "
+                    f"which is meaningless without a contract."
+                )
+            _require(ewhere, edge, {"sealed_by", "rationale"})
+
+
 def load_verification() -> dict:
     """Load and validate `verification/policy/verification.toml`."""
     doc = _load(VERIFICATION_TOML)
@@ -551,7 +610,9 @@ def load_verification() -> dict:
         )
 
     seen_ids: set[str] = set()
-    contracts: set[str] = set()
+    #: What each unit exports, BY unit id. A flat set would answer "somebody exports this",
+    #: and the question a contract edge asks is "does THIS producer export it".
+    exports: dict[str, set[str]] = {}
     for index, unit in enumerate(doc.get("unit", [])):
         uwhere = f"{where} [[unit]] #{index}"
         _reject_unknown(uwhere, unit, _UNIT_KEYS)
@@ -682,34 +743,9 @@ def load_verification() -> dict:
                 f"mutation probe asserts that a DECLARED control goes red; with no "
                 f"declared battery there is nothing for it to name."
             )
-        contracts.update(unit.get("exported_contracts", []))
+        exports[unit["id"]] = set(unit.get("exported_contracts", []))
 
-    for index, edge in enumerate(doc.get("edge", [])):
-        ewhere = f"{where} [[edge]] #{index}"
-        _reject_unknown(ewhere, edge, _EDGE_KEYS)
-        _require(ewhere, edge, {"kind", "from", "to"})
-        if edge["kind"] not in EDGE_KINDS:
-            raise ManifestError(
-                f"{ewhere}: kind {edge['kind']!r} not one of {sorted(EDGE_KINDS)}"
-            )
-        for endpoint in ("from", "to"):
-            if edge[endpoint] not in seen_ids:
-                raise ManifestError(
-                    f"{ewhere}: {endpoint} {edge[endpoint]!r} is not a declared unit"
-                )
-        if edge.get("sealed"):
-            if edge["kind"] != "CONTRACT_CONSUMES":
-                raise ManifestError(
-                    f"{ewhere}: only a CONTRACT_CONSUMES edge may be sealed. Sealing "
-                    f"means source-only dirtiness stops at a proved unchanged contract, "
-                    f"which is meaningless without a contract."
-                )
-            _require(ewhere, edge, {"contract", "sealed_by", "rationale"})
-            if edge["contract"] not in contracts:
-                raise ManifestError(
-                    f"{ewhere}: sealed on contract {edge['contract']!r}, which no unit "
-                    f"exports"
-                )
+    validate_edges(where, doc.get("edge", []), seen_ids, exports)
     return doc
 
 

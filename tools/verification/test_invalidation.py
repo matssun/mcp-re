@@ -30,6 +30,7 @@ from _graph import (  # noqa: E402
     STRUCTURAL_COMPONENT,
     UNRESOLVED_COMPONENT,
 )
+from _manifest import ManifestError, validate_edges  # noqa: E402
 
 COMPONENTS = {
     "source_inputs": {"a.rs": "sha256:aaa"},
@@ -480,6 +481,112 @@ def test_a_failed_proof_keeps_propagating_and_cannot_be_re_attested_away():
 
 def test_context_closure_excludes_the_dirty_set_itself():
     assert context_closure({"a", "b"}, [{"from": "a", "to": "b"}]) == set()
+
+
+# --- what makes an edge a CONTRACT edge -----------------------------------------
+#
+# `CONTRACT_CONSUMES` claims a relation to the producer's PUBLISHED INTERFACE, which is more
+# than "the consumer compiles against the producer". Nine edges carried the kind while naming
+# no contract and while none of their producers exported one, so the kind said "contract
+# relation" about nine compile-time dependencies — and the admission rule could not notice,
+# because it ran only under `sealed` and compared against the union of EVERY unit's exports.
+#
+# Each control below is a way the rule can be wrong, not a way it can be satisfied.
+
+UNITS_AB = {"producer", "consumer", "elsewhere"}
+EXPORTS_AB = {
+    "producer": {"contract://producer/v1"},
+    "elsewhere": {"contract://elsewhere/v1"},
+    "consumer": set(),
+}
+
+
+def edge_refused(edge: dict) -> str:
+    """The message admission refused with, or an assertion failure if it accepted."""
+    try:
+        validate_edges("t", [edge], UNITS_AB, EXPORTS_AB)
+    except ManifestError as exc:
+        return str(exc)
+    raise AssertionError(f"admission accepted an edge it must refuse: {edge}")
+
+
+def test_a_contract_edge_naming_a_contract_its_producer_exports_is_admitted():
+    """The positive case, first, so every refusal below means something."""
+    validate_edges("t", [{
+        "kind": "CONTRACT_CONSUMES", "from": "producer", "to": "consumer",
+        "contract": "contract://producer/v1",
+    }], UNITS_AB, EXPORTS_AB)
+
+
+def test_a_contract_edge_that_names_no_contract_is_refused():
+    """The nine. The kind was the only thing asserting a contract relation existed."""
+    assert "contract" in edge_refused(
+        {"kind": "CONTRACT_CONSUMES", "from": "producer", "to": "consumer"}
+    )
+
+
+def test_a_contract_exported_by_someone_else_does_not_make_a_contract_edge():
+    """The check the old one could not make. It compared against the union of every unit's
+    exports, so an edge between two units could be justified by a third — a relation whose
+    named interface belongs to neither of its endpoints."""
+    message = edge_refused({
+        "kind": "CONTRACT_CONSUMES", "from": "producer", "to": "consumer",
+        "contract": "contract://elsewhere/v1",
+    })
+    assert "does not export" in message
+    assert "COMPILE_DEPENDENCY" in message
+
+
+def test_a_valid_contract_edge_need_not_be_sealed():
+    """`sealed` is an ADDITIONAL property of a valid contract relation — the claim that the
+    contract is the whole of the consumer's reasoning — not what makes the relation a
+    contract relation. Requiring it would make every honest contract edge inadmissible until
+    someone could prove the stronger thing."""
+    validate_edges("t", [{
+        "kind": "CONTRACT_CONSUMES", "from": "producer", "to": "consumer",
+        "contract": "contract://producer/v1",
+    }], UNITS_AB, EXPORTS_AB)
+
+
+def test_a_sealed_edge_still_needs_its_seal_evidence():
+    """And sealing keeps its own requirements: who proved it, and why."""
+    assert "sealed_by" in edge_refused({
+        "kind": "CONTRACT_CONSUMES", "from": "producer", "to": "consumer",
+        "contract": "contract://producer/v1", "sealed": True,
+    })
+
+
+def test_only_a_contract_edge_may_be_sealed():
+    assert "only a CONTRACT_CONSUMES edge may be sealed" in edge_refused({
+        "kind": "COMPILE_DEPENDENCY", "from": "producer", "to": "consumer",
+        "sealed": True, "sealed_by": "THM-0001", "rationale": "r",
+    })
+
+
+def test_a_compile_dependency_needs_no_contract():
+    """The kind the nine became. It asserts only what it can show: this consumer's code
+    depends on that producer's, and any producer dirtiness reaches the consumer."""
+    validate_edges("t", [
+        {"kind": "COMPILE_DEPENDENCY", "from": "producer", "to": "consumer"},
+    ], UNITS_AB, EXPORTS_AB)
+
+
+def test_the_committed_manifest_declares_no_inadmissible_contract_edge():
+    """The census, over the real manifest — the half a synthetic suite cannot state.
+
+    `load_verification` runs `validate_edges`, so this passing means every declared contract
+    edge names a contract its own producer exports. It is deliberately not an assertion that
+    contract edges EXIST: there are none today, and requiring one would be pressure to invent
+    the relation this rule exists to refuse."""
+    import _manifest
+
+    doc = _manifest.load_verification()
+    exports = {
+        unit["id"]: set(unit.get("exported_contracts", [])) for unit in doc["unit"]
+    }
+    for edge in doc["edge"]:
+        if edge["kind"] == "CONTRACT_CONSUMES":
+            assert edge["contract"] in exports[edge["from"]], edge
 
 
 if __name__ == "__main__":
