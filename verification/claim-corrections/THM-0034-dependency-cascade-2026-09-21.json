@@ -1,0 +1,26 @@
+{
+  "authority": "adr-068-phase1",
+  "changed_components": [
+    "theorem_dependencies"
+  ],
+  "corrections": [
+    {
+      "field": "scope",
+      "id": "C1",
+      "new": "The claim is over inhabitants of the type. Callers that reimplement the rules instead of constructing the type are outside it.",
+      "old": "The claim is over inhabitants of the type. Callers that reimplement the rules instead of constructing the type are outside it — which is why the trusted-ingress facade delegating rather than reimplementing is part of this unit's battery.",
+      "reason": "THM-0023, in this theorem's dependency closure. The premise's scope lost a trailing clause naming unit://proxy.asserted_identity_delegation, deleted with the transport::ingress::v1 seam. THM-0034's own statement, security_consequence and scope are byte-identical and its depends_on gained and lost no edge; only the premise's claim digest in theorem_dependencies moved."
+    }
+  ],
+  "dependency_correction": "No edge added or removed. The fingerprint moved solely because THM-0023's corrected claim digest propagated through this theorem's dependency closure.",
+  "from_fingerprint": "sha256:35f0d73fcddd3927f13b36bc062948af798d40789e8c6a0e5a9deef832ef72a6",
+  "packet": "verification/reviews/packets/thm-0023-dependency-cascade-2026-09-21.md",
+  "product_behavior_unchanged": true,
+  "reason": "DEPENDENCY PROPAGATION, derived mechanically rather than assumed. Every theorem whose fingerprint differs between origin/main (9e0ba722) and this branch was enumerated -- nine -- and each classified by whether its OWN claim moved. Two did (THM-0023, the source; THM-0105, unrelated and held by nobody) and seven did not. Intersecting THM-0034's theorem_dependencies component with the moved sources returns exactly {THM-0023}. Measured against origin/main's registry, THM-0034's statement, security_consequence, scope, review_requirement, direct_consequence_severity and supported_by show NO differing field, and depends_on has no edge added or removed. derive_review_state independently classifies it STALE_DEPENDENCY_CLAIM rather than STALE_CLAIM, which is the same finding reached by the review module's own rule. This is the class THM-0074-prose-2026-09-18.json established: closure premise claim digests moved because premise scope prose was corrected.",
+  "root_consequence_unchanged": true,
+  "ruling": "ADR-MCPRE-068 Phase-1 campaign ruling, 2026-09-18, item 5. The authority covering this record is the authority covering its source: THM-0023's precision correction, recorded at verification/claim-corrections/THM-0023-delegation-subject-deleted-2026-09-21.json. This theorem's own claim is byte-identical, so nothing about it was changed except which digest its premise hashes to. The owner did not individually review this fingerprint.",
+  "severity_after": "critical",
+  "severity_before": "critical",
+  "subject": "THM-0034",
+  "to_fingerprint": "sha256:de7106b3e0f84b18b9cab39d65b3f513c49faa5e1313fb4f8a19c223d97d7a6a"
+}
