@@ -16,6 +16,7 @@ Run: python3 tools/verification/test_invalidation.py
 
 from __future__ import annotations
 
+import pathlib
 import sys
 from pathlib import Path
 
@@ -619,6 +620,83 @@ def test_the_committed_manifest_declares_no_inadmissible_contract_edge():
     for edge in doc["edge"]:
         if edge["kind"] == "CONTRACT_CONSUMES":
             assert edge["contract"] in exports[edge["from"]], edge
+
+
+def _while_manifest_has(edge_toml: str, observe):
+    """Append one `[[edge]]` block to the REAL manifest, observe, restore.
+
+    The observation happens INSIDE the edit window, because a helper that restores first and
+    measures afterwards measures the restored file against itself — this suite's sibling made
+    exactly that mistake once. Restoration is byte-for-byte and in a `finally`, and the caller
+    below re-loads afterwards so a test cannot leave a tree that no longer parses.
+    """
+    from _manifest import VERIFICATION_TOML
+
+    path = pathlib.Path(VERIFICATION_TOML)
+    original = path.read_bytes()
+    try:
+        path.write_bytes(original + edge_toml.encode("utf-8"))
+        return observe()
+    finally:
+        path.write_bytes(original)
+
+
+def test_the_real_loader_refuses_an_inadmissible_contract_edge():
+    """Through `load_verification`, which is the function every tool in this directory calls.
+
+    A rule that is only reachable from its own tests is a rule production never applies. This
+    control is the one that says the admission check is ON the manifest-loading path: it
+    appends an edge to the real registry, asks the public loader for the manifest, and
+    requires the refusal — then restores the bytes and requires the loader to succeed again,
+    so a green run cannot be a tree this test broke.
+    """
+    import _manifest
+
+    def observe():
+        try:
+            _manifest.load_verification()
+        except ManifestError as exc:
+            return str(exc)
+        raise AssertionError("the production loader accepted an edge it must refuse")
+
+    message = _while_manifest_has(
+        '''
+[[edge]]
+kind = "CONTRACT_CONSUMES"
+from = "proxy.certificate_identity"
+to = "proxy.channel_associated_identity"
+contract = "contract://core/time/parse_rfc3339_utc"
+''',
+        observe,
+    )
+    assert "does not export" in message, message
+    assert "COMPILE_DEPENDENCY" in message, message
+    # And the tree is intact: the loader answers again.
+    assert _manifest.load_verification()["schema_version"]
+
+
+def test_the_real_loader_refuses_a_contract_edge_naming_no_contract():
+    """The nine, as the loader would have seen them if this rule had existed."""
+    import _manifest
+
+    def observe():
+        try:
+            _manifest.load_verification()
+        except ManifestError as exc:
+            return str(exc)
+        raise AssertionError("the production loader accepted an edge it must refuse")
+
+    message = _while_manifest_has(
+        '''
+[[edge]]
+kind = "CONTRACT_CONSUMES"
+from = "core.time_rfc3339"
+to = "proxy.certificate_identity"
+''',
+        observe,
+    )
+    assert "contract" in message, message
+    assert _manifest.load_verification()["schema_version"]
 
 
 if __name__ == "__main__":

@@ -1334,6 +1334,58 @@ def test_a_non_contract_edge_into_this_unit_does_not_move_it():
     assert before == after
 
 
+def _while_manifest_has(edge_toml: str, observe):
+    """Append one `[[edge]]` block to the REAL manifest, observe INSIDE the window, restore."""
+    from _manifest import VERIFICATION_TOML
+
+    path = Path(VERIFICATION_TOML)
+    original = path.read_bytes()
+    try:
+        path.write_bytes(original + edge_toml.encode("utf-8"))
+        return observe()
+    finally:
+        path.write_bytes(original)
+
+
+def test_the_derivation_reads_the_graph_direction_the_graph_declares():
+    """Through the production loader, and on the axis that is easy to get backwards.
+
+    `propagate` states the direction: `from` PRODUCES, `to` CONSUMES. So a unit's consumed
+    contracts are the contracts on the edges arriving AT it, and the contract on each is the
+    one its `from` exports — which admission has already made a checked fact rather than a
+    convention. A derivation keyed on `from` would be internally consistent and would report
+    the producer as consuming its own contract.
+    """
+    from _manifest import load_verification
+
+    def observe():
+        doc = load_verification()
+        units = {u["id"]: u for u in doc["unit"]}
+        consumer = fingerprint_unit(
+            units[CONSUMER], doc, TOOLCHAINS, ASSUMPTIONS
+        )["components"]["consumed_contracts"]
+        producer = fingerprint_unit(
+            units[PRODUCER], doc, TOOLCHAINS, ASSUMPTIONS
+        )["components"]["consumed_contracts"]
+        return consumer, producer, units[PRODUCER].get("exported_contracts", [])
+
+    consumer, producer, exported = _while_manifest_has(
+        f'''
+[[edge]]
+kind = "CONTRACT_CONSUMES"
+from = "{PRODUCER}"
+to = "{CONSUMER}"
+contract = "{CONTRACT}"
+''',
+        observe,
+    )
+    # The consumer is the edge's `to`, and what it consumes is what the `from` EXPORTS.
+    assert consumer == [CONTRACT], consumer
+    assert CONTRACT in exported, exported
+    # And the producer consumes nothing by producing.
+    assert producer == [], producer
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):
