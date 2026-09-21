@@ -135,8 +135,8 @@ nt_rust_library(
     crate_name = "mcp_re_transport",
     edition = "2021",
     deps = [
-        "//mcp-re-client-core:mcp_re_client_core_pre052",
-        "//mcp-re-client-proxy:mcp_re_client_proxy_pre052",
+        "//mcp-re-client-core:mcp_re_client_core_pre052",  # keep
+        "//mcp-re-client-proxy:mcp_re_client_proxy_pre052",  # keep
         "@crates_mcp_re//:rustls",
         "@crates_mcp_re//:rustls-pki-types",
         "@crates_mcp_re//:thiserror",

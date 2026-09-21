@@ -44,14 +44,19 @@ package(default_visibility = ["//visibility:public"])
 #
 # Feature-flavor disambiguation: several crates publish >1 target with the same
 # `crate_name` (a plain flavor plus feature-gated ones — e.g. mcp_re_host +
-# mcp_re_host_test_fixtures; mcp_re_proxy + _fault/_dev_env/_ext; mcp_re_transport +
-# _fault). gazelle can't tell from `use mcp_re_proxy::X` which flavor an importer
-# wants, so these `resolve` directives pin the DEFAULT (plain) target. Importers
-# that need a specific flavor keep that edge hand-written with a `# keep` comment
-# — the flavor-selection logic is MCPS-69's job. (See ADR-MCPS-048.)
+# mcp_re_host_test_fixtures; mcp_re_proxy + _fault/_dev_env/_ext/_pre052;
+# mcp_re_transport + _fault/_pre052; and the ADR-MCPRE-052 pre-052 chain
+# mcp_re_http_profile / mcp_re_client_core / mcp_re_client_proxy + _pre052).
+# gazelle can't tell from `use mcp_re_proxy::X` which flavor an importer wants, so
+# these `resolve` directives pin the DEFAULT (plain) target. Importers that need a
+# specific flavor keep that edge hand-written with a `# keep` comment — the
+# flavor-selection logic is MCPS-69's job. (See ADR-MCPS-048.)
 # gazelle:resolve rust mcp_re_host //mcp-re-host:mcp_re_host
 # gazelle:resolve rust mcp_re_proxy //mcp-re-proxy:mcp_re_proxy
 # gazelle:resolve rust mcp_re_transport //mcp-re-transport:mcp_re_transport
+# gazelle:resolve rust mcp_re_http_profile //mcp-re-http-profile:mcp_re_http_profile
+# gazelle:resolve rust mcp_re_client_core //mcp-re-client-core:mcp_re_client_core
+# gazelle:resolve rust mcp_re_client_proxy //mcp-re-client-proxy:mcp_re_client_proxy
 
 # Run with: bazel run //:gazelle -- -mode diff   (dry-run; prints the diff)
 #

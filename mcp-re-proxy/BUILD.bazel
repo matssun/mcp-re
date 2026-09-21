@@ -1061,10 +1061,10 @@ nt_rust_test(
         "MCP_RE_TRUST_PLANE_SRC": "$(rlocationpath src/trust_plane/mod.rs)",
     },
     deps = [
-        ":mcp_re_proxy_pre052",
+        ":mcp_re_proxy_pre052",  # keep
         ":mcp_re_proxy_cli",
         "//mcp-re-core:mcp_re_core",
-        "//mcp-re-http-profile:mcp_re_http_profile_pre052",
+        "//mcp-re-http-profile:mcp_re_http_profile_pre052",  # keep
         "//mcp-re-test-paths:mcp_re_test_paths",
         "//mcp-re-transport:mcp_re_transport",
         "@crates_mcp_re//:libc",
@@ -1173,17 +1173,17 @@ nt_rust_test(
         # The hermetic capsule-anchor service in `transparency_e2e_test` reads and writes
         # that contract's STANDARD-base64 JSON envelope, the way the real one does.
         "@crates_mcp_re//:base64",
-        "//mcp-re-client-core:mcp_re_client_core_pre052",
-        "//mcp-re-client-proxy:mcp_re_client_proxy_pre052",
+        "//mcp-re-client-core:mcp_re_client_core_pre052",  # keep
+        "//mcp-re-client-proxy:mcp_re_client_proxy_pre052",  # keep
         "//mcp-re-core:mcp_re_core",
-        "//mcp-re-http-profile:mcp_re_http_profile_pre052",
+        "//mcp-re-http-profile:mcp_re_http_profile_pre052",  # keep
         # ADR-MCPRE-065 Slice 1: the frozen `mcp-re.authorization_*` denial taxonomy the
         # authorization controls refuse in.
         "//mcp-re-policy:mcp_re_policy",
         # Resolves the auditor binary under Bazel runfiles OR a plain cargo build.
         "//mcp-re-test-paths:mcp_re_test_paths",
-        "//mcp-re-transport:mcp_re_transport_pre052",
-        ":mcp_re_proxy_async_pre052",
+        "//mcp-re-transport:mcp_re_transport_pre052",  # keep
+        ":mcp_re_proxy_async_pre052",  # keep
         "@crates_mcp_re//:bytes",
         "@crates_mcp_re//:http-body-util",
         "@crates_mcp_re//:hyper",
