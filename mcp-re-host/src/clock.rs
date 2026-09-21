@@ -1,10 +1,10 @@
-//! Injected wall-clock abstraction for the host session (MCPS-033, ADR-MCPS-015).
+//! Injected wall-clock abstraction for host-side signing (MCPS-033, ADR-MCPS-015).
 //!
 //! The host — unlike pure `mcp-re-core` — is allowed to read time, but it reads it
 //! through an injected [`Clock`] so signing is deterministic under test. Core
-//! itself never reads the clock (ADR-MCPS-006 "push timestamps to callers"); the
-//! session is exactly such a caller, stamping `issued_at`/`expires_at` from the
-//! injected clock and formatting them with `mcp_re_core::unix_to_rfc3339_utc`.
+//! itself never reads the clock (ADR-MCPS-006 "push timestamps to callers"), so a
+//! caller supplies it: `mcp-re-client`'s `ServeContext::for_local_config` reads
+//! [`SystemClock`]'s `now_unix` when it builds the serving context.
 
 /// A source of the current time as Unix seconds (UTC).
 ///

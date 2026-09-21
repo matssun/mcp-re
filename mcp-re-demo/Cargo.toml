@@ -12,14 +12,7 @@ description = "MCP-RE mTLS/fixtures demo surface: the host-side HostSession demo
 # request params — no crate outside the workspace, no async runtime. Transport
 # stays in this crate; mcp-re-host remains networking-free (ADR-MCPS-015).
 [dependencies]
-# The deterministic demo binary (src/bin/demo_mtls_client.rs) and the integration
-# tests use mcp-re-host's `FixedClock` / `SeededNonceSource` fixtures, compiled only
-# under its `test-fixtures` feature (audit #81). Because the consumer is a normal
-# (non-test) bin target, the feature is enabled on the NORMAL dependency here.
-# mcp-re-demo is itself the demo/test harness crate (not a production-deployable),
-# so this does not widen any production surface; the demo lib uses only
-# SystemClock/SystemNonceSource.
-mcp-re-host = { path = "../mcp-re-host", features = ["test-fixtures"] }
+mcp-re-host = { path = "../mcp-re-host" }
 mcp-re-core = { path = "../mcp-re-core" }
 mcp-re-policy = { path = "../mcp-re-policy" }
 mcp-re-proxy = { path = "../mcp-re-proxy" }

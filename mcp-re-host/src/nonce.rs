@@ -1,9 +1,9 @@
-//! Injected nonce-byte source for the host session (MCPS-033, ADR-MCPS-015).
+//! Injected nonce-byte source for host-side signing (MCPS-033, ADR-MCPS-015).
 //!
-//! The session generates each request `nonce` from an injected [`NonceSource`]
-//! and Base64URL-encodes it (MCP_RE_SPEC §2/§5: opaque, Base64URL-safe, ≥128 bits
-//! of entropy). Injection keeps signing deterministic under test while the
-//! production default draws from the OS CSPRNG.
+//! A caller draws each request `nonce` from an injected [`NonceSource`] and
+//! Base64URL-encodes it (MCP_RE_SPEC §2/§5: opaque, Base64URL-safe, ≥128 bits of
+//! entropy). `mcp-re-client`'s `next_nonce` is that caller, over
+//! [`SystemNonceSource`]; injection is what lets a consumer supply its own.
 //!
 //! `getrandom` is the production entropy source: it is already in the mcp-re-host
 //! dependency closure (transitively, via `ed25519-dalek`), is a thin wrapper over
