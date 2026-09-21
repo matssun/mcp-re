@@ -109,7 +109,8 @@ _UNIT_KEYS = {
     "description",
     "paths",
     "exported_contracts",
-    "consumed_contracts",
+    # `consumed_contracts` was here. It is DERIVED from the incoming CONTRACT_CONSUMES
+    # edges now — see `_MOVED_AUTHORITY`.
     "evidence",
     "features",
     "pilot",
@@ -510,7 +511,27 @@ def _load(path: Path) -> dict:
         raise ManifestError(f"{path.relative_to(REPO_ROOT)}: unparsable: {exc}") from exc
 
 
+#: Keys a unit may no longer declare because the fact has ONE authority elsewhere. Named
+#: rather than merely unknown, for the reason `_theorems._DUPLICATED_AUTHORITY` exists: the
+#: generic message sends a reader looking for a typo when the real answer is "that fact is
+#: declared elsewhere, and declaring it twice is how the two disagree".
+_MOVED_AUTHORITY = {
+    "consumed_contracts": (
+        "verification.toml [[edge]].contract — derived from the incoming CONTRACT_CONSUMES "
+        "edges. A unit does not declare what it consumes twice: the edge already names the "
+        "contract and the producer that exports it, and an independently authored field is "
+        "a second answer that nothing reconciles"
+    ),
+}
+
+
 def _reject_unknown(where: str, got, allowed: set[str]) -> None:
+    moved = sorted(set(got) & set(_MOVED_AUTHORITY))
+    if moved:
+        raise ManifestError(
+            f"{where}: {moved[0]!r} is no longer declared here. Its authority is "
+            f"{_MOVED_AUTHORITY[moved[0]]}."
+        )
     unknown = sorted(set(got) - allowed)
     if unknown:
         raise ManifestError(
