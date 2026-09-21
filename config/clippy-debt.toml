@@ -132,7 +132,7 @@ count = 11
 [[debt]]
 crate = "mcp-re-host"
 lint = "arithmetic_side_effects"
-count = 2
+count = 0
 
 [[debt]]
 crate = "mcp-re-host"
@@ -142,7 +142,7 @@ count = 0
 [[debt]]
 crate = "mcp-re-host"
 lint = "indexing_slicing"
-count = 1
+count = 0
 
 [[debt]]
 crate = "mcp-re-http-profile"
