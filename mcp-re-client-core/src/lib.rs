@@ -2,7 +2,8 @@
 //! MCP-RE client-side core — the shared RFC 9421 evidence seam consumed by the
 //! local client proxy and the SDK (ADR-MCPS-044 §`mcp-re-client-core`).
 //!
-//! Client-side mirror of the proxy's `verify_request_full` / `sign_response_full`:
+//! Client-side mirror of the proxy's `verify_request_full` /
+//! `sign_delegated_response_full`:
 //! it constructs a signed **RFC 9421 + RFC 9530** request ([`build_signed_request`])
 //! and verifies the bound signed response ([`verify_delegated_response`]).
 //! Verification is **delegated-required**: a response signed directly by a root key

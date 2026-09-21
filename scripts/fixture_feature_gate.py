@@ -48,6 +48,10 @@ REPO = Path(__file__).resolve().parent.parent
 #: Adding one here is a decision; the gate does not infer membership from the name.
 TEST_ONLY_FEATURES: dict[str, str] = {
     "mcp-re-host": "test-fixtures",
+    # ADR-MCPRE-052: the pre-052 direct-root response emitters. Same class, same door —
+    # a normal-dependency edge would put a removed signing mode back into every build in
+    # the graph, which is exactly the property the relocation was for.
+    "mcp-re-http-profile": "pre_052_fixtures",
 }
 
 #: Tables whose feature edges do NOT unify into a normal build.

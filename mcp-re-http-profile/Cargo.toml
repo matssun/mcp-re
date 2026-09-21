@@ -44,6 +44,13 @@ version = "=0.0.0-2026-08-09-0044"
 optional = true
 
 [features]
+# The pre-ADR-MCPRE-052 direct-root emitters, compiled ONLY for negative tests. Off by
+# default, so the shipped library exports no direct-root response signer and a production
+# caller is a compile error rather than a review finding. Enable it on a DEV-dependency
+# only: a normal-dependency edge unifies the feature into every build in the graph, which
+# is the door `scripts/fixture_feature_gate.py` refuses.
+pre_052_fixtures = []
+
 # mcp-re-core/verify travels with it: `cargo verus verify` processes dependencies too, and
 # a dependency whose manifest asks to be verified but whose prelude is feature-gated off
 # fails to compile. The two lanes turn on together or not at all.
@@ -59,6 +66,12 @@ verify = true
 
 # `verus_keep_ghost` is defined by the prover's rustc driver, never by cargo. Declared so
 # the guard in lib.rs does not read as a typo'd cfg on an ordinary build.
+
+[dev-dependencies]
+# ADR-MCPRE-052: the pre-052 direct-root emitters compile only for negative tests. A
+# DEV-dependency edge, never a normal one — cargo unifies normal-dependency features across
+# the whole invocation, which would put the fixtures back into the production closure.
+mcp-re-http-profile = { path = ".", features = ["pre_052_fixtures"] }
 
 [lib]
 name = "mcp_re_http_profile"

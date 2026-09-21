@@ -386,8 +386,8 @@ evidence = [
 tested_symbols = [
   "tests/proof_path_test#response_roundtrip_bound_to_request_verifies",
   "tests/proof_path_test#response_splice_fails_closed",
-  "lib#rejection::tests::tampered_message_does_not_change_the_trusted_wire_code",
-  "lib#rejection::tests::spliced_rejection_onto_a_different_request_fails",
+  "lib#rejection::pre_052_direct_root::tests::tampered_message_does_not_change_the_trusted_wire_code",
+  "lib#rejection::pre_052_direct_root::tests::spliced_rejection_onto_a_different_request_fails",
   "tests/delegation_e2e_test#body_tamper_is_caught_by_content_digest",
 ]
 
@@ -490,7 +490,7 @@ tested_symbols = [
   "tests/proof_path_test#a_req_component_is_refused_on_the_unbound_floor",
   "tests/proof_path_test#the_unbound_floor_signature_check_is_load_bearing",
   "tests/proof_path_test#the_unbound_floor_content_digest_check_is_load_bearing",
-  "lib#rejection::tests::unbound_rejection_verifies_without_request_context",
+  "lib#rejection::pre_052_direct_root::tests::unbound_rejection_verifies_without_request_context",
   "tests/delegation_e2e_test#a_req_component_is_refused_on_the_delegated_unbound_path",
   "tests/delegation_e2e_test#an_unbound_receipt_body_tamper_is_caught_by_content_digest",
 ]
@@ -6159,7 +6159,15 @@ evidence = [
 id = "http_profile.response_emission_binding"
 class = "V0"
 description = "What an emitted response signature binds: the `;req` components resolved against the request being answered, and the response evidence block's request-evidence handle over that same request."
-paths = ["mcp-re-http-profile/src/sign.rs"]
+paths = [
+  "mcp-re-http-profile/src/sign.rs",
+  # ADR-MCPRE-052 cleanup: five of the eight controls below sign through the PRE-052
+  # root emitter, which now lives here rather than in `sign.rs`. Recorded, not repaired —
+  # that those five measure the emission binding over a REMOVED mode, while only the
+  # `delegated_202_test` three measure the shipped one, is a disposition for the unit's
+  # owner. See EX-015 in docs/architecture/review-dispositions.md.
+  "mcp-re-http-profile/src/rejection/pre_052_direct_root.rs",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -7733,6 +7741,9 @@ description = "What a bodyless message signs and what its acknowledgement establ
 paths = [
   "mcp-re-http-profile/src/bodyless/mod.rs",
   "mcp-re-http-profile/src/bodyless/acknowledged.rs",
+  # The pre-052 ROOT-signed acknowledgement pair, which nine of the `bodyless_202_test`
+  # controls below drive. It left `bodyless/mod.rs` in the ADR-MCPRE-052 cleanup.
+  "mcp-re-http-profile/src/bodyless/pre_052_fixtures.rs",
   "mcp-re-http-profile/src/bodyless/delegated_ack.rs",
   "mcp-re-http-profile/src/bodyless/delegated_credential.rs",
 ]

@@ -23,13 +23,13 @@ use serde::Serialize;
 
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::block::AudienceTuple;
-use mcp_re_http_profile::build_signed_rejection;
+use mcp_re_http_profile::rejection::pre_052_direct_root::build_pre_052_direct_root_rejection_for_negative_test;
 use mcp_re_http_profile::reconstruct_chain;
-use mcp_re_http_profile::sign_accepted_202;
+use mcp_re_http_profile::bodyless::pre_052_fixtures::sign_pre_052_root_signed_202_for_negative_test;
 use mcp_re_http_profile::sign_request;
 use mcp_re_http_profile::sign_request_full;
-use mcp_re_http_profile::sign_response;
-use mcp_re_http_profile::verify_accepted_202;
+use mcp_re_http_profile::rejection::pre_052_direct_root::sign_pre_052_direct_root_response_base_for_negative_test;
+use mcp_re_http_profile::bodyless::pre_052_fixtures::verify_pre_052_root_signed_202_for_negative_test;
 use mcp_re_http_profile::verify_artifact_binding;
 use mcp_re_http_profile::verify_signed_rejection;
 use mcp_re_http_profile::ActorIdentity;
@@ -615,7 +615,7 @@ fn build_fixtures() -> Vec<Fixture> {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec(),
     };
-    sign_response(
+    sign_pre_052_direct_root_response_base_for_negative_test(
         &mut rsp,
         &req,
         &server_key(),
@@ -660,7 +660,7 @@ fn build_fixtures() -> Vec<Fixture> {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec(),
     };
-    sign_response(
+    sign_pre_052_direct_root_response_base_for_negative_test(
         &mut rsp_b,
         &req_b,
         &server_key(),
@@ -858,7 +858,7 @@ fn build_fixtures() -> Vec<Fixture> {
         "vec-nonce-note",
     )
     .expect("a notification signs like any request");
-    let ack = sign_accepted_202(&note, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES)
+    let ack = sign_pre_052_root_signed_202_for_negative_test(&note, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES)
         .expect("the PEP signs its acceptance");
 
     // h34 — positive: a signed 202 bound to its notification.
@@ -1227,7 +1227,7 @@ fn build_fixtures() -> Vec<Fixture> {
         body: b"event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}\n\n"
             .to_vec(),
     };
-    sign_response(
+    sign_pre_052_direct_root_response_base_for_negative_test(
         &mut sse_rsp,
         &req,
         &server_key(),
@@ -1267,7 +1267,7 @@ fn build_fixtures() -> Vec<Fixture> {
     );
 
     // h18 — bound valid: the trusted wire code surfaces after the signature.
-    let bound = build_signed_rejection(
+    let bound = build_pre_052_direct_root_rejection_for_negative_test(
         Some(&req),
         &reject_reason,
         403,
@@ -1300,7 +1300,7 @@ fn build_fixtures() -> Vec<Fixture> {
     });
 
     // h19 — unbound valid: no request context, signed response-only.
-    let unbound = build_signed_rejection(
+    let unbound = build_pre_052_direct_root_rejection_for_negative_test(
         None,
         &reject_reason,
         400,
@@ -2208,7 +2208,7 @@ fn frozen_http_profile_corpus_verifies() {
             "bodyless_202" => {
                 let request = from_wire_request(fixture.request.as_ref().expect("request"));
                 let response = from_wire_response(fixture.response.as_ref().expect("response"));
-                match verify_accepted_202(
+                match verify_pre_052_root_signed_202_for_negative_test(
                     &response,
                     &request,
                     &Verifier::new(&VerifierPolicy::default(), &resolver()),

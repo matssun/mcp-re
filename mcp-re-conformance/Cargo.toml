@@ -20,7 +20,10 @@ mcp-re-client-core = { path = "../mcp-re-client-core" }
 # corpus lives in THIS crate (v0.11 grill E-11 — vectors live with the crate
 # owning the conformance runner), generated and frozen via the http-profile
 # proof-path implementation.
-mcp-re-http-profile = { path = "../mcp-re-http-profile" }
+# ADR-MCPRE-052: the pre-052 direct-root emitters compile only for negative tests. A
+# DEV-dependency edge, never a normal one — cargo unifies normal-dependency features across
+# the whole invocation, which would put the fixtures back into the production closure.
+mcp-re-http-profile = { path = "../mcp-re-http-profile", features = ["pre_052_fixtures"] }
 # MCPRE-427 (#415 rev 2 §12.2): the corpus manifests carry a per-file SHA-256 and
 # a corpus digest, so the vector loaders hash fixture bytes before running them.
 sha2 = { workspace = true }

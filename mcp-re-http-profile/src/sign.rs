@@ -189,7 +189,7 @@ pub fn sign_request_with_signer(
 /// (`se.syncom/mcp-re.http.request`) into the JSON-RPC body `_meta` FIRST, then
 /// sign — so `content-digest` (a covered component) protects the block. Returns
 /// the [`RequestEvidence`] handle over the resulting signature base; pass it to
-/// [`sign_response_full`] so the response can carry `request_evidence`.
+/// [`sign_delegated_response_full`] so the response can carry `request_evidence`.
 pub fn sign_request_full(
     request: &mut HttpRequest,
     block: &HttpRequestEvidenceBlock,
@@ -222,40 +222,8 @@ pub fn sign_request_full_with_signer(
     sign_request_with_signer(request, sign_base, key_id, created, expires, nonce)
 }
 
-/// Full-profile response signing (MCPRE-101): compose the response evidence
-/// block (`se.syncom/mcp-re.http.response`) carrying the `server_signer` identity
-/// and the `request_evidence` this response answers into the body `_meta`, then
-/// sign with the `;req` binding to `request`. `request_evidence` is the handle
-/// [`sign_request_full`]/`verify_request_full` produced for the originating
-/// request.
-#[allow(clippy::too_many_arguments)]
-pub fn sign_response_full(
-    response: &mut HttpResponse,
-    request: &HttpRequest,
-    request_evidence: &RequestEvidence,
-    server_signer: &ActorIdentity,
-    key: &SigningKey,
-    key_id: &str,
-    created: i64,
-    expires: i64,
-) -> Result<(), HttpProfileError> {
-    let block = HttpResponseEvidenceBlock {
-        profile: PROFILE_TAG.to_owned(),
-        server_signer: server_signer.clone(),
-        // Directly root-signed response; the delegated-signing path (ADR-MCPRE-052,
-        // MCPRE-122 custody slice) populates this.
-        server_delegation: None,
-        request_evidence: RequestEvidenceDigest {
-            digest_alg: request_evidence.digest_alg.clone(),
-            digest_value: request_evidence.digest_value.clone(),
-        },
-    };
-    response.body = insert_meta_block(&response.body, RESPONSE_EVIDENCE_BLOCK_KEY, &block)?;
-    sign_response(response, request, key, key_id, created, expires)
-}
-
 /// Full-profile response signing for the DELEGATED-key path (ADR-MCPRE-052 §2,
-/// MCPRE-122). Like [`sign_response_full`] except the response evidence block
+/// MCPRE-122). The response evidence block
 /// carries the inline `server_delegation` credential (protected by
 /// `content-digest`) and the response is signed by the DELEGATED key
 /// (`delegated_kid` == the block's `server_signer.keyid`). The root is NOT on this
@@ -327,28 +295,6 @@ pub fn sign_delegated_response_unbound(
     };
     response.body = insert_meta_block(&response.body, RESPONSE_EVIDENCE_BLOCK_KEY, &block)?;
     sign_response_unbound(response, delegated_key, delegated_kid, created, expires)
-}
-
-/// Sign `response` in place, binding it to the verified originating request
-/// via the `;req` components (v0.11 grill C.1). Label `mcp-re-response`, same
-/// profile tag (E-1/E-2 — rejections reuse this path).
-pub fn sign_response(
-    response: &mut HttpResponse,
-    request: &HttpRequest,
-    key: &SigningKey,
-    key_id: &str,
-    created: i64,
-    expires: i64,
-) -> Result<(), HttpProfileError> {
-    sign_response_with_signer(
-        response,
-        request,
-        |base| local_sig(key, base),
-        key_id,
-        created,
-        expires,
-    )
-    .map(|_base| ())
 }
 
 /// Sign `response` in place with an EXTERNAL signer (Cloud KMS / HSM custody),

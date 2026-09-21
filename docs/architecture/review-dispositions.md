@@ -2713,3 +2713,68 @@ for that re-derivation; the deletion is not pre-executed.
 The NP-106 ratification packet is **annotated, not rewritten** — a review record states what was
 decided on the day it was decided.
 
+
+---
+
+## EX-015 — `unit://http_profile.response_emission_binding` measures its property over the emitter that was removed — **census complete, disposition: RECORDED, owner decision required**
+
+Raised by the ADR-MCPRE-052 cleanup that relocated the pre-052 direct-root emitters into
+`mcp-re-http-profile/src/rejection/pre_052_direct_root.rs` and
+`mcp-re-http-profile/src/bodyless/pre_052_fixtures.rs`. The cleanup did not create this
+fact; it made it visible by giving the code a name that says what it is.
+
+### What was measured
+
+`unit://http_profile.response_emission_binding` is **V0, `direct_consequence_severity =
+"critical"`**. It declares eight `tested_symbols`. Sorting them by which emitter they
+actually sign through:
+
+| controls | emitter they drive | what they establish |
+|---|---|---|
+| the five `tests/full_profile_test#…` round trips | the **pre-052 root** emitter, now `sign_pre_052_direct_root_response_for_negative_test` | the emission binding over a response-signing mode the product **refuses** |
+| the three `tests/delegated_202_test#…` controls | `sign_delegated_accepted_202` | the emission binding over the shipped mode |
+
+The same split appears one level down. `M241-http-profile-the-response-carries-the-handle-over-this-request`
+is this unit's mutation probe for the conjunct *the response evidence block's
+request-evidence handle is over the request being answered*. Its anchor moved with the
+code; its single `expect_red` control is one of the five.
+
+Two further batteries were found stating the same shape in prose, and their headnotes now
+say so rather than drawing a pipeline that does not exist:
+`mcp-re-proxy/tests/integration/http_profile_dispatch_test.rs` (whose response leg is the
+pre-052 emitter, so what it proves is the **dispatch** path) and
+`mcp-re-conformance/tests/full_profile_parity_test.rs` (which pins the SDK byte-parity
+corpus, not the shipped emission mode).
+
+### Why this is recorded and not repaired
+
+Repointing the five controls at `sign_delegated_response_full` would change **what they
+prove**, and several of them are the generators for committed conformance bytes — `h18`,
+`h19` and the SDK parity corpus exist precisely because a directly root-signed response is
+the message the required mode must refuse. Rewriting them would either move published bytes
+or quietly delete the negative half of the proposition. Neither is a cleanup's decision:
+
+> A campaign plan is not authority over current invariants.
+
+Deleting the pre-052 emitters outright is not available either, for the same reason — the
+refusal cannot be exercised without the ability to produce the thing refused.
+
+### What the owner decides
+
+Whether `http_profile.response_emission_binding` is **one** unit whose evidence happens to
+run mostly over a retained fixture, or **two** propositions — *what a root-signed emission
+binds* (the thing the product refuses, and the thing the vectors pin) and *what a delegated
+emission binds* (the shipped path) — that a single V0 critical unit is currently stating as
+one. [[a-claim-may-not-exceed-its-evidence-closure]] is the governing rule and points at the
+second reading, but splitting a V0 unit moves theorem fingerprints and is owner work.
+
+Until then the unit's `paths` names both files, so the registry says where its evidence
+actually runs rather than implying it all lives in `sign.rs`.
+
+### Not affected
+
+`unit://http_profile.bodyless_acknowledgement` has the same relocation but not the same
+hazard: nine of its `bodyless_202_test` controls drive the pre-052 pair and the rest drive
+`delegated_202_test` and the bodyless-REQUEST half, and its claim is about the **named
+component sets**, which both modes share. Its `paths` gained the fixture file; nothing else
+about it moved.

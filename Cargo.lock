@@ -1072,6 +1072,7 @@ dependencies = [
  "ciborium",
  "coset",
  "mcp-re-core",
+ "mcp-re-http-profile",
  "p256",
  "serde",
  "serde_json",

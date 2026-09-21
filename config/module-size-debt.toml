@@ -342,7 +342,7 @@ status = "unreviewed"
 # progress — and the number falls to 707 because the actor projection left with it.
 [[debt]]
 path = "mcp-re-http-profile/src/bodyless/mod.rs"
-baseline_prod_loc = 529
+baseline_prod_loc = 408
 baseline_sha = "255465e"
 status = "unreviewed"
 
@@ -491,7 +491,7 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-http-profile/src/sign.rs"
-baseline_prod_loc = 462
+baseline_prod_loc = 408
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
@@ -599,7 +599,7 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-http-profile/src/rejection/mod.rs"
-baseline_prod_loc = 290
+baseline_prod_loc = 267
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
@@ -732,7 +732,7 @@ status = "unreviewed"
 
 [[debt]]
 path = "mcp-re-http-profile/src/lib.rs"
-baseline_prod_loc = 237
+baseline_prod_loc = 232
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 

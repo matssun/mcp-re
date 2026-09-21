@@ -9,7 +9,7 @@
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::sign::sign_response_unbound;
 use mcp_re_http_profile::sign_request;
-use mcp_re_http_profile::sign_response;
+use mcp_re_http_profile::rejection::pre_052_direct_root::sign_pre_052_direct_root_response_base_for_negative_test;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
@@ -95,7 +95,7 @@ fn signed_exchange() -> (HttpRequest, HttpResponse) {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec(),
     };
-    sign_response(
+    sign_pre_052_direct_root_response_base_for_negative_test(
         &mut rsp,
         &req,
         &server_key(),
@@ -211,7 +211,7 @@ fn response_splice_fails_closed() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec(),
     };
-    sign_response(
+    sign_pre_052_direct_root_response_base_for_negative_test(
         &mut rsp_b,
         &req_b,
         &server_key(),
@@ -563,7 +563,7 @@ fn response_signed_by_request_only_actor_fails_actor_binding() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec(),
     };
-    sign_response(
+    sign_pre_052_direct_root_response_base_for_negative_test(
         &mut rsp,
         &req,
         &client_key(),
