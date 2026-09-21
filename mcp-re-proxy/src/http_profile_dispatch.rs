@@ -579,9 +579,17 @@ mod tests {
     /// `dispatch_request_with_async_tier` without the async store being touched.
     ///
     /// The five controls below drive the function `answering_commitment` calls. The sync
-    /// ones above drive a function no production caller reaches, so they establish the
-    /// gate's logic and say nothing about the admission the proxy actually performs — a
-    /// test property includes the FUNCTION the test exists in.
+    /// ones above drive `dispatch_request_with_tier_gate`, which the serving path does NOT
+    /// call — so they establish the gate's logic and say nothing about the admission the
+    /// proxy performs when answering. A test property includes the FUNCTION the test exists
+    /// in, which is why both sets exist and neither replaces the other.
+    ///
+    /// The sync entry point is reached in production: it is what
+    /// `examples/http_profile_proxy.rs` drives, and that example is a live executable —
+    /// `tools/http_profile_proof.sh` and `tools/http_profile_multireplica_proof.sh` build and
+    /// launch it, `tools/gen_sdk_transport_fixture.py` records fixtures from it,
+    /// `sdk/python/tests/test_transport_e2e.py` drives it, and `config/ports.toml` reserves
+    /// two ports for it. "Not the serving path" is the fact; "no production caller" is not.
     #[test]
     fn the_serving_path_refuses_an_undeclared_tier_before_the_store_is_touched() {
         let (tier, touched) = async_tier(ReplayDurabilityClass::Durable);
