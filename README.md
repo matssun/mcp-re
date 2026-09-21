@@ -96,9 +96,11 @@ signature, and a wrong transport binding — no cloud credentials, no external i
 ./scripts/demo-local.sh
 ```
 
-Expected final line: `OK: MCP-RE local demo completed`. The underlying proofs also
-run directly: `bazel test //mcp-re-proxy:full_stack_test //mcp-re-demo:demo_mtls_client_test`
-(or the `cargo test --test …` equivalents). See [`docs/quickstart-local.md`](docs/quickstart-local.md).
+Expected final line: `OK: MCP-RE local demo completed`. That script is the entry
+point to prefer: each underlying suite is a module inside a merged test binary, and
+the script selects them through a wrapper that fails on a filter matching zero
+tests. See [`docs/quickstart-local.md`](docs/quickstart-local.md) for the
+individual commands and what each suite establishes.
 
 Full walkthrough and what each case proves:
 [`docs/quickstart-local.md`](docs/quickstart-local.md). For the live Google Cloud

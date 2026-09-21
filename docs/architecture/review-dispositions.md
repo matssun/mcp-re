@@ -2597,7 +2597,7 @@ is a measurement of the tree it ships with, not an estimate made when the record
 
 ## DP-001 — paths belonging to another repository — **reviewed exception**
 
-Cited by `config/doc-path-debt.toml` for six files. `scripts/doc_path_gate.py` resolves a
+Cited by `config/doc-path-debt.toml` for seven files. `scripts/doc_path_gate.py` resolves a
 path-like token against this repository and reports the ones that do not resolve. A token
 naming **another** repository's tree cannot resolve here and is not supposed to: it is a
 correct statement about a system this one is deployed beside.
@@ -2609,6 +2609,7 @@ correct statement about a system this one is deployed beside.
 | `.github/workflows/cloud-kms-live.yml` | a LocalStack source file, quoted to say which upstream behaviour the KMS live lane works around |
 | `tools/slo/host_gate.py` | the retention script that runs on the verification host, which is administered outside this repository |
 | `mcp-re-conformance/tests/security_traceability_guard_test.rs` | the manifest's path as the enclosing monorepo sees it |
+| `docs/dogfood-runbook.md` | the inner MCP server's own entry point (`intelli_code_mcp`), which the dogfood is run AGAINST and which is a separate project |
 
 **Disposition: keep as written.** The alternative is to delete a true statement because a
 resolver cannot follow it. The obligation the rows carry instead is the ratchet: a file in

@@ -30,13 +30,25 @@
 with signed requests, then observing and recording the 12 acceptance checks.
 
 This document is the turnkey procedure. It does **not** claim the dogfood has been
-run — running, observing, and signing off are the operator's job. The mechanical
-reference is the already-passing full-stack test
-[`mcp-re-proxy/tests/full_stack_test.rs`](../mcp-re-proxy/tests/full_stack_test.rs),
-which wires `mcp_re_proxy_cli` around a real inner subprocess over real mTLS with
-signed requests and walks the same security matrix. **The dogfood is "do what
-`full_stack_test` does, but with `intelli_code_mcp` as the inner, and walk the 12
-checks by hand."**
+run — running, observing, and signing off are the operator's job.
+
+The mechanical reference is in **two** files, because no single test does both halves
+any more:
+
+- **Server side — material, certificates and the real process:**
+  [`mcp-re-proxy/tests/tls_load_harness_bench.rs`](../mcp-re-proxy/tests/tls_load_harness_bench.rs)
+  mints the CA and leaves with `rcgen`, writes the seed and trust file, and spawns the
+  real `mcp_re_proxy_cli` over real mTLS — `make_ca()`, `make_client_leaf()`,
+  `write_material()`, `spawn_proxy()`, `signed_request()`. **Read it; do not expect
+  `cargo test` to run it.** The file is `#![cfg(feature = "redis_replay")]`, so a plain
+  `cargo test --workspace` compiles it to **zero** tests and reports green.
+- **Client side — signing and response verification:**
+  [`mcp-re-proxy/tests/integration_async/mtls_client_leg_e2e_test.rs`](../mcp-re-proxy/tests/integration_async/mtls_client_leg_e2e_test.rs)
+  and `delegated_client_server_e2e_test.rs` drive the real client proxy against the real
+  server and fail closed on a forged response signature.
+
+**The dogfood is "do what those do, but with `intelli_code_mcp` as the inner, and walk
+the 12 checks by hand."**
 
 The CLI flags are documented in the
 [Sidecar Deployment Guide](sidecar-deployment-guide.md) — that is the source of
@@ -58,14 +70,14 @@ are in the [MCP-RE Core Specification](spec/mcp-re-core-spec.md).
 ## 0. The mental model
 
 ```text
-HostSession (mcp-re-host)                mcp_re_proxy_cli (PEP)              inner stdio server
-  sign_tool_call  ── signed bytes ──▶  terminate TLS + verify mTLS  ──▶  intelli_code_mcp
-                                       verify object signature           (mcp_server py_binary)
+ClientProxy (mcp-re-client-proxy)        mcp_re_proxy_cli (PEP)              inner stdio server
+  handle: sign (9421) ─ signed bytes ─▶  terminate TLS + verify mTLS  ──▶  intelli_code_mcp
+                                       verify envelope signature         (mcp_server py_binary)
                                        (authz, transport binding)
                                        strip caller .verified
                                        inject sidecar .verified  ── stdin ─▶ FastMCP _meta
                                        read inner stdout (protocol)  ◀── stdout ──
-  verify_response ◀── signed bytes ──  sign response, bind request_hash
+  handle: verify bound  ◀─ signed bytes ─  sign response, bind request_hash
 ```
 
 The proxy is the policy-enforcement point: an invalid request is rejected with a
@@ -115,7 +127,7 @@ protocol stream — see the env-allowlist discussion in §2.2).
 
 ### 1.3 Key material, trust, and a Phase-5 authorization profile
 
-Mint the same shapes `full_stack_test` mints in-process, but on disk. You need:
+Mint the same shapes `tls_load_harness_bench.rs` mints in-process, but on disk. You need:
 
 | Artifact | Purpose | Flag |
 | --- | --- | --- |
@@ -160,8 +172,8 @@ command line.
 > `b64url_encode(seed)` to the seed file and the matching `public_key().to_b64url()`
 > into the trust file) and `rcgen` for the CA + leaves (`KeyPair::generate`,
 > `CertificateParams` with `ExtendedKeyUsagePurpose::ClientAuth` and a URI SAN ==
-> the request `signer`). See `full_stack_test.rs` `write_material()` /
-> `trusted_client_cert()` for the exact recipe. A tiny throwaway `cargo`/`rcgen`
+> the request `signer`). See `tls_load_harness_bench.rs` `write_material()`,
+> `make_ca()` and `make_client_leaf()` for the exact recipe. A tiny throwaway `cargo`/`rcgen`
 > script or `openssl` will both work; keep the private material in a temp dir,
 > `chmod 0600` the seed and TLS key (the proxy warns on group/world-readable key
 > files).
@@ -174,8 +186,8 @@ checks you need a request whose authorization is **accepted**; for check #9 you
 need one that is **rejected** (e.g. a request whose authorization artifact does
 not authorize the called tool / on-behalf-of). Construct both with the host
 tooling used in the Phase-5 vectors (`mcp-re-policy` Reference profile fixtures);
-the `authorization_hash` you pass to `HostSession::sign_tool_call` must match the
-artifact the issuer signed.
+the `authorization_hash` carried on the signed call must match the artifact the
+issuer signed.
 
 ---
 
@@ -183,7 +195,7 @@ artifact the issuer signed.
 
 ### 2.1 The fully-hardened invocation
 
-This mirrors `full_stack_test::spawn_proxy` flag-for-flag, adds Phase-5 authz, a
+This mirrors `tls_load_harness_bench::spawn_proxy` flag-for-flag, adds Phase-5 authz, a
 durable replay cache, env minimization, an explicit working dir, stderr caps, and
 rlimits, and wraps the real `intelli_code_mcp` inner.
 
@@ -284,13 +296,16 @@ not assume.**
 
 ### 2.3 Driving the proxy (the host side)
 
-Use `mcp-re-host` `HostSession` to sign requests and verify responses, exactly as
-`full_stack_test::signed_request` / `verify_response` do, and present the trusted
-client certificate (URI SAN == request `signer`) on the mTLS connection. You can:
+Sign requests and verify responses through the real client seam — `mcp-re-client`'s
+`ClientProxy`, as `delegated_client_server_e2e_test` drives it — and present the trusted
+client certificate (URI SAN == request `signer`) on the mTLS connection. For the
+request-signing shape alone, `tls_load_harness_bench::signed_request` is the smaller
+example; for response verification, the client leg test is the one that fails closed on
+a forged signature. You can:
 
-- drive it from a small Rust harness that reuses `HostSession` + a rustls client
-  (the test file is a copyable template — `round_trip`, `trusted_client_cert`,
-  `signed_request`); or
+- drive it from a small Rust harness that reuses `ClientProxy` + a rustls client (the
+  two test files are copyable templates — `make_ca`, `make_client_leaf`,
+  `signed_request`, `cold_round_trip`); or
 - adapt the test itself into a throwaway binary pointed at `intelli_code_mcp`.
 
 Send a real tool call, e.g. `tools/call` for `query_codebase` with a valid
@@ -313,10 +328,10 @@ the host verifies. Record each in the §4 template.
 | 5 | **Caller-supplied `.verified` is stripped** | From the host, send a `tools/call` that maliciously includes its own `_meta["se.syncom/mcp-re.verified"]` block (forged context). | The inner receives the **proxy-injected** `.verified`, not the caller's — the caller's block is discarded regardless of its contents (proxy `build_forwarded_request` strips then injects). |
 | 6 | **Sidecar-injected `.verified` reaches the inner** | Send a valid signed+authorized request. Have the inner echo / log the `_meta` it received (or read it via a tool that surfaces `_meta`). | The inner's request `_meta` contains `se.syncom/mcp-re.verified` with `verified_signer`, `key_id`, `on_behalf_of`, `audience`, `request_hash`, etc., derived only from the verification result. |
 | 7 | **Valid signed + authorized request succeeds** | Valid client cert (URI SAN == signer), request signed by the matching signer, valid `authorization_hash`, fresh nonce, called via mTLS. | The host receives a non-error response; the inner produced a real `query_codebase` result; the proxy logged `inner_request_forwarded` + `inner_response_signed`. |
-| 8 | **Invalid signature rejected before the inner** | Tamper one byte of the signed request body after signing (e.g. mutate an argument), keep the cert valid. | Response error message is `mcp-re.invalid_signature`; **no** `inner_spawned` for this request — rejection precedes dispatch. (Matches `full_stack_test` case 4.) |
+| 8 | **Invalid signature rejected before the inner** | Tamper one byte of the signed request body after signing (e.g. mutate an argument), keep the cert valid. | Response error message is `mcp-re.invalid_signature`; **no** `inner_spawned` for this request — rejection precedes dispatch. (Matches the tampered-signature case in `mtls_transport_binding_test`.) |
 | 9 | **Failed Phase-5 authorization rejected before the inner** | Send a validly-signed request whose authorization artifact does **not** authorize the called tool / `on_behalf_of` (or omit/garble the `authorization_hash` binding) with `--authz reference` on. | Response is a `mcp-re.*` authorization-failure error; the inner is **not** invoked for this request. |
 | 10 | **Response signed by the proxy/server side** | On the happy path (#7), inspect the response bytes. | The response carries the `se.syncom/mcp-re.response` block; `server_signer` == `--server-signer`; signature verifies against the server key in the resolver. |
-| 11 | **`HostSession` verifies the response via `request_hash` correlation** | Call `session.verify_response(&response_bytes, &resolver)` on the host for the #7 response. | `verify_response` succeeds: the response's `request_hash` equals the **stored** hash for that JSON-RPC id, and the server signature verifies. A response over a wrong hash must fail `mcp-re.response_hash_mismatch` (optional negative spot-check). |
+| 11 | **The client verifies the response via `request_hash` correlation** | Drive the #7 call through `ClientProxy::handle`, whose contract is sign → forward → verify the bound signed response, failing closed on any verification failure. | `handle` returns a verified response: its `request_hash` equals the **stored** hash for that JSON-RPC id, and the server signature verifies. A response over a wrong hash must fail `mcp-re.response_hash_mismatch` (optional negative spot-check). |
 | 12 | **stderr captured separately, stdout protocol-clean** | Drive any request; inspect the proxy's stderr log vs the bytes returned as the protocol response. | Inner stderr appears only in the proxy's bounded structured log (never on the protocol stream); the protocol response is a clean JSON-RPC frame with no inner stderr bleed. If the inner is noisy past the cap, an `inner_stderr_truncated` event is emitted. |
 
 > Checks #8 and #9 are the "rejected before the inner" guarantees — confirm by
@@ -344,7 +359,7 @@ this file or attach them to the issue.
 | 8 — invalid signature → `mcp-re.invalid_signature` (no spawn) | | | | |
 | 9 — failed Phase-5 authz rejected (no spawn) | | | | |
 | 10 — response signed by server side | | | | |
-| 11 — `HostSession` verifies via `request_hash` | | | | |
+| 11 — the client verifies via `request_hash` | | | | |
 | 12 — stderr separate, stdout protocol-clean | | | | |
 
 **Environment recorded:** commit SHA `________`, `bazel` version `________`,
@@ -358,7 +373,11 @@ inner launcher path `________`, final `--inner-env-allow` set `________`, OS
 
 ## 5. References
 
-- Mechanical reference (authoritative): [`full_stack_test.rs`](../mcp-re-proxy/tests/full_stack_test.rs)
+- Mechanical reference — server side, material + real process (reading only; the file is
+  `#![cfg(feature = "redis_replay")]`):
+  [`tls_load_harness_bench.rs`](../mcp-re-proxy/tests/tls_load_harness_bench.rs)
+- Mechanical reference — client side, signing + response verification:
+  [`mtls_client_leg_e2e_test.rs`](../mcp-re-proxy/tests/integration_async/mtls_client_leg_e2e_test.rs)
 - CLI flag semantics: [Sidecar Deployment Guide](sidecar-deployment-guide.md)
 - TLS / mTLS / binding / KeySource / replay: [Transport Hardening Guide](transport-hardening-guide.md)
 - Host signing + response verification: [Host Integration Guide](host-integration-guide.md)

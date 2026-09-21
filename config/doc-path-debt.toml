@@ -183,8 +183,9 @@ status = "unreviewed"
 
 [[debt]]
 path = "docs/dogfood-runbook.md"
-dead_tokens = 4
-status = "unreviewed"
+dead_tokens = 1
+status = "reviewed-exception"
+review_ref = "DP-001 in docs/architecture/review-dispositions.md"
 
 [[debt]]
 path = "docs/grilling-seed/mcp-re-next-grill-decisions.md"
