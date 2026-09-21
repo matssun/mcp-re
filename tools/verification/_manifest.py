@@ -172,6 +172,21 @@ def claims_measured_evidence(unit: dict) -> bool:
     return any(str(entry).startswith("measured://") for entry in unit.get("evidence", []))
 
 
+def claims_lean_evidence(unit: dict) -> bool:
+    """Whether a `lean://` URI claims this unit's extracted-model theorems.
+
+    One predicate for BOTH extraction lanes. `generated-model` has no URI of its own —
+    `_compose` derives it from `lean://`, and the manifest refuses a unit that carries the
+    extraction selection keys without the scheme — so "does this unit ask the extraction
+    lanes for evidence" has exactly one answer and this is it.
+
+    Same reason `claims_test_evidence` is defined here rather than in its lane: the
+    FINGERPRINT and the lanes must agree about which units have extraction evidence, or a
+    unit's instrument is measured by nobody.
+    """
+    return any(str(entry).startswith("lean://") for entry in unit.get("evidence", []))
+
+
 def claims_test_evidence(unit: dict) -> bool:
     """Whether any `test://` URI claims this unit's battery.
 

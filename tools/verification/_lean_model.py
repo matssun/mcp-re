@@ -53,6 +53,25 @@ IDENTITY_PINS = ("charon", "aeneas", "lean", "aeneas_lean_backend", "extraction_
 AENEAS_LEAN = Path("/opt/aeneas/backends/lean")
 
 
+def lean_libs() -> list[tuple[str, tuple[str, ...]]]:
+    """Each `[[lean_lib]]` in the package, as `(srcDir, roots)`, in lakefile order.
+
+    The build definition is the authority on what elaborates and where it lives; a second
+    list of either would drift. Split out of `lakefile_roots` because the fingerprint needs
+    the DIRECTORY as well as the names — "which tracked files do these modules resolve to"
+    is not answerable from root names alone, and answering it from a glob would let a module
+    that stopped being built keep participating.
+    """
+    doc = tomllib.loads((LEAN_DIR / "lakefile.toml").read_text(encoding="utf-8"))
+    return [
+        (
+            str(lib.get("srcDir", ".")),
+            tuple(str(name) for name in lib.get("roots", [lib["name"]])),
+        )
+        for lib in doc.get("lean_lib", [])
+    ]
+
+
 def lakefile_roots(srcDir: str | None = None) -> list[str]:
     """The Lean module roots the package builds, read from the lakefile that builds them.
 
@@ -60,12 +79,11 @@ def lakefile_roots(srcDir: str | None = None) -> list[str]:
     expected to produce. Derived rather than listed anywhere else: the build definition is
     the authority on what elaborates, and a second list would drift.
     """
-    doc = tomllib.loads((LEAN_DIR / "lakefile.toml").read_text(encoding="utf-8"))
     roots: list[str] = []
-    for lib in doc.get("lean_lib", []):
-        if srcDir is not None and lib.get("srcDir") != srcDir:
+    for src, names in lean_libs():
+        if srcDir is not None and src != srcDir:
             continue
-        roots += [str(name) for name in lib.get("roots", [lib["name"]])]
+        roots += list(names)
     return sorted(set(roots))
 
 
@@ -252,11 +270,57 @@ def current_written() -> dict[str, str]:
     }
 
 
+#: The three things a caller may conclude from `stamp_defects` plus an environment.
+STAMP_OK = "OK"
+STAMP_FAIL = "FAIL"
+STAMP_UNAVAILABLE = "UNAVAILABLE"
+
+
+def stamp_verdict(defects: list[str], in_extraction_environment: bool) -> str:
+    """What a non-empty `stamp_defects` MEANS, given where it was measured.
+
+    One function so the rule is one place, and named so a self-test can assert it without
+    needing the extraction image — the environment is a directory under `/opt`, so a test
+    that tried to exercise this by arranging the real thing would be a test that only runs
+    where the bug cannot happen.
+
+    The rule:
+
+        in the extraction environment   FAIL — this process could have regenerated, so a
+                                        stamp that does not correspond to the tree means
+                                        the model does not either
+        anywhere else                   UNAVAILABLE — nothing here can regenerate, so
+                                        nothing here can tell a genuinely stale model from
+                                        a stamp left by an earlier run over another tree
+
+    `verify-lean` already had this right by accident of ordering: it refuses a non-extraction
+    environment before it ever reads the stamp. `check-generated` asked the same question
+    only when the stamp was MISSING, so a STALE one took the other path and reported FAIL on
+    a host that could not have known. That produced two false findings — `ids.rs`, traced
+    afterwards to a branch switch, and `crypto.rs`/`lib.rs`, recorded as a defect introduced
+    by RA-0050 while CI's `[generated-model] PASS` at a head containing that very commit says
+    the committed model reproduces.
+    """
+    if not defects:
+        return STAMP_OK
+    return STAMP_FAIL if in_extraction_environment else STAMP_UNAVAILABLE
+
+
 def stamp_defects(stamp: Stamp | None, toolchains: dict, selection: dict[str, dict]) -> list[str]:
-    """Why the model on disk is not the pinned pipeline's output for this tree.
+    """Why THE RECORDED REGENERATION does not correspond to this tree.
 
     Empty means a regeneration ran, against this toolchain, over these sources, and
     nothing has touched its output since.
+
+    OBSERVATIONS, NOT A VERDICT, and the wording is deliberate. The stamp is a local,
+    uncommitted run artefact — a claim about what THIS machine last extracted from — so
+    "the model is stale" is a fact about the stamp and the tree, not about whether the
+    committed model corresponds to the source. Outside the extraction environment nothing
+    can tell those apart, because nothing there can regenerate. The consequence sentence
+    therefore belongs to the caller, which knows whether it could have regenerated: inside
+    the container a non-empty result is a failing model, outside it the measurement is
+    UNAVAILABLE. Stating the consequence here cost two false findings, `ids.rs` and
+    `crypto.rs`/`lib.rs`, both read as defects in the repository.
     """
     if stamp is None:
         return [
@@ -294,8 +358,8 @@ def stamp_defects(stamp: Stamp | None, toolchains: dict, selection: dict[str, di
     )
     if stale:
         defects.append(
-            f"the model is stale: {', '.join(stale)} changed after extraction. A theorem "
-            "proved against it constrains source that is no longer there."
+            f"the model is stale: {', '.join(stale)} changed after the extraction THIS "
+            f"STAMP RECORDS."
         )
 
     written = current_written()
