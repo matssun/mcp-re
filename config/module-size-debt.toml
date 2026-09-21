@@ -443,7 +443,7 @@ status = "unreviewed"
 # because the path changed would launder 522 registered lines as progress.
 [[debt]]
 path = "mcp-re-http-profile/src/admission/mod.rs"
-baseline_prod_loc = 520
+baseline_prod_loc = 509
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
