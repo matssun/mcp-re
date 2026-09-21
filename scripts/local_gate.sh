@@ -111,6 +111,13 @@ stage_static() {
     && python3 scripts/deploy_image_tag_gate.py \
     && python3 scripts/slo_invocation_gate.py --selftest \
     && python3 scripts/slo_invocation_gate.py \
+    `# Doc-path gate: a path in current text that the repository does not contain is` \
+    `# instruction, not dead code — the reader does not learn the sentence is stale,` \
+    `# they learn they cannot find the file. A token resolving ONLY to a gitignored` \
+    `# path is the same defect one step worse: it reads as correct to whoever wrote it` \
+    `# and to nobody else.` \
+    && python3 scripts/doc_path_gate.py --selftest \
+    && python3 scripts/doc_path_gate.py \
     && python3 scripts/bazel_srcs_gate.py --selftest \
     && python3 scripts/startup_backedges.py --selftest \
     && python3 scripts/module_map.py --selftest \

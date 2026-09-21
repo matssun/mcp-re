@@ -408,7 +408,7 @@ record = "docs/architecture/control-dispositions.md#np-005"
 [[proposition]]
 id = "NP-006"
 title = "A deployment runs the artifact that was qualified"
-carrier = "VERSION, deploy/cloudbuild/*.yaml, deploy/k8s/*.yaml, the Helm chart and the deploying runbooks"
+carrier = "VERSION, deploy/cloudbuild/*.yaml, deploy/k8s/*.yaml, deploy/docker/Dockerfile*, the Helm chart and the deploying runbooks (the GKE and EKS SLO baseline runbooks)"
 likely_owner = ""
 consequence = "high"
 root_relationship = "bears on the transparency and release-evidence roots"
@@ -12491,6 +12491,14 @@ decision = "new-proposition"
 proposition = "NP-169"
 recorded = "2026-09-19"
 
+[[disposition]]
+id = "CD-20003"
+project = ""
+control = "gate#scripts/doc_path_gate.py"
+decision = "new-proposition"
+proposition = "NP-198"
+recorded = "2026-09-21"
+
 [[proposition]]
 id = "NP-173"
 title = "Every inner-process log event renders under the brief's own tag"
@@ -12701,3 +12709,12 @@ likely_owner = ""
 consequence = "high"
 root_relationship = "THM-0105's scope excludes the dormant L1 in terms; split out of NP-146 under RR-002 C5"
 record = "docs/architecture/control-dispositions.md#np-197"
+
+[[proposition]]
+id = "NP-198"
+title = "Current documentation names no path this repository does not contain"
+carrier = "config/doc-path-debt.toml"
+likely_owner = ""
+consequence = "medium"
+root_relationship = "no root; a dead path in a current guide is instruction to an integrator, and no unit's paths name documentation"
+record = "docs/architecture/control-dispositions.md#np-198"
