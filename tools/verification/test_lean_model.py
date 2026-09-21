@@ -22,7 +22,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import _lean_model  # noqa: E402
-from _lean_model import Stamp, stamp_defects  # noqa: E402
+from _lean_model import (  # noqa: E402
+    STAMP_FAIL,
+    STAMP_OK,
+    STAMP_UNAVAILABLE,
+    Stamp,
+    stamp_defects,
+    stamp_verdict,
+)
 
 TOOLCHAINS = {
     "charon": {"state": "resolved", "commit": "c" * 40},
@@ -457,6 +464,40 @@ def test_a_read_only_mount_is_named_before_the_pipeline_runs():
                 assert why is not None
         finally:
             os.chmod(target, 0o700)
+
+
+def test_a_stamp_observation_is_not_a_verdict_until_the_environment_is_known():
+    """The same observations mean FAIL in the container and UNAVAILABLE anywhere else.
+
+    Asserted through the named rule rather than by arranging `/opt/aeneas/backends/lean`,
+    because a test that needed the real extraction environment would only run where the
+    defect it guards cannot occur.
+    """
+    observations = ["the model is stale: a.rs changed after the extraction THIS STAMP RECORDS."]
+    assert stamp_verdict(observations, True) == STAMP_FAIL
+    assert stamp_verdict(observations, False) == STAMP_UNAVAILABLE
+    # And no observations is OK in EITHER environment: a host that cannot regenerate but
+    # whose stamp still corresponds to the tree has measured something real.
+    assert stamp_verdict([], True) == STAMP_OK
+    assert stamp_verdict([], False) == STAMP_OK
+
+
+@tree
+def test_the_stale_message_states_an_observation_not_a_consequence(subject: Tree):
+    """`stamp_defects` must not conclude that the committed model is wrong.
+
+    It cannot know: the stamp is a local, uncommitted run artefact, so "a source changed
+    after extraction" is a fact about THIS MACHINE'S last run and the tree. The consequence
+    belongs to the caller that knows whether it could have regenerated, and stating it in
+    the predicate cost two false findings.
+    """
+    stamp = subject.stamp()
+    subject.source.write_text("fn civil_from_days() { /* changed */ }\n", encoding="utf-8")
+    stale = [d for d in stamp_defects(stamp, TOOLCHAINS, SELECTION) if "stale" in d]
+    assert stale, "the stale observation disappeared"
+    for defect in stale:
+        assert "constrains source that is no longer there" not in defect, defect
+        assert "THIS STAMP RECORDS" in defect, defect
 
 
 if __name__ == "__main__":

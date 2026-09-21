@@ -40,10 +40,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _lean_model import (  # noqa: E402
     AENEAS_LEAN,
+    STAMP_FAIL,
+    STAMP_UNAVAILABLE,
     extraction_environment,
     selection,
     read_stamp,
     stamp_defects,
+    stamp_verdict,
 )
 from _evidence import EvidenceRecord, evidence_store, write_record  # noqa: E402
 from _fingerprint import fingerprint_unit  # noqa: E402
@@ -206,9 +209,52 @@ def main() -> int:
         return 1
 
     defects = stamp_defects(stamp, toolchains, wanted)
-    if defects:
+    verdict = stamp_verdict(defects, extraction_environment())
+    if verdict == STAMP_UNAVAILABLE:
+        # THE SAME DISTINCTION THE MISSING-STAMP CASE ALREADY MAKES, applied to the STALE
+        # one. `extraction_environment` exists because "no regeneration stamp" is FAIL for
+        # somebody who could have regenerated and UNAVAILABLE for a host that never could.
+        # A stamp whose recorded source digests no longer match is the same question one
+        # step along: outside the container this process cannot regenerate, so it cannot
+        # tell a committed model that is genuinely wrong from a stamp left by an earlier run
+        # over a different tree — and it was reporting the second as the first.
+        #
+        # THAT HAS PRODUCED A FALSE FINDING TWICE. Once as `ids.rs changed after
+        # extraction`, which was a branch switch; once as `crypto.rs, lib.rs changed after
+        # extraction`, recorded as a defect introduced by RA-0050 — while CI's
+        # `[generated-model] PASS` at a head containing that very commit says the committed
+        # model reproduces from current source.
+        #
+        # No record is written. A `fail` record here would propagate a claim about the
+        # repository that was measured about a machine; a MISSING record is INCOMPLETE,
+        # which is what the aggregate should conclude from a lane that could not run.
+        for defect in defects:
+            print(f"UNAVAILABLE: {defect}", file=sys.stderr)
+        print(
+            f"The Aeneas Lean library is not at {AENEAS_LEAN}, so nothing here can "
+            "regenerate. What was compared is the LOCAL regeneration stamp, which records "
+            "what this machine last extracted from — not whether the committed model "
+            "corresponds to this tree. Only a run inside the pinned extraction container "
+            "answers that.",
+            file=sys.stderr,
+        )
+        print("VERDICT: UNAVAILABLE")
+        return 1
+    if verdict == STAMP_FAIL:
+        # IN the extraction environment, the observations ARE a verdict: this process could
+        # have regenerated, so a stamp that does not correspond to the tree means the model
+        # does not either. That is the consequence `stamp_defects` deliberately no longer
+        # states on its own.
         for defect in defects:
             print(f"FAIL: {defect}", file=sys.stderr)
+        print(
+            "This process COULD have regenerated, so nothing above is about a missing "
+            "capability: what is missing is a regeneration OF this tree, and a theorem "
+            "proved against a model nothing has re-derived constrains whatever source "
+            "that model was built from. Run tools/verification/regenerate-lean and "
+            "commit its output.",
+            file=sys.stderr,
+        )
         record_units(doc, toolchains, "fail", "; ".join(defects)[:400])
         print("VERDICT: FAIL")
         return 1
