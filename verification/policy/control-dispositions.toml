@@ -12379,6 +12379,14 @@ decision = "new-proposition"
 proposition = "NP-198"
 recorded = "2026-09-21"
 
+[[disposition]]
+id = "CD-20004"
+project = ""
+control = "gate#scripts/fixture_feature_gate.py"
+decision = "new-proposition"
+proposition = "NP-199"
+recorded = "2026-09-21"
+
 [[proposition]]
 id = "NP-174"
 title = "The client posture line reports the floor the deployment actually has"
@@ -12580,3 +12588,12 @@ likely_owner = ""
 consequence = "medium"
 root_relationship = "no root; a dead path in a current guide is instruction to an integrator, and no unit's paths name documentation"
 record = "docs/architecture/control-dispositions.md#np-198"
+
+[[proposition]]
+id = "NP-199"
+title = "A test-only cargo feature is enabled by no normal or build dependency"
+carrier = "mcp-re-demo/Cargo.toml"
+likely_owner = "host.request_freshness_inputs"
+consequence = "high"
+root_relationship = "a premise of THM-0114: the deterministic freshness fixtures cannot reach a production build, which is false while a sibling member unifies the feature on"
+record = "docs/architecture/control-dispositions.md#np-199"

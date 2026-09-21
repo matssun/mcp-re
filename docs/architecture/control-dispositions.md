@@ -3954,3 +3954,41 @@ wrongly, and it does not resolve symbols: a symbol sweep over this repository pr
 roughly 60% noise before hand-triage, which makes it a review instrument and not a
 merge-path control. A control that covers one class and is recorded as covering the
 category is the same defect one level up.
+
+
+## NP-199 — a test-only cargo feature is enabled by no normal or build dependency
+
+**Control:** `scripts/fixture_feature_gate.py`.
+**Carrier:** `mcp-re-demo/Cargo.toml`, and every workspace member manifest the gate reads.
+**Statement.** *No normal or build dependency in this workspace enables a feature declared
+test-only; only a dev-dependency table may.*
+**If false.** Cargo unifies features across normal dependencies within one invocation, so a
+single sibling line puts the feature on **every** build whose graph contains that sibling —
+including the library a production consumer links. This was measured, not imagined:
+`mcp-re-demo` is a default workspace member under `resolver = "2"` and carried
+
+```toml
+mcp-re-host = { path = "../mcp-re-host", features = ["test-fixtures"] }
+```
+
+so `cargo tree -e features,no-dev --workspace` found `test-fixtures` **enabled in the
+production closure**. `SeededNonceSource` has no entropy and `FixedClock` has no clock behind
+it; a deployment that could construct either could be given predictable nonces or pinned to a
+frozen `created`/`expires`, by configuration alone, with every request still well-formed and
+correctly signed.
+
+**Why `fixture_boundary.rs`'s three controls did not catch it.** They were not weak, they were
+scoped. All three read `mcp-re-host/Cargo.toml` through `include_str!` — the right instrument
+for the two halves they own (the `#[cfg]` on each item, the feature not defaulted) and for the
+third way in they name (the **self** dev-dependency, which was correct throughout). The
+offending line is in a **sibling's** file, and `include_str!` cannot reach it — under Bazel the
+sibling manifest is not even in the sandbox. A control in the owning crate is structurally
+incapable of stating this property, which is why the carrier is a repository-scoped gate.
+
+Three doors of four. The fourth is the one that was open.
+
+**Likely owner:** `host.request_freshness_inputs`, whose theorem THM-0114 claims the
+deterministic fixtures cannot reach a production build. This proposition is a **premise** of
+that claim rather than a restatement of it: the theorem is about the items and their gate, and
+this is about whether any consumer turns the gate on. The claim was not narrowed and no fixture
+was deleted to satisfy this gate — what changed is that the claim became true of the workspace.

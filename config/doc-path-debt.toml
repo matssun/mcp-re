@@ -258,11 +258,6 @@ status = "reviewed-exception"
 review_ref = "DP-001 in docs/architecture/review-dispositions.md"
 
 [[debt]]
-path = "mcp-re-demo/Cargo.toml"
-dead_tokens = 1
-status = "unreviewed"
-
-[[debt]]
 path = "mcp-re-proxy/BUILD.bazel"
 dead_tokens = 1
 status = "unreviewed"
