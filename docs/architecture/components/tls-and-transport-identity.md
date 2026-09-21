@@ -199,7 +199,7 @@ listener lifetime the production composition does not have.
 | Delegated credential/key correspondence, over real certificates and a real signer seam | `src/tls.rs` `delegated_credential_key_correspondence_tests` | `//mcp-re-proxy:proxy_unit_test` | **the algorithm-confusion vector** — a signing key declaring another algorithm whose trailing bytes ARE the credential's public point; only the profile rule can refuse it |
 | Correspondence gates delegated resolver construction | `src/delegated_tls/resolver.rs` `correspondence_gate` | `//mcp-re-proxy:proxy_unit_test` | **mismatched material cannot produce a resolver at all** — asserted on construction, never on a later handshake failure |
 | Certificate identity: the pure selector and its refusal algebra | `src/communication_assurance/` module tests, probes M25–M29 | `//mcp-re-proxy:proxy_unit_test`; `tools/verification/verify-mutations` | four refusals stay distinguishable; each probe turns a declared control red |
-| Channel binding to transport identity | `tests/integration/mtls_transport_binding_test.rs` | `//mcp-re-proxy:integration_test` (uses the `test-fixtures` dev feature) | binding mismatch refused |
+| Channel binding to transport identity | `tests/integration/mtls_transport_binding_test.rs` | `//mcp-re-proxy:integration_test` | binding mismatch refused |
 | Client leg end to end | `tests/integration_async/mtls_client_leg_e2e_test.rs` | `async_serve`; `//mcp-re-proxy:integration_async_test` | — |
 | Per-request revocation | `tests/integration_async/per_request_revocation_test.rs` | `async_serve` | revoked client refused |
 | CRL freshness / posture | unit tests in `mcp-re-proxy/src/tls.rs` | `//mcp-re-proxy:proxy_unit_test` | stale CRL refused |
