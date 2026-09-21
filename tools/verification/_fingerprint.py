@@ -148,6 +148,7 @@ from _ecosystems import unit_projects
 from _lean_sources import generated_model_paths, LAKEFILE, theorem_source_paths
 from _manifest import (
     claims_lean_evidence,
+    claims_verus_evidence,
     claims_measured_evidence,
     claims_mutation_evidence,
     claims_structural_evidence,
@@ -527,6 +528,30 @@ def _registry_entries(filename: str, key: str, unit_id: str) -> dict[str, str]:
     }
 
 
+#: The lane that decides what a machine-checked PROOF is, and whether one was checked.
+#:
+#: Two files, and the criterion for membership is *can changing this alter whether the lane
+#: reports valid Verus evidence, what proved-symbol population was activated, or whether a
+#: zero/non-activated run is accepted?* — not *is it imported*. `verify-verus` imports
+#: `_evidence`, `_manifest` and this module and none of them is here on that account.
+#:
+#: `toolchain_identity` does NOT cover this. It pins the prover's INPUTS — `vstd.vir`,
+#: `libvstd.rlib`, the `verus.binaries` executables, the solver. These two are the code that
+#: COMPARES those pins, sets `VERUS_Z3_PATH` from the lock, refuses a `focus` run, and
+#: decides between NOT_REQUIRED, SKIPPED, PASS and FAIL. Pinning an instrument's inputs is
+#: not pinning the instrument, and this lane's own history is a record of that check being
+#: strengthened: the digest set was once `vstd.vir` and the commit alone, and a substituted
+#: `rust_verify` shipping the pinned vstd passed both.
+VERUS_LANE_INPUTS = (
+    "tools/verification/verify-verus",
+    # The adjudicator, separately: it reads the prover's own JSON report and decides whether
+    # the unit's evidence EXISTS — prover identity as reported, whole-crate verification
+    # rather than a partial run, and whether the named theorems were processed. Same
+    # position `_structural.py` holds for the structural lane and `_measured.py` for the
+    # measured one, and both of those are lane inputs already.
+    "tools/verification/_verus_results.py",
+)
+
 #: The lane that decides what "the compiler refused the hostile construction" means.
 STRUCTURAL_LANE_INPUTS = (
     "tools/verification/verify-structural",
@@ -625,6 +650,12 @@ def _lean_lane_identity() -> dict[str, str]:
 
 def _generated_model_lane_identity() -> dict[str, str]:
     return _digest_paths(list(GENERATED_MODEL_LANE_INPUTS))
+
+
+def _verus_lane_identity(unit: dict) -> dict[str, str]:
+    if not claims_verus_evidence(unit):
+        return {}
+    return _digest_paths(list(VERUS_LANE_INPUTS))
 
 
 def _structural_lane_identity(unit: dict) -> dict[str, str]:
@@ -786,6 +817,14 @@ def fingerprint_unit(
     # this tree extracts* — and a unit could in principle come to claim one without the
     # other. They overlap in `_lean_model.py` and `_extraction_identity.py`, and the overlap
     # is the honest statement that those two decide something for both.
+    # The seventh formal lane, and the last one whose instrument was outside the identity.
+    # Conditional for the same reason as the two above: 238 of 244 units claim no `verus://`,
+    # and an always-present key would move all of them to record the absence of a thing they
+    # never had. The population it does reach is the repository's entire machine-checked
+    # surface — the same six units that declare `proved_symbols`, export a `contract://`, and
+    # carry class V1.
+    if claims_verus_evidence(unit):
+        components["verus_lane_identity"] = _verus_lane_identity(unit)
     if claims_lean_evidence(unit):
         components["lean_lane_identity"] = _lean_lane_identity()
         components["generated_model_lane_identity"] = _generated_model_lane_identity()
