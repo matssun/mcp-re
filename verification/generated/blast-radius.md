@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- GENERATED FILE — DO NOT EDIT.
      Regenerate with: tools/verification/generate-views
-     Gated by:        tools/verification/check-generated
+     Gated by:        tools/verification/check-views
      Derived from:
        verification/policy/theorems.toml
        verification/policy/verification.toml

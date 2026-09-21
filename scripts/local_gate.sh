@@ -262,6 +262,13 @@ stage_static() {
     && python3 scripts/assurance_obligation_gate.py \
     && python3 tools/verification/test_r9_linkage.py \
     && python3 tools/verification/test_evidence_class.py \
+    `# Every file under verification/generated/ is what the catalogues render right now.` \
+    `# It rode inside check-generated, which is the extraction-phase generated-model lane,` \
+    `# so six cheap Markdown comparisons were reachable only through the pinned Linux` \
+    `# container and only when that container's step condition held. Split out, this half` \
+    `# runs anywhere and every view's own banner now names the control that gates it.` \
+    && ./tools/verification/check-views --selftest \
+    && ./tools/verification/check-views \
     `# The published claim surface and the declared root set are one fact written twice.` \
     `# They had diverged in four ways and nothing related them; this is what relates them.` \
     && python3 scripts/claim_surface_gate.py --selftest \

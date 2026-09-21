@@ -48,6 +48,44 @@ WHAT IT PROVES, from SOURCE alone:
   * §4 SHAPE    the open-gap table names no declared root, and no area twice. A root that
                 is a system promise is not simultaneously an unclosed gap, and a duplicated
                 area row gives a reader a different answer depending which one they reach.
+  * NOT MOVED   every theorem the OWNER HAS REVIEWED whose claim this branch moves is
+                carried by a review at the new claim or by a recorded correction — not only
+                the twelve published roots. See THE REACH below.
+
+THE REACH, and why it is derived rather than listed. Until 2026-09-21 the staleness rule
+above ranged over `declared` — the twelve §2-published roots — so a theorem was enforced if
+it was published, or if it was already enforced. Nothing pulled a theorem into the enforced
+set BECAUSE ITS CLAIM MOVED. Measured on one branch: a single sentence removed from
+THM-0023's scope moved NINE theorems' fingerprints, five of them `critical`, and this gate
+named ONE. THM-0105's own claim text moved in the same push, held by no other theorem's
+closure and published as no root, and nothing in the repository would have reported it.
+
+The published roots are still held hardest — a root with no §2 row, or a §2 row whose review
+went stale, fails whether its claim moved or not. What is added is the second, derived
+population: compare each theorem's claim components against the MERGE BASE with
+`origin/main` and enforce over what actually moved. That set costs one `git show` of
+`verification/policy/theorems.toml`, because a theorem fingerprint reads that file and
+nothing else.
+
+Three decisions inside it, each of which the obvious implementation gets wrong:
+
+  * THE MERGE BASE, not `origin/main`'s tip. The question is *what did THIS branch move*.
+    Against the tip, a claim corrected on `main` after this branch forked reads as this
+    branch's movement, and the gate would demand a record from the wrong author.
+  * CLAIM COMPONENTS, not the composite fingerprint. `encoding_version` participates in the
+    fingerprint and is excluded here: bumping how a claim is ENCODED changes every digest
+    while changing nothing a reviewer approved, and a gate that demanded 128 records for it
+    would be routed around within the hour.
+  * ONLY WHAT THE OWNER REVIEWED. A theorem with no specification review record has no
+    approval to invalidate, so moving it breaks nothing this gate is about. Introducing an
+    unreviewed theorem is release-mode establishment's question, and it asks for the human.
+
+WHAT THE MOVEMENT HALF DOES NOT COVER, stated because a derived population reads as wider
+than it is: a theorem ADDED on the branch (no prior claim to have moved) and one DELETED by
+it (no current claim) are both outside it — the registry's own loader and the §2 mapping
+above judge those. And when the merge base cannot be read the half is SKIPPED and the skip
+is PRINTED, on `module_size_gate.py`'s precedent: a comparison that quietly no-ops when it
+cannot find its baseline is this platform's own "green that measured nothing".
 
 WHAT IT DOES NOT PROVE: that a claim's prose is *accurate*, that the evidence behind a root
 is fresh, or that the argument composes. Evidence freshness is `tools/verification/review`
@@ -62,7 +100,9 @@ Run:  python3 scripts/claim_surface_gate.py
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -326,6 +366,137 @@ def mapping_defects(
     return defects
 
 
+#: The branch this gate measures claim movement against. Named once so the selftest and the
+#: prose agree with the code about which ref is the baseline.
+MOVEMENT_REF = "origin/main"
+
+
+def merge_base(ref: str = MOVEMENT_REF) -> str | None:
+    """The commit this branch forked from `ref`, or `None` when it cannot be determined.
+
+    Deliberately not `ref` itself. A claim corrected on `main` after this branch forked is
+    not this branch's movement, and a gate that attributed it here would demand a record
+    from an author who changed nothing.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "merge-base", "HEAD", ref],
+            cwd=REPO, capture_output=True, text=True, check=True,
+        ).stdout.strip()
+    except Exception:  # noqa: BLE001 - any git failure is the same answer here
+        return None
+    return out or None
+
+
+def theorems_at(commit: str) -> dict | None:
+    """`theorems.toml` as of `commit`, parsed and NOT validated.
+
+    Validation is deliberately skipped. `load_theorems` enforces TODAY's schema, and the
+    baseline is a tree that was legal under whatever schema it shipped with; running the
+    current validator over it would turn a legitimate schema change into a gate failure
+    about a commit nobody can now edit. What is needed here is only what the claim digests
+    read, and those are fields, not invariants.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "show", f"{commit}:verification/policy/theorems.toml"],
+            cwd=REPO, capture_output=True, check=True,
+        ).stdout
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        return tomllib.loads(out.decode("utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def claim_components(doc: dict) -> tuple[dict[str, dict], list[str]]:
+    """`(per-theorem claim components, ids that could not be measured)`.
+
+    `encoding_version` is dropped: it certifies how a claim is encoded, not what it says.
+    A row this code cannot fingerprint is RETURNED as unmeasurable rather than skipped —
+    a theorem silently absent from one side of a comparison is a theorem the comparison
+    reports as unmoved, which is the failure this whole gate is named after.
+    """
+    measured: dict[str, dict] = {}
+    unmeasurable: list[str] = []
+    for row in doc.get("theorem", []):
+        theorem = row.get("id")
+        if not theorem:
+            continue
+        try:
+            components = dict(fingerprint_theorem(row, doc)["components"])
+        except Exception:  # noqa: BLE001 - a row missing a claim field is unmeasurable, not equal
+            unmeasurable.append(theorem)
+            continue
+        components.pop("encoding_version", None)
+        components.pop("theorem_id", None)
+        measured[theorem] = components
+    return measured, sorted(unmeasurable)
+
+
+def moved_claims(before: dict[str, dict], after: dict[str, dict]) -> list[tuple[str, list[str]]]:
+    """`(theorem, which components moved)` for every theorem present on BOTH sides.
+
+    Present on both, because the two asymmetric cases are other controls' propositions and
+    answering them here would be this gate holding a second opinion: a theorem added on the
+    branch has no prior claim to have moved, and one deleted by it has no current claim for
+    a review to be about.
+    """
+    moved = []
+    for theorem in sorted(set(before) & set(after)):
+        which = sorted(k for k in set(before[theorem]) | set(after[theorem])
+                       if before[theorem].get(k) != after[theorem].get(k))
+        if which:
+            moved.append((theorem, which))
+    return moved
+
+
+#: How each moved-claim component reads to someone who has to act on the defect.
+COMPONENT_PROSE = {
+    "theorem_claim": "its own statement, security consequence or scope",
+    "theorem_dependencies": "a premise beneath it",
+    "theorem_review_requirement": "who must review it",
+}
+
+
+def movement_defects(
+    moved: list[tuple[str, list[str]]],
+    review_states: dict[str, tuple[str, str]],
+    corrected: dict[str, tuple[bool, str]],
+    reviewed_subjects: set[str],
+    unmeasurable: list[str] | None = None,
+) -> list[str]:
+    """Every moved claim the owner had reviewed and nothing carries to where it now stands."""
+    defects: list[str] = []
+    for theorem, which in moved:
+        if theorem not in reviewed_subjects:
+            # No approval exists, so none was invalidated. Establishing an unreviewed
+            # theorem is release mode's question and it asks for the human.
+            continue
+        state, reason = review_states.get(theorem, ("MISSING", "no review record"))
+        if state == REVIEWED:
+            continue
+        accepted, why = corrected.get(theorem, (False, "no correction record"))
+        if accepted:
+            continue
+        parts = ", ".join(COMPONENT_PROSE.get(k, k) for k in which)
+        defects.append(
+            f"{theorem}'s claim moved on this branch ({parts}) and its specification "
+            f"review is {state}: {reason}. The owner approved a different claim, and "
+            f"nothing carries the approval to this one: {why}. This theorem is not a "
+            f"published root — it is enforced because its claim MOVED, which is the "
+            f"population a silent cascade hides in."
+        )
+    for theorem in unmeasurable or []:
+        defects.append(
+            f"{theorem} could not be fingerprinted on one side of the comparison, so this "
+            f"gate cannot tell whether its claim moved. An unmeasurable claim must not "
+            f"read as an unchanged one."
+        )
+    return defects
+
+
 def read_surfaces():
     """`(claims, open gaps, settled record, unclassifiable tables)` from the boundary spec."""
     parts = sections(BOUNDARY.read_text(encoding="utf-8"))
@@ -471,6 +642,73 @@ def selftest() -> int:
     if "4" not in sections(nested) or "THM-0091" not in " ".join(sections(nested)["4"]):
         print("SELFTEST FAIL: a §4.1 amendment did not fold into §4", file=sys.stderr)
         return 1
+    # ---- the derived half: the reach SF-009 measured as 1-of-9 -------------------------
+    def thm(tid, statement="s", consequence="c", scope="sc", depends=(), req="owner"):
+        return {
+            "id": tid, "statement": statement, "security_consequence": consequence,
+            "scope": scope, "depends_on": list(depends), "review_requirement": req,
+        }
+
+    base_doc = {"theorem": [thm("THM-0001"), thm("THM-0002", depends=["THM-0001"])]}
+    base_components, base_bad = claim_components(base_doc)
+    if base_bad:
+        print(f"SELFTEST FAIL: a well-formed row read as unmeasurable: {base_bad}", file=sys.stderr)
+        return 1
+
+    # A premise's scope narrows. THM-0001's OWN claim moved; THM-0002 moved only through
+    # its dependency closure and is exactly the class the old reach never saw.
+    after_doc = {"theorem": [thm("THM-0001", scope="narrower"), thm("THM-0002", depends=["THM-0001"])]}
+    after_components, _ = claim_components(after_doc)
+    cascade = moved_claims(base_components, after_components)
+    if [t for t, _ in cascade] != ["THM-0001", "THM-0002"]:
+        print(f"SELFTEST FAIL: the cascade measured {cascade!r}", file=sys.stderr)
+        return 1
+    if dict(cascade)["THM-0001"] != ["theorem_claim"]:
+        print(f"SELFTEST FAIL: the source moved on {dict(cascade)['THM-0001']!r}", file=sys.stderr)
+        return 1
+    if dict(cascade)["THM-0002"] != ["theorem_dependencies"]:
+        print(f"SELFTEST FAIL: the dependent moved on {dict(cascade)['THM-0002']!r}", file=sys.stderr)
+        return 1
+
+    stale = {t: ("STALE_CLAIM", "changed since review") for t in ("THM-0001", "THM-0002")}
+    both = {"THM-0001", "THM-0002"}
+    # 1. moved, reviewed once, nothing carries it -> BOTH are defects, not just the source.
+    defects = movement_defects(cascade, stale, {}, both)
+    if len(defects) != 2 or not any("THM-0002" in d for d in defects):
+        print(f"SELFTEST FAIL: the dependency-only movement was not enforced: {defects}", file=sys.stderr)
+        return 1
+    # 2. re-reviewed at the new claim -> silent.
+    if movement_defects(cascade, {t: (REVIEWED, "reviewed") for t in both}, {}, both):
+        print("SELFTEST FAIL: a re-reviewed moved claim still failed", file=sys.stderr)
+        return 1
+    # 3. carried by a recorded correction -> silent.
+    if movement_defects(cascade, stale, {t: (True, "carried") for t in both}, both):
+        print("SELFTEST FAIL: a recorded correction did not carry a moved claim", file=sys.stderr)
+        return 1
+    # 4. never reviewed -> silent. There is no approval to invalidate, and inventing one
+    #    would make this gate an establishment control, which it is not.
+    if movement_defects(cascade, stale, {}, set()):
+        print("SELFTEST FAIL: an unreviewed theorem was held to a review it never had", file=sys.stderr)
+        return 1
+    # 5. nothing moved -> silent, and that must come from EQUALITY rather than from an
+    #    empty read: `compared` is asserted non-zero by the caller's note.
+    if moved_claims(base_components, base_components):
+        print("SELFTEST FAIL: an identical registry reported movement", file=sys.stderr)
+        return 1
+    # 6. a row this code cannot fingerprint is UNMEASURABLE, never equal.
+    broken, broken_ids = claim_components({"theorem": [{"id": "THM-0003", "statement": "s"}]})
+    if broken or broken_ids != ["THM-0003"]:
+        print(f"SELFTEST FAIL: a malformed row read as {broken!r}/{broken_ids!r}", file=sys.stderr)
+        return 1
+    if not movement_defects([], {}, {}, set(), unmeasurable=["THM-0003"]):
+        print("SELFTEST FAIL: an unmeasurable claim read as an unchanged one", file=sys.stderr)
+        return 1
+    # 7. an ADDED or DELETED theorem is outside this half, deliberately.
+    grown, _ = claim_components({"theorem": [thm("THM-0001"), thm("THM-0009")]})
+    if moved_claims(base_components, grown):
+        print("SELFTEST FAIL: an added/deleted theorem entered the movement set", file=sys.stderr)
+        return 1
+
     print("claim_surface_gate selftest: OK")
     return 0
 
@@ -574,11 +812,52 @@ def main() -> int:
         return 1
 
     found = mapping_defects(roots, claims, gaps, review_states, settled, unknown, corrected)
+
+    # THE DERIVED HALF. Everything above ranges over the twelve published roots; this ranges
+    # over what this branch actually moved, which is the population SF-009 measured the gate
+    # missing by eight theorems out of nine.
+    reviewed_subjects = {
+        theorem for theorem in fingerprints
+        if reviews.get(("specification", theorem)) is not None
+    }
+    base = merge_base()
+    baseline_doc = theorems_at(base) if base else None
+    if baseline_doc is None:
+        # PRINTED, never inferred from silence. A comparison that no-ops when it cannot find
+        # its baseline is this platform's own "green that measured nothing", and the one edit
+        # that disables it must not be the one edit nothing reports.
+        movement_note = (
+            f"claim-movement half SKIPPED: no readable `verification/policy/theorems.toml` "
+            f"at the merge base with {MOVEMENT_REF}"
+            + (f" ({base[:12]})" if base else " (no merge base)")
+            + ". Claim movement was NOT measured on this run."
+        )
+        moved: list[tuple[str, list[str]]] = []
+        compared = 0
+    else:
+        before, unmeasurable_before = claim_components(baseline_doc)
+        after, unmeasurable_after = claim_components({"theorem": theorems.get("theorem", [])})
+        moved = moved_claims(before, after)
+        compared = len(set(before) & set(after))
+        found += movement_defects(
+            moved,
+            review_states,
+            corrected,
+            reviewed_subjects,
+            sorted(set(unmeasurable_before) | set(unmeasurable_after)),
+        )
+        movement_note = (
+            f"{compared} theorem(s) compared against the merge base with {MOVEMENT_REF} "
+            f"({base[:12]}), {len(moved)} moved"
+        )
+
     if found:
+        print(f"claim-surface gate: {movement_note}", file=sys.stderr)
         print("claim-surface gate: FAIL", file=sys.stderr)
         for defect in found:
             print(f"  - {defect}", file=sys.stderr)
         return 1
+    print(f"claim-surface gate: {movement_note}")
     print(
         f"claim-surface gate: OK — {len(roots)} declared root(s), {len(claims)} published "
         f"claim(s), {len(gaps)} open §4 area(s), {len(settled)} settled, every claimed root "
