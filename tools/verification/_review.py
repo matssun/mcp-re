@@ -69,6 +69,26 @@ COMPONENT_CAUSE = {
     "theorem_review_requirement": "STALE_REVIEW_REQUIREMENT",
 }
 
+#: Precedence when SEVERAL components moved at once — the same device as
+#: `_graph.STATE_PRECEDENCE`, and added for the same reason it exists there: the reviewer
+#: should be told the most fundamental cause, not an incidental one.
+#:
+#: It was `sorted(causes)[0]`, which is alphabetical order, and alphabetical order happened
+#: to put `STALE_CLAIM` first. That is correct by accident, not by construction: the next
+#: cause anyone adds decides its own rank by its spelling, and a name beginning with
+#: `STALE_A…` would mask a moved claim behind it. The tie-break has to be a decision.
+#:
+#: `STALE_INPUT` leads, mirroring `UNKNOWN` in `_graph`: it means a component moved that
+#: this schema has no name for, so the named causes cannot be assumed complete, and the
+#: reviewer knows least about exactly that case. The three named causes then run from the
+#: claim itself, through the premises beneath it, to who must review it.
+CAUSE_PRECEDENCE = (
+    "STALE_INPUT",
+    "STALE_CLAIM",
+    "STALE_DEPENDENCY_CLAIM",
+    "STALE_REVIEW_REQUIREMENT",
+)
+
 #: Review states. `UNREVIEWED` and `STALE_*` are both "not reviewed as it stands now", and
 #: they stay apart because the remedy differs: one has never been read, the other was read
 #: at something else.
@@ -83,6 +103,19 @@ STALE_REVIEW = "STALE_REVIEW"
 REVIEW_STATES = {UNREVIEWED, REVIEWED, UNKNOWN, STALE_REVIEW, "STALE_INPUT"} | set(
     COMPONENT_CAUSE.values()
 )
+
+
+def _by_precedence(causes: set[str]) -> str:
+    """The most fundamental cause among those that moved.
+
+    An unranked cause sorts LAST rather than first: a cause nobody placed must not silently
+    outrank one somebody did, and `REVIEW_STATES` plus the census in `test_theorem_review`
+    keep the set from growing unnoticed.
+    """
+    for cause in CAUSE_PRECEDENCE:
+        if cause in causes:
+            return cause
+    return sorted(causes)[0] if causes else "STALE_INPUT"
 
 
 def review_root(repo_root: Path) -> Path:
@@ -159,7 +192,9 @@ def derive_review_state(current: dict, record: dict | None) -> tuple[str, str]:
             name for name, value in comparable.items() if recorded[name] != value
         )
         if differing:
-            cause = sorted(COMPONENT_CAUSE.get(name, "STALE_INPUT") for name in differing)[0]
+            cause = _by_precedence(
+                {COMPONENT_CAUSE.get(name, "STALE_INPUT") for name in differing}
+            )
             return cause, "changed since review: " + ", ".join(differing)
         if record["reviewed_fingerprint"] != current["fingerprint"]:
             # Every recorded component matches and the digest does not: the encoding itself

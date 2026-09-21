@@ -23,9 +23,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _graph import (  # noqa: E402
     Attestation,
+    COMPONENT_STATE,
     context_closure,
     derive_unit_state,
     evaluate,
+    STRUCTURAL_COMPONENT,
+    UNRESOLVED_COMPONENT,
 )
 
 COMPONENTS = {
@@ -106,6 +109,138 @@ def test_feature_or_configuration_change_makes_the_unit_dirty():
 def test_generated_model_drift_invalidates_lean_evidence():
     got = state_of(current({"generated_inputs": "sha256:regenerated"}), attestation())
     assert got == "DIRTY_EVIDENCE"
+
+
+def test_every_component_the_encoding_produces_has_a_classification():
+    """The census, over the REAL manifest — which is the half this suite was missing.
+
+    Every test above states a rule with synthetic components, and a rule stated over
+    components nobody produces is a rule that cannot fire. `generated_inputs` was exactly
+    that for the whole of Phase 4: its rule was asserted here while no unit had a non-empty
+    one.
+
+    So the population is the encoding's own output, and membership is a DEFINITION rather
+    than a list someone maintained: a component is classified, structurally incomparable, or
+    deliberately unresolved with a reason. A new component in none of the three fails here
+    the day it is added, instead of silently reaching `UNKNOWN` for years."""
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    _sys.path.insert(0, str(_Path(__file__).resolve().parent))
+    from _fingerprint import fingerprint_unit, load_trust_boundaries
+    from _manifest import (
+        load_assumptions,
+        load_toolchains,
+        load_verification,
+    )
+
+    doc = load_verification()
+    toolchains = load_toolchains()
+    assumptions = load_assumptions()
+    boundaries = load_trust_boundaries()
+    produced = set()
+    for unit in doc["unit"]:
+        produced |= set(
+            fingerprint_unit(unit, doc, toolchains, assumptions, boundaries)["components"]
+        )
+    assert len(produced) >= 30, produced
+
+    accounted = set(COMPONENT_STATE) | STRUCTURAL_COMPONENT | set(UNRESOLVED_COMPONENT)
+    missing = sorted(produced - accounted)
+    assert not missing, (
+        f"{missing} reach `derive_unit_state`'s UNKNOWN branch with no recorded reason. "
+        "Classify each where the encoding determines it, or record why it does not."
+    )
+    # And no component is in two places at once, which would make the reason depend on
+    # lookup order.
+    assert not set(COMPONENT_STATE) & set(UNRESOLVED_COMPONENT)
+    assert not set(COMPONENT_STATE) & STRUCTURAL_COMPONENT
+    assert not set(UNRESOLVED_COMPONENT) & STRUCTURAL_COMPONENT
+
+
+def test_each_refinement_derives_the_state_of_what_it_refines():
+    """The classifications, exercised rather than declared. Each of these reached UNKNOWN
+    before — fail-closed, but silent about which input moved, which is the answer §5 asks
+    these states to be."""
+    expected = {
+        "test_selection": "DIRTY_EVIDENCE",
+        "test_sources": "DIRTY_EVIDENCE",
+        "test_lane_identity": "DIRTY_EVIDENCE",
+        "mutation_probes": "DIRTY_EVIDENCE",
+        "mutation_lane_identity": "DIRTY_EVIDENCE",
+        "structural_probes": "DIRTY_EVIDENCE",
+        "structural_lane_identity": "DIRTY_EVIDENCE",
+        "measurements": "DIRTY_EVIDENCE",
+        "measured_lane_identity": "DIRTY_EVIDENCE",
+        "extracted_symbols": "DIRTY_EVIDENCE",
+        "lean_theorems": "DIRTY_EVIDENCE",
+        "lean_lane_identity": "DIRTY_EVIDENCE",
+        "generated_model_lane_identity": "DIRTY_EVIDENCE",
+        "lean_theorem_sources": "DIRTY_EVIDENCE",
+        "proved_symbols": "DIRTY_EVIDENCE",
+        "governing_boundaries": "DIRTY_ASSUMPTION",
+    }
+    assert set(expected) | set(COMPONENT_STATE) == set(COMPONENT_STATE)
+    for name, want in expected.items():
+        got, reason = derive_unit_state(
+            "a",
+            current({name: {"x": "sha256:after"}}),
+            {"a": attestation(overrides={name: {"x": "sha256:before"}})},
+        )
+        assert got == want, (name, got, want, reason)
+        assert name in reason, (name, reason)
+
+
+def test_an_unresolved_component_still_derives_unknown_and_says_why():
+    """The other direction, and the reason the three are left alone.
+
+    A classification is not free: a sealed `CONTRACT_CONSUMES` edge stops propagation for
+    `DIRTY_SELF` and `DIRTY_EVIDENCE` and for no other state, so classifying a component can
+    REDUCE what an invalidation reaches. UNKNOWN propagates through a seal. Leaving these
+    unclassified is therefore the conservative answer, not the lazy one — and the reason is
+    reported instead of 'this engine cannot classify it'."""
+    assert UNRESOLVED_COMPONENT, "the set is the record; an empty one records nothing"
+    for name, why in UNRESOLVED_COMPONENT.items():
+        got, reason = derive_unit_state(
+            "a",
+            current({name: "after"}),
+            {"a": attestation(overrides={name: "before"})},
+        )
+        assert got == "UNKNOWN", (name, got)
+        assert why in reason, (name, reason)
+
+
+def test_an_empty_context_closure_says_WHICH_empty_it_is():
+    """`review-frontier` prints "(none)" under Context-only on this machine, and will keep
+    printing it however the graph is edited — because with no attestation store every unit
+    is dirty, and context closure is the neighbours of the dirty set MINUS the dirty set.
+    There is no outside.
+
+    "(none)" reads as "the dirty set reaches no context", which is a different fact. Four
+    causes are materially different and the note names which one holds. Measured on the real
+    tree: 244 units, all UNKNOWN, context closure 0."""
+    from _load_tool import load_tool
+
+    frontier = load_tool("review-frontier", "review_frontier_cli")
+    note = frontier.context_note
+    edges = [{"kind": "COMPILE_DEPENDENCY"}, {"kind": "REVIEW_CONTEXT"}]
+
+    no_relation = note({"review_closure": ["a"]}, [], 10)
+    assert "no edge of any kind is declared" in no_relation
+
+    nothing_dirty = note({"review_closure": []}, edges, 10)
+    assert "nothing is dirty" in nothing_dirty
+
+    # The case that actually holds here, and the one "(none)" hid: everything is dirty, so
+    # the closure is empty for a reason that is about the evidence store, not the graph.
+    all_dirty = note({"review_closure": list("abcdefghij")}, edges, 10)
+    assert "all 10 units are dirty" in all_dirty
+    assert "not the graph" in all_dirty
+
+    neighbours_dirty = note({"review_closure": ["a", "b"]}, edges, 10)
+    assert "is itself dirty" in neighbours_dirty
+
+    assert len({no_relation, nothing_dirty, all_dirty, neighbours_dirty}) == 4
 
 
 def test_a_failed_proof_blocks_rather_than_dirties():

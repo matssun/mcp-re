@@ -48,7 +48,23 @@ STATE_PRECEDENCE = (
 )
 
 #: Which recorded component, when it differs, produces which state.
+#:
+#: This table was written for Phase 4's twelve components and did not grow with the
+#: encoding. Eighteen of the thirty components `fingerprint_unit` produces were in neither
+#: it nor any other list, so each of them reached `derive_unit_state`'s last resort —
+#: `UNKNOWN`, "this engine cannot classify it". Fail-closed, and there is no path from it to
+#: FRESH, so nothing was unsound. What was lost is the thing §5 asks these states to be:
+#: `DIRTY_SELF` versus `DIRTY_CONTRACT` versus `DIRTY_EVIDENCE` are answers to WHICH input
+#: moved, and a reviewer needs that answer to know what work the change created. "Something
+#: this engine cannot classify" is not that answer.
+#:
+#: Every entry added below is DETERMINED by the encoding's own statement about what the
+#: component refines — not chosen for a tidier state. `_fingerprint.py` says of each one
+#: which earlier component it makes effective, and the refinement inherits that component's
+#: classification. Where the encoding does NOT determine it, the component is in
+#: `UNRESOLVED_COMPONENT` and keeps deriving UNKNOWN.
 COMPONENT_STATE = {
+    # --- Phase 4's original twelve ---------------------------------------------------
     "source_inputs": "DIRTY_SELF",
     "exported_contracts": "DIRTY_CONTRACT",
     "test_evidence_definition": "DIRTY_EVIDENCE",
@@ -61,6 +77,88 @@ COMPONENT_STATE = {
     "build_configuration": "DIRTY_SELF",
     "generated_inputs": "DIRTY_EVIDENCE",
     "proof_dependencies": "DIRTY_EVIDENCE",
+    # --- v4: the EFFECTIVE test evidence, not merely its label ------------------------
+    # "Encoding v4 measures the EFFECTIVE TEST EVIDENCE" — these three answer "what did the
+    # test lane actually measure" for the claim `test_evidence_definition` states. A
+    # refinement of a component classified DIRTY_EVIDENCE is DIRTY_EVIDENCE: the battery
+    # behind the claim moved, which is the same fact at a finer grain.
+    "test_selection": "DIRTY_EVIDENCE",
+    "test_sources": "DIRTY_EVIDENCE",
+    "test_lane_identity": "DIRTY_EVIDENCE",
+    # --- v5: "extends the same rule to the MUTATION evidence" -------------------------
+    "mutation_probes": "DIRTY_EVIDENCE",
+    "mutation_lane_identity": "DIRTY_EVIDENCE",
+    # --- ADR-MCPRE-068 Phase 0D: "the same closure the mutation components give" -------
+    "structural_probes": "DIRTY_EVIDENCE",
+    "structural_lane_identity": "DIRTY_EVIDENCE",
+    "measurements": "DIRTY_EVIDENCE",
+    "measured_lane_identity": "DIRTY_EVIDENCE",
+    # --- v8: the extracted-model SELECTION, "for the reason v3 added the test selection"
+    "extracted_symbols": "DIRTY_EVIDENCE",
+    "lean_theorems": "DIRTY_EVIDENCE",
+    # --- the extraction lanes' own identity, and the theorem TEXT ---------------------
+    # The same three sentences the four host lane identities already carry, for the two
+    # lanes that had none: the code deciding what a `lean://` or generated-model result
+    # MEANS is part of that result's identity, and the theorem the prover resolves is the
+    # claim rather than its label. All three refine the extraction evidence, so they take
+    # the classification of what they refine.
+    "lean_lane_identity": "DIRTY_EVIDENCE",
+    "generated_model_lane_identity": "DIRTY_EVIDENCE",
+    "lean_theorem_sources": "DIRTY_EVIDENCE",
+    # The theorems a formal unit claims, by prover-reported name. Same shape as
+    # `test_evidence_definition`: it states WHAT is claimed, and deleting one is a reduction
+    # in evidence that the source digest would not report.
+    "proved_symbols": "DIRTY_EVIDENCE",
+    # --- the boundary cap ------------------------------------------------------------
+    # `max_class_without_assumption` is what keeps a proof's meaning honest across a
+    # declared trust boundary — a premise about what may be trusted beyond it, which is what
+    # `trusted_assumptions` already carries. Relaxing the cap relaxes an assumption.
+    "governing_boundaries": "DIRTY_ASSUMPTION",
+}
+
+#: Components that CANNOT differ between an attestation and the current derivation, because
+#: the comparison is keyed on them or short-circuits before reading them. Listed rather than
+#: omitted so that the census below can range over every produced component.
+STRUCTURAL_COMPONENT = {
+    # Skipped explicitly in `derive_unit_state`: a moved encoding is UNKNOWN by fingerprint
+    # comparison, which is a stronger statement than any per-component one.
+    "encoding_version",
+    # Attestations are looked up BY unit id, so a differing one means a corrupt record. It
+    # keeps deriving UNKNOWN, which is the right answer to a record that is not about this
+    # unit.
+    "unit_id",
+}
+
+#: Produced, and deliberately NOT classified. Each derives UNKNOWN — fail-closed, and more
+#: conservative than any `DIRTY_*` — because the encoding does not determine which state it
+#: is, and a classification is not free: a sealed `CONTRACT_CONSUMES` edge stops propagation
+#: for `DIRTY_SELF` and `DIRTY_EVIDENCE` and for nothing else, so classifying a component
+#: can REDUCE what an invalidation reaches. Zero sealed edges are declared today, which
+#: makes the choice unobservable now and load-bearing the moment one is.
+#:
+#: These three are the owner's, and the value here is the question, not a placeholder.
+UNRESOLVED_COMPONENT = {
+    "class": (
+        "a unit's class decides which lanes are REQUIRED of it, so a reclassification "
+        "changes what evidence must exist rather than what any evidence measured. That is "
+        "arguably DIRTY_POLICY and arguably DIRTY_EVIDENCE, and the encoding says neither."
+    ),
+    "consumed_contracts": (
+        "ruled DIRTY_DEPENDENCY — a change to what contract a unit consumes is a change to "
+        "its dependency closure, not to its own implementation and not to the producer's "
+        "exported contract — and NOT YET APPLIED, because the value it would classify is "
+        "not yet derived from anything. No unit declares one; every CONTRACT_CONSUMES edge "
+        "names no contract; `attest` writes a third, empty copy. Classifying an "
+        "independently asserted field would fix the reading of three representations that "
+        "have never had to agree. It applies once the value is derived from legitimate "
+        "incoming edges."
+    ),
+    "gate_controls": (
+        "ADR-MCPRE-068 Phase 1 describes these as 'the production carrier of the "
+        "proposition it defends' and says softening one is 'a reduction in evidence "
+        "exactly as deleting a runtime check is'. The first phrase points at DIRTY_SELF "
+        "and the second at DIRTY_EVIDENCE, in one sentence."
+    ),
 }
 
 
@@ -146,7 +244,14 @@ def derive_unit_state(unit_id: str, current: dict, attestations: dict) -> tuple[
         if recorded[name] != value:
             state = COMPONENT_STATE.get(name)
             if state is None:
-                return "UNKNOWN", f"`{name}` changed and this engine cannot classify it"
+                why = UNRESOLVED_COMPONENT.get(name)
+                return "UNKNOWN", (
+                    f"`{name}` changed and is deliberately unclassified: {why}"
+                    if why
+                    else f"`{name}` changed and this engine cannot classify it. It is in "
+                    f"neither COMPONENT_STATE nor UNRESOLVED_COMPONENT, which the component "
+                    f"census forbids — so the census is not running where this ran."
+                )
             differing.add(state)
             reasons.append(name)
 
