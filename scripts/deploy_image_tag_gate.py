@@ -34,12 +34,20 @@ REPO = Path(__file__).resolve().parent.parent
 
 # Files whose image references are DEPLOYED or PUSHED. Docs that merely narrate a past
 # run are excluded — a historical "the v0.12.1 run" is a fact, not a pin.
+#
+# A Dockerfile has no extension, so no suffix glob in this tuple reaches one, and
+# `deploy/docker/` holds four. `scripts/bump_version.sh:53-54` does not close that hole
+# either: it selects by grepping for the OLD version string, so a file that misses one
+# bump stops matching and is never swept again. The two runbooks are named individually
+# rather than by `docs/security/*.md`, which is what keeps dated narration out.
 SCAN_GLOBS = (
     "deploy/**/*.yaml",
     "deploy/**/*.yml",
     "deploy/**/*.tpl",
+    "deploy/docker/Dockerfile*",
     "docs/security/*.sh",
     "docs/security/gke-slo-baseline-runbook.md",
+    "docs/security/eks-slo-baseline-runbook.md",
     "tools/**/*.sh",
     ".github/workflows/*.yml",
 )
@@ -132,6 +140,29 @@ def selftest() -> int:
             print("SELFTEST FAILED: a correct bare `tag:` still reported findings")
             return 1
         values.unlink()
+
+        # An extensionless Dockerfile. Its own fixture, because no suffix glob can reach
+        # one at all — the scan that missed four of them looked exactly as green as one
+        # that covers them, and the tag drifted five versions behind under a rule that
+        # forbids retyped tags.
+        (root / "deploy" / "docker").mkdir()
+        dockerfile = root / "deploy" / "docker" / "Dockerfile.x"
+        dockerfile.write_text(
+            "FROM debian:bookworm-slim\n"
+            "#   docker build -f deploy/docker/Dockerfile.x -t mcp-re-proxy:0.12.1 .\n"
+        )
+        findings = scan(root, "9.9.9")
+        if len(findings) != 1 or "Dockerfile.x" not in findings[0]:
+            print(f"SELFTEST FAILED: a drifted Dockerfile pin was not caught, got {findings}")
+            return 1
+        dockerfile.write_text(
+            "FROM debian:bookworm-slim\n"
+            "#   docker build -f deploy/docker/Dockerfile.x -t mcp-re-proxy:9.9.9 .\n"
+        )
+        if scan(root, "9.9.9"):
+            print("SELFTEST FAILED: a correctly-pinned Dockerfile still reported findings")
+            return 1
+        dockerfile.unlink()
 
     # Coverage: an image something DEPLOYS but no cloudbuild config BUILDS. Its own
     # fixture, so the two checks cannot mask each other. The orphan is asserted with an

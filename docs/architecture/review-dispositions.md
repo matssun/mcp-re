@@ -3,11 +3,12 @@
 # ADR-MCPRE-061 §14 review dispositions
 
 The durable records that the repository's debt registers point at through a `review_ref`
-field. Two registers cite this document: `config/module-size-debt.toml` (files over the
-200-line threshold, `EX-` records) and `config/unit-closure-exclusions.toml` (files the
+field. Three registers cite this document: `config/module-size-debt.toml` (files over the
+200-line threshold, `EX-` records), `config/unit-closure-exclusions.toml` (files the
 module tree reaches from a measured assurance unit that no unit's `paths` answer for,
-`UC-` records). Both gates fail when a cited record is absent, so a completed review points
-at evidence rather than at a memory of one.
+`UC-` records), and `config/doc-path-debt.toml` (files naming a path this repository does
+not contain, `DP-` records). Every one of those gates fails when a cited record is absent,
+so a completed review points at evidence rather than at a memory of one.
 
 A §14 record adjudicates a unit. It does **not** necessarily grant it an exception — this
 register holds declined censuses too, because:
@@ -2594,6 +2595,62 @@ is a measurement of the tree it ships with, not an estimate made when the record
 
 ---
 
+## DP-001 — paths belonging to another repository — **reviewed exception**
+
+Cited by `config/doc-path-debt.toml` for six files. `scripts/doc_path_gate.py` resolves a
+path-like token against this repository and reports the ones that do not resolve. A token
+naming **another** repository's tree cannot resolve here and is not supposed to: it is a
+correct statement about a system this one is deployed beside.
+
+| file | what it names |
+|---|---|
+| `config/ports.toml`, `docs/dev/port-registry.md` | the enclosing monorepo's service registry, which is where this project's port band is reserved |
+| `MODULE.bazel` | the enclosing monorepo's build-manifest registry |
+| `.github/workflows/cloud-kms-live.yml` | a LocalStack source file, quoted to say which upstream behaviour the KMS live lane works around |
+| `tools/slo/host_gate.py` | the retention script that runs on the verification host, which is administered outside this repository |
+| `mcp-re-conformance/tests/security_traceability_guard_test.rs` | the manifest's path as the enclosing monorepo sees it |
+
+**Disposition: keep as written.** The alternative is to delete a true statement because a
+resolver cannot follow it. The obligation the rows carry instead is the ratchet: a file in
+this class may not gain a token, so a dead path added next to a foreign one still fails.
+
+## DP-002 — a path this repository must NOT contain — **reviewed exception**
+
+Cited by `config/doc-path-debt.toml` for seven files. Each names a file whose **absence**
+is the point: an ignore-list entry, a credentials-bearing local harness, or the template
+that tells an operator to create one. A gate that demanded these resolve would be
+demanding the repository contain exactly what its other controls exist to keep out —
+`scripts/tracked_secrets_gate.py` is the control that refuses one of them by name.
+
+Covered: `.dockerignore`, `.gcloudignore`, `deploy/codebuild/mcp-re-slo-bench.yaml` and
+`scripts/tracked_secrets_gate.py` (the local settings file that must never be shipped or
+committed); `scripts/test-aws-cloud.sh.example` and `scripts/test-gcp-cloud.sh.example`
+(the operator-local scripts they are templates for); and
+`mcp-re-proxy/tests/integration_live/gcp_kms_delegated_required_live_test.rs` (the
+operator-local script the live lane is driven by).
+
+**Disposition: keep as written.**
+
+## DP-003 — illustrative and placeholder paths — **reviewed exception**
+
+Cited by `config/doc-path-debt.toml` for four files. No rule distinguishes a hypothetical
+path from a real one, and pretending otherwise is how a gate earns a suppression, so these
+are dispositioned once and pinned.
+
+| file | token | why it is not a claim |
+|---|---|---|
+| `CLAUDE.md` | a domain-repository example under `src/domain/`, prefixed *"e.g."*; and the rules file of the vendored AWS agent toolkit | the first is a shape, not a location; the second is a third-party artifact's own path |
+| `BUILD.bazel` | the `lib.rs`/`main.rs` pair, named as a Rust convention | a convention, not a file of this repository |
+| `scripts/bazel_srcs_gate.py` | a synthetic crate layout in a comment explaining the directory-module case its `--selftest` builds | the temporary tree is the subject; the path is supposed not to exist here |
+| `tools/slo/job_identity.py` | the `owner/repo/...` form of a workflow reference | a GitHub API template, instantiated at run time |
+
+**`CLAUDE.md` stays IN the gate's scope.** It is this repository's normative standards
+document and cites a dozen live gate scripts and registries, so it is the single file
+whose dead path would be most expensive. Excluding it to absorb one `e.g.` token would buy
+one registry row at the cost of that file's coverage forever.
+
+---
+
 ## EX-014 — `unit://core.ed25519_primitive` gives up its algorithm-gate clause — **correspondence correction, not a narrowing**
 
 **Unit:** `core.ed25519_primitive` — `V0`, `direct_consequence_severity = "critical"`.
@@ -2653,3 +2710,4 @@ for that re-derivation; the deletion is not pre-executed.
 
 The NP-106 ratification packet is **annotated, not rewritten** — a review record states what was
 decided on the day it was decided.
+
