@@ -114,7 +114,7 @@ attestations this view cannot see.
 | unit://proxy.audit_delivery | source, contracts or evidence | THM-0070 | _no consumer_ |
 | unit://proxy.audit_text_rendering | source, contracts or evidence | THM-0130 | _no consumer_ |
 | unit://proxy.audit_vocabulary_import | source, contracts or evidence | THM-0071 | _no consumer_ |
-| unit://proxy.authenticated_relationship_peer | source, contracts or evidence | THM-0031 | proxy.current_authenticated_peer (CONTRACT_CONSUMES) |
+| unit://proxy.authenticated_relationship_peer | source, contracts or evidence | THM-0031 | proxy.current_authenticated_peer (COMPILE_DEPENDENCY) |
 | unit://proxy.authorization_capability | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.authorization_configuration_state | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.authorization_coordinate_provenance | source, contracts or evidence | THM-0040 | _no consumer_ |
@@ -126,8 +126,8 @@ attestations this view cannot see.
 | unit://proxy.certificate_identity | source, contracts or evidence | THM-0024 | proxy.channel_associated_identity (COMPILE_DEPENDENCY) |
 | unit://proxy.certificate_identity_authority_boundary | source, contracts or evidence | THM-0024 | _no consumer_ |
 | unit://proxy.certificate_identity_refusal_vocabulary | source, contracts or evidence | THM-0024 | _no consumer_ |
-| unit://proxy.channel_associated_credential | source, contracts or evidence | THM-0028 | proxy.channel_associated_identity (CONTRACT_CONSUMES), proxy.mechanism_verified_credential (CONTRACT_CONSUMES) |
-| unit://proxy.channel_associated_identity | source, contracts or evidence | THM-0029 | proxy.authenticated_relationship_peer (CONTRACT_CONSUMES) |
+| unit://proxy.channel_associated_credential | source, contracts or evidence | THM-0028 | proxy.channel_associated_identity (COMPILE_DEPENDENCY), proxy.mechanism_verified_credential (COMPILE_DEPENDENCY) |
+| unit://proxy.channel_associated_identity | source, contracts or evidence | THM-0029 | proxy.authenticated_relationship_peer (COMPILE_DEPENDENCY) |
 | unit://proxy.channel_credential_custody_state | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.channel_peer_resolution | source, contracts or evidence | THM-0031 | _no consumer_ |
 | unit://proxy.client_certificate_posture | source, contracts or evidence | THM-0054 | proxy.credential_currency (COMPILE_DEPENDENCY) |
@@ -145,13 +145,13 @@ attestations this view cannot see.
 | unit://proxy.continuation_materialization | source, contracts or evidence | THM-0096 | _no consumer_ |
 | unit://proxy.continuation_materialization_shared | source, contracts or evidence | THM-0096 | _no consumer_ |
 | unit://proxy.continuation_materialization_sole_producer | source, contracts or evidence | THM-0096 | _no consumer_ |
-| unit://proxy.credential_currency | source, contracts or evidence | THM-0032 | proxy.current_authenticated_peer (CONTRACT_CONSUMES) |
+| unit://proxy.credential_currency | source, contracts or evidence | THM-0032 | proxy.current_authenticated_peer (COMPILE_DEPENDENCY) |
 | unit://proxy.credential_currency_evidence_reporting | source, contracts or evidence | THM-0032 | _no consumer_ |
-| unit://proxy.credential_key_correspondence | source, contracts or evidence | THM-0026 | proxy.delegated_resolver_materialization (CONTRACT_CONSUMES) |
+| unit://proxy.credential_key_correspondence | source, contracts or evidence | THM-0026 | proxy.delegated_resolver_materialization (COMPILE_DEPENDENCY) |
 | unit://proxy.credential_key_correspondence_sole_producer | source, contracts or evidence | THM-0026 | _no consumer_ |
 | unit://proxy.cross_machine_legality | source, contracts or evidence | THM-0049, THM-0077 | _no consumer_ |
 | unit://proxy.currency_policy_classification | source, contracts or evidence | THM-0032 | _no consumer_ |
-| unit://proxy.current_authenticated_peer | source, contracts or evidence | THM-0033 | proxy.request_peer_binding (CONTRACT_CONSUMES) |
+| unit://proxy.current_authenticated_peer | source, contracts or evidence | THM-0033 | proxy.request_peer_binding (COMPILE_DEPENDENCY) |
 | unit://proxy.custody_exposure | source, contracts or evidence | THM-0064 | _no consumer_ |
 | unit://proxy.custody_exposure_sole_producer | source, contracts or evidence | THM-0064 | _no consumer_ |
 | unit://proxy.delegated_resolver_materialization | source, contracts or evidence | THM-0027 | _no consumer_ |
@@ -180,7 +180,7 @@ attestations this view cannot see.
 | unit://proxy.legality_boundary_totality | source, contracts or evidence | THM-0077 | _no consumer_ |
 | unit://proxy.listener_state_assembly | source, contracts or evidence | THM-0048 | _no consumer_ |
 | unit://proxy.mcp_transport_contract_state | source, contracts or evidence | THM-0077 | _no consumer_ |
-| unit://proxy.mechanism_verified_credential | source, contracts or evidence | THM-0030 | proxy.authenticated_relationship_peer (CONTRACT_CONSUMES), proxy.credential_currency (CONTRACT_CONSUMES) |
+| unit://proxy.mechanism_verified_credential | source, contracts or evidence | THM-0030 | proxy.authenticated_relationship_peer (COMPILE_DEPENDENCY), proxy.credential_currency (COMPILE_DEPENDENCY) |
 | unit://proxy.online_ocsp_reachability | source, contracts or evidence | THM-0013 | _no consumer_ |
 | unit://proxy.operator_facing_redaction | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://proxy.outbound_destination | source, contracts or evidence | THM-0090 | _no consumer_ |

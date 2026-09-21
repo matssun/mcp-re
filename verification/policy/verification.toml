@@ -2259,7 +2259,7 @@ evidence = [
 [[edge]]
 # Producer -> consumer. Materialization consumes the correspondence fact as its construction
 # witness; it does not re-derive what correspondence means.
-kind = "CONTRACT_CONSUMES"
+kind = "COMPILE_DEPENDENCY"
 from = "proxy.credential_key_correspondence"
 to = "proxy.delegated_resolver_materialization"
 rationale = "The resolver's guarantee is exactly the correspondence authority's fact, carried into a runtime value. If correspondence became vacuous, the resolver would still be constructed — and only this unit's controls would notice, because the correspondence unit's own tests are about the relation rather than about what is built from it."
@@ -2316,7 +2316,7 @@ pilot = "verus-candidate"
 [[edge]]
 # Producer -> consumer. The linkage consumes the credential fact; it does not re-derive
 # what association means.
-kind = "CONTRACT_CONSUMES"
+kind = "COMPILE_DEPENDENCY"
 from = "proxy.channel_associated_credential"
 to = "proxy.channel_associated_identity"
 rationale = "The linkage's whole added content is that the leaf it interpreted came from a channel-associated credential. If association became manufacturable, the linkage would still be constructed and its own controls would still pass — they measure WHICH certificate of the association was read, not where the association came from."
@@ -2369,7 +2369,7 @@ pilot = "verus-candidate"
 [[edge]]
 # Producer -> consumer. Verified-credential evidence consumes the association fact; it does
 # not re-derive what association means, and it does not read `peer_certificates()`.
-kind = "CONTRACT_CONSUMES"
+kind = "COMPILE_DEPENDENCY"
 from = "proxy.channel_associated_credential"
 to = "proxy.mechanism_verified_credential"
 rationale = "The acceptance is ABOUT the associated credential, obtained from the same connection in the same operation. If association became manufacturable, this product would still be constructed and its own controls would still pass — they measure which PATH the mechanism reported, not where the credential came from."
@@ -2415,7 +2415,7 @@ pilot = "verus-candidate"
 [[edge]]
 # Producer -> consumer. The authenticated fact consumes the acceptance whole; it does not
 # re-derive what acceptance means and it does not read a connection.
-kind = "CONTRACT_CONSUMES"
+kind = "COMPILE_DEPENDENCY"
 from = "proxy.mechanism_verified_credential"
 to = "proxy.authenticated_relationship_peer"
 rationale = "The acceptance is the half of this product that the word AUTHENTICATED rests on, and the establishment path is projected from it rather than stored again. If acceptance became manufacturable, this product would still be constructed and its own controls would still pass — they measure WHICH credential the identity came from, not whether the mechanism really accepted it."
@@ -2423,7 +2423,7 @@ rationale = "The acceptance is the half of this product that the word AUTHENTICA
 [[edge]]
 # Producer -> consumer. The identity half IS the Slice-5 linkage, called on the accepted
 # credential, so a weakened linkage changes which certificate this product authenticates.
-kind = "CONTRACT_CONSUMES"
+kind = "COMPILE_DEPENDENCY"
 from = "proxy.channel_associated_identity"
 to = "proxy.authenticated_relationship_peer"
 rationale = "The identity half of this product is the channel-associated identity linkage applied to the accepted credential. If that linkage stopped reading the relationship's own leaf, this product would authenticate the wrong certificate's identity while these controls — which vary the RELATIONSHIP and hold the policy fixed — stayed green."
@@ -2469,7 +2469,7 @@ pilot = "verus-candidate"
 [[edge]]
 # Producer -> consumer. Currency is ABOUT the accepted credential, projected from it inside
 # the operation rather than handed in as a chain.
-kind = "CONTRACT_CONSUMES"
+kind = "COMPILE_DEPENDENCY"
 from = "proxy.mechanism_verified_credential"
 to = "proxy.credential_currency"
 rationale = "The chain evaluated is projected from the acceptance, so the verdict is about the credential this relationship presented. If acceptance became manufacturable, this unit would still evaluate and its own controls would still pass — they measure WHICH fact refused, not where the credential came from."
@@ -2541,13 +2541,13 @@ pilot = "verus-candidate"
 # ---------------------------------------------------------------------------
 
 [[edge]]
-kind = "CONTRACT_CONSUMES"
+kind = "COMPILE_DEPENDENCY"
 from = "proxy.authenticated_relationship_peer"
 to = "proxy.current_authenticated_peer"
 rationale = "The authentication half is carried whole and its acceptance is the credential the currency half evaluates. If authentication became manufacturable this product would still be built, and its controls — which vary the RELATIONSHIP and the policy — would still pass."
 
 [[edge]]
-kind = "CONTRACT_CONSUMES"
+kind = "COMPILE_DEPENDENCY"
 from = "proxy.credential_currency"
 to = "proxy.current_authenticated_peer"
 rationale = "The currency half IS the currency authority's verdict on the peer's own acceptance, and its refusal is carried unchanged rather than re-decided. A currency authority that stopped distinguishing its five facts would collapse this product's refusal algebra with no control here going red."
@@ -2589,7 +2589,7 @@ pilot = "verus-candidate"
 # succeed. The fixtures conformed to the defect and the tests went green.
 
 [[edge]]
-kind = "CONTRACT_CONSUMES"
+kind = "COMPILE_DEPENDENCY"
 from = "proxy.current_authenticated_peer"
 to = "proxy.request_peer_binding"
 rationale = "The channel operand is the authenticated peer, with whatever currency assurance the deployment established. If authentication became manufacturable the binding would still be formed, and its controls — which vary the SUBJECT on both sides — would still pass."
