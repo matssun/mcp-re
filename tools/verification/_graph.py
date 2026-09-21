@@ -67,6 +67,15 @@ COMPONENT_STATE = {
     # --- Phase 4's original twelve ---------------------------------------------------
     "source_inputs": "DIRTY_SELF",
     "exported_contracts": "DIRTY_CONTRACT",
+    # The consumer's half of the same relation, and a different state on purpose.
+    # `DIRTY_CONTRACT` is the PRODUCER whose published interface moved; a change to WHICH
+    # producer contract this unit consumes is neither that nor consumer implementation
+    # churn — it is a change to the dependency closure the unit's evidence rests on. Applied
+    # only now, because until the value was derived from the incoming CONTRACT_CONSUMES
+    # edges it was an independently authored field, and classifying one of three
+    # representations that had never had to agree would have fixed the reading of a
+    # disagreement instead of removing it.
+    "consumed_contracts": "DIRTY_DEPENDENCY",
     "test_evidence_definition": "DIRTY_EVIDENCE",
     "trusted_assumptions": "DIRTY_ASSUMPTION",
     "toolchain_identity": "DIRTY_TOOLCHAIN",
@@ -143,16 +152,6 @@ UNRESOLVED_COMPONENT = {
         "changes what evidence must exist rather than what any evidence measured. That is "
         "arguably DIRTY_POLICY and arguably DIRTY_EVIDENCE, and the encoding says neither."
     ),
-    "consumed_contracts": (
-        "ruled DIRTY_DEPENDENCY — a change to what contract a unit consumes is a change to "
-        "its dependency closure, not to its own implementation and not to the producer's "
-        "exported contract — and NOT YET APPLIED, because the value it would classify is "
-        "not yet derived from anything. No unit declares one; every CONTRACT_CONSUMES edge "
-        "names no contract; `attest` writes a third, empty copy. Classifying an "
-        "independently asserted field would fix the reading of three representations that "
-        "have never had to agree. It applies once the value is derived from legitimate "
-        "incoming edges."
-    ),
     "gate_controls": (
         "ADR-MCPRE-068 Phase 1 describes these as 'the production carrier of the "
         "proposition it defends' and says softening one is 'a reduction in evidence "
@@ -174,7 +173,6 @@ class Attestation:
     unit_id: str
     fingerprint: str
     components: dict
-    consumed_contracts: dict = field(default_factory=dict)
     evidence: dict = field(default_factory=dict)
 
     @staticmethod
@@ -183,7 +181,6 @@ class Attestation:
             unit_id=raw["unit_id"],
             fingerprint=raw["fingerprint"],
             components=raw.get("components", {}),
-            consumed_contracts=raw.get("consumed_contracts", {}),
             evidence=raw.get("evidence", {}),
         )
 

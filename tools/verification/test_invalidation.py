@@ -483,6 +483,38 @@ def test_context_closure_excludes_the_dirty_set_itself():
     assert context_closure({"a", "b"}, [{"from": "a", "to": "b"}]) == set()
 
 
+def test_consuming_a_different_contract_is_a_dependency_change():
+    """The owner's ruling, applied only now that the value is derived from the edges.
+
+    Three states are plausible and only one is right. It is not `DIRTY_CONTRACT`: that is the
+    PRODUCER whose published interface moved, and reusing it here would overload a state the
+    propagation rules read. It is not `DIRTY_SELF`: nobody edited this unit. What changed is
+    the dependency closure the unit's evidence rests on."""
+    got, reason = derive_unit_state(
+        "a",
+        current({"consumed_contracts": ["contract://b/v2"]}),
+        {"a": attestation(overrides={"consumed_contracts": ["contract://b/v1"]})},
+    )
+    assert got == "DIRTY_DEPENDENCY", (got, reason)
+    assert "consumed_contracts" in reason
+
+
+def test_the_producer_and_consumer_halves_of_a_contract_get_different_states():
+    """Two components, one relation, and the distinction is the reason both exist."""
+    producer, _ = derive_unit_state(
+        "a",
+        current({"exported_contracts": ["contract://a/v2"]}),
+        {"a": attestation(overrides={"exported_contracts": ["contract://a/v1"]})},
+    )
+    consumer, _ = derive_unit_state(
+        "a",
+        current({"consumed_contracts": ["contract://b/v2"]}),
+        {"a": attestation(overrides={"consumed_contracts": ["contract://b/v1"]})},
+    )
+    assert (producer, consumer) == ("DIRTY_CONTRACT", "DIRTY_DEPENDENCY")
+
+
+
 # --- what makes an edge a CONTRACT edge -----------------------------------------
 #
 # `CONTRACT_CONSUMES` claims a relation to the producer's PUBLISHED INTERFACE, which is more

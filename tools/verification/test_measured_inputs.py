@@ -1253,6 +1253,87 @@ def test_the_frontier_is_seams_and_the_cone_is_files():
     assert len(cone) > len(frontier)
 
 
+# --- the consumer's half of a contract relation --------------------------------
+#
+# `consumed_contracts` was an independently authored unit field that no unit declared, beside
+# nine `CONTRACT_CONSUMES` edges that named no contract, beside a third empty copy in every
+# attestation. Three representations that had never had to agree. It is now derived from the
+# edges, and these are the controls that say so.
+
+CONTRACT = "contract://core/time/parse_rfc3339_utc"
+PRODUCER = "core.time_rfc3339"
+CONSUMER = "core.verification_taxonomy"
+
+
+def _doc_with(edge: dict) -> dict:
+    """The real manifest plus one edge. Everything else the encoding reads is unchanged, so
+    a moved fingerprint is attributable to the edge and to nothing else."""
+    return {**DOC, "edge": [*DOC.get("edge", []), edge]}
+
+
+def _contract_edge(to: str) -> dict:
+    return {"kind": "CONTRACT_CONSUMES", "from": PRODUCER, "to": to, "contract": CONTRACT}
+
+
+def test_the_consumed_contracts_component_is_derived_and_not_authored():
+    """The unit key is gone, so there is nothing to author. The component still exists and
+    still participates — it is now a reading of the graph rather than a second claim about
+    it."""
+    from _manifest import ManifestError, _reject_unknown, _UNIT_KEYS
+
+    assert "consumed_contracts" not in _UNIT_KEYS
+    try:
+        _reject_unknown("t", {"consumed_contracts": []}, _UNIT_KEYS)
+    except ManifestError as exc:
+        assert "[[edge]].contract" in str(exc), exc
+    else:
+        raise AssertionError("a unit was allowed to declare what it consumes twice")
+
+
+def test_an_incoming_contract_edge_moves_the_consumer():
+    """The property the authored field could not have: a change in WHICH producer contract a
+    unit consumes changes the consumer's identity, without anyone editing the consumer."""
+    unit = UNITS[CONSUMER]
+    before = fingerprint_unit(unit, DOC, TOOLCHAINS, ASSUMPTIONS)
+    after = fingerprint_unit(unit, _doc_with(_contract_edge(CONSUMER)), TOOLCHAINS, ASSUMPTIONS)
+    assert before["components"]["consumed_contracts"] == []
+    assert after["components"]["consumed_contracts"] == [CONTRACT]
+    assert before["fingerprint"] != after["fingerprint"]
+
+
+def test_the_producer_is_not_moved_by_the_consumer_choosing_it():
+    """The other half of the relation stays the producer's. `exported_contracts` is what the
+    producer published; who consumes it is not a fact about the producer, and a fingerprint
+    that moved here would invalidate a proof because someone else started depending on it."""
+    producer = UNITS[PRODUCER]
+    before = fingerprint_unit(producer, DOC, TOOLCHAINS, ASSUMPTIONS)["fingerprint"]
+    after = fingerprint_unit(
+        producer, _doc_with(_contract_edge(CONSUMER)), TOOLCHAINS, ASSUMPTIONS
+    )["fingerprint"]
+    assert before == after
+
+
+def test_a_contract_edge_into_another_unit_does_not_move_this_one():
+    """The negative direction, and the one a derivation keyed on the wrong endpoint would
+    fail: it is the edges that arrive HERE, not every contract edge in the graph."""
+    unit = UNITS[CONSUMER]
+    before = fingerprint_unit(unit, DOC, TOOLCHAINS, ASSUMPTIONS)["fingerprint"]
+    elsewhere = _doc_with(_contract_edge("core.verification_error_taxonomy"))
+    after = fingerprint_unit(unit, elsewhere, TOOLCHAINS, ASSUMPTIONS)["fingerprint"]
+    assert before == after
+
+
+def test_a_non_contract_edge_into_this_unit_does_not_move_it():
+    """A `COMPILE_DEPENDENCY` is a real dependency and is not a consumed contract. If this
+    moved, the component would be measuring the dependency graph rather than the contract
+    relation, and the nine retyped edges would have re-entered it through the back door."""
+    unit = UNITS[CONSUMER]
+    before = fingerprint_unit(unit, DOC, TOOLCHAINS, ASSUMPTIONS)["fingerprint"]
+    plain = _doc_with({"kind": "COMPILE_DEPENDENCY", "from": PRODUCER, "to": CONSUMER})
+    after = fingerprint_unit(unit, plain, TOOLCHAINS, ASSUMPTIONS)["fingerprint"]
+    assert before == after
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):
