@@ -53,6 +53,25 @@ IDENTITY_PINS = ("charon", "aeneas", "lean", "aeneas_lean_backend", "extraction_
 AENEAS_LEAN = Path("/opt/aeneas/backends/lean")
 
 
+def lean_libs() -> list[tuple[str, tuple[str, ...]]]:
+    """Each `[[lean_lib]]` in the package, as `(srcDir, roots)`, in lakefile order.
+
+    The build definition is the authority on what elaborates and where it lives; a second
+    list of either would drift. Split out of `lakefile_roots` because the fingerprint needs
+    the DIRECTORY as well as the names — "which tracked files do these modules resolve to"
+    is not answerable from root names alone, and answering it from a glob would let a module
+    that stopped being built keep participating.
+    """
+    doc = tomllib.loads((LEAN_DIR / "lakefile.toml").read_text(encoding="utf-8"))
+    return [
+        (
+            str(lib.get("srcDir", ".")),
+            tuple(str(name) for name in lib.get("roots", [lib["name"]])),
+        )
+        for lib in doc.get("lean_lib", [])
+    ]
+
+
 def lakefile_roots(srcDir: str | None = None) -> list[str]:
     """The Lean module roots the package builds, read from the lakefile that builds them.
 
@@ -60,12 +79,11 @@ def lakefile_roots(srcDir: str | None = None) -> list[str]:
     expected to produce. Derived rather than listed anywhere else: the build definition is
     the authority on what elaborates, and a second list would drift.
     """
-    doc = tomllib.loads((LEAN_DIR / "lakefile.toml").read_text(encoding="utf-8"))
     roots: list[str] = []
-    for lib in doc.get("lean_lib", []):
-        if srcDir is not None and lib.get("srcDir") != srcDir:
+    for src, names in lean_libs():
+        if srcDir is not None and src != srcDir:
             continue
-        roots += [str(name) for name in lib.get("roots", [lib["name"]])]
+        roots += list(names)
     return sorted(set(roots))
 
 

@@ -110,6 +110,7 @@ from _ecosystems import CARGO
 from _ecosystems import formal_source_patterns
 from _ecosystems import unit_ecosystem
 from _ecosystems import unit_projects
+from _lean_sources import LAKEFILE, theorem_source_paths
 from _manifest import (
     claims_lean_evidence,
     claims_measured_evidence,
@@ -712,6 +713,17 @@ def fingerprint_unit(
     if claims_lean_evidence(unit):
         components["lean_lane_identity"] = _lean_lane_identity()
         components["generated_model_lane_identity"] = _generated_model_lane_identity()
+        # The BYTES the declared `lean_theorems` are stated in. `lean_theorems` is a list of
+        # names, and a name survives its own statement being emptied: rewrite the theorem to
+        # `: True := trivial` and it still resolves, still reports an axiom closure inside
+        # the kernel baseline, and still leaves the standing PASS deriving FRESH.
+        #
+        # Derived from the lakefile rather than listed: the build definition is what decides
+        # which modules elaborate, and a second list would drift from it. The lakefile joins
+        # the digest because it decides what the set CONTAINS.
+        components["lean_theorem_sources"] = _digest_paths(
+            [LAKEFILE, *theorem_source_paths()]
+        )
     return {
         "unit_id": unit["id"],
         "fingerprint": canonical_digest(components),
