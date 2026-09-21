@@ -127,7 +127,7 @@ way belongs in the record until it is measured.
 | `time.rs` | 6 | **PROVED** — 2 declared theorems; 1 ASSUMED (ASM-0001, dischargeable per Finding 1) |
 | `replay.rs` | 13 | **OUT-OF-REACH** for `check_and_insert`/`durability_class` (Finding 2); inherent methods pending the Mutex question (Finding 3) |
 | `resolver.rs` | 8 | **OUT-OF-REACH** for the `TrustResolver` impl (Finding 2); `compose_key` injectivity is reachable and worth proving |
-| `crypto.rs` | 10 | **NOT-WORTH-IT** below `boundary.crypto_primitives` — the properties that matter are the primitives', which are trusted by declaration; `ensure_ed25519_alg` is reachable |
+| `crypto.rs` | 10 | **NOT-WORTH-IT** below `boundary.crypto_primitives` — the properties that matter are the primitives', which are trusted by declaration. This row said *"`ensure_ed25519_alg` is reachable"*; it was not reachable from any production path and has since been deleted, its algorithm-acceptance obligation being owned by `mcp-re-http-profile`'s `VerifierPolicy` |
 | `hash.rs` | 2 | `parse_hash_id` reachable; `sha256_hash_id`'s meaning lives beyond the trusted boundary |
 | `encoding.rs` | 2 | reachable — round-trip `b64url_decode ∘ b64url_encode == id` is a real theorem |
 | `audit.rs` | 8 | **NOT-WORTH-IT** — total functions over a closed enum, already exhaustive by construction |

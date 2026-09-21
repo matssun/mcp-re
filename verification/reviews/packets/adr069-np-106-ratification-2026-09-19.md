@@ -24,6 +24,27 @@ under THM-0014 anyway. One commit cannot hold both. The NP-107 referral is the h
 survives — its hex-swap test is decisive and THM-0055 is narrower — so the registration is what
 gives way.
 
+## ANNOTATION — two of the thirteen controls no longer exist
+
+Added after the fact; the derivation below is **not** rewritten, because a review record states
+what was decided on the day it was decided.
+
+`ensure_ed25519_alg_rejects_unknown_alg_with_supplied_error` and
+`ensure_ed25519_alg_accepts_the_supported_alg` were deleted with their subject: measured on the
+tree, `ensure_ed25519_alg` had **no production caller** and gated on `SIG_ALG_ED25519` =
+`"Ed25519"`, a token the RFC 9421 carrier never emits and which
+`mcp-re-http-profile/src/policy.rs` pins as NOT accepted. The CONTAINED verdict in the table
+below therefore rested on a premise that was false of the tree — falsifying that gate could not
+have admitted anything, because nothing consulted it.
+
+THM-0014's clause *"under an algorithm the verifier's policy accepts"* is owned by
+`http_profile.request_floor_result` and carried there by six registered controls. **THM-0014's
+own claim, dependencies, scope and review requirement are untouched**, and its owner-reviewed
+fingerprint `sha256:f88e7b44…` is unchanged — asserted, not assumed, by
+`tools/verification/review --fingerprint THM-0014` before and after.
+
+`CD-16003` is retired rather than left pointing at a control that no longer exists.
+
 ## The derivation, control by control
 
 THM-0014, in full:

@@ -7356,14 +7356,6 @@ proposition = "NP-174"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-16003"
-project = "mcp-re-core"
-control = "lib#crypto::tests::ensure_ed25519_alg_accepts_the_supported_alg"
-decision = "new-proposition"
-proposition = "NP-106"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-16005"
 project = "mcp-re-core"
 control = "lib#crypto::tests::malformed_key_b64url_maps_to_actor_binding_failed"

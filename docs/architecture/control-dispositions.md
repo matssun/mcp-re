@@ -594,8 +594,12 @@ here is that it is now machine-visible in the census instead of living in a pack
 ## NP-002 — P-256 is confined to receipt verification
 
 **Control:** `scripts/es256_containment_gate.py`.
-**Carrier:** the `p256` dependency edge, the SCITT receipt verifier's modules, and
-`mcp-re-core`'s `ensure_ed25519_alg`.
+**Carrier:** the `p256` dependency edge, the SCITT receipt verifier's modules, and the
+http-profile verifier policy's algorithm registry
+(`mcp-re-http-profile/src/policy.rs`), whose one-arm match over `ALG_ED25519` answers `None`
+for every other token. `mcp-re-core`'s `ensure_ed25519_alg` was named here until it was
+deleted: it gated on `SIG_ALG_ED25519` = `"Ed25519"`, a token the carrier never emits and the
+live policy explicitly refuses, and it had no production caller.
 **Statement.** *ECDSA P-256 is reachable only from receipt verification: `p256` is a
 dependency of exactly one crate, referenced from exactly the COSE-key owner and its verifier
 inside it, absent from `mcp-re-core`, and `ES256` stays refused by name for MCP-RE's own
@@ -2529,7 +2533,7 @@ them. Four of the eleven are the RR-002 C5 split of the original NP-106.
 ## NP-106 — the Ed25519 floor accepts the material it is supposed to accept
 
 **Controls:** `mcp-re-core/src/crypto.rs`.
-**Statement.** *A signature this system's own signer produces over a preimage verifies under the matching verification key — through the request wrapper `verify_ed25519` and through the raw primitive with no envelope algorithm gate in front of it — and `ensure_ed25519_alg` ADMITS the one supported token, `Ed25519`.*
+**Statement.** *A signature this system's own signer produces over a preimage verifies under the matching verification key — through the request wrapper `verify_ed25519` and through the raw primitive, neither of which inspects a declared algorithm.*
 **If false.** MCP-RE cannot verify what MCP-RE signed. Nothing is forged and nothing is admitted that should not be: the floor simply refuses everything, the proxy admits no request, and the deployment is down. That is the whole reason this is a separate record from the refusals — the two halves fail in opposite directions and only one of them is a soundness fact.
 **Likely owner:** none. `core.ed25519_primitive` is the unit over this file, and THM-0014 is its theorem; the accepting direction is outside that theorem, for the reason stated below.
 **Severity:** `critical`.
@@ -2549,11 +2553,11 @@ It is a conditional over SUCCESSFUL returns, and its security consequence is sta
 - `tamper_preimage_fails` — **contained**, same clause and the same probe. A tampered signature base that still verifies is a floor-verified request whose signature covered different bytes.
 - `malformed_signature_base64_fails` — **contained**, clause 2. `verify_ed25519_with` returning Ok on input it never decoded is a floor-verified request under a signature that was never checked at all. It refuses at the decode arm rather than at `verify_strict`, which is why M312 leaves it green: a different arm of the same clause.
 - `wrong_length_signature_fails` — **contained**, clause 2, at the `try_into` arm. Sixty-four bytes is what an Ed25519 signature IS; accepting fewer is accepting a value the clause's verb cannot be true of.
-- `ensure_ed25519_alg_rejects_unknown_alg_with_supplied_error` — **contained**, by clause 2's qualifier *"under an algorithm the verifier's policy accepts"* and by the security consequence's second limb in terms. If the gate admitted `RS256` or `ES256`, an envelope declaring an algorithm the deployment does not accept would reach the raw primitive and could be floor-verified. It is also NP-002's other half — the refusal that keeps ES256 out of MCP-RE's own signing.
+- `ensure_ed25519_alg_rejects_unknown_alg_with_supplied_error` — **RETIRED with its subject, and the containment argument it rested on was false of the tree.** It read as contained by clause 2's qualifier *"under an algorithm the verifier's policy accepts"*. But the premise — *"if the gate admitted `RS256` or `ES256`, an envelope declaring an algorithm the deployment does not accept would reach the raw primitive"* — required the gate to stand on a path to the floor, and it stood on none: `ensure_ed25519_alg` was called from nothing but its own two tests, and it gated on `SIG_ALG_ED25519` = `"Ed25519"`, which `policy.rs` pins as NOT accepted because the profile token is lowercase. Falsifying it could not have admitted anything. THM-0014's clause is owned by `http_profile.request_floor_result` and carried there by six registered controls — the four `tests/algorithm_confusion_test` cases plus `lib#policy::tests::an_algorithm_without_a_verifier_cannot_be_allowlisted` and `…the_registry_maps_tokens_to_implemented_verifiers`. Nothing the theorem claims lost a carrier.
 
 And the eight that did not leave, with the clause that decides each:
 
-- `ensure_ed25519_alg_accepts_the_supported_alg` — **not contained.** Falsify it and `ensure_ed25519_alg` rejects `Ed25519` too; `verify_request_floor` then returns Ok for nothing and the conditional holds vacuously over an empty set of successful returns. No clause is false of any request. The theorem names no algorithm, so it does not pin WHICH token the policy accepts, only that a floor-verified request used one it did. Here, under NP-106.
+- `ensure_ed25519_alg_accepts_the_supported_alg` — **not contained, and RETIRED with its subject.** The vacuity argument stood and still does: falsify it and `ensure_ed25519_alg` rejects `Ed25519` too, `verify_request_floor` returns Ok for nothing, and the conditional holds vacuously over an empty set of successful returns. The theorem names no algorithm, so it never pinned WHICH token the policy accepts. Its disposition `CD-16003` is retired with the control rather than left pointing at a control that no longer exists.
 - `raw_primitive_verifies_without_any_alg_plumbing` — **not contained**, identically. Its single assertion is `verify_ed25519(preimage, &sig, &vk).is_ok()`. A primitive that refuses genuine material produces no successful return to be a counterexample. What it protects is the ADR-MCPS-02 layering split staying ergonomic for fixed-Ed25519 callers with no envelope — KMS self-checks, LB assertions, conformance vectors — which is a statement about this module's API and not about `verify_request_floor`. Here, under NP-106.
 - `sign_then_verify_round_trip` — **not contained**, identically, and this is the control whose registration the review named first. It is the completeness half of the primitive. THM-0014 has no completeness clause. Here, under NP-106.
 - `signature_is_deterministic_for_fixed_seed` — **not contained.** It asserts `sk.sign(m) == sk.sign(m)`, a property of SIGNING; THM-0014 constrains a VERIFIER and mentions no signer. A randomised Ed25519 signer falsifies this control and leaves every clause of THM-0014 true, because every signature it emits still verifies. NP-170.

@@ -2591,3 +2591,65 @@ It was re-measured once during this slice, too. The record first authorized `454
 widening the token's definition to cover an illegal transition cost six more lines — so the
 gate refused the stale pair exactly as it refuses a spent one. The number in a growth record
 is a measurement of the tree it ships with, not an estimate made when the record was drafted.
+
+---
+
+## EX-014 — `unit://core.ed25519_primitive` gives up its algorithm-gate clause — **correspondence correction, not a narrowing**
+
+**Unit:** `core.ed25519_primitive` — `V0`, `direct_consequence_severity = "critical"`.
+**Change:** the description loses its algorithm-gate clause, `tested_symbols` goes 5 → 4, and
+`CD-16003` is retired. `mcp-re-core`'s `ensure_ed25519_alg` is deleted.
+
+### Why this is not a narrowing
+
+A deletion that removes a `tested_symbol` normally narrows a claim, and narrowing a ratified
+claim is not a cleanup decision. This one does not, and the difference is measurable rather than
+argued.
+
+The description asserted *"…and the algorithm gate rejects any token other than `Ed25519` with
+the caller's supplied error, so an envelope declaring something else never reaches the raw
+primitive."* **The trailing consequence was already false of the tree:**
+
+| fact | measurement |
+|---|---|
+| `ensure_ed25519_alg` production callers | **zero** — called only from its own two tests |
+| the token it gated on | `SIG_ALG_ED25519` = `"Ed25519"` |
+| the RFC 9421 carrier's token | `ALG_ED25519` = `"ed25519"` (`mcp-re-http-profile/src/ids.rs:34`) |
+| what the live policy does with `"Ed25519"` | **refuses it** — `policy.rs` pins `accepted_algorithm("Ed25519")` as `None`, *"the profile token is lowercase"* |
+
+No envelope-verification path called the gate, so nothing established the containment the unit
+claimed. The clause is removed because it was not true, not because the tree is giving something
+up.
+
+### THM-0014 is untouched, and that is asserted rather than assumed
+
+THM-0014's clause *"under an algorithm the verifier's policy accepts"* is owned by
+`http_profile.request_floor_result` and carried there by **six** registered controls: the four
+`tests/algorithm_confusion_test` cases, plus `lib#policy::tests::an_algorithm_without_a_verifier_cannot_be_allowlisted`
+and `…the_registry_maps_tokens_to_implemented_verifiers`. The production carrier is
+`VerifierPolicy::accepted_algorithm`, a one-arm match with `_ => None`, whose single production
+caller is `verify/floor/params.rs` inside `verify_request_floor` — THM-0014's own subject.
+
+THM-0014 carries `review_requirement = "Owner security-specification review"` and an approval
+signed `mats@sundvall.name` at `sha256:f88e7b44…`. Its approval components are
+`encoding_version`, `theorem_claim`, `theorem_dependencies`, `theorem_id` and
+`theorem_review_requirement` — **no unit data of any kind**. Measured with
+`tools/verification/review --fingerprint` before and after this change:
+
+```
+THM-0014   sha256:f88e7b44fb0fe96e8f4d05e7b702ff69c1e0af87f430504c1dd9a0a4d350f94b   unchanged
+THM-0114   sha256:be2f1062ca45b298872154e0ba8a0f31feb746185af74e1b02a6d27b034c0b9a   unchanged
+```
+
+The owner's signature is intact. No theorem statement, consequence, scope, dependency,
+assumption or review requirement is edited anywhere in this change.
+
+### What is deliberately NOT taken
+
+`SIG_ALG_ED25519` loses its last reader here and is **kept**. Its record under NP-145
+states that whether ND-005 still declines over `EXTENSION_ID` and `DIGEST_ALG_SHA256` *"is a
+re-derivation and an owner decision rather than a rewrite"*. The now-zero-reader fact is recorded
+for that re-derivation; the deletion is not pre-executed.
+
+The NP-106 ratification packet is **annotated, not rewritten** — a review record states what was
+decided on the day it was decided.

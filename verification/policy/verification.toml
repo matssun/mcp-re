@@ -10233,7 +10233,7 @@ tested_symbols = [
 [[unit]]
 id = "core.ed25519_primitive"
 class = "V0"
-description = "WHAT THE ED25519 FLOOR REFUSES ON THE REQUEST PATH: a wrong key and a tampered preimage each fail at `verify_strict`, a wrong-length signature and a malformed Base64URL signature each fail structurally before the curve is touched at all, and the algorithm gate rejects any token other than `Ed25519` with the caller's supplied error, so an envelope declaring something else never reaches the raw primitive. This unit is the refusing direction only, because that is the direction THM-0014 claims: it says NOTHING about what the primitive accepts, nothing about signing being deterministic for a fixed seed, nothing about which variant a malformed KEY renders as, nothing about the response-path sentinel, and nothing about a verification key round-tripping through its encodings — each of those is a separate proposition carrying its own census record. It also says nothing about which keys are enrolled, which slot a key answers for, or whether a deployment was right to trust the actor."
+description = "WHAT THE ED25519 FLOOR REFUSES ON THE REQUEST PATH: a wrong key and a tampered preimage each fail at `verify_strict`, and a wrong-length signature and a malformed Base64URL signature each fail structurally before the curve is touched at all. It says NOTHING about which declared algorithm is acceptable: this crate defines no carrier, so it owns no algorithm gate, and THM-0014's clause `under an algorithm the verifier's policy accepts` is carried at its own owner, `http_profile.request_floor_result`, by `VerifierPolicy::accepted_algorithm` and the `algorithm_confusion_test` battery. This unit is the refusing direction only, because that is the direction THM-0014 claims: it says NOTHING about what the primitive accepts, nothing about signing being deterministic for a fixed seed, nothing about which variant a malformed KEY renders as, nothing about the response-path sentinel, and nothing about a verification key round-tripping through its encodings — each of those is a separate proposition carrying its own census record. It also says nothing about which keys are enrolled, which slot a key answers for, or whether a deployment was right to trust the actor."
 paths = ["mcp-re-core/src/crypto.rs"]
 exported_contracts = []
 evidence_class = "tested"
@@ -10243,7 +10243,6 @@ evidence = [
   "mutation://core/ed25519_primitive/refuses_forged_and_malformed_material",
 ]
 tested_symbols = [
-  "lib#crypto::tests::ensure_ed25519_alg_rejects_unknown_alg_with_supplied_error",
   "lib#crypto::tests::malformed_signature_base64_fails",
   "lib#crypto::tests::tamper_preimage_fails",
   "lib#crypto::tests::wrong_key_fails",
