@@ -10097,3 +10097,27 @@ lanes are declared because the defect is visible at both widths and they fail fo
 reasons -- the lib row because a window resolves where none should, the integration row
 because the boundary no longer names `--max-client-cert-lifetime`.
 """
+
+# ---------------------------------------------------------------------------
+# The channel-peer currency case — ADR-MCPRE-064 Slice 4, the seal
+# ---------------------------------------------------------------------------
+#
+# No theorem. THM-0033 owns the currency COMPOSITION one level down, where
+# `CurrencyNotEvaluated` is a refusal; this unit owns the one-level-up mapping of exactly
+# that outcome to the weak channel-peer case. Inventing a theorem because a unit exists is
+# how a registry stops meaning anything, so the obligation is registered where it belongs —
+# against the unit — and the theorem catalogue is untouched.
+
+[[probe]]
+id = "M366-a-refused-credential-may-not-be-relabelled-unexamined"
+unit = "proxy.authenticated_channel_peer"
+conjunct = "the weak case is reachable only from `CurrentPeerRefusal::CurrencyNotEvaluated`; a credential the controls examined and REFUSED produces no peer"
+# The attack is the pre-seal shape written by hand: keep the refusal arm, discard the
+# authority's verdict, and label the peer unexamined. It COMPILES — that is the whole point
+# of the finding — so a control that only asserted the weak case exists would stay green.
+path = "mcp-re-proxy/src/communication_assurance/authenticated_channel_peer.rs"
+anchor = "            Err(CurrentPeerRefusal::CredentialNotCurrent(refusal)) => Err(refusal),\n"
+weakening = "            Err(CurrentPeerRefusal::CredentialNotCurrent(_)) => Ok(AuthenticatedChannelPeer(\n                ChannelPeerAssurance::CurrencyNotEvaluated(unexamined),\n            )),\n"
+expect_red = [
+  "lib#communication_assurance::authenticated_channel_peer::tests::a_refused_credential_becomes_no_peer_rather_than_an_unexamined_one",
+]

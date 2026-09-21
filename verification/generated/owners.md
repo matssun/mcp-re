@@ -110,6 +110,7 @@ not an omission to hide.
 | proxy.audit_delivery | V0 | THM-0070 | 0 |
 | proxy.audit_text_rendering | V0 | THM-0130 | 0 |
 | proxy.audit_vocabulary_import | V0 | THM-0071 | 0 |
+| proxy.authenticated_channel_peer | V0 | _none_ | 0 |
 | proxy.authenticated_relationship_peer | V0 | THM-0031 | 1 |
 | proxy.authorization_capability | V0 | _none_ | 0 |
 | proxy.authorization_configuration_state | V0 | _none_ | 0 |

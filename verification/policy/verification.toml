@@ -2591,8 +2591,39 @@ pilot = "verus-candidate"
 [[edge]]
 kind = "COMPILE_DEPENDENCY"
 from = "proxy.current_authenticated_peer"
+to = "proxy.authenticated_channel_peer"
+rationale = "The channel-peer owner consumes the currency composition AND its refusal distinction: it maps `CurrentPeerRefusal::CurrencyNotEvaluated` to the weak case and propagates `CredentialNotCurrent` as a refusal. A composition that stopped separating *no control was configured* from *the credential was examined and refused* would make the weak case reachable for a refused credential, and this unit's controls — which hold the credential and the instant fixed and vary only the POLICY — would have nothing left to distinguish."
+
+[[unit]]
+id = "proxy.authenticated_channel_peer"
+class = "V0"
+description = "The `AuthenticatedChannelPeer` currency case is a consequence of the configured currency policy and the currency authority's verdict, never a caller choice. `CurrencyNotEvaluated` is reachable only when no currency control was configured; a credential that was evaluated and refused produces no `AuthenticatedChannelPeer`. Claims nothing about which principal the peer is, about the request it may be bound to, or about admission and authorization."
+paths = [
+  "mcp-re-proxy/src/communication_assurance/authenticated_channel_peer.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/authenticated_channel_peer/currency_case_provenance",
+  "mutation://proxy/authenticated_channel_peer/currency_case_provenance",
+]
+# Three controls, deliberately not merged. The seal is two propositions that fail
+# independently — a refused credential must produce no peer, and the weak label must follow
+# the POLICY — and the identity projection is a third fact that must survive both. A single
+# control asserting all three would stay green while any one of them regressed, which is the
+# shape the unregistered-control census exists to surface.
+tested_symbols = [
+  "lib#communication_assurance::authenticated_channel_peer::tests::a_refused_credential_becomes_no_peer_rather_than_an_unexamined_one",
+  "lib#communication_assurance::authenticated_channel_peer::tests::the_unexamined_label_is_reachable_only_where_the_deployment_configured_no_control",
+  "lib#communication_assurance::authenticated_channel_peer::tests::both_arms_agree_on_who_the_peer_is_and_disagree_on_what_was_checked",
+]
+
+[[edge]]
+kind = "COMPILE_DEPENDENCY"
+from = "proxy.authenticated_channel_peer"
 to = "proxy.request_peer_binding"
-rationale = "The channel operand is the authenticated peer, with whatever currency assurance the deployment established. If authentication became manufacturable the binding would still be formed, and its controls — which vary the SUBJECT on both sides — would still pass."
+rationale = "The binding is formed over the SEALED channel-side product, and reads one projection of it — the identity. Request-peer binding does not own how that product chose its currency case and cannot inspect the choice: the representation is private and `AuthenticatedChannelPeer::resolve` is the only producer. A seal that broke — a caller able to label a refused credential *unexamined* — would put a revoked peer under a binding this unit's controls, which vary the SUBJECT on both sides, would still call true."
 
 [[edge]]
 # The request operand is projected from what the verifier resolved. A verifier that resolved
@@ -2613,7 +2644,6 @@ description = "The authenticated peer of a relationship and the actor the reques
 paths = [
   "mcp-re-proxy/src/communication_assurance/request_peer_binding/mod.rs",
   "mcp-re-proxy/src/communication_assurance/request_peer_binding/http_profile_adapter.rs",
-  "mcp-re-proxy/src/communication_assurance/authenticated_channel_peer.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -2638,7 +2668,6 @@ tested_symbols = [
   "lib#communication_assurance::request_peer_binding::http_profile_adapter::tests::the_subject_is_taken_and_the_composite_actor_id_is_not",
   "lib#communication_assurance::request_peer_binding::http_profile_adapter::tests::a_signing_key_rotation_does_not_change_the_binding_coordinate",
   "lib#communication_assurance::request_peer_binding::http_profile_adapter::tests::a_different_subject_is_a_different_coordinate_under_the_same_role_and_domain",
-  "lib#communication_assurance::authenticated_channel_peer::tests::both_arms_agree_on_who_the_peer_is_and_disagree_on_what_was_checked",
 ]
 pilot = "verus-candidate"
 
