@@ -39,8 +39,6 @@ use crate::communication_assurance::credential_currency::CredentialCurrencyOutco
 use crate::communication_assurance::credential_currency::CredentialCurrencyPolicy;
 use crate::communication_assurance::credential_currency::CredentialCurrencyRefusal;
 use crate::communication_assurance::credential_key_correspondence::CredentialKeyCorrespondenceRefusal;
-use crate::communication_assurance::current_authenticated_peer::current_authenticated_peer;
-use crate::communication_assurance::current_authenticated_peer::CurrentPeerRefusal;
 use crate::communication_assurance::peer_identity_provenance::PeerIdentityProvenance;
 use crate::communication_assurance::AuthenticatedChannelPeer;
 use crate::communication_assurance::MechanismVerifiedCredentialEvidence;
@@ -335,18 +333,7 @@ pub(crate) fn resolve_channel_peer(
             }
         };
     };
-    match current_authenticated_peer(peer, &policy, now) {
-        Ok(current) => Ok(Some(AuthenticatedChannelPeer::Current(current))),
-        Err(CurrentPeerRefusal::CurrencyNotEvaluated) => {
-            // Recovered from the policy rather than from the refusal, because the refusal
-            // consumed the peer. The classification is total, so this is the same branch.
-            match authenticated_peer(accepted, options) {
-                Some(peer) => Ok(Some(AuthenticatedChannelPeer::CurrencyNotEvaluated(peer))),
-                None => Ok(None),
-            }
-        }
-        Err(CurrentPeerRefusal::CredentialNotCurrent(refusal)) => Err(refusal),
-    }
+    AuthenticatedChannelPeer::resolve(peer, &policy, now).map(Some)
 }
 
 /// The peer this relationship authenticated as, before any currency question.

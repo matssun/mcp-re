@@ -204,10 +204,15 @@ mod tests {
         let server = server_config(&[root.der()], vec![server_leaf], server_key);
         let client = client_config(&server_ca.der(), Some((vec![client_leaf], client_key)));
         let accepted = verified_credential(&handshake(&client, &server)).expect("accepts");
-        AuthenticatedChannelPeer::CurrencyNotEvaluated(
+        // Through the ONE constructor, under a policy that configures no currency
+        // control — which is what makes the unexamined case legal here.
+        AuthenticatedChannelPeer::resolve(
             authenticate_relationship_peer(accepted, CertificateIdentityPolicy::UriSan)
                 .expect("the leaf carries the configured field"),
+            &crate::communication_assurance::CredentialCurrencyPolicy::NotEvaluated,
+            0,
         )
+        .expect("no currency control is configured, so nothing can refuse")
     }
 
     /// What the request verifier resolves for a signature, through the ONE producer.

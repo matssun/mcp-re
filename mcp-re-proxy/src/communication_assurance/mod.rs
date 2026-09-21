@@ -111,9 +111,7 @@ pub use credential_currency::CredentialCurrencyPolicy;
 pub use credential_currency::CredentialCurrencyRefusal;
 pub use credential_currency::CurrencyControls;
 pub use credential_currency::CurrentCredentialFacts;
-pub use current_authenticated_peer::current_authenticated_peer;
 pub use current_authenticated_peer::CurrentAuthenticatedRelationshipPeerFacts;
-pub use current_authenticated_peer::CurrentPeerRefusal;
 
 pub use certificate_identity_policy::CertificateIdentityPolicy;
 pub use certificate_identity_policy::CertificateIdentitySource;
