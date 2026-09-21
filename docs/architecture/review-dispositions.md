@@ -1422,7 +1422,7 @@ ended (`tls.rs` was reported 679 and is 674; `response.rs` was reported 367 and 
 
 | unit | production lines | record |
 |---|---:|---|
-| `mcp-re-proxy/src/transport/ingress/v1.rs` | 334 | EX-005 — **file deleted by RA3-002**; the grant is spent and `config/module-size-debt.toml` no longer carries the entry. The row records a grant that was made, not a current file. |
+| `mcp-re-proxy` module `transport::ingress::v1` (**deleted**) | 334 | EX-005 — the file was deleted by RA3-002; the grant is spent and `config/module-size-debt.toml` no longer carries the entry. The row records a grant that was made, not a current file — which is why it names the module rather than a source path: a path token for a file this repository no longer has is exactly what `scripts/doc_path_gate.py` exists to refuse, and a historical record must not claim a live path to state a dead fact. |
 | `mcp-re-proxy/src/transport/ingress/v2.rs` | 673 | EX-005 |
 | `mcp-re-proxy/src/tls.rs` | 674 | EX-004 |
 | `mcp-re-client-core/src/response.rs` | 362 | EX-010 |
@@ -2672,7 +2672,7 @@ primitive."* **The trailing consequence was already false of the tree:**
 | `ensure_ed25519_alg` production callers | **zero** — called only from its own two tests |
 | the token it gated on | `SIG_ALG_ED25519` = `"Ed25519"` |
 | the RFC 9421 carrier's token | `ALG_ED25519` = `"ed25519"` (`mcp-re-http-profile/src/ids.rs:34`) |
-| what the live policy does with `"Ed25519"` | **refuses it** — `policy.rs` pins `accepted_algorithm("Ed25519")` as `None`, *"the profile token is lowercase"* |
+| what the live policy does with `"Ed25519"` | **refuses it** — `mcp-re-http-profile/src/policy.rs` pins `accepted_algorithm("Ed25519")` as `None`, *"the profile token is lowercase"* |
 
 No envelope-verification path called the gate, so nothing established the containment the unit
 claimed. The clause is removed because it was not true, not because the tree is giving something
@@ -2685,7 +2685,8 @@ THM-0014's clause *"under an algorithm the verifier's policy accepts"* is owned 
 `tests/algorithm_confusion_test` cases, plus `lib#policy::tests::an_algorithm_without_a_verifier_cannot_be_allowlisted`
 and `…the_registry_maps_tokens_to_implemented_verifiers`. The production carrier is
 `VerifierPolicy::accepted_algorithm`, a one-arm match with `_ => None`, whose single production
-caller is `verify/floor/params.rs` inside `verify_request_floor` — THM-0014's own subject.
+caller is `mcp-re-http-profile/src/verify/floor/params.rs` inside `verify_request_floor` —
+THM-0014's own subject.
 
 THM-0014 carries `review_requirement = "Owner security-specification review"` and an approval
 signed `mats@sundvall.name` at `sha256:f88e7b44…`. Its approval components are

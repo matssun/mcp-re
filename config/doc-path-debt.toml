@@ -131,11 +131,6 @@ dead_tokens = 4
 status = "unreviewed"
 
 [[debt]]
-path = "docs/architecture/components/tls-and-transport-identity.md"
-dead_tokens = 1
-status = "unreviewed"
-
-[[debt]]
 path = "docs/architecture/components/transport-binding.md"
 dead_tokens = 3
 status = "unreviewed"
