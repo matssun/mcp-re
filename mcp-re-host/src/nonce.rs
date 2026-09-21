@@ -79,12 +79,11 @@ impl NonceSource for SystemNonceSource {
 /// advancing per byte so successive nonces differ while remaining reproducible.
 ///
 /// It is a TEST provider with NO real entropy and must never reach a production
-/// binary. Because it is reused as an injectable fixture by integration tests
-/// (and the deterministic demo binaries) in this and dependent crates, it is
-/// compiled only under `cfg(test)` or the explicit `test-fixtures` cargo feature
-/// — an *enforced* boundary, not a doc-comment one. A default (production) build
-/// of `mcp-re-host` does not compile this type at all, so a misconfigured
-/// deployment cannot construct a `HostSession` with predictable nonces from it.
+/// binary. Because it is reused as an injectable fixture by integration tests in
+/// this and dependent crates, it is compiled only under `cfg(test)` or the explicit
+/// `test-fixtures` cargo feature — an *enforced* boundary, not a doc-comment one. A
+/// default (production) build of `mcp-re-host` does not compile this type at all, so
+/// a misconfigured deployment cannot draw predictable nonces from it.
 #[cfg(any(test, feature = "test-fixtures"))]
 #[derive(Debug, Clone)]
 pub struct SeededNonceSource {

@@ -7,11 +7,15 @@
 //! [`verify_delegated_response`] — delegated-required is the only response-signing
 //! mode). The language model never holds private keys or constructs signatures.
 //!
-//! ## Deferred host modules (RFC 9421 rebuild in progress)
-//! The `session` (HostSession), `verified_result`, and `pending`
-//! (request_hash correlation) modules were built on the deleted draft-01/object
-//! model. They are **deferred** (files retained) and rebuilt on RFC 9421 evidence in
-//! a follow-up; the signer + clock/nonce fixtures below are the working surface.
+//! ## There is no session layer
+//! A stateful `HostSession` — with `pending` request_hash correlation and a
+//! `verified_result` — existed on the deleted draft-01/object model. It was not
+//! rebuilt, and its files are gone rather than retained. Under RFC 9421 the
+//! correlation it provided is carried by the protocol: a response's `;req` covered
+//! components resolve against the request the caller signed, so
+//! `ResponseExpectation::for_signed` re-derives the binding instead of looking a
+//! hash up by JSON-RPC id. The signer plus the clock/nonce seams below are the
+//! whole surface.
 
 // ADR-MCPRE-061 Amendment 1 §3.1 — this crate holds no production `unsafe`, and `forbid`
 // (unlike `deny`) cannot be overridden by an inner `#[allow]` anywhere in it. Acquiring

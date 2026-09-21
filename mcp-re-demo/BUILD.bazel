@@ -10,11 +10,12 @@ filegroup(
     srcs = glob(["src/**/*.rs"]),
 )
 
-# MCP-RE mTLS/fixtures demo surface. `DemoFixtures` mints the demo mTLS material
-# with rcgen (the ONE source-of-truth material set) for the proxy/client round-trip
-# tests. MCP-RE is HTTP-profile only — the stdio demo servers, bridge, the runnable
-# client binaries, and their e2e topology were removed; a stdio-only host uses an
-# external plain-MCP adapter (e.g. FastMCP).
+# MCP-RE demo certificate material. `DemoFixtures` mints the demo mTLS material with
+# rcgen (the ONE source-of-truth material set) for the proxy/client round-trip tests.
+# MCP-RE is HTTP-profile only — the stdio demo servers, bridge, the runnable client
+# binaries, and their e2e topology were removed; a stdio-only host uses an external
+# plain-MCP adapter (e.g. FastMCP). The library names no `mcp_re_host` item, so it does
+# NOT depend on that crate's test-fixtures flavor; the cargo manifest agrees.
 nt_rust_library(
     name = "mcp_re_demo",
     srcs = [
@@ -25,8 +26,6 @@ nt_rust_library(
     edition = "2021",
     deps = [
         "//mcp-re-core:mcp_re_core",
-        "//mcp-re-host:mcp_re_host_test_fixtures",  # keep
-        "//mcp-re-http-profile:mcp_re_http_profile",
         "@crates_mcp_re//:rcgen",
         "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:time",

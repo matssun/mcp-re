@@ -12,19 +12,20 @@ description = "MCP-RE client-side ambassador: request envelope injection/signing
 mcp-re-core = { path = "../mcp-re-core" }
 mcp-re-client-core = { path = "../mcp-re-client-core" }
 serde_json = { workspace = true }
-# MCPS-033 (ADR-MCPS-015): production nonce entropy for HostSession's default
-# NonceSource. OS CSPRNG wrapper only — no networking/async; transport-free.
+# MCPS-033 (ADR-MCPS-015): production nonce entropy for `SystemNonceSource`, the
+# default `NonceSource`. OS CSPRNG wrapper only — no networking/async; transport-free.
 getrandom = { workspace = true }
 
 [features]
 # Audit #81 (MEDIUM): the deterministic test fixtures `SeededNonceSource` (no real
 # entropy) and `FixedClock` (frozen time) are compiled ONLY under `cfg(test)` or
 # this explicit, non-default feature — an ENFORCED boundary so they cannot link
-# into a production binary and let a misconfigured deployment construct a
-# `HostSession` with predictable nonces. Dependent crates that need the fixtures
-# enable `mcp-re-host/test-fixtures` (as a dev-dependency feature for test-only use,
-# or a normal feature where deterministic demo binaries require them). OFF by
-# default: a plain `mcp-re-host` build does not expose either type.
+# into a production binary and let a misconfigured deployment draw predictable
+# nonces or serve on a frozen clock. Dependent crates that need the fixtures enable
+# `mcp-re-host/test-fixtures` on a DEV-dependency edge, and only there: cargo unifies
+# features across normal dependencies, so a normal edge anywhere in the workspace puts
+# the fixtures into every build in the graph. `scripts/fixture_feature_gate.py` refuses
+# that shape. OFF by default: a plain `mcp-re-host` build does not expose either type.
 default = []
 test-fixtures = []
 

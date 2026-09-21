@@ -376,7 +376,7 @@ mcp-re-client-core/          Client-side shared seam (signed RFC 9421 requests, 
 mcp-re-client-proxy/         Client-side MCP-RE proxy library — transport-agnostic seam (plain-MCP -> sign -> forward -> verify).
 mcp-re-client/               Client-side ambassador BINARY — the deployable that loads the signed trust-anchor manifest against a durable rollback floor and refreshes it in place.
 mcp-re-conformance/          Black-box conformance harness (object + HTTP; MCP-RE is HTTP-profile only).
-mcp-re-demo/                 mTLS/fixtures demo surface (host-side HostSession client + DemoFixtures).
+mcp-re-demo/                 Demo certificate material: the `DemoFixtures` mTLS fixture generator.
 mcp-re-test-paths/           Test-only: resolve binaries + fixtures under Bazel OR Cargo.
 
 sdk/python/                Python SDK — maturin/PyO3 binding to mcp-re-client-core (ADR-MCPS-044).

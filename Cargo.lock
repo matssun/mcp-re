@@ -1040,8 +1040,6 @@ name = "mcp-re-demo"
 version = "0.17.0"
 dependencies = [
  "mcp-re-core",
- "mcp-re-host",
- "mcp-re-policy",
  "mcp-re-proxy",
  "mcp-re-test-paths",
  "mcp-re-transport",
@@ -1049,7 +1047,6 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "serde_json",
- "thiserror",
  "time",
 ]
 

@@ -43,12 +43,11 @@ impl Clock for SystemClock {
 
 /// Deterministic test clock: always returns a fixed Unix-second value.
 ///
-/// A TEST fixture, reused as an injectable clock by integration tests (and the
-/// deterministic demo binaries) in this and dependent crates. It is compiled
-/// only under `cfg(test)` or the explicit `test-fixtures` cargo feature — an
-/// *enforced* boundary, so a default (production) build of `mcp-re-host` does not
-/// compile or export `FixedClock` at all. That fixture therefore cannot be used
-/// to pin a `HostSession` to a frozen clock unless `test-fixtures` is enabled.
+/// A TEST fixture, reused as an injectable clock by integration tests in this and
+/// dependent crates. It is compiled only under `cfg(test)` or the explicit
+/// `test-fixtures` cargo feature — an *enforced* boundary, so a default
+/// (production) build of `mcp-re-host` does not compile or export `FixedClock` at
+/// all, and no deployment can serve on a frozen clock from it.
 /// (This scopes only this fixture; a consumer remains free to provide its own
 /// [`Clock`] implementation.)
 #[cfg(any(test, feature = "test-fixtures"))]
