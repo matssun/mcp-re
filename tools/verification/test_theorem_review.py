@@ -39,7 +39,9 @@ from _manifest import (  # noqa: E402
     load_verification,
 )
 from _review import (  # noqa: E402
+    CAUSE_PRECEDENCE,
     COMPLETE,
+    COMPONENT_CAUSE,
     INCOMPLETE,
     REVIEWED,
     REVIEW_STATES,
@@ -48,6 +50,7 @@ from _review import (  # noqa: E402
     _valid,
     closure_satisfied,
     derive_review_state,
+    _by_precedence,
     load_reviews,
     root_completeness,
     theorem_assurance,
@@ -96,6 +99,66 @@ def fingerprints(doc: dict) -> dict[str, dict]:
 
 
 # --- THE control ---------------------------------------------------------------
+
+
+def test_the_reported_cause_is_a_decision_not_an_alphabet():
+    """Several components can move at once, and the reviewer is told ONE cause. Which one
+    was `sorted(causes)[0]` — alphabetical order, which happened to put `STALE_CLAIM` first.
+
+    Correct by accident is not correct: the next cause added ranks itself by its spelling,
+    and a `STALE_A…` would mask a moved claim behind it. Both halves are asserted here —
+    that the ranking holds, and that ALPHABETICAL ORDER IS NOT THE MECHANISM, which is the
+    half a green tree cannot show."""
+    # The ranking itself, over the real causes.
+    assert _by_precedence({"STALE_CLAIM", "STALE_REVIEW_REQUIREMENT"}) == "STALE_CLAIM"
+    assert (
+        _by_precedence({"STALE_DEPENDENCY_CLAIM", "STALE_REVIEW_REQUIREMENT"})
+        == "STALE_DEPENDENCY_CLAIM"
+    )
+    # A component this schema cannot name leads, mirroring UNKNOWN in `_graph`: the named
+    # causes cannot be assumed complete when an unnamed one moved.
+    assert _by_precedence({"STALE_CLAIM", "STALE_INPUT"}) == "STALE_INPUT"
+
+    # The falsifier. Under the old rule this returned the alphabetically first name; under
+    # the precedence it returns the RANKED one, and the two disagree by construction.
+    invented = "STALE_AAA_WOULD_HAVE_WON_ALPHABETICALLY"
+    assert sorted({"STALE_CLAIM", invented})[0] == invented
+    assert _by_precedence({"STALE_CLAIM", invented}) == "STALE_CLAIM"
+    # An unranked cause sorts LAST, so it can never silently outrank a placed one.
+    assert _by_precedence({invented}) == invented
+
+    # And the ranking covers exactly the causes a moved COMPONENT can produce, so none
+    # reaches the fallback by omission. `STALE_REVIEW` is deliberately outside it: that is
+    # what a record carrying no components yields, which is not a statement about which
+    # component moved and has no place in an ordering of those.
+    producible = set(COMPONENT_CAUSE.values()) | {"STALE_INPUT"}
+    assert set(CAUSE_PRECEDENCE) == producible, (
+        set(CAUSE_PRECEDENCE) ^ producible
+    )
+    assert producible <= REVIEW_STATES
+    assert "STALE_REVIEW" not in CAUSE_PRECEDENCE
+
+
+def test_two_components_moving_reports_the_more_fundamental_one():
+    """The same property end to end, through `derive_review_state` rather than the helper:
+    a theorem whose claim AND whose review requirement both moved is STALE_CLAIM, because
+    the claim has to be re-read either way."""
+    strong = registry()
+    before = fingerprints(strong)["THM-0001"]
+    record = review_for(before)
+    assert derive_review_state(before, record)[0] == REVIEWED
+
+    moved = registry(
+        theorem(
+            statement="Every NORMAL admitted request satisfies the skew-widened window "
+            "constraints.",
+            review_requirement="Owner security-specification review",
+        )
+    )
+    after = fingerprints(moved)["THM-0001"]
+    state, reason = derive_review_state(after, record)
+    assert state == "STALE_CLAIM", (state, reason)
+    assert "theorem_claim" in reason
 
 
 def test_weakening_a_statement_dirties_specification_review():
