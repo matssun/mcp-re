@@ -135,10 +135,14 @@ UNRESOLVED_COMPONENT = {
         "arguably DIRTY_POLICY and arguably DIRTY_EVIDENCE, and the encoding says neither."
     ),
     "consumed_contracts": (
-        "DIRTY_CONTRACT is defined for the PRODUCER whose exported contract moved. A "
-        "consumer changing what it declares it consumes is a change to its own definition, "
-        "which points at DIRTY_SELF — but reusing DIRTY_CONTRACT for the other side of the "
-        "same edge would overload a state the propagation rules read."
+        "ruled DIRTY_DEPENDENCY — a change to what contract a unit consumes is a change to "
+        "its dependency closure, not to its own implementation and not to the producer's "
+        "exported contract — and NOT YET APPLIED, because the value it would classify is "
+        "not yet derived from anything. No unit declares one; every CONTRACT_CONSUMES edge "
+        "names no contract; `attest` writes a third, empty copy. Classifying an "
+        "independently asserted field would fix the reading of three representations that "
+        "have never had to agree. It applies once the value is derived from legitimate "
+        "incoming edges."
     ),
     "gate_controls": (
         "ADR-MCPRE-068 Phase 1 describes these as 'the production carrier of the "
