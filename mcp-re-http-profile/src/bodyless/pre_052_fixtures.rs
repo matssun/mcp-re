@@ -152,4 +152,3 @@ pub fn verify_pre_052_root_signed_202_for_negative_test<R: Into<ResolverOutcome>
     )?;
     Ok(actor)
 }
-

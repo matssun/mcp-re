@@ -23,13 +23,13 @@ use serde::Serialize;
 
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::block::AudienceTuple;
-use mcp_re_http_profile::rejection::pre_052_direct_root::build_pre_052_direct_root_rejection_for_negative_test;
-use mcp_re_http_profile::reconstruct_chain;
 use mcp_re_http_profile::bodyless::pre_052_fixtures::sign_pre_052_root_signed_202_for_negative_test;
+use mcp_re_http_profile::bodyless::pre_052_fixtures::verify_pre_052_root_signed_202_for_negative_test;
+use mcp_re_http_profile::reconstruct_chain;
+use mcp_re_http_profile::rejection::pre_052_direct_root::build_pre_052_direct_root_rejection_for_negative_test;
+use mcp_re_http_profile::rejection::pre_052_direct_root::sign_pre_052_direct_root_response_base_for_negative_test;
 use mcp_re_http_profile::sign_request;
 use mcp_re_http_profile::sign_request_full;
-use mcp_re_http_profile::rejection::pre_052_direct_root::sign_pre_052_direct_root_response_base_for_negative_test;
-use mcp_re_http_profile::bodyless::pre_052_fixtures::verify_pre_052_root_signed_202_for_negative_test;
 use mcp_re_http_profile::verify_artifact_binding;
 use mcp_re_http_profile::verify_signed_rejection;
 use mcp_re_http_profile::ActorIdentity;
@@ -858,8 +858,14 @@ fn build_fixtures() -> Vec<Fixture> {
         "vec-nonce-note",
     )
     .expect("a notification signs like any request");
-    let ack = sign_pre_052_root_signed_202_for_negative_test(&note, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES)
-        .expect("the PEP signs its acceptance");
+    let ack = sign_pre_052_root_signed_202_for_negative_test(
+        &note,
+        &server_key(),
+        SERVER_KEY_ID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("the PEP signs its acceptance");
 
     // h34 — positive: a signed 202 bound to its notification.
     fixtures.push(Fixture {

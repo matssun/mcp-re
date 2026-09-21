@@ -11,9 +11,9 @@
 
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::bodyless::pre_052_fixtures::sign_pre_052_root_signed_202_for_negative_test;
+use mcp_re_http_profile::bodyless::pre_052_fixtures::verify_pre_052_root_signed_202_for_negative_test;
 use mcp_re_http_profile::sign_bodyless_request;
 use mcp_re_http_profile::sign_request;
-use mcp_re_http_profile::bodyless::pre_052_fixtures::verify_pre_052_root_signed_202_for_negative_test;
 use mcp_re_http_profile::verify_bodyless_request;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::HttpProfileError;
@@ -88,8 +88,14 @@ fn notification(nonce: &str, method: &str) -> HttpRequest {
 #[test]
 fn signed_202_verifies_against_its_notification() {
     let note = notification("n-init", "notifications/initialized");
-    let ack = sign_pre_052_root_signed_202_for_negative_test(&note, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES)
-        .expect("the PEP signs its acceptance");
+    let ack = sign_pre_052_root_signed_202_for_negative_test(
+        &note,
+        &server_key(),
+        SERVER_KEY_ID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("the PEP signs its acceptance");
 
     assert_eq!(ack.status, STATUS_ACCEPTED);
     assert!(ack.body.is_empty(), "an accepted notification gets no body");
@@ -100,8 +106,13 @@ fn signed_202_verifies_against_its_notification() {
         "a bodyless response has no content-type: there is no content to describe"
     );
 
-    let actor = verify_pre_052_root_signed_202_for_negative_test(&ack, &note, &Verifier::new(&policy(), &resolver()), NOW)
-        .expect("the client verifies the acknowledgement");
+    let actor = verify_pre_052_root_signed_202_for_negative_test(
+        &ack,
+        &note,
+        &Verifier::new(&policy(), &resolver()),
+        NOW,
+    )
+    .expect("the client verifies the acknowledgement");
     assert_eq!(actor.identity.keyid, SERVER_KEY_ID);
 }
 
@@ -129,14 +140,30 @@ fn signed_202_verifies_against_its_notification() {
 fn an_acknowledgement_binds_to_one_transmission_not_to_content() {
     let note_a = notification("n-a", "notifications/initialized");
     let note_b = notification("n-b", "notifications/cancelled");
-    let ack_a =
-        sign_pre_052_root_signed_202_for_negative_test(&note_a, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES).expect("signs");
+    let ack_a = sign_pre_052_root_signed_202_for_negative_test(
+        &note_a,
+        &server_key(),
+        SERVER_KEY_ID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("signs");
 
-    verify_pre_052_root_signed_202_for_negative_test(&ack_a, &note_a, &Verifier::new(&policy(), &resolver()), NOW)
-        .expect("binds to A");
+    verify_pre_052_root_signed_202_for_negative_test(
+        &ack_a,
+        &note_a,
+        &Verifier::new(&policy(), &resolver()),
+        NOW,
+    )
+    .expect("binds to A");
     assert_eq!(
-        verify_pre_052_root_signed_202_for_negative_test(&ack_a, &note_b, &Verifier::new(&policy(), &resolver()), NOW)
-            .unwrap_err(),
+        verify_pre_052_root_signed_202_for_negative_test(
+            &ack_a,
+            &note_b,
+            &Verifier::new(&policy(), &resolver()),
+            NOW
+        )
+        .unwrap_err(),
         HttpProfileError::ResponseBindingMismatch,
         "A's acknowledgement must not acknowledge a DIFFERENT notification B"
     );
@@ -173,15 +200,27 @@ fn an_acknowledgement_binds_to_one_transmission_not_to_content() {
 #[test]
 fn a_forged_request_evidence_header_is_refused() {
     let note_a = notification("n-a", "notifications/initialized");
-    let mut ack =
-        sign_pre_052_root_signed_202_for_negative_test(&note_a, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES).expect("signs");
+    let mut ack = sign_pre_052_root_signed_202_for_negative_test(
+        &note_a,
+        &server_key(),
+        SERVER_KEY_ID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("signs");
     for (name, value) in ack.headers.iter_mut() {
         if name.eq_ignore_ascii_case("mcp-re-request-evidence") {
             *value = "0".repeat(value.len());
         }
     }
     assert!(
-        verify_pre_052_root_signed_202_for_negative_test(&ack, &note_a, &Verifier::new(&policy(), &resolver()), NOW).is_err(),
+        verify_pre_052_root_signed_202_for_negative_test(
+            &ack,
+            &note_a,
+            &Verifier::new(&policy(), &resolver()),
+            NOW
+        )
+        .is_err(),
         "a request-evidence value the verifier cannot re-derive must fail closed"
     );
 }
@@ -191,13 +230,24 @@ fn a_forged_request_evidence_header_is_refused() {
 #[test]
 fn a_missing_request_evidence_header_is_refused() {
     let note_a = notification("n-a", "notifications/initialized");
-    let mut ack =
-        sign_pre_052_root_signed_202_for_negative_test(&note_a, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES).expect("signs");
+    let mut ack = sign_pre_052_root_signed_202_for_negative_test(
+        &note_a,
+        &server_key(),
+        SERVER_KEY_ID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("signs");
     ack.headers
         .retain(|(name, _)| !name.eq_ignore_ascii_case("mcp-re-request-evidence"));
     assert_eq!(
-        verify_pre_052_root_signed_202_for_negative_test(&ack, &note_a, &Verifier::new(&policy(), &resolver()), NOW)
-            .unwrap_err(),
+        verify_pre_052_root_signed_202_for_negative_test(
+            &ack,
+            &note_a,
+            &Verifier::new(&policy(), &resolver()),
+            NOW
+        )
+        .unwrap_err(),
         HttpProfileError::MissingEvidence("response request-evidence"),
         "there is no weaker content-level mode to fall back to"
     );
@@ -220,11 +270,23 @@ fn signature_input_of(request: &HttpRequest) -> String {
 #[test]
 fn content_injected_into_a_signed_202_is_caught() {
     let note = notification("n-inj", "notifications/initialized");
-    let mut ack =
-        sign_pre_052_root_signed_202_for_negative_test(&note, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES).expect("signs");
+    let mut ack = sign_pre_052_root_signed_202_for_negative_test(
+        &note,
+        &server_key(),
+        SERVER_KEY_ID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("signs");
     ack.body = br#"{"cancelled":true}"#.to_vec();
     assert_eq!(
-        verify_pre_052_root_signed_202_for_negative_test(&ack, &note, &Verifier::new(&policy(), &resolver()), NOW).unwrap_err(),
+        verify_pre_052_root_signed_202_for_negative_test(
+            &ack,
+            &note,
+            &Verifier::new(&policy(), &resolver()),
+            NOW
+        )
+        .unwrap_err(),
         HttpProfileError::MalformedEvidence("content on a bodyless message"),
     );
 }
@@ -235,12 +297,24 @@ fn content_injected_into_a_signed_202_is_caught() {
 #[test]
 fn content_type_on_a_bodyless_202_is_rejected() {
     let note = notification("n-ct", "notifications/initialized");
-    let mut ack =
-        sign_pre_052_root_signed_202_for_negative_test(&note, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES).expect("signs");
+    let mut ack = sign_pre_052_root_signed_202_for_negative_test(
+        &note,
+        &server_key(),
+        SERVER_KEY_ID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("signs");
     ack.headers
         .push(("Content-Type".into(), "application/json".into()));
     assert_eq!(
-        verify_pre_052_root_signed_202_for_negative_test(&ack, &note, &Verifier::new(&policy(), &resolver()), NOW).unwrap_err(),
+        verify_pre_052_root_signed_202_for_negative_test(
+            &ack,
+            &note,
+            &Verifier::new(&policy(), &resolver()),
+            NOW
+        )
+        .unwrap_err(),
         HttpProfileError::MalformedEvidence("content-type on a bodyless message"),
     );
 }
@@ -250,15 +324,27 @@ fn content_type_on_a_bodyless_202_is_rejected() {
 #[test]
 fn a_202_without_its_req_binding_is_rejected() {
     let note = notification("n-nb", "notifications/initialized");
-    let mut ack =
-        sign_pre_052_root_signed_202_for_negative_test(&note, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES).expect("signs");
+    let mut ack = sign_pre_052_root_signed_202_for_negative_test(
+        &note,
+        &server_key(),
+        SERVER_KEY_ID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("signs");
     for h in ack.headers.iter_mut() {
         if h.0.eq_ignore_ascii_case("signature-input") {
             h.1 = h.1.replace(" \"@target-uri\";req", "");
         }
     }
     assert_eq!(
-        verify_pre_052_root_signed_202_for_negative_test(&ack, &note, &Verifier::new(&policy(), &resolver()), NOW).unwrap_err(),
+        verify_pre_052_root_signed_202_for_negative_test(
+            &ack,
+            &note,
+            &Verifier::new(&policy(), &resolver()),
+            NOW
+        )
+        .unwrap_err(),
         HttpProfileError::MissingCoveredComponent("@target-uri"),
     );
 }
@@ -268,11 +354,23 @@ fn a_202_without_its_req_binding_is_rejected() {
 #[test]
 fn a_bodyless_response_that_is_not_202_is_rejected() {
     let note = notification("n-st", "notifications/initialized");
-    let mut ack =
-        sign_pre_052_root_signed_202_for_negative_test(&note, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES).expect("signs");
+    let mut ack = sign_pre_052_root_signed_202_for_negative_test(
+        &note,
+        &server_key(),
+        SERVER_KEY_ID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("signs");
     ack.status = 200;
     assert_eq!(
-        verify_pre_052_root_signed_202_for_negative_test(&ack, &note, &Verifier::new(&policy(), &resolver()), NOW).unwrap_err(),
+        verify_pre_052_root_signed_202_for_negative_test(
+            &ack,
+            &note,
+            &Verifier::new(&policy(), &resolver()),
+            NOW
+        )
+        .unwrap_err(),
         HttpProfileError::MalformedEvidence("bodyless acknowledgement status"),
     );
 }
@@ -282,10 +380,22 @@ fn a_bodyless_response_that_is_not_202_is_rejected() {
 #[test]
 fn a_202_signed_by_a_request_key_fails_the_response_slot() {
     let note = notification("n-slot", "notifications/initialized");
-    let ack =
-        sign_pre_052_root_signed_202_for_negative_test(&note, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES).expect("signs");
+    let ack = sign_pre_052_root_signed_202_for_negative_test(
+        &note,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("signs");
     assert_eq!(
-        verify_pre_052_root_signed_202_for_negative_test(&ack, &note, &Verifier::new(&policy(), &resolver()), NOW).unwrap_err(),
+        verify_pre_052_root_signed_202_for_negative_test(
+            &ack,
+            &note,
+            &Verifier::new(&policy(), &resolver()),
+            NOW
+        )
+        .unwrap_err(),
         HttpProfileError::UnresolvedKeyId,
     );
 }
