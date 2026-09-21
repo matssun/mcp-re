@@ -82,6 +82,22 @@ on every PR, or that the control is correct. Branch protection is repository con
 and is not readable from the tree; this gate closes the gap it can see from here, which is
 the one that has actually opened five times.
 
+AND IT DOES NOT PROVE A DEFINED POPULATION FOR `scripts/`, which is stated rather than
+quietly left out. The entry-point half above rests on a property — the execute bit — that
+decides membership on its own. `scripts/` has no such property: it holds gates, a sourced
+toolchain shim, a demo runner, architecture reports and CI helpers, and executability
+separates none of them. The obvious substitute is a `*_gate.py` glob, and that is exactly
+the move SF-010 warns against: it would repeat the `test_mutation_lane.py` repair one shape
+later and leave the same hole for the next shape.
+
+Measured 2026-09-21, so the gap is known rather than assumed: 41 files match
+`scripts/*_gate.py`; 40 are invoked by `local_gate.sh` and therefore in the first
+population; the one that is not, `merge_readiness_gate.py`, is named by an unconditional
+workflow and belongs there — it is a merge-TIME authority, and running it from a pre-merge
+aggregate would be asking a question about a commit that does not exist yet. So there is no
+live instance today. What is missing is the guarantee, and a filename pattern would be a
+guarantee-shaped thing rather than one.
+
 Run:  python3 scripts/merge_path_gate.py
       python3 scripts/merge_path_gate.py --selftest
 """
