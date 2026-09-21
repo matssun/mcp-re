@@ -1,0 +1,26 @@
+{
+  "authority": "adr-068-phase1",
+  "changed_components": [
+    "theorem_claim"
+  ],
+  "corrections": [
+    {
+      "field": "scope",
+      "id": "C1",
+      "new": "The claim is over inhabitants of the type. Callers that reimplement the rules instead of constructing the type are outside it.",
+      "old": "The claim is over inhabitants of the type. Callers that reimplement the rules instead of constructing the type are outside it — which is why the trusted-ingress facade delegating rather than reimplementing is part of this unit's battery.",
+      "reason": "The trailing clause named unit://proxy.asserted_identity_delegation, the battery for the trusted-ingress facade RA3-002 deletes. It was justification prose about the BATTERY, not a conjunct about inhabitants of the type, so it could not be kept true by any edit that preserved it: verification.toml declares no such unit, and the two surviving caller-side sites ask PeerIdentityValue::interpret directly. The sentence the clause hung off -- callers that reimplement the rules are outside the claim -- is retained verbatim, so the set of callers the theorem declines to speak for is unchanged."
+    }
+  ],
+  "dependency_correction": "No edge added or removed; depends_on is empty on both sides. The movement is in theorem_claim, and it propagates to seven dependent theorems whose own claim fields are byte-identical -- THM-0024, THM-0029, THM-0031, THM-0033, THM-0034, THM-0074 and THM-0080 -- each recorded separately.",
+  "from_fingerprint": "sha256:72c136266ce6d02251d466cbc5b8e51ef32a92dffba63e5bd189138304378111",
+  "packet": "verification/reviews/packets/thm-0023-delegation-subject-deleted-2026-09-21.md",
+  "product_behavior_unchanged": true,
+  "reason": "THE SOURCE CORRECTION OF THIS BRANCH'S CASCADE. unit://proxy.asserted_identity_delegation is deleted with the transport::ingress::v1 seam, and THM-0023's scope carried a trailing clause naming it. Measured on the tree: no live declaration of that unit remains anywhere outside past-tense retirement records, verification/policy/verification.toml declares no unit with that id, and the surviving callers construct the type directly. Field by field, statement / security_consequence / depends_on / review_requirement / direct_consequence_severity / owner are byte-identical; scope loses exactly one trailing clause; supported_by drops the retired unit from three entries to two. The proposition keeps its evidence: peer_identity_value owns the construction and projection boundary and peer_identity_value_sole_producer establishes that interpret is the only producer, which is what makes a quantifier over inhabitants meaningful. The retired unit's evidence was about a CALLER, and the scope places callers outside the claim -- the same fact, read from the other side, that makes the clause removable. THE STRENGTHENING DIRECTION WAS CHECKED AND FOUND A DEFECT: an intermediate cohort state had replaced the clause with a positive universal over all callers, which is STRONGER than the reviewed text and was written at the moment the only caller-side edge was deleted, while verification.toml still records the pinning as an OPEN item. Corrected at 225d77a4 before this measurement.",
+  "root_consequence_unchanged": true,
+  "ruling": "ADR-MCPRE-068 Phase-1 campaign ruling, 2026-09-18, item 5: claim precision corrections that preserve the ratified promise, and moving evidence to its correct owner, are explicitly NOT owner escalations. The owner did not individually review this fingerprint; the authority recorded here is that ruling. The correction is covered because the old wording described a battery member that no longer exists -- the narrow case the ruling names, where wording misdescribes what production establishes -- and because the accepted promise is neither weakened, removed nor materially expanded: the statement and the security consequence are byte-identical, and the set of callers the scope declines to speak for is unchanged.",
+  "severity_after": "medium",
+  "severity_before": "medium",
+  "subject": "THM-0023",
+  "to_fingerprint": "sha256:264ae6644ea00501f2798c958edd123cb075fcc9c3ad489bb11177c60ad76374"
+}
