@@ -81,6 +81,41 @@ shrink in silence.
                              say so — the theorem lives in `verification/lean/`, not in the
                              unit's declared `paths`.
 
+The EXTRACTION lanes were the exception to all of it, and the exception was silent. Four
+lanes carried their runner; `lean` and `generated-model` carried nothing, so `verify-lean`,
+`check-generated` and the model predicate could be narrowed with no `lean://` unit deriving
+DIRTY. The selection (v8) was measured and the instrument was not. Three components close
+it, all CONDITIONAL — added only where the unit declares `lean://`, on the `gate_controls`
+precedent, because one unit declares it and an always-present key would move the other 243
+fingerprints to record an absence:
+
+  * `lean_lane_identity`             what decides that the theorems STAND: the runner, the
+                                     axiom accounting, the prover query, the model
+                                     predicate, the container identity and the manifest.
+                                     The JUDGEMENT cone, not the import closure — the test
+                                     for membership is whether changing the file can alter
+                                     whether the lane reports valid evidence, which theorems
+                                     were activated, or whether a run that elaborated
+                                     nothing is accepted.
+  * `generated_model_lane_identity`  what decides that the committed model IS the model this
+                                     tree extracts, including `regenerate-lean`: the pinned
+                                     Charon and Aeneas are in `toolchain_identity`, the
+                                     INVOCATION is not.
+  * `lean_theorem_sources`           the bytes the declared `lean_theorems` are stated in.
+                                     The names alone let a claim be emptied — a theorem
+                                     rewritten to `: True := trivial` resolves under its own
+                                     name with an axiom closure inside the kernel baseline —
+                                     which is the v3 test defect at the CLAIM rather than at
+                                     the instrument. Derived from the lakefile's libraries
+                                     by `_lean_sources`, so the elaborated cone and the
+                                     measured cone are one fact.
+
+`generated_inputs` was in the equation from the start and was computed from the unit's
+declared paths ∩ `verification/lean/generated/`. No unit lists a path there — 0 of 244 — and
+none should, because a `.lean` path in a Cargo unit collapses its ecosystem. So the rule
+`generated-model drift -> DIRTY_EVIDENCE` was wired to an empty population. It is now
+derived from the same extraction declaration.
+
 `_fingerprint.py` is deliberately NOT in `test_lane_identity`. Its identity is carried by
 `ENCODING_VERSION`, which is what a change of MEANING here must move; hashing the file
 would additionally invalidate every unit for a comment.
@@ -110,7 +145,7 @@ from _ecosystems import CARGO
 from _ecosystems import formal_source_patterns
 from _ecosystems import unit_ecosystem
 from _ecosystems import unit_projects
-from _lean_sources import LAKEFILE, theorem_source_paths
+from _lean_sources import generated_model_paths, LAKEFILE, theorem_source_paths
 from _manifest import (
     claims_lean_evidence,
     claims_measured_evidence,
@@ -134,7 +169,8 @@ ENCODING_VERSION = 9
 #: touching a line of the source the unit declares.
 WORKSPACE_BUILD_INPUTS = ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml")
 
-#: Where extraction deposits machine-generated proof input.
+#: Where extraction deposits machine-generated proof input. Units do not declare paths here
+#: — see `_generated_inputs`, which derives the population from the lakefile instead.
 GENERATED_ROOT = "verification/lean/generated"
 
 
@@ -541,6 +577,26 @@ GENERATED_MODEL_LANE_INPUTS = (
 #: Unlike the four lane identities above, these two carry no `claims_…` guard: they are
 #: added to the component map only where the unit declares the scheme, so an empty return
 #: would be an unreachable second answer to a question the call site has already asked.
+def _generated_inputs(unit: dict) -> dict[str, str]:
+    """The machine-generated proof input this unit's evidence was measured against.
+
+    Declared paths under `GENERATED_ROOT`, UNION the extracted modules the Lean package
+    actually elaborates. The paths half alone was a component with an empty population: no
+    unit lists a file under `verification/lean/generated/`, and none should — a `.lean` path
+    in a Cargo unit's `paths` collapses `unit_ecosystem` to None and takes the test lane's
+    target resolution with it. So the declared invalidation rule `generated-model drift ->
+    DIRTY_EVIDENCE` was wired to nothing, and measured 0 of 244 units.
+
+    Derived from the unit's extraction DECLARATION instead: a unit claiming `lean://` is
+    measured against the model the lakefile's libraries resolve to, which is what
+    `regenerate-lean` produces and what `lake build` elaborates.
+    """
+    declared = [p for p in unit["paths"] if p.startswith(GENERATED_ROOT)]
+    if not claims_lean_evidence(unit):
+        return _digest_paths(declared)
+    return _digest_paths(sorted({*declared, *generated_model_paths()}))
+
+
 def _lean_lane_identity() -> dict[str, str]:
     return _digest_paths(list(LEAN_LANE_INPUTS))
 
@@ -630,9 +686,7 @@ def fingerprint_unit(
         "unit_id": unit["id"],
         "class": unit["class"],
         "source_inputs": source_inputs,
-        "generated_inputs": _digest_paths(
-            [p for p in unit["paths"] if p.startswith(GENERATED_ROOT)]
-        ),
+        "generated_inputs": _generated_inputs(unit),
         "build_configuration": _build_configuration(unit, formal_closure),
         "enabled_features": sorted(unit.get("features", [])),
         # The theorems the unit claims, by prover-reported name. In the fingerprint

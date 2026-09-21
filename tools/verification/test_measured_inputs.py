@@ -524,6 +524,74 @@ def test_the_extraction_components_do_not_touch_the_specification_axis():
     assert moved != before["THM-0128"]
 
 
+def test_the_generated_model_component_has_a_real_population():
+    """P-c. `generated_inputs` is in the ADR's fingerprint equation and its invalidation
+    rule is tested — `generated-model drift -> DIRTY_EVIDENCE` — but the component was
+    computed from `unit["paths"] ∩ verification/lean/generated/**`, and NO unit lists a path
+    there. Measured: 0 of 244 units had a non-empty one. A declared rule wired to an empty
+    population is a rule that has never been able to fire.
+
+    None of them should list one, either: a `.lean` path in a Cargo unit's `paths` collapses
+    `unit_ecosystem` to None and takes the test lane's target resolution with it. So the
+    population is derived from the extraction declaration instead."""
+    with_model = [
+        unit_id for unit_id in UNITS if components(unit_id)["generated_inputs"]
+    ]
+    assert with_model == ["core.time_civil_from_days"], with_model
+    assert set(components("core.time_civil_from_days")["generated_inputs"]) == {
+        "verification/lean/generated/McpReCore.lean",
+    }
+
+
+def test_generated_model_drift_reaches_the_invalidation_verdict():
+    """The whole chain, on the real manifest rather than on synthetic components:
+
+        the model the unit consumes changes
+            -> `generated_inputs` moves
+            -> the unit fingerprint moves
+            -> the standing attestation is no longer FRESH, and the reason NAMES the model.
+
+    The attestation is built from the CURRENT components on purpose: a stale one would
+    answer UNKNOWN for a different and less interesting reason — that it predates the
+    encoding — and the property under test is the drift, not the upgrade."""
+    from _graph import Attestation, derive_unit_state
+
+    unit_id = "core.time_civil_from_days"
+    before = fingerprint_unit(UNITS[unit_id], DOC, TOOLCHAINS, ASSUMPTIONS)
+    standing = Attestation(
+        unit_id=unit_id,
+        fingerprint=before["fingerprint"],
+        components=before["components"],
+        evidence={"lean": "pass", "generated-model": "pass", "test": "pass"},
+    )
+    assert derive_unit_state(unit_id, before, {unit_id: standing})[0] == "FRESH"
+
+    after = _while_perturbed(
+        "verification/lean/generated/McpReCore.lean",
+        lambda: fingerprint_unit(UNITS[unit_id], DOC, TOOLCHAINS, ASSUMPTIONS),
+    )
+    assert after["components"]["generated_inputs"] != before["components"]["generated_inputs"]
+    assert after["fingerprint"] != before["fingerprint"]
+    state, reason = derive_unit_state(unit_id, after, {unit_id: standing})
+    assert state == "DIRTY_EVIDENCE", (state, reason)
+    assert "generated_inputs" in reason, reason
+
+
+def test_the_non_lean_population_is_untouched_by_the_model():
+    """The control. A unit that asks no extraction lane for evidence must not be dirtied by
+    the extracted model, or `generated_inputs` is measuring "somebody re-extracted" rather
+    than "the input this unit's proof stands on changed"."""
+    bystanders = ["http_profile.keyid", "core.time_rfc3339"]
+    before = {
+        unit_id: fingerprint_unit(UNITS[unit_id], DOC, TOOLCHAINS, ASSUMPTIONS)[
+            "fingerprint"
+        ]
+        for unit_id in bystanders
+    }
+    after = _perturbed("verification/lean/generated/McpReCore.lean", bystanders)
+    assert after == before
+
+
 def test_a_unit_without_mutation_evidence_measures_no_mutation_components():
     """Empty, and measured as empty: a unit with no probe suite must not be dirtied by
     another unit's probes, and the component must not become a sentinel.
