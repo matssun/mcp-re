@@ -454,6 +454,28 @@ def _test_lane_identity(unit: dict) -> dict[str, str]:
     return _digest_paths(list(TEST_LANE_INPUTS))
 
 
+def _consumed_contracts(unit: dict, doc: dict) -> list[str]:
+    """The producer contracts this unit consumes, DERIVED from its incoming edges.
+
+    One authority. The relation lives on the edge — which names the contract and the
+    producer that exports it, and is refused unless that producer really does — so a unit
+    field saying the same thing is a second answer that nothing reconciles. It was authored
+    by no unit while nine edges named no contract, which is what a duplicate authority looks
+    like before anyone notices: three representations that have never had to agree.
+
+    In the fingerprint because a change in WHICH producer contract a unit consumes changes
+    its dependency identity. `exported_contracts` carries the producer's side of the same
+    relation.
+    """
+    return sorted(
+        {
+            edge["contract"]
+            for edge in doc.get("edge", [])
+            if edge["kind"] == "CONTRACT_CONSUMES" and edge["to"] == unit["id"]
+        }
+    )
+
+
 def _mutation_probes(unit_id: str) -> dict[str, str]:
     """Each probe scoped to this unit, mapped to a digest of WHAT IT PROVES.
 
@@ -701,7 +723,7 @@ def fingerprint_unit(
         "extracted_symbols": sorted(unit.get("extracted_symbols", [])),
         "lean_theorems": sorted(unit.get("lean_theorems", [])),
         "exported_contracts": sorted(unit.get("exported_contracts", [])),
-        "consumed_contracts": sorted(unit.get("consumed_contracts", [])),
+        "consumed_contracts": _consumed_contracts(unit, doc),
         "proof_dependencies": proof_dependencies,
         "test_evidence_definition": sorted(unit.get("evidence", [])),
         "test_selection": _test_selection(unit),

@@ -80,7 +80,7 @@ _DUPLICATED_AUTHORITY = {
     "proved_symbols": "verification.toml [[unit]].proved_symbols",
     "tested_symbols": "verification.toml [[unit]].tested_symbols",
     "exported_contracts": "verification.toml [[unit]].exported_contracts",
-    "consumed_contracts": "verification.toml [[unit]].consumed_contracts",
+    "consumed_contracts": "verification.toml [[edge]].contract — derived from the incoming CONTRACT_CONSUMES edges, never authored",
     "assumptions": "assumptions.toml [[assumption]].scope — the one authoritative direction (§8)",
     "required_evidence": "verification.toml [[unit]].evidence, as target-qualified URIs",
     "review": "the review attestation, keyed by reviewed_fingerprint (§14.7)",

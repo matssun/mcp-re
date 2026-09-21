@@ -131,7 +131,6 @@ def main() -> int:
             "unit_id": unit_id,
             "fingerprint": current[unit_id]["fingerprint"],
             "components": current[unit_id]["components"],
-            "consumed_contracts": {},
             "evidence": evidence,
         }
         path = args.store / f"{unit_id}.json"
