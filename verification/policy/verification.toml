@@ -6425,6 +6425,14 @@ tested_symbols = [
   "lib#audit_record::text::tests::the_absent_marker_is_not_producible_by_any_scalar",
   "lib#audit_record::text::tests::no_field_name_contains_a_separator",
   "lib#audit_record::text::tests::a_rendered_record_parses_back_to_the_fields_that_were_written",
+  "lib#audit_record::scalar::tests::is_separator_free_is_exactly_the_escapes_fixed_point",
+  "lib#audit_record::text::tests::a_token_carrying_a_newline_still_renders_one_physical_record",
+  "lib#audit_record::text::tests::a_field_name_carrying_a_separator_cannot_add_a_field",
+  "lib#audit_record::text::tests::a_token_that_is_the_bare_absent_marker_is_not_the_absent_marker",
+  "lib#audit_record::text::tests::every_field_name_a_real_record_renders_is_separator_free",
+  "lib#audit_record::text::tests::every_name_and_token_a_real_record_renders_is_rendered_verbatim",
+  "lib#audit_record::text::tests::a_real_record_parses_back_to_the_fields_that_were_written",
+  "lib#audit_record::text::tests::the_recoverable_object_is_the_record_substring_not_the_physical_line",
 ]
 
 # ADR-MCPRE-059 §28 / issue #742. TWO owners, not one, and the split is the finding: R9's

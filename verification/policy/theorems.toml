@@ -7329,9 +7329,16 @@ separators and bidi controls, and each of them in leading, medial and trailing p
 The CLASSIFICATION is not established here, and cannot be by this unit: whether a given
 value is a closed token or open text is its owner's decision, measured by
 `proxy.audit_vocabulary_import`. What this unit establishes is that the decision is
-honoured — a `Text` is escaped, a `Token` is not — and the type system carries the other
-half, because `AuditValue::Token` takes `&'static str` and a string read out of a request
-body is not `'static`.
+honoured — a `Text` is always escaped, and a `Token` or a field name is rendered verbatim
+only when it is already the fixed point of that escape, and escaped otherwise.
+
+The rendering therefore depends on NO premise about where the value came from. An earlier
+reading of this scope rested the token half on the type system, because `AuditValue::Token`
+takes `&'static str` and a string read out of a request body is not `'static`. That is a
+true statement about the ordinary misclassification and it is not the property this claims:
+`String::leak` yields a `&'static str` from arbitrary bytes, and the previous screen on the
+verbatim arms was a `debug_assert!` and so was absent from every release build. The claim is
+now over the rendering alone, in every build profile.
 
 It does not establish that the record was delivered, or that exactly one line reached the
 stream: the first is THM-0070 and the second is `proxy.audit_delivery`'s control over the
