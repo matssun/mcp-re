@@ -970,3 +970,40 @@ module-tree-visibility = "`binding` is bare-private to `pre_admission::standing`
 alternate-constructors = "`HttpProfileProxy::admission_stage` is the only producer, and it produces on BOTH arms — the enforcer-present arm after `AdmissionEnforcer::decide` returns Ok, and the no-enforcer arm that yields `AdmissionFacet::NotConfigured`. There is no `new`, `From`, `Default` or builder, and `binding()` returns a borrow, never the field"
 generated-or-deserialization = "no derives at all, and nothing decodes it — it is a serving-path product assembled from a stage's own result, never read off a wire. A `Deserialize` would be a second producer reachable from any body the proxy parses"
 test-only-construction = "the region's `#[cfg(test)]` modules obtain nothing through a constructor: `admission_prerequisite_tests` asserts on the projection, and `pre_admission::mod`'s tests construct `AdmittedRequest`, a different type. No test-gated constructor and no test-gated field visibility exists — one would be a producer even though it never runs in production, because the compiler would admit the construction"
+
+[[probe]]
+id = "S29"
+unit = "proxy.replay_materialization_sole_producer"
+kind = "in-crate-source-injection"
+package = "mcp-re-proxy"
+invariant = "no code outside `replay_plane::materialized` can assemble a MaterializedReplay, so every handover value the serving path receives passed `assert_durable` — a volatile single-process tier cannot be paired with a fleet-strict, linearizable-claiming dispatch posture by writing the struct"
+insertion_path = "mcp-re-proxy/src/replay_plane/structural_probe_s29.rs"
+insertion_parent = "mcp-re-proxy/src/replay_plane/mod.rs"
+insertion_declaration = "mod structural_probe_s29;"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+note = """
+r11's R11-538, and the probe exists because the CLOSURE was verified by hand once and a
+hand check is not a control. The audited tree had `pub struct MaterializedReplay { pub tier,
+pub dispatch }`, so `assert_durable` fired inside a private `new` that an ordinary struct
+literal walked straight past — apply the operational test and deleting the guard made
+nothing unconstructible that a literal could not already build.
+
+TWO REFUSALS, AND BOTH ARE THE POINT. Injected as a sibling of the owner, the compiler
+answers with `E0451` on all three fields AND `type DurabilityWitness is private`. The second
+is what survives the obvious regression: field privacy alone is undone by someone restoring
+`pub`, so the checked path returns a witness this module does not export, and the literal
+stays unwritable whatever the fields say. The module doc at `materialized.rs:22-31` claims
+exactly that; this is where the claim is measured.
+
+The probe is a SIBLING inside `replay_plane` rather than another crate, because that is who
+would forge one — `backends.rs` builds the halves, and the owner is deliberately its sibling
+so the halves' module cannot assemble the whole.
+"""
+construction = "// ADR-MCPRE-068 structural probe S29. Injected into a scratch copy by verify-structural;\n// this file cannot exist in the working tree, because it would not build — which is the\n// proposition it witnesses.\nuse super::materialized::MaterializedReplay;\n\npub fn hostile() -> MaterializedReplay {\n    MaterializedReplay {\n        tier: todo!(), // STRUCTURAL-PROBE-SITE\n        dispatch: todo!(),\n        _durable: todo!(),\n    }\n}\n"
+
+[probe.producer_paths]
+module-tree-visibility = "all three fields are bare-private to `replay_plane::materialized`, and `_durable`'s type `DurabilityWitness` is a private struct in the same module. The parent re-exports `MaterializedReplay` so consumers can name the value, never its representation"
+alternate-constructors = "`MaterializedReplay::materialize` and the private `accept` it shares with the guard batteries are the only producers, and `accept` calls `assert_durable` before the literal it returns — producing the value and checking it are one step. There is no `new`, `From`, `Default` or builder. The handover is `into_parts`, which MOVES both halves out together rather than projecting them separately, so a caller cannot carry one half onward beside a posture from elsewhere"
+generated-or-deserialization = "no derives that construct, and no Serialize/Deserialize — the value is established from a plan at startup, never decoded. A derived decoder would be a producer that never meets `assert_durable`"
+test-only-construction = "the owner's `#[cfg(test)] mod tests` reaches the value through `materialize` and through `accept`, which is the CHECKED path and not a bypass — it is private to this module and calls `assert_durable` itself. No test-gated constructor and no test-gated field visibility exists"

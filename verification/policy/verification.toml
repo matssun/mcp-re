@@ -6953,6 +6953,32 @@ tested_symbols = [
 # fingerprint stand for both, and a defect in the installation step falsifies the claim while
 # every local `Established<T>` control stays green.
 
+# THE SEAL, and it is a different proposition from the unit above. That one says the tier
+# handed over is the one the plan SELECTED and that a volatile tier is never handed over —
+# a statement about what materialization decides, measured by its battery. This one says
+# nobody can hand the serving path a value that skipped that decision, which no test can
+# establish: a test exercises the paths that exist, and the question is whether another
+# path could be written. Same split the tree already makes at
+# `proxy.continuation_materialization` / `..._sole_producer` and
+# `proxy.admission_configuration_state` / `..._sole_producer`.
+
+[[unit]]
+id = "proxy.replay_materialization_sole_producer"
+class = "V0"
+description = "No code outside `replay_plane::materialized` can assemble a `MaterializedReplay`, so possession of one IS the statement that `assert_durable` accepted the tier it was built around. Two mechanisms, and the second is why field privacy alone would not do: the three fields are bare-private, AND the checked path returns a `DurabilityWitness` the module does not export, so the struct literal stays unwritable even if someone restored `pub` on the fields. The handover is `into_parts`, which moves both halves out together rather than projecting them separately, so the validated pairing cannot be split back into independently replaceable arguments."
+paths = [
+  "mcp-re-proxy/src/replay_plane/materialized.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+# A forged handover is a deployment advertising cross-replica replay protection while every
+# replica holds a private in-process map: a nonce burned on replica A is Fresh on replica B,
+# so a captured signed request replays against any other replica inside its window.
+direct_consequence_severity = "critical"
+evidence = [
+  "structural://proxy/replay_plane/materialization_sole_producer",
+]
+
 [[unit]]
 id = "proxy.continuation_materialization"
 class = "V0"

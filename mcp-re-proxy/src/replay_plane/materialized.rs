@@ -281,29 +281,17 @@ mod tests {
     /// If this ever fails, the question to ask is which replay state became reachable.
     /// The fix is NOT to restore an in-memory arm: that would make materialization
     /// describe a state layer A refuses to represent, which is the defect CF-01 removed.
+    ///
+    /// The `cfg` is the claim's own scope: BF-01 is a property of a build carrying
+    /// neither backend, so in a lane carrying one this test does not exist. A lane that
+    /// linked a backend and still reported this test GREEN would be reporting a measured
+    /// property it never measured.
+    #[cfg(not(any(feature = "redis_replay", feature = "cpstore_etcd")))]
     #[test]
     fn a_build_with_no_replay_backend_can_reach_no_replay_state() {
         let etcd = crate::config_state::test_support::linearizable_replay_plan();
         let redis = crate::config_state::test_support::redis_replay_plan();
         let freshness = crate::config_state::test_support::freshness(60);
-
-        if cfg!(feature = "cpstore_etcd") {
-            // Only the etcd arm can be probed without a control runtime once its backend
-            // is linked; the Redis arm CONSUMES one, and handing it `None` would assert
-            // the runtime contract rather than reachability. One reachable state is
-            // enough to show the build is a serving binary.
-            assert!(
-                MaterializedReplay::materialize(&etcd, freshness, None).is_ok(),
-                "a build linking cpstore_etcd must reach the linearizable state"
-            );
-            return;
-        }
-        if cfg!(feature = "redis_replay") {
-            // Redis linked, etcd not: the etcd arm refuses for want of ITS backend, which
-            // says nothing about BF-01 either way. Reachability of the Redis arm needs a
-            // runtime, so it is asserted where a runtime exists, not here.
-            return;
-        }
 
         for plan in [&etcd, &redis] {
             assert!(
@@ -311,5 +299,26 @@ mod tests {
                 "BF-01: with neither backend linked, no replay state may be reachable"
             );
         }
+    }
+
+    /// The converse of BF-01, in the one lane that can state it without a control
+    /// runtime: a build that LINKS `cpstore_etcd` reaches the linearizable state. This is
+    /// a reachability fact about a build WITH a backend, not BF-01, which is why it is a
+    /// separate test in a lane where the BF-01 test does not exist.
+    ///
+    /// Only the etcd arm can be probed with `None`; the Redis arm CONSUMES a control
+    /// runtime, and handing it `None` would assert the runtime contract rather than
+    /// reachability. One reachable state is enough to show such a build is a serving
+    /// binary.
+    #[cfg(feature = "cpstore_etcd")]
+    #[test]
+    fn a_build_linking_cpstore_etcd_reaches_the_linearizable_state() {
+        let etcd = crate::config_state::test_support::linearizable_replay_plan();
+        let freshness = crate::config_state::test_support::freshness(60);
+
+        assert!(
+            MaterializedReplay::materialize(&etcd, freshness, None).is_ok(),
+            "a build linking cpstore_etcd must reach the linearizable state"
+        );
     }
 }
