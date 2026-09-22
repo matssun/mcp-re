@@ -7775,6 +7775,36 @@ restored, green.
 """
 
 [[probe]]
+id = "M424-proxy-the-recognised-state-reaches-the-wrong-certificate-policy"
+unit = "proxy.trust_composition_root"
+conjunct = "the identity policy the recognised channel-binding state installs reaches the certificate interpreter's vocabulary unchanged, so the state and the policy the interpreter runs under cannot disagree"
+# r11 R11-127's worry, made falsifiable. The weakening CROSSES one arm of the production
+# conversion: a `ExactDnsSan` deployment would run the certificate interpreter under the
+# URI-SAN policy while the composition root reports DNS-SAN — the request signer compared
+# against one field while the deployment announces another, with no refusal anywhere.
+path = "mcp-re-proxy/src/facades/asserted_identity.rs"
+anchor = """
+            IdentityPolicy::DnsSan => CertificateIdentityPolicy::DnsSan,
+"""
+weakening = """
+            IdentityPolicy::DnsSan => CertificateIdentityPolicy::UriSan,
+"""
+expect_red = [
+  "lib#app::tests::the_channel_binding_effects_are_a_function_of_the_recognised_state",
+]
+note = """
+THE COLUMN THAT ASSERTED NOTHING IS WHY THIS PROBE CAN EXIST. The control carried a fourth
+tuple column naming the certificate field and bound it to `_` (r11 R11-129), so it read as
+covering the field the seam reads while establishing nothing about it. Driving it through
+the real `From` is what makes the crossing visible.
+
+THE LAST HOP IS DELIBERATELY NOT HERE. `CertificateIdentityPolicy::selects` — the policy
+choosing its own certificate field — is private to `communication_assurance` and controlled
+there. Asserting the whole chain from the composition root would have needed that method
+widened, which is a production widening with a test-shaped justification.
+"""
+
+[[probe]]
 id = "M420-proxy-the-unwritten-tail-of-the-group-buffer-is-a-group"
 unit = "proxy.process_group_set"
 conjunct = "only the prefix `getgroups` actually wrote is taken, so an unwritten tail cannot contribute a group this process is not in"

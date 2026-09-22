@@ -1022,14 +1022,6 @@ mod tests {
     /// R10-F1. The serving path's channel-binding effects are a function of the state the
     /// `ChannelBinding` owner recognised — never of the raw selectors it classified.
     ///
-    /// The two halves of one decision are checked together: which SAN the identity is read
-    /// from, and that the request signer is compared with it at all. The negative control
-    /// is the deprecated identity source, which reaches no state — so the projection has
-    /// nothing to map and the exact-match policy cannot end up running over a CN.
-    ///
-    /// The broken implementation this catches: reading `binding` and `identity_source` off
-    /// the request at the call site, which installs `ExactMatchBinding` over
-    /// `IdentityPolicy::CnLegacy` for a request this owner refuses outright.
     /// A verified request subject, through the one producer. The composition root's own
     /// controls need an operand, not a relation.
     fn binding_subject() -> crate::communication_assurance::VerifiedRequestSubject {
@@ -1047,24 +1039,40 @@ mod tests {
         )
     }
 
+    /// The two halves of one decision are checked together: which SAN the identity is read
+    /// from, and that the request signer is compared with it at all. The negative control
+    /// is the deprecated identity source, which reaches no state — so the projection has
+    /// nothing to map and the exact-match policy cannot end up running over a CN.
+    ///
+    /// The broken implementation this catches: reading `binding` and `identity_source` off
+    /// the request at the call site, which installs `ExactMatchBinding` over
+    /// `IdentityPolicy::CnLegacy` for a request this owner refuses outright.
+    ///
+    /// The `expected_field` column is LOAD-BEARING (r11 R11-129): it used to be bound to
+    /// `_` and asserted nothing, so the control read as covering which certificate field
+    /// the seam reads while establishing nothing about it. It is now driven through the
+    /// production chain — `IdentityPolicy` -> `CertificateIdentityPolicy` -> `selects()`
+    /// -> `IdentitySource` — which is the relation r11 R11-127 worried could disagree with
+    /// the state. It cannot: it is a total function of the policy this projection installs.
     #[test]
     fn the_channel_binding_effects_are_a_function_of_the_recognised_state() {
+        use crate::communication_assurance::CertificateIdentityPolicy;
         use crate::config_state::transport::classify_and_validate_binding;
         use crate::config_state::ChannelBindingState;
-        use crate::transport::{IdentityPolicy, IdentitySource};
+        use crate::transport::IdentityPolicy;
 
-        for (source, expected_state, expected_policy, _field) in [
+        for (source, expected_state, expected_policy, expected_field) in [
             (
                 IdentityPolicy::UriSan,
                 ChannelBindingState::ExactUriSan,
                 IdentityPolicy::UriSan,
-                IdentitySource::UriSan,
+                CertificateIdentityPolicy::UriSan,
             ),
             (
                 IdentityPolicy::DnsSan,
                 ChannelBindingState::ExactDnsSan,
                 IdentityPolicy::DnsSan,
-                IdentitySource::DnsSan,
+                CertificateIdentityPolicy::DnsSan,
             ),
         ] {
             let mut config = config_with("file", "/seed", "/key");
@@ -1078,6 +1086,20 @@ mod tests {
             assert_eq!(
                 effects.identity_policy, expected_policy,
                 "{expected_state:?} must read the identity from its own SAN"
+            );
+            // R11-129/R11-127: the installed policy reaches the AUTHORITY'S vocabulary
+            // through the production conversion, so the recognised state and the policy the
+            // certificate interpreter runs under cannot disagree. Driven, not restated —
+            // this is the same `From` the serving path uses.
+            //
+            // The last hop — that policy selecting its own certificate FIELD — is
+            // `CertificateIdentityPolicy::selects`, private to its owner and controlled
+            // there. Widening it to assert the whole chain from here would be a production
+            // widening with a test-shaped justification.
+            assert_eq!(
+                CertificateIdentityPolicy::from(effects.identity_policy),
+                expected_field,
+                "{expected_state:?} must run the interpreter under its own policy"
             );
             // What the composition root owns is WHICH binding it installs and which SAN
             // the identity is read from. Since ADR-MCPRE-064 Slice 4 the relation itself
