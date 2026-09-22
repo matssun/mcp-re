@@ -468,16 +468,21 @@ fn run_validated(
     // Whether it exists is decided by the PLANS, aggregated across every capability that
     // can need one — not by whichever seam reaches for it first. Deriving it from replay
     // once made admission unimplementable on the CP/linearizable tier.
-    let control_rt = crate::control_runtime::ControlRuntime::start(
+    // JOINS THE OWNER WHERE IT IS ACQUIRED (r12 R12-635). It used to stay a local until
+    // the end of the assembly, so each of the seven fallible expressions between here and
+    // there reclaimed it by reverse-declaration-order unwinding — the mechanism the doc
+    // beside it says the guarantee does NOT rest on, and which happened to be correct only
+    // because the replay tier was declared after it and therefore dropped first.
+    building.install_control(crate::control_runtime::ControlRuntime::start(
         crate::startup_plan::control_runtime_requirement(config, &replay_plan),
-    )?;
+    )?);
     // The redis store's reconnect machinery binds to the runtime it is CREATED in, so the
     // substrate must outlive every USE of the tier — discharged by draining the fleet
     // before anything is reclaimed, not by drop order. See `replay_plane`.
     let (replay_async, dispatch_cfg) = crate::replay_plane::MaterializedReplay::materialize(
         &replay_plan,
         config.state().freshness(),
-        control_rt.as_ref(),
+        building.control(),
     )?
     .into_parts();
 
@@ -563,13 +568,23 @@ fn run_validated(
     let in_flight_limit = config.state().in_flight_limit();
     let mut limits = values.limits.clone();
     limits.max_in_flight_requests = in_flight_limit.per_core();
+    // BOTH halves of the relation now come from the owner (r12 R12-625). The comment below
+    // said they were one fact while only the lifetime was: the socket-level bound reached
+    // enforcement as the raw request's copy, agreeing with the adjudicated one only because
+    // layer A had read the same field. `connection_age()` is `Duration` rather than
+    // `Option` because a deployment that disabled the bound is already refused.
+    //
+    // The WEAKER of the two forms the finding names, stated so it is not mistaken for the
+    // stronger: the serving path still reads through `ServerLimits`, so this makes the
+    // value the owner's rather than making `ServerLimits` stop being the source.
+    limits.max_connection_age = Some(config.state().client_credential_window().connection_age());
     let serve_options = ServerOptions {
         identity_policy,
         peer_identity_provenance,
         limits,
         // From the owner, not the request: the lifetime and the connection age are one
-        // fact, and reading the lifetime raw here would be the relation split back into
-        // its terms one layer further on.
+        // fact, and reading either raw here would be the relation split back into its
+        // terms one layer further on.
         max_client_cert_lifetime: Some(config.state().client_credential_window().cert_lifetime()),
         client_revocation: client_revocation.clone(),
         #[cfg(feature = "online_ocsp")]
@@ -694,7 +709,7 @@ fn run_validated(
     let (continuation_store, continuation_state) =
         crate::serving_capabilities::mrtr_continuation_store(
             &config.state().continuation_control().continuation_plan(),
-            control_rt.as_ref(),
+            building.control(),
         )?
         .into_parts();
     if let Some(store) = continuation_store {
@@ -712,7 +727,7 @@ fn run_validated(
     let (admission, admission_state) = crate::serving_capabilities::admission_currency(
         config.state().admission(),
         config.state().freshness().verifier_skew_secs(),
-        control_rt.as_ref(),
+        building.control(),
     )?
     .into_parts();
     if let Some(gate) = admission {
@@ -751,7 +766,6 @@ fn run_validated(
     let fleet_cfg = fleet_config(values, config.state().shard_topology(), in_flight_limit)?;
 
     building.install_proxy(proxy);
-    building.install_control(control_rt);
     let (runtime, lifecycle) = building.finish()?;
 
     runtime.serve(
