@@ -58,6 +58,15 @@ on:
       #   does not reach the default lane — and the classification clause is quantified
       #   over every source, so a change here dirties the unit either way.
       - "mcp-re-proxy/src/redis_admission_source/**"
+      # r12 file 2: the executed PKCS#11 module path's filesystem-integrity floor.
+      - "mcp-re-proxy/src/pkcs11_native.rs"
+      # r12 file 4: the retention decision both redis-backed stores reach. The file is
+      # read by probes M124/M409/M410, so a change to it re-measures those units.
+      - "mcp-re-proxy/src/async_redis_store/**"
+      # The one owner of how an operator-configured locator is rendered. A workspace
+      # crate rather than a module, because two crates render one; probe M403 reads it.
+      - "mcp-re-operator-display/src/**"
+      - "mcp-re-operator-display/Cargo.toml"
       # The async replay retention account (THM-0105); `l1_fast_reject.rs` is dormant and
       # excluded from the unit, but the glob covers the directory so a fingerprint input
       # cannot land outside every trigger.
@@ -428,6 +437,15 @@ on:
       #   does not reach the default lane — and the classification clause is quantified
       #   over every source, so a change here dirties the unit either way.
       - "mcp-re-proxy/src/redis_admission_source/**"
+      # r12 file 2: the executed PKCS#11 module path's filesystem-integrity floor.
+      - "mcp-re-proxy/src/pkcs11_native.rs"
+      # r12 file 4: the retention decision both redis-backed stores reach. The file is
+      # read by probes M124/M409/M410, so a change to it re-measures those units.
+      - "mcp-re-proxy/src/async_redis_store/**"
+      # The one owner of how an operator-configured locator is rendered. A workspace
+      # crate rather than a module, because two crates render one; probe M403 reads it.
+      - "mcp-re-operator-display/src/**"
+      - "mcp-re-operator-display/Cargo.toml"
       # The async replay retention account (THM-0105); `l1_fast_reject.rs` is dormant and
       # excluded from the unit, but the glob covers the directory so a fingerprint input
       # cannot land outside every trigger.

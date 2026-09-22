@@ -22,7 +22,6 @@ mod delegated_signing;
 mod inner_backend_display;
 mod kinds;
 mod peer_identity;
-mod redacted_locator;
 mod request_signer_currency;
 mod revocation;
 mod secret_string;
@@ -38,7 +37,12 @@ pub use peer_identity::{
     AttestedIngressRequest, ChannelCredentialIdentityRequest, IngressAssertionRequest,
     PeerIdentityEvidenceRequest, PinnedChannelAcknowledgement,
 };
-pub(crate) use redacted_locator::RedactedLocator;
+// The one operator-facing projection of a configured locator. It is a WORKSPACE owner,
+// not this module's: `mcp-re-transport` renders locators too, and a second
+// hand-written redaction beside the owner would be two renderings of one fact with two
+// places to get it wrong. Re-exported here so this module stays the request model's
+// single vocabulary and every consumer keeps one import path.
+pub(crate) use mcp_re_operator_display::RedactedLocator;
 pub use request_signer_currency::RequestSignerCurrencyRequest;
 pub use revocation::{
     OcspResponderRequest, OnlineRevocationEvidenceRequest, PeerRevocationRequest,

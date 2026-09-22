@@ -1638,6 +1638,13 @@ paths = [
   # `dispatch` module and reachable solely as a method on `ReplayTierAdmitted`, so the
   # file holding that method is on the path from a caller to the postcondition.
   "mcp-re-http-profile/src/dispatch/replay_posture.rs",
+  # UC-1: both are `mod` declarations of the measured `dispatch.rs`, so a closure naming
+  # only the parent would keep fingerprinting it alone while the proved product's own
+  # type moved underneath. `outcome.rs` holds what the postcondition is sealed INTO;
+  # `retained_continuation.rs` holds the type the transparent Verus mirror reflects, and
+  # whose field visibility the proof is measurably sensitive to.
+  "mcp-re-http-profile/src/dispatch/outcome.rs",
+  "mcp-re-http-profile/src/dispatch/retained_continuation.rs",
   "mcp-re-http-profile/src/block.rs",
   # The product this postcondition is about is built by the full-profile request stage,
   # over the floor stage's result. Both, not the whole `verify/` subtree: the delegated and
@@ -7728,17 +7735,66 @@ tested_symbols = [
   "lib#http_profile_serve::continuation::retirement::tests::a_tier_that_does_not_answer_the_spend_is_its_own_outcome",
 ]
 
+# ---------------------------------------------------------------------------
+# How an operator-configured locator is rendered — one owner, one workspace crate
+# ---------------------------------------------------------------------------
+#
+# Owner instruction, 2026-09-22. The projection used to live inside `mcp-re-proxy`, and
+# `mcp-re-transport` could not reach it, so `--target-uri` was echoed in full one crate
+# over. The two available fixes were both wrong: duplicating the algorithm makes two lists
+# that can disagree, and moving it into `mcp-re-core` would put operator-facing display
+# inside the crate that owns protocol and security verification semantics.
+#
+# So it is its own workspace crate with a narrow authority and NO dependencies. The
+# zero-dependency property is load-bearing rather than tidy: the decomposition is
+# hand-written over `std`, so what a diagnostic renders cannot change because a URL parser
+# upstream changed its mind about a shape.
+#
+# A SEPARATE UNIT, not a widened one. `proxy.operator_facing_redaction` is a different
+# project, and a unit's battery is source- and project-scoped — citing this crate's
+# controls from there would attribute one project's evidence to another.
+
+[[unit]]
+id = "mcp-re-operator-display.locator_projection"
+class = "V0"
+description = "An operator-configured locator reaches a human-readable line only through a projection whose private representation is established by its sole constructor, and that projection renders SCHEME, HOST and PORT alone. Userinfo, path, query and fragment are all removed, because nothing here proves any of them free of credentials; their removal is reported by COMPONENT and never by content. A shape the decomposition cannot confidently take apart is named rather than echoed, so the failure path — which is the path a credential-bearing typo takes — publishes nothing about what it held."
+paths = [
+  # UC-1/UC-2: the root declares the module and re-exports the type, and the projection
+  # itself lives beside it. Both, so neither can move under a standing attestation.
+  "mcp-re-operator-display/src/lib.rs",
+  "mcp-re-operator-display/src/locator.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+# A leaked locator is a store password, a bearer token or a KMS credential in whatever
+# reads the startup output.
+direct_consequence_severity = "high"
+evidence = [
+  "test://operator_display/locator_projection",
+  "mutation://operator_display/locator_projection",
+]
+tested_symbols = [
+  # The five the owner's ruling requires, in its order.
+  "lib#locator::tests::userinfo_never_reaches_the_rendered_locator",
+  "lib#locator::tests::the_complete_configured_locator_never_appears_in_the_rendering",
+  "lib#locator::tests::a_credential_in_query_material_never_reaches_the_rendering",
+  "lib#locator::tests::a_shape_the_projection_cannot_decompose_is_named",
+  "lib#locator::tests::a_credential_free_locator_renders_without_the_marker",
+  # The path is removed for the same reason the query is — nothing proves it safe, and
+  # CF-006 was the live finding that the previous projection published a path segment.
+  "lib#locator::tests::a_path_is_removed_and_its_removal_is_reported",
+  # And the markers report a component, not its contents: a report that named what it
+  # removed would be the leak wearing the projection's clothes.
+  "lib#locator::tests::the_removal_markers_do_not_carry_what_was_removed",
+  "lib#locator::tests::a_scheme_less_credential_bearing_locator_is_named_not_echoed",
+]
+
 [[unit]]
 id = "proxy.operator_facing_redaction"
 class = "V0"
-description = "What of a deployment REQUEST may reach an operator's eyes. Two KINDS of field carry credentials and neither may be printed as configured: the PKCS#11 User PIN, which unlocks a token holding the response-signing key and so sits in the same custody class as the key, and every operator-supplied LOCATOR — `--inner-http-url`, `--admission-redis-url`, `--trust-epoch-redis-url`, `--continuation-control-redis-url`, `--replay-redis-url`, `--cpstore-etcd-endpoint`, `--target-uri` — whose authority component is a place credentials ride along. Each is owned by a type whose sole constructor performs the removal and whose representation is private, so possession of the rendered form IS the statement that the secret is already gone — never a call site that remembered to redact. One locator is `RedactedLocator`'s and the backend LIST is a projection over it: a second hand-written redaction beside the owner would be two renderings of one fact with two places to get it wrong."
+description = "What of a deployment REQUEST may reach an operator's eyes, in the PROXY: the PKCS#11 User PIN, which unlocks a token holding the response-signing key and so sits in the same custody class as the key, and the inner-backend URL LIST. Each is owned by a type whose sole constructor performs the removal and whose representation is private, so possession of the rendered form IS the statement that the secret is already gone — never a call site that remembered to redact. What ONE operator-configured locator becomes is NOT this unit's: that owner is `mcp-re-operator-display`, a different crate and a different project, and `mcp-re-operator-display.locator_projection` claims it. This unit CONSUMES that owner — `RedactedLocator` is re-exported here and the backend list is a projection over it — so what remains local is that the list renders through the shared owner rather than through a second redaction of its own."
 paths = [
   "mcp-re-proxy/src/deployment_request/secret_string.rs",
-  # The one locator projection. In the closure because the redaction the unit claims now
-  # LIVES here: `inner_backend_display` maps through it and holds no hazard list of its
-  # own, so a fingerprint that did not move for a change here would be a fingerprint that
-  # does not cover the statement — the SF-1 defect this unit's own comment warns about.
-  "mcp-re-proxy/src/deployment_request/redacted_locator.rs",
   "mcp-re-proxy/src/deployment_request/inner_backend_display.rs",
 ]
 exported_contracts = []
@@ -7755,15 +7811,9 @@ evidence = [
 tested_symbols = [
   "lib#deployment_request::secret_string::tests::the_debug_rendering_carries_no_part_of_the_secret",
   "lib#deployment_request::secret_string::tests::the_value_is_still_readable_where_it_is_needed",
-  # The owner of ONE locator's rendering. The second of these is the load-bearing one: a
-  # credential-bearing value with NO `://` is the only shape every locator-shape violation
-  # in `config_state` fires on, so that rendering is what stands between a typo and a
-  # password in the startup diagnostic.
-  "lib#deployment_request::redacted_locator::tests::userinfo_never_reaches_the_rendered_locator",
-  "lib#deployment_request::redacted_locator::tests::a_scheme_less_credential_bearing_locator_is_named_not_echoed",
-  "lib#deployment_request::redacted_locator::tests::a_credential_free_locator_renders_without_the_marker",
-  "lib#deployment_request::redacted_locator::tests::a_shape_the_projection_cannot_decompose_is_named",
-  # The LIST projection, over the owner above.
+  # The LIST projection, over the shared owner in `mcp-re-operator-display`. Those four
+  # controls moved WITH the implementation; a battery is source- and project-scoped, so
+  # citing them from here would attribute another project's evidence to this unit.
   "lib#deployment_request::inner_backend_display::tests::userinfo_never_reaches_the_rendered_text",
   "lib#deployment_request::inner_backend_display::tests::a_credential_free_url_renders_without_the_marker",
   "lib#deployment_request::inner_backend_display::tests::a_shape_the_projection_cannot_decompose_is_named_not_echoed",

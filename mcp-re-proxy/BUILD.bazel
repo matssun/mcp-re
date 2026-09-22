@@ -188,7 +188,6 @@ _PROXY_LIB_SRCS = [
     "src/deployment_request/inner_backend_display.rs",
     "src/deployment_request/kinds.rs",
     "src/deployment_request/mod.rs",
-    "src/deployment_request/redacted_locator.rs",
     "src/deployment_request/secret_string.rs",
     "src/deployment_request/signing_source/aws_kms_source.rs",
     "src/deployment_request/signing_source/channel_role.rs",
@@ -655,6 +654,10 @@ _PROXY_LIB_DEPS = [
     # adapter (src/http_profile_dispatch.rs) wraps. Pure crate — mcp-re-core only,
     # no reverse proxy dependency.
     "//mcp-re-http-profile:mcp_re_http_profile",
+    # The ONE operator-facing projection of a configured locator: scheme, host and port,
+    # every credential-bearing component removed and its removal reported. std-only with no
+    # deps of its own, so it adds one rlib and nothing else to every flavor's closure.
+    "//mcp-re-operator-display:mcp_re_operator_display",
     # MCPS-58 (ADR-023 §A1): CRL parsing for the static --client-crl freshness gate.
     "@crates_mcp_re//:der",
     "@crates_mcp_re//:libc",

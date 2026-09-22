@@ -99,6 +99,8 @@ nt_rust_test(
         "//mcp-re-demo:src/lib.rs",
         "//mcp-re-test-paths:guard_src_files",
         "//mcp-re-test-paths:src/lib.rs",
+        "//mcp-re-operator-display:guard_src_files",
+        "//mcp-re-operator-display:src/lib.rs",
     ],
     edition = "2021",
     env = {
@@ -127,6 +129,7 @@ nt_rust_test(
         "MCP_RE_SRC_TREE_HTTP_PROFILE": "$(rlocationpath //mcp-re-http-profile:src/lib.rs)",
         "MCP_RE_SRC_TREE_DEMO": "$(rlocationpath //mcp-re-demo:src/lib.rs)",
         "MCP_RE_SRC_TREE_TEST_PATHS": "$(rlocationpath //mcp-re-test-paths:src/lib.rs)",
+        "MCP_RE_SRC_TREE_OPERATOR_DISPLAY": "$(rlocationpath //mcp-re-operator-display:src/lib.rs)",
     },
     deps = [
         "//mcp-re-test-paths:mcp_re_test_paths",

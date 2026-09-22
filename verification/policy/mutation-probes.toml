@@ -8494,23 +8494,29 @@ reading as a working control. This is the conjunct that separates a gate from an
 
 [[probe]]
 id = "M403-one-locator-projection-removes-the-userinfo"
-unit = "proxy.operator_facing_redaction"
+unit = "mcp-re-operator-display.locator_projection"
 theorem = "THM-0091"
 conjunct = "An operator-supplied locator reaches a diagnostic only through a projection that cannot carry its userinfo, and a shape the projection cannot decompose is NAMED rather than echoed"
-path = "mcp-re-proxy/src/deployment_request/redacted_locator.rs"
+# RE-ADJUDICATED. The projection moved to its own workspace crate on the owner's
+# instruction, and was rewritten over `std` because that crate takes no dependency — so
+# the `hyper::Uri` anchor names code that no longer exists anywhere. The conjunct is
+# unchanged, and the weakening is the same one: echo what could not be decomposed.
+path = "mcp-re-operator-display/src/locator.rs"
 anchor = """
-        let Ok(uri) = raw.parse::<Uri>() else {
-            return Self("<unparseable>".to_string());
-        };
+        if raw.starts_with('/') {
+            return NO_AUTHORITY.to_string();
+        }
+        return UNPARSEABLE.to_string();
 """
 weakening = """
-        let Ok(uri) = raw.parse::<Uri>() else {
-            return Self(raw.to_string());
-        };
+        if raw.starts_with('/') {
+            return NO_AUTHORITY.to_string();
+        }
+        return raw.to_string();
 """
 expect_red = [
-  "lib#deployment_request::redacted_locator::tests::a_scheme_less_credential_bearing_locator_is_named_not_echoed",
-  "lib#deployment_request::redacted_locator::tests::a_shape_the_projection_cannot_decompose_is_named",
+  "lib#locator::tests::a_scheme_less_credential_bearing_locator_is_named_not_echoed",
+  "lib#locator::tests::a_shape_the_projection_cannot_decompose_is_named",
 ]
 note = """
 The echo branch is the one that matters and the one an author is most likely to write: a

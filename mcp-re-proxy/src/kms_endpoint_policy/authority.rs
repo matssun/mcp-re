@@ -6,14 +6,19 @@
 //! port as `:1]:4566`. The bracket is what says where the literal ends, and getting it
 //! wrong would let the policy next door judge a host nobody wrote.
 
+use crate::deployment_request::RedactedLocator;
+
 /// Where the host ends and the port begins.
 ///
 /// An IPv6 literal keeps its brackets, because that is the form both the request line and
 /// a `Host` header carry. Splitting on the bracket rather than on the first `:` is what
 /// makes `[::1]:4566` divide where a parser divides it.
+///
+/// The refusals name the endpoint through the caller's projection, never as configured:
+/// the value is operator input, and a well-formed URL is the shape a credential rides in.
 pub(super) fn split_authority<'a>(
     authority: &'a str,
-    value: &str,
+    locator: &RedactedLocator,
 ) -> Result<(&'a str, Option<&'a str>), String> {
     if !authority.starts_with('[') {
         return Ok(match authority.split_once(':') {
@@ -23,7 +28,7 @@ pub(super) fn split_authority<'a>(
     }
     let end = authority
         .find(']')
-        .ok_or_else(|| format!("has an unterminated IPv6 literal: {value:?}"))?;
+        .ok_or_else(|| format!("has an unterminated IPv6 literal: {locator}"))?;
     // Class C: `end` is an ASCII `]`'s byte offset, so `end + 1` is a char boundary at
     // most `authority.len()`. A position, not `split_once`: the literal keeps its bracket.
     #[allow(clippy::arithmetic_side_effects)]
@@ -32,7 +37,7 @@ pub(super) fn split_authority<'a>(
         after => Ok((
             &authority[..=end],
             Some(after.strip_prefix(':').ok_or_else(|| {
-                format!("has junk after its IPv6 literal ({after:?}): {value:?}")
+                format!("has junk after its IPv6 literal ({after:?}): {locator}")
             })?),
         )),
     }

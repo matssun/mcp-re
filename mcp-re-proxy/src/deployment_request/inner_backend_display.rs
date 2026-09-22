@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The operator-facing projection of the request's `inner_http_urls`.
 //!
-//! `--inner-http-url` is operator-supplied, and a URL's authority component is a place
-//! credentials ride along (`https://user:pass@backend.internal/mcp`). The startup line
-//! that names the backends must therefore print a *projection* of that field, never the
-//! configured string — the same reason [`super::SecretString`] exists next door, applied
-//! to a field whose secret is optional and positional rather than whole.
+//! `--inner-http-url` is operator-supplied, and a URL carries credentials in more than
+//! one position: userinfo (`https://user:pass@backend.internal/mcp`), a token in query
+//! material, a bearer token as a path segment. The startup line that names the backends
+//! must therefore print a *projection* of that field, never the configured string — the
+//! same reason [`super::SecretString`] exists next door, applied to a field whose secret
+//! is optional and positional rather than whole.
 //!
 //! The projection is owned by [`RedactedBackendUrls`]: the rendered text is its private
 //! representation and its sole constructor performs the redaction, so possession of one
-//! means the userinfo is already gone. There is no path from a raw URL list to a
+//! means the removal already happened. There is no path from a raw URL list to a
 //! rendered one that skips the redaction, and the type carries no `Debug` that would
 //! offer a second, unredacted rendering.
 //!
@@ -21,8 +22,8 @@ use std::fmt;
 
 use super::RedactedLocator;
 
-/// The inner-backend URL list as an operator may see it: scheme, host, port and path,
-/// with any `userinfo` removed and its presence reported instead.
+/// The inner-backend URL list as an operator may see it: scheme, host and port only,
+/// with every credential-bearing component removed and its removal reported.
 pub(crate) struct RedactedBackendUrls(String);
 
 impl RedactedBackendUrls {
@@ -62,7 +63,7 @@ mod tests {
         );
         assert_eq!(
             rendered,
-            "[https://backend.internal/mcp (userinfo redacted)]"
+            "[https://backend.internal (userinfo removed, path removed)]"
         );
     }
 
@@ -70,7 +71,7 @@ mod tests {
     fn a_credential_free_url_renders_without_the_marker() {
         let rendered =
             RedactedBackendUrls::of(&["http://127.0.0.1:8621/mcp".to_string()]).to_string();
-        assert_eq!(rendered, "[http://127.0.0.1:8621/mcp]");
+        assert_eq!(rendered, "[http://127.0.0.1:8621 (path removed)]");
     }
 
     #[test]
@@ -86,7 +87,8 @@ mod tests {
         );
         assert_eq!(
             rendered,
-            "[http://a.internal:8621/mcp, https://b.internal/mcp (userinfo redacted)]"
+            "[http://a.internal:8621 (path removed), https://b.internal (userinfo removed, \
+             path removed)]"
         );
     }
 
