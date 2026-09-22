@@ -378,6 +378,19 @@ larger rather than smaller.
 
 **Remediation [#592](https://github.com/matssun/mcp-re/issues/592) is complete.**
 
+#### R12 update — provenance only, the census is not reopened
+
+R12 moved key-file filesystem observation/application from `app.rs` to
+`capability_materialization/key_file_custody`. The composition-root disposition is
+unchanged; the file shrank from 977 to 892 production lines.
+
+Two details worth having beside the number, because the registry's `baseline_sha` names the
+second commit rather than the first. The extraction itself took the file to **867**; the 25
+lines back are three later r12 fixes in the same file, so **892** is the tree that exists and
+is what the ratchet now consumes. And the INBOUND item recorded above — EX-007 moving
+`key_file_mode_is_insecure` to "whichever owner performs the permission check, which is
+authority C here" — now resolves elsewhere: that owner is no longer in this file.
+
 
 ---
 

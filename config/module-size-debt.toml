@@ -21,8 +21,9 @@
 #
 # Review granularity equals exception granularity. A function-level exception does not make
 # its file a reviewed exception — `mcp-re-proxy/src/cli.rs` stays `unreviewed` despite the
-# ADR-MCPRE-058 ruling on `parse_args`, and `mcp-re-proxy/src/app.rs` stays `unreviewed`
-# despite the substantiated item-level exception on `run_validated` (see EX-002).
+# ADR-MCPRE-058 ruling on `parse_args`. `mcp-re-proxy/src/app.rs` is `reviewed-exception`
+# for the opposite reason and not because of `run_validated`: EX-002 is a FILE-level census
+# that concluded the root is what remains once separable authorities leave.
 #
 # An exception is not a licence to grow. The ratchet applies to every entry whatever its
 # status, and `--selftest` pins that.
@@ -226,8 +227,17 @@ review_ref = "EX-010 in docs/architecture/review-dispositions.md"
 [[debt]]
 # MCPRE-154 relocated the audit-drain authority (EX-002 authority A): 1037 -> 977.
 path = "mcp-re-proxy/src/app.rs"
-baseline_prod_loc = 977
-baseline_sha = "d1fc5fa"
+# R12 key-file custody extraction moved the filesystem observation/application authority out
+# of the composition root: 977 -> 892. The ratchet CONSUMES the reduction; it is not future
+# headroom.
+#
+# The shrink is the extraction's — `b4e405b1` took the file to 867 by moving WHICH files the
+# floor covers, what a mode means and which groups this process is in to
+# `capability_materialization/key_file_custody/`. The 25 lines back are three later r12
+# fixes in the same file (R12-628/629, R12-625/635, R12-627), so 892 rather than 867 is the
+# tree that exists, and `baseline_sha` names the commit that first establishes IT.
+baseline_prod_loc = 892
+baseline_sha = "a62176f"
 status = "reviewed-exception"
 review_ref = "EX-002 in docs/architecture/review-dispositions.md"
 
