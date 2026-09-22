@@ -2875,15 +2875,22 @@ conjunct = "A store that does not answer the atomic admission refuses the exchan
 # nothing after it to undo. Reading a store error as freshness serves a replayed request as a
 # fresh one on exactly the deployments whose infrastructure is already in trouble.
 path = "mcp-re-http-profile/src/dispatch.rs"
+# RE-ADJUDICATED: the key is now reached through the sealed product's projection and the
+# freshness through the verified product's own accessor. The conjunct and the weakening are
+# unchanged — an unanswered store read as `Fresh`.
 anchor = """
-    match replay_key.check_and_insert(replay, verified.floor.expires)? {
+    match prepared
+        .replay_key()
+        .check_and_insert(replay, verified.expires())?
+    {
         ReplayDecision::Fresh => {}
         ReplayDecision::Replay => return Err(DispatchError::ReplayDetected),
     }
 """
 weakening = """
-    match replay_key
-        .check_and_insert(replay, verified.floor.expires)
+    match prepared
+        .replay_key()
+        .check_and_insert(replay, verified.expires())
         .unwrap_or(ReplayDecision::Fresh)
     {
         ReplayDecision::Fresh => {}

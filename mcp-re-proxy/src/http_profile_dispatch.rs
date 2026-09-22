@@ -171,15 +171,21 @@ pub async fn dispatch_request_with_async_tier(
         .map_err(ProxyDispatchError::Dispatch)?;
 
     // 2–3. Native key construction + continuation binding (shared, non-side-effecting).
-    //      The borrowed `continuation_ctx` is consumed here, BEFORE the await.
-    let (replay_key, continuation_verified) = admitted
+    //      The borrowed `continuation_ctx` is consumed here, BEFORE the await. The product
+    //      is the profile crate's sealed `PreparedDispatch`: this path cannot assemble an
+    //      outcome of its own, the proved `continuation_verified` having no construction
+    //      site outside the seam that proves it.
+    let prepared = admitted
         .prepare_http_dispatch(verified, continuation_ctx)
         .map_err(ProxyDispatchError::Dispatch)?;
 
     // 4. Awaited atomic admission LAST — the only side-effecting step. A store
     //    failure fails closed (`replay_cache_unavailable`), never an admit.
     let decision = tier
-        .check_and_insert(&replay_key.to_core_replay_key(verified.expires()), now_unix)
+        .check_and_insert(
+            &prepared.replay_key().to_core_replay_key(verified.expires()),
+            now_unix,
+        )
         .await
         .map_err(|_| ProxyDispatchError::Dispatch(DispatchError::ReplayCacheUnavailable))?;
     match decision {
@@ -189,10 +195,7 @@ pub async fn dispatch_request_with_async_tier(
         }
     }
 
-    Ok(DispatchOutcome {
-        replay_key,
-        continuation_verified,
-    })
+    Ok(prepared.into_admitted_outcome())
 }
 
 #[cfg(test)]

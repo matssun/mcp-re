@@ -295,11 +295,11 @@ async fn handle(
         None => None,
     };
     let continuation_ctx = match (&retained, &answer_state) {
-        (Some(bases), Some(request_state)) => Some(RetainedContinuation {
-            previous_request_base: &bases.previous_request_base,
-            input_required_response_base: &bases.input_required_response_base,
-            request_state: request_state.as_bytes(),
-        }),
+        (Some(bases), Some(request_state)) => Some(RetainedContinuation::from_correlation(
+            &bases.previous_request_base,
+            &bases.input_required_response_base,
+            request_state.as_bytes(),
+        )),
         // A continuation was signed but nothing was retained for it: pass None so the
         // dispatcher fails closed rather than admit an unbindable answer leg.
         _ => None,

@@ -50,25 +50,15 @@ use verus_builtin_macros::verus_spec;
 #[allow(unused_imports)]
 use vstd::prelude::*;
 
+mod outcome;
 mod replay_posture;
+mod retained_continuation;
 
+pub use outcome::DispatchOutcome;
+pub use outcome::PreparedDispatch;
 pub use replay_posture::DispatchConfig;
 pub use replay_posture::ReplayTierAdmitted;
-
-/// The bytes the caller retained for a pending correlation, needed to verify an
-/// MRTR continuation. The dispatcher never derives these — they are the exact
-/// signature bases and opaque `requestState` the client committed to on the
-/// prior legs; the caller holds them in its correlation store.
-#[derive(Debug, Clone, Copy)]
-pub struct RetainedContinuation<'a> {
-    /// The RFC 9421 signature base of the client request that produced the
-    /// `InputRequiredResult`.
-    pub previous_request_base: &'a [u8],
-    /// The RFC 9421 signature base of the verified `InputRequiredResult` response.
-    pub input_required_response_base: &'a [u8],
-    /// The opaque `requestState` bytes (never interpreted, only digest-bound).
-    pub request_state: &'a [u8],
-}
+pub use retained_continuation::RetainedContinuation;
 
 /// A fail-closed dispatcher outcome. Wraps the profile per-message failures plus
 /// the replay/tier verdicts this seam adds; every variant maps to a frozen
@@ -110,24 +100,13 @@ impl From<ReplayCacheError> for DispatchError {
     }
 }
 
-/// The successful product of a dispatch: the constructed replay key (for audit /
-/// correlation) and whether an MRTR continuation was present and verified.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DispatchOutcome {
-    /// The five-tuple admitted to the replay cache.
-    pub replay_key: HttpReplayKey,
-    /// `true` iff the request carried a continuation that verified against the
-    /// retained bases; `false` for an ordinary first-leg request.
-    pub continuation_verified: bool,
-}
-
 /// Drive replay and MRTR continuation for a verified full-profile request.
 ///
 /// `verified` MUST come from [`verify_request_full`](crate::verify_request_full)
 /// (the minimal proof path carries no `audience_hash` and cannot form a replay
 /// key). `continuation_ctx` is `Some` iff the caller holds a pending correlation
-/// for this request; it is required exactly when the request block carries a
-/// continuation.
+/// for this request, and that `iff` is enforced: it is required when the request
+/// block carries a continuation, and refused when it does not.
 ///
 /// Ordering (fail closed): fleet-strict tier gate → replay-key construction →
 /// continuation binding → replay `check_and_insert` LAST. The nonce is only ever
@@ -144,19 +123,19 @@ pub fn dispatch_request(
     let admitted = config.admit_replay_tier(replay.durability_class())?;
 
     // 2–3. Replay-key construction + MRTR continuation binding (non-side-effecting).
-    let (replay_key, continuation_verified) =
-        admitted.prepare_http_dispatch(verified, continuation_ctx)?;
+    let prepared = admitted.prepare_http_dispatch(verified, continuation_ctx)?;
 
-    // 4. Replay admission LAST — the only side-effecting step.
-    match replay_key.check_and_insert(replay, verified.floor.expires)? {
+    // 4. Replay admission LAST — the only side-effecting step. Freshness is read through
+    //    the verified product's own projection, the way the async sibling reads it.
+    match prepared
+        .replay_key()
+        .check_and_insert(replay, verified.expires())?
+    {
         ReplayDecision::Fresh => {}
         ReplayDecision::Replay => return Err(DispatchError::ReplayDetected),
     }
 
-    Ok(DispatchOutcome {
-        replay_key,
-        continuation_verified,
-    })
+    Ok(prepared.into_admitted_outcome())
 }
 
 /// Dispatch steps 2–3 — everything EXCEPT the one side-effecting replay admission
@@ -233,9 +212,197 @@ fn prepare_http_dispatch(
                 HttpProfileError::ContinuationBindingFailed,
             ))
         }
-        // Ordinary first-leg request: no continuation to bind.
-        (None, _) => false,
+        // Retained bases offered for a request whose block claims NO continuation. The
+        // caller believes it is resuming a correlation and the signed request does not,
+        // and this seam is not the authority that can pick between them — so it refuses
+        // rather than discard the bases and return an ordinary first-leg admission the
+        // caller would read as a resumption. Free, like the refusal above: it precedes
+        // the replay `check_and_insert`, so no nonce is burned, and it precedes the
+        // caller's continuation consume and retention marker, both of which run after
+        // admission.
+        (None, Some(_)) => {
+            return Err(DispatchError::Profile(
+                HttpProfileError::ContinuationBindingFailed,
+            ))
+        }
+        // Ordinary first-leg request: no continuation to bind, and none offered.
+        (None, None) => false,
     };
 
     Ok((replay_key, continuation_verified))
+}
+
+// Everything below is test code. The `#[cfg(test)]` marker is the region
+// `scripts/module_size_gate.py` reads, so it sits HERE, at the bottom of the file.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::block::ActorIdentity;
+    use crate::block::HttpContinuation;
+    use crate::block::HttpRequestEvidenceBlock;
+    use crate::block::ResolvedActor;
+    use crate::block::SignerSlot;
+    use crate::evidence::RequestEvidence;
+    use crate::AudienceTuple;
+    use mcp_re_core::SigningKey;
+
+    const PREV: &[u8] = b"previous-request-signature-base";
+    const IRR: &[u8] = b"input-required-response-signature-base";
+    const STATE: &[u8] = b"opaque-request-state";
+
+    fn audience() -> AudienceTuple {
+        AudienceTuple {
+            audience_id: "verifier-1".into(),
+            target_uri: "https://example.test/mcp".into(),
+            route: None,
+        }
+    }
+
+    /// A full-profile product, built directly: this file's own types are the unit under
+    /// test, and routing through the verifier would measure the verifier instead.
+    fn verified(continuation: Option<HttpContinuation>) -> VerifiedMcpRequest {
+        let key = SigningKey::from_seed_bytes(&[9u8; 32]);
+        VerifiedMcpRequest {
+            floor: crate::verified_request::CryptographicFloorVerifiedRequest {
+                profile_id: "mcp-re-http-v1".into(),
+                signature_label: "mcp-re".into(),
+                resolved_actor: ResolvedActor {
+                    identity: ActorIdentity {
+                        role: "client".into(),
+                        trust_domain: "example.com".into(),
+                        subject: "did:example:a".into(),
+                        keyid: "client-key-1".into(),
+                    },
+                    verification_key: key.public_key(),
+                    slot: SignerSlot::Request,
+                },
+                evidence: RequestEvidence::from_signature_base(PREV),
+                request_signature_base: PREV.to_vec(),
+                content_digest: "sha-256=:AAAA:".into(),
+                created: 1_000,
+                expires: 2_000,
+                nonce: "nonce-1".into(),
+                key_id: "client-key-1".into(),
+            },
+            audience: audience(),
+            audience_hash: audience().audience_hash(),
+            request_block: HttpRequestEvidenceBlock {
+                profile: "mcp-re-http-v1".into(),
+                audience: audience(),
+                artifact_bindings: Vec::new(),
+                continuation,
+                admission: None,
+                admission_assertion: None,
+                authorization_decision: None,
+            },
+        }
+    }
+
+    fn retained() -> RetainedContinuation<'static> {
+        RetainedContinuation::from_correlation(PREV, IRR, STATE)
+    }
+
+    #[test]
+    fn every_failure_this_seam_adds_maps_to_a_frozen_core_token() {
+        // The taxonomy claim this file makes in its own doc comment: no parallel
+        // namespace. Asserted over each variant rather than over one of them.
+        assert_eq!(
+            DispatchError::ReplayDetected.wire_code(),
+            "mcp-re.replay_detected"
+        );
+        assert_eq!(
+            DispatchError::ReplayCacheUnavailable.wire_code(),
+            "mcp-re.replay_cache_unavailable"
+        );
+        assert_eq!(
+            DispatchError::NonSharedReplayTier.wire_code(),
+            "mcp-re.replay_cache_unavailable"
+        );
+        assert_eq!(
+            DispatchError::Profile(HttpProfileError::ContinuationBindingFailed).wire_code(),
+            "mcp-re.continuation_binding_failed"
+        );
+    }
+
+    #[test]
+    fn a_refused_store_and_an_unreachable_one_are_the_same_verdict_to_a_caller() {
+        // Two different facts, one frozen token, deliberately: the replay cache offered
+        // cannot be relied upon, and a caller can do nothing differently about which.
+        assert_ne!(
+            DispatchError::NonSharedReplayTier,
+            DispatchError::ReplayCacheUnavailable
+        );
+        assert_eq!(
+            DispatchError::NonSharedReplayTier.wire_code(),
+            DispatchError::ReplayCacheUnavailable.wire_code()
+        );
+    }
+
+    #[test]
+    fn an_operational_store_failure_fails_closed_and_never_admits() {
+        let refusal: DispatchError = mcp_re_core::ReplayCacheError::Unavailable {
+            details: "connection refused".into(),
+        }
+        .into();
+        assert_eq!(refusal, DispatchError::ReplayCacheUnavailable);
+    }
+
+    #[test]
+    fn a_first_leg_request_prepares_with_no_continuation() {
+        // The positive control for the two refusals below: an ordinary request with
+        // nothing offered still prepares, and reports that it bound no continuation.
+        let (_key, continuation_verified) =
+            prepare_http_dispatch(&verified(None), None).expect("an ordinary first leg prepares");
+        assert!(!continuation_verified);
+    }
+
+    #[test]
+    fn an_answer_leg_prepares_against_the_retained_bases() {
+        // The other positive control: the refusals are not satisfied by a seam that
+        // refuses everything.
+        let ev = verified(Some(HttpContinuation::build(PREV, IRR, STATE)));
+        let (_key, continuation_verified) =
+            prepare_http_dispatch(&ev, Some(retained())).expect("a matching answer leg prepares");
+        assert!(continuation_verified);
+    }
+
+    #[test]
+    fn retained_bases_offered_for_a_request_that_claims_no_continuation_are_refused() {
+        // The R12-288/289 repair. `(None, _) => false` discarded the bases and returned an
+        // ordinary first-leg admission, so a caller that believed it was resuming a
+        // correlation received no signal at all that it was not.
+        let refusal = prepare_http_dispatch(&verified(None), Some(retained()))
+            .expect_err("a correlation the request does not claim must not be discarded");
+        assert_eq!(
+            refusal,
+            DispatchError::Profile(HttpProfileError::ContinuationBindingFailed)
+        );
+    }
+
+    #[test]
+    fn a_claimed_continuation_with_no_retained_bases_is_refused() {
+        // The mirror image, and the older of the two: a binding that cannot be checked is
+        // never admitted.
+        let ev = verified(Some(HttpContinuation::build(PREV, IRR, STATE)));
+        let refusal = prepare_http_dispatch(&ev, None)
+            .expect_err("an unverifiable continuation must fail closed");
+        assert_eq!(
+            refusal,
+            DispatchError::Profile(HttpProfileError::ContinuationBindingFailed)
+        );
+    }
+
+    #[test]
+    fn the_replay_key_is_built_from_the_verified_product_and_nothing_else() {
+        // The five-tuple's components are the verified evidence's, not the wire's: the
+        // label is the crate constant the verifier accepted under, and the actor is the
+        // one trust resolution produced.
+        let ev = verified(None);
+        let (key, _) = prepare_http_dispatch(&ev, None).expect("prepares");
+        assert_eq!(key.profile_id, ev.profile_id());
+        assert_eq!(key.signature_label, crate::ids::REQUEST_LABEL);
+        assert_eq!(key.actor_id, ev.resolved_actor().actor_id());
+        assert_eq!(key.audience_hash, ev.audience_hash());
+        assert_eq!(key.nonce, ev.nonce());
+    }
 }

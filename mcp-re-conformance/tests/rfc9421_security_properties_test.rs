@@ -293,8 +293,8 @@ fn replayed_request_is_rejected_by_the_replay_tier() {
         .admit_replay_tier(cache.durability_class())
         .expect("the reference cache's class is not load-bearing outside fleet-strict")
         .prepare_http_dispatch(&verified, None)
-        .expect("dispatch prep")
-        .0;
+        .expect("dispatch prep");
+    let key = key.replay_key();
     assert_eq!(
         key.check_and_insert(&cache, EXPIRES).unwrap(),
         ReplayDecision::Fresh

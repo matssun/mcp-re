@@ -41,9 +41,9 @@ use core::fmt;
 
 use mcp_re_core::ReplayDurabilityClass;
 
+use super::outcome::PreparedDispatch;
 use super::DispatchError;
 use super::RetainedContinuation;
-use crate::replay::HttpReplayKey;
 use crate::verified_request::VerifiedMcpRequest;
 
 /// Dispatcher policy knobs.
@@ -62,16 +62,34 @@ pub struct DispatchConfig {
 
 /// Which arm of the posture decision produced a [`ReplayTierAdmitted`].
 ///
-/// Private: the witness's meaning is "a decision was taken", and no consumer branches on
-/// which one. It exists so the witness can answer honestly under `Display` and so this
-/// module's own tests can tell the two legitimate arms apart.
+/// Visible only inside `crate::dispatch`: the witness's meaning is "a decision was taken",
+/// and no consumer branches on which one. It is nameable in the sibling `outcome` module
+/// because the dispatch products CARRY the arm — the fact was produced here and consumed
+/// nowhere, which is what made it worth carrying — and nowhere else, so the arm cannot
+/// become a public tag that callers switch on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PostureDecision {
+pub(in crate::dispatch) enum PostureDecision {
     /// The deployment did not ask for fleet-strict, so the store's self-reported class is
     /// not load-bearing for it.
     StoreClassNotRequired,
     /// Fleet-strict, and the store's self-reported class cleared the gate.
     StoreClassAdmitted,
+}
+
+impl PostureDecision {
+    /// What this arm means, as one sentence.
+    ///
+    /// The single source of the wording: `Display` on the witness and
+    /// `DispatchOutcome::admitting_posture` are the same words, so an audit line and a
+    /// diagnostic cannot describe one decision two ways.
+    pub(in crate::dispatch) fn description(self) -> &'static str {
+        match self {
+            PostureDecision::StoreClassNotRequired => {
+                "replay store class not required (posture is not fleet-strict)"
+            }
+            PostureDecision::StoreClassAdmitted => "replay store class admitted under fleet-strict",
+        }
+    }
 }
 
 /// Evidence that the replay store's durability class was decided under a stated posture.
@@ -87,20 +105,13 @@ pub struct ReplayTierAdmitted {
 
 /// What this witness means, in the words of the arm that produced it.
 ///
-/// Hand-written rather than derived because the two arms mean materially different
-/// things and an audit line that flattened them would overstate the non-strict one. This
-/// is also the only reader of the field: the witness's job is to exist, so nothing
-/// branches on the arm, but it must still be able to say which arm it was.
+/// Hand-written rather than derived because the two arms mean materially different things
+/// and an audit line that flattened them would overstate the non-strict one. The wording
+/// is [`PostureDecision::description`]'s, shared with the dispatch product that carries
+/// the arm forward, so the two surfaces cannot drift.
 impl fmt::Display for ReplayTierAdmitted {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.decision {
-            PostureDecision::StoreClassNotRequired => {
-                f.write_str("replay store class not required (posture is not fleet-strict)")
-            }
-            PostureDecision::StoreClassAdmitted => {
-                f.write_str("replay store class admitted under fleet-strict")
-            }
-        }
+        f.write_str(self.decision.description())
     }
 }
 
@@ -139,15 +150,35 @@ impl ReplayTierAdmitted {
     ///
     /// Delegates unchanged to `prepare_http_dispatch`, the proved unit
     /// (`http_profile.continuation_unbypassability`), which is private to the `dispatch`
-    /// module so that this is the only way in from anywhere else.
+    /// module so that this is the only way in from anywhere else. The proved function's
+    /// own signature and specification are untouched; what happens here is that its
+    /// `(key, bool)` tuple — which any caller could also have written by hand — is sealed
+    /// into a [`PreparedDispatch`], the only value that means a preparation HAPPENED.
     ///
-    /// Consumes the witness: one posture decision admits one preparation.
+    /// Consumes the witness: one posture decision admits one preparation, and the arm that
+    /// decided travels into the product rather than being discarded here.
     pub fn prepare_http_dispatch(
         self,
         verified: &VerifiedMcpRequest,
         continuation_ctx: Option<RetainedContinuation<'_>>,
-    ) -> Result<(HttpReplayKey, bool), DispatchError> {
-        super::prepare_http_dispatch(verified, continuation_ctx)
+    ) -> Result<PreparedDispatch, DispatchError> {
+        let (replay_key, continuation_verified) =
+            super::prepare_http_dispatch(verified, continuation_ctx)?;
+        Ok(PreparedDispatch::from_admitted(
+            self,
+            replay_key,
+            continuation_verified,
+        ))
+    }
+
+    /// The arm that produced this witness.
+    ///
+    /// `pub(in crate::dispatch)`: its one legitimate consumer is the product constructor
+    /// next door, which records the posture a dispatch was admitted under. Nothing wider,
+    /// because a caller that could read the arm could branch on it, and the two arms are
+    /// both admissions.
+    pub(in crate::dispatch) fn posture(&self) -> PostureDecision {
+        self.decision
     }
 }
 
