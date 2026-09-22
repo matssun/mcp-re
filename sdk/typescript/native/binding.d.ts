@@ -30,7 +30,14 @@ export interface AcceptedResultJs {
   serverKeyid: string
 }
 
-/** The audited SDK core version string. */
+/**
+ * The audited core's version — `mcp-re-client-core`'s, not this binding crate's.
+ *
+ * r12 R12-1474: this used to return `env!("CARGO_PKG_VERSION")`, which is the N-API
+ * wrapper's own version (`0.1.x`) and moves independently of the code that was audited.
+ * A consumer calling a function named `coreVersion` to learn which audited core they have
+ * was told the version of the shim in front of it.
+ */
 export declare function coreVersion(): string
 
 /** One HTTP header (name/value pair) on the RFC 9421 request/response. */

@@ -8880,7 +8880,7 @@ tested_symbols = [
 [[unit]]
 id = "client.binding_spec_refusal"
 class = "V0"
-description = "Which provider lists are a legal contribution to a signed request, and which Core verdict each refusal IS. The narrowing — an opaque provider asked to mint a `pdp-decision` binding — is half of a Mode-2 pair and is refused rather than constructed; every refusal derives its wire token from an exhaustive Core projection instead of a table of strings."
+description = "Which provider lists are a legal contribution to a signed request, and which Core verdict each refusal IS. Two narrowings: an opaque provider asked to mint a `pdp-decision` binding is half of a Mode-2 pair and is refused rather than constructed, and a provider presenting `oauth-dpop` IN ANY FORM is refused because that binding is header-derived and a provider-supplied one would attest to a credential no covered header carries. Every refusal derives its wire token from an exhaustive Core projection instead of a table of strings."
 paths = [
   "mcp-re-client-core/src/binding_spec/mod.rs",
   "mcp-re-client-core/src/binding_spec/refusal.rs",
@@ -8917,6 +8917,101 @@ tested_symbols = [
   "lib#binding_spec::tests::a_decision_does_not_also_name_an_external_grant_handle",
   "lib#binding_spec::tests::a_decision_is_text_or_it_is_not_a_compact_jws",
   "lib#binding_spec::tests::other_artifact_types_keep_the_generic_opaque_form",
+  # r12 R12-1463/1464/1473 — the SECOND narrowing. Until this slice the rule was asserted
+  # in a COMMENT three lines above the `bindings.extend(provided.bindings)` that broke it,
+  # in both published SDKs. The positive control is not optional: a rule that refused the
+  # whole provider seam would satisfy the refusal and delete the feature it guards.
+  "lib#binding_spec::tests::a_provider_may_not_present_the_header_derived_dpop_binding",
+  "lib#binding_spec::tests::a_provider_binding_of_another_artifact_type_is_still_accepted",
+]
+
+# ---------------------------------------------------------------------------
+# What the two published SDK bindings may not decide for themselves — r12 file 10
+# ---------------------------------------------------------------------------
+#
+# `sdk/python/src/lib.rs` and `sdk/typescript/src/lib.rs` are byte-for-byte the same shape
+# on every rule they implement, and they implemented these two THEMSELVES. That is the
+# defect class this campaign closed once already with `mcp-re-operator-display`: two
+# independently authored copies of one rule, in the two files with the widest external
+# blast radius, neither of which compiles in `cargo test --workspace` or `bazel test //...`.
+#
+# So the rules moved to the crate both bindings already depend on, and these units measure
+# them THERE — in the default cargo lane, where a mutation probe can reach them. What the
+# SDK lanes then establish is only that the bindings CALL the owner, which is a different
+# and much smaller claim; it is carried by the pytest and vitest batteries, not here.
+
+[[unit]]
+id = "client.continuation_all_or_nothing"
+class = "V0"
+description = "AN MRTR CONTINUATION IS PRESENT WHOLE, ABSENT WHOLE, OR REFUSED — never partially supplied and silently dropped. `ContinuationHandles::from_optional` is a total classifier over the five optional handles with exactly three outcomes, so the state a caller could previously reach — a fully valid signed request carrying no continuation, no warning and no error, which a server processes as an unrelated new call rather than as the answer to the approval it was meant to answer — is not constructible. The refusal carries HOW MANY handles were supplied and none of their values, because `requestState` is correlation material. Says nothing about whether the handles are the RIGHT ones for this correlation: that binding is checked by the server against the bases it retained, and is `http_profile.continuation_binding`'s."
+paths = [
+  "mcp-re-client-core/src/continuation_handles.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://client/continuation/all_or_nothing",
+  "mutation://client/continuation/all_or_nothing",
+]
+tested_symbols = [
+  # THE DEFECT, over all 30 proper non-empty subsets rather than a sampled few: the old
+  # `if let` fell through on each of them identically, so a control over one subset would
+  # have left the other 29 unpinned.
+  "lib#continuation_handles::tests::every_partial_set_is_refused_and_says_how_many_were_supplied",
+  # THE TWO POSITIVE CONTROLS. Without them the refusal is satisfied by a classifier that
+  # refuses every answer leg, which would establish nothing about the requests that sign.
+  "lib#continuation_handles::tests::no_handles_at_all_is_an_ordinary_request",
+  "lib#continuation_handles::tests::all_five_handles_build_an_answer_leg",
+  # The refusal is a line a client logs, and `requestState` does not belong in one.
+  "lib#continuation_handles::tests::the_refusal_carries_a_count_and_no_correlation_material",
+]
+
+[[unit]]
+id = "client.dpop_credential_exists"
+class = "V0"
+description = "A REQUEST THAT CARRIES A DPoP BINDING CARRIES A CREDENTIAL: the artifact binding and the covered `Authorization` header are both projections of one private `DpopCredential` whose only constructor refuses an empty token, so they still cannot describe DIFFERENT credentials and can no longer both describe NOTHING. Measured before the repair: an empty token minted a binding over zero bytes that `ArtifactBinding::validate` ACCEPTS — the digest of nothing is a well-formed base64url token — beside a signed `Authorization: Bearer ` header carrying no credential, and no serving-side check refuses a zero-length artifact. Only EMPTINESS is decided here: a token's shape is the issuer's business and a client that guessed would refuse credentials its own provider issued."
+paths = [
+  "mcp-re-client-core/src/dpop_credential.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = [
+  "test://client/dpop/credential_exists",
+  "mutation://client/dpop/credential_exists",
+]
+tested_symbols = [
+  "lib#dpop_credential::tests::an_empty_credential_is_refused_rather_than_bound_over_nothing",
+  # The property the two projections have TOGETHER, which is the one the repair had to
+  # preserve: one private field, so a binding and a covered header that came from the same
+  # value describe the same credential.
+  "lib#dpop_credential::tests::the_binding_and_the_covered_header_cannot_describe_different_credentials",
+  # POSITIVE CONTROL: the binding an ordinary credential mints is unchanged. This closes a
+  # hole; it does not change what a correctly-bound request looks like on the wire.
+  "lib#dpop_credential::tests::a_present_credential_mints_the_binding_it_always_did",
+  # The stated limit, as its own control rather than as a sentence in a doc comment.
+  "lib#dpop_credential::tests::only_emptiness_is_decided_here",
+  "lib#dpop_credential::tests::the_refusal_names_the_rule_without_carrying_a_credential",
+]
+
+[[unit]]
+id = "client.reported_core_version"
+class = "V0"
+description = "THE VERSION A PUBLISHED BINDING REPORTS AS `core_version` IS THE AUDITED CORE'S, NOT THE BINDING CRATE'S. `env!(\"CARGO_PKG_VERSION\")` is evaluated where it is WRITTEN, so both SDKs' `core_version()` returned their own `0.1.x` shim version while the audited code is this crate at the workspace version — a consumer asking which core they hold was told the version of the wrapper in front of it. The constant is correct only because of the module it lives in, which is why it has one."
+paths = [
+  "mcp-re-client-core/src/core_version.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "low"
+evidence = ["test://client/core_version/reports_the_audited_core"]
+# NO mutation URI, and the reason is stated rather than left as an omission: the only
+# weakening of a one-line constant is to write a different literal, which the control below
+# reads directly. There is no mechanism here for a probe to delete — the value IS the
+# mechanism, and the file's own doc says the mechanism is WHERE the line lives.
+tested_symbols = [
+  "lib#core_version::tests::the_reported_version_is_the_audited_cores_and_not_a_bindings",
 ]
 
 # The measurement that replaced the producer list. `no_producer_outside_core_mints_a_wire_token`

@@ -7671,6 +7671,96 @@ touching any string.
 """
 
 [[probe]]
+id = "M417-client-a-provider-mints-the-header-derived-dpop-binding"
+unit = "client.binding_spec_refusal"
+conjunct = "a provider presenting `oauth-dpop` is refused in EVERY form, because that binding is header-derived and a provider-supplied one attests to a credential no covered header carries"
+# The weakening is the tree as it stood: the rule asserted in a comment, and nothing in the
+# code reading `artifact_type`. It compiles, every other provider control stays green, and
+# a request goes out with TWO `oauth-dpop` bindings — the header-derived one and the
+# provider's — attesting to different credentials, with nothing on the wire saying which
+# the caller actually presented.
+path = "mcp-re-client-core/src/binding_spec/mod.rs"
+anchor = """
+        if spec.artifact_type == ArtifactType::OauthDpop {
+            return Err(BindingSpecRefusal::DpopIsNotProviderSupplied);
+        }
+"""
+weakening = """
+"""
+expect_red = [
+  "lib#binding_spec::tests::a_provider_may_not_present_the_header_derived_dpop_binding",
+]
+note = """
+`a_provider_binding_of_another_artifact_type_is_still_accepted` is deliberately absent from
+`expect_red` and must stay GREEN: deleting a refusal cannot break the bindings that were
+never refused, and naming it would make the probe unsatisfiable for a reason unrelated to
+the conjunct. It is in the unit's battery for the opposite purpose — without it, a rule
+that refused the whole provider seam would satisfy the refusal above while deleting the
+feature it guards.
+"""
+
+[[probe]]
+id = "M418-client-a-partial-continuation-is-dropped-again"
+unit = "client.continuation_all_or_nothing"
+conjunct = "one to four of the five MRTR handles is a REFUSAL, not a silently dropped continuation"
+# The weakening is the defect verbatim — the `if let (Some, Some, Some, Some, Some)` with a
+# fall-through, which is what both published SDKs did. It compiles, every all-five and
+# all-none control stays green, and a caller that loses one handle gets a valid signed
+# request that is simply not an answer leg, with no error anywhere in the client.
+path = "mcp-re-client-core/src/continuation_handles.rs"
+anchor = """
+            // `supplied` is 1..=4 on this arm by construction: 0 and 5 are the two arms
+            // above, and the cast is over a count of a five-element array.
+            #[allow(clippy::cast_possible_truncation)]
+            _ => Err(PartialContinuation {
+                supplied: supplied as u8,
+            }),
+"""
+weakening = """
+            _ => Ok(None),
+"""
+expect_red = [
+  "lib#continuation_handles::tests::every_partial_set_is_refused_and_says_how_many_were_supplied",
+  "lib#continuation_handles::tests::the_refusal_carries_a_count_and_no_correlation_material",
+]
+note = """
+THE WEAKENING IS NOT A DELETION, it is the OLD BEHAVIOUR: `Ok(None)` is exactly what the
+`if let` produced by falling through, so this probe measures the repair against the thing it
+replaced rather than against an absence. The two positive controls stay green under it,
+which is what says the classifier's other two arms are untouched — a probe that turned those
+red would be measuring a broken classifier, not a dropped continuation.
+"""
+
+[[probe]]
+id = "M419-client-an-empty-dpop-token-is-bound-over-nothing"
+unit = "client.dpop_credential_exists"
+conjunct = "an empty OAuth credential is refused rather than minting a binding over zero bytes beside a signed `Authorization: Bearer ` header carrying none"
+path = "mcp-re-client-core/src/dpop_credential.rs"
+anchor = """
+        if token.is_empty() {
+            return Err(EmptyDpopCredential);
+        }
+"""
+weakening = """
+"""
+expect_red = [
+  "lib#dpop_credential::tests::an_empty_credential_is_refused_rather_than_bound_over_nothing",
+]
+note = """
+WHY THE OTHER THREE CONTROLS STAY GREEN, and why that is the point: the binding an ordinary
+credential mints is unchanged, the two projections still read one private field, and only
+emptiness is decided. This repair closes a hole without moving what a correctly-bound
+request looks like on the wire — and a probe whose weakening turned the positive controls
+red would be evidence of the opposite.
+
+MEASURED BEFORE THE REPAIR, so the consequence is not asserted from the shape: with the
+refusal absent, `ArtifactBinding::opaque_digest(OauthDpop, b"")` produces a binding that
+`ArtifactBinding::validate` ACCEPTS — the digest of nothing is still a well-formed
+base64url token — and no serving-side check refuses a zero-length artifact. Nothing
+downstream would have caught it.
+"""
+
+[[probe]]
 id = "M408-the-backslash-is-escaped-even-where-nothing-looks-ambiguous"
 unit = "proxy.audit_text_rendering"
 theorem = "THM-0091"

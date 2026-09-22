@@ -278,6 +278,91 @@ class TestInputRequiredAssociatesWithoutConsuming:
         )
         assert store.take(cid, now=IN_WINDOW).correlation_id == cid
 
+    def test_a_partially_supplied_continuation_is_refused_not_dropped(self):
+        """r12 R12-1455/1456/1466 — the defect, at the published signing surface.
+
+        The five handles used to be folded in under one `if let (Some, Some, Some,
+        Some, Some)`. With one to four present the `if let` did not fire, the request
+        was signed and returned carrying NO continuation and NO error, and a server
+        processed it as an unrelated new call — so a caller bug silently converted an
+        approved-continuation flow into an UNapproved fresh request.
+
+        Every proper non-empty subset is refused. The all-present and all-absent cases
+        are the positive controls above and below: this must not be satisfied by a
+        signer that refuses every answer leg.
+        """
+        full = dict(
+            cont_prev_alg="sha-256",
+            cont_prev_value="cHJldg",
+            cont_irr_alg="sha-256",
+            cont_irr_value="aXJy",
+            cont_request_state="opaque-state",
+        )
+        names = list(full)
+        for drop in names:
+            partial = {k: v for k, v in full.items() if k != drop}
+            with pytest.raises(ValueError, match="4 of 5"):
+                mcp_re_sdk.sign_request(
+                    SEED,
+                    "key-1",
+                    id_json="1",
+                    method="tools/call",
+                    params_json="{}",
+                    target_uri="https://proxy.internal:8600/mcp",
+                    audience_id="did:example:server-1",
+                    route=None,
+                    dpop_token="dpop-token",
+                    nonce="nonce-corr-0002-128bit",
+                    created=CREATED,
+                    expires=EXPIRES,
+                    **partial,
+                )
+        # And the smallest partial set: one handle of five.
+        for keep in names:
+            with pytest.raises(ValueError, match="1 of 5"):
+                mcp_re_sdk.sign_request(
+                    SEED,
+                    "key-1",
+                    id_json="1",
+                    method="tools/call",
+                    params_json="{}",
+                    target_uri="https://proxy.internal:8600/mcp",
+                    audience_id="did:example:server-1",
+                    route=None,
+                    dpop_token="dpop-token",
+                    nonce="nonce-corr-0003-128bit",
+                    created=CREATED,
+                    expires=EXPIRES,
+                    **{keep: full[keep]},
+                )
+
+    def test_an_empty_dpop_token_is_refused_rather_than_bound_over_nothing(self):
+        """r12 R12-1460/1461/1462 — measured unrefused ANYWHERE before this.
+
+        An empty token minted a binding whose digest is the digest of zero bytes and a
+        signed `Authorization: Bearer ` header carrying no credential — a signed
+        statement that the request is bound to a credential that does not exist.
+        `ArtifactBinding::validate` accepts it, because the digest of nothing is still a
+        well-formed base64url token, and nothing on the serving side refuses it either.
+        """
+        with pytest.raises(ValueError, match="empty"):
+            mcp_re_sdk.sign_request(
+                SEED,
+                "key-1",
+                id_json="1",
+                method="tools/list",
+                params_json="{}",
+                target_uri="https://proxy.internal:8600/mcp",
+                audience_id="did:example:server-1",
+                route=None,
+                dpop_token="",
+                nonce="nonce-corr-0004-128bit",
+                created=CREATED,
+                expires=EXPIRES,
+            )
+        # POSITIVE CONTROL: an ordinary token still signs.
+        assert _sign().body()
+
     def test_an_unbound_elicitation_is_rejected(self):
         store = CorrelationStore()
         with pytest.raises(McpReError) as ei:

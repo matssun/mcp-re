@@ -222,6 +222,18 @@ class TestDpopStaysBuiltIn:
         """Omitting the parameter must sign exactly as before — frozen vectors depend on it."""
         assert _sign().body() == mcp_re_sdk.sign_request(SEED, "key-1", **BASE).body()
 
+    def test_a_provider_may_not_present_the_built_in_dpop_binding(self):
+        """r12 R12-1463/1464/1473 — the rule was a COMMENT, three lines above the code
+        that appended provider bindings without inspecting their type.
+
+        A provider-supplied `oauth-dpop` binding is minted from material no covered
+        header carries, so a request would go out with TWO `oauth-dpop` bindings
+        attesting to different credentials and nothing on the wire saying which the
+        caller actually presented.
+        """
+        with pytest.raises(ValueError, match="authorization_binding_malformed"):
+            _sign([OpaqueBytesProvider("oauth-dpop", b"attacker-token")])
+
     def test_several_providers_are_all_bound_in_order(self):
         b = _bindings(
             _sign(

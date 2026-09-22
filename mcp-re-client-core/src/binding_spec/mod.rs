@@ -112,6 +112,14 @@ pub fn build_authorization(
     for spec in specs {
         let material = mcp_re_core::b64url_decode(&spec.material_b64url)
             .map_err(|_| BindingSpecRefusal::MaterialNotBase64Url)?;
+        // THE ONE ARTIFACT TYPE A PROVIDER MAY NOT PRESENT, checked before the form is
+        // read because it is true in every form. The built-in DPoP binding is minted from
+        // the credential the covered `Authorization` header carries, in one expression
+        // pair, which is the whole reason the two cannot disagree. A provider-supplied one
+        // is minted from material no header covers.
+        if spec.artifact_type == ArtifactType::OauthDpop {
+            return Err(BindingSpecRefusal::DpopIsNotProviderSupplied);
+        }
         match spec.form {
             BindingForm::AuthorizationDecision => take_decision(&mut out, &spec, material)?,
             _ => out.bindings.push(binding_from(&spec, &material)?),
@@ -184,6 +192,41 @@ mod tests {
             r#"[{{"artifact_type":"{artifact_type}","form":"{form}","material_b64url":"{}"}}]"#,
             b64(material)
         )
+    }
+
+    /// LOAD-BEARING (r12 R12-1463/1464/1473): the built-in DPoP binding is the one
+    /// binding a provider may not present, and until this refusal existed the rule was
+    /// asserted in a COMMENT three lines above the `bindings.extend(provided.bindings)`
+    /// that violated it. A caller supplying an `oauth-dpop` spec got a SECOND `oauth-dpop`
+    /// binding appended after the header-derived one, attesting to a credential no covered
+    /// header carries — and nothing on the wire says which of the two the caller presented.
+    #[test]
+    fn a_provider_may_not_present_the_header_derived_dpop_binding() {
+        // Every form, because the rule is about the SOURCE and not the shape: a provider
+        // minting this artifact type is illegal however it spells the spec.
+        for form in [
+            "opaque-bytes",
+            "authz-system-reference",
+            "authorization-decision",
+        ] {
+            assert_eq!(
+                build_authorization(&spec("oauth-dpop", form, b"attacker-token"))
+                    .expect_err("dpop is never provider-supplied"),
+                BindingSpecRefusal::DpopIsNotProviderSupplied,
+                "form={form}"
+            );
+        }
+    }
+
+    /// The POSITIVE control for the refusal above: every OTHER artifact type a provider
+    /// may present still goes through. A rule that refused the whole provider seam would
+    /// satisfy the test above and break the feature it guards.
+    #[test]
+    fn a_provider_binding_of_another_artifact_type_is_still_accepted() {
+        let provided = build_authorization(&spec("oauth-mtls", "opaque-bytes", b"cert"))
+            .expect("an ordinary provider binding");
+        assert_eq!(provided.bindings.len(), 1);
+        assert_eq!(provided.bindings[0].artifact_type, ArtifactType::OauthMtls);
     }
 
     #[test]

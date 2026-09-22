@@ -1253,7 +1253,11 @@ recorded = "2026-09-19"
 [[disposition]]
 id = "CD-1032"
 project = "sdk/python"
-control = "pytest#tests/test_smoke.py::test_core_version_is_nonempty_str"
+# RENAMED with its subject, r12 file 10 / R12-1474: the control used to assert only that
+# `core_version()` returns a non-empty string, which the WRAPPER's own version satisfies
+# too. It now asserts the reported version is the audited core's, so the name moved with
+# the property. Same control, same NP-012, stronger assertion.
+control = "pytest#tests/test_smoke.py::test_core_version_reports_the_audited_core_and_not_this_wrapper"
 decision = "new-proposition"
 proposition = "NP-012"
 recorded = "2026-09-19"
@@ -1277,7 +1281,8 @@ recorded = "2026-09-19"
 [[disposition]]
 id = "CD-1035"
 project = "sdk/typescript"
-control = "vitest#test/smoke.test.ts > mcp-re-sdk smoke (built package) > exposes a non-empty core version and RFC 9421 profile tag"
+# RENAMED with its subject — the twin of the pytest row above, same reason.
+control = "vitest#test/smoke.test.ts > mcp-re-sdk smoke (built package) > reports the audited core's version, not this wrapper's"
 decision = "new-proposition"
 proposition = "NP-012"
 recorded = "2026-09-19"

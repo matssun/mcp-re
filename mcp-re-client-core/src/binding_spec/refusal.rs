@@ -36,6 +36,13 @@ pub enum BindingSpecRefusal {
     /// More than one decision was presented. A request acts under ONE decision; two
     /// would leave the verifier to choose which authority spoke for it.
     MoreThanOneDecision,
+    /// A provider presented an `oauth-dpop` binding. DPoP is the built-in,
+    /// HEADER-DERIVED binding: its digest is over the same credential the covered
+    /// `Authorization: Bearer` header carries, which is what makes the two unable to
+    /// disagree. A provider-supplied one is minted from material no header covers, so a
+    /// request would carry two `oauth-dpop` bindings attesting to different credentials
+    /// and nothing on the wire says which the caller actually presented.
+    DpopIsNotProviderSupplied,
     /// The resulting binding is not structurally valid for its form.
     Malformed(HttpProfileError),
 }
@@ -85,6 +92,7 @@ mod tests {
             BindingSpecRefusal::DecisionNotText,
             BindingSpecRefusal::DecisionCarriesReferenceFields,
             BindingSpecRefusal::MoreThanOneDecision,
+            BindingSpecRefusal::DpopIsNotProviderSupplied,
         ] {
             assert_eq!(
                 refusal.wire_code(),
