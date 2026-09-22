@@ -1787,3 +1787,107 @@ review_requirement = "Owner review; any change to the trust-epoch derivation's d
 premise_class = "assumed"
 affected_contracts = []
 tool_specific_mechanism = "none:trusted-primitive"
+
+[[assumption]]
+id = "ASM-0050"
+description = "The channel from the MCP-RE proxy to its inner server is writable by that proxy alone, whenever the verified-context carrier is enabled (`--verified-context-carrier trusted`)."
+justification = """
+The verified-context block is the PEP's conclusion, not evidence: it carries no signature,
+deliberately, because a signature would imply the inner server could evaluate trust
+independently — the job the PEP exists to have already done
+(mcp-re-http-profile/src/context/mod.rs). The inner server therefore cannot distinguish a
+block this proxy wrote from one written by anything else with write access to the channel,
+and a block asserting an arbitrary `actor_id` is a total authentication bypass rather than a
+spoofing nuisance.
+
+Nothing in the code checks the premise and nothing can. `VerifiedContextPolicy::Trusted`
+records that a branch on the policy took the Trusted arm and no more; the witness
+`TrustedInnerChannel` establishes that a caller did not FORGET to consult the policy, not
+that an operator configured the deployment, because `Trusted` is a public data-free variant
+any crate can name. The reserved-field guard runs under every policy precisely so that a
+deployment leaving the carrier disabled is not one reserved-key rename away from forwarding
+caller-authored context — but that guard bounds what a CALLER can seed, not who else can
+write the channel.
+
+It is acceptable only because the carrier is off by default and enabling it is an explicit
+deployment act. It stops being acceptable the moment a second writer can reach the inner
+server: a sidecar added to the pod, a hostNetwork pod on the node, a Service or NodePort
+exposing the inner server for debugging, a NetworkPolicy that stops being applied, or an
+inner server bound to anything other than loopback or a UNIX socket in the same network
+namespace. A deployment demonstrates it by showing the inner server's listener is not
+reachable from outside the proxy's own namespace.
+"""
+scope = [
+  "unit://http_profile.reserved_context_key_guard",
+  "unit://http_profile.verified_context_conclusion",
+  "unit://http_profile.unauthenticated_context_claim",
+  "unit://proxy.verified_context_carrier_boundary",
+  "boundary://boundary.inner_server_channel",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 FILE-01 loop-2 remediation (RA1-005/007/008); #415 rev 2 §10 / MCPRE-429"
+review_requirement = "Owner review of any change to the carrier's enabling path or to the inner-server listener topology. Re-checked at every deployment-topology change, not only at code change."
+premise_class = "external-boundary"
+boundary_owner = """
+The DEPLOYMENT OPERATOR, across the proxy-to-inner-server transport, under the configuration
+`--verified-context-carrier trusted` (Helm: the `verified-context-carrier` value,
+deploy/helm/mcp-re-proxy/values.yaml). The operator guarantees that the inner server's
+listener admits connections from this proxy process alone — loopback, a same-pod sidecar, or
+a UNIX socket — for the whole time the carrier is enabled. "Kubernetes", alone, is not an
+owner statement: the guarantee is the listener's reachability, and the operator is who
+establishes it.
+"""
+affected_contracts = []
+sites = [
+  "mcp-re-http-profile/src/context/policy.rs#VerifiedContextPolicy::Trusted",
+  "mcp-re-proxy/src/serving_capabilities.rs#verified_context_carrier",
+]
+tool_specific_mechanism = "none:trusted-seam"
+
+[[assumption]]
+id = "ASM-0051"
+description = "The inner MCP server reads the verified-context block from the TOP-LEVEL `_meta` of the forwarded body — the one position the PEP writes it to."
+justification = """
+The §10 reserved-field guard is universally quantified over positions: after the loop-2
+change it removes the reserved key from every `_meta` at any depth, because it cannot know
+where a reader looks. The WRITE is existentially quantified — `insert_verified_context`
+places the block at exactly one position, the top-level `_meta`. Widening the write to
+several positions would put one conclusion in several places and manufacture a
+which-copy-wins question that does not currently exist, so the asymmetry is deliberate and
+correct.
+
+What it leaves is this premise, and it is registered separately from ASM-0050 because it
+fails in the opposite direction. ASM-0050 fails LOUDLY in the sense that a second writer
+produces a forged identity; this one fails SILENTLY. An inner server that reads the block
+from somewhere else simply finds nothing, and what it then does — refuse, or serve the
+request as unattributed — is its own behaviour and is invisible from here. No test in this
+repository can observe it, because the inner server is not this repository's code.
+
+It is acceptable because the position is fixed by #415 rev 2 §10 and because the guard's
+totality means the alternative positions carry nothing an attacker placed. It stops being
+acceptable if the write position ever becomes configurable, or if an adapter is shipped
+that reads a different position, at which point the two owners must agree by contract
+rather than by convention.
+"""
+scope = [
+  "unit://http_profile.verified_context_conclusion",
+  "unit://http_profile.unauthenticated_context_claim",
+  "unit://proxy.verified_context_carrier_boundary",
+  "boundary://boundary.inner_server_channel",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 FILE-01 loop-3 residual of RA1-029; #415 rev 2 §10 / MCPRE-429"
+review_requirement = "Owner review if the write position becomes configurable, or if an inner-server adapter is shipped that reads the block from any other position."
+premise_class = "external-boundary"
+boundary_owner = """
+The INNER MCP SERVER, across the proxy-to-inner-server transport: it reads the
+`se.syncom/mcp-re.verified-context` member of the forwarded body's top-level `_meta`. The
+guarantee is a read position, and the party that establishes it is whoever built or
+configured the inner server, not MCP-RE.
+"""
+affected_contracts = []
+sites = [
+  "mcp-re-http-profile/src/context/verified.rs#insert_verified_context",
+  "mcp-re-http-profile/src/context/claim.rs#extract_verified_context",
+]
+tool_specific_mechanism = "none:trusted-seam"

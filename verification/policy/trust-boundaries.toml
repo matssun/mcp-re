@@ -343,3 +343,18 @@ max_class_without_assumption = "V0"
 # Inside those crates there is nothing to trust that is not either declared above or
 # ordinary Rust — which is why both pilot candidates for the extracted-model path were
 # drawn from there.
+
+[[boundary]]
+id = "boundary.inner_server_channel"
+description = "The transport from the MCP-RE proxy to its inner MCP server, and who besides this proxy can write to it."
+kind = "deployment-topology"
+paths = [
+  "mcp-re-http-profile/src/context/mod.rs",
+  "mcp-re-http-profile/src/context/policy.rs",
+  "mcp-re-http-profile/src/context/verified.rs",
+  "mcp-re-http-profile/src/context/claim.rs",
+  "mcp-re-proxy/src/http_profile_serve/body_boundary.rs",
+  "mcp-re-proxy/src/serving_capabilities.rs",
+]
+beyond = "Who can write the channel. Every other boundary here is crossed by code — a library, a service, the kernel — and this one is crossed by a network topology nothing in the process can observe. The verified-context block carries no signature by design, so the inner server cannot distinguish a block this proxy wrote from one any other writer produced; the whole of the carrier's authentication weight rests on the listener being unreachable from anywhere but this proxy. ASM-0050 states it. The reserved-field guard bounds what a CALLER can seed and runs under every policy, which is a different question and is not evidence for this one."
+max_class_without_assumption = "V0"

@@ -11215,3 +11215,120 @@ tested_symbols = [
   "lib#transparency::durability::tests::a_record_without_the_schema_token_is_refused",
   "lib#transparency::durability::tests::a_retained_exchange_comes_back_byte_identical",
 ]
+
+[[unit]]
+id = "http_profile.reserved_context_key_guard"
+class = "V0"
+description = "What the §10 reserved-field guard ESTABLISHES about the body it returns: the reserved verified-context key and the consumed request-evidence block are absent from every `_meta` position an inner server can read one from — the top level, `params._meta`, and every object element of a positional `params` — every other `_meta` entry is unaltered, and a body shape whose reserved-key positions the guard cannot enumerate is REFUSED rather than reported clean. The guard runs under every policy, so a deployment with the carrier disabled is not one reserved-key rename away from forwarding caller-authored context."
+paths = [
+  "mcp-re-http-profile/src/context/reserved_key_strip.rs",
+  "mcp-re-http-profile/src/context/seeded_meta_positions.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://http_profile/verified_context/reserved_key_positions_guarded",
+  "mutation://http_profile/verified_context/reserved_key_positions_guarded",
+]
+tested_symbols = [
+  "lib#context::reserved_key_strip::tests::the_top_level_position_is_guarded",
+  "lib#context::reserved_key_strip::tests::the_params_object_position_is_guarded",
+  "lib#context::reserved_key_strip::tests::every_positional_params_element_is_guarded",
+  "lib#context::reserved_key_strip::tests::every_seeded_position_is_named_at_once",
+  "lib#context::reserved_key_strip::tests::a_body_that_is_not_a_json_object_is_refused",
+  "lib#context::reserved_key_strip::tests::a_params_that_is_neither_an_object_nor_an_array_is_refused",
+  "lib#context::reserved_key_strip::tests::strip_removes_proxy_keys_and_preserves_application_meta",
+  "lib#context::reserved_key_strip::tests::a_meta_containing_only_proxy_keys_is_removed_entirely",
+  "lib#context::reserved_key_strip::tests::a_callers_own_empty_meta_survives",
+  "lib#context::reserved_key_strip::tests::an_ordinary_application_body_passes_through_untouched",
+  "lib#context::reserved_key_strip::tests::a_non_object_meta_carries_no_reserved_key_and_is_left_alone",
+  "lib#context::reserved_key_strip::tests::strip_is_noop_without_meta",
+  "lib#context::reserved_key_strip::tests::a_nested_position_below_params_is_guarded_and_named",
+  "lib#context::reserved_key_strip::tests::a_non_object_meta_is_provably_empty_not_uninspectable",
+  "lib#context::reserved_key_strip::tests::the_consumed_request_evidence_block_is_removed_without_being_reported",
+  "lib#context::seeded_meta_positions::tests::a_report_names_the_positions_it_was_built_from",
+  "lib#context::seeded_meta_positions::tests::an_empty_report_names_nothing",
+]
+
+[[unit]]
+id = "http_profile.verified_context_conclusion"
+class = "V0"
+description = "That possession of a `VerifiedContext` means this crate's verifier produced it. The representation is private to its module, `from_verified` is its sole producer, it projects named semantic accessors rather than fields, and it carries no `Deserialize`, so the wire cannot mint one. The write capability follows the deployment act: `insert_verified_context` requires a witness whose sole producer is `VerifiedContextPolicy::trusted_inner_channel`, so a `Disabled` deployment cannot mint the block at all rather than relying on a caller to consult a selector."
+paths = [
+  "mcp-re-http-profile/src/context/verified.rs",
+  "mcp-re-http-profile/src/context/policy.rs",
+  "mcp-re-http-profile/src/context/mod.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://http_profile/verified_context/conclusion_sole_producer",
+  "mutation://http_profile/verified_context/conclusion_sole_producer",
+]
+tested_symbols = [
+  "lib#context::verified::tests::the_conclusion_projects_the_resolved_actor_not_the_presented_keyid",
+  "lib#context::verified::tests::a_trusted_deployment_writes_the_block_under_the_reserved_key",
+  "lib#context::verified::tests::what_the_insert_writes_is_what_the_strip_removes",
+  "lib#context::verified::tests::the_conclusion_carries_the_verified_requests_own_expiry",
+  "lib#context::policy::tests::only_the_trusted_deployment_yields_the_carrier_capability",
+  "lib#context::policy::tests::the_default_deployment_cannot_carry_the_block",
+  "lib#context::verified::tests::the_write_fails_closed_when_the_callers_meta_occupies_the_write_position",
+  "lib#context::verified::tests::what_the_writer_emits_the_reader_accepts_with_nothing_unstated",
+]
+
+[[unit]]
+id = "http_profile.unauthenticated_context_claim"
+class = "V0"
+description = "That a verified-context block READ from a body is typed as the assertion it is, never as the conclusion a verifier drew. The read returns a distinct type whose projections are all named `claimed_`, a member the sender omitted is an explicit `NotStated` variant rather than an absence a consumer may read as `no constraint`, and a block missing a member the PEP always writes, or carrying an unknown one, fails closed as malformed."
+paths = [
+  "mcp-re-http-profile/src/context/claim.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://http_profile/verified_context/received_claim_proof_strength",
+  "mutation://http_profile/verified_context/received_claim_proof_strength",
+]
+tested_symbols = [
+  "lib#context::claim::tests::a_complete_block_reads_through_the_claimed_projections",
+  "lib#context::claim::tests::an_omitted_audience_is_not_stated_rather_than_absent",
+  "lib#context::claim::tests::a_block_without_an_expiry_reads_and_states_nothing_about_one",
+  "lib#context::claim::tests::a_block_missing_a_required_member_fails_closed",
+  "lib#context::claim::tests::a_decorated_block_is_refused",
+  "lib#context::claim::tests::a_body_without_the_block_reports_the_block_missing",
+]
+
+[[unit]]
+id = "proxy.verified_context_carrier_boundary"
+class = "V0"
+description = "That the serving path composes the §10 guard and the carrier write as one boundary: the PEP-owned `_meta` keys are removed from every request regardless of policy, the PEP's own context is written only under an explicitly trusted channel, and the forwarded bytes cannot be obtained without a caller's attempt on the reserved key being named. A body the guard cannot reach is refused rather than forwarded."
+paths = [
+  "mcp-re-proxy/src/http_profile_serve/body_boundary.rs",
+  "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+test_features = ["async_serve"]
+evidence = [
+  "test://proxy/verified_context/carrier_boundary_serving_path",
+  "mutation://proxy/verified_context/carrier_boundary_serving_path",
+]
+tested_symbols = [
+  "lib#http_profile_serve::body_boundary::tests::application_meta_survives_the_pep_owned_strip",
+  "lib#http_profile_serve::body_boundary::tests::a_body_the_guard_cannot_reach_is_refused_rather_than_forwarded",
+  "lib#http_profile_serve::body_boundary::tests::the_seeded_positions_are_named_on_the_forwarded_body",
+  "tests/integration_async#verified_context_carrier_test::trusted_channel_carries_the_peps_verified_context",
+  "tests/integration_async#verified_context_carrier_test::disabled_by_default_the_inner_server_sees_clean_mcp",
+  "tests/integration_async#verified_context_carrier_test::a_caller_seeded_verified_context_never_reaches_the_inner_server",
+  "tests/integration_async#verified_context_carrier_test::a_params_meta_seeded_verified_context_never_reaches_the_inner_server",
+  "tests/integration_async#verified_context_carrier_test::unrelated_application_meta_survives_the_guard",
+  "lib#http_profile_serve::body_boundary::tests::prepare_strips_the_reserved_key_under_every_policy",
+  "lib#http_profile_serve::body_boundary::tests::prepare_writes_the_peps_block_only_under_trusted",
+  "lib#http_profile_serve::body_boundary::tests::prepare_refuses_a_body_the_verified_request_does_not_cover",
+  "lib#http_profile_serve::body_boundary::tests::prepare_fails_closed_under_trusted_when_the_block_cannot_be_written",
+  "lib#http_profile_serve::body_boundary::tests::the_seeding_report_names_positions_escapes_the_actor_and_is_bounded",
+]
