@@ -935,3 +935,38 @@ module-tree-visibility = "`resolve_root` is `pub(crate)` on a `pub` type in a pr
 alternate-constructors = "the projection is attacked, not a construction. No public method of `TrustedIssuerSet` returns a `ResolvedActor` without consulting revocation: `trusts` returns a bool, `resolve_issuer` returns a `ResolverOutcome` that fails closed on a revoked issuer, and there is no `Deref`, `AsRef` or `Index` impl handing out the representation"
 generated-or-deserialization = "no derive or macro generates a public accessor for the lifecycle lookup, and the type derives no Deserialize that could rebuild the anchors a caller would otherwise read out"
 test-only-construction = "the probe's own placement in `tests/` is the downstream test-code route, which sees the same `pub(crate)` boundary as downstream production code. The owner's `#[cfg(test)]` modules add no wider re-export; a `#[cfg(test)] pub fn` forwarding to `resolve_root` would be a producer even though it never runs in production, because the compiler would admit the call"
+
+[[probe]]
+id = "S28"
+unit = "proxy.admission_gate_unskippable"
+kind = "in-crate-source-injection"
+package = "mcp-re-proxy"
+invariant = "no code outside `http_profile_serve::pre_admission::standing` can assemble an AdmissionDecidedOver, so every value `authorization_stage` receives came from the §7 gate having run"
+insertion_path = "mcp-re-proxy/src/http_profile_serve/pre_admission/structural_probe_s28.rs"
+insertion_parent = "mcp-re-proxy/src/http_profile_serve/pre_admission/mod.rs"
+insertion_declaration = "mod structural_probe_s28;"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+note = """
+THE PROBE IS INJECTED AS A SIBLING, WHICH IS THE POINT. `AdmissionDecidedOver` is
+`pub(super)`, so every file in `pre_admission` can NAME it; what none of them can do is
+write its field. The hostile module is placed exactly where a future stage file would go,
+because that is who would forge one — not another crate, and not another region.
+
+WHY THE TYPE IS NOT THE SEAL. Measured both ways on the working tree: with the field
+bare-private, deleting the gate and passing the transport binding to `authorization_stage`
+is `E0308: expected &AdmissionDecidedOver, found Option<&RequestPeerBindingFacts>`. With the
+field changed to `pub(super)` and the value assembled inline at the funnel, the same
+deletion COMPILES again. The field carries the property; the newtype alone would be
+decoration, and this probe is what keeps that distinction honest.
+
+`todo!()` supplies the field so the error is E0451 about the private field rather than a
+diverging complaint about `RequestPeerBindingFacts`, which is itself sealed one owner over.
+"""
+construction = "// ADR-MCPRE-068 structural probe S28. Injected into a scratch copy by verify-structural;\n// this file cannot exist in the working tree, because it would not build — which is the\n// proposition it witnesses.\nuse super::standing::AdmissionDecidedOver;\n\npub fn hostile() -> AdmissionDecidedOver {\n    AdmissionDecidedOver {\n        binding: todo!(), // STRUCTURAL-PROBE-SITE\n    }\n}\n"
+
+[probe.producer_paths]
+module-tree-visibility = "`binding` is bare-private to `pre_admission::standing`. The type is `pub(super)` so the two stage signatures in the region can name it, and the region's parent re-exports nothing of it — the representation leaves only through `binding()`, which returns `Option<&RequestPeerBindingFacts>`"
+alternate-constructors = "`HttpProfileProxy::admission_stage` is the only producer, and it produces on BOTH arms — the enforcer-present arm after `AdmissionEnforcer::decide` returns Ok, and the no-enforcer arm that yields `AdmissionFacet::NotConfigured`. There is no `new`, `From`, `Default` or builder, and `binding()` returns a borrow, never the field"
+generated-or-deserialization = "no derives at all, and nothing decodes it — it is a serving-path product assembled from a stage's own result, never read off a wire. A `Deserialize` would be a second producer reachable from any body the proxy parses"
+test-only-construction = "the region's `#[cfg(test)]` modules obtain nothing through a constructor: `admission_prerequisite_tests` asserts on the projection, and `pre_admission::mod`'s tests construct `AdmittedRequest`, a different type. No test-gated constructor and no test-gated field visibility exists — one would be a producer even though it never runs in production, because the compiler would admit the construction"

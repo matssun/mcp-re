@@ -7255,6 +7255,55 @@ direct_consequence_severity = "high"
 evidence = [
   "structural://proxy/config_state/admission_sole_producer",
 ]
+# ---------------------------------------------------------------------------
+# The §7 gate cannot be SKIPPED — ADR-MCPRE-053, the pre-admission region
+# ---------------------------------------------------------------------------
+#
+# A gate that is never consulted is not a gate, and until this unit nothing in the registry
+# said the §7 currency gate is on the serving path at all. The r12 packet nominated
+# `http_profile_serve/request_admission.rs` as the call site; that file contains no
+# admission code, so the reviewer correctly reported that every G1-G20 guarantee's
+# antecedent was unaudited. The call site is `pre_admission/standing.rs`.
+#
+# THE MEASUREMENT THAT MADE THIS A UNIT. Nineteen
+# `tests/integration_async#admission_currency_serving_test::*` controls witness that the
+# gate RUNS and what it refuses — 18 of them go red if the stage is deleted. What none of
+# them witnesses is that it CANNOT BE SKIPPED, and before this unit's seal the deletion
+# COMPILED: `admission_stage` and `transport_binding_stage` returned the same type, so
+# handing authorization the transport binding in the gate's place was type-invisible. That
+# is the R-SEAL shape — the check was performed at the one call site and remembered, not
+# owned.
+#
+# The evidence is therefore STRUCTURAL and not the test lane. Citing the serving battery
+# here would overclaim: those controls stay green under a pipeline that never reaches the
+# gate, because they exercise the pipeline that does.
+#
+# The neighbouring stage already had this. `pre_admission/action.rs` states that a pipeline
+# dropping the AUTHORIZATION stage would not compile at the dispatch, because
+# `ReadyForDispatch` carries a body only `AuthorizationPosture::release` produces. The gate
+# ordered FIRST — the one that stops a revoked workload being served, placed before
+# anything irreversible — had no equivalent.
+
+[[unit]]
+id = "proxy.admission_gate_unskippable"
+class = "V0"
+description = "That the §7 admission-currency gate cannot be omitted from the serving path: `authorization_stage` requires an `AdmissionDecidedOver`, whose field is bare-private to `standing` and whose sole producer is `admission_stage` — on BOTH arms, so a deployment with no enforcer still passes through the gate and records `NotConfigured` rather than skipping it. A pipeline that dropped the gate and handed authorization the transport binding directly does not compile. States nothing about what the gate DECIDES, which is `http_profile.admission_currency`'s, nor about what a source may hand it, which is `proxy.admission_state_source`'s."
+paths = [
+  # A triangle, and an edit to any corner dissolves the property: the producer, the
+  # consumer that demands the product, and the funnel that wires them.
+  "mcp-re-proxy/src/http_profile_serve/pre_admission/standing.rs",
+  "mcp-re-proxy/src/http_profile_serve/pre_admission/action.rs",
+  "mcp-re-proxy/src/http_profile_serve/pre_admission/mod.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+# A served exchange that never reached the gate is a revoked workload served, with every
+# control in the admission owner green.
+direct_consequence_severity = "critical"
+evidence = [
+  "structural://proxy/serving/admission_gate_unskippable",
+]
+
 [[unit]]
 id = "proxy.authorization_capability"
 class = "V0"
