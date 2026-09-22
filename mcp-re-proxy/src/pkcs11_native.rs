@@ -2,14 +2,12 @@
 //! #4034 supply-chain follow-up).
 //!
 //! # Why this exists
-//! The high-level `cryptoki` crate transitively pulls the UNMAINTAINED `paste`
-//! crate (RUSTSEC-2024-0436), which fails the cargo-deny gate. `cryptoki-sys`
-//! carries only the raw PKCS#11 bindings and depends solely on `libloading` — no
-//! `paste`. This module is the SMALL safe surface that
-//! [`crate::pkcs11_keysource`] needs, built directly on those raw bindings:
-//! load+initialize a module, enumerate token slots and read their labels, open an
-//! RW session, log in as the User, find objects by template, sign with
-//! `CKM_EDDSA`, and read `CKA_EC_POINT`. Nothing more.
+//! The high-level `cryptoki` crate transitively pulls the UNMAINTAINED `paste` crate
+//! (RUSTSEC-2024-0436), which fails the cargo-deny gate; `cryptoki-sys` carries only the
+//! raw PKCS#11 bindings and depends solely on `libloading`. This module is the SMALL safe
+//! surface [`crate::pkcs11_keysource`] needs over them: load+initialize a module,
+//! enumerate token slots and read their labels, open an RW session, log in as the User,
+//! find objects by template, sign with `CKM_EDDSA`, read `CKA_EC_POINT`. Nothing more.
 //!
 //! # Function-list dispatch
 //! PKCS#11 modules reliably export only `C_GetFunctionList`; the individual
@@ -26,8 +24,7 @@
 //!
 //! # RAII
 //! [`Pkcs11Context`] calls `C_Finalize` on drop; [`Session`] calls
-//! `C_CloseSession` on drop. Each signing / public-key read opens its own
-//! session (this is the pre-amortization variant — no session caching here).
+//! `C_CloseSession` on drop.
 //!
 //! Compiled ONLY under the non-default `pkcs11_keysource` feature.
 #![cfg(feature = "pkcs11_keysource")]
@@ -35,6 +32,7 @@
 use std::ffi::c_void;
 use std::ptr;
 
+use crate::config_state::key_file_access::executable_path_violation;
 use cryptoki_sys::Pkcs11 as RawLoader;
 use cryptoki_sys::CKA_CLASS;
 use cryptoki_sys::CKA_EC_POINT;
@@ -70,8 +68,8 @@ const CK_TOKEN_LABEL_LEN: usize = 32;
 /// never any secret material. The keysource maps these onto its own `KeyError`.
 #[derive(Debug)]
 pub enum Pkcs11Error {
-    /// The module could not be loaded, or `C_GetFunctionList` was unavailable /
-    /// returned a null list. (Module-bootstrap failures.)
+    /// The module was refused by the executable-path floor or could not be loaded,
+    /// or `C_GetFunctionList` was unavailable / returned null. (Bootstrap failures.)
     Load(String),
     /// A required function-list entry was a null pointer (the module does not
     /// implement that PKCS#11 function). Fail closed rather than call null.
@@ -114,6 +112,15 @@ const MAX_SIGNATURE_LEN: usize = 256;
 /// 4 KiB is far above any real curve while bounding the module-returned length.
 const MAX_EC_POINT_LEN: usize = 4096;
 
+/// Upper bound on the slot count `C_GetSlotList` reports before allocating for it —
+/// same two-call idiom, same faulty/hostile-module threat as [`MAX_SIGNATURE_LEN`].
+const MAX_SLOTS: usize = 1024;
+
+/// Upper bound on the handles one `C_FindObjects` walk may accumulate: a module whose
+/// find cursor never advances returns full pages forever, growing the vector without
+/// limit and never leaving the loop. A key lookup here expects exactly ONE object.
+const MAX_OBJECT_HANDLES: usize = 1024;
+
 /// Map a raw `CK_RV` to `Ok(())` on `CKR_OK`, else a contextual [`Pkcs11Error`].
 fn check(rv: CK_RV, op: &str) -> Result<(), Pkcs11Error> {
     if rv == CKR_OK {
@@ -154,10 +161,16 @@ impl Pkcs11Context {
     /// `C_Initialize` with `CKF_OS_LOCKING_OK` (let the module use OS locking for
     /// thread safety). Fails closed on any load / null-list / `CK_RV` error.
     pub fn load_and_initialize(module_path: &str) -> Result<Self, Pkcs11Error> {
+        if let Some(why) = executable_path_violation(module_path) {
+            return Err(Pkcs11Error::Load(format!(
+                "--pkcs11-module {module_path} is refused: {why}"
+            )));
+        }
         // SAFETY: `RawLoader::new` is unsafe purely because it `dlopen`s an
-        // arbitrary shared object and calls its initializers; `module_path` is an
-        // operator-supplied trusted module path. No Rust invariants are at stake
-        // in the call itself.
+        // arbitrary shared object and calls its initializers. Whoever may write
+        // this path may run code in this process, so it is first held to
+        // `executable_path_violation`'s floor: no group/world write bit on the
+        // resolved file or on any directory above it.
         let loader = unsafe { RawLoader::new(module_path) }
             .map_err(|e| Pkcs11Error::Load(format!("load module '{module_path}': {e}")))?;
 
@@ -201,11 +214,11 @@ impl Pkcs11Context {
         })
     }
 
-    /// Enumerate token slots and return `(slot_id, trimmed_label)` for each slot
+    /// Enumerate token slots and return `(slot_id, trimmed_label_bytes)` for each slot
     /// that has a token present, using the two-call length idiom for
     /// `C_GetSlotList` and reading each token's 32-byte label via
     /// `C_GetTokenInfo` (trailing 0x20 padding trimmed).
-    pub fn token_slots(&self) -> Result<Vec<(CK_SLOT_ID, String)>, Pkcs11Error> {
+    pub fn token_slots(&self) -> Result<Vec<(CK_SLOT_ID, Vec<u8>)>, Pkcs11Error> {
         // First call (null buffer) learns the count; second fills it.
         let mut count: CK_ULONG = 0;
         // SAFETY: function-list pointer non-null; `C_GetSlotList` checked non-null
@@ -214,6 +227,12 @@ impl Pkcs11Context {
             let get_slots = func!(self.function_list, C_GetSlotList);
             let rv = get_slots(1, ptr::null_mut(), &mut count);
             check(rv, "C_GetSlotList (count)")?;
+        }
+        if count as usize > MAX_SLOTS {
+            return Err(Pkcs11Error::Protocol(format!(
+                "C_GetSlotList reported an implausible slot count {count} (> {MAX_SLOTS}); \
+                 refusing to allocate"
+            )));
         }
         let mut slots: Vec<CK_SLOT_ID> = vec![0; count as usize];
         // SAFETY: `slots` has capacity `count`; we pass its base pointer and the
@@ -271,8 +290,8 @@ impl Pkcs11Context {
 
     /// Open an RW session on `slot` and log in as the User with `pin`, returning
     /// the raw `CK_SESSION_HANDLE` WITHOUT closing it — the caller becomes
-    /// responsible for that handle's lifetime (close it with
-    /// [`Self::close_session`]; [`Pkcs11Context`]'s `C_Finalize` on drop is the
+    /// responsible for that handle's lifetime (close it with a
+    /// [`SessionCloser`]; [`Pkcs11Context`]'s `C_Finalize` on drop is the
     /// backstop). This is the ONE login that the keysource's session amortization
     /// (audit M16) eliminates per-operation: the handle is cached and reused.
     ///
@@ -289,10 +308,10 @@ impl Pkcs11Context {
     }
 
     /// Borrow a NON-owning view over an already-open session `handle` (typically
-    /// one from [`Self::open_logged_in_handle`]). [`SessionRef`] exposes the same
-    /// `find_objects` / `sign_eddsa` / `get_ec_point` operations as [`Session`] but
-    /// does NOT close the handle on drop — the caller owns the handle's lifetime.
-    /// The returned view borrows `self`, so it cannot outlive the loaded module.
+    /// one from [`Self::open_logged_in_handle`]). [`SessionRef`] carries the
+    /// `find_objects` / `sign_eddsa` / `get_ec_point` operations and does NOT close
+    /// the handle on drop — the caller owns the handle's lifetime. The returned view
+    /// borrows `self`, so it cannot outlive the loaded module.
     pub fn with_handle(&self, handle: CK_SESSION_HANDLE) -> SessionRef<'_> {
         SessionRef {
             function_list: self.function_list,
@@ -301,27 +320,16 @@ impl Pkcs11Context {
         }
     }
 
-    /// Explicitly close a session `handle` previously obtained from
-    /// [`Self::open_logged_in_handle`]. Used to retire a cached session that was
-    /// replaced (invalidated). Fails closed on a non-`CKR_OK` status; a missing
-    /// `C_CloseSession` entry is a [`Pkcs11Error::MissingFunction`] (never a null
-    /// call). `C_Finalize` on context drop is the backstop if this is skipped.
-    pub fn close_session(&self, handle: CK_SESSION_HANDLE) -> Result<(), Pkcs11Error> {
-        self.session_closer().close(handle)
-    }
-
     /// A small, `Copy`, lifetime-free closer for this context's sessions. It
     /// carries only the function-list pointer, so a caller can store it next to a
     /// cached raw `CK_SESSION_HANDLE` and close that handle on retirement WITHOUT a
     /// borrow of the context — the keysource uses this to make its handle cache an
     /// RAII type while sidestepping the self-referential `Session<'ctx>` lifetime.
     ///
-    /// Soundness contract: a [`SessionCloser`] must NOT be used after its parent
-    /// [`Pkcs11Context`] has been dropped (the function list is finalized then). The
-    /// keysource enforces this by FIELD ORDER — it declares its cached session
-    /// before its `Pkcs11Context`, so the session's closer runs `C_CloseSession`
-    /// strictly before the context's `C_Finalize`. Using a closer after its context
-    /// is finalized is undefined behaviour (use-after-finalize).
+    /// Obtaining a closer is harmless; USING one after its parent context has been
+    /// dropped is undefined behaviour, and that is why [`SessionCloser::close`] is an
+    /// `unsafe fn` — the obligation is discharged at each call site, in writing, rather
+    /// than by the declaration order of a struct in another module.
     pub fn session_closer(&self) -> SessionCloser {
         SessionCloser {
             function_list: self.function_list,
@@ -339,7 +347,12 @@ pub struct SessionCloser {
 impl SessionCloser {
     /// Close `handle`. Fails closed on a non-`CKR_OK` status or a missing
     /// `C_CloseSession` entry (never a null call).
-    pub fn close(&self, handle: CK_SESSION_HANDLE) -> Result<(), Pkcs11Error> {
+    ///
+    /// # Safety
+    /// The [`Pkcs11Context`] this closer came from must still be alive. The closer is
+    /// `Copy` and carries no lifetime, so nothing else stops a caller dispatching through
+    /// a function list whose module `Pkcs11Context::drop` already finalized and unmapped.
+    pub unsafe fn close(&self, handle: CK_SESSION_HANDLE) -> Result<(), Pkcs11Error> {
         if self.function_list.is_null() {
             return Err(Pkcs11Error::Load(
                 "session closer has a null function list".to_string(),
@@ -404,27 +417,9 @@ impl<'ctx> Session<'ctx> {
         }
     }
 
-    /// Find all object handles matching `template`. See [`find_objects_raw`].
-    pub fn find_objects(
-        &self,
-        template: &AttributeTemplate,
-    ) -> Result<Vec<CK_OBJECT_HANDLE>, Pkcs11Error> {
-        find_objects_raw(self.function_list, self.handle, template)
-    }
-
-    /// Sign `data` under `key` with `CKM_EDDSA`. See [`sign_eddsa_raw`].
-    pub fn sign_eddsa(&self, key: CK_OBJECT_HANDLE, data: &[u8]) -> Result<Vec<u8>, Pkcs11Error> {
-        sign_eddsa_raw(self.function_list, self.handle, key, data)
-    }
-
-    /// Read the raw `CKA_EC_POINT` attribute of `key`. See [`get_ec_point_raw`].
-    pub fn get_ec_point(&self, key: CK_OBJECT_HANDLE) -> Result<Vec<u8>, Pkcs11Error> {
-        get_ec_point_raw(self.function_list, self.handle, key)
-    }
-
     /// Consume this session WITHOUT closing it, returning its raw
     /// `CK_SESSION_HANDLE`. The caller becomes responsible for the handle's
-    /// lifetime (close it via [`Pkcs11Context::close_session`]; `C_Finalize` on
+    /// lifetime (close it via a [`SessionCloser`]; `C_Finalize` on
     /// context drop is the backstop). Used by
     /// [`Pkcs11Context::open_logged_in_handle`] to hand out a cacheable handle.
     pub fn into_handle(self) -> CK_SESSION_HANDLE {
@@ -481,6 +476,11 @@ fn find_objects_raw(
     template: &AttributeTemplate,
 ) -> Result<Vec<CK_OBJECT_HANDLE>, Pkcs11Error> {
     let attrs = template.as_ck_attributes();
+    // Resolve the terminator BEFORE the find is initiated. Discovering a missing
+    // `C_FindObjectsFinal` afterwards would leave the operation active on this
+    // session, and every later `C_FindObjectsInit` on it returns CKR_OPERATION_ACTIVE.
+    // SAFETY: function-list non-null; this reads one `Option` field out of it.
+    let finalize = unsafe { func!(function_list, C_FindObjectsFinal) };
     // SAFETY: function-list non-null; `C_FindObjectsInit` checked non-null by
     // `func!`. `attrs` is a live slice of CK_ATTRIBUTE for the duration of the
     // call; we pass its base pointer and exact length.
@@ -497,18 +497,9 @@ fn find_objects_raw(
     let result = find_objects_collect(function_list, handle);
 
     // Always finalize the find operation, regardless of the iterate result.
-    // SAFETY: function-list non-null; `C_FindObjectsFinal` checked non-null by
-    // `func!`. Finalize takes only the session handle.
-    let final_rv = unsafe {
-        match (*function_list).C_FindObjectsFinal {
-            Some(finalize) => finalize(handle),
-            None => {
-                return Err(Pkcs11Error::MissingFunction(
-                    "C_FindObjectsFinal".to_string(),
-                ))
-            }
-        }
-    };
+    // SAFETY: `finalize` was pulled non-null from the function list before the find
+    // began; it takes only the session handle.
+    let final_rv = unsafe { finalize(handle) };
     let handles = result?;
     check(final_rv, "C_FindObjectsFinal")?;
     Ok(handles)
@@ -543,6 +534,12 @@ fn find_objects_collect(
             break;
         }
         handles.extend_from_slice(&page[..found]);
+        if handles.len() > MAX_OBJECT_HANDLES {
+            return Err(Pkcs11Error::Protocol(format!(
+                "C_FindObjects returned more than {MAX_OBJECT_HANDLES} handles; refusing to \
+                 accumulate further"
+            )));
+        }
         if found < PAGE {
             break;
         }
@@ -589,8 +586,7 @@ fn sign_eddsa_raw(
         check(rv, "C_Sign (length query)")?;
     }
 
-    // Bound the module-returned length before allocating: a faulty/hostile module
-    // must not be able to trigger an outsized allocation on this trusted boundary.
+    // Bound the module-returned length before allocating (see MAX_SIGNATURE_LEN).
     if sig_len as usize > MAX_SIGNATURE_LEN {
         return Err(Pkcs11Error::Protocol(format!(
             "C_Sign reported an implausible signature length {sig_len} (> {MAX_SIGNATURE_LEN}); \
@@ -652,9 +648,7 @@ fn get_ec_point_raw(
             "CKA_EC_POINT is unavailable on this object".to_string(),
         ));
     }
-    // Bound the module-returned length before allocating (see MAX_EC_POINT_LEN):
-    // a real point is tens of bytes, so a multi-KiB+ length is a faulty/hostile
-    // module and must not drive an outsized allocation.
+    // Bound the module-returned length before allocating (see MAX_EC_POINT_LEN).
     if len as usize > MAX_EC_POINT_LEN {
         return Err(Pkcs11Error::Protocol(format!(
             "CKA_EC_POINT reported an implausible length {len} (> {MAX_EC_POINT_LEN}); \
@@ -771,13 +765,180 @@ fn ck_attr<T>(type_: CK_ATTRIBUTE_TYPE, value: &T) -> CK_ATTRIBUTE {
 }
 
 /// Trim the trailing 0x20 (space) padding PKCS#11 uses for the fixed 32-byte
-/// `CK_TOKEN_INFO.label`, returning it as a `String` (lossy on non-UTF-8, which a
-/// label should never be). A non-space NUL is also trimmed defensively.
-fn trim_ck_label(label: &[u8; CK_TOKEN_LABEL_LEN]) -> String {
+/// `CK_TOKEN_INFO.label` and return the remaining BYTES. A non-space NUL is also
+/// trimmed defensively.
+///
+/// Bytes, not a `String`: a lossy rendering maps every invalid UTF-8 sequence to U+FFFD,
+/// so two tokens whose labels differ only in invalid bytes render equal — and the label
+/// decides which physical device receives the User PIN.
+fn trim_ck_label(label: &[u8; CK_TOKEN_LABEL_LEN]) -> Vec<u8> {
     let end = label
         .iter()
         .rposition(|&b| b != b' ' && b != 0)
         .map(|i| i + 1)
         .unwrap_or(0);
-    String::from_utf8_lossy(&label[..end]).into_owned()
+    label[..end].to_vec()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn padded_label(bytes: &[u8]) -> [u8; CK_TOKEN_LABEL_LEN] {
+        let mut label = [b' '; CK_TOKEN_LABEL_LEN];
+        for (slot, byte) in label.iter_mut().zip(bytes.iter()) {
+            *slot = *byte;
+        }
+        label
+    }
+
+    /// The PKCS#11 label field is a fixed 32 bytes padded with 0x20. Only that padding
+    /// (and a defensive NUL) is trailing noise; an interior space is part of the label.
+    #[test]
+    fn a_token_label_keeps_its_interior_bytes_and_loses_only_its_padding() {
+        assert_eq!(trim_ck_label(&padded_label(b"my token")), &b"my token"[..]);
+        assert_eq!(trim_ck_label(&padded_label(b"")), &b""[..]);
+        let mut nul_padded = padded_label(b"tok");
+        nul_padded[3] = 0;
+        assert_eq!(trim_ck_label(&nul_padded), &b"tok"[..]);
+    }
+
+    /// The NEGATIVE test for label aliasing: two tokens whose labels differ only in
+    /// INVALID UTF-8 must stay distinguishable. Restoring a `String::from_utf8_lossy`
+    /// rendering maps both byte sequences to U+FFFD and turns this red.
+    #[test]
+    fn byte_distinct_token_labels_do_not_compare_equal() {
+        let first = trim_ck_label(&padded_label(&[b't', 0xC3, 0x28]));
+        let second = trim_ck_label(&padded_label(&[b't', 0xE2, 0x28]));
+        assert_ne!(
+            first, second,
+            "the label decides which device receives the User PIN, so equality is over \
+             the bytes the token reported"
+        );
+    }
+
+    /// The POSITIVE control for the same change: the labels an operator actually
+    /// configures are UTF-8, and they must still match byte-for-byte.
+    #[test]
+    fn an_ordinary_utf8_label_still_matches_its_configured_form() {
+        let configured = "mcp-re-tøken";
+        assert_eq!(
+            trim_ck_label(&padded_label(configured.as_bytes())),
+            configured.as_bytes(),
+            "a label a deployment can actually set must still select its slot"
+        );
+    }
+
+    /// `check` is the one place a `CK_RV` becomes a decision: only `CKR_OK` passes, and
+    /// everything else carries the operation name and the raw status for diagnosis.
+    #[test]
+    fn only_ckr_ok_passes_the_status_check() {
+        assert!(check(CKR_OK, "C_Sign").is_ok());
+        match check(0x0000_0082, "C_Sign") {
+            Err(Pkcs11Error::Ck { op, rv }) => {
+                assert_eq!(op, "C_Sign");
+                assert_eq!(rv, 0x0000_0082);
+            }
+            other => panic!("a non-CKR_OK status must fail closed, got {other:?}"),
+        }
+    }
+
+    /// The lookup template is the ONLY thing asked of the token when a key is found, so
+    /// its three attributes are pinned here: the object class, `CKK_EC_EDWARDS`, and the
+    /// label as exact bytes with no NUL terminator and no padding.
+    #[test]
+    fn the_lookup_template_constrains_class_key_type_and_label() {
+        let template = AttributeTemplate::ed25519_labelled(ObjectClass::Private, "signing");
+        assert_eq!(template.class, CKO_PRIVATE_KEY);
+        assert_eq!(template.key_type, CKK_EC_EDWARDS);
+        assert_eq!(template.label, &b"signing"[..]);
+
+        let attrs = template.as_ck_attributes();
+        let [class, key_type, label] = attrs.as_slice() else {
+            panic!(
+                "the Ed25519 lookup asks for exactly three attributes, got {}",
+                attrs.len()
+            );
+        };
+        assert_eq!(class.type_, CKA_CLASS);
+        assert_eq!(key_type.type_, CKA_KEY_TYPE);
+        assert_eq!(label.type_, CKA_LABEL);
+        assert_eq!(label.ulValueLen as usize, "signing".len());
+        assert_eq!(
+            ObjectClass::Public.ck_value(),
+            CKO_PUBLIC_KEY,
+            "the public arm must not silently resolve to the private class"
+        );
+    }
+
+    /// The NEGATIVE test for the module-path floor, AT THE CALL SITE that dlopens: a
+    /// module file anyone may overwrite is refused BEFORE `RawLoader::new` maps it and
+    /// runs its initializers. Removing the `executable_path_violation` guard from
+    /// `load_and_initialize` turns this red — the call would then reach the loader and
+    /// fail with a libloading message instead of a refusal.
+    #[cfg(unix)]
+    #[test]
+    fn a_world_writable_module_is_refused_before_it_is_loaded() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = std::env::temp_dir().join(format!("mcp-re-pkcs11-w-{}", std::process::id()));
+        std::fs::write(&path, b"not really a module").expect("write module");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666))
+            .expect("chmod 0666");
+        let error = Pkcs11Context::load_and_initialize(path.to_str().expect("utf-8"))
+            .err()
+            .expect("a world-writable module must not be loaded");
+        let rendered = format!("{error}");
+        assert!(
+            rendered.contains("is refused") && rendered.contains("group/world-writable"),
+            "expected the executable-path floor to refuse it, got: {rendered}"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The POSITIVE control for that guard, and the one that decides whether the floor is
+    /// deployable: an ordinary system path under root-owned `0755` directories — the
+    /// posture of `/usr/lib/softhsm/libsofthsm2.so` — must PASS the floor and reach the
+    /// loader. It is not a Cryptoki module, so it still fails; what this asserts is that
+    /// it failed at the LOADER and not at the floor.
+    #[cfg(unix)]
+    #[test]
+    fn an_ordinary_system_path_passes_the_floor_and_reaches_the_loader() {
+        let system_file = ["/bin/sh", "/bin/ls", "/usr/bin/env"]
+            .into_iter()
+            .find(|p| std::fs::metadata(p).is_ok())
+            .expect("a POSIX host exposes at least one of /bin/sh, /bin/ls, /usr/bin/env");
+        let error = Pkcs11Context::load_and_initialize(system_file)
+            .err()
+            .unwrap_or_else(|| panic!("{system_file} is not a Cryptoki module"));
+        let rendered = format!("{error}");
+        assert!(
+            !rendered.contains("is refused"),
+            "a root-owned file under 0755 directories must not be refused by the floor, \
+             or no packaged PKCS#11 module would load: {rendered}"
+        );
+    }
+
+    /// Every wrapper failure renders with its context and never with a bare code.
+    #[test]
+    fn every_wrapper_error_renders_its_context() {
+        assert_eq!(format!("{}", Pkcs11Error::Load("boom".to_string())), "boom");
+        assert_eq!(
+            format!("{}", Pkcs11Error::MissingFunction("C_Sign".to_string())),
+            "module does not export C_Sign (null function-list entry)"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                Pkcs11Error::Ck {
+                    op: "C_Login".to_string(),
+                    rv: 0x0000_00a0
+                }
+            ),
+            "C_Login: CK_RV 0x000000a0"
+        );
+        assert_eq!(
+            format!("{}", Pkcs11Error::Protocol("shape".to_string())),
+            "shape"
+        );
+    }
 }

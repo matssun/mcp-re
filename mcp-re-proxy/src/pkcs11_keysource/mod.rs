@@ -23,14 +23,11 @@
 //! from a non-exporting token (it is what relying parties verify against), so its
 //! raw 32-byte Edwards point is read via `CKA_EC_POINT`.
 //!
-//! # TLS material (scope)
-//! This source holds an inner [`FileKeySource`] for the TLS server certificate
-//! chain, TLS server private key, and client-CA trust anchors: in THIS change the
-//! token custodies ONLY the response-signing key, and the TLS cert/key/CA still
-//! come from files. Delegated TLS signing — fronting the token behind a custom
-//! [`rustls::sign::SigningKey`] so the TLS private key also never leaves the
-//! device — is the remaining OUT-OF-SCOPE sub-item of #4034 and is deliberately
-//! NOT implemented here; the existing file-backed TLS path is reused unchanged.
+//! # TLS material
+//! An inner [`FileKeySource`] holds the TLS server certificate chain, the client-CA
+//! trust anchors, and — when no TLS key label is configured — the TLS server private
+//! key. With a TLS key label, a [`Pkcs11TlsSigner`] custodies a SECOND token object and
+//! the TLS private key does not leave the device either.
 //!
 //! # Fail-closed posture
 //! Every Cryptoki/library failure (module load, slot/token selection, login,
@@ -249,14 +246,15 @@ impl Pkcs11KeySource {
         });
 
         // Prove, at construction, that the PIN logs in and BOTH response-signing key
-        // objects exist — a misconfiguration fails closed at startup, not on the
-        // first signed response. This primes the shared login the whole process
-        // reuses (the one login every later op — response AND TLS — rides).
+        // objects exist — and that the public one IS Ed25519: `CKK_EC_EDWARDS` in the
+        // lookup template covers Ed448 too, so the discriminator is the 32-byte point
+        // `verification_key` establishes. A misconfiguration fails closed at startup,
+        // not on the first signed response, and this primes the shared login.
         let key_label = key_label.to_string();
         token.session.with_session(token.as_ref(), |logged_in| {
             let view = token.context.with_handle(logged_in.handle);
             find_key(&view, &key_label, ObjectClass::Private)?;
-            find_key(&view, &key_label, ObjectClass::Public)?;
+            verification_key(&view, &key_label)?;
             Ok::<(), SessionOpError>(())
         })?;
 
@@ -405,8 +403,8 @@ impl ResponseSigner for Pkcs11KeySource {
     }
 }
 
-/// TLS material is delegated to the inner [`FileKeySource`] (see the module doc:
-/// delegated TLS signing through the token is the remaining #4034 sub-item).
+/// TLS material is delegated to the inner [`FileKeySource`]; a configured TLS key
+/// label instead routes the handshake signature through [`Pkcs11TlsSigner`].
 impl KeySource for Pkcs11KeySource {
     fn tls_server_cert_chain(&self) -> Result<Vec<CertificateDer<'static>>, KeyError> {
         self.tls.tls_server_cert_chain()

@@ -9114,6 +9114,15 @@ paths = [
   "mcp-re-proxy/src/pkcs11_keysource/amortized_session.rs",
   "mcp-re-proxy/src/pkcs11_keysource/tls_signer.rs",
   "mcp-re-proxy/src/pkcs11_keysource/token.rs",
+  "mcp-re-proxy/src/pkcs11_native.rs",
+  "mcp-re-proxy/tests/pkcs11_keysource_e2e_test.rs",
+  # The Cryptoki fault injector this unit's e2e control drives lives in the SEPARATE Cargo
+  # package `mcp-re-proxy/tests/mock-pkcs11`. It is deliberately NOT named here: a unit's
+  # battery can only select controls inside the source it measures, in the project it
+  # measures them in, and widening `paths` across a package boundary pulls a neighbouring
+  # authority's machinery into this unit's source closure. The honest consequence is that
+  # the mock can be weakened under the same symbol names without moving this fingerprint —
+  # that residual is the twin proposition, not something this entry may paper over.
 ]
 exported_contracts = []
 evidence_class = "tested"

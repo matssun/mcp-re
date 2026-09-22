@@ -50,12 +50,14 @@ impl Pkcs11TlsSigner {
     pub(super) fn open(token: Arc<Pkcs11Token>, tls_key_label: &str) -> Result<Self, KeyError> {
         let tls_key_label = tls_key_label.to_string();
 
-        // Prove BOTH TLS key objects exist + are single Ed25519 objects (fail closed
+        // Prove BOTH TLS key objects exist and are single Ed25519 objects (fail closed
         // on zero/multiple/non-Ed25519), reusing the token's already-primed login.
+        // `CKK_EC_EDWARDS` in the lookup template admits Ed448 as well, so being Ed25519
+        // is established by reading the public point here, not by the template.
         token.session.with_session(token.as_ref(), |logged_in| {
             let view = token.context.with_handle(logged_in.handle);
             find_key(&view, &tls_key_label, ObjectClass::Private)?;
-            find_key(&view, &tls_key_label, ObjectClass::Public)?;
+            tls_public_spki(&view, &tls_key_label)?;
             Ok::<(), SessionOpError>(())
         })?;
 
@@ -101,15 +103,28 @@ impl RawEd25519TlsSigner for Pkcs11TlsSigner {
             .session
             .with_session(self.token.as_ref(), |logged_in| {
                 let view = self.token.context.with_handle(logged_in.handle);
-                let public = find_key(&view, &self.tls_key_label, ObjectClass::Public)?;
-                let ec_point = view.get_ec_point(public).map_err(|e| {
-                    classify_op_error(e, |e| {
-                        KeyError::Malformed(format!("pkcs11 tls: read CKA_EC_POINT: {e}"))
-                    })
-                })?;
-                // Build the RFC 8410 SPKI from the raw point; a wrong-length / non-Ed25519
-                // point fails closed (intrinsic — not a session fault).
-                ed25519_spki_from_ec_point(&ec_point).map_err(SessionOpError::Fatal)
+                tls_public_spki(&view, &self.tls_key_label)
             })
     }
+}
+
+/// Find the TLS PUBLIC key object labelled `label` and render its point as an RFC 8410
+/// Ed25519 SPKI, classified for the amortization layer.
+///
+/// One function for both callers on purpose: [`Pkcs11TlsSigner::open`] establishes the
+/// key IS Ed25519 by the same read that [`RawEd25519TlsSigner::tls_public_key_spki_der`]
+/// serves from, so a startup that succeeds and a handshake that succeeds cannot disagree
+/// about which grammar the point had to satisfy. A wrong-length / non-Ed25519 point is
+/// intrinsic — [`SessionOpError::Fatal`], never a session fault and never retried.
+fn tls_public_spki(
+    view: &crate::pkcs11_native::SessionRef<'_>,
+    label: &str,
+) -> Result<Vec<u8>, SessionOpError> {
+    let public = find_key(view, label, ObjectClass::Public)?;
+    let ec_point = view.get_ec_point(public).map_err(|e| {
+        classify_op_error(e, |e| {
+            KeyError::Malformed(format!("pkcs11 tls: read CKA_EC_POINT: {e}"))
+        })
+    })?;
+    ed25519_spki_from_ec_point(&ec_point).map_err(SessionOpError::Fatal)
 }

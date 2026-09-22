@@ -1891,3 +1891,146 @@ sites = [
   "mcp-re-http-profile/src/context/claim.rs#extract_verified_context",
 ]
 tool_specific_mechanism = "none:trusted-seam"
+
+[[assumption]]
+id = "ASM-0052"
+description = "The PKCS#11 token keeps the response-signing and TLS key objects `CKA_SENSITIVE` and non-extractable."
+justification = """
+`proxy.pkcs11_adapter`'s description asserts that the Ed25519 private key never leaves the
+token. Nothing in this repository establishes that. `AttributeTemplate::ed25519_labelled`
+asks the token for `CKA_CLASS`, `CKA_KEY_TYPE` and `CKA_LABEL` and nothing else; no code
+reads `CKA_SENSITIVE` or `CKA_EXTRACTABLE`, and a token that answered a `C_GetAttributeValue`
+for `CKA_VALUE` on the private key would be obeyed by a caller that asked. The adapter
+simply never asks — which is a property of the code as written, not of the object, and the
+next edit can change it without contradicting anything stated here.
+
+This is the most load-bearing premise behind the whole PKCS#11 custody claim, and it is the
+operator's, not MCP-RE's: it is established when the key object is provisioned on the token,
+by whoever provisioned it. It stops being acceptable if a key object is ever created by
+MCP-RE rather than found by label, or if an attribute read is added that could return key
+material.
+"""
+scope = [
+  "unit://proxy.pkcs11_adapter",
+  "boundary://boundary.pkcs11",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 FILE-02 remediation (R12-1200)"
+review_requirement = "Owner review of any change to the attribute template, to what is read from a key object, or to how key objects come to exist on the token."
+premise_class = "external-boundary"
+boundary_owner = """
+The OPERATOR'S TOKEN PROVISIONING, across the PKCS#11 object boundary: the key objects named
+by `--pkcs11-*-label` were created with `CKA_SENSITIVE = true` and `CKA_EXTRACTABLE = false`
+and are not subsequently altered.
+"""
+affected_contracts = []
+sites = [
+  "mcp-re-proxy/src/pkcs11_native.rs#AttributeTemplate::ed25519_labelled",
+  "mcp-re-proxy/src/pkcs11_keysource/mod.rs#Pkcs11Token",
+]
+tool_specific_mechanism = "none:trusted-seam"
+
+[[assumption]]
+id = "ASM-0053"
+description = "The shared object named by `--pkcs11-module` is a trustworthy Cryptoki implementation."
+justification = """
+`Pkcs11Context::load_and_initialize` maps that file into the proxy's address space and runs
+its initializers, after which it holds the User PIN, every object handle, the
+response-signing capability over arbitrary bytes and the delegated TLS handshake signer. The
+filesystem floor added in this round (`config_state::key_file_access::executable_path_violation`)
+bounds WHO may write the file: it refuses a group- or world-writable module, or any
+group/world-writable ancestor directory, before the `dlopen`. It does not and cannot bound
+what the module DOES once mapped.
+
+So the residual premise is trust in the implementation itself, and it belongs to the
+operator who names it. It is acceptable because naming a module is an explicit deployment
+act under a non-default feature. It stops being acceptable if a module path is ever derived
+from anything but operator configuration.
+"""
+scope = [
+  "unit://proxy.pkcs11_adapter",
+  "boundary://boundary.pkcs11",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 FILE-02 remediation (R12-1193 residual, R12-1200)"
+review_requirement = "Owner review of any change to `executable_path_violation`, and of any change that lets a module path come from somewhere other than operator configuration."
+premise_class = "external-boundary"
+boundary_owner = """
+The DEPLOYMENT OPERATOR, across the `dlopen` of `--pkcs11-module`: the named shared object
+is the vendor's Cryptoki implementation for the intended token and is not a substitute.
+"""
+affected_contracts = []
+sites = [
+  "mcp-re-proxy/src/pkcs11_native.rs#Pkcs11Context::load_and_initialize",
+  "mcp-re-proxy/src/config_state/key_file_access.rs#executable_path_violation",
+]
+tool_specific_mechanism = "none:trusted-seam"
+
+[[assumption]]
+id = "ASM-0054"
+description = "The PKCS#11 module is thread-safe, as requested by `CKF_OS_LOCKING_OK` at `C_Initialize`."
+justification = """
+`pkcs11_keysource/mod.rs` carries an `unsafe impl Send + Sync for Pkcs11Token`. Its first
+clause is this premise: the proxy asks for OS locking at `C_Initialize` and then uses one
+context and its sessions across the serving fleet's threads. A module that accepted
+`CKF_OS_LOCKING_OK` and is nevertheless not thread-safe produces data races inside the
+module, below anything Rust's type system reaches, and the symptom would be corruption or a
+wrong signature rather than a refusal.
+
+The request is made and its return value checked; that the module tells the truth is the
+module's claim about itself. It stops being acceptable if the proxy ever shares a session
+handle across threads without the pool's discipline, which would make the premise stronger
+than `CKF_OS_LOCKING_OK` actually promises.
+"""
+scope = [
+  "unit://proxy.pkcs11_adapter",
+  "boundary://boundary.pkcs11",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 FILE-02 remediation (R12-1200)"
+review_requirement = "Owner review of any change to the `unsafe impl Send + Sync`, to session sharing across threads, or to the `C_Initialize` arguments."
+premise_class = "external-boundary"
+boundary_owner = """
+The PKCS#11 MODULE, across `C_Initialize`: having accepted `CKF_OS_LOCKING_OK`, it is safe
+for concurrent use from multiple threads.
+"""
+affected_contracts = []
+sites = [
+  "mcp-re-proxy/src/pkcs11_native.rs#Pkcs11Context::load_and_initialize",
+  "mcp-re-proxy/src/pkcs11_keysource/mod.rs#Pkcs11Token",
+]
+tool_specific_mechanism = "none:trusted-seam"
+
+[[assumption]]
+id = "ASM-0055"
+description = "A token label is unique across the slots present when the proxy starts."
+justification = """
+`find_token_slot` compares the trimmed `CK_TOKEN_INFO` label against the operator's
+`--pkcs11-token-label` and takes the FIRST byte-equal match. With two tokens present under
+one label the slot chosen is whichever the module enumerates first, which is the module's
+ordering and not a property the operator controls or the proxy records.
+
+The consequence is a silent one: the proxy would log in and sign against the wrong token,
+producing valid signatures under the wrong key rather than an error. Refusing on ambiguity
+instead of taking the first match would be the stronger design, and is the change this
+premise is a placeholder for; it is registered rather than implemented because the refusal
+belongs with the slot-selection owner and needs its own blast-radius answer for a deployment
+that legitimately has duplicate labels across a token replacement.
+"""
+scope = [
+  "unit://proxy.pkcs11_adapter",
+  "boundary://boundary.pkcs11",
+]
+owner = "mats@sundvall.name"
+introduced_by = "r12 FILE-02 remediation (R12-1200)"
+review_requirement = "Owner review if slot selection changes, or if a deployment can present two tokens under one label."
+premise_class = "external-boundary"
+boundary_owner = """
+The OPERATOR'S TOKEN TOPOLOGY, across slot enumeration: at most one present slot carries the
+token label named by `--pkcs11-token-label`.
+"""
+affected_contracts = []
+sites = [
+  "mcp-re-proxy/src/pkcs11_native.rs#find_token_slot",
+]
+tool_specific_mechanism = "none:trusted-seam"
