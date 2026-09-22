@@ -685,10 +685,10 @@ fn run_validated(
     // ADR-MCPRE-051 §3: the async inner plane — a per-core pooled hyper client to
     // the stateless Streamable-HTTP inner backends. Forwarding is AWAITED, never
     // blocking a per-core runtime worker.
-    let inner_timeout = values
-        .limits
-        .read_timeout
-        .unwrap_or_else(|| Duration::from_secs(30));
+    // Unreachable — the boundary refuses an absent read timeout — and it REFUSES rather
+    // than defaulting, so dropping that clause is an outage, not a second opinion (R12-636).
+    let configured = &values.limits;
+    let inner_timeout = configured.read_timeout.ok_or("--read-timeout-secs unset")?;
     let pool = HttpInnerPool::from_url_strs(values.inner_http_urls.clone(), inner_timeout)?;
     // Named where the pool that forwards to them is BUILT. Reporting them from the fleet
     // instead would mean carrying the URLs through serving purely to print them, and the
