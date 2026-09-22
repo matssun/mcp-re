@@ -47,6 +47,17 @@ const PREV_BASE: &[u8] = b"previous-request-signature-base";
 const IRR_BASE: &[u8] = b"input-required-response-signature-base";
 const REQ_STATE: &[u8] = b"opaque-request-state";
 
+/// The posture these vectors run under, stated rather than defaulted.
+///
+/// `DispatchConfig` is deliberately not `Default`: the unstated value of a security
+/// posture would be the permissive one, so every construction says which posture it
+/// means — the tests included.
+fn permissive_cfg() -> DispatchConfig {
+    DispatchConfig {
+        fleet_strict: false,
+    }
+}
+
 fn client_a_key() -> SigningKey {
     SigningKey::from_seed_bytes(&CLIENT_A_SEED)
 }
@@ -146,7 +157,7 @@ fn duplicate_nonce_same_actor_audience_profile_is_replay() {
     let block = request_block(audience("verifier-1"), None);
     let ev = verified_request(&client_a_key(), "client-key-1", "nonce-1", &block);
     let cache = InMemoryReplayCache::new(0);
-    let cfg = DispatchConfig::default();
+    let cfg = permissive_cfg();
 
     let first = dispatch_request(&ev, &cache, None, &cfg).expect("first admit");
     assert!(!first.continuation_verified);
@@ -160,7 +171,7 @@ fn duplicate_nonce_same_actor_audience_profile_is_replay() {
 #[test]
 fn same_nonce_different_audience_does_not_collide() {
     let cache = InMemoryReplayCache::new(0);
-    let cfg = DispatchConfig::default();
+    let cfg = permissive_cfg();
 
     let block_a = request_block(audience("verifier-1"), None);
     let ev_a = verified_request(&client_a_key(), "client-key-1", "nonce-1", &block_a);
@@ -176,7 +187,7 @@ fn same_nonce_different_audience_does_not_collide() {
 #[test]
 fn same_nonce_different_resolved_actor_does_not_collide() {
     let cache = InMemoryReplayCache::new(0);
-    let cfg = DispatchConfig::default();
+    let cfg = permissive_cfg();
 
     let block = request_block(audience("verifier-1"), None);
     let ev_a = verified_request(&client_a_key(), "client-key-1", "nonce-1", &block);
@@ -258,13 +269,8 @@ fn continuation_round_trips_through_dispatch() {
     let ev = verified_request(&client_a_key(), "client-key-1", "nonce-1", &block);
     let cache = InMemoryReplayCache::new(0);
 
-    let outcome = dispatch_request(
-        &ev,
-        &cache,
-        Some(matching_ctx()),
-        &DispatchConfig::default(),
-    )
-    .expect("continuation must verify");
+    let outcome = dispatch_request(&ev, &cache, Some(matching_ctx()), &permissive_cfg())
+        .expect("continuation must verify");
     assert!(outcome.continuation_verified);
 }
 
@@ -279,7 +285,7 @@ fn continuation_changed_request_state_fails() {
         ..matching_ctx()
     };
 
-    let err = dispatch_request(&ev, &cache, Some(ctx), &DispatchConfig::default())
+    let err = dispatch_request(&ev, &cache, Some(ctx), &permissive_cfg())
         .expect_err("changed requestState must fail");
     assert_eq!(
         err,
@@ -299,7 +305,7 @@ fn continuation_wrong_previous_request_evidence_fails() {
         ..matching_ctx()
     };
 
-    let err = dispatch_request(&ev, &cache, Some(ctx), &DispatchConfig::default())
+    let err = dispatch_request(&ev, &cache, Some(ctx), &permissive_cfg())
         .expect_err("wrong previous-request evidence must fail");
     assert_eq!(
         err,
@@ -318,7 +324,7 @@ fn continuation_wrong_input_required_response_evidence_fails() {
         ..matching_ctx()
     };
 
-    let err = dispatch_request(&ev, &cache, Some(ctx), &DispatchConfig::default())
+    let err = dispatch_request(&ev, &cache, Some(ctx), &permissive_cfg())
         .expect_err("wrong input-required response evidence must fail");
     assert_eq!(
         err,
@@ -334,7 +340,7 @@ fn continuation_without_retained_context_fails_closed() {
     let ev = verified_request(&client_a_key(), "client-key-1", "nonce-1", &block);
     let cache = InMemoryReplayCache::new(0);
 
-    let err = dispatch_request(&ev, &cache, None, &DispatchConfig::default())
+    let err = dispatch_request(&ev, &cache, None, &permissive_cfg())
         .expect_err("missing continuation context must fail closed");
     assert_eq!(
         err,
@@ -355,15 +361,10 @@ fn failed_continuation_does_not_burn_the_nonce() {
     };
 
     // First attempt fails on the continuation, before the replay insert.
-    dispatch_request(&ev, &cache, Some(bad_ctx), &DispatchConfig::default())
+    dispatch_request(&ev, &cache, Some(bad_ctx), &permissive_cfg())
         .expect_err("spliced continuation fails");
     // The good re-presentation still admits: the nonce was never burned.
-    let outcome = dispatch_request(
-        &ev,
-        &cache,
-        Some(matching_ctx()),
-        &DispatchConfig::default(),
-    )
-    .expect("nonce must still be fresh after a failed continuation");
+    let outcome = dispatch_request(&ev, &cache, Some(matching_ctx()), &permissive_cfg())
+        .expect("nonce must still be fresh after a failed continuation");
     assert!(outcome.continuation_verified);
 }

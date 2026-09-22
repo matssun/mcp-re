@@ -2940,18 +2940,23 @@ conjunct = "A store that self-reports the single-process reference class is refu
 # There is no async `dispatch_request` to fall through to, so deleting this arm leaves a
 # fleet-strict deployment admitting against a store that says it cannot prevent a
 # cross-node replay — and nothing beneath it refuses.
+# RE-ADJUDICATED, and the probe got STRONGER rather than merely moving. The old weakening
+# was a pure deletion of the arm; that no longer compiles, because the witness this block
+# produces is what steps 2-3 require — which is the property file 9 pass 1 added, and a
+# compile error is a better falsifier than a red test. What remains falsifiable, and what
+# this probe now applies, is a LIE about the posture: the decision is still made, still
+# reads the store's class, and still refuses — for a deployment that did not ask for
+# fleet-strict. Same shape as M323 one crate over, and the same reason.
 path = "mcp-re-proxy/src/http_profile_dispatch.rs"
 anchor = """
-    if config.fleet_strict
-        && tier.durability_class() == ReplayDurabilityClass::SingleProcessReference
-    {
-        return Err(ProxyDispatchError::Dispatch(
-            DispatchError::NonSharedReplayTier,
-        ));
-    }
+    let posture = DispatchConfig {
+        fleet_strict: config.fleet_strict,
+    };
 """
 weakening = """
-    let _ = tier.durability_class();
+    let posture = DispatchConfig {
+        fleet_strict: false,
+    };
 """
 expect_red = [
   "lib#http_profile_dispatch::tests::a_strong_declared_tier_does_not_excuse_a_single_process_async_store",
@@ -8991,10 +8996,22 @@ id = "M323-httpprofile-the-fleet-strict-store-class-gate"
 unit = "http_profile.fleet_strict_store_class"
 theorem = "THM-0092"
 conjunct = "under the fleet-strict posture, replay admission refuses BEFORE any store side effect when the deployment wires a store that self-reports the single-process reference class"
-path = "mcp-re-http-profile/src/dispatch.rs"
-anchor = "    if config.fleet_strict && replay.is_single_process_reference() {\n        return Err(DispatchError::NonSharedReplayTier);\n    }\n"
-weakening = "    if !config.fleet_strict && replay.is_single_process_reference() {\n        return Err(DispatchError::NonSharedReplayTier);\n    }\n"
-expect_red = ["tests/dispatch_test#fleet_strict_rejects_single_process_reference_cache"]
+# RE-ADJUDICATED, not restored. The gate moved out of `dispatch_request` into the sole
+# decision procedure `DispatchConfig::admit_replay_tier`, which now also PRODUCES the
+# witness `prepare_http_dispatch` requires. The conjunct is unchanged and the weakening is
+# the same inversion; what changed is that there is one site instead of one per entry point.
+path = "mcp-re-http-profile/src/dispatch/replay_posture.rs"
+anchor = """
+        if !self.fleet_strict {
+"""
+weakening = """
+        if self.fleet_strict {
+"""
+expect_red = [
+  "tests/dispatch_test#fleet_strict_rejects_single_process_reference_cache",
+  "lib#dispatch::replay_posture::tests::fleet_strict_refuses_a_single_process_reference_store_class",
+  "lib#dispatch::replay_posture::tests::outside_fleet_strict_the_reference_class_is_a_decision_and_not_an_absence",
+]
 note = """
 THE POSTURE IS INVERTED RATHER THAN DELETED, which is the smaller and the more dangerous
 weakening. The gate still exists, still reads the store's self-reported class, and still

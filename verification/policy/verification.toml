@@ -1634,6 +1634,10 @@ class = "V1"
 description = "MCPRE-102 dispatch preparation: a request whose evidence block carries an MRTR continuation can never be prepared successfully with continuation_verified == false."
 paths = [
   "mcp-re-http-profile/src/dispatch.rs",
+  # The only entry to the proved function. `prepare_http_dispatch` is now private to the
+  # `dispatch` module and reachable solely as a method on `ReplayTierAdmitted`, so the
+  # file holding that method is on the path from a caller to the postcondition.
+  "mcp-re-http-profile/src/dispatch/replay_posture.rs",
   "mcp-re-http-profile/src/block.rs",
   # The product this postcondition is about is built by the full-profile request stage,
   # over the floor stage's result. Both, not the whole `verify/` subtree: the delegated and
@@ -10758,8 +10762,15 @@ tested_symbols = [
 [[unit]]
 id = "http_profile.fleet_strict_store_class"
 class = "V0"
-description = "THE STORE-CLASS HALF OF THE FLEET-STRICT REFUSAL, MEASURED WHERE THE HTTP-PROFILE DISPATCH PATH WIRES IT: under the fleet-strict posture a replay store that SELF-REPORTS the single-process reference class is refused as `NonSharedReplayTier` before the store is touched at all, and a durable one is admitted — so the gate is a refusal of a declared class rather than a refusal of everything. The `paths` is the production site `dispatch.rs`, whose step 1 is that gate; the battery is the integration lane that drives it end to end. Says nothing about the DECLARED tier, which is the operator's statement checked in `proxy.replay_admission_gate`, and nothing about what an acknowledgement durably established — that is per-mechanism and registered as ASM-0040 / ASM-0041."
-paths = ["mcp-re-http-profile/src/dispatch.rs"]
+description = "THE STORE-CLASS HALF OF THE FLEET-STRICT REFUSAL, MEASURED WHERE THE HTTP-PROFILE DISPATCH PATH WIRES IT: under the fleet-strict posture a replay store that SELF-REPORTS the single-process reference class is refused as `NonSharedReplayTier` before the store is touched at all, and a durable one is admitted — so the gate is a refusal of a declared class rather than a refusal of everything. The `paths` are the production sites: `dispatch/replay_posture.rs`, which is the sole decision procedure, and `dispatch.rs`, whose step 1 consults it. The battery is the integration lane that drives it end to end, plus the decision procedure's own controls. Says nothing about the DECLARED tier, which is the operator's statement checked in `proxy.replay_admission_gate`, and nothing about what an acknowledgement durably established — that is per-mechanism and registered as ASM-0040 / ASM-0041."
+paths = [
+  "mcp-re-http-profile/src/dispatch.rs",
+  # Where the gate now IS. It moved out of `dispatch_request`'s step 1 into the one
+  # decision procedure both entry points consult, which also produces the witness
+  # preparation requires — so the file that can falsify this statement is this one, and a
+  # closure naming only the caller would attest a gate it does not measure.
+  "mcp-re-http-profile/src/dispatch/replay_posture.rs",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -10770,6 +10781,12 @@ evidence = [
 tested_symbols = [
   "tests/dispatch_test#fleet_strict_admits_durable_cache",
   "tests/dispatch_test#fleet_strict_rejects_single_process_reference_cache",
+  # The decision procedure's own arms. The integration pair above drives the sync entry
+  # point; these say what the procedure decides, including that a deployment outside
+  # fleet-strict DECIDED the class is not load-bearing rather than having skipped the
+  # question — which is the half a refusal-only battery cannot state.
+  "lib#dispatch::replay_posture::tests::fleet_strict_refuses_a_single_process_reference_store_class",
+  "lib#dispatch::replay_posture::tests::outside_fleet_strict_the_reference_class_is_a_decision_and_not_an_absence",
 ]
 
 # ---------------------------------------------------------------------------

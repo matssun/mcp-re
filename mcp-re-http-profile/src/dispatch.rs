@@ -21,10 +21,12 @@
 //! classification (`ReplayDurabilityTier` / `meets_strict_production_minimum`)
 //! is a `mcp-re-proxy` deployment concern wired AROUND this seam as a follow-up,
 //! never imported here. The only durability signal this layer honestly knows is
-//! the core [`ReplayCache::is_single_process_reference`] self-declaration:
-//! under [`DispatchConfig::fleet_strict`], a single-process reference cache is
-//! refused fail-closed BEFORE any admission (an in-memory reference cache cannot
-//! prevent cross-node replays; ADR-MCPS-020).
+//! the core [`ReplayCache::durability_class`] self-declaration: under
+//! [`DispatchConfig::fleet_strict`], a single-process reference cache is refused
+//! fail-closed BEFORE any admission (an in-memory reference cache cannot prevent
+//! cross-node replays; ADR-MCPS-020). That decision is owned by
+//! [`DispatchConfig::admit_replay_tier`], whose product is the only way in to
+//! the steps below.
 //!
 //! ## Fail-closed ordering
 //!
@@ -48,15 +50,10 @@ use verus_builtin_macros::verus_spec;
 #[allow(unused_imports)]
 use vstd::prelude::*;
 
-/// Dispatcher policy knobs.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct DispatchConfig {
-    /// Fleet-strict posture: refuse a replay cache that self-declares the
-    /// single-process reference class ([`ReplayCache::is_single_process_reference`]).
-    /// This is the ONLY durability signal available at the pure profile layer;
-    /// the richer `ReplayDurabilityTier` gate stays in `mcp-re-proxy`.
-    pub fleet_strict: bool,
-}
+mod replay_posture;
+
+pub use replay_posture::DispatchConfig;
+pub use replay_posture::ReplayTierAdmitted;
 
 /// The bytes the caller retained for a pending correlation, needed to verify an
 /// MRTR continuation. The dispatcher never derives these — they are the exact
@@ -141,13 +138,14 @@ pub fn dispatch_request(
     continuation_ctx: Option<RetainedContinuation<'_>>,
     config: &DispatchConfig,
 ) -> Result<DispatchOutcome, DispatchError> {
-    // 1. Fleet-strict tier gate — refuse a non-shared cache before touching it.
-    if config.fleet_strict && replay.is_single_process_reference() {
-        return Err(DispatchError::NonSharedReplayTier);
-    }
+    // 1. Fleet-strict tier gate — refuse a non-shared cache before touching it. Its
+    //    product is the only key to steps 2–3, so deleting this line does not reorder the
+    //    ladder, it stops the function compiling.
+    let admitted = config.admit_replay_tier(replay.durability_class())?;
 
     // 2–3. Replay-key construction + MRTR continuation binding (non-side-effecting).
-    let (replay_key, continuation_verified) = prepare_http_dispatch(verified, continuation_ctx)?;
+    let (replay_key, continuation_verified) =
+        admitted.prepare_http_dispatch(verified, continuation_ctx)?;
 
     // 4. Replay admission LAST — the only side-effecting step.
     match replay_key.check_and_insert(replay, verified.floor.expires)? {
@@ -171,9 +169,11 @@ pub fn dispatch_request(
 /// `&dyn ReplayCache`; the async data plane (ADR-MCPRE-051 §4) AWAITS its
 /// authoritative async tier with
 /// [`HttpReplayKey::to_core_replay_key`](crate::HttpReplayKey::to_core_replay_key).
-/// The fleet-strict single-process refusal (step 1) is the caller's — the sync
-/// path checks `is_single_process_reference`, the async path relies on the proxy's
-/// deployment tier gate plus the async store's durability class.
+///
+/// Private to this module, and reached only through
+/// [`ReplayTierAdmitted::prepare_http_dispatch`]. The fleet-strict single-process refusal
+/// (step 1) is [`DispatchConfig::admit_replay_tier`], whose product is that witness — so
+/// no path to this function exists that has not decided the durability posture first.
 ///
 /// Ordering is preserved: key construction, then continuation binding; the caller
 /// performs admission strictly LAST, so a spliced or unbindable continuation never
@@ -196,7 +196,7 @@ pub fn dispatch_request(
             (verified.request_block.continuation is Some ==> continuation_verified),
 ))]
 #[allow(clippy::redundant_closure)]
-pub fn prepare_http_dispatch(
+fn prepare_http_dispatch(
     verified: &VerifiedMcpRequest,
     continuation_ctx: Option<RetainedContinuation<'_>>,
 ) -> Result<(HttpReplayKey, bool), DispatchError> {

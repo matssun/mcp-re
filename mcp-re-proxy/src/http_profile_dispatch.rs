@@ -32,9 +32,7 @@
 
 use mcp_re_core::ReplayCache;
 use mcp_re_core::ReplayDecision;
-use mcp_re_core::ReplayDurabilityClass;
 use mcp_re_http_profile::dispatch_request;
-use mcp_re_http_profile::prepare_http_dispatch;
 use mcp_re_http_profile::DispatchConfig;
 use mcp_re_http_profile::DispatchError;
 use mcp_re_http_profile::DispatchOutcome;
@@ -139,9 +137,9 @@ pub fn dispatch_request_with_tier_gate(
 /// admission (`http_profile_serve::answering_commitment`).
 ///
 /// It shares [`ProxyDispatchConfig`]'s `deployment_tier_admits` gate with
-/// [`dispatch_request_with_tier_gate`] and builds the replay key the same way (both call
-/// [`prepare_http_dispatch`]), but the two are not the same shape: the sync entry point
-/// WRAPS [`dispatch_request`] and inherits that dispatcher's store-class refusal beneath
+/// [`dispatch_request_with_tier_gate`] and builds the replay key the same way (both reach
+/// the profile crate's shared preparation), but the two are not the same shape: the sync
+/// entry point WRAPS [`dispatch_request`] and inherits that dispatcher's refusal beneath
 /// it, while this one IS the dispatcher and carries that refusal itself, at step 1b —
 /// same rule about the object holding the nonces, one level higher.
 ///
@@ -162,19 +160,21 @@ pub async fn dispatch_request_with_async_tier(
     // 1b. The store's own self-report. A strong DECLARATION does not excuse a wired
     //     store that says it cannot prevent a cross-node replay. Sync reaches this rule
     //     inside `dispatch_request`; there is no async `dispatch_request`, so this
-    //     function carries it, on the same frozen token.
-    if config.fleet_strict
-        && tier.durability_class() == ReplayDurabilityClass::SingleProcessReference
-    {
-        return Err(ProxyDispatchError::Dispatch(
-            DispatchError::NonSharedReplayTier,
-        ));
-    }
+    //     function carries it, on the same frozen token. Its product is the profile
+    //     crate's key to steps 2–3: without this decision there is nothing to prepare
+    //     a dispatch with, so the refusal is a precondition and not a habit.
+    let posture = DispatchConfig {
+        fleet_strict: config.fleet_strict,
+    };
+    let admitted = posture
+        .admit_replay_tier(tier.durability_class())
+        .map_err(ProxyDispatchError::Dispatch)?;
 
     // 2–3. Native key construction + continuation binding (shared, non-side-effecting).
     //      The borrowed `continuation_ctx` is consumed here, BEFORE the await.
-    let (replay_key, continuation_verified) =
-        prepare_http_dispatch(verified, continuation_ctx).map_err(ProxyDispatchError::Dispatch)?;
+    let (replay_key, continuation_verified) = admitted
+        .prepare_http_dispatch(verified, continuation_ctx)
+        .map_err(ProxyDispatchError::Dispatch)?;
 
     // 4. Awaited atomic admission LAST — the only side-effecting step. A store
     //    failure fails closed (`replay_cache_unavailable`), never an admit.
