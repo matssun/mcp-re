@@ -8287,6 +8287,109 @@ the two-state answer THM-0032 says the three states exist to prevent.
 """
 
 # ---------------------------------------------------------------------------
+# The §10 reserved-field guard and the verified-context carrier — ADR #415 rev 2 §10
+# ---------------------------------------------------------------------------
+#
+# Four units were registered with `mutation://` in their `evidence` and no probe behind it,
+# which `verify-mutations` refuses as a class: a declared evidence class nothing measures is
+# unmeasured evidence, and it blocks the WHOLE lane rather than only those units. Two of
+# these units carry the campaign's `VerifiedContext` critical, so the lane they silenced is
+# the one that would say whether that seal is load-bearing.
+#
+# One probe each, on the conjunct whose loss would be invisible to a reader: not that the
+# guard works, but that it works on the path nobody looks at — the policy that does NOT
+# carry the block, the `params` shape that cannot be walked, the deployment that is
+# `Disabled` by default, and the block a sender decorated.
+
+[[probe]]
+id = "M404-an-unwalkable-params-is-refused-not-reported-clean"
+unit = "http_profile.reserved_context_key_guard"
+conjunct = "A body shape whose reserved-key positions the guard cannot ENUMERATE is refused, rather than walked as far as it goes and reported clean"
+path = "mcp-re-http-profile/src/context/reserved_key_strip.rs"
+anchor = """
+        None | Some(Value::Object(_)) | Some(Value::Array(_)) => Ok(()),
+"""
+weakening = """
+        _ => Ok(()),
+        #[expect(unreachable_patterns, reason = "probe weakening")]
+        None | Some(Value::Object(_)) | Some(Value::Array(_)) => Ok(()),
+"""
+expect_red = [
+  "lib#context::reserved_key_strip::tests::a_params_that_is_neither_an_object_nor_an_array_is_refused",
+]
+note = """
+The weakened guard still strips every position it CAN reach, so every positive control stays
+green and a reader sees a guard that works. What it stops doing is distinguishing "no
+reserved key was present" from "the shape was one this code cannot enumerate positions in" —
+and it is the second that the inner server would be handed as clean.
+"""
+
+[[probe]]
+id = "M405-the-carrier-capability-follows-the-deployment-act"
+unit = "http_profile.verified_context_conclusion"
+conjunct = "The write capability exists only where the deployment took the `Trusted` arm: a `Disabled` deployment cannot mint the block at all, rather than relying on a caller to consult a selector"
+path = "mcp-re-http-profile/src/context/policy.rs"
+anchor = """
+            VerifiedContextPolicy::Disabled => None,
+"""
+weakening = """
+            VerifiedContextPolicy::Disabled => Some(TrustedInnerChannel(PhantomData)),
+"""
+expect_red = [
+  "lib#context::policy::tests::only_the_trusted_deployment_yields_the_carrier_capability",
+  "lib#context::policy::tests::the_default_deployment_cannot_carry_the_block",
+]
+note = """
+This is the conjunct that makes the capability a capability. With the weakening the type
+still exists, `insert_verified_context` still demands it, and every call site still reads as
+though the policy governs the write — while the default deployment now mints the PEP's
+conclusion into bodies it forwards. A `Disabled` deployment becoming a carrier is precisely
+what the witness was introduced to make unconstructible.
+"""
+
+[[probe]]
+id = "M406-a-decorated-received-block-fails-closed"
+unit = "http_profile.unauthenticated_context_claim"
+conjunct = "A block carrying a member this crate does not know fails closed as malformed, rather than being read for the members it does recognise"
+path = "mcp-re-http-profile/src/context/claim.rs"
+anchor = """
+#[serde(deny_unknown_fields)]
+"""
+weakening = """
+"""
+expect_red = [
+  "lib#context::claim::tests::a_decorated_block_is_refused",
+]
+note = """
+Removing `deny_unknown_fields` is a mechanism revert and not the removal of a decoration:
+unlike `#[serde(default)]` on an `Option`, which serde already implies, this attribute is
+the only thing that refuses an unknown member. Without it a sender can append a member the
+reader silently ignores, which is how a claim acquires a meaning the reader never agreed to.
+"""
+
+[[probe]]
+id = "M407-the-pep-owned-strip-runs-under-every-policy"
+unit = "proxy.verified_context_carrier_boundary"
+conjunct = "The PEP-owned `_meta` keys are removed from every request REGARDLESS of policy, so a deployment with the carrier disabled is not one forwarded body away from delivering caller-authored context"
+path = "mcp-re-proxy/src/http_profile_serve/body_boundary.rs"
+anchor = """
+            None => stripped.bytes().to_vec(),
+"""
+weakening = """
+            None => body.to_vec(),
+"""
+expect_red = [
+  "lib#http_profile_serve::body_boundary::tests::prepare_strips_the_reserved_key_under_every_policy",
+]
+note = """
+The weakening keeps the strip — `strip_pep_owned` still runs, still reports the seeded
+positions, and the diagnostic line a caller's attempt produces is unchanged — and merely
+forwards the ORIGINAL bytes on the untrusted arm. That is the defect in its most plausible
+form: an optimisation that avoids a copy on the path where the PEP writes nothing, taken by
+someone who reasoned that a deployment which carries no context has nothing to protect.
+"""
+
+# ---------------------------------------------------------------------------
 # The admission store's retention promise — the CALL SITE, and why it needed a probe
 # ---------------------------------------------------------------------------
 #
