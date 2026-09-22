@@ -60,7 +60,8 @@ use crate::async_serve::AsyncRequestHandler;
 use crate::tls::ServerOptions;
 
 mod core_runtime;
-use core_runtime::build_core_runtime;
+pub use core_runtime::CorePool;
+pub use core_runtime::HandshakeBound;
 
 /// The `listen(2)` backlog for each per-core `SO_REUSEPORT` listener. A generous
 /// default: the kernel bounds it to `net.core.somaxconn` anyway, and admission
@@ -194,6 +195,12 @@ where
     // cores (each core enforces its own share; no shared global semaphore).
     let options = apply_global_admission(options, cfg.max_in_flight_total, cores);
 
+    // The per-core runtime shape and the blocking-handshake bound that shape supports,
+    // decided once from the resolved depth and this deployment's signing custody. Every
+    // core of a fleet is the same shape, so the decision is taken here and not per core.
+    let pool = CorePool::for_core(workers_per_shard, &options);
+    let handshake_bound = pool.handshake_bound();
+
     // Bind the first listener to resolve the concrete port (cfg.addr may be `:0`),
     // then bind the remaining listeners to that resolved address so the whole fleet
     // shares ONE port via SO_REUSEPORT.
@@ -211,7 +218,7 @@ where
         // failure. Neither is an invariant of this program — `build` allocates threads and
         // an event loop, `set_nonblocking` is an `fcntl` — and a core the OS declines must
         // not leave the fleet reporting a successful bind with one fewer server behind it.
-        let runtime = build_core_runtime(core_index, workers_per_shard, &options)?;
+        let runtime = pool.build_runtime(core_index)?;
         listener.set_nonblocking(true)?;
         let config = Arc::clone(&config);
         let options = Arc::clone(&options);
@@ -225,23 +232,8 @@ where
                 // failure to pin is ignored (logged nowhere hot).
                 pin_current_thread_to_core(core_index);
 
-                // One current-thread runtime per core is the share-nothing default
-                // (ADR-MCPRE-051 §1): no work stealing, no cross-core hot-path state.
-                //
-                // DELEGATED TLS custody breaks the assumption that runtime holds. The
-                // handshake signature is produced by rustls' SYNCHRONOUS
-                // `Signer::sign`, which on that path is a blocking KMS round trip or a
-                // PKCS#11 `C_Sign`. On a current-thread runtime one such call freezes
-                // the core outright — its accept loop, its keep-alive connections and
-                // every in-flight signed request — for the duration, and no timer can
-                // preempt it because the future never yields. Any peer opening
-                // connections triggers it, so it is a trivially-reachable DoS.
-                //
-                // Those deployments get a small worker pool per core instead, so a
-                // stalled signature costs one worker rather than a whole core. The
-                // share-nothing default is unchanged for the exported-key path, where
-                // signing is in-memory and never blocks.
-                // See `build_core_runtime` for which runtime this core got and why.
+                // `CorePool` decided which runtime this core got and how much blocking
+                // handshake work it may admit onto it; both are stated there, once.
                 runtime.block_on(async move {
                     // Class A. `from_std` needs a non-blocking socket — established
                     // before this thread was spawned — and a runtime context, which is
@@ -251,7 +243,15 @@ where
                     #[allow(clippy::expect_used)]
                     let listener = tokio::net::TcpListener::from_std(listener)
                         .expect("the listener registers with the runtime running it");
-                    serve(listener, config, options, handler, shutdown).await;
+                    serve(
+                        listener,
+                        config,
+                        options,
+                        handler,
+                        shutdown,
+                        handshake_bound,
+                    )
+                    .await;
                 });
             })?;
         workers.push(worker);
@@ -310,16 +310,6 @@ pub fn derived_per_core_ceiling(
         (None, None) => None,
     }
 }
-
-/// Worker threads per core when the TLS handshake signature can block.
-///
-/// Sized so a handful of concurrent stalled handshakes still leaves the core serving.
-/// It is not a throughput knob: on the exported-key path the runtime stays
-/// single-threaded, and raising this would not make a wedged token any less wedged —
-/// it only widens the window before the pool is exhausted.
-/// `pub(crate)` so `async_serve`'s handshake bound can be checked AGAINST it rather than
-/// against a copy of its value. The two constants are one decision.
-pub(crate) const DELEGATED_TLS_WORKERS_PER_CORE: usize = 4;
 
 /// Resolve the configured core count: `0` → [`std::thread::available_parallelism`]
 /// (min 1), otherwise the configured value.

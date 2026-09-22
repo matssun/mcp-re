@@ -10347,3 +10347,97 @@ weakening = "            Err(CurrentPeerRefusal::CredentialNotCurrent(_)) => Ok(
 expect_red = [
   "lib#communication_assurance::authenticated_channel_peer::tests::a_refused_credential_becomes_no_peer_rather_than_an_unexamined_one",
 ]
+
+# ---------------------------------------------------------------------------
+# r12 R12-647/R12-648 — the handshake bound is a function of the BUILT depth
+# ---------------------------------------------------------------------------
+
+[[probe]]
+id = "M409-the-handshake-bound-is-read-from-the-built-depth"
+unit = "proxy.core_pool_handshake_bound"
+conjunct = "The blocking-handshake bound is derived from the depth the core was ACTUALLY built with, not from a constant that never saw the depth"
+path = "mcp-re-proxy/src/async_fleet/core_runtime.rs"
+anchor = """
+                depth
+                    .saturating_sub(1)
+                    .min(DELEGATED_TLS_HANDSHAKES_PER_CORE),
+"""
+weakening = """
+                DELEGATED_TLS_HANDSHAKES_PER_CORE,
+"""
+expect_red = [
+  "lib#async_fleet::core_runtime::tests::the_bound_follows_the_built_depth_and_is_capped_by_the_ceiling",
+  "lib#async_serve::admission_bound_tests::the_handshake_bound_leaves_workers_for_the_rest_of_the_core",
+]
+note = """
+THE WEAKENING IS THE DEFECT VERBATIM, restored. It is what the tree shipped: a constant
+bound beside a resolved depth, agreeing only on the configurations nobody was running into
+trouble on. At a built depth of 2 it admits two concurrent blocking handshakes onto two
+workers, and a peer with NO client credential occupies both — TLS 1.3 signs
+`CertificateVerify` before the client's `Certificate` is seen.
+
+WHY THE OLD GUARD COULD NOT SEE IT. `the_handshake_bound_leaves_workers_for_the_rest_of_the
+_core` used to compare `DELEGATED_TLS_WORKERS_PER_CORE` with
+`DELEGATED_TLS_HANDSHAKES_PER_CORE` — two constants, neither of which the builder used on
+the failing path — and stayed green throughout. Its own doc comment said "a guard on a
+literal only looks load-bearing". It is named in `expect_red` here because it is now a
+statement over the FUNCTION across every resolvable depth, which is what makes it able to
+fail.
+"""
+
+[[probe]]
+id = "M410-the-ceiling-does-not-rise-with-the-pool"
+unit = "proxy.core_pool_handshake_bound"
+conjunct = "A wider pool does not silently raise how much blocking KMS or PKCS#11 work one core carries at once — the ceiling caps the bound from above"
+path = "mcp-re-proxy/src/async_fleet/core_runtime.rs"
+anchor = """
+                depth
+                    .saturating_sub(1)
+                    .min(DELEGATED_TLS_HANDSHAKES_PER_CORE),
+"""
+weakening = """
+                depth.saturating_sub(1),
+"""
+expect_red = [
+  "lib#async_fleet::core_runtime::tests::the_bound_follows_the_built_depth_and_is_capped_by_the_ceiling",
+]
+note = """
+A SEPARATE CONJUNCT WITH A SEPARATE CONTROL, and measured to be so: this weakening leaves
+`the_handshake_bound_leaves_workers_for_the_rest_of_the_core` GREEN, because `depth - 1` is
+still strictly below `depth` at every depth. Only the depth table sees it. Without this
+probe the ceiling would be an unfalsified clause sitting inside a unit whose other clause is
+well pinned — which is the shape this registry exists to catch.
+
+Widening the ceiling is a throughput change with its own argument to make; it is not a
+consequence of an operator choosing more workers.
+"""
+
+[[probe]]
+id = "M411-the-bound-reaches-the-semaphore"
+unit = "proxy.core_pool_handshake_bound"
+conjunct = "The bound the pool derived is the one the core's handshake semaphore is sized from — taking it and then sizing from a literal is not admitting what the pool decided"
+path = "mcp-re-proxy/src/async_serve/core_admission.rs"
+anchor = """
+            handshakes: handshake_bound
+                .permits()
+                .map(|permits| Arc::new(tokio::sync::Semaphore::new(permits))),
+"""
+weakening = """
+            handshakes: handshake_bound
+                .permits()
+                .map(|_| Arc::new(tokio::sync::Semaphore::new(2))),
+"""
+expect_red = [
+  "lib#async_serve::core_admission::tests::the_handshake_semaphore_carries_the_pools_bound",
+]
+note = """
+THE HALF A STATEMENT ABOUT THE FUNCTION CANNOT CARRY. `for_core` can accept the derived
+bound and size the semaphore from a literal anyway, and until this control existed that
+mutation was invisible: MEASURED at 1516 passed, 0 failed across the whole default lane,
+caught only by `-D warnings` as dead code on the unused projection. Lint-backed is too
+fragile for the enforcement point of a critical — any future caller of `permits()` silences
+the dead-code signal while the wiring stays broken.
+
+The control observes the PERMIT COUNT rather than the fact that a function was called, which
+is why it survives that fragility.
+"""

@@ -10972,10 +10972,72 @@ tested_symbols = [
   "lib#serving_capabilities::tests::an_unopenable_retention_directory_refuses_startup_naming_the_flag",
 ]
 
+# ---------------------------------------------------------------------------
+# The per-core pool and the handshake bound are ONE decision — ADR-MCPRE-051 §1
+# ---------------------------------------------------------------------------
+#
+# r12's R12-647/R12-648. The pool depth and the blocking-handshake bound were decided in two
+# places from two different inputs, and they stopped agreeing: `build_core_runtime` used the
+# RESOLVED depth, `CoreAdmission::for_core` used a constant. A 2-cpu host resolved to two
+# workers and still admitted two concurrent blocking handshakes, so a peer holding NO client
+# credential — TLS 1.3 signs `CertificateVerify` before the client's `Certificate` is seen —
+# occupied both workers and froze the accept loop, the established connections and every
+# in-flight request on that core.
+#
+# WHAT MAKES THIS A UNIT RATHER THAN A FIXED BUG. The guard that existed to prevent exactly
+# this compared `DELEGATED_TLS_WORKERS_PER_CORE` with `DELEGATED_TLS_HANDSHAKES_PER_CORE` —
+# two constants, neither of which the builder used on the failing path — and was green
+# throughout. Its own doc comment said "a guard on a literal only looks load-bearing". The
+# proposition worth registering is not "the constants are ordered" but "the bound is a
+# function of the depth the core was ACTUALLY built with", which is a statement about a
+# function and is measured over the depths a fleet can resolve.
+
+[[unit]]
+id = "proxy.core_pool_handshake_bound"
+class = "V0"
+description = "The blocking-handshake bound a serving core admits is derived from the pool depth that core was actually built with, never from a constant: `CorePool` decides both from one input, the bound is `depth - 1` capped by a ceiling, and it is strictly below the depth at every depth a fleet can resolve — so a core under a full handshake flood always retains a worker for its accept loop, its established connections and its in-flight requests. The exported-key path, where the signature is in-memory and cannot block, keeps the share-nothing runtime and is bounded by nothing. Says nothing about what the RESOLVER does with an operator's stated depth, which is `proxy.fleet_topology_provenance`'s."
+paths = [
+  "mcp-re-proxy/src/async_fleet/core_runtime.rs",
+  # The consumer. The bound reaching the semaphore is the half a statement about the
+  # function cannot carry: `for_core` could take the bound and size the semaphore from a
+  # literal anyway, which was green across the whole 1516-test lane until its control
+  # existed.
+  "mcp-re-proxy/src/async_serve/core_admission.rs",
+  # CLOSURE, NOT CLAIM. `admission_bound_tests` — the control that states the relation over
+  # every resolvable depth — lives here, so a closure omitting this file would cite a
+  # battery whose source it does not measure and the guard could be rewritten under the
+  # same name without moving the fingerprint. That is the SF-1 defect, and the manifest
+  # gate refuses it. This unit claims nothing about the accept loop or the drain, which is
+  # `proxy.serving_drain`'s over the same file.
+  "mcp-re-proxy/src/async_serve/mod.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/serving/core_pool_handshake_bound",
+  "mutation://proxy/serving/core_pool_handshake_bound",
+]
+tested_symbols = [
+  # The relation, over every depth a fleet can resolve and both signing custodies.
+  "lib#async_serve::admission_bound_tests::the_handshake_bound_leaves_workers_for_the_rest_of_the_core",
+  # The depth table, which is what separates "bounded" from "bounded CORRECTLY": it is the
+  # only control that sees the ceiling being dropped, and the only one that sees depth 2
+  # admitting two.
+  "lib#async_fleet::core_runtime::tests::the_bound_follows_the_built_depth_and_is_capped_by_the_ceiling",
+  "lib#async_fleet::core_runtime::tests::a_delegated_tls_core_is_always_pooled_and_always_bounded",
+  # The negative halves. Without them the battery is satisfied by a pool that bounds
+  # everything, which would cost the exported-key path throughput for nothing.
+  "lib#async_fleet::core_runtime::tests::a_share_nothing_core_has_no_pool_and_no_handshake_bound",
+  "lib#async_fleet::core_runtime::tests::a_pool_without_delegated_tls_bounds_no_handshakes",
+  # The bound REACHING the semaphore, observed as a permit count rather than as a call.
+  "lib#async_serve::core_admission::tests::the_handshake_semaphore_carries_the_pools_bound",
+]
+
 [[unit]]
 id = "proxy.fleet_topology_provenance"
 class = "V0"
-description = "AN EXPLICITLY CONFIGURED FLEET TOPOLOGY IS CARRIED THROUGH UNCHANGED: a stated shard count and a stated worker depth are the ones the fleet runs, including the explicit `1` that restores the single-shard share-nothing deployment, so the serving runtime cannot disagree with the operator about the shape it was told to take. It is the provenance half ONLY. What the automatic path computes when nothing was stated — a shard per cpu, the depth it adds on top, and the floor of one shard of one worker — is a throughput and availability policy rather than a security posture, and it stays in the ADR-069 census under NP-147."
+description = "AN EXPLICITLY CONFIGURED FLEET TOPOLOGY IS RESOLVED UNCHANGED: a stated shard count and a stated worker depth survive topology resolution exactly as stated, including the explicit `1`, so the RESOLVER cannot disagree with the operator about the shape it was told to take. It is the provenance half of the resolver ONLY. What the automatic path computes when nothing was stated — a shard per cpu, the depth it adds on top, and the floor of one shard of one worker — is a throughput and availability policy rather than a security posture, and it stays in the ADR-069 census under NP-147. NAMED EXCEPTION, downstream of this unit: under delegated TLS custody (`ServerOptions::tls_signing_may_block`) `CorePool::for_core` raises a resolved depth of 1 to a multi-worker pool, because a current-thread runtime has no answer to a signature that blocks it outright. A stated `1` therefore reaches the resolver intact but does not reach the runtime. This unit claims nothing about the per-shard runtime builder — the previous wording said a stated depth was the one the fleet RUNS, which is the builder's answer and was false on exactly that path."
 # CLOSURE, NOT CLAIM. `core_runtime.rs` is here because `mod core_runtime;` in the file
 # above resolves to it and UC-1 requires a measured file's own modules to be measured —
 # a unit that fingerprinted the topology function while its sibling module could be
