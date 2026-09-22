@@ -9582,19 +9582,22 @@ id = "M337-proxy-an-explicit-worker-depth-is-not-capped"
 unit = "proxy.fleet_topology_provenance"
 theorem = "THM-0077"
 conjunct = "a serving component cannot disagree with the owner about what was configured"
+# RE-ADJUDICATED at the new implementation, not restored: Owner Ruling 7 made the resolver
+# return a `ShardDepth` so the depth's provenance survives it. The conjunct is unchanged and
+# the weakening is the same clamp, now applied inside the stated arm.
 path = "mcp-re-proxy/src/async_fleet/mod.rs"
 anchor = """
     let workers = if configured_workers != 0 {
-        configured_workers
+        ShardDepth::stated(configured_workers)
     } else {
-        DEFAULT_MAX_WORKERS_PER_SHARD.min(available).max(1)
+        ShardDepth::derived(DEFAULT_MAX_WORKERS_PER_SHARD.min(available).max(1))
     };
 """
 weakening = """
     let workers = if configured_workers != 0 {
-        DEFAULT_MAX_WORKERS_PER_SHARD.min(configured_workers)
+        ShardDepth::stated(DEFAULT_MAX_WORKERS_PER_SHARD.min(configured_workers))
     } else {
-        DEFAULT_MAX_WORKERS_PER_SHARD.min(available).max(1)
+        ShardDepth::derived(DEFAULT_MAX_WORKERS_PER_SHARD.min(available).max(1))
     };
 """
 expect_red = [
@@ -10511,4 +10514,69 @@ the dead-code signal while the wiring stays broken.
 
 The control observes the PERMIT COUNT rather than the fact that a function was called, which
 is why it survives that fragility.
+"""
+
+[[probe]]
+id = "M413-an-explicit-single-thread-under-delegated-tls-is-refused"
+unit = "proxy.delegated_tls_depth_refusal"
+conjunct = "an operator-stated `--workers-per-shard 1` under delegated TLS custody is REFUSED, not silently widened to a worker pool"
+# The weakening is the defect verbatim: delete the refusal and the code below widens the
+# stated 1 to four workers exactly as it did before Owner Ruling 7. It compiles, it serves,
+# the whole serving battery stays green, and the operator is told nothing.
+path = "mcp-re-proxy/src/async_fleet/core_runtime.rs"
+anchor = """
+        if options.tls_signing_may_block && stated_single_thread {
+            return Err(DelegatedTlsDepthRefusal);
+        }
+"""
+weakening = """
+        let _ = stated_single_thread;
+"""
+expect_red = [
+  "lib#async_fleet::core_runtime::tests::delegated_custody_with_a_stated_single_thread_is_refused",
+  "lib#async_fleet::core_runtime::tests::neither_half_of_the_refused_pair_refuses_on_its_own",
+  "lib#async_fleet::refusal_order_tests::the_delegated_tls_depth_refusal_precedes_the_first_bind",
+]
+note = """
+THE THREE CONTROLS ARE THREE DIFFERENT READINGS, not one fact counted three times: the
+decision itself, the decision being about a PAIR, and the decision happening before a
+listener exists. A registry holding only the first would attest a refusal that could be
+correct and still fire after the fleet was up.
+
+`a_share_nothing_core_has_no_pool_and_no_handshake_bound` and
+`delegated_custody_over_a_derived_depth_derives_the_safe_one` are deliberately absent, and
+must stay GREEN under this weakening: deleting a refusal cannot break the configurations
+that were never refused, and naming them would make the probe unsatisfiable for a reason
+that has nothing to do with the conjunct.
+"""
+
+[[probe]]
+id = "M414-a-stated-depth-and-a-derived-one-are-one-number-again"
+unit = "proxy.delegated_tls_depth_refusal"
+conjunct = "the resolver preserves WHOSE number the depth is, so an operator's explicit 1 and a single-cpu host's derived 1 remain distinguishable where the refusal is decided"
+# THE SUBTLER WEAKENING, and the shape the defect actually had. The refusal is untouched —
+# it is still there, still two-term, still before the bind. What is removed is the fact it
+# turns on: every resolved depth comes back as the host's, so no depth is ever
+# operator-stated and the condition can never be true. A refusal that cannot fire reads as
+# a refusal in every place a reader looks except the one that matters.
+path = "mcp-re-proxy/src/async_fleet/mod.rs"
+anchor = """
+        ShardDepth::stated(configured_workers)
+"""
+weakening = """
+        ShardDepth::derived(configured_workers)
+"""
+expect_red = [
+  "lib#async_fleet::topology_tests::a_resolved_depth_says_whether_the_operator_or_the_host_chose_it",
+  "lib#async_fleet::refusal_order_tests::the_delegated_tls_depth_refusal_precedes_the_first_bind",
+]
+note = """
+WHAT THIS PROBE ESTABLISHES THAT M413 CANNOT. M413 measures the decision; this measures its
+PREMISE. Provenance travelling from the resolver to the decision is the whole reason
+`ShardDepth` exists instead of a `usize`, and a type carrying a fact nothing preserves is
+the produced-but-not-consumed shape one step worse — consumed, and always the same value.
+
+`explicit_topology_is_never_overridden` stays green under it, correctly: the NUMBER still
+survives resolution, which is that unit's claim. Only the provenance is lost, and only the
+two controls above can see it.
 """

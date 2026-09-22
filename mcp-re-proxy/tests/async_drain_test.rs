@@ -328,8 +328,12 @@ where
             };
                 // The handshake bound belongs to the pool that built the runtime this loop
                 // runs on, so the harness derives it from the same depth it just built (6).
-                let handshake_bound =
-                    mcp_re_proxy::async_fleet::CorePool::for_core(6, &options).handshake_bound();
+                let handshake_bound = mcp_re_proxy::async_fleet::CorePool::for_core(
+                    mcp_re_proxy::async_fleet::ShardDepth::stated(6),
+                    &options,
+                )
+                .expect("a stated depth above one is a shape every custody has")
+                .handshake_bound();
                 async_serve::serve(
                     listener,
                     // The accept loop reads the serving config per connection from a

@@ -11167,7 +11167,9 @@ evidence = [
   "mutation://proxy/serving/core_pool_handshake_bound",
 ]
 tested_symbols = [
-  # The relation, over every depth a fleet can resolve and both signing custodies.
+  # The relation, over every depth a fleet can resolve and both signing custodies — and,
+  # since Owner Ruling 7, over both PROVENANCES, because a stated depth and a derived one
+  # are no longer the same input at 1.
   "lib#async_serve::admission_bound_tests::the_handshake_bound_leaves_workers_for_the_rest_of_the_core",
   # The depth table, which is what separates "bounded" from "bounded CORRECTLY": it is the
   # only control that sees the ceiling being dropped, and the only one that sees depth 2
@@ -11178,6 +11180,11 @@ tested_symbols = [
   # everything, which would cost the exported-key path throughput for nothing.
   "lib#async_fleet::core_runtime::tests::a_share_nothing_core_has_no_pool_and_no_handshake_bound",
   "lib#async_fleet::core_runtime::tests::a_pool_without_delegated_tls_bounds_no_handshakes",
+  # The derived-depth arm, which is where a delegated-TLS deployment now gets its pool
+  # from. Ruling 7 removed the stated-1 path into this arm, so without this control the
+  # only remaining evidence that the arm fires at all would be the two above — and neither
+  # of them is about delegated custody.
+  "lib#async_fleet::core_runtime::tests::delegated_custody_over_a_derived_depth_derives_the_safe_one",
   # The bound REACHING the semaphore, observed as a permit count rather than as a call.
   "lib#async_serve::core_admission::tests::the_handshake_semaphore_carries_the_pools_bound",
 ]
@@ -11185,7 +11192,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.fleet_topology_provenance"
 class = "V0"
-description = "AN EXPLICITLY CONFIGURED FLEET TOPOLOGY IS RESOLVED UNCHANGED: a stated shard count and a stated worker depth survive topology resolution exactly as stated, including the explicit `1`, so the RESOLVER cannot disagree with the operator about the shape it was told to take. It is the provenance half of the resolver ONLY. What the automatic path computes when nothing was stated — a shard per cpu, the depth it adds on top, and the floor of one shard of one worker — is a throughput and availability policy rather than a security posture, and it stays in the ADR-069 census under NP-147. NAMED EXCEPTION, downstream of this unit: under delegated TLS custody (`ServerOptions::tls_signing_may_block`) `CorePool::for_core` raises a resolved depth of 1 to a multi-worker pool, because a current-thread runtime has no answer to a signature that blocks it outright. A stated `1` therefore reaches the resolver intact but does not reach the runtime. This unit claims nothing about the per-shard runtime builder — the previous wording said a stated depth was the one the fleet RUNS, which is the builder's answer and was false on exactly that path."
+description = "AN EXPLICITLY CONFIGURED FLEET TOPOLOGY IS RESOLVED UNCHANGED: a stated shard count and a stated worker depth survive topology resolution exactly as stated, including the explicit `1`, so the RESOLVER cannot disagree with the operator about the shape it was told to take. It is the provenance half of the resolver ONLY. What the automatic path computes when nothing was stated — a shard per cpu, the depth it adds on top, and the floor of one shard of one worker — is a throughput and availability policy rather than a security posture, and it stays in the ADR-069 census under NP-147. THE NAMED EXCEPTION IS WITHDRAWN, because the behaviour it named is gone. It read: under delegated TLS custody `CorePool::for_core` raises a resolved depth of 1 to a multi-worker pool, so a stated `1` reaches the resolver intact but does not reach the runtime. Owner Ruling 7 made that silent widening a STARTUP REFUSAL, so a stated `1` now either reaches the runtime as stated (exported key) or refuses the deployment (delegated custody) — it is never converted. What survives is that a DERIVED depth of 1 is still raised, which is the resolver filling in rather than overriding and is `proxy.delegated_tls_depth_refusal`'s to state. This unit still claims nothing about the per-shard runtime builder."
 # CLOSURE, NOT CLAIM. `core_runtime.rs` is here because `mod core_runtime;` in the file
 # above resolves to it and UC-1 requires a measured file's own modules to be measured —
 # a unit that fingerprinted the topology function while its sibling module could be
@@ -11208,6 +11215,74 @@ evidence = [
 # would put a control that cannot fail inside a battery.
 tested_symbols = [
   "lib#async_fleet::topology_tests::explicit_topology_is_never_overridden",
+]
+
+# ---------------------------------------------------------------------------
+# The one serving topology with no safe shape — Owner Ruling 7
+# ---------------------------------------------------------------------------
+#
+# The two units above divide the topology between them: one says a stated shape survives
+# resolution, the other says the handshake bound follows the depth actually built. Between
+# them sat a configuration neither could refuse, because neither was about a PAIR.
+#
+# An explicit `--workers-per-shard 1` is how an operator asks for the single-threaded
+# share-nothing runtime. Under delegated TLS custody the handshake signature is a blocking
+# KMS or PKCS#11 round trip inside rustls' synchronous `Signer::sign`, so one such call
+# freezes the whole core — accept loop, keep-alive connections, every in-flight request —
+# for a peer that needs no credential to open the connection. The tree's answer was to
+# widen the depth to four workers and say nothing, which serves a topology the operator was
+# explicit about not wanting on the axis they were most explicit about.
+#
+# WHY IT IS A UNIT AND NOT A CLAUSE. Neither half is a defect: an exported key with a
+# stated 1 is fine, and delegated custody over a DERIVED 1 is fine and is raised for the
+# same reason. Only the conjunction has no safe shape, and a proposition about a pair
+# cannot be carried by a unit whose description is about one of its terms — which is
+# exactly how the configuration reached the runtime unrefused while both neighbours were
+# green.
+
+[[unit]]
+id = "proxy.delegated_tls_depth_refusal"
+class = "V0"
+description = "A DEPLOYMENT WHOSE OPERATOR EXPLICITLY ASKED FOR THE SINGLE-THREADED SHARE-NOTHING RUNTIME AND WHOSE TLS CUSTODY IS DELEGATED IS REFUSED AT STARTUP, BEFORE ANY LISTENER IS BOUND OR RUNTIME BUILT, rather than being silently widened to a worker pool. The refusal turns on the PAIR: an exported key with a stated depth of 1 is served as asked, a derived depth of 1 under delegated custody is raised to the safe depth because `auto` is the operator declining to choose, and a stated depth of 2 or more is honoured exactly. The depth's provenance is carried by `ShardDepth` rather than reconstructed, so the resolver cannot collapse the two meanings of 1. There is no acknowledgement or unsafe flag. Says nothing about what the bound then is — that is `proxy.core_pool_handshake_bound`'s — and nothing about the automatic path's throughput policy, which stays in the ADR-069 census under NP-147."
+paths = [
+  # Where the decision is, and the type that makes it possible.
+  "mcp-re-proxy/src/async_fleet/core_runtime.rs",
+  "mcp-re-proxy/src/async_fleet/shard_depth.rs",
+  # The ORDERING half: the resolver that produces the provenance, and the one call site
+  # that must consult the decision before it binds anything. A closure without this file
+  # would attest a refusal while the line that has to come first could move.
+  "mcp-re-proxy/src/async_fleet/mod.rs",
+]
+exported_contracts = []
+# TWO classes. The refusal is one `return Err` reached by a two-term condition, and the
+# ordering is one statement's position in a function — both are deletable while the tree
+# still builds and every other serving control stays green. M413 deletes the refusal; M414
+# turns the pair back into the silent widening by reading the depth without its provenance.
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/async_fleet/delegated_tls_depth_refusal",
+  "mutation://proxy/async_fleet/delegated_tls_depth_refusal",
+]
+tested_symbols = [
+  # THE FOUR CASES the ruling names, one control each.
+  "lib#async_fleet::core_runtime::tests::a_share_nothing_core_has_no_pool_and_no_handshake_bound",
+  "lib#async_fleet::core_runtime::tests::delegated_custody_with_a_stated_single_thread_is_refused",
+  "lib#async_fleet::core_runtime::tests::delegated_custody_over_a_derived_depth_derives_the_safe_one",
+  "lib#async_fleet::core_runtime::tests::the_bound_follows_the_built_depth_and_is_capped_by_the_ceiling",
+  # THE PAIR, stated as a pair: neither term refuses alone. Without it the four above are
+  # satisfied by a rule that refuses delegated custody outright, or every stated 1.
+  "lib#async_fleet::core_runtime::tests::neither_half_of_the_refused_pair_refuses_on_its_own",
+  # THE PROVENANCE, at the resolver that spends `0 = auto`. This is the fact the refusal
+  # turns on, and it is established one layer before the refusal can see it.
+  "lib#async_fleet::topology_tests::a_resolved_depth_says_whether_the_operator_or_the_host_chose_it",
+  # BEFORE THE FIRST BIND, driven through `serve_fleet` itself against an address no host
+  # can bind — so a run that reached the listener loop fails with an OS error instead, and
+  # the two verdicts are distinguishable. The second is the positive control: an admitted
+  # configuration DOES reach the bind, which is what stops the first from being satisfied
+  # by a fleet that refuses everything.
+  "lib#async_fleet::refusal_order_tests::the_delegated_tls_depth_refusal_precedes_the_first_bind",
+  "lib#async_fleet::refusal_order_tests::an_admitted_configuration_reaches_the_listener_and_fails_there",
 ]
 
 [[unit]]

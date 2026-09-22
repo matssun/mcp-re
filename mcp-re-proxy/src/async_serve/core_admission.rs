@@ -126,7 +126,11 @@ mod tests {
             tls_signing_may_block: true,
             ..Default::default()
         };
-        let pool = crate::async_fleet::CorePool::for_core(2, &delegated);
+        let pool = crate::async_fleet::CorePool::for_core(
+            crate::async_fleet::ShardDepth::stated(2),
+            &delegated,
+        )
+        .expect("a stated depth of two is a shape delegated custody has");
         let admission = CoreAdmission::for_core(&delegated, pool.handshake_bound());
         let handshakes = admission
             .handshakes
@@ -142,7 +146,11 @@ mod tests {
         // no control, and the bound is not free — it costs a handshake round of
         // concurrency wherever it applies.
         let exported = ServerOptions::default();
-        let pool = crate::async_fleet::CorePool::for_core(2, &exported);
+        let pool = crate::async_fleet::CorePool::for_core(
+            crate::async_fleet::ShardDepth::stated(2),
+            &exported,
+        )
+        .expect("an exported key admits every depth");
         let admission = CoreAdmission::for_core(&exported, pool.handshake_bound());
         assert!(
             admission.handshakes.is_none(),

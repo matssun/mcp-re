@@ -445,29 +445,46 @@ mod admission_bound_tests {
     /// same value the runtime was built from.
     #[test]
     fn the_handshake_bound_leaves_workers_for_the_rest_of_the_core() {
-        // Every depth a fleet can resolve, under both signing custodies.
-        let cases = (1..=16usize).flat_map(|depth| [(depth, false), (depth, true)]);
+        // Every depth a fleet can RESOLVE, under both signing custodies and both
+        // provenances — `resolve_topology` produces a stated depth or a derived one, and
+        // the pair (delegated custody, stated 1) is refused rather than resolved, so it is
+        // not a depth a fleet can reach and is excluded here. Its own controls are
+        // `async_fleet::core_runtime`'s.
+        let depths = (1..=16usize).flat_map(|depth| {
+            [
+                crate::async_fleet::ShardDepth::stated(depth),
+                crate::async_fleet::ShardDepth::derived(depth),
+            ]
+        });
+        let cases = depths.flat_map(|depth| [(depth, false), (depth, true)]);
         for (depth, tls_signing_may_block) in cases {
             let options = ServerOptions {
                 tls_signing_may_block,
                 ..Default::default()
             };
-            let pool = crate::async_fleet::CorePool::for_core(depth, &options);
+            let Ok(pool) = crate::async_fleet::CorePool::for_core(depth, &options) else {
+                assert!(
+                    tls_signing_may_block && depth == crate::async_fleet::ShardDepth::stated(1),
+                    "{depth:?}: only the operator-stated single thread under delegated \
+                     custody has no safe shape"
+                );
+                continue;
+            };
             let Some(permits) = pool.handshake_bound().permits() else {
                 assert!(
                     !tls_signing_may_block,
-                    "depth={depth}: a blocking signature must always be bounded"
+                    "{depth:?}: a blocking signature must always be bounded"
                 );
                 continue;
             };
             let built = pool.worker_threads().expect("a bounded core runs a pool");
             // A bound of zero would refuse every handshake.
-            assert!(permits >= 1, "depth={depth}: a bound of zero");
+            assert!(permits >= 1, "{depth:?}: a bound of zero");
             // The PROPERTY: a core under a full handshake flood still has a worker for its
             // accept loop, its established connections and its in-flight requests.
             assert!(
                 permits < built,
-                "depth={depth}: {permits} handshakes on {built} workers leaves none \
+                "{depth:?}: {permits} handshakes on {built} workers leaves none \
                  for the rest of the core"
             );
         }
