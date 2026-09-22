@@ -16,8 +16,6 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use mcp_re_core::SigningKey;
-use mcp_re_http_profile::context::ClaimedAudience;
-use mcp_re_http_profile::context::ClaimedExpiry;
 use mcp_re_http_profile::extract_verified_context;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::ActorIdentity;
@@ -262,17 +260,12 @@ async fn trusted_channel_carries_the_peps_verified_context() {
     assert_eq!(ctx.claimed_profile(), PROFILE_TAG);
     assert_eq!(ctx.claimed_verified_at(), NOW);
     // The block the PEP writes always states its audience, so an inner server reading
-    // this channel never has to decide what silence meant.
-    match ctx.claimed_audience() {
-        ClaimedAudience::Stated(tuple) => assert_eq!(tuple.audience_id, AUDIENCE),
-        ClaimedAudience::NotStated => panic!("the PEP's own block states its audience"),
-    }
+    // this channel never has to decide what silence meant — and since Owner Ruling 8
+    // the reader refuses a block that omitted it, so silence is not a case at all.
+    assert_eq!(ctx.claimed_audience().audience_id, AUDIENCE);
     // The conclusion carries the expiry of the signature it was drawn from, so a
     // consumer can bound it rather than treat a copied block as timeless.
-    assert_eq!(
-        ctx.claimed_request_expires(),
-        ClaimedExpiry::Stated(EXPIRES)
-    );
+    assert_eq!(ctx.claimed_request_expires(), EXPIRES);
 }
 
 #[tokio::test]

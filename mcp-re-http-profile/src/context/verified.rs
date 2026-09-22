@@ -10,6 +10,7 @@ use crate::evidence::RequestEvidence;
 use crate::ids::VERIFIED_CONTEXT_BLOCK_KEY;
 use crate::verified_request::VerifiedMcpRequest;
 
+use super::block_schema::BlockSchema;
 use super::policy::TrustedInnerChannel;
 use super::reserved_key_strip::StrippedBody;
 
@@ -30,8 +31,14 @@ use super::reserved_key_strip::StrippedBody;
 /// with no trailing clause about what the construction site remembered. What
 /// arrives on a channel is [`super::UnauthenticatedContextClaim`] instead, because
 /// bytes off a wire establish nothing and must not share a type with this.
+///
+/// The block DECLARES ITS OWN SHAPE (Owner Ruling 8). `block_schema` is a zero-sized
+/// type with one inhabitant, so the writer emits the current discriminator on every
+/// block and there is no value it could emit instead — "always emit it" is the
+/// representation rather than a line anyone has to keep writing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct VerifiedContext {
+    block_schema: BlockSchema,
     profile: String,
     actor_id: String,
     key_id: String,
@@ -50,6 +57,7 @@ impl VerifiedContext {
     /// The two are independent readings, not an ordered pair.
     pub fn from_verified(verified: &VerifiedMcpRequest, verified_at: i64) -> Self {
         VerifiedContext {
+            block_schema: BlockSchema,
             profile: verified.profile_id().to_owned(),
             actor_id: verified.resolved_actor().actor_id(),
             key_id: verified.key_id().to_owned(),
@@ -149,8 +157,6 @@ mod tests {
     use crate::block::SignerSlot;
     use crate::context::extract_verified_context;
     use crate::context::strip_proxy_owned_meta;
-    use crate::context::ClaimedAudience;
-    use crate::context::ClaimedExpiry;
     use crate::context::VerifiedContextPolicy;
     use crate::verified_request::floor::CryptographicFloorVerifiedRequest;
     use mcp_re_core::SigningKey;
@@ -263,9 +269,14 @@ mod tests {
         assert_eq!(v["jsonrpc"], serde_json::json!("2.0"), "the body survives");
     }
 
-    /// What this PEP WRITES, this PEP's reader READS, with nothing NotStated — the
+    /// What this PEP WRITES, this PEP's reader READS, with nothing unstated — the
     /// one place in the default lane where the two independently maintained field
     /// lists meet.
+    ///
+    /// Since Owner Ruling 8 it carries a second fact: the two lists agree on the
+    /// SCHEMA too. The writer's discriminator is the one the reader requires, so
+    /// this crate cannot emit blocks its own reader refuses — which is the failure a
+    /// mandatory discriminator introduces and the one nothing else would catch.
     #[test]
     fn what_the_writer_emits_the_reader_accepts_with_nothing_unstated() {
         let out = write_block(ORDINARY_BODY).expect("the block is written");
@@ -275,15 +286,21 @@ mod tests {
         assert_eq!(claim.claimed_profile(), ctx.profile());
         assert_eq!(claim.claimed_key_id(), ctx.key_id());
         assert_eq!(claim.claimed_verified_at(), ctx.verified_at());
+        assert_eq!(claim.claimed_request_expires(), ctx.request_expires());
+        assert_eq!(claim.claimed_audience(), ctx.audience());
+    }
+
+    /// THE DISCRIMINATOR IS ON THE WIRE, not merely in the type. A block the writer
+    /// emitted without it would still round-trip through a reader that had stopped
+    /// requiring it, so the emitted BYTES are asserted rather than the round trip.
+    #[test]
+    fn the_written_block_declares_the_current_schema() {
+        let out = write_block(ORDINARY_BODY).expect("the block is written");
+        let v: serde_json::Value = serde_json::from_slice(&out).expect("json out");
         assert_eq!(
-            claim.claimed_request_expires(),
-            ClaimedExpiry::Stated(ctx.request_expires()),
-            "a member the writer always emits must never read as NotStated"
+            v["_meta"][VERIFIED_CONTEXT_BLOCK_KEY]["block_schema"],
+            serde_json::json!(super::super::block_schema::VERIFIED_CONTEXT_BLOCK_SCHEMA),
         );
-        match claim.claimed_audience() {
-            ClaimedAudience::Stated(tuple) => assert_eq!(tuple, ctx.audience()),
-            ClaimedAudience::NotStated => panic!("the writer always states its audience"),
-        }
     }
 
     /// A caller-supplied non-object `_meta` occupies the PEP's write position, and

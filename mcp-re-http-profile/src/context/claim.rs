@@ -14,6 +14,8 @@ use crate::error::HttpProfileError;
 use crate::evidence::RequestEvidence;
 use crate::ids::VERIFIED_CONTEXT_BLOCK_KEY;
 
+use super::block_schema::BlockSchema;
+
 /// A verified-context block as READ from a body — an assertion, not a conclusion.
 ///
 /// Distinct from [`super::VerifiedContext`] because the two have different evidence
@@ -21,70 +23,42 @@ use crate::ids::VERIFIED_CONTEXT_BLOCK_KEY;
 /// [`super::VerifiedContext`] exists only because this crate's verifier produced
 /// it; one of these exists because some bytes deserialized.
 ///
-/// Every member this PEP writes is REQUIRED here except `audience` and
-/// `request_expires`, so a block missing one of the rest fails closed as malformed
-/// rather than arriving with a field quietly defaulted. Those two are optional
-/// because a sender may omit them and the honest model of the channel has to be
-/// able to say so — see [`ClaimedAudience`] and [`ClaimedExpiry`], whose absent
-/// variants a consumer must name before it can proceed.
+/// EVERY member this PEP writes is REQUIRED here, so a block missing one fails
+/// closed as malformed rather than arriving with a field quietly defaulted, and
+/// `deny_unknown_fields` refuses a decorated one.
 ///
-/// # Why the read is WIDER than the write, deliberately
+/// # One representation, declared (Owner Ruling 8)
 ///
-/// This PEP always emits both members, so on the producing side neither absent case
-/// occurs. The read keeps them because a reader and a writer are not required to be
-/// the same build: a rolling upgrade puts an older PEP's blocks in front of a newer
-/// reader, and a reader that refused them would turn a deployment sequence into an
-/// outage. The cost is stated rather than hidden: the read type accepts a block
-/// stating less than this PEP states, and a consumer that treats either absent
-/// variant permissively has given itself no audience constraint and no bound. The
-/// variants exist so that reading is a decision a consumer writes down.
+/// `audience` and `request_expires` used to be `Option` + `serde(default)`, to
+/// accept blocks written before those members existed. The block carried no shape
+/// discriminator, so "omitted because the writer predates the member" and "omitted
+/// deliberately" were the same bytes and the tolerance could never be withdrawn —
+/// there was nothing it could be withdrawn ON. On a block whose only integrity is
+/// the channel's isolation, that left any writer able to hand a consumer no
+/// audience constraint and no bound at will.
 ///
-/// Closing the window needs a block-shape version member, so that "written before
-/// the member existed" becomes a fact the reader can decide rather than infer. That
-/// is a change to the verified-context WIRE SCHEMA, which ADR-MCPS-008 governs and
-/// `docs/architecture/authorization.md` defers by name, so it is not made here.
+/// [`BlockSchema`] closes it. The block declares its own shape, exactly one shape is
+/// current, and a claim holding one has already had that checked. There is no
+/// absence-as-v1, no legacy parser and no second reader: when the representation
+/// changes, the constant changes and the tree migrates atomically.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UnauthenticatedContextClaim {
+    /// Evidence that the block declared the current representation.
+    ///
+    /// First in the struct, which is where a reader looks for it — NOT a claim about
+    /// evaluation order: serde visits a JSON object's members in the order the INPUT
+    /// carries them, so a block putting the discriminator last has its other members
+    /// visited first. That costs nothing, because a wrong or missing discriminator
+    /// fails the whole deserialization and no partial value escapes.
+    block_schema: BlockSchema,
     profile: String,
     actor_id: String,
     key_id: String,
-    #[serde(default)]
-    audience: Option<AudienceTuple>,
+    audience: AudienceTuple,
     request_evidence: RequestEvidence,
     verified_at: i64,
-    #[serde(default)]
-    request_expires: Option<i64>,
-}
-
-/// What a received block says about audience, including that it said nothing.
-///
-/// [`ClaimedAudience::NotStated`] means the sender omitted the member. It does NOT
-/// mean "no audience constraint": a consumer holding this variant has been told
-/// nothing at all about which audience the block's author had in mind, and silence
-/// on the value that binds an identity to a target is not a permission.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ClaimedAudience<'a> {
-    /// The block stated an audience tuple. It is still only a claim.
-    Stated(&'a AudienceTuple),
-    /// The block carried no audience member.
-    NotStated,
-}
-
-/// What a received block says about the expiry of the signature its conclusion was
-/// drawn from, including that it said nothing.
-///
-/// [`ClaimedExpiry::NotStated`] means the sender omitted the member — which a block
-/// written before the member existed does. It does NOT mean the conclusion does not
-/// expire: a consumer holding this variant has been given no bound at all, and a
-/// claim with no bound is the one a copy can outlive.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ClaimedExpiry {
-    /// The block stated the signature expiry its conclusion was drawn under. It is
-    /// still only a claim.
-    Stated(i64),
-    /// The block carried no `request_expires` member.
-    NotStated,
+    request_expires: i64,
 }
 
 impl UnauthenticatedContextClaim {
@@ -104,12 +78,10 @@ impl UnauthenticatedContextClaim {
         &self.key_id
     }
 
-    /// What the block says about audience, or that it says nothing.
-    pub fn claimed_audience(&self) -> ClaimedAudience<'_> {
-        match self.audience.as_ref() {
-            Some(tuple) => ClaimedAudience::Stated(tuple),
-            None => ClaimedAudience::NotStated,
-        }
+    /// The audience tuple the block CLAIMS the request was bound to. Present
+    /// unconditionally: a block that omitted it is not a block this reader produces.
+    pub fn claimed_audience(&self) -> &AudienceTuple {
+        &self.audience
     }
 
     /// The request-evidence handle the block claims.
@@ -122,14 +94,13 @@ impl UnauthenticatedContextClaim {
         self.verified_at
     }
 
-    /// What the block says about the signature expiry its conclusion was drawn
-    /// under — the bound a consumer needs to decide whether this is still a
-    /// conclusion at all, or that the block offered none.
-    pub fn claimed_request_expires(&self) -> ClaimedExpiry {
-        match self.request_expires {
-            Some(expires) => ClaimedExpiry::Stated(expires),
-            None => ClaimedExpiry::NotStated,
-        }
+    /// The signature expiry the block CLAIMS its conclusion was drawn under — the
+    /// bound a consumer needs to decide whether this is still a conclusion at all.
+    ///
+    /// Present unconditionally, which is what the discriminator bought: a consumer no
+    /// longer has an absent case to handle permissively. It is still only a claim.
+    pub fn claimed_request_expires(&self) -> i64 {
+        self.request_expires
     }
 }
 
@@ -146,6 +117,7 @@ pub fn extract_verified_context(
 
 #[cfg(test)]
 mod tests {
+    use super::super::block_schema::VERIFIED_CONTEXT_BLOCK_SCHEMA;
     use super::*;
 
     fn body_with(block: serde_json::Value) -> Vec<u8> {
@@ -158,6 +130,7 @@ mod tests {
 
     fn full_block() -> serde_json::Value {
         serde_json::json!({
+            "block_schema": VERIFIED_CONTEXT_BLOCK_SCHEMA,
             "profile": "p",
             "actor_id": "client:example.com:did%3Aexample%3Aa:k",
             "key_id": "k",
@@ -171,75 +144,96 @@ mod tests {
         })
     }
 
-    /// POSITIVE CONTROL: an ordinary complete block still reads, through the
-    /// projections, with the audience STATED.
+    fn without(member: &str) -> serde_json::Value {
+        let mut block = full_block();
+        block
+            .as_object_mut()
+            .expect("object fixture")
+            .remove(member);
+        block
+    }
+
+    /// POSITIVE CONTROL: an ordinary complete block still reads, through every
+    /// projection.
     #[test]
     fn a_complete_block_reads_through_the_claimed_projections() {
         let claim = extract_verified_context(&body_with(full_block())).expect("a complete block");
         assert_eq!(claim.claimed_profile(), "p");
         assert_eq!(claim.claimed_key_id(), "k");
         assert_eq!(claim.claimed_verified_at(), 1_700_000_100);
-        assert_eq!(
-            claim.claimed_request_expires(),
-            ClaimedExpiry::Stated(1_700_000_300)
-        );
+        assert_eq!(claim.claimed_request_expires(), 1_700_000_300);
         assert_eq!(claim.claimed_request_evidence().digest_value, "AAAA");
-        match claim.claimed_audience() {
-            ClaimedAudience::Stated(tuple) => assert_eq!(tuple.audience_id, "aud"),
-            ClaimedAudience::NotStated => panic!("the block stated an audience"),
-        }
+        assert_eq!(claim.claimed_audience().audience_id, "aud");
     }
 
-    /// An omitted audience is REPORTED as omitted rather than arriving as a value a
-    /// consumer can mistake for "no audience constraint".
+    /// OWNER RULING 8: a MISSING discriminator is refused. It is the case
+    /// absence-as-v1 would have admitted, and the one the ruling names first.
     #[test]
-    fn an_omitted_audience_is_not_stated_rather_than_absent() {
-        let mut block = full_block();
-        block
-            .as_object_mut()
-            .expect("object fixture")
-            .remove("audience");
-        let claim = extract_verified_context(&body_with(block)).expect("audience is optional");
-        assert_eq!(claim.claimed_audience(), ClaimedAudience::NotStated);
-    }
-
-    /// COMPATIBILITY POSITIVE CONTROL: a block written without `request_expires` —
-    /// which is every block written before the member existed — still reads, and
-    /// reads as having said nothing rather than as having said "does not expire".
-    #[test]
-    fn a_block_without_an_expiry_reads_and_states_nothing_about_one() {
-        let mut block = full_block();
-        block
-            .as_object_mut()
-            .expect("object fixture")
-            .remove("request_expires");
-        let claim =
-            extract_verified_context(&body_with(block)).expect("the member is additive, not new");
-        assert_eq!(claim.claimed_request_expires(), ClaimedExpiry::NotStated);
-        assert_eq!(
-            claim.claimed_actor_id(),
-            "client:example.com:did%3Aexample%3Aa:k",
-            "the rest of the block reads exactly as before"
+    fn a_block_with_no_schema_discriminator_is_refused() {
+        assert!(
+            extract_verified_context(&body_with(without("block_schema"))).is_err(),
+            "a block that does not declare its shape is not a block this reader accepts"
         );
     }
 
-    /// A block missing a member this PEP always writes is malformed, not defaulted.
+    /// OWNER RULING 8: an UNKNOWN discriminator is refused rather than read as the
+    /// current shape. A required field cannot state this half.
     #[test]
-    fn a_block_missing_a_required_member_fails_closed() {
-        for member in [
-            "profile",
-            "actor_id",
-            "key_id",
-            "request_evidence",
-            "verified_at",
+    fn a_block_declaring_another_schema_is_refused() {
+        for declared in [
+            serde_json::json!("se.syncom/mcp-re.verified-context/2"),
+            serde_json::json!("se.syncom/mcp-re.verified-context"),
+            serde_json::json!(""),
+            serde_json::json!(1),
         ] {
             let mut block = full_block();
             block
                 .as_object_mut()
                 .expect("object fixture")
-                .remove(member);
+                .insert("block_schema".to_owned(), declared.clone());
             assert!(
                 extract_verified_context(&body_with(block)).is_err(),
+                "{declared}: a schema this build does not write must not read as the one it does"
+            );
+        }
+    }
+
+    /// An omitted audience is REFUSED, not read as "no audience constraint".
+    ///
+    /// This was the compatibility window: the member was `Option` + `serde(default)`
+    /// so a block omitting it parsed and handed the consumer an absent variant. The
+    /// discriminator is what makes refusing it correct rather than a rolling-upgrade
+    /// outage — a block declaring the current schema and omitting the member is
+    /// malformed by definition.
+    #[test]
+    fn an_omitted_audience_is_refused() {
+        assert!(extract_verified_context(&body_with(without("audience"))).is_err());
+    }
+
+    /// The same, for the bound: a block declaring the current schema with no
+    /// `request_expires` is malformed, so no consumer is ever handed a claim with no
+    /// bound at all.
+    #[test]
+    fn a_block_without_an_expiry_is_refused() {
+        assert!(extract_verified_context(&body_with(without("request_expires"))).is_err());
+    }
+
+    /// A block missing a member this PEP always writes is malformed, not defaulted —
+    /// which since Owner Ruling 8 is EVERY member.
+    #[test]
+    fn a_block_missing_a_required_member_fails_closed() {
+        for member in [
+            "block_schema",
+            "profile",
+            "actor_id",
+            "key_id",
+            "audience",
+            "request_evidence",
+            "verified_at",
+            "request_expires",
+        ] {
+            assert!(
+                extract_verified_context(&body_with(without(member))).is_err(),
                 "{member}: an absent member must not default"
             );
         }

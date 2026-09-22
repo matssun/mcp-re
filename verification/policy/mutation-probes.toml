@@ -8416,6 +8416,72 @@ reader silently ignores, which is how a claim acquires a meaning the reader neve
 """
 
 [[probe]]
+id = "M415-an-unknown-block-schema-is-read-as-the-current-one"
+unit = "http_profile.verified_context_block_schema"
+conjunct = "a block naming a schema this build does not write is REFUSED, not read as the one it does"
+# The weakening keeps the discriminator required and drops only the comparison, which is
+# the half a required field cannot enforce: every block still declares a shape, and every
+# declared shape is now accepted. It is what "add a version member" looks like when the
+# reader never checks it.
+path = "mcp-re-http-profile/src/context/block_schema.rs"
+anchor = """
+        let declared = String::deserialize(deserializer)?;
+        if declared == VERIFIED_CONTEXT_BLOCK_SCHEMA {
+            return Ok(BlockSchema);
+        }
+"""
+weakening = """
+        let declared = String::deserialize(deserializer)?;
+        if !declared.is_empty() {
+            return Ok(BlockSchema);
+        }
+"""
+expect_red = [
+  "lib#context::block_schema::tests::a_schema_this_build_does_not_write_is_refused",
+  "lib#context::claim::tests::a_block_declaring_another_schema_is_refused",
+]
+note = """
+BOTH READINGS ARE NAMED because they are different lanes of the same fact: the first drives
+the type directly, the second drives a whole verified-context block through
+`extract_verified_context`. A registry holding only the first would attest a refusal that
+could be correct in the type and unreachable through the block.
+
+`a_block_with_no_schema_discriminator_is_refused` stays GREEN, correctly: an absent field
+never reaches this function, because serde refuses the block before `Deserialize` runs. It
+is named in no `expect_red` here for that reason, and its own falsifier would be making the
+field optional — which does not compile, since the type has no meaningful default that is
+not the current schema.
+"""
+
+[[probe]]
+id = "M416-the-writer-emits-a-schema-its-own-reader-refuses"
+unit = "http_profile.verified_context_block_schema"
+conjunct = "the discriminator the writer emits is the one the reader requires, so this build cannot produce blocks its own reader refuses"
+# THE FAILURE A MANDATORY DISCRIMINATOR INTRODUCES, and the reason the unit spans both
+# halves. The weakening changes only what is written. Every refusal above stays exactly as
+# correct as it was; what breaks is the agreement, and a PEP whose blocks its own inner
+# server rejects is an outage that no test of either half alone can see.
+path = "mcp-re-http-profile/src/context/block_schema.rs"
+anchor = """
+        serializer.serialize_str(VERIFIED_CONTEXT_BLOCK_SCHEMA)
+"""
+weakening = """
+        serializer.serialize_str("se.syncom/mcp-re.verified-context/2")
+"""
+expect_red = [
+  "lib#context::block_schema::tests::the_only_inhabitant_serializes_as_the_current_schema",
+  "lib#context::block_schema::tests::what_the_writer_emits_the_reader_accepts",
+  "lib#context::verified::tests::the_written_block_declares_the_current_schema",
+  "lib#context::verified::tests::what_the_writer_emits_the_reader_accepts_with_nothing_unstated",
+]
+note = """
+THE ROUND TRIP IS NOT ENOUGH ON ITS OWN, which is why the emitted BYTES are asserted too:
+a build that changed the constant in one place would keep every round trip green while
+writing a representation nothing else in the estate reads. Two of the four controls above
+read the wire form directly for exactly that reason.
+"""
+
+[[probe]]
 id = "M407-the-pep-owned-strip-runs-under-every-policy"
 unit = "proxy.verified_context_carrier_boundary"
 conjunct = "The PEP-owned `_meta` keys are removed from every request REGARDLESS of policy, so a deployment with the carrier disabled is not one forwarded body away from delivering caller-authored context"

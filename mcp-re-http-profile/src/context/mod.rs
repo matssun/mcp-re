@@ -47,6 +47,16 @@
 //!   projections are named so that reading it as a conclusion takes a deliberate
 //!   sentence.
 //!
+//! # The block declares its own shape
+//!
+//! Both types carry a `block_schema` discriminator, and `block_schema.rs` owns what it
+//! means: the writer emits the one current representation and has no other value it could
+//! emit, and a block with no discriminator, or one naming a schema this build does not
+//! write, is refused. There is no compatibility mode — Owner Ruling 8 and CLAUDE.md's
+//! general form. Without it "absent because the writer predates the member" and "absent
+//! because someone removed it" are the same bytes, and a tolerance for the first can never
+//! be withdrawn.
+//!
 //! # The deployment act is a capability, not a selector
 //!
 //! [`VerifiedContextPolicy::trusted_inner_channel`] is the only producer of a
@@ -80,6 +90,7 @@
 //! compiles only under the `async_serve` feature — a plain `cargo test --workspace`
 //! builds it to zero tests. Any claim about the served path must name that lane.
 
+mod block_schema;
 mod claim;
 mod policy;
 mod reserved_key_strip;
@@ -87,8 +98,6 @@ mod seeded_meta_positions;
 mod verified;
 
 pub use claim::extract_verified_context;
-pub use claim::ClaimedAudience;
-pub use claim::ClaimedExpiry;
 pub use claim::UnauthenticatedContextClaim;
 pub use policy::TrustedInnerChannel;
 pub use policy::VerifiedContextPolicy;

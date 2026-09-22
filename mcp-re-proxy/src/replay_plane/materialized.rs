@@ -310,6 +310,23 @@ mod tests {
     /// runtime, and handing it `None` would assert the runtime contract rather than
     /// reachability. One reachable state is enough to show such a build is a serving
     /// binary.
+    ///
+    /// # NOT EVIDENCE, and that is recorded here rather than left to be discovered
+    ///
+    /// Owner Ruling 9. This control is useful integration coverage and it is not
+    /// standalone assurance evidence, for a reason that is measured rather than
+    /// stylistic: **no falsifier can reach it.** It compiles only under `cpstore_etcd`,
+    /// a unit's `test_features` are ONE set for its whole battery, and
+    /// `proxy.replay_materialization` — the unit that owns this file — declares none, so
+    /// declaring this control there would claim default-lane evidence for a feature-lane
+    /// fact. No `cpstore_etcd` mutation probe exists anywhere in the registry either.
+    ///
+    /// Re-measured before this note was written, as the ruling required: the search was
+    /// for a narrower ADAPTER-LOCAL proposition with an independent falsifier, and there
+    /// is none. What this asserts is that a build with a backend linked can reach a state
+    /// — a composition-level fact, which NP-150 already classifies as having no single
+    /// unit owner. So it gets no unit, and it is not parked in assurance debt merely to
+    /// satisfy a census that cannot see it. It stays because it is worth running.
     #[cfg(feature = "cpstore_etcd")]
     #[test]
     fn a_build_linking_cpstore_etcd_reaches_the_linearizable_state() {

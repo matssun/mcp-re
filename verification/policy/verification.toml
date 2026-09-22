@@ -11712,7 +11712,7 @@ tested_symbols = [
 [[unit]]
 id = "http_profile.unauthenticated_context_claim"
 class = "V0"
-description = "That a verified-context block READ from a body is typed as the assertion it is, never as the conclusion a verifier drew. The read returns a distinct type whose projections are all named `claimed_`, a member the sender omitted is an explicit `NotStated` variant rather than an absence a consumer may read as `no constraint`, and a block missing a member the PEP always writes, or carrying an unknown one, fails closed as malformed."
+description = "That a verified-context block READ from a body is typed as the assertion it is, never as the conclusion a verifier drew: the read returns a distinct type whose projections are all named `claimed_`, and EVERY member the PEP writes is required, so a block missing one — or carrying an unknown one — fails closed as malformed rather than arriving with a field quietly defaulted. The `NotStated` clause this description used to carry is GONE, not weakened: `audience` and `request_expires` were `Option` + `serde(default)` for a compatibility window, and Owner Ruling 8 closed it, so there is no absent case for a consumer to read permissively. What makes closing it correct rather than a rolling-upgrade outage is the discriminator, which is `http_profile.verified_context_block_schema`'s."
 paths = [
   "mcp-re-http-profile/src/context/claim.rs",
 ]
@@ -11723,13 +11723,73 @@ evidence = [
   "test://http_profile/verified_context/received_claim_proof_strength",
   "mutation://http_profile/verified_context/received_claim_proof_strength",
 ]
+# TWO SYMBOLS RENAMED rather than deleted, because the property each one carried was
+# REPLACED by Owner Ruling 8 and its replacement belongs at the same site:
+# `an_omitted_audience_is_not_stated_rather_than_absent` is now
+# `an_omitted_audience_is_refused`, and `a_block_without_an_expiry_reads_and_states_nothing
+# _about_one` is now `a_block_without_an_expiry_is_refused`. Both renames land in the same
+# commit as this edit, so no lane ever selected a name the tree did not hold.
 tested_symbols = [
   "lib#context::claim::tests::a_complete_block_reads_through_the_claimed_projections",
-  "lib#context::claim::tests::an_omitted_audience_is_not_stated_rather_than_absent",
-  "lib#context::claim::tests::a_block_without_an_expiry_reads_and_states_nothing_about_one",
+  "lib#context::claim::tests::an_omitted_audience_is_refused",
+  "lib#context::claim::tests::a_block_without_an_expiry_is_refused",
   "lib#context::claim::tests::a_block_missing_a_required_member_fails_closed",
   "lib#context::claim::tests::a_decorated_block_is_refused",
   "lib#context::claim::tests::a_body_without_the_block_reports_the_block_missing",
+]
+
+# ---------------------------------------------------------------------------
+# The block declares its own shape — Owner Ruling 8 / r12 RA1-003
+# ---------------------------------------------------------------------------
+#
+# Without a discriminator, "this member is absent because the writer predates it" and "this
+# member is absent because someone removed it" are the same bytes. A reader that tolerates
+# the first tolerates the second, and the tolerance can never be withdrawn — there is
+# nothing it could be withdrawn ON. On a block whose only integrity is an operator's
+# assertion about channel isolation, that left any writer able to hand a consumer no
+# audience constraint and no bound at will, forever.
+#
+# WHY IT IS A UNIT OF ITS OWN. The proposition spans BOTH halves of the carrier — the
+# writer always emits it, the reader requires it — and the two halves are in different
+# files owned by different units. A clause in either one would be a claim about half a
+# round trip, and the failure a mandatory discriminator introduces is precisely the
+# disagreement between the halves: a build whose writer emits a schema its own reader
+# refuses.
+
+[[unit]]
+id = "http_profile.verified_context_block_schema"
+class = "V0"
+description = "THE VERIFIED-CONTEXT BLOCK DECLARES ITS OWN REPRESENTATION, AND EXACTLY ONE IS CURRENT: the writer emits the discriminator on every block and has no other value it could emit, a block carrying no discriminator is refused, and a block naming a schema this build does not write is refused rather than read as the one it does. There is no absence-as-v1, no legacy parser, no migration flag and no second reader — when the representation changes, the constant changes and the tree migrates atomically. `BlockSchema` is how that is structural rather than remembered: one inhabitant, deserializing from one string, so a claim holding one has already had the discriminator checked and there is no branch to forget. Says nothing about which FACTS the block carries, which is `http_profile.unauthenticated_context_claim`'s and `http_profile.verified_context_conclusion`'s."
+paths = [
+  "mcp-re-http-profile/src/context/block_schema.rs",
+  # Both halves. The proposition is about the writer and the reader AGREEING, and a closure
+  # naming one of them would attest a round trip it measures half of.
+  "mcp-re-http-profile/src/context/claim.rs",
+  "mcp-re-http-profile/src/context/verified.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://http_profile/verified_context/block_schema_discriminator",
+  "mutation://http_profile/verified_context/block_schema_discriminator",
+]
+tested_symbols = [
+  # The owner's own arms: what is emitted, what is refused, and that the refusal does not
+  # echo a string that arrived on a channel whose isolation is an assertion.
+  "lib#context::block_schema::tests::the_only_inhabitant_serializes_as_the_current_schema",
+  "lib#context::block_schema::tests::a_schema_this_build_does_not_write_is_refused",
+  "lib#context::block_schema::tests::a_discriminator_that_is_not_a_string_is_refused",
+  "lib#context::block_schema::tests::the_refusal_does_not_echo_what_the_block_declared",
+  "lib#context::block_schema::tests::what_the_writer_emits_the_reader_accepts",
+  # THROUGH THE BLOCK, not just through the type: the two refusals driven by a whole
+  # verified-context block rather than by a bare string.
+  "lib#context::claim::tests::a_block_with_no_schema_discriminator_is_refused",
+  "lib#context::claim::tests::a_block_declaring_another_schema_is_refused",
+  # THE WRITER'S HALF, asserted on the emitted BYTES. A round trip alone would stay green
+  # for a build that stopped emitting the discriminator AND stopped requiring it.
+  "lib#context::verified::tests::the_written_block_declares_the_current_schema",
+  "lib#context::verified::tests::what_the_writer_emits_the_reader_accepts_with_nothing_unstated",
 ]
 
 [[unit]]

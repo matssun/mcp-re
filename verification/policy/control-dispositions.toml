@@ -6368,30 +6368,6 @@ proposition = "NP-100"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-15003"
-project = "mcp-re-http-profile"
-control = "lib#context::tests::a_meta_containing_only_proxy_keys_is_removed_entirely"
-decision = "new-proposition"
-proposition = "NP-100"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15004"
-project = "mcp-re-http-profile"
-control = "lib#context::tests::strip_is_noop_without_meta"
-decision = "new-proposition"
-proposition = "NP-100"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-15005"
-project = "mcp-re-http-profile"
-control = "lib#context::tests::strip_removes_proxy_keys_and_preserves_application_meta"
-decision = "new-proposition"
-proposition = "NP-100"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-15006"
 project = "mcp-re-http-profile"
 control = "lib#delegation::tests::seam_minted_credential_verifies_to_the_root"
@@ -8663,14 +8639,6 @@ proposition = "NP-146"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-18011"
-project = "mcp-re-proxy"
-control = "lib#async_serve::admission_bound_tests::the_handshake_bound_leaves_workers_for_the_rest_of_the_core"
-decision = "new-proposition"
-proposition = "NP-141"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-18012"
 project = "mcp-re-proxy"
 control = "lib#async_serve::body_budget::tests::absorbing_a_frame_does_not_release_its_bytes_twice"
@@ -9335,14 +9303,6 @@ project = "mcp-re-proxy"
 control = "lib#http_profile_serve::answering_commitment::tests::only_a_real_retirement_spends_an_approval"
 decision = "new-proposition"
 proposition = "NP-130"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-18125"
-project = "mcp-re-proxy"
-control = "lib#http_profile_serve::body_boundary::tests::application_meta_survives_the_pep_owned_strip"
-decision = "new-proposition"
-proposition = "NP-129"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -11825,41 +11785,9 @@ proposition = "NP-154"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-19262"
-project = "mcp-re-proxy"
-control = "tests/integration_async#verified_context_carrier_test::a_caller_seeded_verified_context_never_reaches_the_inner_server"
-decision = "new-proposition"
-proposition = "NP-166"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19263"
-project = "mcp-re-proxy"
-control = "tests/integration_async#verified_context_carrier_test::disabled_by_default_the_inner_server_sees_clean_mcp"
-decision = "new-proposition"
-proposition = "NP-166"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-19264"
 project = "mcp-re-proxy"
 control = "tests/integration_async#verified_context_carrier_test::transport_contract_is_enforced_on_the_served_path"
-decision = "new-proposition"
-proposition = "NP-166"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19265"
-project = "mcp-re-proxy"
-control = "tests/integration_async#verified_context_carrier_test::trusted_channel_carries_the_peps_verified_context"
-decision = "new-proposition"
-proposition = "NP-166"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-19266"
-project = "mcp-re-proxy"
-control = "tests/integration_async#verified_context_carrier_test::unrelated_application_meta_survives_the_guard"
 decision = "new-proposition"
 proposition = "NP-166"
 recorded = "2026-09-19"

@@ -493,7 +493,11 @@ refused; it does not invent a rule.
 - **ADR-MCPS-035 audit vocabulary** — not widened here. Which authorization facts belong in the
   audit record is decided once a semantic product exists.
 - **The verified-context wire schema** — not changed here. Committing a representation before
-  knowing which facts downstream consumers need is the mistake this ordering avoids.
+  knowing which facts downstream consumers need is the mistake this ordering avoids. *(Owner
+  Ruling 8, r12: the block now carries a mandatory `block_schema` discriminator. The writer
+  always emits it; a missing or unknown one is refused; there is no compatibility mode. What
+  stays deferred is which further FACTS the block carries — the deferral above was never
+  about whether the block declares its own shape.)*
 
 Both follow the authorization model; neither precedes it.
 
