@@ -7652,9 +7652,14 @@ tested_symbols = [
 [[unit]]
 id = "proxy.operator_facing_redaction"
 class = "V0"
-description = "What of a deployment REQUEST may reach an operator's eyes. Two fields carry credentials and neither may be printed as configured: the PKCS#11 User PIN, which unlocks a token holding the response-signing key and so sits in the same custody class as the key, and `--inner-http-url`, whose authority component is a place credentials ride along. Both are owned by a type whose sole constructor performs the removal and whose representation is private, so possession of the rendered form IS the statement that the secret is already gone — never a call site that remembered to redact."
+description = "What of a deployment REQUEST may reach an operator's eyes. Two KINDS of field carry credentials and neither may be printed as configured: the PKCS#11 User PIN, which unlocks a token holding the response-signing key and so sits in the same custody class as the key, and every operator-supplied LOCATOR — `--inner-http-url`, `--admission-redis-url`, `--trust-epoch-redis-url`, `--continuation-control-redis-url`, `--replay-redis-url`, `--cpstore-etcd-endpoint`, `--target-uri` — whose authority component is a place credentials ride along. Each is owned by a type whose sole constructor performs the removal and whose representation is private, so possession of the rendered form IS the statement that the secret is already gone — never a call site that remembered to redact. One locator is `RedactedLocator`'s and the backend LIST is a projection over it: a second hand-written redaction beside the owner would be two renderings of one fact with two places to get it wrong."
 paths = [
   "mcp-re-proxy/src/deployment_request/secret_string.rs",
+  # The one locator projection. In the closure because the redaction the unit claims now
+  # LIVES here: `inner_backend_display` maps through it and holds no hazard list of its
+  # own, so a fingerprint that did not move for a change here would be a fingerprint that
+  # does not cover the statement — the SF-1 defect this unit's own comment warns about.
+  "mcp-re-proxy/src/deployment_request/redacted_locator.rs",
   "mcp-re-proxy/src/deployment_request/inner_backend_display.rs",
 ]
 exported_contracts = []
@@ -7671,6 +7676,15 @@ evidence = [
 tested_symbols = [
   "lib#deployment_request::secret_string::tests::the_debug_rendering_carries_no_part_of_the_secret",
   "lib#deployment_request::secret_string::tests::the_value_is_still_readable_where_it_is_needed",
+  # The owner of ONE locator's rendering. The second of these is the load-bearing one: a
+  # credential-bearing value with NO `://` is the only shape every locator-shape violation
+  # in `config_state` fires on, so that rendering is what stands between a typo and a
+  # password in the startup diagnostic.
+  "lib#deployment_request::redacted_locator::tests::userinfo_never_reaches_the_rendered_locator",
+  "lib#deployment_request::redacted_locator::tests::a_scheme_less_credential_bearing_locator_is_named_not_echoed",
+  "lib#deployment_request::redacted_locator::tests::a_credential_free_locator_renders_without_the_marker",
+  "lib#deployment_request::redacted_locator::tests::a_shape_the_projection_cannot_decompose_is_named",
+  # The LIST projection, over the owner above.
   "lib#deployment_request::inner_backend_display::tests::userinfo_never_reaches_the_rendered_text",
   "lib#deployment_request::inner_backend_display::tests::a_credential_free_url_renders_without_the_marker",
   "lib#deployment_request::inner_backend_display::tests::a_shape_the_projection_cannot_decompose_is_named_not_echoed",
@@ -8396,6 +8410,11 @@ description = "The deployable Redis replay backend, sync and async: it refuses a
 paths = [
   "mcp-re-proxy/src/redis_store.rs",
   "mcp-re-proxy/src/async_redis_store.rs",
+  # The eviction decision itself. It moved out of `async_redis_store.rs` when the admission
+  # source turned out to need the same question answered, so the file that can falsify this
+  # unit's first clause is now this one — a closure that named only the caller would attest
+  # a policy check it does not measure.
+  "mcp-re-proxy/src/async_redis_store/retention_promise.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -8411,6 +8430,11 @@ tested_symbols = [
   "lib#async_redis_store::tests::a_store_refuses_to_connect_to_an_evicting_redis",
   "lib#async_redis_store::tests::every_evicting_policy_is_refused_and_so_is_an_unreadable_one",
   "lib#async_redis_store::tests::the_policy_is_read_out_of_either_protocols_reply",
+  # The shared decision, where it is now decided. The four symbols above drive it through
+  # this tier's own connect over a scripted server; these two pin the decision itself —
+  # every evicting policy by name, an unreadable one, and both RESP reply shapes.
+  "lib#async_redis_store::retention_promise::tests::only_noeviction_is_a_retention_promise",
+  "lib#async_redis_store::retention_promise::tests::the_policy_is_read_out_of_either_resp_protocols_reply",
   "lib#redis_store::tests::abandoned_connect_threads_are_bounded_by_a_ceiling_failing_closed",
   "lib#redis_store::tests::fatal_error_does_not_reconnect",
   "lib#redis_store::tests::injected_clock_drives_the_pre_store_staleness_gate",
@@ -10030,6 +10054,62 @@ tested_symbols = [
   "lib#communication_assurance::credential_currency::x509_adapter::tests::an_inverted_window_is_not_orderable_and_contains_nothing",
   "lib#communication_assurance::credential_currency::x509_adapter::tests::an_orderable_window_is_not_the_same_question_as_containing_now",
   "lib#communication_assurance::credential_currency::x509_adapter::tests::rubbish_der_reads_no_facts",
+]
+
+# ---------------------------------------------------------------------------
+# What the admission record's ABSENCE is allowed to mean, and the store posture
+# that keeps the answer honest
+# ---------------------------------------------------------------------------
+#
+# Its own unit rather than a clause of the two beside it, because question 2 of the twelve
+# separates them: `proxy.admission_state_source` decides what an ANSWER means and
+# `proxy.admission_record_addressing` decides which key an answer is about, while this one
+# is about the store's promise to still HAVE an answer. Folding it into either would make
+# that unit's statement need an "and".
+#
+# The premise it protects is unusual and worth stating: an admission record deliberately
+# carries NO TTL, because the serving path reads absence as a definitive negative and an
+# expiring key would drop every workload out of admission on a timer. Setting no expiry is
+# only half of that — an evicting instance drops the key anyway at `maxmemory` — so the
+# no-TTL argument is sound only against a store that promised not to. The failure direction
+# is CLOSED, which is why this is availability rather than bypass: under `Required`
+# enforcement it is a fleet-wide admission outage with no diagnosis.
+#
+# `--admission-redis-url` is an INDEPENDENT endpoint from `--replay-redis-url`, so the
+# replay tier's identical assertion establishes nothing about this instance. Both reach the
+# same decision, which is why `retention_promise.rs` is in both closures.
+
+[[unit]]
+id = "proxy.admission_record_retention"
+class = "V0"
+description = "The instance backing the authoritative admission record is refused AT CONNECT unless it promises never to evict a key nobody set an expiry on, and refused likewise when it will not say what its eviction policy is — an unverifiable policy is not evidence of a safe one. The refusal names the policy it read and the admission consequence, so an operator is told which store's guarantee broke rather than the other store's."
+paths = [
+  "mcp-re-proxy/src/redis_admission_source/mod.rs",
+  "mcp-re-proxy/src/async_redis_store/retention_promise.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = [
+  "test://proxy/admission/record_retention",
+  "mutation://proxy/admission/record_retention",
+]
+# The Redis half does not exist in the default crate, and a lane that compiled it to
+# zero tests would report this battery green having measured nothing.
+test_features = ["redis_replay"]
+tested_symbols = [
+  # THE CALL SITE, and the reason this unit exists. Deleting the check from `connect` left
+  # the whole 1554-test lane green before this control: the check was reached by
+  # remembering, not established by anything. It drives `connect` against a scripted
+  # server, so it is the caller that is measured and not only the decision.
+  "lib#redis_admission_source::tests::an_evicting_redis_is_refused_by_the_admission_connect_itself",
+  # Its positive half, and it is not optional: without it the control above is satisfied by
+  # a connect that refuses EVERY instance, and by a scripted server too broken to answer.
+  "lib#redis_admission_source::tests::a_noeviction_redis_is_accepted_by_the_admission_connect",
+  # The verdict-to-error mapping in this source's own error type, including that the
+  # sentence an operator reads is the ADMISSION consequence and names this endpoint's flag.
+  "lib#redis_admission_source::tests::an_evicting_admission_instance_is_refused_with_the_admission_consequence",
+  "lib#async_redis_store::retention_promise::tests::each_store_states_its_own_consequence",
 ]
 
 [[unit]]

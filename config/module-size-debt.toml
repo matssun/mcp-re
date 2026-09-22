@@ -567,9 +567,13 @@ baseline_prod_loc = 395
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 
+# The `maxmemory-policy` decision moved out to `async_redis_store/retention_promise.rs`,
+# where both redis-backed stores reach it. An ordinary ratchet decrease, not a measurement
+# correction: the bytes changed, so the entry is pinned at what it now measures and may not
+# grow back.
 [[debt]]
 path = "mcp-re-proxy/src/async_redis_store.rs"
-baseline_prod_loc = 393
+baseline_prod_loc = 330
 baseline_sha = "d1fc5fa"
 status = "unreviewed"
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The operator-facing projection of the request's `inner_http_urls`.
 //!
 //! `--inner-http-url` is operator-supplied, and a URL's authority component is a place
@@ -11,10 +12,14 @@
 //! means the userinfo is already gone. There is no path from a raw URL list to a
 //! rendered one that skips the redaction, and the type carries no `Debug` that would
 //! offer a second, unredacted rendering.
+//!
+//! What ONE locator becomes is [`super::RedactedLocator`]'s, not this type's: this is the
+//! list projection, and a second hand-written redaction beside that owner would be two
+//! renderings of the same fact with one place to get it wrong.
 
 use std::fmt;
 
-use hyper::Uri;
+use super::RedactedLocator;
 
 /// The inner-backend URL list as an operator may see it: scheme, host, port and path,
 /// with any `userinfo` removed and its presence reported instead.
@@ -27,7 +32,7 @@ impl RedactedBackendUrls {
     pub(crate) fn of(urls: &[String]) -> Self {
         let rendered = urls
             .iter()
-            .map(|url| redact_one(url))
+            .map(|url| RedactedLocator::of(url).to_string())
             .collect::<Vec<String>>()
             .join(", ");
         Self(format!("[{rendered}]"))
@@ -38,31 +43,6 @@ impl fmt::Display for RedactedBackendUrls {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
-}
-
-/// Reduce one URL to the coordinates that identify a backend, dropping every part that
-/// can carry a credential. A shape this cannot decompose is named as such rather than
-/// echoed, because echoing is exactly what must not happen to an unparsed string.
-fn redact_one(url: &str) -> String {
-    let Ok(uri) = url.parse::<Uri>() else {
-        return "<unparseable>".to_string();
-    };
-    let Some(authority) = uri.authority() else {
-        return "<no-authority>".to_string();
-    };
-    let scheme = uri.scheme_str().unwrap_or("<no-scheme>");
-    let host = authority.host();
-    let port = authority
-        .port_u16()
-        .map_or_else(String::new, |port| format!(":{port}"));
-    // `Authority::host` already returns the host alone; the `@` test is what lets the
-    // line SAY that credentials were configured, which is the fact an operator needs.
-    let userinfo = if authority.as_str().contains('@') {
-        " (userinfo redacted)"
-    } else {
-        ""
-    };
-    format!("{scheme}://{host}{port}{}{userinfo}", uri.path())
 }
 
 #[cfg(test)]

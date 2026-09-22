@@ -3685,17 +3685,21 @@ id = "M124-an-unreadable-eviction-policy-is-refused"
 unit = "proxy.redis_replay_adapter"
 theorem = "THM-0106"
 conjunct = "a maxmemory-policy the store could not read is refused too — an unverifiable policy is not evidence of a safe one"
-path = "mcp-re-proxy/src/async_redis_store.rs"
+# RE-ADJUDICATED, not restored. The decision moved to `retention_promise.rs` when the
+# admission source turned out to need the same question answered; the conjunct is
+# unchanged and now has one site instead of one per store, so the probe follows it there.
+path = "mcp-re-proxy/src/async_redis_store/retention_promise.rs"
 anchor = """
-        None => Err(ReplayStoreError::Unavailable {
+        None => Err(format!(
 """
 weakening = """
         None => Ok(()),
         #[expect(unreachable_patterns, reason = "probe weakening")]
-        None => Err(ReplayStoreError::Unavailable {
+        None => Err(format!(
 """
 expect_red = [
   "lib#async_redis_store::tests::every_evicting_policy_is_refused_and_so_is_an_unreadable_one",
+  "lib#async_redis_store::retention_promise::tests::only_noeviction_is_a_retention_promise",
 ]
 
 [[probe]]
@@ -8280,6 +8284,89 @@ note = """
 `controls()` returning `None` is what the evaluator reads as *nobody asked*. A ceiling-only
 deployment answering `None` skips every check while reporting the credential as unexamined —
 the two-state answer THM-0032 says the three states exist to prevent.
+"""
+
+# ---------------------------------------------------------------------------
+# The admission store's retention promise — the CALL SITE, and why it needed a probe
+# ---------------------------------------------------------------------------
+#
+# M401 is the probe this campaign wrote because the mutation had already been run and
+# SURVIVED: with the check deleted from `connect`, `cargo test -p mcp-re-proxy --lib
+# --features redis_replay` reported 1554 passed, 0 failed. The decision was tested and the
+# CALLER was not, which is the shape a green battery hides best.
+
+[[probe]]
+id = "M401-admission-retention-is-asserted-at-connect"
+unit = "proxy.admission_record_retention"
+conjunct = "The instance backing the admission record is refused AT CONNECT, not merely judged by a function some caller may forget to call"
+path = "mcp-re-proxy/src/redis_admission_source/mod.rs"
+anchor = """
+        Self::retention_refusal(retention_promise::read_policy(&mut conn).await.as_deref())?;
+"""
+weakening = """
+        let _ = retention_promise::read_policy(&mut conn).await;
+"""
+expect_red = [
+  "lib#redis_admission_source::tests::an_evicting_redis_is_refused_by_the_admission_connect_itself",
+]
+note = """
+The weakening keeps the round trip and discards the verdict, so a reviewer reading `connect`
+still sees the policy being read. That is precisely the state the tree was in before this
+control existed: the decision was exercised directly and nothing established that `connect`
+consulted it.
+"""
+
+[[probe]]
+id = "M402-admission-retention-admits-the-supported-instance"
+unit = "proxy.admission_record_retention"
+conjunct = "A `noeviction` instance still connects, so the refusal is the policy and not the check"
+path = "mcp-re-proxy/src/redis_admission_source/mod.rs"
+anchor = """
+        retention_promise::retention_verdict(policy, &retention_promise::ADMISSION)
+            .map_err(|details| AdmissionSourceError::Unavailable { details })
+"""
+weakening = """
+        let _ = policy;
+        Err(AdmissionSourceError::Unavailable {
+            details: "refused".to_string(),
+        })
+"""
+expect_red = [
+  "lib#redis_admission_source::tests::a_noeviction_redis_is_accepted_by_the_admission_connect",
+  "lib#redis_admission_source::tests::an_evicting_admission_instance_is_refused_with_the_admission_consequence",
+]
+note = """
+The negative half alone is satisfied by a connect that refuses every instance, and by a
+scripted server too broken to answer — either would make the admission source unusable while
+reading as a working control. This is the conjunct that separates a gate from an outage.
+"""
+
+[[probe]]
+id = "M403-one-locator-projection-removes-the-userinfo"
+unit = "proxy.operator_facing_redaction"
+theorem = "THM-0091"
+conjunct = "An operator-supplied locator reaches a diagnostic only through a projection that cannot carry its userinfo, and a shape the projection cannot decompose is NAMED rather than echoed"
+path = "mcp-re-proxy/src/deployment_request/redacted_locator.rs"
+anchor = """
+        let Ok(uri) = raw.parse::<Uri>() else {
+            return Self("<unparseable>".to_string());
+        };
+"""
+weakening = """
+        let Ok(uri) = raw.parse::<Uri>() else {
+            return Self(raw.to_string());
+        };
+"""
+expect_red = [
+  "lib#deployment_request::redacted_locator::tests::a_scheme_less_credential_bearing_locator_is_named_not_echoed",
+  "lib#deployment_request::redacted_locator::tests::a_shape_the_projection_cannot_decompose_is_named",
+]
+note = """
+The echo branch is the one that matters and the one an author is most likely to write: a
+locator the projection cannot parse is exactly the shape every `config_state` locator-shape
+violation fires on, because a string with no `://` is what those clauses refuse. Echoing it
+"so the operator can see what they typed" publishes the password of anyone who typed
+`user:pass@host:port`.
 """
 
 [[probe]]

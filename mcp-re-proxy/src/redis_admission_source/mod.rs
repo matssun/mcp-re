@@ -63,6 +63,8 @@ use crate::admission_source::AdmissionRecordVerifier;
 use crate::admission_source::AdmissionSourceError;
 use crate::admission_source::AnsweredAs;
 use crate::admission_source::AsyncAdmissionSource;
+use crate::async_redis_store::retention_promise;
+use crate::deployment_request::RedactedLocator;
 
 /// A cross-process authoritative admission source backed by Redis.
 pub struct RedisAdmissionSource {
@@ -75,24 +77,33 @@ pub struct RedisAdmissionSource {
 }
 
 impl RedisAdmissionSource {
+    /// The shared retention verdict in this source's own error type. Separate from
+    /// [`Self::connect`] so the mapping an operator reads is exercised without a server.
+    fn retention_refusal(policy: Option<&str>) -> Result<(), AdmissionSourceError> {
+        retention_promise::retention_verdict(policy, &retention_promise::ADMISSION)
+            .map_err(|details| AdmissionSourceError::Unavailable { details })
+    }
+
     /// Connect to `url` (e.g. `redis://host:port`). Fails closed if the client cannot be
-    /// opened or the initial async connection cannot be established.
+    /// opened, the connection cannot be established, or the instance may evict the key.
     ///
     /// The verifier is supplied rather than derived here: which authority this deployment
     /// trusts, and how current it requires a record to be, are the validated deployment's
-    /// facts and not a store adapter's.
+    /// facts and not a store adapter's. `url` is operator-supplied and its authority may
+    /// carry a credential, so a diagnostic names it rather than echoing it.
     pub async fn connect(
         url: &str,
         verifier: AdmissionRecordVerifier,
     ) -> Result<Self, AdmissionSourceError> {
         let client = redis::Client::open(url).map_err(|e| AdmissionSourceError::Unavailable {
-            details: format!("open redis client: {e}"),
+            details: format!("open redis client for {}: {e}", RedactedLocator::of(url)),
         })?;
-        let conn = client.get_connection_manager().await.map_err(|e| {
+        let mut conn = client.get_connection_manager().await.map_err(|e| {
             AdmissionSourceError::Unavailable {
-                details: format!("connect redis async: {e}"),
+                details: format!("connect redis async to {}: {e}", RedactedLocator::of(url)),
             }
         })?;
+        Self::retention_refusal(retention_promise::read_policy(&mut conn).await.as_deref())?;
         Ok(RedisAdmissionSource {
             conn,
             verifier,
@@ -116,6 +127,8 @@ impl RedisAdmissionSource {
     /// the KEY would turn a healthy authority's silence into "no record", which the serving
     /// path treats as a definitive negative — every workload would fall out of admission on
     /// a timer. The record's own `exp` is what bounds it, and the authority republishes.
+    /// Setting no expiry is only half of that: an evicting instance drops the key anyway at
+    /// `maxmemory`, so [`Self::connect`] refuses one that does not promise otherwise.
     pub async fn publish(
         &self,
         signed_record: &str,
@@ -186,9 +199,12 @@ impl AsyncAdmissionSource for RedisAdmissionSource {
 
 #[cfg(test)]
 mod tests {
+    use super::RedisAdmissionSource;
     use crate::admission_source::test_support::{
         signed_admitted, signed_revoked, verifier_for, AUTHORITY_KID,
     };
+    use crate::admission_source::AdmissionSourceError;
+    use crate::async_redis_store::retention_promise::scripted_server::redis_reporting;
     use mcp_re_core::SigningKey;
     use mcp_re_http_profile::authoritative_admission::record::AdmissionRecordRefusal;
     use mcp_re_http_profile::AdmissionStatus;
@@ -255,6 +271,86 @@ mod tests {
             Err(AdmissionRecordRefusal::Expired),
             "past it, without anybody detecting the substitution"
         );
+    }
+
+    /// The connect diagnostic NAMES the endpoint instead of echoing it. The URL that
+    /// fails to open is exactly the shape a credential-bearing typo takes, so this
+    /// failure path is where an operator's password would otherwise reach the log.
+    #[tokio::test]
+    async fn a_connect_diagnostic_names_the_endpoint_without_its_credentials() {
+        let key = authority();
+        let err = RedisAdmissionSource::connect(
+            "mats:hunter2@redis.internal:6379",
+            verifier_for(&key, 60, 5),
+        )
+        .await
+        .err()
+        .expect("a locator redis cannot open is a connect failure");
+        let AdmissionSourceError::Unavailable { details } = err;
+        assert!(
+            !details.contains("hunter2"),
+            "the password reached the diagnostic: {details}"
+        );
+        assert!(
+            details.contains("redis.internal"),
+            "the endpoint is what an operator needs named: {details}"
+        );
+    }
+
+    /// An admission record carries no TTL because absence is a definitive negative, so an
+    /// instance that may evict it is refused at connect. Driven on the verdict-to-error
+    /// mapping rather than a store double: the decision is pure, and a scripted server
+    /// would only re-prove the shared module's own test.
+    #[test]
+    fn an_evicting_admission_instance_is_refused_with_the_admission_consequence() {
+        let err = RedisAdmissionSource::retention_refusal(Some("allkeys-lru"))
+            .expect_err("an instance that may evict an admission record must not back it");
+        let AdmissionSourceError::Unavailable { details } = err;
+        assert!(details.contains("allkeys-lru"), "{details}");
+        assert!(
+            details.contains("admission outage") && details.contains("--admission-redis-url"),
+            "the refusal must state the admission consequence and the endpoint: {details}"
+        );
+        assert!(
+            RedisAdmissionSource::retention_refusal(Some("noeviction")).is_ok(),
+            "the supported configuration must still connect"
+        );
+        assert!(
+            RedisAdmissionSource::retention_refusal(None).is_err(),
+            "an unreadable policy is not evidence of a safe one"
+        );
+    }
+
+    /// The mapping above is the consequence; this is that `connect` REACHES it. Driven
+    /// against a scripted server reporting an evicting policy, so deleting the check
+    /// from [`RedisAdmissionSource::connect`] turns this red — where the pure test on
+    /// `retention_refusal` alone stays green with the connect path unguarded.
+    #[tokio::test]
+    async fn an_evicting_redis_is_refused_by_the_admission_connect_itself() {
+        let key = authority();
+        let url = redis_reporting("allkeys-lru").await;
+        let err = RedisAdmissionSource::connect(&url, verifier_for(&key, 60, 5))
+            .await
+            .err()
+            .expect("an instance that may evict an admission record must not be connected");
+        let AdmissionSourceError::Unavailable { details } = err;
+        assert!(
+            details.contains("allkeys-lru") && details.contains("admission outage"),
+            "the connect refusal must carry the admission consequence: {details}"
+        );
+    }
+
+    /// The companion the refusal above needs: the identical connect against a server
+    /// reporting `noeviction` has to SUCCEED, or the refusal proves only that the
+    /// scripted server is broken.
+    #[tokio::test]
+    async fn a_noeviction_redis_is_accepted_by_the_admission_connect() {
+        let key = authority();
+        let url = redis_reporting("noeviction").await;
+        RedisAdmissionSource::connect(&url, verifier_for(&key, 60, 5))
+            .await
+            .map(|_| ())
+            .expect("noeviction is the supported configuration");
     }
 
     /// The key an operator reads in `redis-cli` is still the workload's own name.

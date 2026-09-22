@@ -188,6 +188,7 @@ _PROXY_LIB_SRCS = [
     "src/deployment_request/inner_backend_display.rs",
     "src/deployment_request/kinds.rs",
     "src/deployment_request/mod.rs",
+    "src/deployment_request/redacted_locator.rs",
     "src/deployment_request/secret_string.rs",
     "src/deployment_request/signing_source/aws_kms_source.rs",
     "src/deployment_request/signing_source/channel_role.rs",
@@ -587,6 +588,7 @@ _PROXY_LIB_SRCS = [
     # cfg'd out of the default build; the ext flavor + the cargo redis lane link it,
     # and main.rs selects it for `--replay-cache shared` (non-linearizable tier).
     "src/async_redis_store.rs",
+    "src/async_redis_store/retention_promise.rs",
     # ADR-MCPS-047: the MRTR continuation correlation store — trait + in-memory impl
     # always compiled; the Redis backend is redis_replay-gated inside the module.
     "src/continuation_store/mod.rs",

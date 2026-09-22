@@ -32,7 +32,7 @@
 //! forbid it without destroying cross-replica MRTR. `ContinuationControl` owns that fact
 //! now, so the forbidden cell can finally be stated.
 
-use crate::deployment_request::{DeploymentRequest, ReplayStoreRequest};
+use crate::deployment_request::{DeploymentRequest, RedactedLocator, ReplayStoreRequest};
 use crate::replay_tier::ReplayDurabilityTier;
 
 /// Which replay state a configuration requests. Only live states are representable.
@@ -291,8 +291,9 @@ fn locator_shape(flag: &str, value: Option<&str>, example: &str) -> Option<Strin
     let value = value?;
     (!value.contains("://")).then(|| {
         format!(
-            "{flag} {value:?} is not a URL: give a scheme-bearing URL such as {example}, \
-             since the state this deployment requests is inhabited by the store it names"
+            "{flag} {} is not a URL: give a scheme-bearing URL such as {example}, \
+             since the state this deployment requests is inhabited by the store it names",
+            RedactedLocator::of(value)
         )
     })
 }
@@ -494,6 +495,26 @@ mod tests {
                 "{flag}: not refused — {violations:?}"
             );
         }
+    }
+
+    /// The guard fires exactly when the value has no `://`, which is the shape a
+    /// credential-bearing typo takes. It names the locator rather than echoing it.
+    #[test]
+    fn the_locator_shape_refusal_does_not_echo_a_credential() {
+        let refusal = locator_shape(
+            "--replay-redis-url",
+            Some("mats:hunter2@redis.internal:6379"),
+            "redis://host:6379",
+        )
+        .expect("a value that names no store is refused");
+        assert!(
+            !refusal.contains("hunter2"),
+            "the password reached the diagnostic: {refusal}"
+        );
+        assert!(
+            refusal.contains("--replay-redis-url"),
+            "the flag is the diagnostic fact an operator needs: {refusal}"
+        );
     }
 
     /// The positive half: a scheme-bearing locator passes the same guard, so a predicate

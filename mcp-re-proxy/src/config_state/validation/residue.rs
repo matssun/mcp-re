@@ -55,11 +55,12 @@ fn target_uri_violation(uri: &str) -> Option<String> {
     }
     if !uri.contains("://") {
         return Some(format!(
-            "--target-uri {uri:?} is not an absolute URI: it must be \
+            "--target-uri {} is not an absolute URI: it must be \
              <scheme>://<authority><path> (e.g. https://proxy.internal:8600/mcp). \
              A scheme-less target disables the request-target reconstruction check \
              entirely, so an ingress fanning several paths into one process would \
-             verify signatures over a @target-uri the request never arrived at"
+             verify signatures over a @target-uri the request never arrived at",
+            crate::deployment_request::RedactedLocator::of(uri)
         ));
     }
     None
@@ -480,6 +481,22 @@ mod tests {
                 "the refusal must name the flag, got: {refusal}"
             );
         }
+    }
+
+    /// The clause fires exactly when the target has no `://`, which is the shape a
+    /// credential-bearing typo takes. It names the target rather than echoing it.
+    #[test]
+    fn the_target_uri_refusal_does_not_echo_a_credential() {
+        let refusal = target_uri_violation("mats:hunter2@proxy.internal:8600")
+            .expect("a scheme-less target leaves the check unanswerable");
+        assert!(
+            !refusal.contains("hunter2"),
+            "the password reached the diagnostic: {refusal}"
+        );
+        assert!(
+            refusal.contains("--target-uri"),
+            "the refusal must still name the flag: {refusal}"
+        );
     }
 
     #[test]

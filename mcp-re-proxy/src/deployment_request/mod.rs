@@ -22,6 +22,7 @@ mod delegated_signing;
 mod inner_backend_display;
 mod kinds;
 mod peer_identity;
+mod redacted_locator;
 mod request_signer_currency;
 mod revocation;
 mod secret_string;
@@ -37,6 +38,7 @@ pub use peer_identity::{
     AttestedIngressRequest, ChannelCredentialIdentityRequest, IngressAssertionRequest,
     PeerIdentityEvidenceRequest, PinnedChannelAcknowledgement,
 };
+pub(crate) use redacted_locator::RedactedLocator;
 pub use request_signer_currency::RequestSignerCurrencyRequest;
 pub use revocation::{
     OcspResponderRequest, OnlineRevocationEvidenceRequest, PeerRevocationRequest,
