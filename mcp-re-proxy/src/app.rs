@@ -887,7 +887,10 @@ pub(crate) fn serve_fleet(
     Ok(())
 }
 
-#[cfg(all(test, unix))]
+// EVERY TARGET (r12 R12-627). The `unix` half was for the key-file permission controls, and
+// they left with the authority — the arm that genuinely needs unix now carries its own gate.
+// Keeping the qualifier would compile these target-independent claims to ZERO tests elsewhere.
+#[cfg(test)]
 mod tests {
     use super::faulted_clock_refusal;
     use crate::config_state::test_support::config_with;
