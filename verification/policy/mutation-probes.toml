@@ -9041,6 +9041,47 @@ battery holding only the positive control would report the inversion as no chang
 why both directions are declared.
 """
 
+[[probe]]
+id = "M412-httpprofile-an-unclaimed-continuation-offer-is-not-discarded"
+unit = "http_profile.continuation_offer_agreement"
+conjunct = "retained continuation bases offered for a request whose signed block claims no continuation are REFUSED, not discarded into an ordinary first-leg admission"
+# The weakening is the defect verbatim — `(None, _) => false`, which is what the arm was
+# before r12 file 9. It compiles, every continuation test stays green, and a caller that
+# believes it is answering a correlation gets a successful first-leg dispatch with no
+# signal that its correlation was dropped. Nothing downstream can recover the difference:
+# by the time the caller sees `Ok`, the nonce is burned.
+path = "mcp-re-http-profile/src/dispatch.rs"
+anchor = """
+        (None, Some(_)) => {
+            return Err(DispatchError::Profile(
+                HttpProfileError::ContinuationBindingFailed,
+            ))
+        }
+        // Ordinary first-leg request: no continuation to bind, and none offered.
+        (None, None) => false,
+"""
+weakening = """
+        (None, _) => false,
+"""
+expect_red = [
+  "lib#dispatch::tests::retained_bases_offered_for_a_request_that_claims_no_continuation_are_refused",
+]
+note = """
+THE POSITIVE CONTROLS MUST STAY GREEN, and they do: this weakening only merges the two
+`None`-claim arms, so `a_first_leg_request_prepares_with_no_continuation` and
+`an_answer_leg_prepares_against_the_retained_bases` are untouched. That is what
+distinguishes this probe from one satisfied by a seam that has started refusing everything
+— and it is why the unit declares the two positives alongside the two refusals rather than
+the refusals alone.
+
+`a_claimed_continuation_with_no_retained_bases_is_refused` is deliberately NOT named here.
+It reads the `(Some(_), None)` arm, which this weakening does not touch, so naming it would
+make the probe unsatisfiable for a reason that has nothing to do with the conjunct. Its own
+falsifier is the deletion of that arm, which is `continuation_unbypassability`'s proof
+obligation rather than a mutation — a preparation returning `Ok` with no bases to bind
+against is exactly the state the Verus `ensures` excludes.
+"""
+
 # ---------------------------------------------------------------------------
 # What a verified reply's disposition is — ADR-MCPRE-069 NP-111
 # ---------------------------------------------------------------------------

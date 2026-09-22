@@ -533,6 +533,21 @@ one named assumption for a larger unnamed one, which is negative progress.
 Standing, therefore, and explicit — which is what an honest verification result looks like
 when the security value of a claim and the prover's current reach do not coincide. Revisit
 on a prover release that lifts either ceiling.
+
+WHY THE SCOPE IS ONE UNIT THOUGH `actor_id()` IS LOAD-BEARING TWICE. r12 R12-285 observed
+that the join carries a second security weight outside this proof: `chain_to_root`
+(`verify/full/delegated/credential_chain.rs`) scopes a delegation credential with
+`expected_server_signer = block.server_signer.actor_id()`, so two distinct declared
+identities colliding there would let a credential issued for one be accepted for the other.
+That is correct, and the scope is still right, because THIS assumption is not injectivity —
+it is the narrower claim that the join is OPAQUE TO THE PROVER and contributes no ensures
+to one Verus theorem. Injectivity itself is a tested property of shipped code, controlled by
+`block::tests::actor_id_is_injective_across_colon_boundaries`,
+`separator_cannot_be_forged_across_fields` and
+`the_escape_marker_itself_does_not_create_a_collision`, and dispositioned as the unratified
+NP-087. The honest gap R12-285 names is therefore a RATIFICATION gap at NP-087, not a
+widening owed here — widening this assumption to cover the credential chain would make a
+Verus modelling limit read as the carrier of a property no Verus proof is stated over.
 """
 scope = ["unit://http_profile.continuation_unbypassability", "boundary://boundary.unmodelled_own_behaviour"]
 owner = "mats@sundvall.name"

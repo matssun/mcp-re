@@ -1669,9 +1669,16 @@ evidence = [
 # — the labelled digest as a function of its arguments, and the two policy getters. They
 # are premises of this unit and are named here for the same reason they are scoped to it:
 # one relation, declared in both manifests, and the two must agree.
-# Unbypassability is a property of `prepare_http_dispatch`, so the battery is the dispatch
-# integration target rather than any unit test: `dispatch.rs` carries no test module, and a
-# battery declared over the lib alone would run zero of the cases that matter.
+# Unbypassability is a property of `prepare_http_dispatch` driven end to end, so the battery
+# is the dispatch integration target rather than the lib: the integration cases reach the
+# proved function through a signed exchange, and a battery declared over the lib alone would
+# run none of them. `dispatch.rs` DOES now carry a test module — it gained one in the file-9
+# pass that sealed the product — and its `a_claimed_continuation_with_no_retained_bases_is_
+# refused` is the lib-side twin of `continuation_without_retained_context_fails_closed`
+# below. It is deliberately not added here: it is a duplicate reading of a conjunct this
+# battery already carries, and a battery is not improved by counting the same fact twice.
+# The controls that test module added which state something NEW belong to
+# `http_profile.continuation_offer_agreement`, which is where they are declared.
 tested_symbols = [
   "tests/dispatch_test#continuation_round_trips_through_dispatch",
   "tests/dispatch_test#continuation_changed_request_state_fails",
@@ -1683,6 +1690,54 @@ tested_symbols = [
 proved_symbols = ["mcp_re_http_profile::dispatch::prepare_http_dispatch"]
 features = ["verify"]
 pilot = "verus-wp2"
+
+
+# ---------------------------------------------------------------------------
+# The other half of the continuation seam's `iff` — r12 file 9, R12-288/289
+# ---------------------------------------------------------------------------
+#
+# `continuation_unbypassability` above answers "a continuation that IS carried cannot be
+# admitted unverified". It says nothing about the opposite disagreement, and until the
+# file-9 pass there was nothing to say: retained bases offered for a request whose signed
+# block claimed no continuation were DISCARDED, and the caller received an ordinary
+# first-leg admission it would read as a resumption.
+#
+# That is a different proposition with a different failure, so it is a different unit
+# rather than a clause bolted onto the theorem above. The proved postcondition is about
+# what a successful preparation guarantees; this is about which disagreements between the
+# caller's belief and the signed request are refused at all. Keeping them apart is what
+# stops the proved unit's description from growing an "and" it has no proof for.
+
+[[unit]]
+id = "http_profile.continuation_offer_agreement"
+class = "V0"
+description = "THE CALLER'S OFFER AND THE SIGNED REQUEST'S CLAIM MUST AGREE, IN BOTH DIRECTIONS, AND EITHER DISAGREEMENT IS REFUSED BEFORE THE NONCE IS BURNED: retained continuation bases supplied for a request whose evidence block carries no continuation are refused rather than discarded, and a carried continuation with no retained bases to bind against is refused rather than admitted. Says NOTHING about whether a bound continuation's three handles are the right handles — that is `http_profile.continuation_binding` — and nothing about unbypassability, which is the proved unit above."
+paths = [
+  "mcp-re-http-profile/src/dispatch.rs",
+]
+exported_contracts = []
+# TWO classes, for the reason the refusal direction always needs them: both conjuncts are
+# `return Err` arms in one `match`, so "the battery is green" and "the battery would notice
+# an arm being turned back into a discard" are different facts. M412 deletes the arm the
+# way the defect had it — `(None, _) => false` — and the control below goes red.
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = [
+  "test://http_profile/dispatch/continuation_offer_agreement",
+  "mutation://http_profile/dispatch/continuation_offer_agreement",
+]
+tested_symbols = [
+  # The R12-288/289 repair itself.
+  "lib#dispatch::tests::retained_bases_offered_for_a_request_that_claims_no_continuation_are_refused",
+  # The mirror image, stated here as this unit's own conjunct. Its integration twin lives
+  # in `continuation_unbypassability`'s battery; the two units measure the same arm for
+  # different reasons, and neither may be deleted on the strength of the other.
+  "lib#dispatch::tests::a_claimed_continuation_with_no_retained_bases_is_refused",
+  # THE POSITIVE CONTROLS. Without them both conjuncts above are satisfied by a seam that
+  # refuses every request, which would establish nothing about the ones that dispatch.
+  "lib#dispatch::tests::a_first_leg_request_prepares_with_no_continuation",
+  "lib#dispatch::tests::an_answer_leg_prepares_against_the_retained_bases",
+]
 
 
 # ---------------------------------------------------------------------------
