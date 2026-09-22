@@ -97,8 +97,7 @@ impl<R: EpochReader> TrustEpochSource<R> {
         }
     }
 
-    /// Start requiring a poll within `bound`, because a poller is now responsible for
-    /// producing one. Called by [`spawn_trust_epoch_poller`].
+    /// Require a poll within `bound`, now that [`trust_epoch_poller_body`] owns producing one.
     fn require_polling_within(&self, bound: Duration) {
         *recover(self.liveness_bound.lock()) = Some(bound);
     }
@@ -297,8 +296,9 @@ impl RedisEpochReader {
     /// [`EpochReadError`] — lazy connectivity changes WHEN we try, never whether an
     /// unreadable epoch is treated as fail-closed.
     pub fn connect_lazy(url: &str, epoch_key: impl Into<String>) -> Result<Self, EpochReadError> {
+        use crate::deployment_request::RedactedLocator;
         let client = redis::Client::open(url)
-            .map_err(|e| EpochReadError(format!("open redis {url}: {e}")))?;
+            .map_err(|e| EpochReadError(format!("open redis {}: {e}", RedactedLocator::of(url))))?;
         Ok(RedisEpochReader {
             client,
             conn: Mutex::new(None),
@@ -1082,6 +1082,38 @@ mod tests {
             RedisEpochReader::require_present(Some(0), "k").ok(),
             Some(0),
             "a present counter at 0 is a live baseline: presence is the fact, not the value"
+        );
+    }
+
+    /// LOAD-BEARING (Owner Ruling 6): the configured `--trust-epoch-redis-url` reaches this
+    /// message on EVERY open failure, and a WELL-FORMED URL is exactly the shape that
+    /// carries a password. Neither the credential nor the complete configured string may
+    /// appear in what an operator reads, and the projection must not change which URLs open.
+    #[cfg(feature = "redis_replay")]
+    #[test]
+    fn an_open_failure_names_the_store_without_the_credential_or_the_configured_url() {
+        const CONFIGURED: &str = "https://ops:hunter2@epoch.internal:6379/0";
+        let Err(err) = RedisEpochReader::connect_lazy(CONFIGURED, DEFAULT_TRUST_EPOCH_KEY) else {
+            panic!("a non-redis scheme is not a redis URL and must not open");
+        };
+        assert!(
+            !err.0.contains("hunter2"),
+            "the configured password reached the diagnostic: {}",
+            err.0
+        );
+        assert!(
+            !err.0.contains(CONFIGURED),
+            "the complete configured URL was echoed: {}",
+            err.0
+        );
+        assert!(
+            err.0.contains("epoch.internal:6379"),
+            "an operator still learns which store failed to open: {}",
+            err.0
+        );
+        assert!(
+            RedisEpochReader::connect_lazy("redis://epoch:6379", DEFAULT_TRUST_EPOCH_KEY).is_ok(),
+            "redacting the diagnostic must not change which URLs open"
         );
     }
 }

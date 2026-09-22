@@ -258,14 +258,14 @@ fn read_kms_response(
 fn endpoint_of(url: &str) -> Result<KmsEndpoint, KeyError> {
     let endpoint = KmsEndpoint::parse(url)
         .map_err(|why| KeyError::Malformed(format!("aws-kms: endpoint {why}")))?;
-    let path = url
+    let has_path = url
         .split_once("://")
         .and_then(|(_, rest)| rest.split_once('/'))
-        .map(|(_, path)| path)
-        .unwrap_or("");
-    if !path.is_empty() {
+        .is_some_and(|(_, path)| !path.is_empty());
+    if has_path {
+        let authority = endpoint.authority();
         return Err(KeyError::Malformed(format!(
-            "aws-kms: endpoint '{url}' must not include a path"
+            "aws-kms: endpoint {authority} must not include a path"
         )));
     }
     Ok(endpoint)
@@ -1177,5 +1177,31 @@ mod tests {
         .raw_point();
         let key = VerificationKey::from_bytes(&raw).unwrap();
         verify_ed25519(transcript, &b64url_encode(&sig), &key).expect("tls sig verifies");
+    }
+
+    /// LOAD-BEARING (Owner Ruling 6): `--kms-endpoint` is operator-supplied, and by the
+    /// time this refusal is reached the shared rule has already refused userinfo, a query
+    /// and a fragment — so the PATH is the one component left that can carry a token, and
+    /// it is exactly the component this message is about. The refusal therefore names the
+    /// authority the rule computed, which is derived and credential-free by construction,
+    /// never the configured text.
+    #[test]
+    fn a_path_refusal_names_the_authority_not_the_configured_endpoint() {
+        const CONFIGURED: &str = "https://kms.example.com/s3cr3t";
+        let Err(KeyError::Malformed(why)) = endpoint_of(CONFIGURED) else {
+            panic!("an endpoint carrying a path must be refused");
+        };
+        assert!(
+            !why.contains("s3cr3t"),
+            "the path segment was echoed: {why}"
+        );
+        assert!(
+            !why.contains(CONFIGURED),
+            "the complete configured endpoint was echoed: {why}"
+        );
+        assert!(
+            why.contains("kms.example.com"),
+            "an operator still learns which authority was taken: {why}"
+        );
     }
 }
