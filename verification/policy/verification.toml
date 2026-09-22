@@ -3039,6 +3039,48 @@ tested_symbols = [
 # fail closed, and because the decision is now a pure function that can be measured without
 # a kernel — which is the only reason it has controls at all.
 
+# ---------------------------------------------------------------------------
+# WHICH files the permission floor is enforced against — r12 R12-620
+# ---------------------------------------------------------------------------
+#
+# The guard's own doc already states the rule: "the rule follows the files, not the
+# key-source name", written when gating the whole check on `key_source == File` had skipped
+# the one private key that DOES land in the pod. The projection then reintroduced the same
+# shape one level up — an EARLY RETURN on the RESPONSE-signing custody's answer about ITS
+# locators, before the CHANNEL machine's file was appended.
+#
+# The two are separate machines (ADR-MCPRE-067 §10) and nothing makes them agree, so an
+# `EnvSeed` response custody beside an exported channel key produced an EMPTY list while
+# `key_source.tls_server_key()` read that file anyway: a TLS server private key at
+# Kubernetes' default 0644 booted silently, with the deployment advertising a hardened
+# key-custody posture. Reachable only in `dev_env_key_source` builds today, because that is
+# the only place `--key-source env` parses — which bounds the exposure, not the defect.
+
+[[unit]]
+id = "proxy.key_file_floor_scope"
+class = "V0"
+description = "WHICH FILES THE STARTUP PERMISSION FLOOR IS ENFORCED AGAINST: every private-key file this configuration causes the proxy to READ, asked of the owner that knows — each custody machine answers for its own locators and no machine's answer suppresses another's file. The PKCS#11 User PIN is included because it unlocks the token holding the keys; an environment-variable seed is excluded because stat'ing a variable NAME as a path is a check that passes for the wrong reason. Says nothing about what the floor then DECIDES about a file's mode, which is `config_state::KeyFileAccessPolicy`'s, and nothing about the group set that decision is taken against, which is `proxy.process_group_set`'s."
+paths = [
+  "mcp-re-proxy/src/app.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = [
+  "test://proxy/key_file/floor_scope",
+  "mutation://proxy/key_file/floor_scope",
+]
+tested_symbols = [
+  # THE DEFECT: one machine's answer suppressing another machine's file. The assertion is
+  # on the EXACT vector, so it is simultaneously the other direction — the env-var seed
+  # name is absent, and a fix that checked everything would fail it too.
+  "lib#app::tests::an_env_seed_response_custody_does_not_suppress_the_channel_key_file",
+  # The PIN file is in scope because it unlocks the token, and is NOT claimed for a source
+  # that reads no PIN — the second half is what stops the first from being satisfied by a
+  # projection that names every path it can find.
+  "lib#app::tests::the_pkcs11_pin_file_is_permission_checked",
+]
+
 [[unit]]
 id = "proxy.process_group_set"
 class = "V0"

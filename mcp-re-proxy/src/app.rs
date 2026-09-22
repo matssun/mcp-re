@@ -195,29 +195,47 @@ fn key_files_read_from_disk<'a>(
     custody: &'a CustodyState,
     channel_credential_custody: &'a ChannelCredentialCustodyState,
 ) -> Vec<&'a str> {
-    // Under `EnvSeed` NOTHING is on disk: every locator this deployment carries names an
-    // environment variable, the channel ones included — which is why custody answers that
-    // and the channel machine does not. Phrasing the projection over the state removes the
-    // case instead of adding a condition for it.
-    if !custody.locators_are_filesystem_paths() {
-        return Vec::new();
-    }
-    let mut paths = custody.disk_secret_paths();
-    // And the handshake key, only where custody EXPORTS one. Non-exporting custody keeps
-    // it on the device, and the tagged request carries no file beside it to read.
+    // EACH OWNER ANSWERS FOR ITS OWN FILES, and neither can suppress the other's (r12
+    // R12-620). `locators_are_filesystem_paths` is the RESPONSE custody's statement about
+    // ITS locators, and as an early return it made an `EnvSeed` response custody beside an
+    // exported channel key produce an EMPTY list while `tls_server_key()` read that file
+    // anyway. The two are separate machines (ADR-MCPRE-067 §10) and nothing makes them
+    // agree — the same shape this function's own rule names: follow the files.
+    let mut paths = if custody.locators_are_filesystem_paths() {
+        custody.disk_secret_paths()
+    } else {
+        Vec::new()
+    };
+    // And the handshake key, only where the CHANNEL machine exports one. Non-exporting
+    // custody keeps it on the device, and the tagged request carries no file beside it.
     paths.extend(channel_credential_custody.material().exported_key_path());
     paths
 }
 
-/// No-op off unix: the mode bits this guard reads do not exist there. Kept in step with
-/// the unix signature above — it had drifted to a second `strict` parameter no caller
-/// passes, so this arm could not have compiled.
+/// REFUSES off unix — it does not silently succeed (r12 R12-621).
+///
+/// The mode bits do not exist on a non-unix target, so such a build cannot tell a 0600 key
+/// file from a world-readable one. That is the SAME situation as the `stat` failure the
+/// unix arm refuses on, and a permanent inability is not a weaker case than a transient
+/// one. Returning `Ok(())` made the guarantee "a group- or world-readable key file refuses
+/// startup" quietly target-conditional, on a target set nobody had written down — no
+/// `assumptions.toml` entry records that production targets are unix-only. This makes the
+/// guarantee unconditional instead of adding that premise.
+///
+/// NO EXECUTABLE CONTROL, stated rather than left to be looked for: every lane here is unix,
+/// so nothing compiles this arm, and adding a target to assert a refusal would be a lane
+/// invented for a test. It mirrors the unix arm's own refusal deliberately.
 #[cfg(not(unix))]
 fn check_key_file_perms(
-    _path: &str,
+    path: &str,
     _policy: crate::config_state::KeyFileAccessPolicy,
 ) -> Result<(), String> {
-    Ok(())
+    Err(format!(
+        "mcp-re-proxy refuses unsafe configuration:\n  - key file {path} cannot have its \
+         permission posture established on this target (the mode bits do not exist); it is \
+         read by the proxy regardless, and starting would mean serving with a key file that \
+         may be group- or world-readable"
+    ))
 }
 
 /// Build every component from `config` and serve on the per-core async fleet until
@@ -1100,6 +1118,49 @@ mod tests {
             custody.expect("the fixture names a custody state"),
             channel_credential_custody.expect("the fixture names a TLS custody state"),
         )
+    }
+
+    /// LOAD-BEARING (r12 R12-620): the RESPONSE-signing custody's answer about ITS
+    /// locators must not suppress the CHANNEL machine's file.
+    ///
+    /// The two are separate machines and nothing makes them agree, so an `EnvSeed`
+    /// response custody — every locator an environment variable — beside an exported
+    /// channel key is representable. The guard's early return on
+    /// `locators_are_filesystem_paths()` then produced an EMPTY check list while
+    /// `key_source.tls_server_key()` read that key file anyway, so a TLS server private
+    /// key mounted at Kubernetes' default 0644 booted silently — with the deployment
+    /// advertising a hardened key-custody posture.
+    ///
+    /// Built by setting `response_signing.source` directly rather than through
+    /// `--key-source env`, which `cli::parse_args` admits only under
+    /// `dev_env_key_source`: the state is what this projection is wrong about, and the
+    /// flag that reaches it is not part of the claim.
+    #[test]
+    fn an_env_seed_response_custody_does_not_suppress_the_channel_key_file() {
+        use crate::deployment_request::EnvironmentSigningSourceRequest;
+        use crate::deployment_request::SigningSourceRequest;
+
+        let mut config = config_with("file", "/seed", "/tls.key");
+        config.response_signing.source =
+            SigningSourceRequest::Environment(EnvironmentSigningSourceRequest {
+                seed_var: "MCP_RE_SEED".to_string(),
+            });
+        let (custody, channel_credential_custody) = custody_states(&config);
+        assert!(
+            !custody.locators_are_filesystem_paths(),
+            "the fixture must be the state the defect turned on"
+        );
+        let files = super::key_files_read_from_disk(&custody, &channel_credential_custody);
+        // EXACT, not `contains`: this is simultaneously the other direction. The fix is
+        // not "check everything always" — the env-var seed name is absent, because
+        // stat'ing a variable NAME as a path is a check that passes for the wrong reason,
+        // which is what the early return was written to prevent.
+        assert_eq!(
+            files,
+            vec!["/tls.key"],
+            "the channel machine's exported key is read from disk whatever the response \
+             custody says about its own locators, and an env-var name is not a path"
+        );
     }
 
     /// C048: the PKCS#11 PIN file unlocks the token holding the signing keys, so it must

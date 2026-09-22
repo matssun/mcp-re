@@ -7671,6 +7671,42 @@ touching any string.
 """
 
 [[probe]]
+id = "M421-proxy-one-custodys-answer-suppresses-anothers-key-file"
+unit = "proxy.key_file_floor_scope"
+conjunct = "each custody machine answers for its own locators, and no machine's answer suppresses another machine's file"
+# The weakening is the defect verbatim: an early return on the RESPONSE-signing custody's
+# answer, before the CHANNEL machine's file is appended. It compiles, every other key-file
+# control stays green, and the TLS server private key stops being permission-checked for a
+# deployment whose response seed comes from the environment.
+path = "mcp-re-proxy/src/app.rs"
+anchor = """
+    let mut paths = if custody.locators_are_filesystem_paths() {
+        custody.disk_secret_paths()
+    } else {
+        Vec::new()
+    };
+"""
+weakening = """
+    if !custody.locators_are_filesystem_paths() {
+        return Vec::new();
+    }
+    let mut paths = custody.disk_secret_paths();
+"""
+expect_red = [
+  "lib#app::tests::an_env_seed_response_custody_does_not_suppress_the_channel_key_file",
+]
+note = """
+`the_pkcs11_pin_file_is_permission_checked` stays GREEN under this weakening and is in the
+battery for the opposite reason: its custody IS filesystem-backed, so the early return never
+fires for it. That is precisely why the defect survived — every fixture that exercised this
+projection used a custody whose own locators were paths, and the one state that makes the
+two machines disagree had no fixture at all.
+
+MEASURED BOTH WAYS BEFORE THIS PROBE WAS WRITTEN: the fix reverted by hand, the control red;
+restored, green.
+"""
+
+[[probe]]
 id = "M420-proxy-the-unwritten-tail-of-the-group-buffer-is-a-group"
 unit = "proxy.process_group_set"
 conjunct = "only the prefix `getgroups` actually wrote is taken, so an unwritten tail cannot contribute a group this process is not in"

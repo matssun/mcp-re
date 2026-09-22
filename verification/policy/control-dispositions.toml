@@ -4206,14 +4206,6 @@ proposition = "NP-064"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-10013"
-project = "mcp-re-proxy"
-control = "lib#app::tests::the_pkcs11_pin_file_is_permission_checked"
-decision = "new-proposition"
-proposition = "NP-054"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-10014"
 project = "mcp-re-proxy"
 control = "lib#app::tests::the_tls_key_is_checked_under_every_custody_mode"
