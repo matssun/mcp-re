@@ -7659,6 +7659,42 @@ touching any string.
 """
 
 [[probe]]
+id = "M408-the-backslash-is-escaped-even-where-nothing-looks-ambiguous"
+unit = "proxy.audit_text_rendering"
+theorem = "THM-0091"
+conjunct = "The escape of the backslash is UNCONDITIONAL, so no image of the escape can be re-read as a literal — the property that makes the map injective rather than merely separator-free"
+path = "mcp-re-proxy/src/audit_record/scalar.rs"
+anchor = """
+            '\\\\' => out.push_str("\\\\\\\\"),
+"""
+weakening = """
+            '\\\\' if !value[index + 1..].starts_with(|n: char| is_escaped_char(n)) => {
+                out.push_str("\\\\\\\\")
+            }
+            '\\\\' => out.push('\\\\'),
+"""
+expect_red = [
+  "lib#audit_record::scalar::tests::every_scalar_round_trips",
+]
+note = """
+THE WEAKENING IS THE PLAUSIBLE BUG, not a contrived one: "only escape a backslash where the
+next character could be mistaken for an escape body" is the optimisation a reader reaches for
+after noticing that most backslashes are unambiguous. It is also invisible to a corpus of
+ISOLATED hazards, which is what this battery had.
+
+MEASURED, both directions. Against the corpus as it stood before the pairs were added, this
+weakening left `cargo test -p mcp-re-proxy --lib -- audit_record` at 26 passed, 0 failed:
+every seed placed its hazard between ordinary text, `"read\\nx"` has an `n` after the
+backslash and `n` is not itself escaped, and no member anywhere put two escapes next to each
+other. With the adjacency pairs present the same weakening fails on `"\\\\"` — two
+backslashes, whose image is re-read as one.
+
+That is the whole argument for the pairs. R12-736 named the gap in its own words ("two
+escapes adjacent ... not in the corpus"); this probe is what makes closing it evidence rather
+than breadth.
+"""
+
+[[probe]]
 id = "M273-proxy-one-logical-audit-record-is-one-physical-record"
 unit = "proxy.audit_text_rendering"
 theorem = "THM-0091"

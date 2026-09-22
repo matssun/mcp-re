@@ -210,6 +210,28 @@ mod tests {
             corpus.push(format!("head{seed}"));
             corpus.push(format!("head{seed}tail"));
         }
+        // Two escapes with nothing between them. The seeds above are each isolated by
+        // ordinary text, so they say nothing about an escape whose neighbour is another
+        // escape — and the backslash's escape is the one whose correctness depends on that
+        // neighbour. The cross product is over ONE representative of each family
+        // (backslash, the named escapes, the positional `-`, `\xNN`, `\u{...}`) rather than
+        // over every seed, which bounds it at 121 members and keeps it readable.
+        let families = [
+            "\\", "\n", "\r", "\t", " ", "=", "-", "\u{0}", "\u{7F}", "\u{202E}", "\u{2028}",
+        ];
+        for left in families {
+            for right in families {
+                corpus.push(format!("{left}{right}"));
+            }
+        }
+        // Values that are ALREADY images of the escape: a backslash followed by an escape
+        // body, written literally. Each must come back as the characters it is made of and
+        // never as the character that body names — `\x41` is four characters, not `A`.
+        for already_an_image in ["\\x41", "\\u{202e}", "\\n", "\\\\n", "\\e", "\\s", "-\\n"] {
+            corpus.push(already_an_image.to_owned());
+        }
+        let mut images: std::collections::HashMap<String, &String> =
+            std::collections::HashMap::new();
         for s in &corpus {
             let escaped = escape_scalar(s);
             assert_eq!(
@@ -224,6 +246,14 @@ mod tests {
                     && c as u32 != 0x7F
                     && !is_hazard(c)),
                 "the image carries a hazard: {s:?} -> {escaped:?}"
+            );
+            // Injectivity, stated rather than inferred: the word the proposition uses is
+            // the one the corpus is evidence for. A repeated corpus member is not a
+            // collision, so the comparison is between the preimages, not the images.
+            let collision = images.insert(escaped.clone(), s);
+            assert!(
+                !matches!(collision, Some(previous) if previous != s),
+                "{collision:?} and {s:?} share the image {escaped:?}"
             );
         }
     }
@@ -277,8 +307,10 @@ mod tests {
     /// This is the tie that keeps the two from drifting: a hazard added to `escape_scalar`
     /// and not to `is_separator_free` makes some string of the corpus escape to something
     /// other than itself while the predicate still calls it verbatim, and the equality
-    /// below fails. The corpus is the round-trip corpus, so it already contains one member
-    /// of every escape family in each of the three positions.
+    /// below fails. The corpus is this test's own, because the question needs members on
+    /// BOTH sides of the predicate — ordinary names and tokens that must be fixed points,
+    /// which the round-trip corpus has no reason to carry — and one member of every escape
+    /// family, which must not be.
     #[test]
     fn is_separator_free_is_exactly_the_escapes_fixed_point() {
         let mut corpus: Vec<String> = vec![
