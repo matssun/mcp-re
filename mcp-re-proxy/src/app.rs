@@ -165,7 +165,8 @@ fn check_key_file_perms(
         }
     };
     let mode = meta.permissions().mode();
-    if let Some(reason) = policy.violation(mode, meta.gid(), &process_gids()) {
+    let gids = crate::config_state::process_groups::process_gids();
+    if let Some(reason) = policy.violation(mode, meta.gid(), &gids) {
         return Err(format!(
             "mcp-re-proxy refuses unsafe configuration:\n  - key file {path} \
              is {reason} (mode {:o}); restrict to 0600",
@@ -175,25 +176,6 @@ fn check_key_file_perms(
     Ok(())
 }
 
-/// The groups this process belongs to: the effective gid plus its supplementary
-/// groups. Under Kubernetes `fsGroup` the mounted Secret is owned by a supplementary
-/// group, not the effective one, so checking only `getegid()` would refuse the very
-/// mount model the relaxation exists for.
-#[cfg(unix)]
-fn process_gids() -> Vec<u32> {
-    let mut gids = vec![unsafe { libc::getegid() } as u32];
-    // SAFETY: the two-call idiom — ask for the count, then fill a buffer of that size.
-    unsafe {
-        let count = libc::getgroups(0, std::ptr::null_mut());
-        if count > 0 {
-            let mut buf = vec![0 as libc::gid_t; count as usize];
-            if libc::getgroups(count, buf.as_mut_ptr()) >= 0 {
-                gids.extend(buf);
-            }
-        }
-    }
-    gids
-}
 /// Every private-key file this config causes the proxy to READ from disk.
 ///
 /// Pure, so the decision is testable on its own — the defect this replaces was not in

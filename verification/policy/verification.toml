@@ -3018,6 +3018,53 @@ tested_symbols = [
 # is a fact about the `?` operators in `run_validated`. M358 weakens exactly that.
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# The fail-closed input to the fsGroup relaxation — r12 R12-631
+# ---------------------------------------------------------------------------
+#
+# `KeyFileAccessPolicy::violation` admits a group-readable key file only when the file's
+# group is one this process is ACTUALLY in. That is what makes the Kubernetes `fsGroup`
+# relaxation a narrow one rather than a blanket permission — and it makes the group set an
+# input to a fail-closed decision, not a diagnostic.
+#
+# The two-call `getgroups` idiom extended that set with the WHOLE BUFFER, checking only
+# that the second call had not failed. The call returns how many entries it WROTE, and the
+# supplementary list can shrink between the two calls: the tail then still holds its
+# initialiser, `0`, and gid 0 — root — entered the set of groups this process is in. Under
+# `--allow-group-readable-key-files`, a 0640 key file owned by group root would be admitted
+# by a process that is not in group root.
+#
+# The race needs a concurrent privileged `setgroups` and no realistic attacker drives it.
+# It is registered because it is a fail-OPEN direction in a guard whose entire job is to
+# fail closed, and because the decision is now a pure function that can be measured without
+# a kernel — which is the only reason it has controls at all.
+
+[[unit]]
+id = "proxy.process_group_set"
+class = "V0"
+description = "THE GROUP SET THE KEY-FILE GUARD IS HANDED IS WHAT THE KERNEL REPORTED AND NOTHING ELSE: only the prefix `getgroups` actually wrote is taken, so an unwritten tail cannot contribute a group — in particular gid 0 — that this process is not in; a failed call yields NO supplementary groups, which is the fail-closed reading because a smaller set can only make the policy refuse more files; and a count past the buffer is clamped rather than trusted. Says nothing about what the policy then DECIDES from that set, which is `config_state::KeyFileAccessPolicy`'s."
+paths = [
+  "mcp-re-proxy/src/config_state/process_groups.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = [
+  "test://proxy/key_file/process_group_set",
+  "mutation://proxy/key_file/process_group_set",
+]
+tested_symbols = [
+  # THE DEFECT: the unwritten tail is the initialiser, not a group.
+  "lib#config_state::process_groups::tests::the_unwritten_tail_is_not_a_group_this_process_is_in",
+  "lib#config_state::process_groups::tests::a_failed_call_yields_no_supplementary_groups",
+  "lib#config_state::process_groups::tests::a_count_past_the_buffer_is_clamped_not_trusted",
+  # THE POSITIVE CONTROLS. Without them the three above are satisfied by a function that
+  # always returns nothing — which would refuse every fsGroup mount the relaxation exists
+  # to admit, and would look like a fix.
+  "lib#config_state::process_groups::tests::a_fully_written_buffer_is_taken_whole",
+  "lib#config_state::process_groups::tests::the_effective_gid_is_always_in_the_set",
+]
+
 [[unit]]
 id = "proxy.unestablishable_capability_refusal"
 class = "V0"

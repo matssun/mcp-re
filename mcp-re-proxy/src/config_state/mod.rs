@@ -71,6 +71,10 @@ pub mod in_flight_limit;
 pub mod key_file_access;
 pub(crate) mod kms_endpoint;
 pub mod mcp_transport_contract;
+/// The OTHER input to the key-file access decision: which groups this process is in.
+/// Beside the policy that consumes it, because a group set is only meaningful as the thing
+/// the `fsGroup` relaxation is checked against.
+pub(crate) mod process_groups;
 pub mod replay;
 pub mod server_identity;
 pub mod topology;

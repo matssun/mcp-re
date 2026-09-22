@@ -7671,6 +7671,42 @@ touching any string.
 """
 
 [[probe]]
+id = "M420-proxy-the-unwritten-tail-of-the-group-buffer-is-a-group"
+unit = "proxy.process_group_set"
+conjunct = "only the prefix `getgroups` actually wrote is taken, so an unwritten tail cannot contribute a group this process is not in"
+# The weakening is the defect verbatim: take the whole buffer, ignoring how much the
+# kernel wrote. It compiles, `process_gids` still returns a plausible set on every machine
+# a test runs on, and the only observable difference is a buffer the kernel filled
+# PARTIALLY — which the pure function is what makes reachable at all.
+path = "mcp-re-proxy/src/config_state/process_groups.rs"
+anchor = """
+    let filled = usize::try_from(filled).unwrap_or(0);
+    buf.get(..filled.min(buf.len())).unwrap_or(&[])
+"""
+weakening = """
+    let _ = filled;
+    buf
+"""
+expect_red = [
+  "lib#config_state::process_groups::tests::the_unwritten_tail_is_not_a_group_this_process_is_in",
+  "lib#config_state::process_groups::tests::a_failed_call_yields_no_supplementary_groups",
+]
+note = """
+THE CONSEQUENCE, STATED SO THE SEVERITY IS NOT INFERRED FROM THE SHAPE: the tail of a
+`getgroups` buffer holds its initialiser, `0`. Taking the whole buffer therefore puts gid 0
+— root — into the set of groups this process is in, and `KeyFileAccessPolicy::violation`
+admits a group-readable key file when the file's group is in that set. Under
+`--allow-group-readable-key-files` a 0640 key file owned by group root is then accepted by
+a process that is not in group root.
+
+`a_fully_written_buffer_is_taken_whole` and `the_effective_gid_is_always_in_the_set` stay
+GREEN under this weakening, correctly and necessarily: taking too much cannot break the
+case where taking everything is right. They are in the battery for the opposite direction —
+without them, a "fix" that returned no supplementary groups at all would satisfy the two
+red controls above while refusing every fsGroup mount the relaxation exists to admit.
+"""
+
+[[probe]]
 id = "M417-client-a-provider-mints-the-header-derived-dpop-binding"
 unit = "client.binding_spec_refusal"
 conjunct = "a provider presenting `oauth-dpop` is refused in EVERY form, because that binding is header-derived and a provider-supplied one attests to a credential no covered header carries"
