@@ -409,7 +409,9 @@ fn run_validated(
     let resolve_actor = build_actor_resolver(
         building.trust()?.signers(),
         Arc::clone(&resolver),
-        values.trust_domain.clone(),
+        // r12 R12-629: the coordinate through its OWNER, not the raw request. The server
+        // actor already took it from here; the client one took the primitive beside it.
+        config.state().server_identity().trust_domain().to_owned(),
         response_kid.clone(),
         server_identity.clone(),
         response_pub,
@@ -516,10 +518,16 @@ fn run_validated(
     if config.state().topology().is_fleet() {
         let trust_bound = crate::trust_plane::fleet_trust_bound(&trust_plan);
         let crl_bound = crate::tls_plane::fleet_crl_bound(&tls_plan);
+        // r12 R12-628: THREE slots, three postures. The response-slot anchor is read once
+        // and held for the process lifetime — deliberately, because it is the deployment's
+        // own trust anchor and is revoked by root rotation rather than by a trust-store
+        // entry — so neither the trust-epoch kill switch nor the CRL reload reaches it. An
+        // operator reading two numbers and an omission cannot tell that from an oversight.
         eprintln!(
             "mcp-re-proxy: FLEET cross-replica revocation-lag bounds (ADR-MCPS-049 clause 3): \
-             trust-key-status={trust_bound}; client-cert-crl={crl_bound}; zero-window revocation \
-             NOT claimed"
+             trust-key-status={trust_bound}; client-cert-crl={crl_bound}; \
+             response-signer-anchor=restart-only (read once at startup; withdrawn by root \
+             rotation, not by the trust store or a CRL); zero-window revocation NOT claimed"
         );
     }
 
