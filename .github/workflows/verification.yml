@@ -78,7 +78,10 @@ on:
       - "mcp-re-proxy/src/admission_enforcer/**"
       - "mcp-re-proxy/src/authorization/**"
       - "mcp-re-proxy/src/config_state/admission.rs"
-      - "mcp-re-proxy/src/config_state/process_groups.rs"
+      - "mcp-re-proxy/src/capability_materialization/key_file_custody/covered_files.rs"
+      - "mcp-re-proxy/src/capability_materialization/key_file_custody/mod.rs"
+      - "mcp-re-proxy/src/capability_materialization/key_file_custody/observed_posture.rs"
+      - "mcp-re-proxy/src/capability_materialization/key_file_custody/process_groups.rs"
       - "mcp-re-proxy/src/config_state/authorization.rs"
       # The deployable replay backends (THM-0106 / THM-0107). Feature-gated, so a plain
       # cargo lane compiles them to zero tests — which is exactly why a change to one must
@@ -458,7 +461,10 @@ on:
       - "mcp-re-proxy/src/admission_enforcer/**"
       - "mcp-re-proxy/src/authorization/**"
       - "mcp-re-proxy/src/config_state/admission.rs"
-      - "mcp-re-proxy/src/config_state/process_groups.rs"
+      - "mcp-re-proxy/src/capability_materialization/key_file_custody/covered_files.rs"
+      - "mcp-re-proxy/src/capability_materialization/key_file_custody/mod.rs"
+      - "mcp-re-proxy/src/capability_materialization/key_file_custody/observed_posture.rs"
+      - "mcp-re-proxy/src/capability_materialization/key_file_custody/process_groups.rs"
       - "mcp-re-proxy/src/config_state/authorization.rs"
       # The deployable replay backends (THM-0106 / THM-0107). Feature-gated, so a plain
       # cargo lane compiles them to zero tests — which is exactly why a change to one must

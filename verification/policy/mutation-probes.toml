@@ -7671,6 +7671,74 @@ touching any string.
 """
 
 [[probe]]
+id = "M422-proxy-the-admission-walk-observes-without-enforcing"
+unit = "proxy.key_file_custody_admission"
+conjunct = "the walk ENFORCES the policy over every covered file — the first refusal stops it — rather than observing and continuing"
+# The composition's own production property, and it has one: a walk that calls the
+# observation and discards its verdict still visits every path, still builds a product, and
+# still looks like a check. `app.rs` ran exactly this shape for its whole life — a loop
+# whose result went nowhere — which is why the earned product exists at all.
+path = "mcp-re-proxy/src/capability_materialization/key_file_custody/mod.rs"
+anchor = """
+        observed_posture::admit(path, policy)?;
+"""
+weakening = """
+        let _ = observed_posture::admit(path, policy);
+"""
+expect_red = [
+  "lib#capability_materialization::key_file_custody::tests::one_illegal_key_file_refuses_the_whole_admission",
+]
+note = """
+`the_admitted_product_names_the_scope_it_walked` stays GREEN under this weakening, and that
+is the point of having both: the SCOPE is still right, every observation still happens, and
+the deployment starts anyway. A battery holding only the scope control would report the
+enforcement being deleted as no change.
+
+This probe was added because `verify --manifests` refused the unit without one (ADR-MCPRE-068
+N1), and the refusal was correct: the first draft argued a falsifier here would duplicate the
+three roles' probes. It does not — those attack WHAT is covered, WHAT a mode means and WHAT
+groups exist, and none of them can see a composition that asks all three and ignores the
+answer.
+"""
+
+[[probe]]
+id = "M423-proxy-an-unestablishable-posture-passes"
+unit = "proxy.key_file_posture_observation"
+conjunct = "a `stat` that fails for any reason other than `no such file` REFUSES, because the posture of a file the proxy is about to read is either established or it is not"
+# The fail-open this exists to exclude, and the one that boots silently: a world-readable
+# signing seed on a networked or overlay mount (EIO, ESTALE, EACCES on the directory) is
+# unstat'able, and reading that as compliance starts the proxy over it.
+path = "mcp-re-proxy/src/capability_materialization/key_file_custody/observed_posture.rs"
+anchor = """
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => {
+            return Err(format!(
+                "mcp-re-proxy refuses unsafe configuration:\\n  - key file {path} cannot be \\
+                 stat'ed ({e}), so its permission posture cannot be established; it is read \\
+                 by the proxy regardless, and starting would mean serving with a key file \\
+                 that may be group- or world-readable"
+            ))
+        }
+"""
+weakening = """
+        Err(_) => return Ok(()),
+"""
+expect_red = [
+  "lib#capability_materialization::key_file_custody::observed_posture::tests::a_key_file_whose_posture_cannot_be_established_is_refused",
+]
+note = """
+COLLAPSING THE TWO ABSENCES IS THE TEMPTING SIMPLIFICATION, and it is wrong in one
+direction only: `NotFound` genuinely is not a fail-open — there is no file whose permissions
+could be wrong, and the loader resolves the same path a moment later and reports the absence
+with a diagnostic that names it. Every OTHER error is the proxy not knowing about a file it
+is about to read.
+
+`an_absent_key_file_is_not_an_error` stays GREEN, correctly: the weakening makes the
+absent case Ok too, which it already was. That is what distinguishes this probe from one
+satisfied by a role that refuses everything.
+"""
+
+[[probe]]
 id = "M421-proxy-one-custodys-answer-suppresses-anothers-key-file"
 unit = "proxy.key_file_floor_scope"
 conjunct = "each custody machine answers for its own locators, and no machine's answer suppresses another machine's file"
@@ -7678,7 +7746,7 @@ conjunct = "each custody machine answers for its own locators, and no machine's 
 # answer, before the CHANNEL machine's file is appended. It compiles, every other key-file
 # control stays green, and the TLS server private key stops being permission-checked for a
 # deployment whose response seed comes from the environment.
-path = "mcp-re-proxy/src/app.rs"
+path = "mcp-re-proxy/src/capability_materialization/key_file_custody/covered_files.rs"
 anchor = """
     let mut paths = if custody.locators_are_filesystem_paths() {
         custody.disk_secret_paths()
@@ -7693,7 +7761,7 @@ weakening = """
     let mut paths = custody.disk_secret_paths();
 """
 expect_red = [
-  "lib#app::tests::an_env_seed_response_custody_does_not_suppress_the_channel_key_file",
+  "lib#capability_materialization::key_file_custody::covered_files::tests::an_env_seed_response_custody_does_not_suppress_the_channel_key_file",
 ]
 note = """
 `the_pkcs11_pin_file_is_permission_checked` stays GREEN under this weakening and is in the
@@ -7714,7 +7782,7 @@ conjunct = "only the prefix `getgroups` actually wrote is taken, so an unwritten
 # kernel wrote. It compiles, `process_gids` still returns a plausible set on every machine
 # a test runs on, and the only observable difference is a buffer the kernel filled
 # PARTIALLY — which the pure function is what makes reachable at all.
-path = "mcp-re-proxy/src/config_state/process_groups.rs"
+path = "mcp-re-proxy/src/capability_materialization/key_file_custody/process_groups.rs"
 anchor = """
     let filled = usize::try_from(filled).unwrap_or(0);
     buf.get(..filled.min(buf.len())).unwrap_or(&[])
@@ -7724,8 +7792,8 @@ weakening = """
     buf
 """
 expect_red = [
-  "lib#config_state::process_groups::tests::the_unwritten_tail_is_not_a_group_this_process_is_in",
-  "lib#config_state::process_groups::tests::a_failed_call_yields_no_supplementary_groups",
+  "lib#capability_materialization::key_file_custody::process_groups::tests::the_unwritten_tail_is_not_a_group_this_process_is_in",
+  "lib#capability_materialization::key_file_custody::process_groups::tests::a_failed_call_yields_no_supplementary_groups",
 ]
 note = """
 THE CONSEQUENCE, STATED SO THE SEVERITY IS NOT INFERRED FROM THE SHAPE: the tail of a

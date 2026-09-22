@@ -200,7 +200,13 @@ _PROXY_LIB_SRCS = [
     "src/deployment_request/delegated_signing/mod.rs",
     "src/cli/currency_flags.rs",
     "src/deployment_request/request_signer_currency/mod.rs",
-    "src/capability_materialization/ingress.rs",
+        # ADR-MCPRE-067 §23 / r12 file 11: the environmental half of key-file custody —
+    # observe the real objects and apply the policy `config_state::key_file_access` owns.
+    "src/capability_materialization/key_file_custody/mod.rs",
+    "src/capability_materialization/key_file_custody/covered_files.rs",
+    "src/capability_materialization/key_file_custody/observed_posture.rs",
+    "src/capability_materialization/key_file_custody/process_groups.rs",
+"src/capability_materialization/ingress.rs",
     "src/capability_materialization/key_source/aws.rs",
     "src/capability_materialization/key_source/env.rs",
     "src/capability_materialization/key_source/file.rs",
@@ -369,9 +375,6 @@ _PROXY_LIB_SRCS = [
     # cryptoki-sys FFI bindings (replaces the high-level cryptoki crate +
     # transitive unmaintained `paste`). Same `pkcs11_keysource` feature gate.
     "src/pkcs11_native.rs",
-    # R12-631: which groups this process is in — the fail-closed input to the key-file
-    # guard's Kubernetes `fsGroup` relaxation.
-    "src/config_state/process_groups.rs",
     # Issue #4030: online OCSP client-cert revocation (behind #[cfg(feature =
     # "online_ocsp")]; cfg'd out of the default build).
     "src/ocsp.rs",

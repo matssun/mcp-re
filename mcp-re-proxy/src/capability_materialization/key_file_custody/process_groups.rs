@@ -3,9 +3,12 @@
 //!
 //! One fact: **the group set is what the kernel reported, and nothing else.**
 //!
-//! # Why this is its own owner
+//! # Why this is its own role
 //!
-//! The answer is an input to a FAIL-CLOSED decision — `KeyFileAccessPolicy::violation`
+//! It is the PROCESS half of the environmental context this subtree observes, and it is
+//! separate from the file half because the two fail differently: a file can be absent or
+//! unstat'able, a group set cannot. The answer is an input to a FAIL-CLOSED decision —
+//! `KeyFileAccessPolicy::violation`
 //! admits a group-readable key file only when the file's group is one this process is
 //! actually in, which is what makes the Kubernetes `fsGroup` relaxation safe rather than a
 //! blanket permission. A group this process is NOT in, appearing in that set, turns the
@@ -56,7 +59,7 @@ fn supplementary_prefix(buf: &[u32], filled: i32) -> &[u32] {
 /// the effective one, so checking only `getegid()` would refuse the very mount model the
 /// relaxation exists for.
 #[cfg(unix)]
-pub(crate) fn process_gids() -> Vec<u32> {
+pub(super) fn process_gids() -> Vec<u32> {
     let mut gids = vec![unsafe { libc::getegid() } as u32];
     // SAFETY: the two-call idiom — ask for the count, then fill a buffer of that size.
     // The RETURN of the second call is authoritative over the buffer's length; see

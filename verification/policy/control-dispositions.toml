@@ -4112,7 +4112,11 @@ record = "docs/architecture/control-dispositions.md#np-067"
 [[disposition]]
 id = "CD-10001"
 project = "mcp-re-proxy"
-control = "lib#app::tests::a_delegated_tls_key_contributes_no_file_to_check"
+# MOVED WITH THEIR SUBJECT, r12 file 11: the key-file guard's three semantic roles were
+# extracted from `app.rs` into `capability_materialization/key_file_custody/`, so these
+# controls have new identities and the same propositions. Repointed rather than deleted —
+# nothing was claimed by a unit and nothing ceased to exist.
+control = "lib#capability_materialization::key_file_custody::covered_files::tests::a_delegated_tls_key_contributes_no_file_to_check"
 decision = "new-proposition"
 proposition = "NP-054"
 recorded = "2026-09-19"
@@ -4126,30 +4130,6 @@ proposition = "NP-065"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-10003"
-project = "mcp-re-proxy"
-control = "lib#app::tests::a_group_readable_key_file_is_refused_without_the_opt_in"
-decision = "new-proposition"
-proposition = "NP-054"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-10004"
-project = "mcp-re-proxy"
-control = "lib#app::tests::a_group_readable_key_file_owned_by_our_group_is_accepted_with_the_opt_in"
-decision = "new-proposition"
-proposition = "NP-054"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-10005"
-project = "mcp-re-proxy"
-control = "lib#app::tests::a_key_file_whose_posture_cannot_be_established_is_refused"
-decision = "new-proposition"
-proposition = "NP-054"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-10006"
 project = "mcp-re-proxy"
 control = "lib#app::tests::a_record_enqueued_immediately_before_teardown_still_reaches_stderr"
@@ -4158,43 +4138,11 @@ proposition = "NP-066"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-10007"
-project = "mcp-re-proxy"
-control = "lib#app::tests::a_world_readable_key_file_is_refused"
-decision = "new-proposition"
-proposition = "NP-054"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-10008"
-project = "mcp-re-proxy"
-control = "lib#app::tests::an_absent_key_file_is_not_an_error"
-decision = "new-proposition"
-proposition = "NP-054"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-10009"
-project = "mcp-re-proxy"
-control = "lib#app::tests::an_owner_only_key_file_is_accepted"
-decision = "new-proposition"
-proposition = "NP-054"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-10010"
 project = "mcp-re-proxy"
 control = "lib#app::tests::an_unresolvable_bind_is_refused_and_names_the_flag"
 decision = "new-proposition"
 proposition = "NP-064"
-recorded = "2026-09-19"
-
-[[disposition]]
-id = "CD-10011"
-project = "mcp-re-proxy"
-control = "lib#app::tests::group_write_is_refused_even_with_the_opt_in"
-decision = "new-proposition"
-proposition = "NP-054"
 recorded = "2026-09-19"
 
 [[disposition]]
@@ -4208,7 +4156,7 @@ recorded = "2026-09-19"
 [[disposition]]
 id = "CD-10014"
 project = "mcp-re-proxy"
-control = "lib#app::tests::the_tls_key_is_checked_under_every_custody_mode"
+control = "lib#capability_materialization::key_file_custody::covered_files::tests::the_tls_key_is_checked_under_every_custody_mode"
 decision = "new-proposition"
 proposition = "NP-054"
 recorded = "2026-09-19"

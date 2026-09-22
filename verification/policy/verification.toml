@@ -3056,12 +3056,36 @@ tested_symbols = [
 # key-custody posture. Reachable only in `dev_env_key_source` builds today, because that is
 # the only place `--key-source env` parses — which bounds the exposure, not the defect.
 
+# The composition of the three roles, which is its own proposition: the scope can be right
+# and every observation correct while the ROOT forgets to hold the result — which is what
+# `app.rs` did for its whole life, by running a loop and discarding what it learned. The
+# earned product is what makes "every key file was admitted" a value rather than a habit.
+
+[[unit]]
+id = "proxy.key_file_custody_admission"
+class = "V0"
+description = "EVERY PRIVATE-KEY FILE THIS DEPLOYMENT WILL READ HAD ITS PERMISSION POSTURE OBSERVED AND FOUND LEGAL, AND THAT IS A VALUE RATHER THAN AN EVENT: `admit_key_files` walks the covered set, applies the policy to each observed object, and yields an `AdmittedKeyFiles` whose representation is private and whose only producer is that walk — so holding one means the observation happened, over a named scope. The first refusal stops the walk, because a deployment with one illegal key file does not start. Says nothing about WHICH files are covered (`proxy.key_file_floor_scope`), what a mode means (`config_state::KeyFileAccessPolicy`), or which groups this process is in (`proxy.process_group_set`); it is the composition of exactly those three."
+paths = [
+  "mcp-re-proxy/src/capability_materialization/key_file_custody/mod.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = [
+  "test://proxy/key_file/custody_admission",
+  "mutation://proxy/key_file/custody_admission",
+]
+tested_symbols = [
+  "lib#capability_materialization::key_file_custody::tests::the_admitted_product_names_the_scope_it_walked",
+  "lib#capability_materialization::key_file_custody::tests::one_illegal_key_file_refuses_the_whole_admission",
+]
+
 [[unit]]
 id = "proxy.key_file_floor_scope"
 class = "V0"
 description = "WHICH FILES THE STARTUP PERMISSION FLOOR IS ENFORCED AGAINST: every private-key file this configuration causes the proxy to READ, asked of the owner that knows — each custody machine answers for its own locators and no machine's answer suppresses another's file. The PKCS#11 User PIN is included because it unlocks the token holding the keys; an environment-variable seed is excluded because stat'ing a variable NAME as a path is a check that passes for the wrong reason. Says nothing about what the floor then DECIDES about a file's mode, which is `config_state::KeyFileAccessPolicy`'s, and nothing about the group set that decision is taken against, which is `proxy.process_group_set`'s."
 paths = [
-  "mcp-re-proxy/src/app.rs",
+  "mcp-re-proxy/src/capability_materialization/key_file_custody/covered_files.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -3074,11 +3098,39 @@ tested_symbols = [
   # THE DEFECT: one machine's answer suppressing another machine's file. The assertion is
   # on the EXACT vector, so it is simultaneously the other direction — the env-var seed
   # name is absent, and a fix that checked everything would fail it too.
-  "lib#app::tests::an_env_seed_response_custody_does_not_suppress_the_channel_key_file",
+  "lib#capability_materialization::key_file_custody::covered_files::tests::an_env_seed_response_custody_does_not_suppress_the_channel_key_file",
   # The PIN file is in scope because it unlocks the token, and is NOT claimed for a source
   # that reads no PIN — the second half is what stops the first from being satisfied by a
   # projection that names every path it can find.
-  "lib#app::tests::the_pkcs11_pin_file_is_permission_checked",
+  "lib#capability_materialization::key_file_custody::covered_files::tests::the_pkcs11_pin_file_is_permission_checked",
+]
+
+[[unit]]
+id = "proxy.key_file_posture_observation"
+class = "V0"
+description = "EVERY WAY OF NOT KNOWING A KEY FILE'S POSTURE IS A REFUSAL, NEVER A PASS: the real object is `stat`ed and the policy applied to what was observed, a `stat` that fails for any reason other than `no such file` refuses because the posture of a file the proxy is about to READ is either established or it is not, and a target whose mode bits do not exist refuses for the same reason permanently rather than returning success. `NotFound` is the one non-refusal — there is no file whose permissions could be wrong, and the loader reports the absence itself. This role does not see `--allow-group-readable-key-files` and could not re-derive the rule from it: the rule is three conditions and a boolean is one term in it, which is `config_state::KeyFileAccessPolicy`'s."
+paths = [
+  "mcp-re-proxy/src/capability_materialization/key_file_custody/observed_posture.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/key_file/posture_observation",
+  "mutation://proxy/key_file/posture_observation",
+]
+tested_symbols = [
+  # The policy applied to what was observed, in both directions and at the opt-in's edge.
+  "lib#capability_materialization::key_file_custody::observed_posture::tests::a_world_readable_key_file_is_refused",
+  "lib#capability_materialization::key_file_custody::observed_posture::tests::a_group_readable_key_file_is_refused_without_the_opt_in",
+  "lib#capability_materialization::key_file_custody::observed_posture::tests::a_group_readable_key_file_owned_by_our_group_is_accepted_with_the_opt_in",
+  "lib#capability_materialization::key_file_custody::observed_posture::tests::group_write_is_refused_even_with_the_opt_in",
+  # THE POSITIVE CONTROL. Without it every refusal above is satisfied by a role that
+  # refuses every key file, which would start no deployment at all.
+  "lib#capability_materialization::key_file_custody::observed_posture::tests::an_owner_only_key_file_is_accepted",
+  # NOT KNOWING, in its two shapes: an unstat'able file refuses, an absent one does not.
+  "lib#capability_materialization::key_file_custody::observed_posture::tests::a_key_file_whose_posture_cannot_be_established_is_refused",
+  "lib#capability_materialization::key_file_custody::observed_posture::tests::an_absent_key_file_is_not_an_error",
 ]
 
 [[unit]]
@@ -3086,7 +3138,7 @@ id = "proxy.process_group_set"
 class = "V0"
 description = "THE GROUP SET THE KEY-FILE GUARD IS HANDED IS WHAT THE KERNEL REPORTED AND NOTHING ELSE: only the prefix `getgroups` actually wrote is taken, so an unwritten tail cannot contribute a group — in particular gid 0 — that this process is not in; a failed call yields NO supplementary groups, which is the fail-closed reading because a smaller set can only make the policy refuse more files; and a count past the buffer is clamped rather than trusted. Says nothing about what the policy then DECIDES from that set, which is `config_state::KeyFileAccessPolicy`'s."
 paths = [
-  "mcp-re-proxy/src/config_state/process_groups.rs",
+  "mcp-re-proxy/src/capability_materialization/key_file_custody/process_groups.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -3097,14 +3149,14 @@ evidence = [
 ]
 tested_symbols = [
   # THE DEFECT: the unwritten tail is the initialiser, not a group.
-  "lib#config_state::process_groups::tests::the_unwritten_tail_is_not_a_group_this_process_is_in",
-  "lib#config_state::process_groups::tests::a_failed_call_yields_no_supplementary_groups",
-  "lib#config_state::process_groups::tests::a_count_past_the_buffer_is_clamped_not_trusted",
+  "lib#capability_materialization::key_file_custody::process_groups::tests::the_unwritten_tail_is_not_a_group_this_process_is_in",
+  "lib#capability_materialization::key_file_custody::process_groups::tests::a_failed_call_yields_no_supplementary_groups",
+  "lib#capability_materialization::key_file_custody::process_groups::tests::a_count_past_the_buffer_is_clamped_not_trusted",
   # THE POSITIVE CONTROLS. Without them the three above are satisfied by a function that
   # always returns nothing — which would refuse every fsGroup mount the relaxation exists
   # to admit, and would look like a fix.
-  "lib#config_state::process_groups::tests::a_fully_written_buffer_is_taken_whole",
-  "lib#config_state::process_groups::tests::the_effective_gid_is_always_in_the_set",
+  "lib#capability_materialization::key_file_custody::process_groups::tests::a_fully_written_buffer_is_taken_whole",
+  "lib#capability_materialization::key_file_custody::process_groups::tests::the_effective_gid_is_always_in_the_set",
 ]
 
 [[unit]]

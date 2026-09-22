@@ -24,11 +24,16 @@
 //! responder did not answer.
 
 pub mod ingress;
+/// The environmental half of key-file custody: observe the real objects and apply the
+/// policy `config_state::key_file_access` owns.
+pub mod key_file_custody;
 pub mod key_source;
 #[cfg(feature = "online_ocsp")]
 pub mod revocation;
 
 pub use ingress::build_attested_ingress_binding;
+pub use key_file_custody::admit_key_files;
+pub use key_file_custody::AdmittedKeyFiles;
 pub use key_source::{build_key_source, read_pkcs11_pin, MaterializedSigningRoles};
 #[cfg(feature = "online_ocsp")]
 pub use revocation::build_ocsp_checker;
