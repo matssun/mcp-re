@@ -1007,3 +1007,113 @@ module-tree-visibility = "all three fields are bare-private to `replay_plane::ma
 alternate-constructors = "`MaterializedReplay::materialize` and the private `accept` it shares with the guard batteries are the only producers, and `accept` calls `assert_durable` before the literal it returns — producing the value and checking it are one step. There is no `new`, `From`, `Default` or builder. The handover is `into_parts`, which MOVES both halves out together rather than projecting them separately, so a caller cannot carry one half onward beside a posture from elsewhere"
 generated-or-deserialization = "no derives that construct, and no Serialize/Deserialize — the value is established from a plan at startup, never decoded. A derived decoder would be a producer that never meets `assert_durable`"
 test-only-construction = "the owner's `#[cfg(test)] mod tests` reaches the value through `materialize` and through `accept`, which is the CHECKED path and not a bypass — it is private to this module and calls `assert_durable` itself. No test-gated constructor and no test-gated field visibility exists"
+
+
+# --- proxy.fleet_serve_sole_route ------------------------------------------------------
+#
+# r12 R12-626 under owner ruling (b): the serving fleet runs only through the lifecycle gate.
+# S30 is the bypass itself, and the falsifier the ruling asks for: restore `serve_fleet`'s
+# plain `FleetConfig` parameter and S30 COMPILES, which the lane reports as the boundary
+# open. S31 and S32 close the witness's two production routes.
+
+[[probe]]
+id = "S30"
+unit = "proxy.fleet_serve_sole_route"
+kind = "in-crate-source-injection"
+package = "mcp-re-proxy"
+invariant = "crate code cannot call `app::serve_fleet` with a bare fleet configuration: serving requires a `FleetServeAuthorized`, so the fleet runs only through `MaterializedRuntime::serve`"
+insertion_path = "mcp-re-proxy/src/structural_probe_s30.rs"
+insertion_parent = "mcp-re-proxy/src/lib.rs"
+insertion_declaration = "mod structural_probe_s30;"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0308"
+note = """
+THE BYPASS R12-626 NAMED, written the way the call site was before the ruling: every other
+argument supplied, the configuration passed where the authorization is required. `E0308`
+because the refusal is a TYPE mismatch at that argument — which is also what makes this the
+falsifier. Remove the witness requirement and this construction is exactly the old, legal
+call, so the lane reports FAIL with the invariant named.
+"""
+construction = """
+// ADR-MCPRE-068 structural probe S30. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use std::sync::Arc;
+
+pub(crate) fn hostile(
+    proxy: Arc<crate::HttpProfileProxy>,
+    fleet: crate::async_fleet::FleetConfig,
+) -> Result<(), String> {
+    crate::app::serve_fleet(proxy, todo!(), todo!(), fleet, todo!()) // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "`FleetServeAuthorized`'s field is bare-private to `materialized_runtime::fleet_serve_authorized`, and `issue` is `pub(super)`, visible to `materialized_runtime` and nothing else. The type is `pub(crate)` so `app::serve_fleet` can require it; naming it grants nothing. The probe sits at the crate root, the widest position crate code occupies"
+alternate-constructors = "`issue` is the only associated function returning `Self`, called once, in `MaterializedRuntime::serve`. There is no `new`, `From`, `Default` or builder; `into_fleet_config` consumes the witness and returns the configuration, never the witness or a `&mut` to it"
+generated-or-deserialization = "no derives at all — no `Clone`, no `Default`, no Serialize/Deserialize — so no generated code produces one and an authorization cannot be duplicated or decoded"
+test-only-construction = "the owner's `#[cfg(test)] mod tests` reaches the witness only through `issue`, from inside the owning module. No test-gated constructor and no test-gated visibility exists"
+
+[[probe]]
+id = "S31"
+unit = "proxy.fleet_serve_sole_route"
+kind = "in-crate-source-injection"
+package = "mcp-re-proxy"
+invariant = "no code outside `materialized_runtime` can mint a FleetServeAuthorized through its producer, so `MaterializedRuntime::serve` is the only issuer"
+insertion_path = "mcp-re-proxy/src/structural_probe_s31.rs"
+insertion_parent = "mcp-re-proxy/src/lib.rs"
+insertion_declaration = "mod structural_probe_s31;"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0624"
+note = """
+THE ROUTE THAT KEEPS S30 HONEST. A witness anyone could mint would make S30 a formality:
+the bypass would call `issue` and then `serve_fleet`. `E0624` — the associated function is
+private — rather than a field error, because this attacks the producer, not the literal.
+"""
+construction = """
+// ADR-MCPRE-068 structural probe S31. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::materialized_runtime::fleet_serve_authorized::FleetServeAuthorized;
+
+pub(crate) fn hostile(fleet: crate::async_fleet::FleetConfig) -> FleetServeAuthorized {
+    FleetServeAuthorized::issue(fleet) // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "`FleetServeAuthorized`'s field is bare-private to `materialized_runtime::fleet_serve_authorized`, and `issue` is `pub(super)`, visible to `materialized_runtime` and nothing else. The type is `pub(crate)` so `app::serve_fleet` can require it; naming it grants nothing. The probe sits at the crate root, the widest position crate code occupies"
+alternate-constructors = "`issue` is the only associated function returning `Self`, called once, in `MaterializedRuntime::serve`. There is no `new`, `From`, `Default` or builder; `into_fleet_config` consumes the witness and returns the configuration, never the witness or a `&mut` to it"
+generated-or-deserialization = "no derives at all — no `Clone`, no `Default`, no Serialize/Deserialize — so no generated code produces one and an authorization cannot be duplicated or decoded"
+test-only-construction = "the owner's `#[cfg(test)] mod tests` reaches the witness only through `issue`, from inside the owning module. No test-gated constructor and no test-gated visibility exists"
+
+[[probe]]
+id = "S32"
+unit = "proxy.fleet_serve_sole_route"
+kind = "in-crate-source-injection"
+package = "mcp-re-proxy"
+invariant = "no code outside `materialized_runtime::fleet_serve_authorized` can write a FleetServeAuthorized literal, so possession means `issue` ran"
+insertion_path = "mcp-re-proxy/src/structural_probe_s32.rs"
+insertion_parent = "mcp-re-proxy/src/lib.rs"
+insertion_declaration = "mod structural_probe_s32;"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+note = """
+The literal route, closed by field privacy, probed separately from S31 because either
+alone would leave the other unwitnessed.
+"""
+construction = """
+// ADR-MCPRE-068 structural probe S32. Injected into a scratch copy by verify-structural;
+// this file cannot exist in the working tree, because it would not build — which is the
+// proposition it witnesses.
+use crate::materialized_runtime::fleet_serve_authorized::FleetServeAuthorized;
+
+pub(crate) fn hostile(fleet: crate::async_fleet::FleetConfig) -> FleetServeAuthorized {
+    FleetServeAuthorized {
+        fleet, // STRUCTURAL-PROBE-SITE
+    }
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "`FleetServeAuthorized`'s field is bare-private to `materialized_runtime::fleet_serve_authorized`, and `issue` is `pub(super)`, visible to `materialized_runtime` and nothing else. The type is `pub(crate)` so `app::serve_fleet` can require it; naming it grants nothing. The probe sits at the crate root, the widest position crate code occupies"
+alternate-constructors = "`issue` is the only associated function returning `Self`, called once, in `MaterializedRuntime::serve`. There is no `new`, `From`, `Default` or builder; `into_fleet_config` consumes the witness and returns the configuration, never the witness or a `&mut` to it"
+generated-or-deserialization = "no derives at all — no `Clone`, no `Default`, no Serialize/Deserialize — so no generated code produces one and an authorization cannot be duplicated or decoded"
+test-only-construction = "the owner's `#[cfg(test)] mod tests` reaches the witness only through `issue`, from inside the owning module. No test-gated constructor and no test-gated visibility exists"

@@ -48,6 +48,8 @@ on:
       # filter covers it.
       - "mcp-re-http-profile/tests/**"
       - "mcp-re-proxy/src/runtime_state.rs"
+      - "mcp-re-proxy/src/materialized_runtime.rs"
+      - "mcp-re-proxy/src/materialized_runtime/fleet_serve_authorized.rs"
       # Issue #744: the two store-materialization owners, sibling authorities that had
       # no unit between them.
       - "mcp-re-proxy/src/replay_plane/**"
@@ -80,7 +82,7 @@ on:
       - "mcp-re-proxy/src/config_state/admission.rs"
       - "mcp-re-proxy/src/capability_materialization/key_file_custody/covered_files.rs"
       - "mcp-re-proxy/src/capability_materialization/key_file_custody/mod.rs"
-      - "mcp-re-proxy/src/capability_materialization/key_file_custody/observed_posture.rs"
+      - "mcp-re-proxy/src/capability_materialization/key_file_custody/checked_key_file.rs"
       - "mcp-re-proxy/src/capability_materialization/key_file_custody/process_groups.rs"
       - "mcp-re-proxy/src/config_state/authorization.rs"
       # The deployable replay backends (THM-0106 / THM-0107). Feature-gated, so a plain
@@ -431,6 +433,8 @@ on:
       # filter covers it.
       - "mcp-re-http-profile/tests/**"
       - "mcp-re-proxy/src/runtime_state.rs"
+      - "mcp-re-proxy/src/materialized_runtime.rs"
+      - "mcp-re-proxy/src/materialized_runtime/fleet_serve_authorized.rs"
       # Issue #744: the two store-materialization owners, sibling authorities that had
       # no unit between them.
       - "mcp-re-proxy/src/replay_plane/**"
@@ -463,7 +467,7 @@ on:
       - "mcp-re-proxy/src/config_state/admission.rs"
       - "mcp-re-proxy/src/capability_materialization/key_file_custody/covered_files.rs"
       - "mcp-re-proxy/src/capability_materialization/key_file_custody/mod.rs"
-      - "mcp-re-proxy/src/capability_materialization/key_file_custody/observed_posture.rs"
+      - "mcp-re-proxy/src/capability_materialization/key_file_custody/checked_key_file.rs"
       - "mcp-re-proxy/src/capability_materialization/key_file_custody/process_groups.rs"
       - "mcp-re-proxy/src/config_state/authorization.rs"
       # The deployable replay backends (THM-0106 / THM-0107). Feature-gated, so a plain

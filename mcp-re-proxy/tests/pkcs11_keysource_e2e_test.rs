@@ -34,7 +34,6 @@ use std::io::Write as _;
 use std::net::TcpListener;
 use std::net::TcpStream;
 use std::path::Path;
-use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
@@ -47,6 +46,7 @@ use mcp_re_core::McpReError;
 
 use mcp_re_proxy::serve_once;
 use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
+use mcp_re_proxy::FileKeySource;
 use mcp_re_proxy::KeySource;
 use mcp_re_proxy::Pkcs11KeySource;
 use mcp_re_proxy::ResponseSigner;
@@ -205,12 +205,17 @@ impl MockToken {
     }
 }
 
-/// The TLS material paths are not exercised by the response-signing test (the token
-/// custodies only the response-signing key), but `Pkcs11KeySource::open` takes them;
-/// point them at this crate's own `Cargo.toml` (a file that always exists) so `open`
-/// does not need real TLS fixtures. The TLS accessors are NOT called there, so the
-/// file contents are never parsed.
+/// The TLS material is not exercised by the response-signing tests (the token custodies
+/// only the response-signing key), but `Pkcs11KeySource::open` takes an inner TLS source.
+/// This one holds NO exported TLS key — a key can only arrive as an admitted file — and
+/// points the public-material paths at this crate's own `Cargo.toml`, which is never
+/// parsed because the TLS accessors are not called.
 const PLACEHOLDER_TLS_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
+
+fn placeholder_tls() -> FileKeySource {
+    FileKeySource::tls_only(PLACEHOLDER_TLS_PATH, None, PLACEHOLDER_TLS_PATH)
+        .expect("no key to parse")
+}
 
 #[test]
 fn pkcs11_sign_verifies_against_token_public_key() {
@@ -226,9 +231,7 @@ fn pkcs11_sign_verifies_against_token_public_key() {
         &token.pin,
         &token.token_label,
         "mcp-re-response-signing",
-        PLACEHOLDER_TLS_PATH,
-        PLACEHOLDER_TLS_PATH,
-        PLACEHOLDER_TLS_PATH,
+        placeholder_tls(),
         None,
     )
     .expect("open PKCS#11 token + locate Ed25519 key");
@@ -432,14 +435,6 @@ fn client_round_trip(
     Ok(response[pos..].to_vec())
 }
 
-/// A path GUARANTEED not to exist — used as the `--tls-key` argument to prove the
-/// delegated path NEVER reads it from disk.
-fn nonexistent_tls_key_path() -> String {
-    let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    p.push("THIS-TLS-KEY-MUST-NEVER-BE-READ.pem");
-    p.to_string_lossy().into_owned()
-}
-
 /// (a) Without a TLS-key label, `tls_delegated_signer()` is `None` (file-backed TLS);
 /// with one it is `Some` and its exported public key is a well-formed RFC 8410
 /// Ed25519 SPKI matching the token object.
@@ -462,9 +457,7 @@ fn pkcs11_tls_delegated_signer_none_then_some() {
             &token.pin,
             &token.token_label,
             "mcp-re-sign",
-            PLACEHOLDER_TLS_PATH,
-            PLACEHOLDER_TLS_PATH,
-            PLACEHOLDER_TLS_PATH,
+            placeholder_tls(),
             None,
         )
         .expect("open without a TLS label");
@@ -481,9 +474,7 @@ fn pkcs11_tls_delegated_signer_none_then_some() {
         &token.pin,
         &token.token_label,
         "mcp-re-sign",
-        PLACEHOLDER_TLS_PATH,
-        &nonexistent_tls_key_path(),
-        PLACEHOLDER_TLS_PATH,
+        placeholder_tls(),
         Some("mcp-re-tls"),
     )
     .expect("open with a TLS label");
@@ -523,9 +514,7 @@ fn pkcs11_tls_cert_signer_mismatch_fails_closed() {
         &token.pin,
         &token.token_label,
         "mcp-re-sign",
-        PLACEHOLDER_TLS_PATH,
-        &nonexistent_tls_key_path(),
-        PLACEHOLDER_TLS_PATH,
+        placeholder_tls(),
         Some("mcp-re-tls"),
     )
     .expect("open with a TLS label");
@@ -565,9 +554,7 @@ fn pkcs11_tls_non_ed25519_fails_closed() {
         &token.pin,
         &token.token_label,
         "mcp-re-sign",
-        PLACEHOLDER_TLS_PATH,
-        &nonexistent_tls_key_path(),
-        PLACEHOLDER_TLS_PATH,
+        placeholder_tls(),
         Some("mcp-re-tls"),
     );
     assert!(
@@ -595,9 +582,7 @@ fn pkcs11_tls_multiple_objects_fails_closed() {
         &token.pin,
         &token.token_label,
         "mcp-re-sign",
-        PLACEHOLDER_TLS_PATH,
-        &nonexistent_tls_key_path(),
-        PLACEHOLDER_TLS_PATH,
+        placeholder_tls(),
         Some("mcp-re-tls"),
     );
     assert!(
@@ -631,11 +616,7 @@ fn pkcs11_tls_full_mtls_handshake_token_resident_no_disk_read() {
         &token.pin,
         &token.token_label,
         "mcp-re-sign",
-        PLACEHOLDER_TLS_PATH,
-        // GUARANTEED-MISSING TLS key file: if the delegated path ever read it, open
-        // or the handshake would fail. It must not be touched.
-        &nonexistent_tls_key_path(),
-        PLACEHOLDER_TLS_PATH,
+        placeholder_tls(),
         Some("mcp-re-tls"),
     )
     .expect("open with a TLS label");

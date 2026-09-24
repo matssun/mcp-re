@@ -101,6 +101,27 @@ pilot = "verus-candidate"
 #
 # This unit is why THM-0012 needed no claim correction: the statement was already right, and
 # what was missing was the evidence for a sentence it had asserted since it was ratified.
+# THE SERVING FLEET HAS ONE ROUTE, and it is a compile-time fact (r12 R12-626, owner ruling
+# option (b)). `app::serve_fleet` is the phase-1 primitive beneath `MaterializedRuntime::serve`;
+# it was `pub(crate)` with plain arguments, so any crate code could serve past the lifecycle
+# gate. It now requires a `FleetServeAuthorized` that only `materialized_runtime` can mint,
+# inside `serve`. Three routes to a forged serve, three refusals: calling without the witness,
+# minting it elsewhere, and writing its literal.
+[[unit]]
+id = "proxy.fleet_serve_sole_route"
+class = "V0"
+description = "Crate code cannot execute the serving fleet except through `MaterializedRuntime::serve`: `app::serve_fleet` cannot be called without a `FleetServeAuthorized`, which carries the fleet configuration it authorizes and is spent to obtain it; its field is private to `materialized_runtime::fleet_serve_authorized`, its only producer `issue` is `pub(super)` so only `materialized_runtime` can name it, and `serve` — which holds a lifecycle that legally reached `Materialized` by value — is where it is issued. No `Default`, `Clone` or serialization produces one."
+# The issuer is in the closure: "only `serve` issues it" is a fact about `materialized_runtime.rs`,
+# so a change there must move this unit's fingerprint.
+paths = [
+  "mcp-re-proxy/src/materialized_runtime.rs",
+  "mcp-re-proxy/src/materialized_runtime/fleet_serve_authorized.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "medium"
+evidence = ["structural://proxy/fleet_serve/sole_route"]
+
 [[unit]]
 id = "proxy.runtime_lifecycle_sole_mutator"
 class = "V0"
@@ -3064,7 +3085,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.key_file_custody_admission"
 class = "V0"
-description = "EVERY PRIVATE-KEY FILE THIS DEPLOYMENT WILL READ HAD ITS PERMISSION POSTURE OBSERVED AND FOUND LEGAL, AND THAT IS A VALUE RATHER THAN AN EVENT: `admit_key_files` walks the covered set, applies the policy to each observed object, and yields an `AdmittedKeyFiles` whose representation is private and whose only producer is that walk — so holding one means the observation happened, over a named scope. The first refusal stops the walk, because a deployment with one illegal key file does not start. Says nothing about WHICH files are covered (`proxy.key_file_floor_scope`), what a mode means (`config_state::KeyFileAccessPolicy`), or which groups this process is in (`proxy.process_group_set`); it is the composition of exactly those three."
+description = "EVERY PRIVATE-KEY FILE THIS DEPLOYMENT WILL READ HAD ITS PERMISSION POSTURE OBSERVED AND FOUND LEGAL, AND THAT IS A VALUE RATHER THAN AN EVENT: `admit_key_files` walks the covered set, applies the policy to each observed object, and yields an `AdmittedKeyFiles` whose representation is private and whose only producer is that walk — so holding one means the observation happened, over a named scope. It carries the material read from each admitted object and the custody states it was admitted for, and `build_key_source` takes it as its only input, so a key source is built from exactly that material: `take` surrenders a file's material once and refuses a path the walk never covered. The first refusal stops the walk, because a deployment with one illegal key file does not start. Says nothing about WHICH files are covered (`proxy.key_file_floor_scope`), what a mode means (`config_state::KeyFileAccessPolicy`), or which groups this process is in (`proxy.process_group_set`); it is the composition of exactly those three."
 paths = [
   "mcp-re-proxy/src/capability_materialization/key_file_custody/mod.rs",
 ]
@@ -3078,6 +3099,9 @@ evidence = [
 tested_symbols = [
   "lib#capability_materialization::key_file_custody::tests::the_admitted_product_names_the_scope_it_walked",
   "lib#capability_materialization::key_file_custody::tests::one_illegal_key_file_refuses_the_whole_admission",
+  "lib#capability_materialization::key_file_custody::tests::the_admission_surrenders_each_walked_file_once_and_nothing_else",
+  # The same-object claim through the REAL loader: admit, replace the path, then build.
+  "lib#capability_materialization::key_file_custody::tests::the_loader_consumes_the_admitted_seed_when_the_path_is_replaced",
 ]
 
 [[unit]]
@@ -3108,9 +3132,9 @@ tested_symbols = [
 [[unit]]
 id = "proxy.key_file_posture_observation"
 class = "V0"
-description = "EVERY WAY OF NOT KNOWING A KEY FILE'S POSTURE IS A REFUSAL, NEVER A PASS: the real object is `stat`ed and the policy applied to what was observed, a `stat` that fails for any reason other than `no such file` refuses because the posture of a file the proxy is about to READ is either established or it is not, and a target whose mode bits do not exist refuses for the same reason permanently rather than returning success. `NotFound` is the one non-refusal — there is no file whose permissions could be wrong, and the loader reports the absence itself. This role does not see `--allow-group-readable-key-files` and could not re-derive the rule from it: the rule is three conditions and a boolean is one term in it, which is `config_state::KeyFileAccessPolicy`'s."
+description = "THE OBJECT WHOSE POSTURE WAS CHECKED IS THE OBJECT WHOSE BYTES ARE CONSUMED, AND EVERY WAY OF NOT KNOWING THAT POSTURE IS A REFUSAL: the configured name is resolved ONCE — opened, following symlinks as any open does — the open handle is `fstat`ed, the policy applied to that metadata, and the key material read from the same handle into a sealed `CheckedKeyFile` that holds bytes and never a path to reopen (r12 R12-630, R12-634). An open or `fstat` that fails for any reason other than `no such file` refuses because the posture of a file the proxy is about to READ is either established or it is not, and a target whose mode bits do not exist refuses for the same reason permanently rather than returning success. `NotFound` is the one non-refusal — there is no file whose permissions could be wrong, and the loader reports the absence itself. This role does not see `--allow-group-readable-key-files` and could not re-derive the rule from it: the rule is three conditions and a boolean is one term in it, which is `config_state::KeyFileAccessPolicy`'s."
 paths = [
-  "mcp-re-proxy/src/capability_materialization/key_file_custody/observed_posture.rs",
+  "mcp-re-proxy/src/capability_materialization/key_file_custody/checked_key_file.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -3121,16 +3145,21 @@ evidence = [
 ]
 tested_symbols = [
   # The policy applied to what was observed, in both directions and at the opt-in's edge.
-  "lib#capability_materialization::key_file_custody::observed_posture::tests::a_world_readable_key_file_is_refused",
-  "lib#capability_materialization::key_file_custody::observed_posture::tests::a_group_readable_key_file_is_refused_without_the_opt_in",
-  "lib#capability_materialization::key_file_custody::observed_posture::tests::a_group_readable_key_file_owned_by_our_group_is_accepted_with_the_opt_in",
-  "lib#capability_materialization::key_file_custody::observed_posture::tests::group_write_is_refused_even_with_the_opt_in",
+  "lib#capability_materialization::key_file_custody::checked_key_file::tests::a_world_readable_key_file_is_refused",
+  "lib#capability_materialization::key_file_custody::checked_key_file::tests::a_group_readable_key_file_is_refused_without_the_opt_in",
+  "lib#capability_materialization::key_file_custody::checked_key_file::tests::a_group_readable_key_file_owned_by_our_group_is_accepted_with_the_opt_in",
+  "lib#capability_materialization::key_file_custody::checked_key_file::tests::group_write_is_refused_even_with_the_opt_in",
   # THE POSITIVE CONTROL. Without it every refusal above is satisfied by a role that
   # refuses every key file, which would start no deployment at all.
-  "lib#capability_materialization::key_file_custody::observed_posture::tests::an_owner_only_key_file_is_accepted",
+  "lib#capability_materialization::key_file_custody::checked_key_file::tests::an_owner_only_key_file_is_accepted",
   # NOT KNOWING, in its two shapes: an unstat'able file refuses, an absent one does not.
-  "lib#capability_materialization::key_file_custody::observed_posture::tests::a_key_file_whose_posture_cannot_be_established_is_refused",
-  "lib#capability_materialization::key_file_custody::observed_posture::tests::an_absent_key_file_is_not_an_error",
+  "lib#capability_materialization::key_file_custody::checked_key_file::tests::a_key_file_whose_posture_cannot_be_established_is_refused",
+  "lib#capability_materialization::key_file_custody::checked_key_file::tests::an_absent_key_file_is_not_an_error",
+  # THE SAME-OBJECT CLAIM, as the attack: the path is replaced by a world-readable file
+  # after the check, and the value still yields the checked object's bytes.
+  "lib#capability_materialization::key_file_custody::checked_key_file::tests::the_checked_object_is_the_consumed_object_when_the_path_is_replaced",
+  # Symlinks stay supported, and the posture checked is the RESOLVED target's.
+  "lib#capability_materialization::key_file_custody::checked_key_file::tests::a_symlink_is_followed_and_its_resolved_target_is_checked_and_read",
 ]
 
 [[unit]]

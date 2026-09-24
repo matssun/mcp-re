@@ -287,7 +287,7 @@ fn run_validated(
     // A group/world-readable key file is a HARD error (refuse startup). WHICH files those
     // are, what a mode means and which groups this process is in are all the key-file
     // custody owner's — this root names the two custody states and holds the evidence.
-    let _admitted_key_files = crate::capability_materialization::admit_key_files(
+    let admitted_key_files = crate::capability_materialization::admit_key_files(
         config.state().custody(),
         config.state().channel_credential_custody(),
         config.state().key_file_access(),
@@ -306,8 +306,7 @@ fn run_validated(
     // never need to surrender its private key — there is deliberately no
     // `signing_key()` export call on the wiring path anymore.
     let key_source = crate::capability_materialization::build_key_source(
-        config.state().custody(),
-        config.state().channel_credential_custody(),
+        admitted_key_files,
         &values.channel_credential.credential_chain,
         &values.peer_trust_anchors,
     )
@@ -830,15 +829,15 @@ fn fleet_config(
 /// returned, which is the DRAIN: no request can be in flight afterwards. Everything that
 /// must then happen in a particular order — each plane's post-owner transition, and
 /// reclaiming the control runtime the proxy's networked clients are bound to — belongs to
-/// [`crate::materialized_runtime::MaterializedRuntime`], which calls this and then tears
-/// down. Keeping the drain here and the ordering there is deliberate: this function's
-/// contract is "no request is running when I return", and that is all a caller should
-/// have to know to sequence anything after it.
+/// [`crate::materialized_runtime::MaterializedRuntime`], the sole issuer of `authorized` and
+/// so the only caller, which tears down after. The drain here and the ordering there is
+/// deliberate: this function's contract is "no request is running when I return", and
+/// that is all a caller should have to know to sequence anything after it.
 pub(crate) fn serve_fleet(
     proxy: Arc<HttpProfileProxy>,
     config_snapshot: Arc<config_snapshot::ServerConfigSnapshot>,
     serve_options: Arc<crate::ServerOptions>,
-    fleet_cfg: crate::async_fleet::FleetConfig,
+    authorized: crate::materialized_runtime::fleet_serve_authorized::FleetServeAuthorized,
     shutdown: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), String> {
     // MCPRE-116: hand the fleet the SNAPSHOT, not a one-shot `load()`. The accept
@@ -864,7 +863,7 @@ pub(crate) fn serve_fleet(
     };
 
     let fleet = crate::async_fleet::serve_fleet(
-        fleet_cfg,
+        authorized.into_fleet_config(),
         server_config,
         serve_options,
         make_handler,

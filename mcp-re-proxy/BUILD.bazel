@@ -204,7 +204,7 @@ _PROXY_LIB_SRCS = [
     # observe the real objects and apply the policy `config_state::key_file_access` owns.
     "src/capability_materialization/key_file_custody/mod.rs",
     "src/capability_materialization/key_file_custody/covered_files.rs",
-    "src/capability_materialization/key_file_custody/observed_posture.rs",
+    "src/capability_materialization/key_file_custody/checked_key_file.rs",
     "src/capability_materialization/key_file_custody/process_groups.rs",
 "src/capability_materialization/ingress.rs",
     "src/capability_materialization/key_source/aws.rs",
@@ -340,6 +340,7 @@ _PROXY_LIB_SRCS = [
     # from the parser that was merely their first caller.
     "src/trust_document.rs",
     "src/key_source.rs",
+    "src/key_source/file_key_source.rs",
     # The KMS/STS endpoint admission rule, owned apart from the parser that was its
     # first caller: key sources reach it without meeting a command line.
     "src/kms_endpoint_policy/mod.rs",
@@ -476,6 +477,7 @@ _PROXY_LIB_SRCS = [
     # ADR-MCPRE-056 §10: the assembled runtime — owns every resource with a teardown
     # obligation and enforces drain -> transition -> reclaim. Crate-internal.
     "src/materialized_runtime.rs",
+    "src/materialized_runtime/fleet_serve_authorized.rs",
     # ADR-MCPRE-056 §9: owned background workers — structural halt, bounded
     # reclamation, named stragglers. Crate-internal.
     "src/managed_worker/mod.rs",

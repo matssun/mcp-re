@@ -11,8 +11,6 @@
 //! with the rest of MCP-RE); `mcp-re-core` exposes only seed-based construction. The
 //! TLS materials are PEM (parsed with rustls-pki-types' `PemObject`).
 
-use std::fs;
-
 use mcp_re_core::b64url_decode;
 use mcp_re_core::SigningKey;
 use mcp_re_core::VerificationKey;
@@ -22,6 +20,9 @@ use rustls_pki_types::PrivateKeyDer;
 use zeroize::Zeroizing;
 
 use crate::delegated_tls::RawEd25519TlsSigner;
+
+mod file_key_source;
+pub use file_key_source::FileKeySource;
 
 /// Errors loading key material.
 #[derive(Debug, thiserror::Error)]
@@ -183,92 +184,6 @@ fn certs_from_pem(pem: &[u8], what: &str) -> Result<Vec<CertificateDer<'static>>
 /// Parse a single PEM private key from bytes.
 fn key_from_pem(pem: &[u8]) -> Result<PrivateKeyDer<'static>, KeyError> {
     PrivateKeyDer::from_pem_slice(pem).map_err(|e| KeyError::Malformed(format!("tls key: {e}")))
-}
-
-/// Loads key material from files on disk.
-#[derive(Debug, Clone)]
-pub struct FileKeySource {
-    /// Path to a file containing the Base64URL-no-pad Ed25519 signing-key seed.
-    pub signing_key_seed_path: String,
-    /// Path to the PEM TLS server certificate chain.
-    pub tls_cert_path: String,
-    /// Path to the PEM TLS server private key.
-    pub tls_key_path: String,
-    /// Path to the PEM client-CA trust anchors.
-    pub client_ca_path: String,
-}
-
-impl FileKeySource {
-    /// The TLS and client-CA half only, for a source whose SIGNING key lives elsewhere.
-    ///
-    /// `KmsKeySource` wraps one of these to serve `tls_server_cert_chain`,
-    /// `tls_server_key` and `client_ca_roots`; its own `ResponseSigner` impl routes to the
-    /// KMS backend, the `tls` field is private, and no accessor hands it out. So the seed
-    /// path is not merely unused on those deployments — it is outside the reachable method
-    /// surface of the wrapped source, and passing one in would hand a component material
-    /// nothing can consume.
-    #[cfg(any(feature = "aws_kms_keysource", feature = "gcp_kms_keysource"))]
-    pub(crate) fn tls_only(tls_cert_path: &str, tls_key_path: &str, client_ca_path: &str) -> Self {
-        FileKeySource {
-            signing_key_seed_path: String::new(),
-            tls_cert_path: tls_cert_path.to_string(),
-            tls_key_path: tls_key_path.to_string(),
-            client_ca_path: client_ca_path.to_string(),
-        }
-    }
-
-    fn read(&self, path: &str) -> Result<Vec<u8>, KeyError> {
-        fs::read(path).map_err(|e| KeyError::NotFound(format!("{path}: {e}")))
-    }
-
-    /// Load the Ed25519 signing key from the seed file. This is an INHERENT
-    /// (non-trait) helper, NOT part of the [`KeySource`]/[`ResponseSigner`]
-    /// contract — issue #3838 removed key export from the trait so a non-exporting
-    /// HSM/KMS backend can satisfy it. `FileKeySource` owns the file holding the
-    /// raw seed, so it CAN load the key; it routes its own [`ResponseSigner`] impl
-    /// through here and signs internally. Tests that need the loaded key call this
-    /// on the concrete type.
-    pub fn signing_key(&self) -> Result<SigningKey, KeyError> {
-        // MCPS-076: the file holds the raw private seed (Base64URL text). Hold the
-        // file bytes and the decoded text in `Zeroizing` so both are scrubbed on
-        // drop; only the borrowed dalek key (itself `ZeroizeOnDrop`) outlives them.
-        let bytes: Zeroizing<Vec<u8>> = Zeroizing::new(self.read(&self.signing_key_seed_path)?);
-        // Borrow the seed bytes as &str — NO owned copy. `bytes.to_vec()` would clone
-        // the secret into a non-`Zeroizing` `Vec` that `String::from_utf8` then owns,
-        // so a UTF-8 error would drop an UNSCRUBBED copy of the seed. `str::from_utf8`
-        // borrows; on error its `Utf8Error` carries no payload, so the secret stays in
-        // `bytes` (Zeroizing) and is scrubbed on drop. The b64url decode inside
-        // `signing_key_from_seed_b64url` wraps its own decoded bytes in `Zeroizing`.
-        let text = std::str::from_utf8(&bytes)
-            .map_err(|_| KeyError::Malformed("signing-key seed is not UTF-8".to_string()))?;
-        signing_key_from_seed_b64url(text)
-    }
-}
-
-/// `FileKeySource` signs internally (issue #3838): it loads its seed-backed
-/// [`SigningKey`] and forwards to that key's [`ResponseSigner`] impl, so the seed
-/// is never exported across the trait boundary. The loaded key (and every seed
-/// temporary inside [`FileKeySource::signing_key`]) is `Zeroizing`/`ZeroizeOnDrop`,
-/// so it is scrubbed at the end of each call.
-impl ResponseSigner for FileKeySource {
-    fn sign_response(&self, preimage: &[u8]) -> Result<String, KeyError> {
-        self.signing_key()?.sign_response(preimage)
-    }
-    fn response_public_key(&self) -> Result<VerificationKey, KeyError> {
-        self.signing_key()?.response_public_key()
-    }
-}
-
-impl KeySource for FileKeySource {
-    fn tls_server_cert_chain(&self) -> Result<Vec<CertificateDer<'static>>, KeyError> {
-        certs_from_pem(&self.read(&self.tls_cert_path)?, "tls cert chain")
-    }
-    fn tls_server_key(&self) -> Result<PrivateKeyDer<'static>, KeyError> {
-        key_from_pem(&self.read(&self.tls_key_path)?)
-    }
-    fn client_ca_roots(&self) -> Result<Vec<CertificateDer<'static>>, KeyError> {
-        certs_from_pem(&self.read(&self.client_ca_path)?, "client CA")
-    }
 }
 
 /// Loads key material from environment variables. Each field is the NAME of the
@@ -487,50 +402,5 @@ mod tests {
     #[test]
     fn the_default_is_no_delegated_tls_signer() {
         assert!(NonExportingSource::new().tls_delegated_signer().is_none());
-        assert!(FileKeySource {
-            signing_key_seed_path: "/seed".to_string(),
-            tls_cert_path: "/cert".to_string(),
-            tls_key_path: "/key".to_string(),
-            client_ca_path: "/ca".to_string(),
-        }
-        .tls_delegated_signer()
-        .is_none());
-    }
-
-    /// The two refusal variants are the tree's intrinsic/transient distinction, and every
-    /// consumer branches on it: absent material may be a deployment mistake worth
-    /// reporting as missing, whereas malformed material is never retried into working.
-    #[test]
-    fn the_refusal_vocabulary_separates_absent_from_malformed() {
-        let absent = FileKeySource {
-            signing_key_seed_path: "/nonexistent/seed".to_string(),
-            tls_cert_path: "/nonexistent/cert".to_string(),
-            tls_key_path: "/nonexistent/key".to_string(),
-            client_ca_path: "/nonexistent/ca".to_string(),
-        };
-        assert!(
-            matches!(absent.tls_server_cert_chain(), Err(KeyError::NotFound(_))),
-            "an unreadable path is NotFound, not Malformed"
-        );
-        assert!(matches!(
-            absent.client_ca_roots(),
-            Err(KeyError::NotFound(_))
-        ));
-    }
-
-    /// `tls_only` builds a source whose SEED is outside the reachable surface.
-    ///
-    /// The doc claims the seed path is not merely unused but unconsumable. The empty path
-    /// is what makes that true by construction: there is no file it could name.
-    #[cfg(any(feature = "aws_kms_keysource", feature = "gcp_kms_keysource"))]
-    #[test]
-    fn a_tls_only_source_names_no_signing_seed() {
-        let source = FileKeySource::tls_only("/cert", "/key", "/ca");
-        assert!(
-            source.signing_key_seed_path.is_empty(),
-            "a KMS-backed deployment must not carry a seed path something could read"
-        );
-        assert_eq!(source.tls_cert_path, "/cert");
-        assert_eq!(source.client_ca_path, "/ca");
     }
 }

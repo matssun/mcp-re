@@ -197,8 +197,8 @@ impl Pkcs11KeySource {
     /// token whose label equals `token_label`, opens a logged-in User session to
     /// confirm the PIN and locate the Ed25519 PRIVATE and PUBLIC key objects by
     /// `key_label`, then closes that probe session (each later operation opens its
-    /// own). The TLS cert chain, TLS key, and client-CA roots are loaded from the
-    /// given file paths via an inner [`FileKeySource`].
+    /// own). The TLS cert chain, TLS key, and client-CA roots are served by `tls`, an
+    /// inner [`FileKeySource`] built from the admitted TLS key file.
     ///
     /// Every failure maps to a [`KeyError`] with context (fail closed); this never
     /// panics and never substitutes an in-process key.
@@ -206,19 +206,16 @@ impl Pkcs11KeySource {
     /// object (distinct from `key_label` — a separate security principal) custodies
     /// the TLS server key, and a [`Pkcs11TlsSigner`] is opened over it so the TLS
     /// handshake is signed ON the token (the TLS private key never leaves the
-    /// device, `tls_key_path` is then NOT read from disk). `None` keeps the
+    /// device, and `tls` then holds no exported key). `None` keeps the
     /// file-backed TLS path. The object-signing label and TLS label are independent:
     /// neither requires the other, and a label resolving to multiple or non-Ed25519
     /// objects fails closed at `open` (proven by the live lane).
-    #[allow(clippy::too_many_arguments)]
     pub fn open(
         module_path: &str,
         pin: &str,
         token_label: &str,
         key_label: &str,
-        tls_cert_path: &str,
-        tls_key_path: &str,
-        client_ca_path: &str,
+        tls: FileKeySource,
         tls_key_label: Option<&str>,
     ) -> Result<Self, KeyError> {
         // Load the module and C_Initialize with OS locking (CKF_OS_LOCKING_OK)
@@ -273,16 +270,7 @@ impl Pkcs11KeySource {
             token,
             tls_signer,
             key_label,
-            tls: FileKeySource {
-                // The token custodies the response-signing key, so this inner
-                // file source's signing-key path is never read; give it the TLS
-                // key path as an inert, valid placeholder rather than an empty
-                // string. Only the TLS accessors below are ever delegated to it.
-                signing_key_seed_path: tls_key_path.to_string(),
-                tls_cert_path: tls_cert_path.to_string(),
-                tls_key_path: tls_key_path.to_string(),
-                client_ca_path: client_ca_path.to_string(),
-            },
+            tls,
         })
     }
 }

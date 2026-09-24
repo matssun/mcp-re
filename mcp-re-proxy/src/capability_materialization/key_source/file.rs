@@ -1,21 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The file-seed key source.
 
-use super::ChannelMaterial;
+use super::{exported_tls_key, ChannelMaterial};
+use crate::capability_materialization::key_file_custody::AdmittedKeyFiles;
 use crate::key_source::{FileKeySource, KeyError, KeySource};
 
-/// Open a source whose signing key is a 32-byte seed on disk.
+/// Open a source whose signing key is the admitted 32-byte seed file.
 ///
 /// Always available: reading a file needs no backend, which is why this arm has no
 /// build-gated twin.
 pub(super) fn open(
+    admitted: &mut AdmittedKeyFiles<'_>,
     seed_path: &str,
     material: ChannelMaterial<'_>,
 ) -> Result<Box<dyn KeySource + Send + Sync>, KeyError> {
-    Ok(Box::new(FileKeySource {
-        signing_key_seed_path: seed_path.to_string(),
-        tls_cert_path: material.cert.to_string(),
-        tls_key_path: material.key.to_string(),
-        client_ca_path: material.client_ca.to_string(),
-    }))
+    let seed = admitted.take(seed_path)?;
+    let tls_key = exported_tls_key(admitted, material)?;
+    Ok(Box::new(FileKeySource::from_checked(
+        seed,
+        material.cert,
+        tls_key,
+        material.client_ca,
+    )?))
 }

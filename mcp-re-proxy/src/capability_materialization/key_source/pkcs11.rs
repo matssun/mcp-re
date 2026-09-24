@@ -4,6 +4,7 @@
 #[cfg(feature = "pkcs11_keysource")]
 use super::read_pkcs11_pin;
 use super::ChannelMaterial;
+use crate::capability_materialization::key_file_custody::AdmittedKeyFiles;
 use crate::config_state::ChannelKeyMaterial;
 use crate::key_source::{KeyError, KeySource};
 
@@ -14,6 +15,7 @@ use crate::key_source::{KeyError, KeySource};
 #[cfg(feature = "pkcs11_keysource")]
 pub(super) fn open(
     module: &str,
+    admitted: &mut AdmittedKeyFiles<'_>,
     pin_file: &str,
     token_label: &str,
     key_label: &str,
@@ -22,9 +24,12 @@ pub(super) fn open(
 ) -> Result<Box<dyn KeySource + Send + Sync>, KeyError> {
     // Read the User PIN here, at the one point it is used, so it exists for as short a
     // window as possible and never lands in `DeploymentRequest` (which is `Debug` and
-    // freely cloned). The file must be no more readable than a key file: it unlocks the
-    // token holding the signing keys.
-    let pin = read_pkcs11_pin(pin_file)?;
+    // freely cloned). The PIN comes from the file the custody check admitted, which held
+    // it to the key-file floor: it unlocks the token holding the signing keys.
+    let pin = read_pkcs11_pin(admitted.take(pin_file)?)?;
+    let tls_key = super::exported_tls_key(admitted, material)?;
+    let tls =
+        crate::key_source::FileKeySource::tls_only(material.cert, tls_key, material.client_ca)?;
     // #59: an optional SECOND token object holds the Ed25519 channel key. When present,
     // `open` builds the delegated handshake signer and the proxy never reads an exported
     // key from disk — a custody the request cannot even state alongside this one.
@@ -33,9 +38,7 @@ pub(super) fn open(
         pin.expose(),
         token_label,
         key_label,
-        material.cert,
-        material.key,
-        material.client_ca,
+        tls,
         channel.pkcs11_key_label(),
     )?))
 }
@@ -46,6 +49,7 @@ pub(super) fn open(
 #[cfg(not(feature = "pkcs11_keysource"))]
 pub(super) fn open(
     _module: &str,
+    _admitted: &mut AdmittedKeyFiles<'_>,
     _pin_file: &str,
     _token_label: &str,
     _key_label: &str,

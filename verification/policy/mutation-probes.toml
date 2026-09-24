@@ -7680,10 +7680,10 @@ conjunct = "the walk ENFORCES the policy over every covered file — the first r
 # whose result went nowhere — which is why the earned product exists at all.
 path = "mcp-re-proxy/src/capability_materialization/key_file_custody/mod.rs"
 anchor = """
-        observed_posture::admit(path, policy)?;
+        let material = checked_key_file::observe(path, policy)?;
 """
 weakening = """
-        let _ = observed_posture::admit(path, policy);
+        let material = checked_key_file::observe(path, policy).unwrap_or(None);
 """
 expect_red = [
   "lib#capability_materialization::key_file_custody::tests::one_illegal_key_file_refuses_the_whole_admission",
@@ -7704,27 +7704,20 @@ answer.
 [[probe]]
 id = "M423-proxy-an-unestablishable-posture-passes"
 unit = "proxy.key_file_posture_observation"
-conjunct = "a `stat` that fails for any reason other than `no such file` REFUSES, because the posture of a file the proxy is about to read is either established or it is not"
+conjunct = "an open or `fstat` that fails for any reason other than `no such file` REFUSES, because the posture of a file the proxy is about to read is either established or it is not"
 # The fail-open this exists to exclude, and the one that boots silently: a world-readable
 # signing seed on a networked or overlay mount (EIO, ESTALE, EACCES on the directory) is
 # unstat'able, and reading that as compliance starts the proxy over it.
-path = "mcp-re-proxy/src/capability_materialization/key_file_custody/observed_posture.rs"
+path = "mcp-re-proxy/src/capability_materialization/key_file_custody/checked_key_file.rs"
 anchor = """
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => {
-            return Err(format!(
-                "mcp-re-proxy refuses unsafe configuration:\\n  - key file {path} cannot be \\
-                 stat'ed ({e}), so its permission posture cannot be established; it is read \\
-                 by the proxy regardless, and starting would mean serving with a key file \\
-                 that may be group- or world-readable"
-            ))
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(unobservable(e)),
 """
 weakening = """
-        Err(_) => return Ok(()),
+        Err(_) => return Ok(None),
 """
 expect_red = [
-  "lib#capability_materialization::key_file_custody::observed_posture::tests::a_key_file_whose_posture_cannot_be_established_is_refused",
+  "lib#capability_materialization::key_file_custody::checked_key_file::tests::a_key_file_whose_posture_cannot_be_established_is_refused",
 ]
 note = """
 COLLAPSING THE TWO ABSENCES IS THE TEMPTING SIMPLIFICATION, and it is wrong in one
@@ -7736,6 +7729,42 @@ is about to read.
 `an_absent_key_file_is_not_an_error` stays GREEN, correctly: the weakening makes the
 absent case Ok too, which it already was. That is what distinguishes this probe from one
 satisfied by a role that refuses everything.
+"""
+
+[[probe]]
+id = "M425-proxy-the-consumed-bytes-come-from-a-second-resolution"
+unit = "proxy.key_file_posture_observation"
+conjunct = "the key material a consumer receives is the bytes read from the checked handle, never a later read of the configured name"
+# r12 R12-630 / R12-634, the owner's same-object ruling. The weakening is the design this
+# replaced: the value remembers WHERE the checked file was and the consumer reads it there
+# when it loads — so anything that replaces or retargets the name between the check and the
+# load hands the proxy a file whose posture nobody saw.
+path = "mcp-re-proxy/src/capability_materialization/key_file_custody/checked_key_file.rs"
+anchor = """
+    pub(crate) fn into_bytes(self) -> Zeroizing<Vec<u8>> {
+        self.bytes
+    }
+"""
+weakening = """
+    pub(crate) fn into_bytes(self) -> Zeroizing<Vec<u8>> {
+        Zeroizing::new(std::fs::read(&self.path).unwrap_or_default())
+    }
+"""
+expect_red = [
+  "lib#capability_materialization::key_file_custody::checked_key_file::tests::the_checked_object_is_the_consumed_object_when_the_path_is_replaced",
+]
+note = """
+EVERY POSTURE TEST STAYS GREEN UNDER THIS WEAKENING, and that is why the probe exists: each
+file is checked and consumed while nothing touches its name, so a check-then-reread consumes
+the same bytes. Only a control that REPLACES the path between check and load tells them
+apart, and it replaces it with a world-readable file so the consumed bytes are ones whose
+posture was never admitted.
+
+WHAT NO CONTROL HERE REACHES, stated rather than implied: a re-resolution INSIDE `observe`,
+between the `fstat` and the read. That window opens and closes within one call, so a
+black-box test cannot put a replacement into it without a test-only seam in production code.
+It is held by the code — the read is from `file`, and the `verbose_file_reads` allowance
+beside it says why `fs::read(path)` is the defect — and by review, not by this lane.
 """
 
 [[probe]]
