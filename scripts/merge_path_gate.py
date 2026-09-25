@@ -403,6 +403,11 @@ EXEMPT_ENTRY: dict[str, str] = {
     # by scripts/release_assurance_gate.py, which is unconditional.
     f"{ENTRY_ROOT}/review": "reads the machine-local attestation store; its binding mode is policed by release_assurance_gate.py",
     f"{ENTRY_ROOT}/review-frontier": "a review-obligation report with no verdict",
+    # It decides a pull request's SCOPE, never a verdict, and only in the two filtered
+    # workflows that run the lanes it scopes — a scope is meaningless where no lane runs.
+    # On any doubt it widens to a full run. Its semantics are pinned by
+    # test_scoped_verification.py, which the unconditional ci.yml runs.
+    f"{ENTRY_ROOT}/select-units": "scopes the filtered verification workflows; pinned by test_scoped_verification.py in ci.yml",
     f"{ENTRY_ROOT}/review-packet": "a derived review packet; a document, not a decision",
 }
 
