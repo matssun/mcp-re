@@ -167,6 +167,9 @@ Q_WAIT_S = int(os.environ.get("MCP_RE_ARBITER_Q_WAIT_S", 20 * 60))
 REGISTERED_RUNNERS = (
     {"name": "dev1", "kernel": "darwin", "root": "/Users/mats/dev/actions-runner"},
     {"name": "dev1-mcp-re", "kernel": "darwin", "root": "/Users/mats/dev/actions-runner-mcp-re"},
+    # matssun/code's `fast` lane (no Bazel): two runner services, 2026-09-23.
+    {"name": "dev1-fast-1", "kernel": "darwin", "root": "/Users/mats/dev/actions-runner-dev1-fast-1"},
+    {"name": "dev1-fast-2", "kernel": "darwin", "root": "/Users/mats/dev/actions-runner-dev1-fast-2"},
     {"name": "dev1-linux", "kernel": "linux-vm",
      "root": os.environ.get("MCP_RE_ARBITER_VM_RUNNER_HOME", "/home/mats.guest/actions-runner")},
 )
