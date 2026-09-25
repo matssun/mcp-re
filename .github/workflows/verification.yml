@@ -825,9 +825,10 @@ jobs:
     # targets, so this job now carries a Cargo build rather than only manifest parsing and
     # a prover invocation.
     #
-    # A merge check is held to the CI time budget; the complete run (schedule, dispatch)
-    # measured 30-95 minutes in September 2026 and grows with every registered probe.
-    timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 240 || 20 }}
+    # The complete run (schedule, dispatch) measured 30-95 minutes in September 2026 and
+    # grows with every registered probe. A merge check's work is decided before it runs
+    # (scoped or deferred); nothing stops it once started.
+    timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 240 || 120 }}
     env:
       # THE ENDPOINT IS DECLARED, NOT INHERITED.
       #
