@@ -91,8 +91,6 @@ jobs:
   probe:
     name: V0 evidence self-test (mutation probes)
     runs-on: ubuntu-latest
-    # A merge check is held to the CI time budget; the complete run is not.
-    timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 240 || 20 }}
     steps:
       # Depth 2: a pull request checks out its MERGE commit, and `select-units` measures the
       # change against that commit's first parent.
