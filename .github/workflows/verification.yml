@@ -820,7 +820,12 @@ jobs:
     # The test lane compiles and runs each unit's declared battery, including integration
     # targets, so this job now carries a Cargo build rather than only manifest parsing and
     # a prover invocation.
-    timeout-minutes: 60
+    #
+    # 120, not 60: a FULL run (push to main, dispatch, or a pull request that touches the
+    # platform itself) measured 30-48 minutes in September 2026 and reached 58, and it
+    # grows with every registered probe. A scoped pull-request run measures only the units
+    # its change affects and is far below either figure.
+    timeout-minutes: 120
     env:
       # THE ENDPOINT IS DECLARED, NOT INHERITED.
       #
@@ -838,7 +843,56 @@ jobs:
       # (`~/.local/bin/colima-watchdog.sh` on the runner), never this workflow's.
       DOCKER_CONTEXT: colima
     steps:
+      # Depth 2: a pull request checks out its MERGE commit, and `select-units` measures the
+      # change against that commit's first parent — the base it merges into.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+
+      # A PULL REQUEST MEASURES THE UNITS ITS CHANGE AFFECTS; everything else measures all.
+      #
+      # `select-units` compares every unit's fingerprint at the base with HEAD's and takes
+      # the moved units plus their prerequisite consumers. A change to the platform itself,
+      # or a scope it cannot compute, selects a FULL run instead. The scoped lanes and the
+      # composer are confined to the result, and a scoped run's bundle is INCOMPLETE, so
+      # nothing attests from a pull-request check — the full run on main is the repository's
+      # verdict. When no unit moved, nothing is measured and the step below says so.
+      - name: Select the units this change affects
+        id: scope
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "full run: a ${{ github.event_name }} event measures every unit"
+            { echo "mode=full"; echo "args="; echo "measure=true"; } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git rev-parse -q --verify HEAD^2 >/dev/null; then
+            base=HEAD^1
+          else
+            base='${{ github.event.pull_request.base.sha }}'
+            git fetch -q --no-tags --depth=1 origin "$base"
+          fi
+          mkdir -p .verification/scope
+          python3 tools/verification/select-units --base "$base" \
+            --out .verification/scope/units --github-output
+          mode=$(sed -n 's/^mode=//p' "$GITHUB_OUTPUT" | tail -1)
+          count=$(sed -n 's/^count=//p' "$GITHUB_OUTPUT" | tail -1)
+          if [ "$mode" = "scoped" ]; then
+            echo "args=--units-file .verification/scope/units" >> "$GITHUB_OUTPUT"
+          else
+            echo "args=" >> "$GITHUB_OUTPUT"
+          fi
+          if [ "$mode" = "scoped" ] && [ "$count" = "0" ]; then
+            echo "measure=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "measure=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: No unit's evidence inputs changed
+        if: steps.scope.outputs.measure != 'true'
+        run: |
+          echo "This change moves no unit's fingerprint, so no evidence it rests on changed."
+          echo "Nothing is measured here; the full run on main measures every unit."
 
       # First, because every step below reads the environment this checks. The job
       # PATH comes from the runner service's `.env`, not from the operator's login
@@ -884,6 +938,7 @@ jobs:
       # `npx` is missing, and it derives that requirement from the registry — so this step
       # exists exactly while some unit's battery needs it.
       - name: Prepare the non-Rust SDK batteries
+        if: steps.scope.outputs.measure == 'true'
         run: |
           set -euo pipefail
           if grep -q '^id = "sdk_python\.' verification/policy/verification.toml; then
@@ -942,7 +997,8 @@ jobs:
       # cannot run the extracted-model lanes, so any aggregate here would be a claim about
       # measurements this process did not make.
       - name: Execute the host lanes
-        run: ./tools/verification/verify --phase host
+        if: steps.scope.outputs.measure == 'true'
+        run: ./tools/verification/verify --phase host ${{ steps.scope.outputs.args }}
 
       # -----------------------------------------------------------------------
       # PHASE 2 — the extracted-model lanes, inside the preserved artifact.
@@ -981,7 +1037,7 @@ jobs:
           PY
 
       - name: Container runtime availability
-        if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true'
+        if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true' && steps.scope.outputs.measure == 'true'
         run: |
           set -euo pipefail
           # An unavailable runtime is a lane that CANNOT run. On the authoritative runner
@@ -1004,7 +1060,7 @@ jobs:
       # different instrument under the same declared pins.
       - name: Load the preserved extraction artifact
         id: artifact
-        if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true'
+        if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true' && steps.scope.outputs.measure == 'true'
         run: |
           set -euo pipefail
           image="$(./tools/verification/extraction-image load)"
@@ -1029,7 +1085,7 @@ jobs:
       # OOM-killed hangs the VM rather than failing the step, trading a legible
       # failure for an illegible one.
       - name: Regenerate the extracted model
-        if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true'
+        if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true' && steps.scope.outputs.measure == 'true'
         run: |
           set -euo pipefail
           docker run --rm --platform linux/arm64 \
@@ -1047,7 +1103,7 @@ jobs:
       # building the theorems, or a parser that silently matched nothing would each turn
       # every check into a tautology, and all three look exactly like a clean axiom closure.
       - name: Lean lane activation probe
-        if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true'
+        if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true' && steps.scope.outputs.measure == 'true'
         run: |
           set -euo pipefail
           docker run --rm --platform linux/arm64 \
@@ -1059,7 +1115,7 @@ jobs:
             ./tools/verification/verify-lean --activation-probe
 
       - name: Execute the extraction lanes
-        if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true'
+        if: steps.image.outputs.resolved == 'true' && steps.image.outputs.required == 'true' && steps.scope.outputs.measure == 'true'
         run: |
           set -euo pipefail
           docker run --rm --platform linux/arm64 \
@@ -1069,7 +1125,7 @@ jobs:
             -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/workspace \
             -e MCP_RE_EVIDENCE_DIR='/workspace/${{ steps.evidence.outputs.rel }}' \
             '${{ steps.artifact.outputs.image }}' \
-            ./tools/verification/verify --phase extraction
+            ./tools/verification/verify --phase extraction ${{ steps.scope.outputs.args }}
 
       - name: Extraction lanes unpinned
         if: steps.image.outputs.resolved != 'true'
@@ -1101,8 +1157,8 @@ jobs:
       # diagnostic; the job stays red either way. `!cancelled()` rather than `always()`: a
       # cancelled run measured nothing and has nothing to compose.
       - name: Compose the repository verdict
-        if: ${{ !cancelled() }}
-        run: ./tools/verification/verify --aggregate --gate
+        if: ${{ !cancelled() && steps.scope.outputs.measure == 'true' }}
+        run: ./tools/verification/verify --aggregate --gate ${{ steps.scope.outputs.args }}
 
       # The records this verdict was composed from, kept whatever the verdict was. A
       # failing run's evidence is the thing a reader needs most, and it lives in a

@@ -60,6 +60,13 @@ from _manifest import (  # noqa: E402
     load_verification,
 )
 from _measured import apparatus_problem, extract, load_measurements  # noqa: E402
+from _unit_selection import (  # noqa: E402
+    add_unit_argument,
+    basis,
+    filter_by_unit,
+    refuse,
+    selection_error,
+)
 
 REGISTRY = REPO_ROOT / "verification" / "policy" / "measurements.toml"
 
@@ -138,6 +145,7 @@ def measure(measurement: dict, store: Path) -> tuple[str | None, str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--measurement", action="append", default=[], help="only these ids")
+    add_unit_argument(parser)
     parser.add_argument("--registry", default=str(REGISTRY), help="registry to read")
     args = parser.parse_args()
 
@@ -188,6 +196,17 @@ def main() -> int:
     if drift:
         return _fail("; ".join(drift))
 
+    total = len(measurements)
+    if args.unit:
+        problem = selection_error(args.unit, set(units), registered, "measurement")
+        if problem:
+            return refuse("verify-measured", problem)
+        measurements = filter_by_unit(measurements, args.unit, lambda m: m["unit"])
+    print(
+        "verify-measured: selection basis — "
+        + basis(args.unit, len(measurements), total, f"every registered measurement ({total})")
+    )
+
     selected = (
         [m for m in measurements if m["id"] in set(args.measurement)]
         if args.measurement
@@ -230,7 +249,9 @@ def main() -> int:
         )
 
     if not args.measurement:
-        for unit_id in sorted(registered):
+        # The units this run MEASURED — every registered one on a full run. Under `--unit`,
+        # iterating the whole registry would write a pass for units nothing measured.
+        for unit_id in sorted({m["unit"] for m in selected}):
             unit = units.get(unit_id)
             if unit is None or not claims_measured(unit):
                 continue
