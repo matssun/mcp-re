@@ -87,7 +87,50 @@ jobs:
     name: V0 evidence self-test (mutation probes)
     runs-on: ubuntu-latest
     steps:
+      # Depth 2: a pull request checks out its MERGE commit, and `select-units` measures the
+      # change against that commit's first parent.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+
+      # A PULL REQUEST APPLIES THE PROBES OF THE UNITS ITS CHANGE AFFECTS; a push applies
+      # all of them. Same selection as `verification.yml`: moved fingerprints plus their
+      # prerequisite consumers, narrowed to the units that owe the mutation lane evidence,
+      # and a FULL run whenever the platform itself changed or the scope cannot be computed.
+      - name: Select the units this change affects
+        id: scope
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "full run: a ${{ github.event_name }} event applies every probe"
+            { echo "args="; echo "measure=true"; } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git rev-parse -q --verify HEAD^2 >/dev/null; then
+            base=HEAD^1
+          else
+            base='${{ github.event.pull_request.base.sha }}'
+            git fetch -q --no-tags --depth=1 origin "$base"
+          fi
+          units="$RUNNER_TEMP/mutation-units"
+          python3 tools/verification/select-units --base "$base" --out "$units" \
+            --lane mutation --github-output
+          mode=$(sed -n 's/^mode=//p' "$GITHUB_OUTPUT" | tail -1)
+          count=$(sed -n 's/^count=//p' "$GITHUB_OUTPUT" | tail -1)
+          if [ "$mode" = "scoped" ]; then
+            echo "args=$(sed 's/^/--unit /' "$units" | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
+          else
+            echo "args=" >> "$GITHUB_OUTPUT"
+          fi
+          if [ "$mode" = "scoped" ] && [ "$count" = "0" ]; then
+            echo "measure=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "measure=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: No affected unit owes mutation evidence
+        if: steps.scope.outputs.measure != 'true'
+        run: echo "This change moves no mutation-evidence unit; the push to main applies every probe."
 
       - name: Rust toolchain
         run: rustup show active-toolchain || rustup toolchain install stable --profile minimal
@@ -109,4 +152,5 @@ jobs:
       # is no longer called that. Without the flag they FAIL here, and correctly: an absent
       # prepared environment in a lane that was supposed to have one is a defect.
       - name: Apply every probe this environment can run
-        run: tools/verification/verify-mutations --skip-unprepared
+        if: steps.scope.outputs.measure == 'true'
+        run: tools/verification/verify-mutations --skip-unprepared ${{ steps.scope.outputs.args }}
