@@ -172,9 +172,8 @@ impl SigningPlane {
         })?;
         eprintln!(
             "mcp-re-proxy: response signing = DELEGATED (ADR-MCPRE-052): the root issuer is off \
-             the request path; delegated key {window}; issuer kid {:?}. \
+             the request path; delegated key {window}. \
              Initial delegated key issued.",
-            plan.custody.issuer_kid,
         );
         // Cold-path rotation worker: rotate within the overlap window before each key's
         // exp so the KMS/root stays off the per-core serving runtimes. It also watches the
