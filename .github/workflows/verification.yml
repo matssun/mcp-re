@@ -855,6 +855,11 @@ jobs:
       # budget (2026-09-25). They are build caches, not evidence -- every record is bound
       # to a fingerprint of the SOURCES, and the lanes that mutate the tree build in their
       # own scratch copies -- so keeping them changes what is fast, not what is measured.
+      #
+      # The pinned Node runtimes (sdk/typescript/.node-v<major>) are the same kind of
+      # cache. Not keeping them made the preflight re-prepare all four on every run --
+      # 17 minutes of a merge check in `prepare_node_matrix.sh` before any unit was
+      # measured (2026-09-25). The preflight still checks each runtime's exact version.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 2
@@ -865,6 +870,7 @@ jobs:
           -e /target/
           -e /sdk/typescript/node_modules/
           -e /sdk/typescript/target/
+          -e '/sdk/typescript/.node-v*/'
           -e /verification/lean/.lake/
 
       # A MERGE CHECK MEASURES ONLY WHAT ITS CHANGE AFFECTS, and never everything.
