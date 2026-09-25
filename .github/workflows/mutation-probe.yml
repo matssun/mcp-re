@@ -75,6 +75,11 @@ on:
       - "mcp-re-proxy/src/tls_plane/**"
       - "mcp-re-proxy/src/delegated_tls.rs"
 
+  # THE COMPLETE RUN: every probe. Weekly, and by dispatch for a release.
+  schedule:
+    - cron: "0 4 * * 0"
+  workflow_dispatch:
+
 concurrency:
   group: mutation-probe-${{ github.ref }}
   cancel-in-progress: true
@@ -86,6 +91,8 @@ jobs:
   probe:
     name: V0 evidence self-test (mutation probes)
     runs-on: ubuntu-latest
+    # A merge check is held to the CI time budget; the complete run is not.
+    timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 240 || 20 }}
     steps:
       # Depth 2: a pull request checks out its MERGE commit, and `select-units` measures the
       # change against that commit's first parent.
@@ -93,44 +100,47 @@ jobs:
         with:
           fetch-depth: 2
 
-      # A PULL REQUEST APPLIES THE PROBES OF THE UNITS ITS CHANGE AFFECTS; a push applies
-      # all of them. Same selection as `verification.yml`: moved fingerprints plus their
-      # prerequisite consumers, narrowed to the units that owe the mutation lane evidence,
-      # and a FULL run whenever the platform itself changed or the scope cannot be computed.
+      # A MERGE CHECK APPLIES ONLY THE PROBES OF THE UNITS ITS CHANGE AFFECTS, never all.
+      # Same selection as `verification.yml`: moved fingerprints plus their prerequisite
+      # consumers, narrowed to the units that owe the mutation lane evidence. A platform
+      # change, a scope over the cap, or a scope that cannot be computed is deferred to the
+      # complete run: the weekly schedule and manual dispatch.
       - name: Select the units this change affects
         id: scope
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
-            echo "full run: a ${{ github.event_name }} event applies every probe"
-            { echo "args="; echo "measure=true"; } >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if git rev-parse -q --verify HEAD^2 >/dev/null; then
-            base=HEAD^1
-          else
-            base='${{ github.event.pull_request.base.sha }}'
-            git fetch -q --no-tags --depth=1 origin "$base"
-          fi
+          case "${{ github.event_name }}" in
+            schedule|workflow_dispatch)
+              echo "complete run: a ${{ github.event_name }} event applies every probe"
+              { echo "args="; echo "measure=true"; } >> "$GITHUB_OUTPUT"
+              exit 0 ;;
+            push)
+              base='${{ github.event.before }}' ;;
+            *)
+              if git rev-parse -q --verify HEAD^2 >/dev/null; then
+                base=HEAD^1
+              else
+                base='${{ github.event.pull_request.base.sha }}'
+              fi ;;
+          esac
+          case "$base" in HEAD^1) ;; *) git fetch -q --no-tags --depth=1 origin "$base" || true ;; esac
           units="$RUNNER_TEMP/mutation-units"
           python3 tools/verification/select-units --base "$base" --out "$units" \
-            --lane mutation --github-output
+            --lane mutation --github-output | tee "$RUNNER_TEMP/why"
           mode=$(sed -n 's/^mode=//p' "$GITHUB_OUTPUT" | tail -1)
           count=$(sed -n 's/^count=//p' "$GITHUB_OUTPUT" | tail -1)
-          if [ "$mode" = "scoped" ]; then
-            echo "args=$(sed 's/^/--unit /' "$units" | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
-          else
-            echo "args=" >> "$GITHUB_OUTPUT"
-          fi
-          if [ "$mode" = "scoped" ] && [ "$count" = "0" ]; then
-            echo "measure=false" >> "$GITHUB_OUTPUT"
-          else
+          echo "args=$(sed 's/^/--unit /' "$units" | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
+          if [ "$mode" = "scoped" ] && [ "$count" != "0" ]; then
             echo "measure=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "measure=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: No affected unit owes mutation evidence
+      - name: No probe to apply in this merge check
         if: steps.scope.outputs.measure != 'true'
-        run: echo "This change moves no mutation-evidence unit; the push to main applies every probe."
+        run: |
+          head -1 "$RUNNER_TEMP/why"
+          echo "The complete run (weekly, or dispatched) applies every probe."
 
       - name: Rust toolchain
         run: rustup show active-toolchain || rustup toolchain install stable --profile minimal

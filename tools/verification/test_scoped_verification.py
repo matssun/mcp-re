@@ -7,7 +7,8 @@ The properties pinned here, each with the control that shows it can fail:
 
   * the selection is exactly the moved units plus their prerequisite consumers — and
     empty when nothing moved, which is a stated result rather than a quiet one;
-  * a change to the platform itself selects a FULL run, never a scope;
+  * a merge check never runs everything: a change to the platform itself, a scope over
+    the cap, or a scope that cannot be computed is DEFERRED to the weekly / release run;
   * a scoped run can never leave a bundle that reads as a repository PASS, so `attest`
     cannot issue from a pull-request check;
   * a `--unit` that names nothing, or a unit the lane owes nothing, is FAIL in every lane.
@@ -66,16 +67,16 @@ def test_review_context_does_not_widen_the_scope():
     assert "z" in select_units.consumer_closure({"a"}, propagating)
 
 
-def test_a_change_to_the_platform_forces_a_full_run():
+def test_a_change_to_the_platform_is_deferred():
     for path in (
         "tools/verification/verify",
         "tools/verification/select-units",
         ".github/workflows/verification.yml",
         ".github/workflows/mutation-probe.yml",
     ):
-        assert select_units.full_run_reason([path]), path
-    # Control: an ordinary source change is scoped, not full.
-    assert select_units.full_run_reason(["mcp-re-core/src/lib.rs"]) is None
+        assert select_units.platform_change([path]), path
+    # Control: an ordinary source change is not a platform change.
+    assert select_units.platform_change(["mcp-re-core/src/lib.rs"]) is None
 
 
 def test_lane_narrowing_keeps_exactly_the_units_the_lane_is_required_for():
@@ -92,10 +93,36 @@ def test_lane_narrowing_keeps_exactly_the_units_the_lane_is_required_for():
     assert select_units.required_of("verus", set()) == set()
 
 
-def test_an_uncomputable_scope_is_a_full_run_never_an_empty_one():
+def test_an_uncomputable_scope_is_deferred_never_widened():
     mode, units, why = select_units.select("no-such-revision-anywhere")
-    assert mode == "full" and not units, (mode, units)
-    assert "could not be computed" in why, why
+    assert mode == "deferred" and not units, (mode, units)
+    assert "could not be computed" in why and "weekly / release" in why, why
+
+
+def _stubbed_select(moved_count: int, max_units: int):
+    """`select` over a synthetic tree where `moved_count` units' fingerprints moved."""
+    saved = (select_units.changed_paths, select_units.fingerprints,
+             select_units.base_fingerprints, select_units.load_verification)
+    head = {f"u{i}": "new" for i in range(50)}
+    base = {f"u{i}": ("old" if i < moved_count else "new") for i in range(50)}
+    select_units.changed_paths = lambda _base: ["mcp-re-core/src/lib.rs"]
+    select_units.fingerprints = lambda _root: head
+    select_units.base_fingerprints = lambda _base: base
+    select_units.load_verification = lambda: {"edge": []}
+    try:
+        return select_units.select("base", max_units)
+    finally:
+        (select_units.changed_paths, select_units.fingerprints,
+         select_units.base_fingerprints, select_units.load_verification) = saved
+
+
+def test_a_scope_over_the_cap_is_deferred():
+    mode, units, why = _stubbed_select(moved_count=21, max_units=20)
+    assert mode == "deferred" and not units, (mode, units)
+    assert "21 of 50" in why, why
+    # Control: at the cap it is measured, not deferred.
+    mode, units, _ = _stubbed_select(moved_count=20, max_units=20)
+    assert mode == "scoped" and len(units) == 20, (mode, len(units))
 
 
 def test_the_real_tree_against_itself_selects_nothing_and_says_so():

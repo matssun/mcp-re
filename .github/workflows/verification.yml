@@ -773,6 +773,10 @@ on:
       - "mcp-re-core/Cargo.toml"
       - "mcp-re-http-profile/Cargo.toml"
       - "mcp-re-proxy/Cargo.toml"
+  # THE COMPLETE RUN: every unit, every lane. Weekly, and by dispatch for a release
+  # (release-assurance composes a dispatched run on the release commit).
+  schedule:
+    - cron: "0 4 * * 0"
   workflow_dispatch:
 
 permissions:
@@ -821,11 +825,9 @@ jobs:
     # targets, so this job now carries a Cargo build rather than only manifest parsing and
     # a prover invocation.
     #
-    # 120, not 60: a FULL run (push to main, dispatch, or a pull request that touches the
-    # platform itself) measured 30-48 minutes in September 2026 and reached 58, and it
-    # grows with every registered probe. A scoped pull-request run measures only the units
-    # its change affects and is far below either figure.
-    timeout-minutes: 120
+    # A merge check is held to the CI time budget; the complete run (schedule, dispatch)
+    # measured 30-95 minutes in September 2026 and grows with every registered probe.
+    timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 240 || 20 }}
     env:
       # THE ENDPOINT IS DECLARED, NOT INHERITED.
       #
@@ -845,54 +847,71 @@ jobs:
     steps:
       # Depth 2: a pull request checks out its MERGE commit, and `select-units` measures the
       # change against that commit's first parent — the base it merges into.
+      #
+      # `clean: false`, then a clean that keeps the BUILD CACHES: actions/checkout's own
+      # clean deleted target/ and the SDK and Lean build trees on every run, and on the
+      # runner's external work disk that delete alone took 11 minutes of a merge check's
+      # budget (2026-09-25). They are build caches, not evidence -- every record is bound
+      # to a fingerprint of the SOURCES, and the lanes that mutate the tree build in their
+      # own scratch copies -- so keeping them changes what is fast, not what is measured.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 2
+          clean: false
+      - name: Clean the checkout, keeping the build caches
+        run: >-
+          git clean -ffdx
+          -e /target/
+          -e /sdk/typescript/node_modules/
+          -e /sdk/typescript/target/
+          -e /verification/lean/.lake/
 
-      # A PULL REQUEST MEASURES THE UNITS ITS CHANGE AFFECTS; everything else measures all.
+      # A MERGE CHECK MEASURES ONLY WHAT ITS CHANGE AFFECTS, and never everything.
       #
-      # `select-units` compares every unit's fingerprint at the base with HEAD's and takes
-      # the moved units plus their prerequisite consumers. A change to the platform itself,
-      # or a scope it cannot compute, selects a FULL run instead. The scoped lanes and the
-      # composer are confined to the result, and a scoped run's bundle is INCOMPLETE, so
-      # nothing attests from a pull-request check — the full run on main is the repository's
-      # verdict. When no unit moved, nothing is measured and the step below says so.
+      # Pull requests and pushes to main are merge checks: they answer inside the CI time
+      # budget. `select-units` compares every unit's fingerprint at the base with HEAD's
+      # and takes the moved units plus their prerequisite consumers. A change to the
+      # platform itself, a scope over its cap, or a scope it cannot compute is DEFERRED —
+      # measured by the complete run, which is the schedule below and a manual dispatch
+      # (release-assurance consumes a dispatched run). A scoped run's bundle is INCOMPLETE,
+      # so nothing attests from a merge check.
       - name: Select the units this change affects
         id: scope
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
-            echo "full run: a ${{ github.event_name }} event measures every unit"
-            { echo "mode=full"; echo "args="; echo "measure=true"; } >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if git rev-parse -q --verify HEAD^2 >/dev/null; then
-            base=HEAD^1
-          else
-            base='${{ github.event.pull_request.base.sha }}'
-            git fetch -q --no-tags --depth=1 origin "$base"
-          fi
+          case "${{ github.event_name }}" in
+            schedule|workflow_dispatch)
+              echo "complete run: a ${{ github.event_name }} event measures every unit"
+              { echo "mode=full"; echo "args="; echo "measure=true"; } >> "$GITHUB_OUTPUT"
+              exit 0 ;;
+            push)
+              base='${{ github.event.before }}' ;;
+            *)
+              if git rev-parse -q --verify HEAD^2 >/dev/null; then
+                base=HEAD^1
+              else
+                base='${{ github.event.pull_request.base.sha }}'
+              fi ;;
+          esac
+          case "$base" in HEAD^1) ;; *) git fetch -q --no-tags --depth=1 origin "$base" || true ;; esac
           mkdir -p .verification/scope
           python3 tools/verification/select-units --base "$base" \
-            --out .verification/scope/units --github-output
+            --out .verification/scope/units --github-output | tee .verification/scope/why
           mode=$(sed -n 's/^mode=//p' "$GITHUB_OUTPUT" | tail -1)
           count=$(sed -n 's/^count=//p' "$GITHUB_OUTPUT" | tail -1)
-          if [ "$mode" = "scoped" ]; then
-            echo "args=--units-file .verification/scope/units" >> "$GITHUB_OUTPUT"
-          else
-            echo "args=" >> "$GITHUB_OUTPUT"
-          fi
-          if [ "$mode" = "scoped" ] && [ "$count" = "0" ]; then
-            echo "measure=false" >> "$GITHUB_OUTPUT"
-          else
+          echo "args=--units-file .verification/scope/units" >> "$GITHUB_OUTPUT"
+          if [ "$mode" = "scoped" ] && [ "$count" != "0" ]; then
             echo "measure=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "measure=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: No unit's evidence inputs changed
+      - name: Nothing to measure in this merge check
         if: steps.scope.outputs.measure != 'true'
         run: |
-          echo "This change moves no unit's fingerprint, so no evidence it rests on changed."
-          echo "Nothing is measured here; the full run on main measures every unit."
+          head -1 .verification/scope/why
+          echo "Nothing is measured here. The complete run (weekly, and dispatched for a"
+          echo "release) measures every unit."
 
       # First, because every step below reads the environment this checks. The job
       # PATH comes from the runner service's `.env`, not from the operator's login
@@ -900,9 +919,11 @@ jobs:
       # `ModuleNotFoundError: tomllib`, then as `verus: rustup not found`, neither of
       # which names the runner environment that decided it.
       - name: Runner environment preflight
+        if: steps.scope.outputs.measure == 'true'
         run: ./scripts/verification_runner_preflight.sh
 
       - name: Report the pinned Verus identity
+        if: steps.scope.outputs.measure == 'true'
         run: |
           set -euo pipefail
           # Resolved from the lock file, never from PATH: another package manager on this
@@ -965,6 +986,7 @@ jobs:
       # behind. `actions/checkout` cleans ignored files, so this starts empty — and it is
       # created explicitly anyway, because "it happened to be empty" is not a control.
       - name: A fresh evidence directory for this run
+        if: steps.scope.outputs.measure == 'true'
         id: evidence
         run: |
           set -euo pipefail
@@ -989,6 +1011,7 @@ jobs:
       # a silent and an irreproducible apparatus. A lane that cannot fail measures nothing,
       # and neither registry is large enough yet for the lane run itself to prove it can.
       - name: Structural and measured lane self-tests
+        if: steps.scope.outputs.measure == 'true'
         run: |
           python3 tools/verification/test_structural_lane.py
           python3 tools/verification/test_measured_lane.py
@@ -1010,6 +1033,7 @@ jobs:
       # environments can reach, and the composer at the end reads exactly that one.
       # -----------------------------------------------------------------------
       - name: Resolve the pinned extraction identity
+        if: steps.scope.outputs.measure == 'true'
         id: image
         run: |
           set -euo pipefail
@@ -1128,7 +1152,7 @@ jobs:
             ./tools/verification/verify --phase extraction ${{ steps.scope.outputs.args }}
 
       - name: Extraction lanes unpinned
-        if: steps.image.outputs.resolved != 'true'
+        if: steps.image.outputs.resolved != 'true' && steps.scope.outputs.measure == 'true'
         run: |
           echo "extraction_container is unresolved in toolchains.lock.toml."
           echo "The Lean lane cannot produce evidence until an artifact identity and its"
@@ -1164,7 +1188,7 @@ jobs:
       # failing run's evidence is the thing a reader needs most, and it lives in a
       # directory the next run will not reuse.
       - name: The records the verdict was composed from
-        if: always()
+        if: always() && steps.scope.outputs.measure == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: verification-evidence-${{ github.run_id }}-${{ github.run_attempt }}
