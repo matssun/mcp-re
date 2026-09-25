@@ -188,6 +188,17 @@ def claims_lean_evidence(unit: dict) -> bool:
     return any(str(entry).startswith("lean://") for entry in unit.get("evidence", []))
 
 
+def claims_verus_evidence(unit: dict) -> bool:
+    """Whether a `verus://` URI claims this unit's machine-checked proof.
+
+    Defined here, beside its five siblings, for the reason each of them is: the FINGERPRINT
+    and the lane must agree about which units the Verus lane owes evidence for. A unit the
+    fingerprint treated as unproved and the lane verified would have its PROVER measured by
+    nobody — which is exactly the state this predicate was added to end.
+    """
+    return any(str(entry).startswith("verus://") for entry in unit.get("evidence", []))
+
+
 def claims_test_evidence(unit: dict) -> bool:
     """Whether any `test://` URI claims this unit's battery.
 

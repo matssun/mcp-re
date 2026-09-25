@@ -105,6 +105,11 @@ COMPONENT_STATE = {
     # --- v8: the extracted-model SELECTION, "for the reason v3 added the test selection"
     "extracted_symbols": "DIRTY_EVIDENCE",
     "lean_theorems": "DIRTY_EVIDENCE",
+    # --- the PROOF lane's own identity ------------------------------------------------
+    # The seventh lane, and the same sentence the other six carry: the code that decides
+    # what "a machine-checked proof passed" MEANS is part of that result's identity. A
+    # refinement of the formal evidence, so it takes the classification of what it refines.
+    "verus_lane_identity": "DIRTY_EVIDENCE",
     # --- the extraction lanes' own identity, and the theorem TEXT ---------------------
     # The same three sentences the four host lane identities already carry, for the two
     # lanes that had none: the code deciding what a `lean://` or generated-model result
