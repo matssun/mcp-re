@@ -773,6 +773,10 @@ on:
       - "mcp-re-core/Cargo.toml"
       - "mcp-re-http-profile/Cargo.toml"
       - "mcp-re-proxy/Cargo.toml"
+  # THE COMPLETE RUN: every unit, every lane. Weekly, and by dispatch for a release
+  # (release-assurance composes a dispatched run on the release commit).
+  schedule:
+    - cron: "0 4 * * 0"
   workflow_dispatch:
 
 permissions:
@@ -821,11 +825,9 @@ jobs:
     # targets, so this job now carries a Cargo build rather than only manifest parsing and
     # a prover invocation.
     #
-    # 120, not 60: a FULL run (push to main, dispatch, or a pull request that touches the
-    # platform itself) measured 30-48 minutes in September 2026 and reached 58, and it
-    # grows with every registered probe. A scoped pull-request run measures only the units
-    # its change affects and is far below either figure.
-    timeout-minutes: 120
+    # A merge check is held to the CI time budget; the complete run (schedule, dispatch)
+    # measured 30-95 minutes in September 2026 and grows with every registered probe.
+    timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 240 || 20 }}
     env:
       # THE ENDPOINT IS DECLARED, NOT INHERITED.
       #
@@ -849,50 +851,52 @@ jobs:
         with:
           fetch-depth: 2
 
-      # A PULL REQUEST MEASURES THE UNITS ITS CHANGE AFFECTS; everything else measures all.
+      # A MERGE CHECK MEASURES ONLY WHAT ITS CHANGE AFFECTS, and never everything.
       #
-      # `select-units` compares every unit's fingerprint at the base with HEAD's and takes
-      # the moved units plus their prerequisite consumers. A change to the platform itself,
-      # or a scope it cannot compute, selects a FULL run instead. The scoped lanes and the
-      # composer are confined to the result, and a scoped run's bundle is INCOMPLETE, so
-      # nothing attests from a pull-request check — the full run on main is the repository's
-      # verdict. When no unit moved, nothing is measured and the step below says so.
+      # Pull requests and pushes to main are merge checks: they answer inside the CI time
+      # budget. `select-units` compares every unit's fingerprint at the base with HEAD's
+      # and takes the moved units plus their prerequisite consumers. A change to the
+      # platform itself, a scope over its cap, or a scope it cannot compute is DEFERRED —
+      # measured by the complete run, which is the schedule below and a manual dispatch
+      # (release-assurance consumes a dispatched run). A scoped run's bundle is INCOMPLETE,
+      # so nothing attests from a merge check.
       - name: Select the units this change affects
         id: scope
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
-            echo "full run: a ${{ github.event_name }} event measures every unit"
-            { echo "mode=full"; echo "args="; echo "measure=true"; } >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if git rev-parse -q --verify HEAD^2 >/dev/null; then
-            base=HEAD^1
-          else
-            base='${{ github.event.pull_request.base.sha }}'
-            git fetch -q --no-tags --depth=1 origin "$base"
-          fi
+          case "${{ github.event_name }}" in
+            schedule|workflow_dispatch)
+              echo "complete run: a ${{ github.event_name }} event measures every unit"
+              { echo "mode=full"; echo "args="; echo "measure=true"; } >> "$GITHUB_OUTPUT"
+              exit 0 ;;
+            push)
+              base='${{ github.event.before }}' ;;
+            *)
+              if git rev-parse -q --verify HEAD^2 >/dev/null; then
+                base=HEAD^1
+              else
+                base='${{ github.event.pull_request.base.sha }}'
+              fi ;;
+          esac
+          case "$base" in HEAD^1) ;; *) git fetch -q --no-tags --depth=1 origin "$base" || true ;; esac
           mkdir -p .verification/scope
           python3 tools/verification/select-units --base "$base" \
-            --out .verification/scope/units --github-output
+            --out .verification/scope/units --github-output | tee .verification/scope/why
           mode=$(sed -n 's/^mode=//p' "$GITHUB_OUTPUT" | tail -1)
           count=$(sed -n 's/^count=//p' "$GITHUB_OUTPUT" | tail -1)
-          if [ "$mode" = "scoped" ]; then
-            echo "args=--units-file .verification/scope/units" >> "$GITHUB_OUTPUT"
-          else
-            echo "args=" >> "$GITHUB_OUTPUT"
-          fi
-          if [ "$mode" = "scoped" ] && [ "$count" = "0" ]; then
-            echo "measure=false" >> "$GITHUB_OUTPUT"
-          else
+          echo "args=--units-file .verification/scope/units" >> "$GITHUB_OUTPUT"
+          if [ "$mode" = "scoped" ] && [ "$count" != "0" ]; then
             echo "measure=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "measure=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: No unit's evidence inputs changed
+      - name: Nothing to measure in this merge check
         if: steps.scope.outputs.measure != 'true'
         run: |
-          echo "This change moves no unit's fingerprint, so no evidence it rests on changed."
-          echo "Nothing is measured here; the full run on main measures every unit."
+          head -1 .verification/scope/why
+          echo "Nothing is measured here. The complete run (weekly, and dispatched for a"
+          echo "release) measures every unit."
 
       # First, because every step below reads the environment this checks. The job
       # PATH comes from the runner service's `.env`, not from the operator's login

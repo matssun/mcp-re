@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Which units a change affects — the scope of a pull request's verification run.
+"""Which units a change affects — the scope of a merge check's verification run.
 
-    tools/verification/select-units --base REF --out FILE [--lane NAME] [--github-output]
+    tools/verification/select-units --base REF --out FILE [--lane NAME] [--max-units N]
+                                    [--github-output]
 
 A unit is AFFECTED when its fingerprint at HEAD differs from its fingerprint at `--base`
 (or it is new), and so is every unit that consumes an affected one over a prerequisite
@@ -13,16 +14,24 @@ describes this unit". The consumer closure is taken because a consumer may not b
 over a producer whose evidence is unknown; it is not narrowed by sealed edges, which is
 the conservative direction.
 
-A FULL run is selected instead, and said so, when the change touches the verification
-platform itself (`tools/verification/`) or the workflows that run it, or when anything
-here cannot be computed. Uncertainty widens the scope; it never narrows it.
+A MERGE CHECK NEVER RUNS EVERYTHING. It answers inside the CI time budget, and the
+complete verification runs weekly, at release and on dispatch (the workflows call it
+without `--units-file`). So when a scope cannot be trusted or cannot fit the budget, the
+check is DEFERRED to that complete run, and says so, rather than widened to it:
+
+  * the change touches the verification platform itself (`tools/verification/`) or the
+    workflows that run it — a scope computed by a changed instrument is not trusted, and
+    the platform's own self-tests, which the unconditional CI runs, are what check it;
+  * the scope exceeds `--max-units` (a change to widely shared code, or to anything every
+    fingerprint reads);
+  * the scope cannot be computed.
 
 The base tree is fingerprinted by ITS OWN tools, in a temporary worktree, so both sides
-are measured by the instrument that describes them. A change to that instrument is one of
-the full-run triggers, so the two instruments are the same whenever a scope is produced.
+are measured by the instrument that describes them. A change to that instrument defers,
+so the two instruments are the same whenever a scope is produced.
 
-Output: FILE holds the affected unit ids, one per line (empty when nothing moved). A full
-run writes no ids and says `full`; the caller then runs without `--units-file`.
+Output: FILE holds the affected unit ids, one per line (empty when nothing moved or the
+check is deferred). The mode is `scoped` or `deferred`.
 
 `--lane NAME` narrows the ids to the affected units that lane is REQUIRED for, read from
 the composer's own `requirements` — the form a single lane's `--unit` accepts. It is for a
@@ -52,9 +61,10 @@ from _manifest import (  # noqa: E402
     load_verification,
 )
 
-#: A changed path under any of these makes the run full. The platform's own code decides
-#: what every verdict means, so a scope computed by a changed instrument is not trusted.
-FULL_RUN_PREFIXES = (
+#: A changed path under any of these defers the check to the complete run. The platform's
+#: own code decides what every verdict means, so a scope computed by a changed instrument
+#: is not trusted.
+PLATFORM_PREFIXES = (
     "tools/verification/",
     ".github/workflows/verification.yml",
     ".github/workflows/mutation-probe.yml",
@@ -69,8 +79,14 @@ def changed_paths(base: str) -> list[str]:
     return [line for line in completed.stdout.splitlines() if line]
 
 
-def full_run_reason(paths: list[str]) -> str | None:
-    hits = sorted(p for p in paths if p.startswith(FULL_RUN_PREFIXES))
+#: The largest scope a merge check measures. Measured 2026-09-25: 14 units took the
+#: verification job 7-11 minutes, most of it fixed setup; the complete run of 245 units
+#: took 95. A larger scope is deferred to the weekly / release run.
+DEFAULT_MAX_UNITS = 20
+
+
+def platform_change(paths: list[str]) -> str | None:
+    hits = sorted(p for p in paths if p.startswith(PLATFORM_PREFIXES))
     if hits:
         return f"the change touches the verification platform: {', '.join(hits[:5])}"
     return None
@@ -122,20 +138,28 @@ def consumer_closure(units: set[str], edges: list[dict]) -> set[str]:
     return closure
 
 
-def select(base: str) -> tuple[str, set[str], str]:
-    """(mode, units, explanation): mode is `full` or `scoped`."""
+def select(base: str, max_units: int = DEFAULT_MAX_UNITS) -> tuple[str, set[str], str]:
+    """(mode, units, explanation): mode is `scoped` or `deferred`."""
+    later = "; verified by the weekly / release run instead"
     try:
-        reason = full_run_reason(changed_paths(base))
+        reason = platform_change(changed_paths(base))
         if reason:
-            return "full", set(), reason
+            return "deferred", set(), reason + later
         head = fingerprints(REPO_ROOT)
         before = base_fingerprints(base)
         edges = load_verification().get("edge", [])
     except (subprocess.CalledProcessError, OSError, ValueError, KeyError, ManifestError) as exc:
         detail = getattr(exc, "stderr", "") or str(exc)
-        return "full", set(), f"the scope could not be computed, so nothing is narrowed: {detail}"
+        return "deferred", set(), f"the scope could not be computed ({detail.strip()[:300]})" + later
     changed = moved(before, head)
     affected = consumer_closure(changed, edges)
+    if len(affected) > max_units:
+        return (
+            "deferred",
+            set(),
+            f"{len(affected)} of {len(head)} units are affected, more than a merge check "
+            f"measures (--max-units {max_units})" + later,
+        )
     return (
         "scoped",
         affected,
@@ -155,6 +179,10 @@ def main() -> int:
     parser.add_argument("--base", required=True, help="the commit the change is measured against")
     parser.add_argument("--out", required=True, type=Path, help="file to write the unit ids to")
     parser.add_argument(
+        "--max-units", type=int, default=DEFAULT_MAX_UNITS,
+        help=f"defer a scope larger than this (default {DEFAULT_MAX_UNITS})",
+    )
+    parser.add_argument(
         "--lane", choices=sorted(FORMAL_LANES),
         help="keep only the affected units this lane is required for",
     )
@@ -164,7 +192,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    mode, units, why = select(args.base)
+    mode, units, why = select(args.base, args.max_units)
     if args.lane and mode == "scoped":
         affected = len(units)
         units = required_of(args.lane, units)
