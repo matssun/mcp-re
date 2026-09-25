@@ -670,7 +670,6 @@ jobs:
         # Nothing here is weakened. If the image ever stops shipping Clang the fallback
         # installs it exactly as before; a package that genuinely cannot be installed
         # still fails the step, and every gate below is untouched.
-        timeout-minutes: 20
         run: |
           set -euo pipefail
           # cryptoki-sys builds its FFI bindings with bindgen, which needs libclang at
@@ -902,7 +901,6 @@ jobs:
         # Nothing here is weakened. If the image ever stops shipping Clang the fallback
         # installs it exactly as before; a package that genuinely cannot be installed
         # still fails the step, and every gate below is untouched.
-        timeout-minutes: 20
         run: |
           set -euo pipefail
           # cryptoki-sys builds its FFI bindings with bindgen, which needs libclang at
@@ -1064,7 +1062,6 @@ jobs:
         # Nothing here is weakened. If the image ever stops shipping Clang the fallback
         # installs it exactly as before; a package that genuinely cannot be installed
         # still fails the step, and every gate below is untouched.
-        timeout-minutes: 20
         run: |
           set -euo pipefail
           # cryptoki-sys builds its FFI bindings with bindgen, which needs libclang at
