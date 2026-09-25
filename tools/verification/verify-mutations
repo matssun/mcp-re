@@ -31,7 +31,7 @@ FAIL for a stale anchor or an unprotected conjunct, UNAVAILABLE when the tree ca
 copied or cargo cannot run, PASS otherwise.
 
 Usage:
-    tools/verification/verify-mutations [--probe ID]... [--keep-tree]
+    tools/verification/verify-mutations [--probe ID]... [--unit ID]... [--keep-tree]
 """
 
 from __future__ import annotations
@@ -42,6 +42,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
 from pathlib import Path
 
@@ -58,6 +59,13 @@ from _ecosystems import (  # noqa: E402
     vitest_report_path,
 )
 from _evidence import EvidenceRecord, evidence_store, write_record  # noqa: E402
+from _unit_selection import (  # noqa: E402
+    add_unit_argument,
+    basis,
+    filter_by_unit,
+    refuse,
+    selection_error,
+)
 from _fingerprint import fingerprint_unit  # noqa: E402
 from _manifest import (  # noqa: E402
     REPO_ROOT,
@@ -714,9 +722,21 @@ def check_matrix_count(probes: list[dict]) -> str | None:
     return None
 
 
+def report_timings(timings: list[tuple[str, float]], total: float) -> None:
+    """Every probe's wall-clock, one `time` line each, then the lane total.
+
+    Printed rather than recorded as evidence: a duration says what the lane COST, not what
+    it measured, and the evidence records must stay a function of the tree.
+    """
+    for probe_id, seconds in timings:
+        print(f"  time {seconds:7.1f}s  {probe_id}")
+    print(f"  time {total:7.1f}s  lane total, {len(timings)} probe(s)")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--probe", action="append", default=[], help="only these probe ids")
+    add_unit_argument(parser)
     parser.add_argument(
         "--keep-tree", action="store_true", help="leave the scratch copy for inspection"
     )
@@ -765,6 +785,21 @@ def main() -> int:
         print("VERDICT: FAIL")
         return 1
 
+    # A unit is selected WHOLE — every probe registered for it — so the per-unit record
+    # written below still describes the unit's entire battery, exactly as a full run's does.
+    total = len(probes)
+    if args.unit:
+        problem = selection_error(
+            args.unit, set(units), {probe["unit"] for probe in probes}, "mutation probe"
+        )
+        if problem:
+            return refuse("verify-mutations", problem)
+        probes = filter_by_unit(probes, args.unit, lambda probe: probe["unit"])
+    print(
+        "verify-mutations: selection basis — "
+        + basis(args.unit, len(probes), total, f"every registered probe ({total})")
+    )
+
     if args.probe:
         wanted = set(args.probe)
         probes = [p for p in probes if p["id"] in wanted]
@@ -800,8 +835,17 @@ def main() -> int:
     failures: list[str] = []
     unavailable: list[str] = []
     probed_units = sorted({probe["unit"] for probe in probes})
+    # Wall-clock per probe, for evaluating the lane's cost over time. Each probe's clock is
+    # closed when the next one starts, so every exit from the loop body — the many
+    # `continue`s included — is timed without restructuring it.
+    timings: list[tuple[str, float]] = []
+    running: tuple[str, float] | None = None
+    lane_started = time.monotonic()
     try:
         for index, probe in enumerate(probes):
+            if running is not None:
+                timings.append((running[0], time.monotonic() - running[1]))
+            running = (probe["id"], time.monotonic())
             where = f"probe {probe['id']}"
             try:
                 package, grouped, features, gates, eco = declared_battery(
@@ -878,10 +922,13 @@ def main() -> int:
                 continue
             print(f"  ok   {probe['id']}  {probe.get('theorem', probe['unit'])}  red: {', '.join(red)}")
     finally:
+        if running is not None:
+            timings.append((running[0], time.monotonic() - running[1]))
         if args.keep_tree:
             print(f"  scratch tree kept at {scratch}")
         else:
             shutil.rmtree(scratch, ignore_errors=True)
+    report_timings(timings, time.monotonic() - lane_started)
 
     # Phase 3 of the evidence pipeline, exactly as the other lanes do it: the result
     # becomes a machine record BOUND TO THE FINGERPRINT it was measured at, and `attest`
