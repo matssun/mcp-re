@@ -374,6 +374,21 @@ the code, and one that already cost a full A/B/B/A investigation. The lane refus
 measure when load is high; do not paper over it with `ALLOW_NOISY_BOX=1` and then quote
 the number.
 
+## Progress narration, and the one place it is suppressed
+
+The normal rule stands for all ordinary work: report progress as you go — what you did, what
+is next — as running narration rather than as a request for permission.
+
+**During an `/exec-campaign-orchestrator` run, ordinary progress narration is suppressed.**
+The campaign returns to the user only on campaign completion or a Review Judge RED requiring
+HITL. Intermediate progress is recorded durably in campaign state and worker reports, under
+`work/campaigns/<campaign_id>/`, and that is where to look while a campaign is running.
+
+This is narrow and deliberate. A campaign that narrates is a campaign that stops, and every
+stop is an unplanned handback in a run whose whole purpose is to need none. The carve-out
+applies to the campaign orchestrator only — not to workers reporting to it, not to any other
+skill, and not to any non-campaign task in this repository.
+
 ## Other standing rules
 
 - **No hardcoded ports.** `config/ports.toml` is the source; the Helm mirror is
