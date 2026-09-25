@@ -46,6 +46,7 @@ run, and it is not PASS, which would mean a proof was checked.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
@@ -64,6 +65,13 @@ from _manifest import (  # noqa: E402
     load_toolchains,
     load_verification,
     unpinned_identities,
+)
+from _unit_selection import (  # noqa: E402
+    add_unit_argument,
+    basis,
+    filter_by_unit,
+    refuse,
+    selection_error,
 )
 from _verus_results import evaluate_unit, parse_reports  # noqa: E402
 
@@ -239,6 +247,9 @@ def installed_identity(toolchains: dict, install_root: Path) -> str | None:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    add_unit_argument(parser)
+    args = parser.parse_args()
     try:
         toolchains = load_toolchains()
         doc = load_verification()
@@ -256,6 +267,18 @@ def main() -> int:
     unpinned = unpinned_identities(toolchains, REQUIRED)
     missing = sorted(unpinned)
     verus_units = [unit for unit in doc.get("unit", []) if unit["class"] in {"V1", "V3"}]
+    total = len(verus_units)
+    if args.unit:
+        declared = {unit["id"] for unit in doc.get("unit", [])}
+        applicable = {unit["id"] for unit in verus_units}
+        problem = selection_error(args.unit, declared, applicable, "Verus evidence")
+        if problem:
+            return refuse("verify-verus", problem)
+        verus_units = filter_by_unit(verus_units, args.unit, lambda unit: unit["id"])
+    print(
+        "verify-verus: selection basis — "
+        + basis(args.unit, len(verus_units), total, f"every V1/V3 unit ({total})")
+    )
 
     if not verus_units:
         # NOT_REQUIRED, not SKIPPED: the manifest asks nothing of this lane, which is a

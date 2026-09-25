@@ -140,7 +140,13 @@ def load_records(store: Path, lane: str) -> dict[str, EvidenceRecord]:
     return out
 
 
-def write_bundle(store: Path, aggregate: str, lanes: dict[str, str], policy_revision: str) -> Path:
+def write_bundle(
+    store: Path,
+    aggregate: str,
+    lanes: dict[str, str],
+    policy_revision: str,
+    scope: tuple[str, ...] | None = None,
+) -> Path:
     """The run's aggregate verdict, as a record the issuer can consume.
 
     Phase 3 of the pipeline, and the reason it is a file rather than an exit code: the
@@ -155,18 +161,17 @@ def write_bundle(store: Path, aggregate: str, lanes: dict[str, str], policy_revi
     worse a run failed, the earlier it exited and the more certainly the stale record
     survived. `verify` now writes on every path, which is what makes the file's meaning
     the one the issuer assumes.
+
+    `scope` names the units a scoped run was confined to, so a reader of the bundle can see
+    that the run was partial; the caller passes INCOMPLETE as the aggregate for such a run.
+    Omitted for a full run, which keeps a full run's bundle byte-identical to before.
     """
     store.mkdir(parents=True, exist_ok=True)
     path = store / "bundle.json"
-    path.write_text(
-        json.dumps(
-            {"aggregate": aggregate, "lanes": lanes, "policy_revision": policy_revision},
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    body: dict = {"aggregate": aggregate, "lanes": lanes, "policy_revision": policy_revision}
+    if scope is not None:
+        body["scope"] = list(scope)
+    path.write_text(json.dumps(body, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return path
 
 

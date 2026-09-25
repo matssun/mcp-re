@@ -50,8 +50,10 @@ as a verified repository, which is "exits 0 having measured nothing" one level u
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
+import time
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,7 +61,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _assurance_graph import unmet_obligations  # noqa: E402
-from _compose import compose, contradictions, requirements  # noqa: E402
+from _compose import compose, contradictions, requirements, within  # noqa: E402
 from _evidence import evidence_store, write_bundle  # noqa: E402
 from _theorems import load_theorems, unsupported_theorems  # noqa: E402
 from _manifest import (  # noqa: E402
@@ -143,6 +145,13 @@ assert set().union(*PHASES.values()) == {
 }
 assert not (PHASES["host"] & PHASES["extraction"])
 
+#: The formal lanes a scoped run (`--units-file`) confines to the selected units. Each
+#: takes `--unit` with one shared semantics (`_unit_selection`). The extraction lanes are
+#: not here: they judge the one extracted model as a whole, in under a minute, so they run
+#: in full and the composer reads only the selected units' records.
+SCOPABLE_LANES = {"test", "mutation", "structural", "measured", "verus"}
+assert SCOPABLE_LANES <= PHASES["host"]
+
 
 def gate_exit_code(aggregate: str, gate: bool) -> int:
     """The process status this run reports for an aggregate verdict.
@@ -192,6 +201,20 @@ class RunOutcome:
     exit_code: int
     aggregate: str
     lanes: dict[str, str]
+    #: The unit ids a scoped run (`--units-file`) was confined to; None for a full run.
+    scope: tuple[str, ...] | None = None
+
+    def bundle_aggregate(self) -> str:
+        """The aggregate the BUNDLE may carry, which for a scoped run is never PASS.
+
+        A scoped run measured the units a change affects and nothing else, so its PASS is a
+        statement about those units and not a repository verdict. `attest` reads the bundle
+        as "the aggregate of the last verification run" and issues nothing from
+        INCOMPLETE; recording a scoped run as INCOMPLETE is what keeps a pull-request check
+        from ever becoming the basis of an attestation. The exit status still carries the
+        scoped verdict, which is what the pull request is gated on.
+        """
+        return self.aggregate if self.scope is None else "INCOMPLETE"
 
     def policy_revision(self) -> str:
         """The revision this run validated against, or a marker if it cannot be read.
@@ -343,25 +366,34 @@ def main() -> int:
     outcome = _run()
     write_bundle(
         evidence_store(),
-        outcome.aggregate,
+        outcome.bundle_aggregate(),
         outcome.lanes,
         outcome.policy_revision(),
+        scope=outcome.scope,
     )
     return outcome.exit_code
 
 
 
-def _phase_contradictions(verdicts: dict[str, str]) -> list[str]:
+def _phase_contradictions(
+    verdicts: dict[str, str], scope: frozenset[str] | None = None
+) -> list[str]:
     """Lanes in this phase that declared NOT_REQUIRED while the manifest requires them.
 
     Asked HERE because this is where the declared verdict exists: a lane reporting
     NOT_REQUIRED writes no record, so the composer downstream sees an absence and cannot
     tell it from a lane that simply did not run. The two call for different actions.
+
+    Under a scope, "required" means required of a SELECTED unit — the same set the scoped
+    composer will ask for.
     """
     try:
         return contradictions(
             verdicts,
-            requirements(load_verification(), load_toolchains(), load_assumptions()),
+            within(
+                requirements(load_verification(), load_toolchains(), load_assumptions()),
+                scope,
+            ),
         )
     except ManifestError:
         # Manifest validation already ran and passed before any lane executed; if the
@@ -370,7 +402,9 @@ def _phase_contradictions(verdicts: dict[str, str]) -> list[str]:
         return []
 
 
-def _phase_outcome(phase: str, verdicts: dict[str, str]) -> RunOutcome:
+def _phase_outcome(
+    phase: str, verdicts: dict[str, str], scope: frozenset[str] | None = None
+) -> RunOutcome:
     """What one execution phase reports: whether its own lanes ran, and nothing more.
 
     NO REPOSITORY AGGREGATE. This process cannot execute the other phase's lanes, so any
@@ -386,7 +420,7 @@ def _phase_outcome(phase: str, verdicts: dict[str, str]) -> RunOutcome:
     broken = sorted(
         name for name, verdict in verdicts.items() if verdict in {"FAIL", "UNAVAILABLE", "SKIPPED"}
     )
-    contradicted = _phase_contradictions(verdicts)
+    contradicted = _phase_contradictions(verdicts, scope)
     print("\n" + "=" * 70)
     for note in contradicted:
         print(f"FAIL: {note}")
@@ -400,10 +434,14 @@ def _phase_outcome(phase: str, verdicts: dict[str, str]) -> RunOutcome:
     # INCOMPLETE, always, and deliberately: a phase never produces a repository verdict, so
     # the bundle it leaves must not read as one. `attest` refuses on INCOMPLETE, which is
     # the correct posture between the phases of a run.
-    return RunOutcome(1 if (broken or contradicted) else 0, "INCOMPLETE", verdicts)
+    return RunOutcome(
+        1 if (broken or contradicted) else 0, "INCOMPLETE", verdicts, _scope_ids(scope)
+    )
 
 
-def _composed_outcome(hygiene: dict[str, str], gate: bool) -> RunOutcome:
+def _composed_outcome(
+    hygiene: dict[str, str], gate: bool, scope: frozenset[str] | None = None
+) -> RunOutcome:
     """The repository verdict, composed from the evidence records this run produced."""
     try:
         doc = load_verification()
@@ -414,7 +452,9 @@ def _composed_outcome(hygiene: dict[str, str], gate: bool) -> RunOutcome:
         return RunOutcome(1, "FAIL", {"manifests": "FAIL"})
 
     store = evidence_store()
-    aggregate, verdicts, refusals = compose(store, doc, toolchains, assumptions, hygiene)
+    aggregate, verdicts, refusals = compose(
+        store, doc, toolchains, assumptions, hygiene, units=scope
+    )
 
     print(f"\n[compose] over {store}")
     for lane in sorted(set(verdicts) - set(hygiene)):
@@ -431,10 +471,77 @@ def _composed_outcome(hygiene: dict[str, str], gate: bool) -> RunOutcome:
     else:
         print("VERIFICATION: PASS")
         print(f"Composed from records in {store}; every required lane has one, at this fingerprint.")
+    if scope is not None:
+        print(
+            f"SCOPED to {len(scope)} unit(s): a verdict about the units this change affects, "
+            "NOT a repository verdict. The bundle records INCOMPLETE, so nothing attests from "
+            "this run; the full run on main is the repository's."
+        )
     if not gate:
         print("(report-only — pass --gate to make this authoritative)")
     print("=" * 70)
-    return RunOutcome(gate_exit_code(aggregate, gate), aggregate, verdicts)
+    return RunOutcome(gate_exit_code(aggregate, gate), aggregate, verdicts, _scope_ids(scope))
+
+
+def _scope_ids(scope: frozenset[str] | None) -> tuple[str, ...] | None:
+    return None if scope is None else tuple(sorted(scope))
+
+
+def _load_scope(path: Path) -> frozenset[str] | str:
+    """The unit ids a scoped run is confined to, or the reason the file cannot be one.
+
+    An id the manifest does not declare is refused here rather than per lane: a scope that
+    names a unit nothing measures would otherwise compose a verdict over less than it says.
+    An EMPTY file is a valid scope — `select-units` writes one when no unit's fingerprint
+    moved — and the run then says so in its output instead of measuring anything.
+    """
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        return f"--units-file {path}: {exc}"
+    ids = frozenset(line.strip() for line in lines if line.strip() and not line.startswith("#"))
+    try:
+        declared = {unit["id"] for unit in load_verification().get("unit", [])}
+    except ManifestError as exc:
+        return f"--units-file {path}: the manifest cannot be read to check it: {exc}"
+    unknown = sorted(ids - declared)
+    if unknown:
+        return f"--units-file {path} names undeclared unit(s): {', '.join(unknown)}"
+    return ids
+
+
+def _lane_scope(lane: str, scope: frozenset[str]) -> list[str]:
+    """The selected units this lane is required for — the `--unit` ids it is handed.
+
+    Read from the same `requirements` the composer uses, so a lane is never asked about a
+    unit the composer will not ask it for, and never spared one the composer will.
+    """
+    required = requirements(load_verification(), load_toolchains(), load_assumptions())
+    return sorted({r.unit_id for r in within(required, scope) if r.lane == lane})
+
+
+def _report_timings(timings: list[tuple[str, str, float]], scope: frozenset[str] | None) -> None:
+    """Every executed lane's wall-clock: in the log, and in the job summary when in CI.
+
+    For following the platform's cost over time, never for any verdict — a duration says
+    what a lane cost, not what it measured.
+    """
+    if not timings:
+        return
+    label = "full" if scope is None else f"scoped to {len(scope)} unit(s)"
+    print(f"\n[timings] {label}")
+    for name, verdict, seconds in timings:
+        print(f"    {name:<16} {verdict:<13} {seconds:8.1f}s")
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not summary:
+        return
+    rows = [f"| {name} | {verdict} | {seconds:.1f} |" for name, verdict, seconds in timings]
+    with open(summary, "a", encoding="utf-8") as handle:
+        handle.write(
+            f"\n#### Lane timings ({label})\n\n| lane | verdict | seconds |\n|---|---|---|\n"
+            + "\n".join(rows)
+            + "\n"
+        )
 
 
 def _run() -> RunOutcome:
@@ -458,6 +565,16 @@ def _run() -> RunOutcome:
         ),
     )
     parser.add_argument(
+        "--units-file",
+        type=Path,
+        help=(
+            "confine the run to the unit ids listed in this file, one per line (a scoped "
+            "pull-request run; `select-units` writes it). With --phase, the scoped lanes "
+            "measure only these units; with --aggregate, the verdict is composed over them "
+            "alone. A scoped run's bundle is always INCOMPLETE, so nothing can attest from it."
+        ),
+    )
+    parser.add_argument(
         "--aggregate",
         action="store_true",
         help=(
@@ -472,6 +589,14 @@ def _run() -> RunOutcome:
         # result would be the instrument certifying itself, which is the property the whole
         # split exists to remove.
         parser.error("--phase executes; --aggregate composes. Run them separately.")
+    if args.units_file and not (args.phase or args.aggregate):
+        # The umbrella's own full-sweep aggregate is a repository verdict; a scope would
+        # make it a statement about some units dressed as one about all of them.
+        parser.error("--units-file scopes a --phase or an --aggregate run, not the full sweep.")
+    scope = _load_scope(args.units_file) if args.units_file else None
+    if isinstance(scope, str):
+        print(f"FAIL: {scope}", file=sys.stderr)
+        return RunOutcome(1, "FAIL", {"scope": "FAIL"})
 
     print("=" * 70)
     print("ADR-MCPRE-059 verification platform")
@@ -501,16 +626,33 @@ def _run() -> RunOutcome:
         # kept apart to prevent.
         selected = {name for name, _s, is_formal in LANES if not is_formal}
 
+    if scope is not None:
+        print(f"\n[scope] {len(scope)} unit(s): {', '.join(sorted(scope)) or '(none)'}")
     verdicts: dict[str, str] = {}
+    timings: list[tuple[str, str, float]] = []
     for name, script, _is_formal in LANES:
         if name not in selected:
             continue
+        argv = [sys.executable, str(HERE / script)]
+        if scope is not None and name in SCOPABLE_LANES:
+            units = _lane_scope(name, scope)
+            if not units:
+                # Not run, and not a pass: no selected unit owes this lane anything, which
+                # is exactly the fact NOT_REQUIRED states. The scoped contradiction check
+                # below agrees, because it asks the same scoped requirement set.
+                verdicts[name] = "NOT_REQUIRED"
+                print(f"\n[{name}] NOT_REQUIRED — no selected unit requires this lane")
+                continue
+            for unit_id in units:
+                argv += ["--unit", unit_id]
+        started = time.monotonic()
         completed = subprocess.run(
-            [sys.executable, str(HERE / script)],
+            argv,
             capture_output=True,
             text=True,
             check=False,
         )
+        elapsed = time.monotonic() - started
         output = (completed.stdout + completed.stderr).strip()
         # The lane states its own verdict on a VERDICT: line. Inferring it from the prose
         # instead would mean a lane that exits 0 having done nothing reads as PASS purely
@@ -519,15 +661,17 @@ def _run() -> RunOutcome:
         declared = _declared_verdict(output)
         verdict, output = _lane_verdict(completed.returncode, declared, output)
         verdicts[name] = verdict
-        print(f"\n[{name}] {verdict}")
+        timings.append((name, verdict, elapsed))
+        print(f"\n[{name}] {verdict}  ({elapsed:.1f}s)")
         for line in output.splitlines():
             print(f"    {line}")
+    _report_timings(timings, scope)
 
     if args.phase:
-        return _phase_outcome(args.phase, verdicts)
+        return _phase_outcome(args.phase, verdicts, scope)
 
     if args.aggregate:
-        return _composed_outcome(verdicts, args.gate)
+        return _composed_outcome(verdicts, args.gate, scope)
 
     formal = {name for name, _script, is_formal in LANES if is_formal}
     aggregate = aggregate_verdict(

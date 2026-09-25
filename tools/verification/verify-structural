@@ -69,6 +69,13 @@ from _manifest import (  # noqa: E402
 )
 from _scratch import copy_tracked_tree  # noqa: E402
 from _structural import adjudicate, load_probes, provenance_problem  # noqa: E402
+from _unit_selection import (  # noqa: E402
+    add_unit_argument,
+    basis,
+    filter_by_unit,
+    refuse,
+    selection_error,
+)
 
 REGISTRY = REPO_ROOT / "verification" / "policy" / "structural-probes.toml"
 
@@ -206,6 +213,7 @@ def revert(tree: Path, probe: dict, original: str | None) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--probe", action="append", default=[], help="only these probe ids")
+    add_unit_argument(parser)
     parser.add_argument("--registry", default=str(REGISTRY), help="probe registry to read")
     parser.add_argument("--keep-tree", action="store_true", help="leave the scratch copy")
     args = parser.parse_args()
@@ -234,6 +242,7 @@ def main() -> int:
         sorted(uid for uid, unit in units.items() if claims_structural(unit)) if official else []
     )
     registered = {probe["unit"] for probe in probes}
+    registered_probes = list(probes)
     unknown = sorted({probe["unit"] for probe in probes} - set(units))
     if unknown:
         return _fail(
@@ -254,6 +263,17 @@ def main() -> int:
     ]
     if drifted:
         return _fail("; ".join(drifted))
+
+    if args.unit:
+        problem = selection_error(args.unit, set(units), registered, "structural probe")
+        if problem:
+            return refuse("verify-structural", problem)
+        probes = filter_by_unit(probes, args.unit, lambda probe: probe["unit"])
+    total = len(registered_probes)
+    print(
+        "verify-structural: selection basis — "
+        + basis(args.unit, len(probes), total, f"every registered probe ({total})")
+    )
 
     selected = [p for p in probes if p["id"] in set(args.probe)] if args.probe else list(probes)
     if not selected:
@@ -329,7 +349,9 @@ def main() -> int:
     # subset measured part of the witness, and a record from it would let "one probe passed"
     # stand in for "the boundary is closed".
     if not args.probe:
-        for unit_id in sorted(registered):
+        # The units this run MEASURED — every registered one on a full run. Under `--unit`,
+        # iterating the whole registry would write a pass for units no probe ran against.
+        for unit_id in sorted({probe["unit"] for probe in selected}):
             unit = units.get(unit_id)
             if unit is None or not claims_structural(unit):
                 continue

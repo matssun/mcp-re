@@ -141,6 +141,19 @@ def requirements(doc: dict, toolchains: dict, assumptions: dict) -> list[Require
     return out
 
 
+def within(required: list[Requirement], units: frozenset[str] | None) -> list[Requirement]:
+    """The requirements of the units a scoped run was confined to; all of them if unscoped.
+
+    Narrowing the REQUIREMENT set is what makes a scoped run's verdict a statement about
+    those units and no others. It is still derived from the manifest — only the unit
+    dimension is restricted — so a lane that stops running still leaves a selected unit
+    without its record, and that absence still refuses.
+    """
+    if units is None:
+        return required
+    return [requirement for requirement in required if requirement.unit_id in units]
+
+
 def contradictions(lane_verdicts: dict[str, str], required: list[Requirement]) -> list[str]:
     """Lanes that declared `NOT_REQUIRED` while the manifest requires them.
 
@@ -216,14 +229,17 @@ def compose(
     toolchains: dict,
     assumptions: dict,
     hygiene: dict[str, str],
+    units: frozenset[str] | None = None,
 ) -> tuple[str, dict[str, str], list[str]]:
     """The repository verdict, the per-lane verdicts behind it, and every refusal.
 
     `hygiene` is the executed hygiene lanes' verdicts — those are whole-repository
     propositions with no per-unit evidence, they are host-capable, and they enter the
     algebra exactly as they always have: able to withhold a pass, never to carry one.
+
+    `units` confines the verdict to those units (a scoped run); see `within`.
     """
-    required = requirements(doc, toolchains, assumptions)
+    required = within(requirements(doc, toolchains, assumptions), units)
     refusals: list[str] = []
     lane_verdicts: dict[str, str] = {}
 
