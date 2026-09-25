@@ -105,8 +105,14 @@ impl CurrentAuthenticatedRelationshipPeerFacts {
 }
 
 /// Why an authenticated peer is not a CURRENT authenticated peer.
+///
+/// Visible only inside `communication_assurance`, because the two arms are exactly the
+/// distinction a caller must not be able to act on: seeing both is what makes
+/// `map(Current).unwrap_or(CurrencyNotEvaluated(peer))` expressible. The one consumer is
+/// [`crate::communication_assurance::AuthenticatedChannelPeer::resolve`], which turns the
+/// second arm into a refusal instead of a label.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CurrentPeerRefusal {
+pub(in crate::communication_assurance) enum CurrentPeerRefusal {
     /// The deployment configures no currency control, so the credential was never
     /// examined. Not a verdict about the credential — a statement that none was reached.
     CurrencyNotEvaluated,
@@ -120,7 +126,7 @@ pub enum CurrentPeerRefusal {
 /// THE construction operation. It takes the authenticated peer BY VALUE, the deployment
 /// policy and the instant — never a currency product, never a credential — evaluates the
 /// currency of the acceptance that peer already carries, and pairs the two in one closure.
-pub fn current_authenticated_peer(
+pub(in crate::communication_assurance) fn current_authenticated_peer(
     peer: AuthenticatedRelationshipPeerFacts,
     policy: &CredentialCurrencyPolicy,
     now: i64,
