@@ -1636,11 +1636,11 @@ nt_rust_test(
     crate_features = _PROXY_EXT_FEATURES,
     data = [":mock_pkcs11"],
     edition = "2021",
-    env = {"MCP_RE_MOCK_PKCS11_LIB": "$(rootpath :mock_pkcs11)"},
-    env_inherit = [
-        # CI opt-in: when set, a missing-mock SKIP HARD-FAILS instead of passing.
-        "MCP_RE_REQUIRE_LIVE_INFRA",
-    ],
+    env = {
+        "MCP_RE_MOCK_PKCS11_LIB": "$(rootpath :mock_pkcs11)",
+        # Here the mock is always provided, so a skip can only mean it was lost: fail.
+        "MCP_RE_REQUIRE_LIVE_INFRA": "1",
+    },
     deps = [
         ":mcp_re_proxy_ext",  # keep
         "//mcp-re-core:mcp_re_core",
