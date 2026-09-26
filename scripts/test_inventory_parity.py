@@ -68,10 +68,6 @@ ALLOWED: dict[str, str] = {
     "mcp-re-test-paths [unit]::*":
         "KEEP: they check the cargo fallback table against the source tree through "
         "CARGO_MANIFEST_DIR; Bazel resolves runfiles instead, and the table goes with Cargo",
-    "[doc]::*":
-        "OPEN: no rust_doc_test target exists for client-core, http-profile, proxy, transport",
-    "mcp-re-proxy/tests/key_source_test.rs::env_source_*":
-        "OPEN: `dev_env_key_source`-gated; :key_source_test compiles without the feature",
     "mcp-re-proxy/tests/integration/main.rs::tls_test::*_kms_delegated_*":
         "OPEN: KMS-feature-gated; :integration_test compiles with no features",
     "mcp-re-proxy/tests/integration_async/main.rs::replay_race_harness_test::*":
@@ -86,7 +82,9 @@ ALLOWED: dict[str, str] = {
         "OPEN: no Bazel target. Self-skips without MCP_RE_TEST_REDIS_URL and no workflow "
         "sets one, so cargo's PR lane is the only thing that compiles it",
     "mcp-re-proxy/tests/tls_load_harness_bench.rs::*":
-        "OPEN: the Bazel target is `manual`; cargo runs these five tests on every PR",
+        "OPEN: compiled on every `bazel test //...` by :tls_load_harness_bench_builds, but "
+        "the target is `manual` because its tests start a Docker Redis fleet; cargo runs "
+        "them on every PR, so the lane that replaces cargo's needs Docker",
 }
 
 
@@ -103,6 +101,18 @@ def listed(exe: str, cwd: Path) -> tuple[list[str], list[str]]:
         out = run([exe, "--list", "--format=terse", *extra], cwd)
         return sorted(line[:-len(": test")] for line in out.splitlines() if line.endswith(": test"))
     return names([]), names(["--ignored"])
+
+
+def doc_name(name: str, pkg: str | None = None) -> str:
+    """One spelling for a doctest on both sides. Run output appends ` - compile fail` or
+    ` - compile` to what `--list` prints, and rustdoc under Bazel may print the path
+    relative to the package rather than the workspace."""
+    for suffix in (" - compile fail", " - compile"):
+        if name.endswith(suffix):
+            name = name[:-len(suffix)]
+    if pkg and not name.startswith(f"{pkg}/"):
+        name = f"{pkg}/{name}"
+    return name
 
 
 def rel(path: str) -> str:
@@ -130,16 +140,17 @@ def collect_cargo() -> dict:
             binaries.append({"binary": f"{target['name']} ({'/'.join(target['kind'])})",
                              "key": key, "tests": tests, "ignored": ignored})
         lanes.append({"lane": lane, "ci_step": step, "binaries": binaries})
-    doc = run(["cargo", "test", "--workspace", "--doc", "--", "--list", "--format=terse"])
-    doctests = sorted(l[:-len(": test")] for l in doc.splitlines() if l.endswith(": test"))
+    def doctests(extra: list[str]) -> list[str]:
+        out = run(["cargo", "test", "--workspace", "--doc", "--", "--list", "--format=terse", *extra])
+        return sorted(doc_name(l[:-len(": test")]) for l in out.splitlines() if l.endswith(": test"))
     lanes.append({"lane": "doctests", "ci_step": "cargo / Test (workspace) runs doctests too",
-                  "binaries": [{"binary": "doctests", "key": "[doc]", "tests": doctests,
-                                "ignored": []}]})
+                  "binaries": [{"binary": "doctests", "key": "[doc]", "tests": doctests([]),
+                                "ignored": doctests(["--ignored"])}]})
     return {"side": "cargo", "lanes": lanes}
 
 
 def bazel_test_targets() -> list[dict]:
-    out = run(["bazel", "query", "--noshow_progress", 'kind("rust_test rule", //...)',
+    out = run(["bazel", "query", "--noshow_progress", 'kind("rust_(doc_)?test rule", //...)',
                "--output=streamed_jsonproto"])
     targets = []
     for line in out.splitlines():
@@ -156,6 +167,9 @@ def bazel_test_targets() -> list[dict]:
             mains = [s for s in srcs if s.endswith("/main.rs")]
             root = f"{pkg}/{mains[0]}" if len(mains) == 1 else None
         unit = bool(attrs.get("crate", {}).get("stringValue"))
+        if rule["ruleClass"] == "rust_doc_test":
+            targets.append({"label": rule["name"], "key": "[doc]", "manual": False})
+            continue
         if not unit and root is None:
             raise SystemExit(f"cannot tell the crate root of {rule['name']} (srcs {srcs})")
         targets.append({"label": rule["name"],
@@ -171,8 +185,8 @@ def collect_bazel() -> dict:
     targets = bazel_test_targets()
     run(["bazel", "build", "--noshow_progress", *(t["label"] for t in targets if not t["manual"])])
     bin_dir = Path(run(["bazel", "info", "bazel-bin"]).strip())
-    binaries = []
-    for t in targets:
+    binaries = doc_binaries([t for t in targets if t["key"] == "[doc]"])
+    for t in (t for t in targets if t["key"] != "[doc]"):
         entry = {"binary": t["label"], "key": t["key"], "manual": t["manual"],
                  "tests": [], "ignored": []}
         if t["manual"]:
@@ -189,6 +203,29 @@ def collect_bazel() -> dict:
         binaries.append(entry)
     return {"side": "bazel", "lanes": [{"lane": "rust_test", "ci_step": "bazel / bazel test //...",
                                         "binaries": binaries}]}
+
+
+def doc_binaries(targets: list[dict]) -> list[dict]:
+    """rules_rust's rustdoc runner is a generated script that forwards no arguments, so
+    `--list` cannot reach it. Doctests are cheap: run them and read the names from the log."""
+    if not targets:
+        return []
+    labels = [t["label"] for t in targets]
+    run(["bazel", "test", "--noshow_progress", *labels])
+    logs = Path(run(["bazel", "info", "bazel-testlogs"]).strip())
+    out = []
+    for label in labels:
+        pkg, name = label[2:].split(":")
+        tests, ignored = [], []
+        for line in (logs / pkg / name / "test.log").read_text().splitlines():
+            m = re.fullmatch(r"test (.+) \.\.\. (ok|ignored|FAILED)", line.strip())
+            if m:
+                tests.append(doc_name(m[1], pkg))
+                if m[2] == "ignored":
+                    ignored.append(tests[-1])
+        out.append({"binary": label, "key": "[doc]", "manual": False,
+                    "tests": sorted(tests), "ignored": sorted(ignored)})
+    return out
 
 
 def names(inventory: dict, *, manual: bool | None = None, ignored: bool | None = None) -> set[str]:

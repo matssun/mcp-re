@@ -1,3 +1,4 @@
+load("@rules_rust//rust:defs.bzl", "rust_doc_test")
 load("//bazel:defs.bzl", "nt_rust_library", "nt_rust_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -156,4 +157,11 @@ nt_rust_library(
         "@crates_mcp_re//:rustls-pki-types",
         "@crates_mcp_re//:thiserror",
     ],
+)
+
+# The crate's doctests. Cargo runs them in `cargo test --workspace`; the `compile_fail`
+# ones assert that a verified value cannot be built outside its owner.
+rust_doc_test(
+    name = "mcp_re_transport_doc_test",
+    crate = ":mcp_re_transport",
 )
