@@ -6,9 +6,12 @@
 # one toolchain.
 #
 # Gating policy:
-#   - BLOCKING: `cargo build` + `cargo test` over the whole workspace (this
-#     includes the mcp-re-conformance suite + the conformance drift guard, which
-#     resolve their fixtures via the cargo runfiles fallback in mcp-re-test-paths).
+#   - BLOCKING: the workspace's tests run in the `bazel` job (`bazel test //...`),
+#     the conformance suite and its drift guard among them. That job holds every
+#     test `cargo test --workspace` compiles, under the features cargo compiles it
+#     with; `scripts/test_inventory_parity.py` (weekly) keeps that true. The cargo
+#     job still runs `mcp-re-test-paths`' own tests: they check the cargo-side
+#     fixture table the remaining cargo test lanes resolve through.
 #   - BLOCKING: `cargo test` over mcp-re-proxy with the four NON-DEFAULT feature
 #     gates enabled (dev_env_key_source, pkcs11_keysource, redis_replay,
 #     online_ocsp). The default `cargo test --workspace` does NOT compile these
@@ -34,7 +37,7 @@
 #     happened. Two steps: (1) the semantic-drift gate — gazelle_rust as a drift
 #     DETECTOR (not a byte-authority): fails if the Cargo graph has a target/edge
 #     the committed BUILD omits, modulo the script's allowlist; (2) `bazel test
-#     //...` parity with the cargo suite.
+#     //...`, the workspace test lane.
 #   - BLOCKING (ADR-MCPS-048 / MCPS-71): the `sdk-python` and `sdk-typescript`
 #     jobs make "downloaders skip Bazel" a VERIFIED path, not a rotting side
 #     artifact. Each builds the ecosystem-native artifact (maturin wheel / napi
@@ -722,14 +725,14 @@ jobs:
           python3 scripts/crate_spec_parity_gate.py --selftest
           python3 scripts/crate_spec_parity_gate.py
 
-      - name: Build (workspace, all targets)
-        run: cargo build --workspace --all-targets
-
-      - name: Test (workspace, incl. conformance suite + drift guard)
-        run: cargo test --workspace
+      # The workspace's tests run in the `bazel` job. These belong to cargo: they check the
+      # fallback table that the `cargo-features` and `rfc9421-cross-verify` jobs' cargo
+      # tests resolve fixtures through.
+      - name: Test (mcp-re-test-paths, the cargo fixture table)
+        run: cargo test -p mcp-re-test-paths
 
       # MCPRE-427 (#415 rev 2 §12.2). The hash/digest checks themselves run inside
-      # `cargo test --workspace` above (corpus_pinning_test + the frozen runners,
+      # the `bazel` job's `bazel test //...` (corpus_pinning_test + the frozen runners,
       # which fail closed before running a vector whose bytes drifted). This step
       # PUBLISHES the resulting digests into the job summary so a release packet —
       # and any reviewer — can quote the exact corpus that was tested, rather than
@@ -1134,7 +1137,8 @@ jobs:
       - name: BUILD semantic-drift gate (gazelle as drift detector)
         run: python3 scripts/bazel_gazelle_gate.py
 
-      # (2) Parity: the Bazel suite must pass like the cargo suite.
+      # (2) The workspace test lane. It holds every test `cargo test --workspace`
+      # compiles; scripts/test_inventory_parity.py measures that weekly.
       - name: Bazel test parity (//...)
         run: bazel test //... --test_output=errors
 
