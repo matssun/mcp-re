@@ -965,11 +965,28 @@ jobs:
       # `scripts/verification_runner_preflight.sh` has already refused the job if `uv` or
       # `npx` is missing, and it derives that requirement from the registry — so this step
       # exists exactly while some unit's battery needs it.
+      #
+      # ONLY FOR THE UNITS THIS RUN MEASURES. A merge check measures the units in
+      # `.verification/scope/units`; building the Python and Node matrices for a change that
+      # affects no SDK unit measured nothing and cost 8-46 minutes per run (September 2026).
+      # A complete run (schedule, dispatch) passes no units file and prepares every SDK.
       - name: Prepare the non-Rust SDK batteries
         if: steps.scope.outputs.measure == 'true'
+        env:
+          UNITS_ARGS: ${{ steps.scope.outputs.args }}
         run: |
           set -euo pipefail
-          if grep -q '^id = "sdk_python\.' verification/policy/verification.toml; then
+          measures() {
+            if [ -z "$UNITS_ARGS" ]; then
+              grep -q "^id = \"$1\." verification/policy/verification.toml
+            else
+              grep -q "^$1\." .verification/scope/units
+            fi
+          }
+          if ! measures sdk_python && ! measures sdk_typescript; then
+            echo "No SDK unit is measured in this run; nothing to prepare."
+          fi
+          if measures sdk_python; then
             # ONE ENVIRONMENT PER PINNED INTERPRETER, and the script owns which ones: the
             # supported CPython minors are `[python].interpreters` in the toolchain lock,
             # and the lane refuses an environment whose interpreter is not exactly one of
@@ -979,7 +996,7 @@ jobs:
             # range (#746, packet 6B §9).
             ./scripts/prepare_python_matrix.sh
           fi
-          if grep -q '^id = "sdk_typescript\.' verification/policy/verification.toml; then
+          if measures sdk_typescript; then
             # ONE RUNTIME PER PINNED NODE, for the reason the Python side has one per
             # interpreter: `npx vitest` ran under whatever node the runner offered, and the
             # package declared no `engines` at all — so the battery's green described an
