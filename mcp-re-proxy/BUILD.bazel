@@ -1098,6 +1098,57 @@ nt_rust_test(
     ],
 )
 
+# The same suite under the ext features: `tls_test`'s delegated-TLS cases for AWS and
+# Google KMS exist only with `aws_kms_keysource` / `gcp_kms_keysource`. They run against
+# a local seed, not a cloud.
+nt_rust_test(
+    name = "integration_kms_test",
+    srcs = glob(["tests/integration/*.rs"]) + [
+        # `main.rs` reaches these shared modules via `#[path = "../<dir>/mod.rs"]`.
+        "tests/serving_fixtures/mod.rs",
+        "tests/startup_transcript/mod.rs",
+    ],
+    auto_cargo_toml = False,
+    crate_root = "tests/integration/main.rs",
+    crate_features = _PROXY_EXT_FEATURES,
+    bazel_build_cfg = False,
+    data = [
+        "//docs:sidecar-deployment-guide.md",
+        ":mcp_re_proxy_cli",
+        # Every library source. The source-scanning guards in this suite scope to a
+        # DIRECTORY — the serving path, a plane — because a list of files has to learn
+        # about the next file, and the failure mode of a stale list is a clean pass over
+        # unmeasured code. A glob here says nothing about `srcs`, which
+        # `scripts/bazel_srcs_gate.py` still checks file by file.
+    ] + glob(["src/**/*.rs"]),
+    edition = "2021",
+    env = {
+        "MCP_RE_SIDECAR_GUIDE": "$(rlocationpath //docs:sidecar-deployment-guide.md)",
+        "MCP_RE_PROXY_CLI": "$(rlocationpath :mcp_re_proxy_cli)",
+        "MCP_RE_APP_SRC": "$(rlocationpath src/app.rs)",
+        "MCP_RE_HTTP_PROFILE_SERVE_SRC": "$(rlocationpath src/http_profile_serve/mod.rs)",
+        "MCP_RE_DELEGATED_WIRING_SRC": "$(rlocationpath src/delegated_wiring.rs)",
+        "MCP_RE_REPLAY_PLANE_SRC": "$(rlocationpath src/replay_plane/mod.rs)",
+        "MCP_RE_SIGNING_PLANE_SRC": "$(rlocationpath src/signing_plane/mod.rs)",
+        "MCP_RE_TLS_PLANE_SRC": "$(rlocationpath src/tls_plane/mod.rs)",
+        "MCP_RE_TRUST_PLANE_SRC": "$(rlocationpath src/trust_plane/mod.rs)",
+    },
+    deps = [
+        ":mcp_re_proxy_ext_pre052",  # keep
+        ":mcp_re_proxy_cli",
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile_pre052",  # keep
+        "//mcp-re-test-paths:mcp_re_test_paths",
+        "//mcp-re-transport:mcp_re_transport",
+        "@crates_mcp_re//:libc",
+        "@crates_mcp_re//:rcgen",
+        "@crates_mcp_re//:rustls",
+        "@crates_mcp_re//:rustls-pki-types",
+        "@crates_mcp_re//:serde",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
 # The `async_serve` integration suites, in ONE test binary.
 #
 # The companion of `:integration_test`; the same rule governs membership. These link
@@ -1220,6 +1271,64 @@ nt_rust_test(
     ],
 )
 
+# The same suite under every ext feature, as cargo's all-features lane builds it:
+# `replay_race_harness_test`'s Redis and etcd lanes exist only with `async_serve` AND a
+# shared store. Without live infra they skip themselves, so here they are compiled and
+# the in-memory lanes run.
+nt_rust_test(
+    name = "integration_async_ext_test",
+    srcs = glob(["tests/integration_async/*.rs"]) + [
+        # `main.rs` reaches the shared helpers via `#[path = "../common/mod.rs"]`.
+        "tests/common/mod.rs",
+    ],
+    auto_cargo_toml = False,
+    crate_root = "tests/integration_async/main.rs",
+    bazel_build_cfg = False,
+    crate_features = ["async_serve"] + _PROXY_EXT_FEATURES,
+    env_inherit = [
+        "MCP_RE_TEST_REDIS_URL",
+        "MCP_RE_TEST_ETCD_URL",
+        "MCP_RE_REQUIRE_LIVE_INFRA",
+    ],
+    # The transparency suite runs the SHIPPED auditor as a child process. A composition
+    # root proved only in-process is a composition root nobody can run, so the lane needs
+    # the executable itself rather than the library behind it.
+    data = [
+        ":mcp_re_auditor_cli",
+    ],
+    edition = "2021",
+    env = {
+        "MCP_RE_AUDITOR_CLI": "$(rlocationpath :mcp_re_auditor_cli)",
+    },
+    deps = [
+        # The hermetic capsule-anchor service in `transparency_e2e_test` reads and writes
+        # that contract's STANDARD-base64 JSON envelope, the way the real one does.
+        "@crates_mcp_re//:base64",
+        "//mcp-re-client-core:mcp_re_client_core_pre052",  # keep
+        "//mcp-re-client-proxy:mcp_re_client_proxy_pre052",  # keep
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile_pre052",  # keep
+        # ADR-MCPRE-065 Slice 1: the frozen `mcp-re.authorization_*` denial taxonomy the
+        # authorization controls refuse in.
+        "//mcp-re-policy:mcp_re_policy",
+        # Resolves the auditor binary under Bazel runfiles OR a plain cargo build.
+        "//mcp-re-test-paths:mcp_re_test_paths",
+        "//mcp-re-transport:mcp_re_transport_pre052",  # keep
+        ":mcp_re_proxy_ext_pre052",  # keep
+        "@crates_mcp_re//:bytes",
+        "@crates_mcp_re//:http-body-util",
+        "@crates_mcp_re//:hyper",
+        "@crates_mcp_re//:hyper-util",
+        "@crates_mcp_re//:rcgen",
+        "@crates_mcp_re//:rustls",
+        "@crates_mcp_re//:rustls-pki-types",
+        "@crates_mcp_re//:serde",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:sha2",
+        "@crates_mcp_re//:tokio",
+    ],
+)
+
 # ADR-MCPRE-051 §7 load/SLO harness. `manual`: it stands up a primary+2-replica
 # Redis fleet via Docker (or an external MCP_RE_LOADGEN_REDIS_URL), which the Bazel
 # test sandbox cannot provide — so it is excluded from `bazel test //...` and driven
@@ -1325,6 +1434,20 @@ nt_rust_library(
     deps = _PROXY_EXT_DEPS,
 )
 
+# Every ext feature over the pre-052 fixture chain: what cargo's all-features test
+# lane compiles. Cargo's proxy dev-dependency turns on `pre_052_fixtures` for every
+# proxy test build, and `async_serve` gates nothing in the library (only test files
+# carry `#![cfg(feature = "async_serve")]`), so this is that library for the batteries
+# that need both the ext features and the fixtures.
+nt_rust_library(
+    name = "mcp_re_proxy_ext_pre052",
+    srcs = _PROXY_LIB_SRCS,
+    crate_features = _PROXY_EXT_FEATURES,
+    crate_name = "mcp_re_proxy",
+    edition = "2021",
+    deps = _PROXY_LIB_DEPS_PRE052 + _PROXY_EXT_CRATES,
+)
+
 # Inline #[cfg(feature = ...)] unit tests for the external backends (ocsp.rs
 # network-free codec/policy tests + the RFC 6960 §3.2 responder-SIGNATURE
 # acceptance tests, cli.rs feature-gated flag tests, redis/pkcs11 inline tests).
@@ -1411,7 +1534,7 @@ nt_rust_test(
     bazel_build_cfg = False,
     # Each suite is `#![cfg(feature = ...)]`; without these the binary links and runs
     # ZERO tests while reporting PASSED.
-    crate_features = _PROXY_EXT_FEATURES,
+    crate_features = ["async_serve"] + _PROXY_EXT_FEATURES,
     edition = "2021",
     env_inherit = [
         "MCP_RE_TEST_REDIS_URL",
@@ -1425,6 +1548,7 @@ nt_rust_test(
     deps = [
         ":mcp_re_proxy_ext",
         "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
         "@crates_mcp_re//:base64",
         "@crates_mcp_re//:rcgen",
         "@crates_mcp_re//:redis",
@@ -1432,6 +1556,54 @@ nt_rust_test(
         "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:tokio",
         "@crates_mcp_re//:ureq",
+    ],
+)
+
+# The cloud-KMS suites. Every `*_live` case is `#[ignore]`d and needs real AWS or Google
+# credentials; the `*_offline_local_seed` cases are not live and run here.
+nt_rust_test(
+    name = "integration_live_test",
+    srcs = glob(["tests/integration_live/*.rs"]) + [
+        # `main.rs` reaches the shared helpers via `#[path = "../common/mod.rs"]`.
+        "tests/common/mod.rs",
+    ],
+    auto_cargo_toml = False,
+    crate_root = "tests/integration_live/main.rs",
+    bazel_build_cfg = False,
+    crate_features = ["async_serve"] + _PROXY_EXT_FEATURES,
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy_ext_pre052",  # keep
+        "//mcp-re-client-core:mcp_re_client_core_pre052",  # keep
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile_pre052",  # keep
+        "@crates_mcp_re//:rcgen",
+        "@crates_mcp_re//:rustls",
+        "@crates_mcp_re//:rustls-pki-types",
+        "@crates_mcp_re//:tokio",
+    ],
+)
+
+# MCPRE-493: cross-replica admission-revocation propagation, measured over a live Redis.
+# Without MCP_RE_TEST_REDIS_URL it skips itself, so this target keeps it compiling.
+nt_rust_test(
+    name = "admission_propagation_measure_test",
+    srcs = ["tests/admission_propagation_measure_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = ["async_serve"] + _PROXY_EXT_FEATURES,
+    edition = "2021",
+    env_inherit = [
+        "MCP_RE_TEST_REDIS_URL",
+        "MCP_RE_TEST_ETCD_URL",
+        "MCP_RE_REQUIRE_LIVE_INFRA",
+    ],
+    deps = [
+        ":mcp_re_proxy_ext_pre052",  # keep
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile_pre052",  # keep
+        "@crates_mcp_re//:sha2",
+        "@crates_mcp_re//:tokio",
     ],
 )
 
