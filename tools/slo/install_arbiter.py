@@ -47,7 +47,7 @@ VM_PROFILE = os.environ.get("MCP_RE_ARBITER_VM_PROFILE", "gh-runner")
 VM_RUNNER_HOME = os.environ.get("MCP_RE_ARBITER_VM_RUNNER_HOME", "/home/mats.guest/actions-runner")
 COLIMA = os.environ.get("MCP_RE_ARBITER_COLIMA", "/opt/homebrew/bin/colima")
 
-SOURCES = ("host_gate.py", "vm_participant.py", "job_identity.py",
+SOURCES = ("host_gate.py", "job_liveness.py", "vm_participant.py", "job_identity.py",
            "arbiter_error.py", "runner_arbiter.py", "environment_preflight.py",
            "run_supervisor.py")
 
