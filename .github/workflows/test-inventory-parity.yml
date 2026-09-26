@@ -1,0 +1,113 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Test-inventory parity: every test the PR path's cargo lanes run is compiled into a binary
+# that `bazel test //...` runs. Names, not results: a test that skips itself under Bazel
+# still matches. It is what makes it safe to move the PR test lane from cargo to
+# Bazel, and what notices afterwards when a test compiles only under cargo — a new
+# `tests/*.rs` without a BUILD target, or a `#[cfg(feature = ...)]` test that no Bazel crate
+# flavor enables. See scripts/test_inventory_parity.py.
+#
+# It builds every test binary under both build systems, which is far over the PR budget, so
+# it runs weekly and on PRs that change the check itself. Delete it with the last Cargo.toml.
+name: test-inventory parity
+
+on:
+  schedule:
+    - cron: "0 5 * * 0" # Sundays 05:00 UTC
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - scripts/test_inventory_parity.py
+      - .github/workflows/test-inventory-parity.yml
+
+concurrency:
+  group: test-inventory-parity-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  cargo:
+    name: list cargo test binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # cryptoki-sys needs libclang at runtime; the runner image ships it (see ci.yml).
+      - name: Locate libclang
+        run: |
+          set -euo pipefail
+          for dir in /usr/lib/llvm-*/lib /usr/lib/x86_64-linux-gnu; do
+            if compgen -G "$dir/libclang*.so*" > /dev/null 2>&1; then
+              echo "LIBCLANG_PATH=$dir" >> "$GITHUB_ENV"
+              exit 0
+            fi
+          done
+          echo "no libclang on the runner image" >&2
+          exit 1
+
+      - name: Select pinned toolchain (from rust-toolchain.toml)
+        run: rustup show && rustc --version && cargo --version
+
+      - name: Collect
+        run: python3 scripts/test_inventory_parity.py --collect-cargo cargo.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cargo-inventory
+          path: cargo.json
+
+  bazel:
+    name: list bazel test binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Locate libclang
+        run: |
+          set -euo pipefail
+          for dir in /usr/lib/llvm-*/lib /usr/lib/x86_64-linux-gnu; do
+            if compgen -G "$dir/libclang*.so*" > /dev/null 2>&1; then
+              echo "LIBCLANG_PATH=$dir" >> "$GITHUB_ENV"
+              exit 0
+            fi
+          done
+          echo "no libclang on the runner image" >&2
+          exit 1
+
+      # Same key as ci.yml's bazel job, so this restores the cache that job saved.
+      - name: Cache Bazel
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/bazel
+            ~/.cache/bazelisk
+          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock', 'Cargo.lock') }}
+          restore-keys: |
+            bazel-${{ runner.os }}-
+
+      - name: Collect
+        run: python3 scripts/test_inventory_parity.py --collect-bazel bazel.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bazel-inventory
+          path: bazel.json
+
+  compare:
+    name: test-inventory parity
+    needs: [cargo, bazel]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Selftest
+        run: python3 scripts/test_inventory_parity.py --selftest
+
+      - name: Compare
+        run: python3 scripts/test_inventory_parity.py --compare cargo.json bazel.json

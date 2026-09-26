@@ -822,6 +822,10 @@ nt_rust_test(
     crate = ":mcp_re_proxy_auditor",
     auto_cargo_toml = False,
     bazel_build_cfg = False,
+    # A test compiles its `crate`'s sources with ITS OWN features, not the library's.
+    # Without this line the binary is the default flavor again, 1475 tests with the
+    # three `ureq_exchange` ones absent.
+    crate_features = ["scitt_registration"],
     edition = "2021",
     deps = [
         "//mcp-re-core:mcp_re_core",
@@ -1228,17 +1232,21 @@ nt_rust_test(
     deps = [
         "//mcp-re-test-paths:mcp_re_test_paths",  # #220 (ADR-048): source imports this crate
         ":mcp_re_proxy_ext",
+        "//mcp-re-client-core:mcp_re_client_core",
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-host:mcp_re_host",
+        "//mcp-re-http-profile:mcp_re_http_profile",
         "@crates_mcp_re//:bytes",
         "@crates_mcp_re//:http-body-util",
         "@crates_mcp_re//:hyper",
         "@crates_mcp_re//:hyper-util",
         "@crates_mcp_re//:rcgen",
+        "@crates_mcp_re//:redis",
         "@crates_mcp_re//:rustls",
         "@crates_mcp_re//:rustls-pki-types",
         "@crates_mcp_re//:serde",
-    "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:time",
         "@crates_mcp_re//:tokio",
     ],
 )
