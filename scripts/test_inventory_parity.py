@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 """Test-inventory parity — every test the cargo lanes run is in a binary `bazel test //...` runs.
 
@@ -50,7 +51,7 @@ PROXY_FEATURES = ("dev_env_key_source,pkcs11_keysource,redis_replay,online_ocsp,
 
 # (lane, the ci.yml job/step it mirrors, cargo test arguments)
 CARGO_LANES = [
-    ("workspace", "cargo / Test (workspace, incl. conformance suite + drift guard)",
+    ("workspace", "cargo test --workspace (the lane `bazel test //...` replaced on the PR path)",
      ["--workspace"]),
     ("proxy-all-features", "cargo-features / Test (mcp-re-proxy, all feature gates)",
      ["-p", "mcp-re-proxy", "--features", PROXY_FEATURES]),
