@@ -822,6 +822,10 @@ nt_rust_test(
     crate = ":mcp_re_proxy_auditor",
     auto_cargo_toml = False,
     bazel_build_cfg = False,
+    # A test compiles its `crate`'s sources with ITS OWN features, not the library's.
+    # Without this line the binary is the default flavor again, 1475 tests with the
+    # three `ureq_exchange` ones absent.
+    crate_features = ["scitt_registration"],
     edition = "2021",
     deps = [
         "//mcp-re-core:mcp_re_core",

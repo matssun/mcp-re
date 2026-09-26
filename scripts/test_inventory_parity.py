@@ -20,7 +20,9 @@ A test is keyed by where it lives, so the two build systems' target names do not
 `<package dir> [unit]` for tests compiled into a library or binary crate, the crate-root
 path for an integration test binary, `[doc] <crate>` for a doctest. A test cargo RUNS (not
 `#[ignore]`d) that no non-manual Bazel binary contains is a gap, and a gap fails unless
-ALLOWED names it with a reason. An ALLOWED entry that matches nothing also fails.
+ALLOWED names it with a reason. An ALLOWED entry that matches nothing also fails. An
+`OPEN:` entry is a gap still to close: the cargo test lanes may leave the PR path only
+once no `OPEN:` entry remains.
 
 Delete this together with the last Cargo manifest.
 
@@ -32,8 +34,8 @@ Delete this together with the last Cargo manifest.
 
 from __future__ import annotations
 
-import fnmatch
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -54,8 +56,35 @@ CARGO_LANES = [
       "--test", "integration_async", "--test", "async_drain_test"]),
 ]
 
-# Gaps accepted on purpose: fnmatch pattern over `<key>::<test name>` -> reason.
-ALLOWED: dict[str, str] = {}
+# Known gaps: pattern over `<key>::<test name>`, where only `*` is a wildcard -> reason. A reason starts with
+#   KEEP: the test belongs to cargo and is deleted with it;
+#   OPEN: Bazel must compile it before the cargo test lanes leave the PR path. The rule is
+#         compile, not run: a test nothing compiles rots unseen, which is how
+#         `tls_load_harness_bench` stopped building. Self-skipping tests are OPEN too.
+ALLOWED: dict[str, str] = {
+    "mcp-re-test-paths [unit]::*":
+        "KEEP: they check the cargo fallback table against the source tree through "
+        "CARGO_MANIFEST_DIR; Bazel resolves runfiles instead, and the table goes with Cargo",
+    "[doc]::*":
+        "OPEN: no rust_doc_test target exists for client-core, http-profile, proxy, transport",
+    "mcp-re-proxy/tests/key_source_test.rs::env_source_*":
+        "OPEN: `dev_env_key_source`-gated; :key_source_test compiles without the feature",
+    "mcp-re-proxy/tests/integration/main.rs::tls_test::*_kms_delegated_*":
+        "OPEN: KMS-feature-gated; :integration_test compiles with no features",
+    "mcp-re-proxy/tests/integration_async/main.rs::replay_race_harness_test::*":
+        "OPEN: needs async_serve with redis_replay/cpstore_etcd; no Bazel flavor combines "
+        "them. Self-skips without live infra, so on the PR path cargo only compiles it",
+    "mcp-re-proxy/tests/integration_ext/main.rs::redis_*_e2e_test::*":
+        "OPEN: the async_serve half; :integration_ext_test has the ext features without "
+        "async_serve. Self-skips without live infra",
+    "mcp-re-proxy/tests/integration_live/main.rs::*_offline_local_seed":
+        "OPEN: no Bazel target; these are not live and run on every PR under cargo",
+    "mcp-re-proxy/tests/admission_propagation_measure_test.rs::*":
+        "OPEN: no Bazel target. Self-skips without MCP_RE_TEST_REDIS_URL and no workflow "
+        "sets one, so cargo's PR lane is the only thing that compiles it",
+    "mcp-re-proxy/tests/tls_load_harness_bench.rs::*":
+        "OPEN: the Bazel target is `manual`; cargo runs these five tests on every PR",
+}
 
 
 def run(cmd: list[str], cwd: Path = REPO) -> str:
@@ -172,6 +201,12 @@ def names(inventory: dict, *, manual: bool | None = None, ignored: bool | None =
     return out
 
 
+def matches(name: str, pattern: str) -> bool:
+    """`*` is the only wildcard: keys contain `[unit]` and `[doc]`, which fnmatch would read
+    as character classes."""
+    return re.fullmatch(".*".join(map(re.escape, pattern.split("*"))), name) is not None
+
+
 def compare(cargo: dict, bazel: dict, allowed: dict[str, str]) -> tuple[list[str], list[str]]:
     """(problems, report lines)."""
     problems, report = [], []
@@ -197,7 +232,7 @@ def compare(cargo: dict, bazel: dict, allowed: dict[str, str]) -> tuple[list[str
     gaps = sorted(names(cargo, ignored=False) - covered)
     used = set()
     for gap in gaps:
-        hits = [p for p in allowed if fnmatch.fnmatchcase(gap, p)]
+        hits = [p for p in allowed if matches(gap, p)]
         used.update(hits)
         where = "only in a `manual` Bazel target" if gap in manual_only else "in no Bazel test binary"
         if hits:
@@ -207,6 +242,9 @@ def compare(cargo: dict, bazel: dict, allowed: dict[str, str]) -> tuple[list[str
     for pattern in sorted(set(allowed) - used):
         problems.append(f"ALLOWED entry `{pattern}` matches no gap — remove it")
     unmatched_ignored = sorted(names(cargo, ignored=True) - covered - manual_only)
+    open_hits = sum(1 for p in used if allowed[p].startswith("OPEN"))
+    report.append(f"allowlist: {len(used)} entries used, {open_hits} of them OPEN "
+                  f"(to close before the cargo test lanes leave the PR path)")
     report.append(f"cargo runs {len(names(cargo, ignored=False))} distinct tests; "
                   f"non-manual Bazel binaries contain {len(covered)}; gaps {len(gaps)}; "
                   f"#[ignore]d in cargo and absent from Bazel {len(unmatched_ignored)} (not a gap)")
@@ -233,6 +271,8 @@ def selftest() -> int:
          cargo, inv("bazel", ("a [unit]", ["x", "y", "z"], [], False)), {}, "`a/tests/t.rs::z`"),
         ("an allowed gap passes", cargo, inv("bazel", ("a [unit]", ["x", "y"], [], False)),
          {"a/tests/t.rs::*": "reason"}, None),
+        ("a bracketed key is matched literally",
+         cargo, inv("bazel", ("a/tests/t.rs", ["z"], [], False)), {"a [unit]::*": "reason"}, None),
         ("a stale allowlist entry fails", cargo, same, {"b::*": "reason"}, "matches no gap"),
         ("bazel listed nothing", cargo, inv("bazel", ("a [unit]", [], [], False)), {},
          "comparing nothing"),
