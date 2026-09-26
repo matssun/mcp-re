@@ -25,6 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import host_gate  # noqa: E402
+import job_liveness  # noqa: E402
 import vm_participant  # noqa: E402
 from arbiter_error import ArbiterError  # noqa: E402
 from job_identity import JobIdentity  # noqa: E402
@@ -36,6 +37,8 @@ def vm_workers_or_refuse():
     """The drain loop's VM observation. An unreachable VM refuses; it never reads as idle."""
     def probe() -> int:
         if not vm_participant.available():
+            if vm_participant.stopped():
+                return 0  # Lima reports it Stopped: it runs nothing
             raise ArbiterError(
                 "the colima VM hosting dev1-linux is unreachable, so its runner cannot be "
                 "observed. Refusing: an unobserved runner is not a quiet runner."
@@ -47,10 +50,12 @@ def vm_workers_or_refuse():
 def vm_readers() -> dict:
     """Participation probes, or None when the VM cannot be reached at all."""
     if not vm_participant.available():
-        return {"vm_read_env": None, "vm_check_exec": None, "vm_check_fresh": None}
+        return {"vm_read_env": None, "vm_check_exec": None, "vm_check_fresh": None,
+                "vm_stopped": vm_participant.stopped()}
     return {"vm_read_env": lambda path: vm_participant.read_file(path),
             "vm_check_exec": vm_participant.is_executable,
-            "vm_check_fresh": vm_participant.listener_loaded_env}
+            "vm_check_fresh": vm_participant.listener_loaded_env,
+            "vm_stopped": False}
 
 
 def cmd_job_started(paths, ident: JobIdentity) -> int:
@@ -60,12 +65,18 @@ def cmd_job_started(paths, ident: JobIdentity) -> int:
     # every runner behind a job that never ran.
     host_gate.refuse_if_disk_exhausted(paths, ident)
 
+    # The Runner.Worker this hook runs under. Records carry it so that a job which dies
+    # without its completion hook can be proven dead and its record released.
+    worker = job_liveness.own_worker()
+    if worker is None:
+        host_gate.log(paths, "worker.unidentified", key=ident.key)
+
     if not ident.is_slo:
-        host_gate.admit_ordinary(paths, ident)
+        host_gate.admit_ordinary(paths, ident, worker=worker)
         return EXIT_OK
 
     # Owner path: reserve FIRST, so no runner can admit replacement work while we drain.
-    host_gate.grant_reservation(paths, ident)
+    host_gate.grant_reservation(paths, ident, worker=worker)
 
     # Participation is checked before drain: if a runner is not gating itself, draining it
     # proves nothing, because it may accept new work the moment it goes idle.
@@ -157,6 +168,8 @@ def cmd_assert_exclusive(paths, ident: JobIdentity) -> int:
             vm_workers = vm_participant.worker_count()
             if vm_workers:
                 problems.append(f"{vm_workers} Runner.Worker process(es) live in the VM")
+        elif vm_participant.stopped():
+            vm_workers = 0
         else:
             problems.append("the VM could not be observed")
     except ArbiterError as exc:
@@ -197,6 +210,9 @@ def cmd_status(paths) -> int:
         "root": str(paths["root"]), "mirror": str(paths["mirror"]),
         "gate": host_gate.read_gate(paths),
         "active": host_gate.active_records(paths),
+        "heavy_runners": sorted(host_gate.HEAVY_RUNNERS),
+        "heavy_waiting": [json.loads(f.read_text())
+                          for f in sorted(paths["waiting"].glob("*.json"))],
         "macos_runner_workers": host_gate.macos_workers(),
         "vm_unit_active": vm_participant.unit_active() if reachable else "unreachable",
         "vm_runner_workers": vm_participant.worker_count() if reachable else "unreachable",

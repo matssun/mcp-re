@@ -146,6 +146,27 @@ def _group_alive(group: int) -> bool:
         return True
 
 
+LIMACTL = os.environ.get("MCP_RE_ARBITER_LIMACTL", "/opt/homebrew/bin/limactl")
+LIMA_HOME = os.environ.get("MCP_RE_ARBITER_LIMA_HOME", str(Path.home() / ".colima" / "_lima"))
+
+
+def stopped() -> bool:
+    """True only when Lima positively reports this VM as Stopped.
+
+    The VM is stopped between the weekly Linux runs to give its memory back to the host
+    (2026-09-26). A stopped VM runs no job, so it is quiet -- but that is a different fact
+    from "could not reach it", which must still refuse. So anything short of an explicit
+    `Stopped` (an unknown instance, a failing limactl, `Running`, `Broken`) is False.
+    """
+    try:
+        r = subprocess.run([LIMACTL, "list", "--format", "{{.Status}}", f"colima-{PROFILE}"],
+                           capture_output=True, text=True, timeout=30,
+                           env={**os.environ, "LIMA_HOME": LIMA_HOME})
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return r.returncode == 0 and r.stdout.strip() == "Stopped"
+
+
 def available() -> bool:
     if not Path(COLIMA).exists():
         return False

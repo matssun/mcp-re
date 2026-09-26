@@ -69,8 +69,10 @@ not a quiet runner, it is an unobserved one. Where participation cannot be confi
 stopping that listener remains an acceptable FALLBACK (see `vm_participant`), but it is no
 longer the normal mechanism.
 
-Stale reservations are an operator condition. No TTL releases one: a timer that clears a
-live reservation is fail-open at the worst possible moment.
+No TTL releases a reservation or a record: a timer that clears a live one is fail-open at
+the worst possible moment. What releases them, besides the completion hook, is PROOF that
+the owning Runner.Worker is dead (see `job_liveness`); a record whose owner cannot be
+established stays, and a stale reservation of that kind is an operator condition.
 """
 
 from __future__ import annotations
@@ -78,6 +80,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -90,6 +93,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import job_liveness  # noqa: E402
 from arbiter_error import ArbiterError  # noqa: E402
 from job_identity import JobIdentity  # noqa: E402
 
@@ -107,6 +111,29 @@ MIRROR = Path(os.environ.get("MCP_RE_ARBITER_MIRROR", str(Path.home() / ".runner
 # Runner hooks have no built-in timeout, so an unbounded wait wedges a runner permanently
 # with nothing to show an operator. Every wait is bounded; every expiry REFUSES.
 ORDINARY_WAIT_S = int(os.environ.get("MCP_RE_ARBITER_ORDINARY_WAIT_S", 45 * 60))
+
+# THE HEAVY SLOT: ONE HEAVY JOB ON THE PHYSICAL HOST AT A TIME.
+#
+# dev1 (matssun/code's Bazel lane) and dev1-mcp-re (every mcp-re job) each load this 48 GB
+# host enough on their own. GitHub schedules them concurrently because they serve different
+# repositories, and on a personal account a runner cannot be shared between repositories.
+# Measured 2026-09-26: with both lanes, the fast lane and the Colima VMs running, the host
+# sat at 358 MB free and 10.7 of 12 GB swap, and tests that take 12 s alone timed out at 60.
+#
+# So a job on a heavy runner is admitted only while no other heavy job holds an ACTIVE
+# record, and heavy waiters are served oldest first so neither lane starves the other. The
+# fast lane is not in this set and never waits here; the SLO reservation remains the only
+# thing that stops it.
+#
+# The wait is long because the holder is a LIVE job -- dead holders are reaped (see
+# `job_liveness`), so the only thing waited on is real work. Six hours is the longest
+# job timeout on this host (release.yml); past it the waiter refuses rather than wedging
+# its runner, since runner hooks have no timeout of their own.
+HEAVY_RUNNERS = frozenset(
+    name.strip()
+    for name in os.environ.get("MCP_RE_ARBITER_HEAVY_RUNNERS", "dev1,dev1-mcp-re").split(",")
+    if name.strip())
+HEAVY_WAIT_S = int(os.environ.get("MCP_RE_ARBITER_HEAVY_WAIT_S", 6 * 3600))
 
 # HOW LONG THE HOST MAY STAY CLOSED WHILE THE OWNER DRAINS.
 #
@@ -224,11 +251,13 @@ def paths(root: Path | None = None, mirror: Path | None = None) -> dict[str, Pat
         "lock": r / "lock", "gate": r / "gate.json", "active": r / "active",
         "log": r / "arbiter.log", "mirror_gate": m / "gate.json",
         "vm_active": m / "vm-active",
+        "waiting": r / "waiting", "reaped": r / "reaped",
     }
 
 
 def ensure_layout(p: dict[str, Path]) -> None:
     p["active"].mkdir(parents=True, exist_ok=True)
+    p["waiting"].mkdir(parents=True, exist_ok=True)
     p["vm_active"].mkdir(parents=True, exist_ok=True)
     if not p["lock"].exists():
         p["lock"].touch()
@@ -447,36 +476,135 @@ def refuse_if_disk_exhausted(p: dict[str, Path], ident: JobIdentity, measure=Non
 # ==========================================================================================
 
 
-def admit_ordinary(p: dict[str, Path], ident: JobIdentity, wait_s: int = ORDINARY_WAIT_S) -> None:
-    """Admit an ordinary job, or refuse. Blocks while a non-owner reservation stands."""
-    deadline = time.monotonic() + wait_s
-    announced = False
+def reap_dead_owners(p: dict[str, Path],
+                     table_fn=job_liveness.process_table) -> list[str]:
+    """Release every record whose owning Runner.Worker is PROVEN dead. Call under `mutex`.
+
+    The completion hook is the normal release; this is for the jobs that never run it. An
+    active record is moved to `reaped/` rather than deleted, so what was released stays
+    inspectable. A record whose owner cannot be established -- no worker recorded, a VM
+    self-report, an unreadable process table -- is kept: unknown is alive.
+    """
+    table = job_liveness.readable_table(table_fn)
+    reaped: list[str] = []
+    for directory, kind in ((p["active"], "active"), (p["waiting"], "waiting")):
+        for f in sorted(directory.glob("*.json")):
+            try:
+                rec = json.loads(f.read_text())
+            except (OSError, json.JSONDecodeError):
+                continue  # a corrupt record stays for an operator, as before
+            if job_liveness.worker_state(rec.get("worker"), table) != "dead":
+                continue
+            if kind == "active":
+                p["reaped"].mkdir(parents=True, exist_ok=True)
+                os.replace(f, p["reaped"] / f.name)
+            else:
+                f.unlink()
+            log(p, "record.reaped", kind=kind, key=rec.get("key"), worker=rec.get("worker"))
+            reaped.append(str(rec.get("key")))
+    try:
+        gate = read_gate(p)
+    except ArbiterError:
+        return reaped
+    if (gate.get("state") in (RESERVING, RESERVED)
+            and job_liveness.worker_state(gate.get("worker"), table) == "dead"):
+        commit(p, {**gate, "state": RELEASED, "released_at": now(),
+                   "released_by": "reaper: the owning Runner.Worker is dead"})
+        log(p, "reservation.reaped", reservation_id=gate.get("reservation_id"),
+            owner=gate.get("owner", {}).get("key"), worker=gate.get("worker"))
+        reaped.append(str(gate.get("owner", {}).get("key")))
+    return reaped
+
+
+def _heavy_blocker(p: dict[str, Path], ident: JobIdentity, since: float) -> dict | None:
+    """The heavy job holding the slot, or an older heavy waiter; None if this job may run."""
+    for rec in active_records(p):
+        if (rec.get("key") != ident.key
+                and rec.get("identity", {}).get("runner") in HEAVY_RUNNERS):
+            return rec
+    for f in sorted(p["waiting"].glob("*.json")):
+        try:
+            rec = json.loads(f.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if rec.get("key") != ident.key and (rec.get("since", 0), rec.get("key")) < (since, ident.key):
+            return rec
+    return None
+
+
+def _drop_waiting(p: dict[str, Path], ident: JobIdentity) -> None:
+    try:
+        (p["waiting"] / f"{ident.key}.json").unlink()
+    except FileNotFoundError:
+        pass
+
+
+def admit_ordinary(p: dict[str, Path], ident: JobIdentity, wait_s: int = ORDINARY_WAIT_S,
+                   heavy_wait_s: int = HEAVY_WAIT_S, worker: dict | None = None,
+                   table_fn=job_liveness.process_table) -> None:
+    """Admit an ordinary job, or refuse.
+
+    Blocks while a non-owner reservation stands, and -- for a job on a heavy runner --
+    while another heavy job holds the heavy slot or has waited for it longer.
+    """
+    started = time.monotonic()
+    heavy = ident.runner in HEAVY_RUNNERS
+    since = time.time()
+    announced: set[str] = set()
     gate: dict = {}
+    blocker: dict | None = None
     while True:
         with mutex(p):
+            reap_dead_owners(p, table_fn)
             gate = read_gate(p)
             state = gate.get("state", OPEN)
             owner = gate.get("owner", {})
             if owner.get("key") == ident.key:
+                _drop_waiting(p, ident)
                 log(p, "ordinary.is_owner", key=ident.key)
                 return
+            blocker = None
             if state in (OPEN, RELEASED):
-                write_atomic(p["active"] / f"{ident.key}.json", {
-                    "schema": SCHEMA, "kind": "active", "key": ident.key,
-                    "identity": asdict(ident), "pid": os.getpid(), "started_at": now(),
-                })
-                log(p, "ordinary.admitted", key=ident.key, waited=announced)
-                return
-        if time.monotonic() >= deadline:
+                blocker = _heavy_blocker(p, ident, since) if heavy else None
+                if blocker is None:
+                    write_atomic(p["active"] / f"{ident.key}.json", {
+                        "schema": SCHEMA, "kind": "active", "key": ident.key,
+                        "identity": asdict(ident), "pid": os.getpid(), "started_at": now(),
+                        "worker": worker,
+                    })
+                    _drop_waiting(p, ident)
+                    log(p, "ordinary.admitted", key=ident.key, waited=sorted(announced),
+                        heavy=heavy)
+                    return
+                if "heavy" not in announced:
+                    write_atomic(p["waiting"] / f"{ident.key}.json", {
+                        "schema": SCHEMA, "kind": "waiting", "key": ident.key,
+                        "identity": asdict(ident), "since": since, "worker": worker,
+                    })
+        limit = heavy_wait_s if blocker is not None else wait_s
+        if time.monotonic() - started >= limit:
+            with mutex(p):
+                _drop_waiting(p, ident)
+            if blocker is not None:
+                raise ArbiterError(
+                    f"refusing admission: the heavy slot stayed taken for {limit}s, last by "
+                    f"{blocker.get('key')}. Only one heavy job runs on this host at a time "
+                    f"(heavy runners: {sorted(HEAVY_RUNNERS)}). Fail-closed: this job "
+                    "executed no workload."
+                )
             raise ArbiterError(
                 f"refusing admission: host reservation {gate.get('reservation_id')} held by "
                 f"runner {gate.get('owner', {}).get('runner')} run "
                 f"{gate.get('owner', {}).get('run_id')} did not release within {wait_s}s. "
                 "Fail-closed: this job executed no workload."
             )
-        if not announced:
-            log(p, "ordinary.waiting", key=ident.key, reservation=gate.get("reservation_id"))
-            announced = True
+        reason = "heavy" if blocker is not None else "reservation"
+        if reason not in announced:
+            if blocker is not None:
+                log(p, "heavy.waiting", key=ident.key, behind=blocker.get("key"))
+            else:
+                log(p, "ordinary.waiting", key=ident.key, reservation=gate.get("reservation_id"))
+            announced.add(reason)
         time.sleep(POLL_S)
 
 
@@ -485,6 +613,7 @@ def job_completed(p: dict[str, Path], ident: JobIdentity) -> dict:
     removed_active = False
     released = False
     with mutex(p):
+        _drop_waiting(p, ident)
         try:
             (p["active"] / f"{ident.key}.json").unlink()
             removed_active = True
@@ -507,9 +636,11 @@ def job_completed(p: dict[str, Path], ident: JobIdentity) -> dict:
 # ==========================================================================================
 
 
-def grant_reservation(p: dict[str, Path], ident: JobIdentity) -> dict:
+def grant_reservation(p: dict[str, Path], ident: JobIdentity, worker: dict | None = None,
+                      table_fn=job_liveness.process_table) -> dict:
     """Atomically move OPEN -> RESERVING(owner). Nothing else is admitted after this."""
     with mutex(p):
+        reap_dead_owners(p, table_fn)
         gate = read_gate(p)
         state = gate.get("state", OPEN)
         if state in (RESERVING, RESERVED):
@@ -531,14 +662,16 @@ def grant_reservation(p: dict[str, Path], ident: JobIdentity) -> dict:
             "activated_at": None,
             "released_at": None,
             "pid": os.getpid(),
+            "worker": worker,
             "stale_recovery": {
-                "policy": "operator-only",
-                "note": "No TTL releases this reservation. If the owning runner dies before "
-                        "its completion hook runs, this record persists and the host stays "
-                        "closed until an operator runs `runner-arbiter recover`, which "
-                        "itself refuses while any Runner.Worker lives. A stuck host is a "
-                        "visible, safe condition; an auto-released reservation is a silent, "
-                        "unsafe one.",
+                "policy": "owner-death, else operator",
+                "note": "No TTL releases this reservation; age proves nothing. It is released "
+                        "by the owner's completion hook, or -- when the owner dies without "
+                        "running it -- by the next admission decision that finds the "
+                        "recorded Runner.Worker gone. If no worker was recorded, the owner "
+                        "cannot be proven dead, and the host stays closed until an operator "
+                        "runs `runner-arbiter recover`, which itself refuses while any "
+                        "Runner.Worker lives.",
                 "recover_command": "runner-arbiter recover --clear-reservation "
                                    "--i-verified-no-owner-job-is-running",
             },
@@ -549,7 +682,7 @@ def grant_reservation(p: dict[str, Path], ident: JobIdentity) -> dict:
 
 
 def await_drain(p: dict[str, Path], ident: JobIdentity, vm_workers,
-                wait_s: int = DRAIN_WAIT_S) -> list[dict]:
+                wait_s: int = DRAIN_WAIT_S, table_fn=job_liveness.process_table) -> list[dict]:
     """Let already-running work finish. No replacement work can be admitted meanwhile.
 
     `vm_workers` is a callable returning the VM's live worker count, injected so this stays
@@ -560,6 +693,8 @@ def await_drain(p: dict[str, Path], ident: JobIdentity, vm_workers,
     announced: list[dict] = []
     last_announce = 0.0
     while True:
+        with mutex(p):
+            reap_dead_owners(p, table_fn)
         others = [r for r in active_records(p) if r.get("key") != ident.key]
         vm_n = vm_workers()
         if not others and vm_n == 0:
@@ -700,9 +835,30 @@ def listener_started_after_env(runner_root: str) -> bool | None:
     return (time.time() - seconds) >= env_mtime
 
 
+def runner_is_stopped(runner_root: str, table_fn=job_liveness.process_table) -> bool:
+    """True only when NO listener or worker of this runner application is running.
+
+    A stopped runner runs nothing, so it is quiet; and if launchd starts it again, the new
+    listener reads the `.env` that declares the hook, so the gate governs it from its first
+    job. An unreadable process table is not "stopped".
+    """
+    table = job_liveness.readable_table(table_fn)
+    if table is None:
+        return False
+    pattern = re.compile(re.escape(runner_root) + r"/bin[^/]*/Runner\.(Listener|Worker)\b")
+    return not any(pattern.search(command) for _, _, command in table.values())
+
+
 def verify_participation(vm_read_env=None, vm_check_exec=None,
-                         vm_check_fresh=None) -> dict:
-    """Confirm every registered runner consults this gate before admitting work."""
+                         vm_check_fresh=None, vm_stopped: bool = False,
+                         table_fn=job_liveness.process_table) -> dict:
+    """Confirm every registered runner consults this gate before admitting work.
+
+    A runner application that is not running at all counts as participating when its
+    `.env` declares an existing hook: it can run nothing now, and it is gated once started.
+    Likewise a VM that Lima reports as Stopped -- but a VM that is running and merely
+    unreachable is still unobserved, and refuses.
+    """
     results = []
     for r in REGISTERED_RUNNERS:
         entry = {"name": r["name"], "kernel": r["kernel"], "participating": False,
@@ -727,6 +883,14 @@ def verify_participation(vm_read_env=None, vm_check_exec=None,
                     results.append(entry)
                     continue
 
+                if hook and Path(hook).exists() and runner_is_stopped(r["root"], table_fn):
+                    entry["participating"] = True
+                    entry["stopped"] = True
+                    entry["detail"] = ("stopped: no listener or worker is running; its .env "
+                                       "declares the hook, so it is gated if it starts")
+                    results.append(entry)
+                    continue
+
                 fresh = listener_started_after_env(r["root"])
                 entry["listener_loaded_env"] = fresh
                 if not (hook and Path(hook).exists()):
@@ -740,7 +904,12 @@ def verify_participation(vm_read_env=None, vm_check_exec=None,
                 else:
                     entry["participating"] = True
             else:
-                if vm_read_env is None:
+                if vm_read_env is None and vm_stopped:
+                    entry["participating"] = True
+                    entry["stopped"] = True
+                    entry["detail"] = ("VM stopped (Lima reports Stopped): its runner can run "
+                                       "nothing, and reads the committed gate if started")
+                elif vm_read_env is None:
                     entry["detail"] = "VM unreachable"
                 else:
                     hook = hook_from_env_text(vm_read_env(f"{r['root']}/.env"))
