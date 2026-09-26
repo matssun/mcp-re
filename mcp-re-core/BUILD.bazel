@@ -1,4 +1,3 @@
-load("@crates_mcp_re//:defs.bzl", "all_crate_deps")
 load("//bazel:defs.bzl", "nt_rust_library", "nt_rust_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -14,14 +13,21 @@ filegroup(
 exports_files(["src/lib.rs"])
 
 # ADR-MCPS-011/012: mcp-re-core stays pure (no networking / async / filesystem).
-# Crate deps come from the isolated `crates_mcp_re` crate_universe hub
-# (serde, serde_json, ed25519-dalek, sha2, base64, thiserror; dev: hex).
+# Crate deps come from the isolated `crates_mcp_re` crate_universe hub. They are named here,
+# not derived, so `firewall_test` reads the exact set this library links.
 nt_rust_library(
     name = "mcp_re_core",
     srcs = glob(["src/**/*.rs"]),
     crate_name = "mcp_re_core",
     edition = "2021",
-    deps = all_crate_deps(normal = True),
+    deps = [
+        "@crates_mcp_re//:base64",
+        "@crates_mcp_re//:ed25519-dalek",
+        "@crates_mcp_re//:serde",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:sha2",
+        "@crates_mcp_re//:thiserror",
+    ],
 )
 
 nt_rust_test(
@@ -30,7 +36,7 @@ nt_rust_test(
     auto_cargo_toml = False,
     bazel_build_cfg = False,
     edition = "2021",
-    deps = all_crate_deps(normal_dev = True),
+    deps = ["@crates_mcp_re//:hex"],
 )
 
 # ADR-MCPS-034: the Core source tree, exposed so the method-name drift guard in

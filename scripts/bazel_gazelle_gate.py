@@ -33,12 +33,12 @@ Known limitation: a `deps` list expressed as an unmergeable form gazelle cannot
 read — `all_crate_deps(...)`, a `_VAR + [...]` concat, or `glob(...)` for srcs —
 is emitted by gazelle as a whole-attribute replacement, which this gate skips (it
 is representation, not a clean inserted edge). Edges in such targets are therefore
-not edge-gated. In practice that is safe here: the only `all_crate_deps` target is
-the leaf `mcp-re-core` (no first-party deps; `all_crate_deps` auto-covers its
-crates.io deps, so a new dep is picked up with no BUILD edit). Every crate that
-carries first-party edges uses an explicit `deps = [...]` list, which gazelle
-merges — so a forgotten first-party edge (the #220 failure) IS caught. Missing
-TARGETS are always caught regardless of deps representation.
+not edge-gated. `all_crate_deps` is not used: it cannot load under the
+spec-declared `crates_mcp_re` hub, which has no per-package Cargo tables. The
+remaining unmergeable `deps` are three `_PROXY_LIB_DEPS + ...` concats in
+`mcp-re-proxy/BUILD.bazel`; every other target uses an explicit `deps = [...]` list,
+which gazelle merges — so a forgotten dep edge (the #220 failure) IS caught there.
+Missing TARGETS are always caught regardless of deps representation.
 
 CI: `python3 scripts/bazel_gazelle_gate.py` (pair with `bazel test //...`).
 """

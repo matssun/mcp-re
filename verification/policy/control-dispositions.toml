@@ -12395,6 +12395,14 @@ decision = "new-proposition"
 proposition = "NP-199"
 recorded = "2026-09-21"
 
+[[disposition]]
+id = "CD-20005"
+project = ""
+control = "gate#scripts/crate_spec_parity_gate.py"
+decision = "not-evidence"
+reason_family = "ND-004"
+recorded = "2026-09-26"
+
 [[proposition]]
 id = "NP-174"
 title = "The client posture line reports the floor the deployment actually has"

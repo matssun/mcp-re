@@ -1,4 +1,3 @@
-load("@crates_mcp_re//:defs.bzl", "all_crate_deps")
 load("//bazel:defs.bzl", "nt_rust_test")
 
 package(default_visibility = ["//visibility:public"])
