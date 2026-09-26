@@ -133,17 +133,28 @@ def bazel_test_targets() -> list[dict]:
 
 
 def collect_bazel() -> dict:
+    """Every non-manual target must build — `bazel test //...` builds them. A `manual` target
+    is built on its own and one that fails is recorded as containing nothing: nothing builds
+    it, so it covers nothing."""
     targets = bazel_test_targets()
-    run(["bazel", "build", "--noshow_progress", *(t["label"] for t in targets)])
+    run(["bazel", "build", "--noshow_progress", *(t["label"] for t in targets if not t["manual"])])
     bin_dir = Path(run(["bazel", "info", "bazel-bin"]).strip())
     binaries = []
     for t in targets:
+        entry = {"binary": t["label"], "key": t["key"], "manual": t["manual"],
+                 "tests": [], "ignored": []}
+        if t["manual"]:
+            built = subprocess.run(["bazel", "build", "--noshow_progress", t["label"]],
+                                   cwd=REPO, capture_output=True, text=True)
+            if built.returncode != 0:
+                entry["does_not_build"] = built.stderr[-2000:]
+                binaries.append(entry)
+                continue
         exe = bin_dir / t["label"][2:].replace(":", "/")
         if not exe.is_file():
             raise SystemExit(f"built {t['label']} but found no executable at {exe}")
-        tests, ignored = listed(str(exe), REPO)
-        binaries.append({"binary": t["label"], "key": t["key"], "manual": t["manual"],
-                         "tests": tests, "ignored": ignored})
+        entry["tests"], entry["ignored"] = listed(str(exe), REPO)
+        binaries.append(entry)
     return {"side": "bazel", "lanes": [{"lane": "rust_test", "ci_step": "bazel / bazel test //...",
                                         "binaries": binaries}]}
 
@@ -164,11 +175,20 @@ def names(inventory: dict, *, manual: bool | None = None, ignored: bool | None =
 def compare(cargo: dict, bazel: dict, allowed: dict[str, str]) -> tuple[list[str], list[str]]:
     """(problems, report lines)."""
     problems, report = [], []
+    for lane in bazel["lanes"]:
+        for b in lane["binaries"]:
+            if "does_not_build" in b:
+                report.append(f"  manual target {b['binary']} does not build:\n"
+                              + "\n".join("    " + l for l in b["does_not_build"].splitlines()[-12:]))
     for inv in (cargo, bazel):
         for lane in inv["lanes"]:
             total = sum(len(b["tests"]) for b in lane["binaries"])
             report.append(f"{inv['side']:5} {lane['lane']:20} {len(lane['binaries']):3} binaries "
                           f"{total:5} tests  ({lane['ci_step']})")
+            for b in lane["binaries"]:
+                flag = " [manual]" if b.get("manual") else ""
+                report.append(f"        {len(b['tests']):5} tests ({len(b['ignored'])} ignored)  "
+                              f"{b['binary']}{flag} -> {b['key']}")
             if not total and lane["lane"] != "doctests":
                 problems.append(f"{inv['side']} lane `{lane['lane']}` listed no tests — "
                                 f"comparing nothing is not a pass")
