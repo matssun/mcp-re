@@ -75,11 +75,13 @@ ALLOW_NAMING_COLLISION = {
     # The consolidated proxy suites: a cargo test target is named for its directory
     # (`tests/integration_async/`), while every nt_rust_test in this repo ends in
     # `_test`. Same unit, two naming conventions — Bazel ships :integration_test,
-    # :integration_async_test and :integration_ext_test over exactly these sources,
-    # so adopting gazelle's name would duplicate a target rather than add coverage.
+    # :integration_async_test, :integration_ext_test and :integration_live_test over
+    # exactly these sources, so adopting gazelle's name would duplicate a target rather
+    # than add coverage.
     "integration",
     "integration_async",
     "integration_ext",
+    "integration_live",
 }
 
 # HITL / live-cloud: `#![cfg(feature="…kms…")]`; the live cases are `#[ignore]`,
@@ -87,8 +89,8 @@ ALLOW_NAMING_COLLISION = {
 # generated Bazel target would compile empty (misleading) or attempt real cloud
 # calls in CI. Cargo-only. Some ({aws,gcp}_kms_http_profile_live_test,
 # {aws,gcp}_kms_delegated_signing_live_test) also carry a hermetic
-# `for_test_with_local_seed` offline lane that runs in the feature-gated cargo CI
-# job — still cargo-only because the KMS feature closure is not Bazel-wired.
+# `for_test_with_local_seed` offline lane; those modules are compiled into
+# :integration_live_test, where the offline lanes run and the live ones stay ignored.
 #
 # NOT allowlisted, and deliberately so: `aws_irsa_web_identity_test`. It drives the
 # IRSA exchange against a LOCAL fake STS over loopback, so it needs no cloud and no
@@ -110,17 +112,6 @@ ALLOW_HITL_LIVE = {
     # ADR-MCPRE-052 §I: live Cloud KMS trust-anchor rotation across two DISPOSABLE
     # KMS key versions (self-provisioned by docs/security/gcp-kms-root-rotation.sh).
     "gcp_kms_root_rotation_live_test",
-    # The binary those live suites were consolidated into. Every module inside it is
-    # already listed individually above; the merged target inherits their exemption
-    # rather than creating a new one, and there is deliberately no
-    # `:integration_live_test` — a Bazel target here would need live cloud endpoints.
-    "integration_live",
-    # MCPRE-493: MEASURES cross-replica admission-revocation propagation against the
-    # declared P bound. It needs a live Redis two replicas genuinely share — the whole
-    # claim is that a revocation crosses a real store, so an in-process stand-in would
-    # measure a memory write. The hermetic half of the same contract IS a Bazel target
-    # (`admission_currency_serving_test`); only the measurement is cargo-only.
-    "admission_propagation_measure_test",
 }
 
 # Non-hermetic guards: cargo tests that assert an invariant of the git WORKING

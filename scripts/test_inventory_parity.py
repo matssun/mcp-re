@@ -68,19 +68,6 @@ ALLOWED: dict[str, str] = {
     "mcp-re-test-paths [unit]::*":
         "KEEP: they check the cargo fallback table against the source tree through "
         "CARGO_MANIFEST_DIR; Bazel resolves runfiles instead, and the table goes with Cargo",
-    "mcp-re-proxy/tests/integration/main.rs::tls_test::*_kms_delegated_*":
-        "OPEN: KMS-feature-gated; :integration_test compiles with no features",
-    "mcp-re-proxy/tests/integration_async/main.rs::replay_race_harness_test::*":
-        "OPEN: needs async_serve with redis_replay/cpstore_etcd; no Bazel flavor combines "
-        "them. Self-skips without live infra, so on the PR path cargo only compiles it",
-    "mcp-re-proxy/tests/integration_ext/main.rs::redis_*_e2e_test::*":
-        "OPEN: the async_serve half; :integration_ext_test has the ext features without "
-        "async_serve. Self-skips without live infra",
-    "mcp-re-proxy/tests/integration_live/main.rs::*_offline_local_seed":
-        "OPEN: no Bazel target; these are not live and run on every PR under cargo",
-    "mcp-re-proxy/tests/admission_propagation_measure_test.rs::*":
-        "OPEN: no Bazel target. Self-skips without MCP_RE_TEST_REDIS_URL and no workflow "
-        "sets one, so cargo's PR lane is the only thing that compiles it",
     "mcp-re-proxy/tests/tls_load_harness_bench.rs::*":
         "OPEN: compiled on every `bazel test //...` by :tls_load_harness_bench_builds, but "
         "the target is `manual` because its tests start a Docker Redis fleet; cargo runs "
