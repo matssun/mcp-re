@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# Test-inventory parity: every test the PR path's cargo lanes run is in a binary that
-# `bazel test //...` runs. It is what makes it safe to move the PR test lane from cargo to
+# Test-inventory parity: every test the PR path's cargo lanes run is compiled into a binary
+# that `bazel test //...` runs. Names, not results: a test that skips itself under Bazel
+# still matches. It is what makes it safe to move the PR test lane from cargo to
 # Bazel, and what notices afterwards when a test compiles only under cargo — a new
 # `tests/*.rs` without a BUILD target, or a `#[cfg(feature = ...)]` test that no Bazel crate
 # flavor enables. See scripts/test_inventory_parity.py.

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Test-inventory parity — every test the cargo lanes run, a `bazel test //...` binary runs.
+"""Test-inventory parity — every test the cargo lanes run is in a binary `bazel test //...` runs.
 
 Bazel is becoming the only build system, and the PR path is moving from cargo test runs to
 `bazel test`. That move is safe only if Bazel compiles every test cargo compiles, under the
@@ -8,7 +8,10 @@ feature a `#[cfg(feature = ...)]` test needs, or a target tagged `manual` each m
 disappear with every check still green. Nothing else asks: `bazel test //...` cannot report
 a test it never compiled.
 
-This compares NAMES, not results. Each side lists what its binaries contain:
+This compares NAMES, not results, and a name proves that a test is compiled, not that it
+does anything: a test that skips itself under Bazel (`pkcs11_keysource_e2e_test` needs a
+mock provider only cargo builds) matches here and exercises nothing there. Each side lists
+what its binaries contain:
 
   * cargo — every test executable of the lanes below, `--list`ed, plus the doctests.
     The lanes are the cargo test commands the PR path runs in `ci.yml`; the cross-verify
