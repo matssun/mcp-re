@@ -35,6 +35,9 @@ bazel_dep(name = "rules_rust", version = "0.70.0")
 bazel_dep(name = "rules_python", version = "1.7.0")
 bazel_dep(name = "rules_shell", version = "0.6.1")
 bazel_dep(name = "platforms", version = "1.0.0")
+# `build_test`: compiles a `manual` target on every `bazel test //...` without running it.
+# 1.8.2 is the version the module graph already resolves (via aspect_bazel_lib).
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
 
 # OCI image packaging of the production proxy artifact (mcp_re_proxy_ext) — pinned
 # to the SAME versions as the root monorepo (infrastructure/config/build) so the

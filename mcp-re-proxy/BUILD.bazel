@@ -1,4 +1,5 @@
 load("@aspect_bazel_lib//lib:transitions.bzl", "platform_transition_filegroup")
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@rules_oci//oci:defs.bzl", "oci_image", "oci_load", "oci_push")
 load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
 load("//bazel:defs.bzl", "nt_rust_binary", "nt_rust_library", "nt_rust_test")
@@ -924,6 +925,23 @@ nt_rust_test(
     ],
 )
 
+# The same file with `dev_env_key_source`: its `env_source_*` tests exist only under the
+# feature, and `:key_source_test` above is the default build that must not have it.
+nt_rust_test(
+    name = "key_source_dev_env_test",
+    srcs = ["tests/key_source_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = ["dev_env_key_source"],
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy_dev_env",  # keep
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:rcgen",
+        "@crates_mcp_re//:rustls-pki-types",
+    ],
+)
+
 # MCPS-076 (audit gap G-3): a SEPARATE library instance of mcp-re-proxy built WITH
 # the dev-only `dev_env_key_source` feature, so `EnvKeySource` (and the dev arm of
 # build_key_source) is compiled into the dev test below. The default `:mcp_re_proxy`
@@ -1206,6 +1224,7 @@ nt_rust_test(
 # Redis fleet via Docker (or an external MCP_RE_LOADGEN_REDIS_URL), which the Bazel
 # test sandbox cannot provide — so it is excluded from `bazel test //...` and driven
 # by cargo / the GKE runbook. Built against the redis_replay ext flavor.
+# `:tls_load_harness_bench_builds` below compiles it on every `bazel test //...`.
 nt_rust_test(
     name = "tls_load_harness_bench",
     srcs = ["tests/tls_load_harness_bench.rs"],
@@ -1249,6 +1268,13 @@ nt_rust_test(
         "@crates_mcp_re//:time",
         "@crates_mcp_re//:tokio",
     ],
+)
+
+# A `manual` target is built by nothing, and this one stopped compiling unnoticed:
+# `bazel test //...` skips it and its tests need Docker. This compiles it every run.
+build_test(
+    name = "tls_load_harness_bench_builds",
+    targets = [":tls_load_harness_bench"],
 )
 # above is NEVER built with this feature; production and the production CLI link
 # only the env-LESS instance. This instance is built on every `bazel test //...`
