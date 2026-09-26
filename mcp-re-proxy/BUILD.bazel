@@ -1100,7 +1100,9 @@ nt_rust_test(
 
 # The same suite under the ext features: `tls_test`'s delegated-TLS cases for AWS and
 # Google KMS exist only with `aws_kms_keysource` / `gcp_kms_keysource`. They run against
-# a local seed, not a cloud.
+# a local seed, not a cloud. The suite spawns the proxy binary and expects diagnostics
+# matching its own features, so it spawns the ext binary, as cargo's all-features lane
+# does.
 nt_rust_test(
     name = "integration_kms_test",
     srcs = glob(["tests/integration/*.rs"]) + [
@@ -1114,7 +1116,7 @@ nt_rust_test(
     bazel_build_cfg = False,
     data = [
         "//docs:sidecar-deployment-guide.md",
-        ":mcp_re_proxy_cli",
+        ":mcp_re_proxy_ext_bin",
         # Every library source. The source-scanning guards in this suite scope to a
         # DIRECTORY — the serving path, a plane — because a list of files has to learn
         # about the next file, and the failure mode of a stale list is a clean pass over
@@ -1124,7 +1126,7 @@ nt_rust_test(
     edition = "2021",
     env = {
         "MCP_RE_SIDECAR_GUIDE": "$(rlocationpath //docs:sidecar-deployment-guide.md)",
-        "MCP_RE_PROXY_CLI": "$(rlocationpath :mcp_re_proxy_cli)",
+        "MCP_RE_PROXY_CLI": "$(rlocationpath :mcp_re_proxy_ext_bin)",
         "MCP_RE_APP_SRC": "$(rlocationpath src/app.rs)",
         "MCP_RE_HTTP_PROFILE_SERVE_SRC": "$(rlocationpath src/http_profile_serve/mod.rs)",
         "MCP_RE_DELEGATED_WIRING_SRC": "$(rlocationpath src/delegated_wiring.rs)",
@@ -1135,7 +1137,7 @@ nt_rust_test(
     },
     deps = [
         ":mcp_re_proxy_ext_pre052",  # keep
-        ":mcp_re_proxy_cli",
+        ":mcp_re_proxy_ext_bin",
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-http-profile:mcp_re_http_profile_pre052",  # keep
         "//mcp-re-test-paths:mcp_re_test_paths",
@@ -1278,7 +1280,7 @@ nt_rust_test(
 nt_rust_test(
     name = "integration_async_ext_test",
     srcs = glob(["tests/integration_async/*.rs"]) + [
-        # `main.rs` reaches the shared helpers via `#[path = "../common/mod.rs"]`.
+        # `main.rs` reaches the shared helpers in tests/common/mod.rs.
         "tests/common/mod.rs",
     ],
     auto_cargo_toml = False,
@@ -1564,7 +1566,7 @@ nt_rust_test(
 nt_rust_test(
     name = "integration_live_test",
     srcs = glob(["tests/integration_live/*.rs"]) + [
-        # `main.rs` reaches the shared helpers via `#[path = "../common/mod.rs"]`.
+        # `main.rs` reaches the shared helpers in tests/common/mod.rs.
         "tests/common/mod.rs",
     ],
     auto_cargo_toml = False,
