@@ -825,10 +825,11 @@ jobs:
     # targets, so this job now carries a Cargo build rather than only manifest parsing and
     # a prover invocation.
     #
-    # The complete run (schedule, dispatch) measured 30-95 minutes in September 2026 and
-    # grows with every registered probe. A merge check's work is decided before it runs
-    # (scoped or deferred); nothing stops it once started.
-    timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 240 || 120 }}
+    # No job-level time limit. On dev1 a job can now wait in the admission hook for the
+    # host's single heavy slot (tools/slo/host_locks.py) while matssun/code's Bazel lane
+    # holds it, and that wait counts against the job's own timeout: a 120-minute cap
+    # cancelled merge checks that had not started any work. How long this job SHOULD take
+    # is a question about what it runs, not a cap; GitHub's default (360 min) remains.
     env:
       # THE ENDPOINT IS DECLARED, NOT INHERITED.
       #
