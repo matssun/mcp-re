@@ -712,6 +712,16 @@ jobs:
       - name: Select pinned toolchain (from rust-toolchain.toml)
         run: rustup show && rustc --version && cargo --version
 
+      # Bazel resolves external crates from MODULE.bazel's crate.spec entries and
+      # bazel/crates.lock; the cargo steps below read the Cargo manifests and Cargo.lock.
+      # Until the cargo lanes are gone that is two declarations of one dependency set,
+      # and this is what keeps them equal — a Dependabot bump to Cargo.lock alone fails
+      # here instead of leaving the Bazel-built proxy image on the old version.
+      - name: Crate-spec parity gate (Bazel's crates == the Cargo workspace's)
+        run: |
+          python3 scripts/crate_spec_parity_gate.py --selftest
+          python3 scripts/crate_spec_parity_gate.py
+
       - name: Build (workspace, all targets)
         run: cargo build --workspace --all-targets
 
@@ -1102,15 +1112,16 @@ jobs:
           fi
 
       # Cache the Bazel repository + disk cache across runs (crate_universe hub,
-      # the gazelle_rust Go binary, rules_go/gazelle). Keyed on the module lock +
-      # Cargo lock so a dependency change busts it.
+      # the gazelle_rust Go binary, rules_go/gazelle). Keyed on the module lock, the
+      # crate lock the hub resolves against, and Cargo.lock (which gazelle_rust still
+      # reads), so a dependency change busts it.
       - name: Cache Bazel
         uses: actions/cache@v6
         with:
           path: |
             ~/.cache/bazel
             ~/.cache/bazelisk
-          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'Cargo.lock') }}
+          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock', 'Cargo.lock') }}
           restore-keys: |
             bazel-${{ runner.os }}-
 

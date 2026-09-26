@@ -178,7 +178,10 @@ against the unit whose proposition it establishes.
 **Covers:** `bazel_gazelle_gate.py`, `bazel_srcs_gate.py`, `cargo_test_target_gate.py`,
 `workspace_lints_gate.py`, `node_matrix_state.py`, `self_hosted_docker_gate.py`,
 `heavy_lane_disk_preflight.py`, `prepare_node_matrix.sh`, `prepare_python_matrix.sh`,
-`use_pinned_toolchain.sh`, `verification_runner_preflight.sh`.
+`use_pinned_toolchain.sh`, `verification_runner_preflight.sh`, `crate_spec_parity_gate.py`
+(added 2026-09-26: while Bazel and Cargo each declare the external crates, it keeps the
+Bazel-built artifacts on the crate set the Cargo lanes measured — its failure mode is a
+measurement taken over a different build than the one shipped).
 **Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 2.
 
 These keep the machinery that RUNS the batteries able to run them: a Bazel target list that

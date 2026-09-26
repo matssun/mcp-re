@@ -94,20 +94,223 @@ zig_toolchains = use_extension(
 use_repo(zig_toolchains, "zig_sdk")
 
 ########################################
-# Cargo dependencies via crate_universe
+# External crates — declared here, resolved by Bazel from no Cargo manifest
 ########################################
 #
-# Reads components/mcp-re' own Cargo.toml + Cargo.lock and exposes every
-# external crate as `@crates_mcp_re//:<crate-name>`. The hub MUST be named
-# `crates_mcp_re` so the existing `@crates_mcp_re//:...` references in the
-# per-crate BUILD files keep resolving unchanged whether the module is
-# built standalone or as a nested module of the root.
+# Every external crate the build graph uses is named below, with its version
+# requirement and features, and resolved into the `@crates_mcp_re` hub against
+# `bazel/crates.lock`. Bazel reads no Cargo.toml and no Cargo.lock. The hub used to
+# be spliced from the Cargo workspace (`crate.from_cargo`), which made Cargo's
+# manifests the source of truth for the Bazel build; this is the first step of
+# making Bazel the only build system. The Cargo lanes still read the manifests
+# until they are moved over, and so does gazelle_rust (the BUILD drift detector,
+# `gazelle:rust_mode generate_from_cargo` in //:BUILD.bazel) — a later step.
+#
+# Features are the union of what every workspace member requests, because one hub
+# holds one feature set per crate — the unification Cargo performed.
+# `default_features = False` means no member uses that crate's defaults.
+#
+# While the Cargo manifests exist, `scripts/crate_spec_parity_gate.py` fails when a
+# spec here and the Cargo workspace disagree on a version or a feature, or when
+# `bazel/crates.lock` and `Cargo.lock` pin a crate differently.
+#
+# To change a crate: edit its spec, then re-resolve the lock with
+#     CARGO_BAZEL_REPIN=1 bazel mod show_extension @rules_rust//crate_universe:extension.bzl%crate
+# A spec change takes effect without that (the lock only pins versions), but the
+# lock must be re-resolved to record what the change pulled in.
+# The hub MUST stay named `crates_mcp_re`: every BUILD file refers to it.
 
 crate = use_extension("@rules_rust//crate_universe:extension.bzl", "crate")
-crate.from_cargo(
+crate.spec(
+    package = "asn1-rs",
+    version = "0.7",
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "base64",
+    version = "0.23",
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "bytes",
+    version = "1",
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "ciborium",
+    version = "0.2",
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "coset",
+    version = "0.4",
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "cryptoki-sys",
+    version = "0.5.0",
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "der",
+    version = "0.7",
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "ed25519-dalek",
+    version = "3",
+    features = ["alloc", "pkcs8", "zeroize"],
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "getrandom",
+    version = "0.4",
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "hex",
+    version = "0.4",
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "hmac",
+    version = "0.13",
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "http-body-util",
+    version = "0.1",
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "hyper",
+    version = "1",
+    features = ["client", "http1", "http2", "server"],
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "hyper-util",
+    version = "0.1",
+    features = ["client", "client-legacy", "server", "server-auto", "tokio"],
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "libc",
+    version = "0.2",
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "p256",
+    version = "0.14",
+    features = ["ecdsa", "std"],
+    default_features = False,
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "rcgen",
+    version = "0.14",
+    features = ["pem", "ring"],
+    default_features = False,
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "redis",
+    version = "1.4",
+    features = ["aio", "connection-manager", "tls-rustls", "tokio-comp", "tokio-rustls-comp"],
+    default_features = False,
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "rustls",
+    version = "0.23",
+    features = ["ring", "std", "tls12"],
+    default_features = False,
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "rustls-pki-types",
+    version = "1",
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "serde",
+    version = "1.0",
+    features = ["derive"],
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "serde_json",
+    version = "1.0",
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "sha2",
+    version = "0.11",
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "spki",
+    version = "0.7",
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "thiserror",
+    version = "2.0",
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "time",
+    version = "0.3",
+    features = ["std"],
+    default_features = False,
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "tokio",
+    version = "1",
+    features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "time"],
+    default_features = False,
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "tokio-rustls",
+    version = "0.26",
+    features = ["ring", "tls12"],
+    default_features = False,
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "ureq",
+    version = "2",
+    features = ["tls"],
+    default_features = False,
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "x509-cert",
+    version = "0.2",
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "x509-ocsp",
+    version = "0.2",
+    features = ["builder"],
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "x509-parser",
+    version = "0.18",
+    features = ["verify"],
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "zeroize",
+    version = "1",
+    repositories = ["crates_mcp_re"],
+)
+crate.from_specs(
     name = "crates_mcp_re",
-    cargo_lockfile = "//:Cargo.lock",
-    manifests = ["//:Cargo.toml"],
+    cargo_lockfile = "//bazel:crates.lock",
 )
 use_repo(crate, "crates_mcp_re")
 
