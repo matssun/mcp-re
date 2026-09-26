@@ -25,6 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import host_gate  # noqa: E402
+import host_locks  # noqa: E402
 import job_liveness  # noqa: E402
 import vm_participant  # noqa: E402
 from arbiter_error import ArbiterError  # noqa: E402
@@ -65,21 +66,23 @@ def cmd_job_started(paths, ident: JobIdentity) -> int:
     # every runner behind a job that never ran.
     host_gate.refuse_if_disk_exhausted(paths, ident)
 
-    # The Runner.Worker this hook runs under. Records carry it so that a job which dies
-    # without its completion hook can be proven dead and its record released.
+    # The process whose exit ends this job's locks: the job's Runner.Worker, found by
+    # walking up from this hook. The runner starts the hook directly under the worker, so
+    # the fallback -- this hook's parent -- is normally the same process. If it is not, the
+    # holder lets go when that parent exits: the lock drops EARLY, which can let two heavy
+    # jobs overlap once, and can never leave a lock behind.
     worker = job_liveness.own_worker()
+    watch_pid = worker["pid"] if worker else os.getppid()
     if worker is None:
-        host_gate.log(paths, "worker.unidentified", key=ident.key)
+        host_gate.log(paths, "worker.unidentified", key=ident.key, watching=watch_pid)
 
     if not ident.is_slo:
-        host_gate.admit_ordinary(paths, ident, worker=worker)
+        host_gate.admit_job(paths, ident, watch_pid, worker=worker)
         return EXIT_OK
 
-    # Owner path: reserve FIRST, so no runner can admit replacement work while we drain.
-    host_gate.grant_reservation(paths, ident, worker=worker)
-
-    # Participation is checked before drain: if a runner is not gating itself, draining it
-    # proves nothing, because it may accept new work the moment it goes idle.
+    # Owner path. Participation first, BEFORE the host is closed: if a runner is not gating
+    # itself, draining it proves nothing, and there is no reason to close the host to find
+    # that out.
     participation = host_gate.verify_participation(**vm_readers())
     if not participation["all_participating"]:
         missing = [e for e in participation["runners"] if not e["participating"]]
@@ -101,7 +104,15 @@ def cmd_job_started(paths, ident: JobIdentity) -> int:
                 f"({detail}). Refusing to measure: an unhooked runner is unobserved, not quiet."
             )
 
-    host_gate.await_drain(paths, ident, vm_workers_or_refuse())
+    # Reserve, then drain: the holder takes the gate lock (no new job anywhere from here),
+    # the file reservation is written for the VM, and the host lock is granted once every
+    # admitted macOS job has ended. The VM, which cannot share the locks, drains below.
+    holder = host_gate.admit_job(paths, ident, watch_pid, worker=worker)
+    try:
+        host_gate.await_drain(paths, ident, vm_workers_or_refuse())
+    except ArbiterError:
+        holder.terminate()
+        raise
 
     # QUIESCENCE IS DELIBERATELY NOT MEASURED HERE.
     #
@@ -150,6 +161,16 @@ def cmd_assert_exclusive(paths, ident: JobIdentity) -> int:
     if others:
         problems.append(f"{len(others)} non-owner ACTIVE record(s) remain")
 
+    # The kernel's own answer: this run's holder must hold the gate and host locks
+    # exclusively. If either can be taken shared, the reservation is not in force.
+    locks = host_locks.lock_state(paths["root"])
+    for name in ("gate", "host"):
+        if locks[name] != "exclusive":
+            problems.append(f"the {name} lock is {locks[name]}, not held exclusively")
+    own_holder = [h for h in host_locks.holders(paths["root"]) if h.get("key") == ident.key]
+    if not own_holder:
+        problems.append("this run has no lock holder record")
+
     participation = host_gate.verify_participation(**vm_readers())
     inhibited = (paths["root"] / "vm-inhibition.json").exists()
     if not participation["all_participating"] and not inhibited:
@@ -191,6 +212,7 @@ def cmd_assert_exclusive(paths, ident: JobIdentity) -> int:
         "activated_at": gate.get("activated_at"),
         "owner_run_id": gate.get("owner", {}).get("run_id"),
         "non_owner_active": len(others),
+        "locks": locks,
         "participation": participation,
         "vm_inhibition_fallback_applied": inhibited,
         "macos_runner_workers": macos,
@@ -205,14 +227,15 @@ def cmd_assert_exclusive(paths, ident: JobIdentity) -> int:
 
 
 def cmd_status(paths) -> int:
+    host_gate.repair_stale_gate(paths)
     reachable = vm_participant.available()
     print(json.dumps({
         "root": str(paths["root"]), "mirror": str(paths["mirror"]),
         "gate": host_gate.read_gate(paths),
         "active": host_gate.active_records(paths),
         "heavy_runners": sorted(host_gate.HEAVY_RUNNERS),
-        "heavy_waiting": [json.loads(f.read_text())
-                          for f in sorted(paths["waiting"].glob("*.json"))],
+        "locks": host_locks.lock_state(paths["root"]),
+        "holders": host_locks.holders(paths["root"]),
         "macos_runner_workers": host_gate.macos_workers(),
         "vm_unit_active": vm_participant.unit_active() if reachable else "unreachable",
         "vm_runner_workers": vm_participant.worker_count() if reachable else "unreachable",
