@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 """Test-inventory parity — every test the cargo lanes run is in a binary `bazel test //...` runs.
 
