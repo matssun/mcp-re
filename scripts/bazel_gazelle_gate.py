@@ -137,16 +137,13 @@ ALLOW_NON_HERMETIC: set[str] = {
     "mcp_re_test_paths_test",
 }
 
-# Cargo-only test-support crates: a Cargo package that exists ONLY to be built
-# on-demand by a cargo test (via a nested `cargo build`) and loaded at runtime —
-# it is DELIBERATELY outside the Bazel graph (its own detached `[workspace]`), so
-# it must never gain a Bazel target. Under the Bazel sandbox the consuming e2e
-# self-skips (no `cargo`), so no Bazel coverage is lost. Structurally cargo-only,
-# not "not yet wired".
+# Test-support crates with their own detached `[workspace]`: under cargo the consuming
+# test builds them on demand (a nested `cargo build`). gazelle would generate a target
+# in the crate's own directory; Bazel builds it in the consumer's package instead.
 ALLOW_CARGO_ONLY_FIXTURE = {
-    # mcp-re-proxy/tests/mock-pkcs11: hermetic mock PKCS#11 provider `cdylib` built
-    # + dlopen'd by pkcs11_keysource_e2e_test. A Bazel target would pull cryptoki-sys/
-    # ed25519-dalek into a fixture the sandbox can't even run. See [[no-onprem-hsm-custody]].
+    # mcp-re-proxy/tests/mock-pkcs11: hermetic mock PKCS#11 provider `cdylib` dlopen'd
+    # by pkcs11_keysource_e2e_test; under Bazel it is //mcp-re-proxy:mock_pkcs11.
+    # See [[no-onprem-hsm-custody]].
     "mock_pkcs11",
 }
 

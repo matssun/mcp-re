@@ -12,13 +12,14 @@
 //! exercised; only the token is a controllable fake.
 //!
 //! # How the mock is provisioned
-//! `mock_module()` runs a nested `cargo build` of `tests/mock-pkcs11` (into that
-//! crate's OWN target dir, so it never contends the workspace build lock) and
-//! returns the resulting library path. Objects are seeded per test through two env
-//! vars the mock reads at `C_Initialize` (`MOCK_PKCS11_TOKEN_LABEL`,
-//! `MOCK_PKCS11_OBJECTS`) — see [`MockToken`]. When the mock cannot be built here —
-//! e.g. under the Bazel test sandbox, which has no `cargo` — the test self-skips
-//! (honoring `MCP_RE_REQUIRE_LIVE_INFRA`: set → a skip becomes a hard failure). A
+//! Under Bazel the mock is `//mcp-re-proxy:mock_pkcs11`, a data dependency whose path
+//! arrives in `MCP_RE_MOCK_PKCS11_LIB`; a path that is set but absent panics. Under
+//! cargo, `mock_module()` runs a nested `cargo build` of `tests/mock-pkcs11` (into that
+//! crate's OWN target dir, so it never contends the workspace build lock) and returns
+//! the resulting library path. Objects are seeded per test through two env vars the
+//! mock reads at `C_Initialize` (`MOCK_PKCS11_TOKEN_LABEL`, `MOCK_PKCS11_OBJECTS`) —
+//! see [`MockToken`]. When neither is available the test self-skips (honoring
+//! `MCP_RE_REQUIRE_LIVE_INFRA`: set → a skip becomes a hard failure). A
 //! `cargo`-present build FAILURE, by contrast, panics loudly and is never skipped.
 //!
 //! The keygen-on-token flow (never import a private key) that the delegated-TLS
@@ -70,15 +71,21 @@ use rustls_pki_types::ServerName;
 // Hermetic mock PKCS#11 provider: build once, seed per test.
 // ===========================================================================
 
-/// Build the mock provider `cdylib` once per test process and cache its path.
-/// `None` means the mock could not be built HERE (no `cargo` / source absent — e.g.
-/// the Bazel sandbox), which self-skips. A `cargo`-present build error panics.
+/// The mock provider `cdylib`, located or built once per test process. `None` means it
+/// is neither provided nor buildable HERE (no `cargo` / source absent), which
+/// self-skips. A `cargo`-present build error panics.
 fn mock_module() -> Option<String> {
     static MODULE: OnceLock<Option<String>> = OnceLock::new();
     MODULE.get_or_init(build_mock_module).clone()
 }
 
 fn build_mock_module() -> Option<String> {
+    if let Ok(provided) = std::env::var("MCP_RE_MOCK_PKCS11_LIB") {
+        let path = std::fs::canonicalize(&provided).unwrap_or_else(|e| {
+            panic!("MCP_RE_MOCK_PKCS11_LIB names {provided}, which does not resolve: {e}")
+        });
+        return Some(path.to_string_lossy().into_owned());
+    }
     let mock_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/mock-pkcs11");
     let manifest = mock_dir.join("Cargo.toml");
     if !manifest.exists() {
