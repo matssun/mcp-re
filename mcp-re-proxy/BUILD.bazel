@@ -1637,7 +1637,7 @@ nt_rust_test(
     data = [":mock_pkcs11"],
     edition = "2021",
     env = {
-        "MCP_RE_MOCK_PKCS11_LIB": "$(rootpath :mock_pkcs11)",
+        "MCP_RE_MOCK_PKCS11_LIB": "does/not/exist.so",
         # Here the mock is always provided, so a skip can only mean it was lost: fail.
         "MCP_RE_REQUIRE_LIVE_INFRA": "1",
     },
