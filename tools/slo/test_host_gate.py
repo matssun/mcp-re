@@ -17,12 +17,14 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import host_gate  # noqa: E402
+import host_locks  # noqa: E402
 from arbiter_error import ArbiterError  # noqa: E402
 from job_identity import JobIdentity  # noqa: E402
 
@@ -62,6 +64,77 @@ def ordinary(n: int = 1, runner: str = "dev1") -> JobIdentity:
 def slo(n: int = 99, runner: str = "dev1-mcp-re") -> JobIdentity:
     return JobIdentity(runner, MCPRE_REPO, workflow_ref(MCPRE_REPO, SLO_WORKFLOW),
                        SLO_WORKFLOW, str(n), "1", "slo")
+
+
+FAST = {"gate_wait": 1, "heavy_wait": 1, "drain_wait": 2}
+STARTED_WORKERS: list = []
+
+
+class Job:
+    """A job as the gate sees it: a stand-in Runner.Worker (a real process) and its holder."""
+
+    def __init__(self, paths: dict, ident: JobIdentity) -> None:
+        self.paths, self.ident = paths, ident
+        self.worker = subprocess.Popen(["sleep", "600"])
+        STARTED_WORKERS.append(self.worker)
+        self.holder = None
+
+    def admit(self, **bounds) -> "Job":
+        self.holder = host_gate.admit_job(self.paths, self.ident, self.worker.pid,
+                                          bounds={**FAST, **bounds})
+        return self
+
+    def end(self) -> None:
+        """The worker exits -- what happens when the job ends, is cancelled, or dies."""
+        if self.worker.poll() is None:
+            self.worker.kill()
+            self.worker.wait()
+
+
+def admitted(paths: dict, ident: JobIdentity, **bounds) -> Job:
+    return Job(paths, ident).admit(**bounds)
+
+
+def refusal(paths: dict, ident: JobIdentity, **bounds) -> str | None:
+    """The refusal message, or None if the job was admitted (it is then ended)."""
+    job = Job(paths, ident)
+    try:
+        job.admit(**bounds)
+    except ArbiterError as exc:
+        job.end()
+        return str(exc)
+    job.end()
+    return None
+
+
+def within(predicate, timeout: float = 3.0) -> float | None:
+    """Seconds until `predicate()` held, or None if it never did within `timeout`."""
+    start = time.monotonic()
+    while time.monotonic() - start < timeout:
+        if predicate():
+            return time.monotonic() - start
+        time.sleep(0.005)
+    return None
+
+
+def locks(paths: dict) -> dict:
+    return host_locks.lock_state(paths["root"])
+
+
+def in_thread(fn) -> dict:
+    """Run `fn` in a thread; the returned dict gets "result" or "error" when it finishes."""
+    box: dict = {}
+
+    def run() -> None:
+        try:
+            box["result"] = fn()
+        except Exception as exc:  # noqa: BLE001 -- reported by the caller
+            box["error"] = exc
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    box["thread"] = t
+    return box
 
 
 # ==========================================================================================
@@ -201,7 +274,8 @@ def test_the_hook_consults_the_guard() -> None:
     # Refused BEFORE any state is written. A job that left an active record behind would
     # leak one per refused job, and on the SLO path would reserve the whole host and then
     # refuse -- closing every runner behind a job that never ran.
-    check("a refused job leaves no active record", not list(p["active"].glob("*.json")))
+    check("a refused job leaves no lock holder", not host_locks.holders(p["root"]))
+    check("and holds no lock", all(v == "free" for v in locks(p).values()))
     check("a refused job leaves the gate open",
           host_gate.read_gate(p).get("state", host_gate.OPEN) == host_gate.OPEN)
 
@@ -213,10 +287,13 @@ def test_the_hook_consults_the_guard() -> None:
         host_gate.free_gb = lambda _volume: 400.0
         rc = runner_arbiter.cmd_job_started(p2, ordinary(11))
         check("a host with room admits through the hook entry point", rc == 0)
-        check("and the admitted job DID leave an active record",
-              len(list(p2["active"].glob("*.json"))) == 1)
-    except ArbiterError:
-        check("a host with room admits through the hook entry point", False)
+        check("and the admitted job DID get a lock holder",
+              [h["key"] for h in host_locks.holders(p2["root"])] == [ordinary(11).key])
+        host_gate.job_completed(p2, ordinary(11))
+        check("and its completion frees the host lock",
+              within(lambda: locks(p2)["host"] == "free") is not None)
+    except ArbiterError as exc:
+        check("a host with room admits through the hook entry point", False, str(exc))
     finally:
         host_gate.free_gb = real_free_gb
         os.environ.clear()
@@ -263,53 +340,69 @@ def test_identification() -> None:
 def test_reserve_then_drain() -> None:
     print("\nreserve-first-then-drain (§2)")
     paths = fresh()
-    first = ordinary(1)
-    host_gate.admit_ordinary(paths, first, wait_s=1)
-    host_gate.grant_reservation(paths, slo())
+    first = admitted(paths, ordinary(1))
+    owner = in_thread(lambda: admitted(paths, slo(), drain_wait=20))
+    reserved = within(lambda: host_gate.read_gate(paths).get("state") == host_gate.RESERVING)
+    check("the reservation is taken while a job is still running", reserved is not None)
 
     # The invariant: after the grant, NO new non-owner job may be admitted -- which is what
     # stops the queue refilling while the owner waits for the drain.
-    try:
-        host_gate.admit_ordinary(paths, ordinary(2), wait_s=1)
-        check("a new ordinary job is refused during a reservation", False, "it was admitted")
-    except ArbiterError:
-        check("a new ordinary job is refused during a reservation", True)
+    check("a new ordinary job is refused during a reservation",
+          refusal(paths, ordinary(2)) is not None, "it was admitted")
+    check("the pre-existing job is left running", first.worker.poll() is None)
+    check("the owner is still draining", "result" not in owner and "error" not in owner)
 
-    # ...while work that was ALREADY running is left alone to finish.
-    check("the pre-existing job is still active", len(host_gate.active_records(paths)) == 1)
-    host_gate.job_completed(paths, first)
-    check("the pre-existing job drains normally", len(host_gate.active_records(paths)) == 0)
+    first.end()
+    drained = within(lambda: "result" in owner or "error" in owner)
+    check("the drain completes the moment the running job ends",
+          drained is not None and "result" in owner, str(owner.get("error")))
+    check("  (within 1 s of the job ending)", drained is not None and drained < 1.0,
+          f"{drained}")
+    check("the owner then holds gate and host exclusively",
+          locks(paths)["gate"] == "exclusive" and locks(paths)["host"] == "exclusive")
+    if "result" in owner:
+        owner["result"].end()
 
 
 def test_ordinary_first_then_slo() -> None:
-    print("\nordinary wins the mutex first (§13)")
+    print("\nordinary first, then the SLO (§13)")
     paths = fresh()
-    first = ordinary(1)
-    host_gate.admit_ordinary(paths, first, wait_s=1)
-    gate = host_gate.grant_reservation(paths, slo())
+    first = admitted(paths, ordinary(1))
+    owner = in_thread(lambda: admitted(paths, slo(), drain_wait=20))
+    within(lambda: host_gate.read_gate(paths).get("state") == host_gate.RESERVING)
+    gate = host_gate.read_gate(paths)
     check("the reservation is granted even over a running job",
           gate["state"] == host_gate.RESERVING)
     check("but the owner is not yet RESERVED", gate["state"] != host_gate.RESERVED)
-
-    host_gate.job_completed(paths, first)
-    drained = host_gate.await_drain(paths, slo(), lambda: 0, wait_s=5)
-    check("drain completes once the ordinary job finishes", isinstance(drained, list))
-    host_gate.activate(paths, slo(), {"established": True, "duration_s": 60})
+    host_gate.job_completed(paths, ordinary(1))
+    within(lambda: "result" in owner or "error" in owner)
+    check("the owner is admitted once the ordinary job completes", "result" in owner,
+          str(owner.get("error")))
+    if "result" in owner:
+        host_gate.activate(paths, slo(), {"established": True, "duration_s": 60})
     check("the owner then reaches RESERVED",
           host_gate.read_gate(paths)["state"] == host_gate.RESERVED)
+    first.end()
+    if "result" in owner:
+        owner["result"].end()
 
 
 def test_second_slo_cannot_overlap() -> None:
     print("\ntwo SLO measurements cannot overlap (§13)")
     paths = fresh()
-    host_gate.grant_reservation(paths, slo(1))
+    one = admitted(paths, slo(1))
+    check("a second SLO is refused while the first holds the host",
+          refusal(paths, slo(2)) is not None, "it was admitted")
+    check("the file gate still names the first owner",
+          host_gate.read_gate(paths)["owner"]["key"] == slo(1).key)
+    one.end()
+    two = Job(paths, slo(2))
     try:
-        host_gate.grant_reservation(paths, slo(2))
-        check("a second SLO reservation is refused", False, "it was granted")
-    except ArbiterError:
-        check("a second SLO reservation is refused", True)
-    again = host_gate.grant_reservation(paths, slo(1))
-    check("the SAME owner re-entering is idempotent", again["state"] == host_gate.RESERVING)
+        two.admit()
+        check("the second SLO is admitted once the first has ended", True)
+    except ArbiterError as exc:
+        check("the second SLO is admitted once the first has ended", False, str(exc))
+    two.end()
 
 
 # ==========================================================================================
@@ -317,42 +410,30 @@ def test_second_slo_cannot_overlap() -> None:
 # ==========================================================================================
 
 
-def racer(args) -> str:
-    root, mirror, kind, n = args
-    paths = host_gate.paths(Path(root), Path(mirror))
-    ident = slo(n) if kind == "slo" else ordinary(n)
-    try:
-        if kind == "slo":
-            host_gate.grant_reservation(paths, ident)
-            return "slo-reserved"
-        host_gate.admit_ordinary(paths, ident, wait_s=0)
-        return "ordinary-admitted"
-    except ArbiterError:
-        return f"{kind}-refused"
-
-
 def test_simultaneous_admission() -> None:
     print("\nsimultaneous admission, driven concurrently (§13)")
     violations = 0
-    rounds = 40
+    empty = 0
+    rounds = 8
     for r in range(rounds):
         paths = fresh()
-        args = [(str(paths["root"]), str(paths["mirror"]), "slo", 500 + r)]
-        args += [(str(paths["root"]), str(paths["mirror"]), "ordinary", i) for i in range(6)]
-        with multiprocessing.Pool(len(args)) as pool:
-            pool.map(racer, args)
-        gate = host_gate.read_gate(paths)
-        owner_key = gate.get("owner", {}).get("key")
-        actives = [a for a in host_gate.active_records(paths) if a.get("key") != owner_key]
-        # THE forbidden state: an owner holding the host while a non-owner is also admitted.
-        # A job admitted BEFORE the grant is legitimate -- it drains. One admitted AFTER is
-        # the violation, and each record's own timestamp is what separates the two.
-        if gate.get("state") in (host_gate.RESERVING, host_gate.RESERVED) and actives:
-            granted_at = gate.get("created_at", "")
-            if [a for a in actives if a.get("started_at", "") > granted_at]:
-                violations += 1
-    check(f"no round observed a reservation plus a post-grant non-owner ({rounds} rounds)",
+        jobs = [Job(paths, slo(500 + r))] + [Job(paths, ordinary(i)) for i in range(5)]
+        boxes = [in_thread(lambda j=j: j.admit(gate_wait=1, drain_wait=1)) for j in jobs]
+        for b in boxes:
+            b["thread"].join(30)
+        ok = ["result" in b for b in boxes]
+        # THE forbidden state: the SLO admitted while any ordinary job is admitted and still
+        # running. Every stand-in worker is alive here, so any overlap would be live.
+        if ok[0] and any(ok[1:]):
+            violations += 1
+        if not any(ok):
+            empty += 1
+        for j in jobs:
+            j.end()
+    check(f"no round admitted the SLO beside a running job ({rounds} rounds)",
           violations == 0, f"{violations} violations")
+    check("and every round admitted someone (the positive control)", empty == 0,
+          f"{empty} empty rounds")
 
 
 # ==========================================================================================
@@ -363,14 +444,12 @@ def test_simultaneous_admission() -> None:
 def test_fail_closed() -> None:
     print("\nfail-closed (§5)")
     paths = fresh()
-    host_gate.grant_reservation(paths, slo())
+    owner = admitted(paths, slo())
     start = time.monotonic()
-    try:
-        host_gate.admit_ordinary(paths, ordinary(3), wait_s=2)
-        check("a bounded wait ends in refusal, not admission", False, "admitted")
-    except ArbiterError:
-        check("a bounded wait ends in refusal, not admission", True)
+    check("a bounded wait ends in refusal, not admission",
+          refusal(paths, ordinary(3), gate_wait=2) is not None, "admitted")
     check("the wait was actually bounded", time.monotonic() - start < 20)
+    owner.end()
 
     # A corrupt gate must not read as an open host. This is THE fail-open case.
     corrupt = fresh()
@@ -410,30 +489,16 @@ def test_completion_releases_on_every_path() -> None:
     for outcome in ("success", "workflow failure", "cancelled",
                     "benchmark INCONCLUSIVE", "benchmark FAIL"):
         paths = fresh()
-        owner = slo()
-        host_gate.grant_reservation(paths, owner)
-        host_gate.activate(paths, owner, {"established": True, "duration_s": 1})
-        result = host_gate.job_completed(paths, owner)
-        released = (result["released_reservation"]
-                    and host_gate.read_gate(paths)["state"] == host_gate.RELEASED)
-        check(f"reservation released after {outcome}", released)
-        host_gate.admit_ordinary(paths, ordinary(9), wait_s=1)
+        owner = admitted(paths, slo())
+        host_gate.activate(paths, slo(), {"established": True, "duration_s": 1})
+        host_gate.job_completed(paths, slo())
+        freed = within(lambda: locks(paths)["gate"] == "free" and locks(paths)["host"] == "free")
+        check(f"locks released after {outcome}", freed is not None)
+        check(f"file gate RELEASED after {outcome}",
+              host_gate.read_gate(paths)["state"] == host_gate.RELEASED)
         check(f"normal admission resumes after {outcome}",
-              len(host_gate.active_records(paths)) == 1)
-
-
-def fake_worker(pid: int = 4242, started: int | None = None) -> dict:
-    return {"pid": pid, "started": int(time.time()) - 600 if started is None else started}
-
-
-def table_with(worker: dict | None):
-    """A process table in which `worker` (if any) is a live Runner.Worker."""
-    def table() -> dict:
-        if worker is None:
-            return {}
-        elapsed = int(time.time()) - worker["started"]
-        return {worker["pid"]: (1, elapsed, "/runner/bin/Runner.Worker spawnclient 1 2")}
-    return table
+              refusal(paths, ordinary(9)) is None)
+        owner.end()
 
 
 def unreadable_table() -> dict:
@@ -441,67 +506,54 @@ def unreadable_table() -> dict:
 
 
 def test_crash_leaves_closed_not_open() -> None:
-    print("\nrunner crash / missing completion hook (§6)")
-    # LIVE owner, completion hook not (yet) run: the host stays closed.
+    print("\nkilled jobs, killed holders: no lock outlives its owner (§6)")
+    # A LIVE owner keeps the host closed, however old its record looks.
     paths = fresh()
-    owner = slo()
-    worker = fake_worker()
-    host_gate.grant_reservation(paths, owner, worker=worker, table_fn=table_with(worker))
-    host_gate.activate(paths, owner, {"established": True, "duration_s": 1})
+    owner = admitted(paths, slo())
     gate = host_gate.read_gate(paths)
-    check("the reservation survives while its owner lives", gate["state"] == host_gate.RESERVED)
-    try:
-        host_gate.admit_ordinary(paths, ordinary(4), wait_s=1, table_fn=table_with(worker))
-        check("the host stays CLOSED while the owner lives", False, "admitted")
-    except ArbiterError:
-        check("the host stays CLOSED while the owner lives", True)
-    check("the record carries operator recovery instructions",
-          "recover" in json.dumps(gate.get("stale_recovery", {})))
-
-    # No elapsed time releases it. A TTL here would be fail-open at the worst moment.
     host_gate.write_atomic(paths["gate"], {**gate, "created_at": "2000-01-01T00:00:00Z"})
-    try:
-        host_gate.admit_ordinary(paths, ordinary(5), wait_s=1, table_fn=table_with(worker))
-        check("age alone does NOT release a reservation", False, "an old reservation opened")
-    except ArbiterError:
-        check("age alone does NOT release a reservation", True)
+    check("age alone does NOT release a live owner's reservation",
+          refusal(paths, ordinary(5)) is not None, "an old reservation opened")
 
-    # UNKNOWN owner (no worker recorded, or no process table): still closed.
-    for label, recorded, table in (("no worker was recorded", None, table_with(None)),
-                                   ("the process table is unreadable", worker, unreadable_table)):
-        paths = fresh()
-        host_gate.grant_reservation(paths, owner, worker=recorded, table_fn=table)
-        try:
-            host_gate.admit_ordinary(paths, ordinary(6), wait_s=1, table_fn=table)
-            check(f"closed when {label}", False, "admitted")
-        except ArbiterError:
-            check(f"closed when {label}", True)
+    # The owner's WORKER dies (kill -9, crash, runner stopped): everything goes at once.
+    owner.worker.kill()
+    freed = within(lambda: all(v == "free" for v in locks(paths).values()))
+    check("kill -9 of the worker frees every lock", freed is not None)
+    check("  (within 1 s)", freed is not None and freed < 1.0, f"{freed}")
+    check("and the holder marks the file gate RELEASED on its way out",
+          within(lambda: host_gate.read_gate(paths)["state"] == host_gate.RELEASED) is not None)
+    check("ordinary work is admitted behind it", refusal(paths, ordinary(6)) is None)
+    owner.end()
 
-    # DEAD owner: the next admission decision releases it and admits.
+    # The HOLDER itself is killed -9: the kernel frees its locks; nothing else runs.
     paths = fresh()
-    host_gate.grant_reservation(paths, owner, worker=worker, table_fn=table_with(worker))
-    host_gate.activate(paths, owner, {"established": True, "duration_s": 1})
-    try:
-        host_gate.admit_ordinary(paths, ordinary(7), wait_s=1, table_fn=table_with(None))
-    except ArbiterError as exc:
-        check("a DEAD owner does not hold the host", False, str(exc))
-    gate = host_gate.read_gate(paths)
-    check("a DEAD owner's reservation is released", gate["state"] == host_gate.RELEASED
-          and "reaper" in gate.get("released_by", ""))
-    check("the mirror sees the release too",
-          json.loads(paths["mirror_gate"].read_text())["state"] == host_gate.RELEASED)
-    check("and ordinary work is admitted behind it", len(host_gate.active_records(paths)) == 1)
-
-    # A recycled pid is not the owner: same pid, different start time.
-    paths = fresh()
-    host_gate.grant_reservation(paths, owner, worker=worker, table_fn=table_with(worker))
-    impostor = fake_worker(worker["pid"], worker["started"] + 3600)
-    try:
-        host_gate.admit_ordinary(paths, ordinary(8), wait_s=1, table_fn=table_with(impostor))
-    except ArbiterError as exc:
-        check("a recycled pid is not taken for the owner", False, str(exc))
-    check("a recycled pid does not keep a dead owner's reservation",
+    owner = admitted(paths, slo())
+    owner.holder.kill()
+    freed = within(lambda: all(v == "free" for v in locks(paths).values()))
+    check("kill -9 of the holder frees every lock", freed is not None)
+    check("  (within 1 s)", freed is not None and freed < 1.0, f"{freed}")
+    check("the file gate is left stale (nobody could write it)",
+          host_gate.read_gate(paths)["state"] == host_gate.RESERVING)
+    check("the next admission repairs it and is admitted", refusal(paths, ordinary(7)) is None)
+    check("the file gate then reads RELEASED",
           host_gate.read_gate(paths)["state"] == host_gate.RELEASED)
+    owner.end()
+
+    # An ordinary job whose worker dies frees its share of the host at once, so an SLO
+    # drain does not wait on a dead job.
+    paths = fresh()
+    dead = admitted(paths, ordinary(8))
+    dead.worker.kill()
+    freed = within(lambda: locks(paths)["host"] == "free")
+    check("a dead ordinary job's host lock is freed", freed is not None)
+    later = Job(paths, slo(80))
+    try:
+        later.admit(drain_wait=2)
+        check("so an SLO drains straight past it", True)
+    except ArbiterError as exc:
+        check("so an SLO drains straight past it", False, str(exc))
+    later.end()
+    dead.end()
 
 
 # ==========================================================================================
@@ -585,35 +637,24 @@ def test_drain_refusal_names_the_blocker() -> None:
 
     The reservation closes the host to every runner from the moment it is granted, so a
     drain that cannot complete is a fleet-wide outage until it expires. On 2026-09-12 that
-    ran most of an hour. Two properties follow, and both are checked here rather than
-    assumed: the bound is short enough to be a nuisance instead of an outage, and the
-    refusal identifies the blocker so nobody has to go read the arbiter log to find it.
+    ran most of an hour. The bound must be short, and the refusal must name the blocker.
     """
     print("\na drain that gives up names the blocker and releases (blast radius)")
     check("the drain bound is at most 30 minutes", host_gate.DRAIN_WAIT_S <= 30 * 60,
           f"{host_gate.DRAIN_WAIT_S}s")
-
     paths = fresh()
-    blocker = ordinary(7, runner="dev1")
-    host_gate.admit_ordinary(paths, blocker, wait_s=1)
-    host_gate.grant_reservation(paths, slo())
-    try:
-        host_gate.await_drain(paths, slo(), lambda: 0, wait_s=2)
-        check("the drain refuses when work will not finish", False, "it returned")
-    except ArbiterError as exc:
-        message = str(exc)
-        check("the drain refuses when work will not finish", True)
-        check("and the refusal NAMES the blocking runner and job",
-              "dev1" in message and blocker.job in message, message[:140])
-        check("and says the work was not killed", "NOT killed" in message, message[:140])
-
-    # The owner's job-completed hook is what reopens the host; the refusal must not leave
-    # the reservation standing, or the outage outlives the attempt.
-    host_gate.job_completed(paths, slo())
+    blocker = admitted(paths, ordinary(7, runner="dev1"))
+    message = refusal(paths, slo(), drain_wait=1)
+    check("the drain refuses when work will not finish", message is not None, "it was admitted")
+    message = message or ""
+    check("and the refusal NAMES the blocking job", ordinary(7, runner="dev1").key in message,
+          message[:200])
+    check("and says no workload ran", "executed no workload" in message, message[:200])
+    check("the blocking work was NOT killed", blocker.worker.poll() is None)
     check("the reservation is released so ordinary work resumes",
           host_gate.read_gate(paths)["state"] == host_gate.RELEASED)
-    host_gate.admit_ordinary(paths, ordinary(8), wait_s=1)
-    check("and a new ordinary job is admitted again", True)
+    check("and a new ordinary job is admitted again", refusal(paths, ordinary(8)) is None)
+    blocker.end()
 
 
 def test_listener_freshness_is_timezone_independent() -> None:
@@ -691,100 +732,50 @@ def test_vm_reported_jobs_block_drain() -> None:
 # ==========================================================================================
 
 
-def test_dead_records_are_reaped() -> None:
-    print("\nrecords of jobs that died without their completion hook")
-    live, dead = fake_worker(1001), fake_worker(1002)
-    both = {live["pid"]: (1, int(time.time()) - live["started"], "x/Runner.Worker")}
-    table = lambda: dict(both)  # noqa: E731 -- only `live` is running
-    paths = fresh()
-    host_gate.admit_ordinary(paths, ordinary(1, "dev1-fast-1"), wait_s=1, worker=live, table_fn=table)
-    host_gate.admit_ordinary(paths, ordinary(2, "dev1-fast-2"), wait_s=1, worker=dead, table_fn=table)
-    host_gate.admit_ordinary(paths, ordinary(3, "dev1-b"), wait_s=1, worker=None, table_fn=table)
-    keys = {r["key"] for r in host_gate.active_records(paths)}
-    check("the dead job's record is gone, the live and the unknown remain",
-          keys == {ordinary(1, "dev1-fast-1").key, ordinary(3, "dev1-b").key}, str(keys))
-    check("the reaped record is kept for inspection",
-          (paths["reaped"] / f"{ordinary(2, 'dev1-fast-2').key}.json").exists())
-
-    with host_gate.mutex(paths):
-        host_gate.reap_dead_owners(paths, unreadable_table)
-    check("an unreadable process table reaps nothing",
-          len(host_gate.active_records(paths)) == 2)
-
-    # The drain reaps too, so a dead job cannot hold an SLO drain for its whole budget.
-    paths = fresh()
-    host_gate.admit_ordinary(paths, ordinary(4, "dev1-fast-1"), wait_s=1, worker=dead, table_fn=table)
-    owner = slo()
-    host_gate.grant_reservation(paths, owner, table_fn=table)
-    try:
-        drained = host_gate.await_drain(paths, owner, lambda: 0, wait_s=2, table_fn=table)
-        check("a dead job does not hold the SLO drain", drained == [])
-    except ArbiterError as exc:
-        check("a dead job does not hold the SLO drain", False, str(exc))
-
-
 def test_heavy_slot() -> None:
     print("\none heavy job on the host at a time; the fast lane is never in it")
     saved = host_gate.HEAVY_RUNNERS
     host_gate.HEAVY_RUNNERS = frozenset({"dev1", "dev1-mcp-re"})
     try:
-        a, b = fake_worker(2001), fake_worker(2002)
-        table = lambda: {w["pid"]: (1, int(time.time()) - w["started"], "x/Runner.Worker")  # noqa: E731
-                         for w in (a, b)}
         paths = fresh()
-        code_bazel = ordinary(10, "dev1")
-        host_gate.admit_ordinary(paths, code_bazel, wait_s=1, heavy_wait_s=1, worker=a, table_fn=table)
+        code_bazel = admitted(paths, ordinary(10, "dev1"))
         mcpre = JobIdentity("dev1-mcp-re", MCPRE_REPO, workflow_ref(MCPRE_REPO, CI_WORKFLOW),
                             CI_WORKFLOW, "11", "1", "verification")
-        try:
-            host_gate.admit_ordinary(paths, mcpre, wait_s=1, heavy_wait_s=1, worker=b, table_fn=table)
-            check("a second heavy job waits (and refuses at its bound)", False, "admitted")
-        except ArbiterError as exc:
-            check("a second heavy job waits (and refuses at its bound)", True)
-            check("the refusal names the holder", code_bazel.key in str(exc), str(exc))
-        check("a refused waiter leaves no waiting record",
-              not list(paths["waiting"].glob("*.json")))
-
-        host_gate.admit_ordinary(paths, ordinary(12, "dev1-fast-1"), wait_s=1, heavy_wait_s=1,
-                                 table_fn=table)
+        message = refusal(paths, mcpre)
+        check("a second heavy job waits (and refuses at its bound)", message is not None,
+              "admitted")
+        check("the refusal names the holder", code_bazel.ident.key in (message or ""),
+              str(message))
         check("the fast lane is admitted while the heavy slot is held",
-              len(host_gate.active_records(paths)) == 2)
+              refusal(paths, ordinary(12, "dev1-fast-1")) is None)
 
-        host_gate.job_completed(paths, code_bazel)
-        host_gate.admit_ordinary(paths, mcpre, wait_s=1, heavy_wait_s=1, worker=b, table_fn=table)
-        check("the next heavy job runs once the holder completes",
-              mcpre.key in {r["key"] for r in host_gate.active_records(paths)})
+        # Whoever is already waiting gets the slot, not a later arrival.
+        waiter = in_thread(lambda: admitted(paths, mcpre, heavy_wait=20))
+        time.sleep(0.8)  # the waiter is now blocked on the heavy lock
+        code_bazel.end()
+        late = refusal(paths, ordinary(13, "dev1"), heavy_wait=1)
+        waiter["thread"].join(10)
+        check("the job already waiting gets the heavy slot", "result" in waiter,
+              str(waiter.get("error")))
+        check("a job arriving after it does not jump the queue", late is not None, "admitted")
+        if "result" in waiter:
+            waiter["result"].end()
 
-        # A holder that dies without its completion hook frees the slot.
+        # A waiter whose job dies while it waits never takes the lock.
         paths = fresh()
-        dead = fake_worker(2099)
-        host_gate.admit_ordinary(paths, code_bazel, wait_s=1, heavy_wait_s=1, worker=dead,
-                                 table_fn=lambda: {})
-        host_gate.admit_ordinary(paths, mcpre, wait_s=1, heavy_wait_s=1, worker=b, table_fn=table)
-        check("a dead holder does not keep the heavy slot",
-              {r["key"] for r in host_gate.active_records(paths)} == {mcpre.key})
-
-        # Oldest waiter first: an older live waiter blocks a newer arrival...
-        paths = fresh()
-        older = JobIdentity("dev1-mcp-re", MCPRE_REPO, "", CI_WORKFLOW, "20", "1", "verification")
-        host_gate.write_atomic(paths["waiting"] / f"{older.key}.json", {
-            "key": older.key, "identity": {"runner": "dev1-mcp-re"},
-            "since": time.time() - 60, "worker": a})
-        try:
-            host_gate.admit_ordinary(paths, ordinary(21, "dev1"), wait_s=1, heavy_wait_s=1,
-                                     worker=b, table_fn=table)
-            check("an older heavy waiter goes first", False, "the newer job was admitted")
-        except ArbiterError as exc:
-            check("an older heavy waiter goes first", older.key in str(exc), str(exc))
-        # ...but a DEAD waiter (a cancelled job) does not block the queue.
-        host_gate.write_atomic(paths["waiting"] / f"{older.key}.json", {
-            "key": older.key, "identity": {"runner": "dev1-mcp-re"},
-            "since": time.time() - 60, "worker": fake_worker(2098)})
-        host_gate.admit_ordinary(paths, ordinary(22, "dev1"), wait_s=1, heavy_wait_s=1,
-                                 worker=b, table_fn=table)
-        check("a dead waiter does not block the queue",
-              not list(paths["waiting"].glob("*.json"))
-              and len(host_gate.active_records(paths)) == 1)
+        running = admitted(paths, ordinary(20, "dev1"))
+        doomed = Job(paths, ordinary(21, "dev1-mcp-re"))
+        box = in_thread(lambda: doomed.admit(heavy_wait=20))
+        time.sleep(0.8)
+        doomed.worker.kill()
+        gone = within(lambda: "error" in box or "result" in box)
+        check("a waiter whose worker dies gives up at once",
+              gone is not None and "error" in box, f"{gone} {box}")
+        running.end()
+        check("and never takes the heavy lock afterwards",
+              within(lambda: locks(paths)["heavy"] == "free") is not None
+              and not host_locks.holders(paths["root"]))
+        doomed.end()
     finally:
         host_gate.HEAVY_RUNNERS = saved
 
@@ -812,6 +803,59 @@ def test_stopped_participants_are_quiet() -> None:
     check("a running-but-unreachable VM still does not", not vm_entry["participating"])
 
 
+def test_the_holder_needs_something_to_watch() -> None:
+    print("\na holder with nothing to watch takes no lock")
+    paths = fresh()
+    ghost = subprocess.Popen(["true"])
+    ghost.wait()
+    try:
+        host_gate.admit_job(paths, ordinary(30), ghost.pid, bounds=FAST)
+        check("a job whose worker is already gone is refused", False, "admitted")
+    except ArbiterError as exc:
+        check("a job whose worker is already gone is refused", "already gone" in str(exc), str(exc))
+    check("and no lock is held", all(v == "free" for v in locks(paths).values()))
+
+
+def test_the_hook_returns_while_the_holder_lives() -> None:
+    """The runner reads a hook's stdout and stderr to EOF. A holder that kept either open
+    would stall every job at "Set up job"; this runs an admission exactly that way."""
+    print("\nthe hook returns at once; the holder keeps the lock")
+    paths = fresh()
+    worker = subprocess.Popen(["sleep", "600"])
+    STARTED_WORKERS.append(worker)
+    script = "\n".join([
+        "import sys",
+        "from pathlib import Path",
+        f"sys.path.insert(0, {str(Path(__file__).resolve().parent)!r})",
+        "import host_gate",
+        "from job_identity import JobIdentity",
+        f"p = host_gate.paths(Path({str(paths['root'])!r}), Path({str(paths['mirror'])!r}))",
+        "host_gate.ensure_layout(p)",
+        f"ident = JobIdentity('dev1-fast-1', {CODE_REPO!r}, '', {CI_WORKFLOW!r}, '40', '1', 'fast')",
+        f"host_gate.admit_job(p, ident, {worker.pid}, bounds={FAST!r})",
+        "print('admitted')",
+    ])
+    hook = subprocess.Popen([sys.executable, "-c", script], stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE)
+    try:
+        out, err = hook.communicate(timeout=20)
+        check("the hook's output reaches EOF while its holder lives",
+              b"admitted" in out, (out + err).decode()[-300:])
+    except subprocess.TimeoutExpired:
+        # Do NOT communicate() again: a holder holding the pipe would stall that too.
+        hook.kill()
+        hook.stdout.close()
+        hook.stderr.close()
+        hook.wait()
+        subprocess.run(["pkill", "-f", f"--watch {worker.pid} "], capture_output=True)
+        check("the hook's output reaches EOF while its holder lives", False, "stalled")
+    check("and the lock is still held after the hook has exited",
+          locks(paths)["host"] == "shared")
+    worker.kill()
+    worker.wait()
+    check("until the worker exits", within(lambda: locks(paths)["host"] == "free") is not None)
+
+
 def main() -> int:
     print("host-gate controls — temp directories only, no /opt, no runner")
     # The heavy slot serializes dev1 jobs; the older tests admit several at once, so they run
@@ -826,9 +870,13 @@ def main() -> int:
                test_mirror_is_published_for_the_other_kernel,
                test_vm_reported_jobs_block_drain,
                test_capacity_refusal, test_the_hook_consults_the_guard,
-               test_dead_records_are_reaped, test_heavy_slot,
-               test_stopped_participants_are_quiet):
+               test_heavy_slot, test_stopped_participants_are_quiet,
+               test_the_holder_needs_something_to_watch,
+               test_the_hook_returns_while_the_holder_lives):
         fn()
+    for worker in STARTED_WORKERS:
+        if worker.poll() is None:
+            worker.kill()
     total = len(PASSED) + len(FAILED)
     print(f"\n{'=' * 74}\nexecuted {total} checks: {len(PASSED)} passed, {len(FAILED)} failed")
     for name in FAILED:

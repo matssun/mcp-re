@@ -1,26 +1,10 @@
-"""Whether the job that wrote an arbiter record is still running.
+"""Which Runner.Worker a hook runs under, read from the process table.
 
-WHY THIS EXISTS
-===============
-Every arbiter record used to be released by one thing only: the job-completed hook. A
-runner that is killed, crashes, or loses its host never runs that hook, so its record
-stayed forever. Measured on dev1 2026-09-26: 17 records on disk, 1 of them live, the
-oldest from 2026-09-14 -- including a job whose runner service was stopped deliberately
-that morning, and three from runs GitHub reports as succeeded. Ordinary admission never
-read them, which is why CI kept working; the SLO drain waits for every one of them, so no
-SLO measurement could have started since 2026-09-14.
-
-THE RULE
-========
-A record is released when its owner is PROVEN dead, never because it is old. The owner is
-the job's `Runner.Worker` process: GitHub's runner starts one per job and it exits when the
-job ends, whether by success, failure, cancellation or the runner dying. The hook is a
-descendant of that worker, so it can name it.
-
-"Cannot tell" is ALIVE. A record without a worker (written before this module existed, or
-from a kernel we cannot see into), or a process table we cannot read, keeps its lock. The
-pid is paired with the worker's start time, so a recycled pid is not mistaken for the
-original owner.
+The admission hook runs as a child of the job's `Runner.Worker`, which the runner starts
+per job and which exits when the job ends -- by success, failure, cancellation, or the
+runner dying. The job's lock holder watches that process (see `host_locks`), so the hook
+must name it. Elapsed time (`etime`) is used rather than a formatted start date: it has no
+timezone to get wrong.
 """
 
 from __future__ import annotations
@@ -29,10 +13,6 @@ import os
 import subprocess
 import time
 from typing import Callable, Dict, Optional, Tuple
-
-#: A start time within this many seconds of the recorded one is the same process. `etime`
-#: has one-second resolution and the two reads are taken at different moments.
-START_TOLERANCE_S = 5
 
 WORKER_MARK = "Runner.Worker"
 
@@ -82,23 +62,6 @@ def own_worker(table_fn: Callable[[], ProcessTable] = process_table,
             return None
         pid = ppid
     return None
-
-
-def worker_state(worker: Optional[dict], table: Optional[ProcessTable]) -> str:
-    """"alive", "dead" or "unknown" for a recorded worker, read against one process table.
-
-    `table` is None when the process table could not be read; that is "unknown".
-    """
-    if not worker or "pid" not in worker or "started" not in worker or table is None:
-        return "unknown"
-    entry = table.get(int(worker["pid"]))
-    if entry is None:
-        return "dead"
-    _, elapsed, command = entry
-    started = int(time.time()) - elapsed
-    if WORKER_MARK not in command or abs(started - int(worker["started"])) > START_TOLERANCE_S:
-        return "dead"  # the pid now belongs to some other process
-    return "alive"
 
 
 def readable_table(table_fn: Callable[[], ProcessTable] = process_table) -> Optional[ProcessTable]:
