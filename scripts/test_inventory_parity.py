@@ -53,15 +53,17 @@ PROXY_FEATURES = ("dev_env_key_source,pkcs11_keysource,redis_replay,online_ocsp,
 CARGO_LANES = [
     ("workspace", "cargo test --workspace (the lane `bazel test //...` replaced on the PR path)",
      ["--workspace"]),
-    ("proxy-all-features", "cargo-features / Test (mcp-re-proxy, all feature gates)",
+    ("proxy-all-features", "cargo test -p mcp-re-proxy, all features (replaced on the PR path)",
      ["-p", "mcp-re-proxy", "--features", PROXY_FEATURES]),
-    ("proxy-async-serve", "cargo-features / Release gate — replay race, bounded drain, inner plane",
+    ("proxy-async-serve", "cargo release-gate lanes, async_serve (replaced by Bazel lanes)",
      ["-p", "mcp-re-proxy", "--features", "async_serve",
       "--test", "integration_async", "--test", "async_drain_test"]),
 ]
 
 # Known gaps: pattern over `<key>::<test name>`, where only `*` is a wildcard -> reason. A reason starts with
 #   KEEP: the test belongs to cargo and is deleted with it;
+#   LANE: a `manual` Bazel target that a named CI job runs explicitly (`bazel test //...`
+#         skips it); the reason names the job;
 #   OPEN: Bazel must compile it before the cargo test lanes leave the PR path. The rule is
 #         compile, not run: a test nothing compiles rots unseen, which is how
 #         `tls_load_harness_bench` stopped building. Self-skipping tests are OPEN too.
@@ -70,9 +72,9 @@ ALLOWED: dict[str, str] = {
         "KEEP: they check the cargo fallback table against the source tree through "
         "CARGO_MANIFEST_DIR; Bazel resolves runfiles instead, and the table goes with Cargo",
     "mcp-re-proxy/tests/tls_load_harness_bench.rs::*":
-        "OPEN: compiled on every `bazel test //...` by :tls_load_harness_bench_builds, but "
-        "the target is `manual` because its tests start a Docker Redis fleet; cargo runs "
-        "them on every PR, so the lane that replaces cargo's needs Docker",
+        "LANE: `manual` because its tests start a Docker Redis fleet; ci.yml's "
+        "release-gates job runs it (`Release gate — load harness`), and "
+        ":tls_load_harness_bench_builds compiles it on every `bazel test //...`",
 }
 
 
