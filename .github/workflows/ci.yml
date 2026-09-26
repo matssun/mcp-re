@@ -1111,18 +1111,20 @@ jobs:
               libclang-dev
           fi
 
-      # Cache the Bazel repository + disk cache across runs (crate_universe hub,
-      # the gazelle_rust Go binary, rules_go/gazelle). Keyed on the module lock, the
-      # crate lock the hub resolves against, and Cargo.lock (which gazelle_rust still
-      # reads), so a dependency change busts it.
-      - name: Cache Bazel
-        uses: actions/cache@v6
+      # The Bazel output base and bazelisk download, restored from the newest cache main
+      # saved (same locks first, then any). Only a push to main saves one — see the last
+      # step — so the cache follows main instead of freezing at the first build under a
+      # lock hash, and a PR never uploads its own ~2.4 GB copy. The key names the locks
+      # the external repositories come from, and Cargo.lock, which gazelle_rust reads.
+      - name: Restore Bazel cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ~/.cache/bazel
             ~/.cache/bazelisk
-          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock', 'Cargo.lock') }}
+          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock', 'Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
+            bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock', 'Cargo.lock') }}-
             bazel-${{ runner.os }}-
 
       - name: Bazel version
@@ -1135,6 +1137,17 @@ jobs:
       # (2) Parity: the Bazel suite must pass like the cargo suite.
       - name: Bazel test parity (//...)
         run: bazel test //... --test_output=errors
+
+      # After a green run on main only: what the next PR restores. Saving on success
+      # alone keeps a cache from a run that failed halfway out of the chain.
+      - name: Save Bazel cache (main)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/.cache/bazel
+            ~/.cache/bazelisk
+          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock', 'Cargo.lock') }}-${{ github.sha }}
 
   sdk-python:
     name: downloader — Python maturin wheel (no Bazel)

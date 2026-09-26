@@ -76,15 +76,16 @@ jobs:
           echo "no libclang on the runner image" >&2
           exit 1
 
-      # Same key as ci.yml's bazel job, so this restores the cache that job saved.
-      - name: Cache Bazel
-        uses: actions/cache@v6
+      # Restores the newest cache ci.yml's bazel job saved on main; never saves one.
+      - name: Restore Bazel cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ~/.cache/bazel
             ~/.cache/bazelisk
-          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock', 'Cargo.lock') }}
+          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock', 'Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
+            bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock', 'Cargo.lock') }}-
             bazel-${{ runner.os }}-
 
       - name: Collect
