@@ -1,8 +1,8 @@
 """Controls for `job_liveness` against REAL processes on this kernel.
 
-The host-gate tests inject a fake process table; that cannot establish that `ps` is read
-correctly, that the parent walk finds a real worker, or that a real death is seen. This
-spawns a process named like a runner's worker, with a child standing in for the hook.
+That `ps` is read correctly and that the parent walk finds a real worker cannot be shown
+with a fake process table. This spawns a process named like a runner's worker, with a child
+standing in for the hook. (Real deaths are exercised by the lock-holder tests.)
 
 Run:  python3 tools/slo/test_job_liveness.py
 """
@@ -59,20 +59,13 @@ def main() -> int:
               str(found))
         check("from a process with no worker above it, nothing is found",
               job_liveness.own_worker(start_pid=os.getpid()) is None)
-        state = job_liveness.worker_state(found, job_liveness.readable_table())
-        check("a running worker is alive", state == "alive", state)
-
-        os.killpg(worker.pid, signal.SIGKILL)
-        worker.wait()
-        state = job_liveness.worker_state(found, job_liveness.readable_table())
-        check("a killed worker is dead", state == "dead", state)
     finally:
         if worker.poll() is None:
             os.killpg(worker.pid, signal.SIGKILL)
             worker.wait()
 
-    check("an unreadable table is unknown, not dead",
-          job_liveness.worker_state({"pid": 1, "started": 0}, None) == "unknown")
+    check("an unreadable process table reads as None, not as empty",
+          job_liveness.readable_table(lambda: (_ for _ in ()).throw(OSError("x"))) is None)
     total = len(PASSED) + len(FAILED)
     print(f"\nexecuted {total} checks: {len(PASSED)} passed, {len(FAILED)} failed")
     return 0 if not FAILED else 1
