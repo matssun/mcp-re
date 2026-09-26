@@ -103,6 +103,18 @@ def listed(exe: str, cwd: Path) -> tuple[list[str], list[str]]:
     return names([]), names(["--ignored"])
 
 
+def doc_name(name: str, pkg: str | None = None) -> str:
+    """One spelling for a doctest on both sides. Run output appends ` - compile fail` or
+    ` - compile` to what `--list` prints, and rustdoc under Bazel may print the path
+    relative to the package rather than the workspace."""
+    for suffix in (" - compile fail", " - compile"):
+        if name.endswith(suffix):
+            name = name[:-len(suffix)]
+    if pkg and not name.startswith(f"{pkg}/"):
+        name = f"{pkg}/{name}"
+    return name
+
+
 def rel(path: str) -> str:
     return str(Path(path).resolve().relative_to(REPO))
 
@@ -130,7 +142,7 @@ def collect_cargo() -> dict:
         lanes.append({"lane": lane, "ci_step": step, "binaries": binaries})
     def doctests(extra: list[str]) -> list[str]:
         out = run(["cargo", "test", "--workspace", "--doc", "--", "--list", "--format=terse", *extra])
-        return sorted(l[:-len(": test")] for l in out.splitlines() if l.endswith(": test"))
+        return sorted(doc_name(l[:-len(": test")]) for l in out.splitlines() if l.endswith(": test"))
     lanes.append({"lane": "doctests", "ci_step": "cargo / Test (workspace) runs doctests too",
                   "binaries": [{"binary": "doctests", "key": "[doc]", "tests": doctests([]),
                                 "ignored": doctests(["--ignored"])}]})
@@ -173,8 +185,8 @@ def collect_bazel() -> dict:
     targets = bazel_test_targets()
     run(["bazel", "build", "--noshow_progress", *(t["label"] for t in targets if not t["manual"])])
     bin_dir = Path(run(["bazel", "info", "bazel-bin"]).strip())
-    binaries = []
-    for t in targets:
+    binaries = doc_binaries([t for t in targets if t["key"] == "[doc]"])
+    for t in (t for t in targets if t["key"] != "[doc]"):
         entry = {"binary": t["label"], "key": t["key"], "manual": t["manual"],
                  "tests": [], "ignored": []}
         if t["manual"]:
@@ -191,6 +203,29 @@ def collect_bazel() -> dict:
         binaries.append(entry)
     return {"side": "bazel", "lanes": [{"lane": "rust_test", "ci_step": "bazel / bazel test //...",
                                         "binaries": binaries}]}
+
+
+def doc_binaries(targets: list[dict]) -> list[dict]:
+    """rules_rust's rustdoc runner is a generated script that forwards no arguments, so
+    `--list` cannot reach it. Doctests are cheap: run them and read the names from the log."""
+    if not targets:
+        return []
+    labels = [t["label"] for t in targets]
+    run(["bazel", "test", "--noshow_progress", *labels])
+    logs = Path(run(["bazel", "info", "bazel-testlogs"]).strip())
+    out = []
+    for label in labels:
+        pkg, name = label[2:].split(":")
+        tests, ignored = [], []
+        for line in (logs / pkg / name / "test.log").read_text().splitlines():
+            m = re.fullmatch(r"test (.+) \.\.\. (ok|ignored|FAILED)", line.strip())
+            if m:
+                tests.append(doc_name(m[1], pkg))
+                if m[2] == "ignored":
+                    ignored.append(tests[-1])
+        out.append({"binary": label, "key": "[doc]", "manual": False,
+                    "tests": sorted(tests), "ignored": sorted(ignored)})
+    return out
 
 
 def names(inventory: dict, *, manual: bool | None = None, ignored: bool | None = None) -> set[str]:
