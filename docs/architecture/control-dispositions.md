@@ -181,7 +181,10 @@ against the unit whose proposition it establishes.
 `use_pinned_toolchain.sh`, `verification_runner_preflight.sh`, `crate_spec_parity_gate.py`
 (added 2026-09-26: while Bazel and Cargo each declare the external crates, it keeps the
 Bazel-built artifacts on the crate set the Cargo lanes measured — its failure mode is a
-measurement taken over a different build than the one shipped).
+measurement taken over a different build than the one shipped), `test_inventory_parity.py`
+(added 2026-09-26: it compares the test names cargo's PR lanes compile with those in the
+binaries `bazel test //...` runs, so moving the test lane to Bazel cannot silently drop a
+test — its failure mode is a lane that is green because it never compiled the test).
 **Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 2.
 
 These keep the machinery that RUNS the batteries able to run them: a Bazel target list that
