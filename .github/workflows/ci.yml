@@ -892,7 +892,7 @@ jobs:
         run: cargo test -p mcp-re-conformance --test scitt_interop_test
 
   release-gates:
-    name: release gates (Bazel) + saturation liveness
+    name: feature-gated backend tests (Bazel, 1.97.1)
     runs-on: ubuntu-latest
     # The ADR-MCPRE-051 §7 release gates as NAMED, attributable lanes (MCPRE-123). Their
     # tests also run inside the bazel job's `bazel test //...`; naming them makes each a
