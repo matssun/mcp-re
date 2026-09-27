@@ -836,13 +836,25 @@ jobs:
           python3 mcp-re-conformance/tools/rfc9421_cross_verify.py --emit-external-kat
           git diff --exit-code mcp-re-conformance/tests/vectors/http-profile/external_kat.json
 
-      - name: Select pinned toolchain (from rust-toolchain.toml)
-        run: rustup show && rustc --version && cargo --version
+      - uses: actions/checkout@v7
+
+      - name: Restore Bazel cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.cache/bazel
+            ~/.cache/bazelisk
+          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock', 'Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock', 'Cargo.lock') }}-
+            bazel-${{ runner.os }}-
 
       # Direction 2: the externally produced signature verifies under the Rust
-      # MCP-RE verifier.
+      # MCP-RE verifier. Run under Bazel instead of cargo.
       - name: Cross-verify (external → us) under the Rust verifier
-        run: cargo test -p mcp-re-conformance --test rfc9421_cross_verification_test
+        run: >-
+          scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
+          //mcp-re-conformance:rfc9421_cross_verification_test
 
       # ADR-MCPRE-052 §9 (MCPRE-122): the same two-direction gate for the compact-
       # JWS delegation credential, against an independent JOSE/EdDSA impl.
@@ -857,9 +869,11 @@ jobs:
           git diff --exit-code mcp-re-conformance/tests/vectors/delegation-profile/external_delegation_kat.json
 
       # Direction 2: the externally produced credential verifies under the Rust
-      # MCP-RE delegation verifier.
+      # MCP-RE delegation verifier. Run under Bazel instead of cargo.
       - name: Cross-verify delegation (external → us) under the Rust verifier
-        run: cargo test -p mcp-re-conformance --test delegation_cross_verification_test
+        run: >-
+          scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
+          //mcp-re-conformance:delegation_cross_verification_test
 
       # MCPRE-501: the same two-direction gate for SCITT, against RFC 9942/9943 AS
       # PUBLISHED. Its absence is why a non-conforming receipt encoding shipped: the
@@ -879,17 +893,22 @@ jobs:
       # Direction 2: statements and receipts BUILT by the independent implementation
       # must verify under the Rust verifier, and each refusal a conforming verifier owes
       # must be refused — including a draft-labelled receipt, so a regression to those
-      # labels fails here instead of shipping.
+      # labels fails here instead of shipping. Run under Bazel instead of cargo.
       - name: Cross-verify SCITT (external → us) under the Rust verifier
-        run: cargo test -p mcp-re-conformance --test scitt_cross_verification_test
+        run: >-
+          scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
+          //mcp-re-conformance:scitt_cross_verification_test
 
       # MCPRE-501 slice 4: the frozen third-party interoperability corpus — a receipt
       # produced by @transmute/cose (RFC 9942's editor's implementation: its RFC 9162
       # tree, its proof encoder, its CBOR) verified offline here, plus the mutations of
       # that receipt MCP-RE must refuse. No network and no peer install: the corpus is
       # committed octets, which is what makes the offline claim reproducible.
+      # Run under Bazel instead of cargo.
       - name: Third-party SCITT interoperability corpus (offline verification)
-        run: cargo test -p mcp-re-conformance --test scitt_interop_test
+        run: >-
+          scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
+          //mcp-re-conformance:scitt_interop_test
 
   release-gates:
     name: feature-gated backend tests (Bazel, 1.97.1)
