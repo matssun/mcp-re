@@ -714,14 +714,8 @@ jobs:
         run: rustup show && rustc --version && cargo --version
 
       # Bazel resolves external crates from MODULE.bazel's crate.spec entries and
-      # bazel/crates.lock; the cargo steps below read the Cargo manifests and Cargo.lock.
-      # Until the cargo lanes are gone that is two declarations of one dependency set,
-      # and this is what keeps them equal — a Dependabot bump to Cargo.lock alone fails
-      # here instead of leaving the Bazel-built proxy image on the old version.
-      - name: Crate-spec parity gate (Bazel's crates == the Cargo workspace's)
-        run: |
-          python3 scripts/crate_spec_parity_gate.py --selftest
-          python3 scripts/crate_spec_parity_gate.py
+      # bazel/crates.lock. Cargo manifests remain for local development and SDK builds
+      # (which are out of scope per ADR-MCPS-048/71), but Cargo is not used in CI.
 
       # MCPRE-427 (#415 rev 2 §12.2). The hash/digest checks themselves run inside
       # the `bazel` job's `bazel test //...` (corpus_pinning_test + the frozen runners,
@@ -789,9 +783,9 @@ jobs:
           path: |
             ~/.cache/bazel
             ~/.cache/bazelisk
-          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock', 'Cargo.lock') }}-${{ github.sha }}
+          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-${{ github.sha }}
           restore-keys: |
-            bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock', 'Cargo.lock') }}-
+            bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-
             bazel-${{ runner.os }}-
 
       # Direction 2: the externally produced signature verifies under the Rust
@@ -923,9 +917,9 @@ jobs:
           path: |
             ~/.cache/bazel
             ~/.cache/bazelisk
-          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock', 'Cargo.lock') }}-${{ github.sha }}
+          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-${{ github.sha }}
           restore-keys: |
-            bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock', 'Cargo.lock') }}-
+            bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-
             bazel-${{ runner.os }}-
 
       # These suites share the `integration_async` binary, so each lane selects by module
@@ -1082,9 +1076,9 @@ jobs:
           path: |
             ~/.cache/bazel
             ~/.cache/bazelisk
-          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock', 'Cargo.lock') }}-${{ github.sha }}
+          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-${{ github.sha }}
           restore-keys: |
-            bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock', 'Cargo.lock') }}-
+            bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-
             bazel-${{ runner.os }}-
 
       - name: Bazel version
@@ -1108,7 +1102,7 @@ jobs:
           path: |
             ~/.cache/bazel
             ~/.cache/bazelisk
-          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock', 'Cargo.lock') }}-${{ github.sha }}
+          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-${{ github.sha }}
 
   sdk-python:
     name: downloader — Python maturin wheel (no Bazel)
