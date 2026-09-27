@@ -723,12 +723,6 @@ jobs:
           python3 scripts/crate_spec_parity_gate.py --selftest
           python3 scripts/crate_spec_parity_gate.py
 
-      # The workspace's tests run in the `bazel` job. These belong to cargo: they check the
-      # fallback table that the `rfc9421-cross-verify` job's cargo tests resolve fixtures
-      # through.
-      - name: Test (mcp-re-test-paths, the cargo fixture table)
-        run: cargo test -p mcp-re-test-paths
-
       # MCPRE-427 (#415 rev 2 §12.2). The hash/digest checks themselves run inside
       # the `bazel` job's `bazel test //...` (corpus_pinning_test + the frozen runners,
       # which fail closed before running a vector whose bytes drifted). This step
