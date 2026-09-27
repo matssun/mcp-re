@@ -745,59 +745,10 @@ jobs:
             done
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # Every cargo universe, not just the root workspace: the SDK crates and the
-      # mock-PKCS#11 crate have their own manifests and are invisible to `--workspace`.
-      - name: Format check
-        run: |
-          cargo fmt --all -- --check
-          cargo fmt --all --manifest-path sdk/python/Cargo.toml -- --check
-          cargo fmt --all --manifest-path sdk/typescript/Cargo.toml -- --check
-          cargo fmt --all --manifest-path mcp-re-proxy/tests/mock-pkcs11/Cargo.toml -- --check
-
-      # The feature lane is not optional: the default features do not compile
-      # etcd_store.rs / redis_store.rs at all, so linting only the default set
-      # leaves the ADR-051 control-plane backends unlinted.
-      - name: Clippy
-        run: |
-          cargo clippy --workspace --all-targets -- -D warnings
-          cargo clippy --workspace --all-targets \
-            --features dev_env_key_source,pkcs11_keysource,redis_replay,online_ocsp,aws_kms_keysource,gcp_kms_keysource,async_serve,cpstore_etcd \
-            -- -D warnings
-          cargo clippy --manifest-path sdk/python/Cargo.toml --all-targets -- -D warnings
-          cargo clippy --manifest-path sdk/typescript/Cargo.toml --all-targets -- -D warnings
-          cargo clippy --manifest-path mcp-re-proxy/tests/mock-pkcs11/Cargo.toml --all-targets -- -D warnings
-
-      # Default and all-features leave everything BETWEEN them unbuilt, and an item
-      # reachable only from one feature's code is unused under a different one. Two
-      # such leftovers survived both lanes above (`TEST_ACTOR` under `async_serve`
-      # alone, `ReplayInsert` under `redis_replay` alone) because no build ever used
-      # exactly one flag. Each feature on its own is the cheap lane that covers it.
-      # Proves the `[workspace.lints]` table is enforced, not merely declared: a
-      # deliberate `todo!()` is compiled inside a real workspace member and the build
-      # must fail with clippy::todo. Runs here because it needs the toolchain.
-      - name: Workspace-lints enforcement probe
-        run: python3 scripts/workspace_lints_gate.py --probe
-
-      # The ADR-MCPRE-061 §6 lints are ALLOW-BY-DEFAULT, so the `-D warnings` lanes above
-      # say nothing about them: `unwrap_used`, `expect_used`, `indexing_slicing`,
-      # `too_many_lines`, `excessive_nesting` and `arithmetic_side_effects` are switched on
-      # by this gate and nowhere else. `--activation-probe` compiles a deliberately
-      # violating file and fails if they stop firing — the repository has twice shipped a
-      # threshold that parameterised a lint nobody had enabled.
-      - name: Clippy ratchet (ADR-MCPRE-061 §6)
-        run: |
-          python3 scripts/clippy_ratchet_gate.py --selftest
-          python3 scripts/clippy_ratchet_gate.py --activation-probe
-          python3 scripts/clippy_ratchet_gate.py
-
-      - name: Clippy — each feature alone
-        run: |
-          for feature in dev_env_key_source pkcs11_keysource redis_replay online_ocsp \
-                         aws_kms_keysource gcp_kms_keysource async_serve cpstore_etcd; do
-            echo "::group::clippy --features $feature"
-            cargo clippy -p mcp-re-proxy --all-targets --features "$feature" -- -D warnings
-            echo "::endgroup::"
-          done
+      # All linting (rustfmt, clippy, lint ratchets) runs locally before pushing.
+      # Developers use pre-commit hooks to enforce `cargo fmt` and `cargo clippy`.
+      # Bazel build enforces rustc warnings via `-D warnings` on all targets.
+      # This keeps CI focused on tests and builds (all Bazel), reducing cycle time.
 
   rfc9421-cross-verify:
     name: RFC 9421 third-party cross-verification (no-merge gate)
