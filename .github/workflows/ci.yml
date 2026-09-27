@@ -12,17 +12,15 @@
 #     with; `scripts/test_inventory_parity.py` (weekly) keeps that true. The cargo
 #     job still runs `mcp-re-test-paths`' own tests: they check the cargo-side
 #     fixture table the remaining cargo test lanes resolve through.
-#   - BLOCKING: `cargo test` over mcp-re-proxy with the four NON-DEFAULT feature
-#     gates enabled (dev_env_key_source, pkcs11_keysource, redis_replay,
-#     online_ocsp). The default `cargo test --workspace` does NOT compile these
-#     modules, so without this job the v0.3 hardening that lives behind them
-#     (the Redis WAIT-quorum fake-connection harness, the PKCS#11 sign-loop
-#     proof, the OCSP AIA-SSRF inet_aton parser, the env-key-source no-mutation
-#     contract) would have zero cargo-CI coverage. The PKCS#11 sign+verify e2e
-#     runs against a hermetic in-tree mock provider, so it needs no external
-#     token. The remaining live-infra e2e tests (real Redis / OCSP responder)
-#     self-skip cleanly when their MCP_RE_TEST_* env vars are unset; they hard-fail
-#     only when MCP_RE_REQUIRE_LIVE_INFRA is set, which this job leaves unset.
+#     The feature-gated suites are Bazel targets too, each built with the features
+#     its tests need (the ext flavors, dev_env_key_source, async_serve), so the
+#     same `bazel test //...` runs what cargo's all-features lane ran: the Redis
+#     WAIT-quorum harness, the PKCS#11 sign loop against a Bazel-built mock token,
+#     the OCSP AIA-SSRF parser, the env-key-source contract. Live-infra e2e tests
+#     skip themselves while their MCP_RE_TEST_* variables are unset.
+#   - BLOCKING: the `release-gates` job runs the ADR-MCPRE-051 §7 release gates as
+#     named lanes under Bazel, the load harness's Docker tests, and the
+#     saturation rig's liveness check, which stays a cargo example.
 #   - BLOCKING: `cargo fmt --check` and `cargo clippy -D warnings`. The tree carries
 #     zero warnings, so any new one is a build failure rather than a line of scroll-
 #     back nobody reads. Both run over EVERY cargo universe (the root workspace, the
@@ -726,8 +724,8 @@ jobs:
           python3 scripts/crate_spec_parity_gate.py
 
       # The workspace's tests run in the `bazel` job. These belong to cargo: they check the
-      # fallback table that the `cargo-features` and `rfc9421-cross-verify` jobs' cargo
-      # tests resolve fixtures through.
+      # fallback table that the `rfc9421-cross-verify` job's cargo tests resolve fixtures
+      # through.
       - name: Test (mcp-re-test-paths, the cargo fixture table)
         run: cargo test -p mcp-re-test-paths
 
@@ -893,12 +891,14 @@ jobs:
       - name: Third-party SCITT interoperability corpus (offline verification)
         run: cargo test -p mcp-re-conformance --test scitt_interop_test
 
-  cargo-features:
-    name: cargo test (feature-gated backends, 1.97.1)
+  release-gates:
+    name: feature-gated backend tests (Bazel, 1.97.1)
     runs-on: ubuntu-latest
-    # No live infra is provisioned here, so MCP_RE_REQUIRE_LIVE_INFRA is left unset
-    # and the *_e2e_test suites self-skip. This job exercises the feature-gated
-    # UNIT tests + adapter compilation only.
+    # The ADR-MCPRE-051 §7 release gates as NAMED, attributable lanes (MCPRE-123). Their
+    # tests also run inside the bazel job's `bazel test //...`; naming them makes each a
+    # gate whose failure is unambiguous. Each lane runs through run_test_lane.sh, which
+    # refuses one that ran zero tests, with --nocache_test_results so a gate runs rather
+    # than replays a cached result, and --test_output=all so the log names what ran.
     steps:
       - uses: actions/checkout@v7
 
@@ -953,37 +953,22 @@ jobs:
               libclang-dev
           fi
 
-      - name: Select pinned toolchain (from rust-toolchain.toml)
-        run: rustup show && rustc --version && cargo --version
+      - name: Restore Bazel cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.cache/bazel
+            ~/.cache/bazelisk
+          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock', 'Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock', 'Cargo.lock') }}-
+            bazel-${{ runner.os }}-
 
-      # Build the WHOLE workspace (not just -p mcp-re-proxy): the proxy's
-      # integration tests spawn the cross-crate `echo-inner` fixture binary, which
-      # cargo does NOT auto-build for another crate's integration tests.
-      # `--workspace` puts it in target/debug for mcp-re-test-paths to find.
-      # `async_serve,cpstore_etcd` are included so the async serving-path tests and
-      # the async etcd authoritative replay store (MCPRE-117) get per-PR compile
-      # coverage here: the replay_race_harness_test async lanes compile, the in-memory
-      # async full-serving-path race RUNS, and the live Redis/etcd lanes self-skip
-      # (no MCP_RE_REQUIRE_LIVE_INFRA — the nightly live-infra-e2e lane is where they
-      # bind). Without cpstore_etcd the async etcd store would have NO per-PR build.
-      - name: Build (workspace, all feature gates)
-        run: >-
-          cargo build --workspace --all-targets
-          --features dev_env_key_source,pkcs11_keysource,redis_replay,online_ocsp,aws_kms_keysource,gcp_kms_keysource,async_serve,cpstore_etcd
-
-      - name: Test (mcp-re-proxy, all feature gates; e2e self-skip without live infra)
-        run: >-
-          cargo test -p mcp-re-proxy
-          --features dev_env_key_source,pkcs11_keysource,redis_replay,online_ocsp,aws_kms_keysource,gcp_kms_keysource,async_serve,cpstore_etcd
-
-      # ADR-MCPRE-051 §7 release gates as NAMED, attributable lanes (MCPRE-123).
-      # These targets also run inside the whole-suite step above; naming them makes
-      # each a required release gate whose failure is unambiguous. Fast (cached build).
-
-      # These suites now share the `integration_async` binary, so each lane selects
-      # by module filter. `run_test_lane.sh` refuses a filter that matches nothing:
-      # a missing BINARY exits 101, but a missing FILTER prints `0 passed` and exits
-      # 0, which would make a release gate green having measured nothing.
+      # These suites share the `integration_async` binary, so each lane selects by module
+      # filter, passed to libtest with --test_arg. A missing BINARY fails the build, but a
+      # FILTER that matches nothing prints `0 passed` and exits 0; run_test_lane.sh refuses
+      # that. The target is built with `async_serve`, which `async_replay_test.rs` and
+      # `http_inner_test.rs` need: without it they compile to zero tests.
 
       # §4 — replay race: exactly one Fresh, N-1 Replay, zero Fresh when the store is
       # Unavailable (fail-closed). (#314)
@@ -995,30 +980,34 @@ jobs:
       # refuses; it still does not measure a shipped backend. CROSS-REPLICA is
       # `replay_race_harness_test.rs` over live Redis and etcd, in
       # `live-infra-e2e.yml`, not here.
-      #
-      # `--features async_serve` is load-bearing: `async_replay_test.rs` is
-      # `#![cfg(feature = "async_serve")]`, so without it the module compiles to zero
-      # tests and libtest exits 0. `run_test_lane.sh` refuses a zero-count lane.
       - name: Release gate — replay race
         run: >-
-          scripts/run_test_lane.sh cargo test -p mcp-re-proxy --features async_serve
-          --test integration_async -- async_replay_test::
+          scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
+          //mcp-re-proxy:integration_async_test --test_arg=async_replay_test::
 
       # §6 — bounded graceful drain: in-flight requests complete, zero abandoned,
       # a stuck request cannot delay exit past the grace bound. (MCPRE-115)
-      # Still its own binary: it runs under RUST_TEST_THREADS=1, which is a property
-      # of a binary rather than of a test.
+      # Its own binary: it runs under RUST_TEST_THREADS=1, which the target sets.
       - name: Release gate — bounded drain
         run: >-
-          scripts/run_test_lane.sh cargo test -p mcp-re-proxy --features async_serve
-          --test async_drain_test
+          scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
+          //mcp-re-proxy:async_drain_test
 
       # §3 — inner plane: concurrent in-flight (no serial pipe) + pool-exhaustion
       # backpressure fails closed without queuing. (MCPRE-118)
       - name: Release gate — inner-plane concurrency + backpressure
         run: >-
-          scripts/run_test_lane.sh cargo test -p mcp-re-proxy --features async_serve
-          --test integration_async -- http_inner_test::
+          scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
+          //mcp-re-proxy:integration_async_test --test_arg=http_inner_test::
+
+      # §7 — the load harness's own tests: its smoke run, the in-process app_run
+      # checks, and one tiny ADR-051 run. They start a Redis wait-quorum fleet in Docker,
+      # which is why the target is `manual` and absent from `bazel test //...`, and why
+      # it runs here, on a runner with Docker.
+      - name: Release gate — load harness (Docker Redis)
+        run: >-
+          scripts/run_test_lane.sh bazel test --test_output=all --nocache_test_results
+          //mcp-re-proxy:tls_load_harness_bench
 
       # §7 — SLO gate mechanism self-check (MCPRE-110/123). Proves the gate logic
       # (correctness floors bite; declared capacity/scaling targets enforce; null
@@ -1036,6 +1025,10 @@ jobs:
       # because on that workstation these rules never fire, so nothing else establishes them.
       - name: Release gate — local-regression gate comparability (self-test)
         run: python3 scripts/adr051_slo_gate.py --selftest
+
+      # The saturation rig below is a cargo example, not yet a Bazel target.
+      - name: Select pinned toolchain (from rust-toolchain.toml)
+        run: rustup show && rustc --version && cargo --version
 
       # LIVENESS of the standardized capacity instrument, not a measurement.
       #

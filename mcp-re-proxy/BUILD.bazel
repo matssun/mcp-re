@@ -1337,6 +1337,8 @@ nt_rust_test(
 # test sandbox cannot provide — so it is excluded from `bazel test //...` and driven
 # by cargo / the GKE runbook. Built against the redis_replay ext flavor.
 # `:tls_load_harness_bench_builds` below compiles it on every `bazel test //...`.
+# It spawns the ext binary: the harness runs a shared Redis replay tier, which only a
+# redis_replay build accepts.
 nt_rust_test(
     name = "tls_load_harness_bench",
     srcs = ["tests/tls_load_harness_bench.rs"],
@@ -1345,11 +1347,11 @@ nt_rust_test(
     crate_features = _PROXY_EXT_FEATURES,
     tags = ["manual"],
     data = [
-        ":mcp_re_proxy_cli",
+        ":mcp_re_proxy_ext_bin",
     ],
     edition = "2021",
     env = {
-        "MCP_RE_PROXY_CLI": "$(rlocationpath :mcp_re_proxy_cli)",
+        "MCP_RE_PROXY_CLI": "$(rlocationpath :mcp_re_proxy_ext_bin)",
     },
     env_inherit = [
         "MCP_RE_LOADGEN_CONCURRENCY",
