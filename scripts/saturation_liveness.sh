@@ -33,12 +33,11 @@ fi
 trap sat_fleet_down EXIT
 sat_fleet_up || exit 2
 
-# Debug binaries: this lane asserts admission, never speed, and an optimized build would
-# add minutes to every pull request to prove the same thing.
-echo "saturation liveness: building the rig (debug)"
-cargo build -p mcp-re-proxy --features async_serve,redis_replay --bins --examples
+# Debug binaries under Bazel: this lane asserts admission, never speed, and an
+# optimized build would add minutes to every pull request to prove the same thing.
+echo "saturation liveness: building the rig (Bazel debug)"
+bazel build -c dbg //mcp-re-proxy:saturation_rig
 
-export MCP_RE_PROXY_CLI="target/debug/mcp-re-proxy"
-export CARGO_BIN_EXE_DIR="target/debug/examples"
+export MCP_RE_PROXY_CLI="$(bazel cquery --output=files -c dbg //mcp-re-proxy:mcp_re_proxy_cli 2>/dev/null | head -1)"
 
-target/debug/examples/saturation_rig --smoke
+bazel run -c dbg //mcp-re-proxy:saturation_rig -- --smoke
