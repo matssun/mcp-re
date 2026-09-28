@@ -2424,12 +2424,12 @@ conjunct = "nbf/exp are read out of the published credential, never taken from t
 # implementation.
 path = "mcp-re-http-profile/src/custody/active_key.rs"
 anchor = """
-            delegated_kid: claims.delegated_kid,
+            jti: claims.jti,
             nbf: claims.nbf,
             exp: claims.exp,
 """
 weakening = """
-            delegated_kid: claims.delegated_kid,
+            jti: claims.jti,
             nbf: requested_claims.nbf,
             exp: requested_claims.exp,
 """
@@ -6816,10 +6816,10 @@ theorem = "THM-0091"
 conjunct = "the validity a response may advertise is bounded by the credential it is signed under, not only by the configured TTL"
 path = "mcp-re-proxy/src/http_profile_serve/signing_window.rs"
 anchor = """
-            expires: now.saturating_add(ttl_secs).min(exp),
+        let expires = now.saturating_add(ttl_secs).min(key.exp());
 """
 weakening = """
-            expires: now.saturating_add(ttl_secs),
+        let expires = now.saturating_add(ttl_secs);
 """
 expect_red = [
   "lib#http_profile_serve::signing_window::tests::the_credential_bounds_a_ttl_that_would_outlive_it",
