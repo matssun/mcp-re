@@ -19,6 +19,7 @@ filegroup(
 nt_rust_library(
     name = "mcp_re_demo",
     srcs = [
+        "src/demo_fixture_files.rs",
         "src/demo_fixtures.rs",
         "src/lib.rs",
     ],
