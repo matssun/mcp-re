@@ -57,6 +57,8 @@ pub struct ActiveDelegatedKey {
     credential: String,
     /// Read out of `credential`, never supplied.
     delegated_kid: String,
+    /// Read out of `credential`, never supplied — the revocation identifier.
+    jti: String,
     /// Read out of `credential`, never supplied. `exp` is the fail-closed bound: a signer
     /// MUST stop signing off this snapshot once `now >= exp`.
     nbf: i64,
@@ -121,6 +123,7 @@ impl ActiveDelegatedKey {
             server_signer,
             credential,
             delegated_kid: claims.delegated_kid,
+            jti: claims.jti,
             nbf: claims.nbf,
             exp: claims.exp,
         })
@@ -135,6 +138,12 @@ impl ActiveDelegatedKey {
     /// `server_signer.keyid`. Read out of the credential.
     pub fn delegated_kid(&self) -> &str {
         &self.delegated_kid
+    }
+
+    /// The credential id — the revocation identifier a verifier's RevocationSource is
+    /// consulted with. Read out of the credential.
+    pub fn jti(&self) -> &str {
+        &self.jti
     }
 
     /// The server-signer identity naming this delegated key.
@@ -267,6 +276,18 @@ mod tests {
         let active = offer(&key, &request, &header, &request).expect("the exact request");
         assert_eq!((active.nbf(), active.exp()), (NBF, EXP));
         assert_eq!(active.delegated_kid(), request.delegated_kid);
+    }
+
+    /// The revocation identifier is the credential's own `jti`.
+    #[test]
+    fn the_credential_id_is_read_out_of_the_credential() {
+        let key = delegated();
+        let (header, request, _) = requested(&key);
+        let active = offer(&key, &request, &header, &request).expect("the exact request");
+        assert_eq!(
+            active.jti(),
+            format!("{ROOT_KID}#{}#0", request.delegated_kid)
+        );
     }
 
     /// A credential attesting a DIFFERENT key publishes nothing: the snapshot's RFC 9421

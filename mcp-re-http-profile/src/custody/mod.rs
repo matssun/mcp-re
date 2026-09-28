@@ -176,51 +176,40 @@ where
     /// trust epoch), so the node swaps to the new epoch within the bounded poll window
     /// rather than waiting for the next scheduled rotation.
     ///
-    /// **The successor is minted BEFORE the predecessor is dropped.** Clearing
-    /// `active` first and only then attempting issuance meant a transient root blip at
-    /// exactly that instant left the node with no signing key at all — every response
-    /// failing `delegated_signing_unavailable` until the root came back — which is the
-    /// opposite of the rotation contract, where a failed issuance keeps serving the
-    /// still-valid key until its own `exp`. An epoch advance is a scheduled event; a
-    /// root blip is not, and the two must not compose into an outage.
+    /// **The successor is minted BEFORE the predecessor is dropped**, so a transient root
+    /// blip at this instant never leaves the node without a signing key.
     ///
-    /// The predecessor is superseded, so once the successor exists it is retired
-    /// immediately rather than kept for an overlap window: it was minted under an epoch
-    /// verifiers have stopped accepting.
-    pub fn reissue(&mut self, now: i64) -> Result<(), CustodyError> {
-        // RETIRE the predecessor explicitly. `self.active = None` dropped it silently,
-        // which broke the §7 contract this module states at the top — "every issue /
-        // rotate / retire is a `mcp-re.delegated_key.*` event". The one site that emits
-        // a retire is guarded on `self.active.take()`, so clearing the field first made
-        // that branch unreachable, and an operator auditing the key lifecycle saw a key
-        // appear with no record of the one it displaced. It also made `is_rotation`
-        // false, so the successor was labelled `issued` rather than `rotated`.
-        let previous_kid = self.active.as_ref().map(|a| a.delegated_kid().to_owned());
-        // Mint first. `issue_now` does not consult the overlap window, so this is an
-        // unconditional issuance attempt; a failure leaves `active` untouched and the
-        // node keeps serving on the superseded key until its own `exp` — bounded,
-        // and strictly better than no key at all.
+    /// Three outcomes: `Ok(Some(successor))` — a successor was minted under the current
+    /// config and the predecessor, superseded, is retired at once; `Ok(None)` — the root
+    /// declined and the predecessor, minted under the prior config, keeps serving until its
+    /// own `exp`; `Err(FailClosedIssuance)` — nothing usable remains.
+    pub fn reissue(&mut self, now: i64) -> Result<Option<ActiveDelegatedKey>, CustodyError> {
+        let previous = self.active.clone();
         self.issue_now(now)?;
-        // Success: the predecessor is gone from `active` (replaced), so record its
-        // retirement. Matched by kid so a failed attempt above cannot log one.
-        if let Some(kid) = previous_kid {
-            if self
-                .active
-                .as_ref()
-                .is_some_and(|a| a.delegated_kid() != kid)
-            {
-                self.audit.push(KeyLifecycleEvent {
-                    event_type: event_type::DELEGATED_KEY_RETIRED,
-                    delegated_kid: kid,
-                    issuer_kid: self.cfg.issuer_kid.clone(),
-                    nbf: 0,
-                    exp: now,
-                    jti: String::new(),
-                    at: now,
-                });
-            }
+        // Only `adopt` writes `active`, and every adoption carries a fresh `jti` ordinal,
+        // so differing credential bytes mean this call minted.
+        let successor = self
+            .active
+            .clone()
+            .filter(|a| previous.as_ref().is_none_or(|p| p.credential() != a.credential()));
+        if let (Some(_), Some(p)) = (&successor, &previous) {
+            let event = self.retired(p, now);
+            self.audit.push(event);
         }
-        Ok(())
+        Ok(successor)
+    }
+
+    /// The retire event for `a`: its own credential id and window.
+    fn retired(&self, a: &ActiveDelegatedKey, now: i64) -> KeyLifecycleEvent {
+        KeyLifecycleEvent {
+            event_type: event_type::DELEGATED_KEY_RETIRED,
+            delegated_kid: a.delegated_kid().to_owned(),
+            issuer_kid: self.cfg.issuer_kid.clone(),
+            nbf: a.nbf(),
+            exp: a.exp(),
+            jti: a.jti().to_owned(),
+            at: now,
+        }
     }
 
     /// Ensure a usable delegated key exists at `now`, issuing or rotating as
@@ -289,7 +278,7 @@ where
         });
         match issued {
             Some(active) => {
-                self.adopt(active, &claims.jti, is_rotation, now);
+                self.adopt(active, is_rotation, now);
                 Ok(())
             }
             None => self.hold_off(now),
@@ -298,7 +287,7 @@ where
 
     /// Publish what the root issued, and audit the window it issued — which is what the
     /// fleet verifies against and what this node will serve under, not the one requested.
-    fn adopt(&mut self, active: ActiveDelegatedKey, jti: &str, is_rotation: bool, now: i64) {
+    fn adopt(&mut self, active: ActiveDelegatedKey, is_rotation: bool, now: i64) {
         self.next_attempt_at = None;
         self.audit.push(KeyLifecycleEvent {
             event_type: if is_rotation {
@@ -310,7 +299,7 @@ where
             issuer_kid: self.cfg.issuer_kid.clone(),
             nbf: active.nbf(),
             exp: active.exp(),
-            jti: jti.to_owned(),
+            jti: active.jti().to_owned(),
             at: now,
         });
         self.active = Some(active);
@@ -329,15 +318,8 @@ where
             return Ok(());
         }
         if let Some(a) = self.active.take() {
-            self.audit.push(KeyLifecycleEvent {
-                event_type: event_type::DELEGATED_KEY_RETIRED,
-                delegated_kid: a.delegated_kid().to_owned(),
-                issuer_kid: self.cfg.issuer_kid.clone(),
-                nbf: a.nbf(),
-                exp: a.exp(),
-                jti: String::new(),
-                at: now,
-            });
+            let event = self.retired(&a, now);
+            self.audit.push(event);
         }
         Err(CustodyError::FailClosedIssuance)
     }
@@ -629,6 +611,26 @@ mod tests {
         );
     }
 
+    /// A re-issuance retires the predecessor under its own credential id and window, so
+    /// the retire event is revocable by the same identifier the issue event carried.
+    #[test]
+    fn a_reissue_retires_the_predecessor_under_its_own_credential_id_and_window() {
+        let mut c = DelegatedSigningCustody::new(cfg(), ok_issuer(), factory());
+        c.ensure_active(1_000).expect("issue");
+        c.reissue(1_010).expect("reissue").expect("minted");
+        let issued = &c.audit()[0];
+        let retired = c
+            .audit()
+            .iter()
+            .find(|e| e.event_type == event_type::DELEGATED_KEY_RETIRED)
+            .expect("the predecessor is retired");
+        assert!(!retired.jti.is_empty());
+        assert_eq!(retired.jti, issued.jti);
+        assert_eq!(retired.nbf, issued.nbf);
+        assert_eq!(retired.exp, issued.exp);
+        assert_eq!(retired.delegated_kid, issued.delegated_kid);
+    }
+
     /// Successive issuances within ONE process must also stay distinct — including a
     /// re-issuance that mints over the same instant.
     ///
@@ -639,7 +641,9 @@ mod tests {
     fn successive_issuances_in_one_process_have_distinct_credential_ids() {
         let mut c = DelegatedSigningCustody::new(cfg(), ok_issuer(), factory());
         c.ensure_active(1_000).expect("issue");
-        c.reissue(1_000).expect("re-issue at the SAME instant");
+        c.reissue(1_000)
+            .expect("re-issue at the SAME instant")
+            .expect("the successor was minted");
         // issued, ROTATED (the successor is minted while the predecessor is still
         // valid — that is what keeps a root blip from leaving the node with no key at
         // all), then RETIRED for the key the advance superseded. The retire is the §7
@@ -694,7 +698,11 @@ mod tests {
         // Operator bumped the shared trust epoch: advance + re-issue WELL INSIDE the
         // current key's life (no scheduled rotation would fire here).
         c.set_trust_epoch(format!("{base_epoch}#1"));
-        c.reissue(1_010).expect("reissue under the new epoch");
+        let successor = c
+            .reissue(1_010)
+            .expect("reissue under the new epoch")
+            .expect("the successor was minted");
+        assert_eq!(successor.delegated_kid(), c.active_kid().unwrap());
 
         assert_eq!(c.trust_epoch(), format!("{base_epoch}#1"));
         let second_kid = c.active_kid().unwrap().to_string();
@@ -745,11 +753,14 @@ mod tests {
             CustodyError::FailClosedIssuance
         );
         assert!(c.active_kid().is_none(), "no key remains active");
-        assert!(
-            c.audit()
-                .iter()
-                .any(|e| e.event_type == "mcp-re.delegated_key.retired"),
-            "the expired key is retired in the audit trail"
+        let retired = c
+            .audit()
+            .iter()
+            .find(|e| e.event_type == "mcp-re.delegated_key.retired")
+            .expect("the expired key is retired in the audit trail");
+        assert_eq!(
+            retired.jti, c.audit()[0].jti,
+            "the retire names the credential it retires"
         );
     }
     /// The signature `expires` is clamped to the credential's own `exp`.
@@ -867,7 +878,10 @@ mod tests {
         let before = c.active_kid().expect("a key is active").to_string();
 
         c.set_trust_epoch("epoch-1#2".into());
-        c.reissue(1_010).expect("the predecessor keeps serving");
+        assert!(c
+            .reissue(1_010)
+            .expect("the predecessor keeps serving")
+            .is_none());
 
         assert_eq!(
             c.active_kid().expect("still active"),
@@ -948,8 +962,12 @@ mod tests {
         );
 
         c.set_trust_epoch("epoch-1#2".into());
-        c.reissue(1_010).expect("reissue under the new epoch");
+        let minted = c
+            .reissue(1_010)
+            .expect("reissue under the new epoch")
+            .expect("the successor was minted");
         let second = c.active_snapshot().expect("a successor is active");
+        assert_eq!(minted.delegated_kid(), second.delegated_kid());
         assert_eq!(
             verify_minted(
                 second.credential(),
@@ -997,20 +1015,5 @@ mod tests {
             c.audit().is_empty(),
             "no lifecycle event describes a non-key"
         );
-    }
-    /// The signature's stated validity never outlives the credential authorizing it, and
-    /// an unrepresentable `now + ttl` clamps to `exp` rather than to a wrapped instant.
-    #[test]
-    fn a_signature_window_that_cannot_be_computed_clamps_to_the_credential() {
-        let mut c = DelegatedSigningCustody::new(cfg(), ok_issuer(), factory());
-        c.ensure_active(1_000).expect("issue");
-        let exp = c.active_snapshot().expect("a key").exp();
-        assert_eq!(exp, 1_000 + T);
-        // `min(now + ttl, exp)` is `exp` for every `now` in the second half of the life,
-        // and the checked form must agree with the plain one everywhere it is defined.
-        for now in [1_000, 1_100, 1_250, exp - 1] {
-            let until = now.checked_add(T).map_or(exp, |u: i64| u.min(exp));
-            assert!(until <= exp, "the window may never outlive the credential");
-        }
     }
 }

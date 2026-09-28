@@ -328,42 +328,27 @@ where
     /// which is cross-replica because every replica reads the same shared counter. On a
     /// fail-closed issuance the snapshot is retired so the hot path fails closed.
     ///
-    /// `Ok` distinguishes the two outcomes `reissue` collapses into one. `reissue`
-    /// returns `Ok(())` both when a successor was minted under the new epoch AND when
-    /// the root issuer DECLINED while the predecessor — minted under the epoch just
-    /// revoked — is still valid. Reporting the second as an advance would tell the
-    /// operator their break-glass revocation had landed on a replica that is still
-    /// minting under the revoked epoch, so the caller is handed
-    /// [`TrustEpochAdvance::Declined`] and must retry rather than record success.
+    /// The custody owner reports the outcome and this method maps it: `reissue` yields a
+    /// successor when one was minted under the new epoch, and nothing when the root issuer
+    /// DECLINED while the predecessor — minted under the epoch just revoked — is still
+    /// valid. Reporting the second as an advance would tell the operator their break-glass
+    /// revocation had landed on a replica that is still minting under the revoked epoch,
+    /// so the caller is handed [`TrustEpochAdvance::Declined`] and must retry rather than
+    /// record success.
     pub fn advance_trust_epoch(
         &mut self,
         epoch: String,
         now: i64,
     ) -> Result<TrustEpochAdvance, CustodyError> {
-        // The published kid BEFORE the attempt. A successful issuance always mints a
-        // fresh keypair, and the kid is that key's RFC 7638 thumbprint, so an unchanged
-        // kid is proof no new credential was minted.
-        let before_kid = self
-            .custody
-            .active_snapshot()
-            .map(|active| active.delegated_kid().to_owned());
         self.custody.set_trust_epoch(epoch);
         match self.custody.reissue(now) {
-            // Same shape as `rotate`: an absent snapshot is the fail-closed outcome.
-            Ok(()) => {
-                let Some(snapshot) = self.custody.active_snapshot() else {
-                    self.signer.retire();
-                    return Err(CustodyError::FailClosedIssuance);
-                };
-                if Some(snapshot.delegated_kid()) == before_kid.as_deref() {
-                    // The predecessor is untouched and still serving until its own `exp`
-                    // (ADR-MCPRE-052 §6) — not retired, because a root blip must not
-                    // compose an epoch advance into an outage.
-                    return Ok(TrustEpochAdvance::Declined);
-                }
-                self.signer.publish(snapshot);
+            Ok(Some(successor)) => {
+                self.signer.publish(successor);
                 Ok(TrustEpochAdvance::Advanced)
             }
+            // The predecessor keeps serving until its own `exp` (ADR-MCPRE-052 §6) — not
+            // retired, because a root blip must not compose an epoch advance into an outage.
+            Ok(None) => Ok(TrustEpochAdvance::Declined),
             Err(e) => {
                 self.signer.retire();
                 Err(e)
