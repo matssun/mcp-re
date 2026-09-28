@@ -6322,7 +6322,7 @@ evidence = [
 tested_symbols = [
   "lib#http_profile_serve::signing_window::tests::the_configured_ttl_bounds_a_window_inside_the_credential",
   "lib#http_profile_serve::signing_window::tests::the_credential_bounds_a_ttl_that_would_outlive_it",
-  "lib#http_profile_serve::signing_window::tests::an_expired_credential_advertises_no_future_validity",
+  "lib#http_profile_serve::signing_window::tests::an_expired_credential_opens_no_window",
   "lib#http_profile_serve::signing_window::tests::a_saturating_ttl_does_not_wrap_past_the_credential",
   "lib#http_profile_serve::receipt::artifact::last_resort_receipt_tests::a_spent_approval_last_resort_receipt_names_the_consumed_continuation",
   "lib#http_profile_serve::receipt::artifact::last_resort_receipt_tests::a_retention_indeterminate_last_resort_receipt_still_names_the_failed_obligation",
@@ -7678,7 +7678,6 @@ tested_symbols = [
   "lib#custody::tests::a_declined_reissue_leaves_the_predecessor_untouched",
   "lib#custody::tests::the_minted_credential_carries_the_configured_scope_and_trust_epoch",
   "lib#custody::tests::an_unrepresentable_expiry_refuses_rather_than_wrapping",
-  "lib#custody::tests::a_signature_window_that_cannot_be_computed_clamps_to_the_credential",
   "lib#custody::issuance_terms::tests::every_term_fails_restrictively",
   "lib#custody::issuance_terms::tests::the_retry_interval_has_a_floor",
   "lib#custody::issuance_terms::tests::an_uncomputable_rotation_threshold_reads_as_due",

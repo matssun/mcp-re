@@ -6823,7 +6823,7 @@ weakening = """
 """
 expect_red = [
   "lib#http_profile_serve::signing_window::tests::the_credential_bounds_a_ttl_that_would_outlive_it",
-  "lib#http_profile_serve::signing_window::tests::an_expired_credential_advertises_no_future_validity",
+  "lib#http_profile_serve::signing_window::tests::an_expired_credential_opens_no_window",
 ]
 note = """
 TWO BOUNDS, AND THE OTHER ONE IS THE OPERATOR'S. The configured TTL is what the deployment
