@@ -31,6 +31,7 @@
 
 use std::ffi::c_void;
 use std::ptr;
+use std::sync::Arc;
 
 use crate::config_state::key_file_access::executable_path_violation;
 use cryptoki_sys::Pkcs11 as RawLoader;
@@ -46,6 +47,7 @@ use cryptoki_sys::CKM_EDDSA;
 use cryptoki_sys::CKO_PRIVATE_KEY;
 use cryptoki_sys::CKO_PUBLIC_KEY;
 use cryptoki_sys::CKR_OK;
+use cryptoki_sys::CKR_USER_ALREADY_LOGGED_IN;
 use cryptoki_sys::CKU_USER;
 use cryptoki_sys::CK_ATTRIBUTE;
 use cryptoki_sys::CK_ATTRIBUTE_TYPE;
@@ -320,50 +322,42 @@ impl Pkcs11Context {
         }
     }
 
-    /// A small, `Copy`, lifetime-free closer for this context's sessions. It
-    /// carries only the function-list pointer, so a caller can store it next to a
-    /// cached raw `CK_SESSION_HANDLE` and close that handle on retirement WITHOUT a
-    /// borrow of the context — the keysource uses this to make its handle cache an
-    /// RAII type while sidestepping the self-referential `Session<'ctx>` lifetime.
-    ///
-    /// Obtaining a closer is harmless; USING one after its parent context has been
-    /// dropped is undefined behaviour, and that is why [`SessionCloser::close`] is an
-    /// `unsafe fn` — the obligation is discharged at each call site, in writing, rather
-    /// than by the declaration order of a struct in another module.
-    pub fn session_closer(&self) -> SessionCloser {
+    /// A lifetime-free closer for this context's sessions. It holds an `Arc` of the
+    /// context, so a caller can store it next to a cached raw `CK_SESSION_HANDLE` and
+    /// close that handle on retirement WITHOUT a borrow of the context — the keysource
+    /// uses this to make its handle cache an RAII type while sidestepping the
+    /// self-referential `Session<'ctx>` lifetime. The held `Arc` keeps the module
+    /// un-finalized for as long as any closer exists.
+    pub fn session_closer(self: &Arc<Self>) -> SessionCloser {
         SessionCloser {
-            function_list: self.function_list,
+            context: Arc::clone(self),
         }
     }
 }
 
-/// A `Copy`, lifetime-free handle to a context's `C_CloseSession`. See
-/// [`Pkcs11Context::session_closer`] for the soundness contract.
-#[derive(Clone, Copy)]
+/// A lifetime-free handle to a context's `C_CloseSession` that keeps the context alive.
+/// See [`Pkcs11Context::session_closer`].
+#[derive(Clone)]
 pub struct SessionCloser {
-    function_list: CK_FUNCTION_LIST_PTR,
+    context: Arc<Pkcs11Context>,
 }
 
 impl SessionCloser {
     /// Close `handle`. Fails closed on a non-`CKR_OK` status or a missing
     /// `C_CloseSession` entry (never a null call).
-    ///
-    /// # Safety
-    /// The [`Pkcs11Context`] this closer came from must still be alive. The closer is
-    /// `Copy` and carries no lifetime, so nothing else stops a caller dispatching through
-    /// a function list whose module `Pkcs11Context::drop` already finalized and unmapped.
-    pub unsafe fn close(&self, handle: CK_SESSION_HANDLE) -> Result<(), Pkcs11Error> {
-        if self.function_list.is_null() {
+    pub fn close(&self, handle: CK_SESSION_HANDLE) -> Result<(), Pkcs11Error> {
+        let function_list = self.context.function_list;
+        if function_list.is_null() {
             return Err(Pkcs11Error::Load(
                 "session closer has a null function list".to_string(),
             ));
         }
         // SAFETY: function-list non-null (checked); `C_CloseSession` checked
-        // non-null by `func!`. It takes only the session handle. The caller's
-        // contract guarantees the parent context is still alive (function list not
-        // yet finalized).
+        // non-null by `func!`. It takes only the session handle. The held
+        // `Arc<Pkcs11Context>` keeps the context un-finalized, so the function list
+        // is still live.
         unsafe {
-            let close = func!(self.function_list, C_CloseSession);
+            let close = func!(function_list, C_CloseSession);
             check(close(handle), "C_CloseSession")
         }
     }
@@ -397,7 +391,9 @@ pub struct Session<'ctx> {
 
 impl<'ctx> Session<'ctx> {
     /// Log in as the User with `pin`. The PIN bytes are passed straight to
-    /// `C_Login` and are NOT copied or retained by this wrapper.
+    /// `C_Login` and are NOT copied or retained by this wrapper. Login state is per
+    /// application per token, so a session opened after the first login is already
+    /// authenticated: `CKR_USER_ALREADY_LOGGED_IN` is success, every other status fails.
     pub fn login_user(&self, pin: &str) -> Result<(), Pkcs11Error> {
         let pin_bytes = pin.as_bytes();
         // SAFETY: function-list non-null; `C_Login` checked non-null by `func!`.
@@ -413,6 +409,9 @@ impl<'ctx> Session<'ctx> {
                 pin_bytes.as_ptr() as *mut u8,
                 pin_bytes.len() as CK_ULONG,
             );
+            if rv == CKR_USER_ALREADY_LOGGED_IN {
+                return Ok(());
+            }
             check(rv, "C_Login (CKU_USER)")
         }
     }

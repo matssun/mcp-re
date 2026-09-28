@@ -47,6 +47,7 @@ use mcp_re_core::McpReError;
 use mcp_re_proxy::serve_once;
 use mcp_re_proxy::tls_listener_state::TlsListenerSecurityState;
 use mcp_re_proxy::FileKeySource;
+use mcp_re_proxy::KeyError;
 use mcp_re_proxy::KeySource;
 use mcp_re_proxy::Pkcs11KeySource;
 use mcp_re_proxy::ResponseSigner;
@@ -192,6 +193,7 @@ impl MockToken {
         let kt = match key_type {
             "EC:edwards25519" | "ed25519" => "ed25519",
             "EC:prime256v1" | "ec" => "ec",
+            "ed25519-misbound" => "ed25519-misbound",
             other => panic!("unsupported mock key type {other:?}"),
         };
         self.objects.push(format!("{label},{kt},{id}"));
@@ -265,6 +267,66 @@ fn pkcs11_sign_verifies_against_token_public_key() {
     assert!(
         tampered_result.is_err(),
         "a tampered preimage must NOT verify under the token signature"
+    );
+}
+
+/// The emit guard, driven through `sign_response` on a real source: a token whose
+/// private object signs with a key other than the advertised one returns 64
+/// well-formed bytes that verify under nobody advertised, and they are never emitted.
+#[test]
+fn pkcs11_sign_response_refuses_a_token_signature_that_does_not_verify() {
+    let Some(module) = require_mock_or_skip(
+        "pkcs11_sign_response_refuses_a_token_signature_that_does_not_verify",
+    ) else {
+        return;
+    };
+    let _guard = provisioning_lock();
+    let mut token = MockToken::init();
+    token.keygen("ed25519-misbound", "mcp-re-response-signing", "01");
+
+    let source = Pkcs11KeySource::open(
+        &module,
+        &token.pin,
+        &token.token_label,
+        "mcp-re-response-signing",
+        placeholder_tls(),
+        None,
+    )
+    .expect("startup reads only the public point");
+
+    match source.sign_response(b"mcp-re-misbound-preimage") {
+        Err(KeyError::Malformed(m)) => assert!(
+            m.contains("did NOT verify"),
+            "the refusal must name the verification failure, got {m:?}"
+        ),
+        Err(_) => panic!("an unverifiable token signature must be Malformed"),
+        Ok(_) => panic!("an unverifiable token signature must never be emitted"),
+    }
+}
+
+/// The TLS key and the response-signing key are distinct principals: naming one
+/// token object for both is refused at the constructor.
+#[test]
+fn pkcs11_tls_label_equal_to_response_label_is_refused() {
+    let Some(module) = require_mock_or_skip("pkcs11_tls_label_equal_to_response_label_is_refused")
+    else {
+        return;
+    };
+    let _guard = provisioning_lock();
+    let mut token = MockToken::init();
+    token.keygen_ed25519("mcp-re-sign", "01");
+
+    let result = Pkcs11KeySource::open(
+        &module,
+        &token.pin,
+        &token.token_label,
+        "mcp-re-sign",
+        placeholder_tls(),
+        Some("mcp-re-sign"),
+    );
+    assert!(
+        matches!(result, Err(KeyError::Malformed(_))),
+        "one token object may not custody both the TLS key and the response-signing key"
     );
 }
 

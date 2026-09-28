@@ -63,19 +63,6 @@ pub(crate) trait LoginSessionFactory {
     fn open_logged_in(&self) -> Result<Self::Session, KeyError>;
 }
 
-/// Amortizes the PKCS#11 LOGIN across operations (audit M16): instead of opening a
-/// fresh session and performing a `C_Login` on EVERY signed response — which makes
-/// signing latency/availability hostage to token login throughput and is a
-/// boundary DoS amplification — this holds ONE logged-in session behind a `Mutex`
-/// and reuses it. A fresh login happens only on first use or when the cached
-/// session has gone invalid (handle closed / token re-inserted / login lapsed), so
-/// N sequential signs perform far fewer than N logins.
-///
-/// Fail-closed is preserved: a *fatal* [`SessionOpError::Fatal`] (a real sign /
-/// lookup failure) is propagated immediately and never retried; only a
-/// [`SessionOpError::SessionInvalid`] triggers a single re-open-and-retry. If the
-/// re-open itself fails, that error is surfaced (no in-process fallback, no
-/// drop is the backstop for the one currently-cached handle.
 /// A cached, logged-in PKCS#11 session reduced to its raw `CK_SESSION_HANDLE`.
 ///
 /// This is the lifetime-free `S` that [`AmortizedSession`] caches for the real
@@ -87,7 +74,9 @@ pub(crate) trait LoginSessionFactory {
 /// [`SessionRef`](crate::pkcs11_native::SessionRef) against the live context.
 ///
 /// The handle is closed explicitly when this holder is retired (on a transient
-/// invalidation, via its [`SessionCloser`]); `C_Finalize` on context
+/// invalidation, via its [`SessionCloser`], which keeps the context alive until the
+/// close has run); `C_Finalize` on context drop is the backstop for the one
+/// currently-cached handle.
 pub(crate) struct LoggedInSession {
     /// The raw open+logged-in session handle (owned: closed on retirement).
     pub(crate) handle: CK_SESSION_HANDLE,
@@ -102,14 +91,7 @@ impl Drop for LoggedInSession {
         // meaningful to go (and `C_Finalize` on the context is the backstop), so it
         // is intentionally ignored — but we never call a null pointer (the closer
         // guards that) and we never leak silently while the context lives.
-        //
-        // SAFETY (the closer's obligation — its parent context must still be alive):
-        // every `LoggedInSession` is reached only through a field of `Pkcs11Token`
-        // declared BEFORE its `context`, and Rust drops fields in declaration order, so
-        // this runs strictly before that context's `C_Finalize`. That ordering is the
-        // whole discharge, which is why it is asserted here at the one call site rather
-        // than assumed by a safe `close`.
-        let _ = unsafe { self.closer.close(self.handle) };
+        let _ = self.closer.close(self.handle);
     }
 }
 

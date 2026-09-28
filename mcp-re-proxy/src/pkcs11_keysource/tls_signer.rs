@@ -26,6 +26,20 @@ use super::token::ed25519_spki_from_ec_point;
 use super::token::find_key;
 use super::Pkcs11Token;
 
+/// A PKCS#11-backed DELEGATED TLS handshake signer (issue #59, ADR-MCPS-028 §G):
+/// the Ed25519 TLS *server* key lives on the token as a SEPARATE object (a distinct
+/// security principal from the response-signing key) and is exercised ONLY via
+/// `C_Sign` with `CKM_EDDSA` — the TLS private key never leaves the device. rustls
+/// drives the handshake signature through [`RawEd25519TlsSigner::sign_tls_ed25519`];
+/// the (exportable) TLS public point feeds [`RawEd25519TlsSigner::tls_public_key_spki_der`]
+/// so the validated build path (#58) fails closed on a cert/key mismatch.
+///
+/// This signer SHARES the owning [`Pkcs11KeySource`]'s [`Pkcs11Token`] via `Arc` —
+/// one `C_Initialize` and one amortized `C_Login` per process — and signs with the
+/// TLS-key label. It is an independent signing PRINCIPAL (a separate token object,
+/// ADR-MCPS-028 §G) that rides the same module + login as the response-signing key.
+/// (The ADR allows the TLS key to carry distinct PKCS#11 auth; the CLI wires the
+/// same token PIN. A future flag could route a separate credential without changing
 /// the `RawEd25519TlsSigner` surface.)
 pub struct Pkcs11TlsSigner {
     /// The shared, logged-in token (see [`Pkcs11Token`]). All TLS handshake signs and

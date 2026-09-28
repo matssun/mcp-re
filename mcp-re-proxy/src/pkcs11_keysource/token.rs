@@ -24,6 +24,14 @@ use crate::pkcs11_native::SessionRef;
 use super::session::classify_op_error;
 use super::session::SessionOpError;
 
+/// Locate the single Ed25519 key object of the given class with `key_label`
+/// against an open session view, classified for the amortization layer.
+///
+/// A transient session fault during the find is [`SessionOpError::SessionInvalid`]
+/// (retry once); any other wrapper error is [`SessionOpError::Fatal`] with the SAME
+/// `NotFound` context text as the pre-amortization path. The count cases are
+/// intrinsic, never a session fault: zero matches is a [`KeyError::NotFound`] Fatal;
+/// more than one is a [`KeyError::Malformed`] Fatal (an ambiguous token config must
 /// fail closed, never silently pick one). A re-open would not change these.
 pub(crate) fn find_key(
     view: &SessionRef<'_>,

@@ -21,7 +21,9 @@ use super::amortized_session::AmortizedSession;
 use super::LoginSessionFactory;
 use super::SessionOpError;
 
-/// is the token's own session limit and its internal concurrency, not the host's.
+/// Sized to the per-core handshake workers and deliberately not scaled by core count:
+/// the ceiling that binds beyond that is the token's own session limit and its internal
+/// concurrency, not the host's.
 pub(crate) const TLS_SESSION_POOL_SIZE: usize = 4;
 
 /// A fixed set of interchangeable logged-in sessions for the delegated-TLS path.
