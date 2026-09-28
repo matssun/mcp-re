@@ -374,45 +374,39 @@ fn build_trust_epoch_channel(
     epoch: &crate::startup_plan::TrustEpochPlan,
     workers: &mut crate::managed_worker::WorkerSet,
 ) -> Result<Option<Box<dyn crate::InvalidationChannel + Send + Sync>>, String> {
-    match epoch {
-        crate::startup_plan::TrustEpochPlan::Redis { url, key } => {
-            // Layer B, asked of the PLAN rather than of `cfg!` here. In this lane the
-            // answer is always yes; it is asked anyway so the question has one owner in
-            // every build rather than an owner only in the build where it refuses.
-            if let Some(refusal) = epoch.unsupported_by_build() {
-                return Err(refusal);
-            }
-            let source = std::sync::Arc::new(
-                crate::trust_epoch::redis_trust_epoch_source(url, key)
-                    .map_err(|e| format!("trust-epoch source: {e}"))?,
-            );
-            // The epoch read is a blocking network round trip behind ONE connection
-            // mutex, and the resolver that would trigger it runs before signature
-            // verification on every request. Polled from a dedicated thread instead,
-            // so the request path costs a mutex acquisition and the whole per-core
-            // fleet is not serialized on one Redis connection.
-            let halt = workers.halt();
-            workers.spawn(
-                "trust epoch poll",
-                crate::trust_epoch::trust_epoch_poller_body(
-                    std::sync::Arc::clone(&source),
-                    TRUST_EPOCH_POLL_SECS,
-                    move || halt.requested(),
-                ),
-            );
-            eprintln!(
-                "mcp-re-proxy: revocation-tier PUSH: networked trust-epoch source ACTIVE (redis, \
-                 epoch key {key:?}, polled every {TRUST_EPOCH_POLL_SECS}s off the request path); \
-                 the trust cache flushes within one poll interval of an epoch advance and \
-                 reverts to the bounded-T guarantee on a read outage."
-            );
-            Ok(Some(Box::new(crate::trust_epoch::SharedEpochChannel(
-                source,
-            ))))
-        }
-        crate::startup_plan::TrustEpochPlan::NoNetworkChannel => Ok(None),
-    }
+    let Some(endpoint) = epoch.networked_source()? else {
+        return Ok(None);
+    };
+    let (url, key) = (endpoint.url(), endpoint.key());
+    let source = std::sync::Arc::new(
+        crate::trust_epoch::redis_trust_epoch_source(url, key)
+            .map_err(|e| format!("trust-epoch source: {e}"))?,
+    );
+    // The epoch read is a blocking network round trip behind ONE connection
+    // mutex, and the resolver that would trigger it runs before signature
+    // verification on every request. Polled from a dedicated thread instead,
+    // so the request path costs a mutex acquisition and the whole per-core
+    // fleet is not serialized on one Redis connection.
+    let halt = workers.halt();
+    workers.spawn(
+        "trust epoch poll",
+        crate::trust_epoch::trust_epoch_poller_body(
+            std::sync::Arc::clone(&source),
+            TRUST_EPOCH_POLL_SECS,
+            move || halt.requested(),
+        ),
+    );
+    eprintln!(
+        "mcp-re-proxy: revocation-tier PUSH: networked trust-epoch source ACTIVE (redis, \
+         epoch key {key:?}, polled every {TRUST_EPOCH_POLL_SECS}s off the request path); \
+         the trust cache flushes within one poll interval of an epoch advance and \
+         reverts to the bounded-T guarantee on a read outage."
+    );
+    Ok(Some(Box::new(crate::trust_epoch::SharedEpochChannel(
+        source,
+    ))))
 }
+
 /// The same, in a build with no Redis client. The refusal is the plan's own (CF-09): both
 /// consumers of the epoch state it identically, so which plane materializes first stops
 /// deciding which half of the consequence an operator is told about.

@@ -300,18 +300,12 @@ mod tests {
         let plan = TrustPlan::from_validated(
             &config,
             "decided-above".to_string(),
-            TrustEpochPlan::Redis {
-                url: "redis://198.51.100.1:6379".to_string(),
-                key: "decided-above".to_string(),
-            },
+            TrustEpochPlan::redis("redis://198.51.100.1:6379", "decided-above"),
         );
         assert_eq!(plan.response_kid, "decided-above");
         assert_eq!(
             plan.epoch,
-            TrustEpochPlan::Redis {
-                url: "redis://198.51.100.1:6379".to_string(),
-                key: "decided-above".to_string(),
-            }
+            TrustEpochPlan::redis("redis://198.51.100.1:6379", "decided-above")
         );
     }
 }
