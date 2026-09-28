@@ -33,7 +33,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use super::{STDERR_AUDIT_DROP_REPORT_INTERVAL, STDERR_AUDIT_QUEUE_DEPTH};
 
 /// One item on the hand-off queue.
-pub(crate) enum AuditMessage {
+pub(super) enum AuditMessage {
     /// A formatted record to write.
     Line(String),
     /// Write everything queued ahead of this, then acknowledge. The acknowledgement is
@@ -45,7 +45,7 @@ pub(crate) enum AuditMessage {
 ///
 /// Process-global because the sink is a unit type installed once and shared by every
 /// core: one stderr, one thread that owns it, one queue in front of it.
-pub(crate) static STDERR_AUDIT_WRITER: std::sync::OnceLock<
+pub(super) static STDERR_AUDIT_WRITER: std::sync::OnceLock<
     std::sync::mpsc::SyncSender<AuditMessage>,
 > = std::sync::OnceLock::new();
 
@@ -91,6 +91,7 @@ pub(super) fn stderr_audit_writer() -> &'static std::sync::mpsc::SyncSender<Audi
                     &STDERR_AUDIT_DROPPED,
                     &STDERR_AUDIT_QUEUED,
                     &STDERR_AUDIT_WRITES_FAILED,
+                    || std::io::stderr().lock(),
                 );
             });
         if started.is_err() {
@@ -112,20 +113,20 @@ pub(super) fn stderr_audit_writer() -> &'static std::sync::mpsc::SyncSender<Audi
 
 /// Drain the queue until the sender side is gone.
 ///
-/// The cadence and the three counters are PARAMETERS for the reason [`report_drops`]
+/// The cadence, the three counters and the output are PARAMETERS for the reason [`report_drops`]
 /// already gives about its own: the globals are process-wide and monotonic, so a battery
 /// that drove this loop over them would make every later drain in the same process report
 /// `OutcomeUnknown`. Passing them is also what makes the loop's own decisions measurable —
 /// the timeout arm below is the whole reason the drop report is ever emitted for a burst
 /// that stopped, and calling `report_drops` directly cannot establish that it is reached.
-fn write_until_disconnected(
+fn write_until_disconnected<W: std::io::Write>(
     receiver: &std::sync::mpsc::Receiver<AuditMessage>,
     report_interval: std::time::Duration,
     dropped: &AtomicU64,
     queued: &AtomicUsize,
     failed: &AtomicBool,
+    mut out: impl FnMut() -> W,
 ) {
-    use std::io::Write;
     loop {
         let message = match receiver.recv_timeout(report_interval) {
             Ok(message) => Some(message),
@@ -137,24 +138,28 @@ fn write_until_disconnected(
         };
         let line = match message {
             Some(AuditMessage::Line(line)) => {
-                queued.fetch_sub(1, Ordering::Relaxed);
+                let _ =
+                    queued.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1));
                 Some(line)
             }
             Some(AuditMessage::Flush(ack)) => {
-                report_drops(&mut std::io::stderr().lock(), dropped, failed);
+                report_drops(&mut out(), dropped, failed);
                 let _ = ack.try_send(());
                 continue;
             }
             None => None,
         };
-        let mut stderr = std::io::stderr().lock();
+        let mut stderr = out();
         report_drops(&mut stderr, dropped, failed);
-        if let Some(line) = line {
-            if stderr.write_all(line.as_bytes()).is_err() || stderr.write_all(b"\n").is_err() {
-                failed.store(true, Ordering::Relaxed);
-            }
+        if line.is_some_and(|line| !write_record(&mut stderr, &line)) {
+            failed.store(true, Ordering::Relaxed);
         }
     }
+}
+
+/// One terminated physical record in ONE write, so a pipe receives it whole or not at all.
+fn write_record(out: &mut impl std::io::Write, record: &str) -> bool {
+    out.write_all(format!("{record}\n").as_bytes()).is_ok()
 }
 
 /// Emit the outstanding drop count, if any, latching `failed` when the write does not land.
@@ -164,27 +169,26 @@ fn write_until_disconnected(
 /// same process report `OutcomeUnknown`, and the tests below would then be measuring each
 /// other's order rather than this function.
 ///
-/// The count is taken out of the counter atomically, so it can never be reported twice —
-/// and PUT BACK when the write fails, so it can never be reported zero times either. The
-/// earlier form took the count and discarded the write result, which erased exactly the
-/// gaps the condition it names (a full volume, a closed stderr, a stalled collector) is
-/// most likely to produce. "Never twice" and "at least once" are both halves of the
-/// property; only the first was held.
+/// The count is swapped out atomically and the report is ONE write, so a failure on a pipe
+/// means nothing was emitted; a short write to a regular file can still leave a fragment,
+/// the put-back then errs toward reporting again, and over-stating a loss count is the safe
+/// direction (the latch already makes the drain `OutcomeUnknown`). The count is PUT BACK
+/// when the write fails, so it can never be reported zero times: that erases exactly the
+/// gaps a full volume, a closed stderr or a stalled collector is most likely to produce.
 fn report_drops(stderr: &mut impl std::io::Write, counter: &AtomicU64, failed: &AtomicBool) {
     let dropped = counter.swap(0, Ordering::Relaxed);
     if dropped == 0 {
         return;
     }
-    let reported = writeln!(
-        stderr,
+    let report = format!(
         "mcp-re-proxy: audit dropped={dropped} (the audit hand-off queue was full; \
          that many decisions are missing from this stream, and their seq numbers are \
          the gaps in it)"
     );
-    if reported.is_err() {
-        // Saturating: the counter is a report of how many records were lost, and a
-        // saturated one still says "at least this many". Wrapping would say a number
-        // smaller than the truth, which is the direction that matters.
+    if !write_record(stderr, &report) {
+        // A wrapping add that cannot wrap: the counter never exceeds the records ever
+        // offered, one per `STDERR_AUDIT_SEQ` value, and 2^64 offers outlast any process.
+        // It exists so the report never understates the loss.
         counter.fetch_add(dropped, Ordering::Relaxed);
         failed.store(true, Ordering::Relaxed);
     }
@@ -214,7 +218,7 @@ mod tests {
         // shape production uses. The three counters cross as shared references.
         let (d, q, f) = (&dropped, &queued, &failed);
         std::thread::scope(|scope| {
-            scope.spawn(move || write_until_disconnected(&rx, interval, d, q, f));
+            scope.spawn(move || write_until_disconnected(&rx, interval, d, q, f, std::io::sink));
             // Nothing is sent, so only the timeout arm can run. Ten intervals is far more
             // than the one turn the property needs and keeps the control off the scheduler's
             // exact timing.
@@ -230,6 +234,124 @@ mod tests {
             );
             drop(tx);
         });
+    }
+
+    /// Output shared with the test: every `write` call is recorded, and calls past
+    /// `accept` fail.
+    struct Shared<'a> {
+        bytes: &'a std::sync::Mutex<Vec<u8>>,
+        calls: &'a AtomicUsize,
+        accept: usize,
+    }
+    impl std::io::Write for Shared<'_> {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if self.calls.fetch_add(1, Ordering::Relaxed) >= self.accept {
+                return Err(std::io::Error::other("EPIPE"));
+            }
+            self.bytes.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Drive the loop over `Shared` output with the given messages, then disconnect.
+    fn drive(
+        accept: usize,
+        queued: &AtomicUsize,
+        failed: &AtomicBool,
+        send: impl FnOnce(&std::sync::mpsc::SyncSender<AuditMessage>, &std::sync::Mutex<Vec<u8>>),
+    ) -> Vec<u8> {
+        let (tx, rx) = std::sync::mpsc::sync_channel::<AuditMessage>(4);
+        let bytes = std::sync::Mutex::new(Vec::new());
+        let calls = AtomicUsize::new(0);
+        let dropped = AtomicU64::new(0);
+        std::thread::scope(|scope| {
+            let (b, c, d) = (&bytes, &calls, &dropped);
+            scope.spawn(move || {
+                write_until_disconnected(
+                    &rx,
+                    std::time::Duration::from_secs(60),
+                    d,
+                    queued,
+                    failed,
+                    || Shared {
+                        bytes: b,
+                        calls: c,
+                        accept,
+                    },
+                );
+            });
+            send(&tx, &bytes);
+            drop(tx);
+        });
+        bytes.into_inner().unwrap()
+    }
+
+    #[test]
+    fn a_failed_line_write_latches_the_failure() {
+        let (queued, failed) = (AtomicUsize::new(1), AtomicBool::new(false));
+        drive(0, &queued, &failed, |tx, _| {
+            tx.send(AuditMessage::Line("x".to_owned())).unwrap();
+        });
+        assert!(failed.load(Ordering::Relaxed));
+        assert_eq!(queued.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn a_flush_is_acknowledged_behind_the_lines_ahead_of_it() {
+        let (queued, failed) = (AtomicUsize::new(1), AtomicBool::new(false));
+        let (ack, acked) = std::sync::mpsc::sync_channel::<()>(1);
+        let bytes = drive(usize::MAX, &queued, &failed, |tx, captured| {
+            tx.send(AuditMessage::Line("x".to_owned())).unwrap();
+            tx.send(AuditMessage::Flush(ack)).unwrap();
+            acked
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .expect("the flush is acknowledged");
+            assert_eq!(*captured.lock().unwrap(), b"x\n");
+        });
+        assert_eq!(bytes, b"x\n");
+    }
+
+    #[test]
+    fn a_record_is_one_write_call() {
+        let (queued, failed) = (AtomicUsize::new(1), AtomicBool::new(false));
+        let bytes = drive(1, &queued, &failed, |tx, _| {
+            tx.send(AuditMessage::Line("x".to_owned())).unwrap();
+        });
+        assert_eq!(bytes, b"x\n");
+        assert!(!failed.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn a_drop_report_is_one_write_call() {
+        let bytes = std::sync::Mutex::new(Vec::new());
+        let calls = AtomicUsize::new(0);
+        let counter = AtomicU64::new(5);
+        let failed = AtomicBool::new(false);
+        let mut out = Shared {
+            bytes: &bytes,
+            calls: &calls,
+            accept: 1,
+        };
+        report_drops(&mut out, &counter, &failed);
+        let text = String::from_utf8(bytes.into_inner().unwrap()).unwrap();
+        assert!(
+            text.contains("dropped=5") && text.ends_with('\n'),
+            "{text:?}"
+        );
+        assert_eq!(counter.load(Ordering::Relaxed), 0);
+        assert!(!failed.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn an_unpaired_line_does_not_wrap_the_occupancy_counter() {
+        let (queued, failed) = (AtomicUsize::new(0), AtomicBool::new(false));
+        drive(usize::MAX, &queued, &failed, |tx, _| {
+            tx.send(AuditMessage::Line("x".to_owned())).unwrap();
+        });
+        assert_eq!(queued.load(Ordering::Relaxed), 0);
     }
 
     /// A write that fails does not consume the drop count: the next successful report

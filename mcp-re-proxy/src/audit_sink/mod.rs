@@ -88,7 +88,7 @@ static STDERR_AUDIT_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::Atomi
 mod writer;
 
 use writer::{stderr_audit_writer, STDERR_AUDIT_DROPPED, STDERR_AUDIT_QUEUED};
-pub(crate) use writer::{AuditMessage, STDERR_AUDIT_WRITER};
+use writer::{AuditMessage, STDERR_AUDIT_WRITER};
 
 /// Bounded hand-off depth. Deep enough to absorb a burst while the writer is inside one
 /// `write` syscall, shallow enough that a stalled writer costs bounded memory.
