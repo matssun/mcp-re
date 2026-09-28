@@ -90,13 +90,11 @@ kind = "environment"
 # authority, not whatever larger module happens to contain it.
 paths = [
   "mcp-re-client/src/startup.rs",
-  "mcp-re-demo/src/demo_fixtures.rs",
   "mcp-re-host/src/clock.rs",
   # MCPRE-175: the store's own eviction clock is the only `SystemTime` read left in the
   # replay tier, and it moved to the module that owns what is retained. Named precisely,
   # per the note above: the authority, not the module tree that contains it.
   "mcp-re-proxy/src/async_replay/retained_set.rs",
-  "mcp-re-proxy/src/aws_kms_keysource.rs",
   "mcp-re-proxy/src/aws_sts.rs",
   "mcp-re-proxy/src/clock.rs",
   # MCPRE-176: the clock read belongs to the in-memory tier's own expiry, and moved with

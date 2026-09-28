@@ -133,6 +133,26 @@ impl Drop for EvidenceRetention {
     }
 }
 
+/// A writer that stopped before acknowledging: a pre-dispatch write is then unresolved.
+fn writer_lost(pre_dispatch: bool) -> RetentionError {
+    let lost = std::io::Error::new(
+        std::io::ErrorKind::BrokenPipe,
+        "retention writer stopped before acknowledging the write",
+    );
+    if pre_dispatch {
+        RetentionError::Unresolved(lost)
+    } else {
+        RetentionError::Store(lost)
+    }
+}
+
+/// The digest token a marker file name carries at the given suffix, if it is one.
+fn marker_digest(name: &str, suffix: &str) -> Option<String> {
+    let token = name.strip_suffix(suffix)?;
+    let digest = EvidenceDigest::from_token(token).ok()?;
+    Some(digest.as_str().to_owned())
+}
+
 #[cfg(test)]
 impl EvidenceRetention {
     /// Put this store in the state a returned or panicked write loop leaves it: holding a
@@ -236,17 +256,7 @@ impl EvidenceRetention {
             Ok(Ok(())) => Ok(()),
             Ok(Err(JobFault::NotPublished(e))) => Err(RetentionError::Store(e)),
             Ok(Err(JobFault::Unwithdrawn(e))) => Err(RetentionError::Unresolved(e)),
-            Err(_) => {
-                let lost = std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    "retention writer stopped before acknowledging the write",
-                );
-                Err(if pre_dispatch {
-                    RetentionError::Unresolved(lost)
-                } else {
-                    RetentionError::Store(lost)
-                })
-            }
+            Err(_) => Err(writer_lost(pre_dispatch)),
         }
     }
 
@@ -447,14 +457,7 @@ impl EvidenceRetention {
         for entry in std::fs::read_dir(&self.root).map_err(RetentionError::Store)? {
             let entry = entry.map_err(RetentionError::Store)?;
             let name = entry.file_name();
-            let Some(name) = name.to_str() else { continue };
-            let Some(token) = name.strip_suffix(&suffix) else {
-                continue;
-            };
-            let Ok(digest) = EvidenceDigest::from_token(token) else {
-                continue;
-            };
-            found.push(digest.as_str().to_owned());
+            found.extend(name.to_str().and_then(|name| marker_digest(name, &suffix)));
         }
         found.sort();
         Ok(found)

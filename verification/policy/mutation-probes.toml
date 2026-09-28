@@ -4244,11 +4244,11 @@ conjunct = "the writer loop's timeout arm reports the drops a stopped burst alre
 # directly and stays green under it, which is the asymmetry this probe exists to show.
 path = "mcp-re-proxy/src/audit_sink/writer.rs"
 anchor = """
-        let mut stderr = std::io::stderr().lock();
+        let mut stderr = out();
         report_drops(&mut stderr, dropped, failed);
 """
 weakening = """
-        let mut stderr = std::io::stderr().lock();
+        let mut stderr = out();
         if line.is_some() {
             report_drops(&mut stderr, dropped, failed);
         }
