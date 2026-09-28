@@ -273,14 +273,15 @@ mod tests {
         );
     }
 
-    /// The connect diagnostic NAMES the endpoint instead of echoing it. The URL that
-    /// fails to open is exactly the shape a credential-bearing typo takes, so this
-    /// failure path is where an operator's password would otherwise reach the log.
+    /// The connect diagnostic NAMES the endpoint instead of echoing it. A URL redis
+    /// refuses to open still carries its userinfo, so this failure path is where an
+    /// operator's password would otherwise reach the log. The scheme is one redis does
+    /// not accept, so the locator decomposes and its host can be named.
     #[tokio::test]
     async fn a_connect_diagnostic_names_the_endpoint_without_its_credentials() {
         let key = authority();
         let err = RedisAdmissionSource::connect(
-            "mats:hunter2@redis.internal:6379",
+            "redis+bogus://mats:hunter2@redis.internal:6379",
             verifier_for(&key, 60, 5),
         )
         .await
