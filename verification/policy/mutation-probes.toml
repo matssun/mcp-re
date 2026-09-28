@@ -10149,10 +10149,7 @@ to the owner's battery: `bind_request_to_peer` is called correctly, with two wel
 products, and answers correctly about them. Only a control that drives the INSTALLABLE policy
 with two independently obtained operands can see it, which is what this twin's battery is.
 
-`a_permissive_policy_cannot_manufacture_the_binding_fact` deliberately stays green: it builds
-its own `TransportBindingPolicy` impl and reaches the relation directly, so it is not routed
-through the weakened arm. `an_absent_channel_peer_fails_closed` stays green for the stronger
-reason — `TransportBinding::bind` cannot be weakened into admitting an absence at all,
+`an_absent_channel_peer_fails_closed` stays green because `TransportBinding::bind` cannot be weakened into admitting an absence at all,
 because the return type gives an absent peer nothing to produce. That refusal is a seal, not
 a check, and a mutation probe is the wrong instrument for it.
 """

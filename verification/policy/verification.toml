@@ -11659,7 +11659,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.transport_binding_application"
 class = "V0"
-description = "THE INSTALLABLE BINDING APPLIES THE RELATION AND REFUSES AN ABSENCE: the policy the serving path can hold relates an authenticated channel peer to a verified request subject and succeeds only where the two name one principal, the coordinate is the resolved actor's SUBJECT rather than the `role:trust_domain:subject:keyid` composite, an absent channel peer is refused rather than treated as nothing to compare, and a policy written to admit everything cannot manufacture the binding fact because the only producer of `RequestPeerBindingFacts` is the authority's own relation. It states nothing the relation itself states — what the comparison DECIDES and why the subject is the coordinate are `proxy.request_peer_binding`'s — and nothing about WHICH binding modes a deployment may select, which the configuration owner decides."
+description = "THE INSTALLABLE BINDING APPLIES THE RELATION AND REFUSES AN ABSENCE: the policy the serving path can hold relates an authenticated channel peer to a verified request subject and succeeds only where the two name one principal, the coordinate is the resolved actor's SUBJECT rather than the `role:trust_domain:subject:keyid` composite, an absent channel peer is refused rather than treated as nothing to compare — and a permissive or fact-replaying `TransportBindingPolicy` is expressible but not installable, because `TransportBinding`'s policy field is private and `exact_match()` is its only constructor; that exclusion is a visibility fact read from source, not a tested one. It states nothing the relation itself states — what the comparison DECIDES and why the subject is the coordinate are `proxy.request_peer_binding`'s — and nothing about WHICH binding modes a deployment may select, which the configuration owner decides."
 # UC-1: `transport/mod.rs` declares `mod identity;` and `pub mod ingress;`, so both
 # resolve inside this unit's source closure and must be measured with it — a unit that
 # fingerprinted only the declaring file could have either body rewritten under it without
@@ -11683,7 +11683,6 @@ tested_symbols = [
   "lib#transport::tests::the_composite_actor_id_is_not_the_binding_coordinate",
   "lib#transport::tests::an_absent_channel_peer_fails_closed",
   "lib#transport::tests::the_installable_binding_is_exact_match",
-  "lib#transport::tests::a_permissive_policy_cannot_manufacture_the_binding_fact",
 ]
 
 [[unit]]
