@@ -39,13 +39,7 @@ use super::ClientCrlEvidence;
 pub(super) fn load_and_check_crls(
     crl_paths: &[String],
     startup_now_unix: i64,
-) -> Result<
-    (
-        Vec<rustls_pki_types::CertificateRevocationListDer<'static>>,
-        ClientCrlEvidence,
-    ),
-    String,
-> {
+) -> Result<ClientCrlEvidence, String> {
     let client_crls = crate::client_crl_publication::load_client_crls(crl_paths)?;
     if !client_crls.is_empty() {
         eprintln!(
@@ -59,32 +53,24 @@ pub(super) fn load_and_check_crls(
     // is the CONSEQUENCE: here a refusal means the deployment does not come up, because a
     // proxy that starts and then fails every handshake is an outage nobody attributes to a
     // CRL; on reload the same refusal keeps last-good, which still ages out on its own.
-    let evidence = ClientCrlEvidence::from_checked(&client_crls, startup_now_unix)
-        .map_err(|e| format!("mcp-re-proxy refuses to start with a bad client CRL: {e}"))?;
-    Ok((client_crls, evidence))
+    ClientCrlEvidence::from_checked(client_crls, startup_now_unix)
+        .map_err(|e| format!("mcp-re-proxy refuses to start with a bad client CRL: {e}"))
 }
 
-/// The PER-REQUEST revocation index, built from the same CRL bytes the handshake verifier
+/// The PER-REQUEST revocation index, built from the gated evidence the handshake verifier
 /// is about to be given.
 ///
 /// Without it revocation reaches only NEW connections: rustls runs client authentication on
 /// a full handshake alone, so a peer added to a reloaded CRL keeps serving every request on
 /// the connection it already holds.
 pub(super) fn build_revocation_index(
-    client_crls: &[rustls_pki_types::CertificateRevocationListDer<'static>],
+    evidence: &ClientCrlEvidence,
 ) -> Result<Option<Arc<client_revocation::SharedClientRevocation>>, String> {
-    if client_crls.is_empty() {
+    if evidence.is_empty() {
         return Ok(None);
     }
-    let index = client_revocation::ClientRevocationIndex::from_crl_ders(
-        &client_crls
-            .iter()
-            .map(|crl| crl.as_ref().to_vec())
-            .collect::<Vec<_>>(),
-    )
-    .map_err(|e| e.to_string())?;
     Ok(Some(Arc::new(
-        client_revocation::SharedClientRevocation::new(index),
+        client_revocation::SharedClientRevocation::new(evidence.revocation_index()?),
     )))
 }
 

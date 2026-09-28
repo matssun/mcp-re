@@ -521,7 +521,7 @@ fn run_validated(
     // claimed on either.
     if config.state().topology().is_fleet() {
         let trust_bound = crate::trust_plane::fleet_trust_bound(&trust_plan);
-        let crl_bound = crate::tls_plane::fleet_crl_bound(&tls_plan);
+        let crl_bound = building.tls()?.fleet_crl_bound(&tls_plan);
         // r12 R12-628: THREE slots, three postures. The response-slot anchor is read once
         // and held for the process lifetime — deliberately, because it is the deployment's
         // own trust anchor and is revoked by root rotation rather than by a trust-store

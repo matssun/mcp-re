@@ -31,12 +31,8 @@ use supervision::spawn_crl_reload_task;
 /// Start the CRL reload worker the posture calls for, and nothing otherwise.
 ///
 /// Only the `Reloading` posture starts one, and the cadence comes from that variant rather
-/// than from an `Option` beside it. There was a branch here for a cadence with NO CRLs,
-/// which printed "no CRL reload scheduled" and carried on; it is gone because it is now
-/// unreachable — that combination is refused at the boundary (CF-04: a cadence for
-/// re-reading an empty set states a control the deployment does not have). The same shape
-/// as `ReplayPlan::Memory` — a branch that survived because nothing had ever asked whether
-/// a configuration could reach it.
+/// than from an `Option` beside it. The currency is created here, so a cadence is claimed
+/// only where a worker was spawned.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn start_reload_worker(
     deployment: Arc<std::sync::atomic::AtomicBool>,
@@ -47,32 +43,37 @@ pub(super) fn start_reload_worker(
     reload_crl_paths: Vec<String>,
     revocation: Option<Arc<client_revocation::SharedClientRevocation>>,
     rebuild_state: &Arc<TlsListenerSecurityState>,
-    currency: &Arc<ClientRevocationCurrency>,
-) -> WorkerSet {
+    crls: ClientCrlEvidence,
+) -> (WorkerSet, Arc<ClientRevocationCurrency>) {
     let mut workers = WorkerSet::new(deployment);
-    if let Some(cadence_secs) = plan.client_revocation.reload_cadence_secs() {
-        let custody = material.label();
-        spawn_crl_reload_task(
-            &mut workers,
-            CrlReloadTask {
-                snapshot: Arc::clone(snapshot),
-                server_chain: reload_chain,
-                material,
-                crl_paths: reload_crl_paths,
-                interval_secs: cadence_secs,
-                revocation: revocation.clone(),
-                rebuild_state: Arc::clone(rebuild_state),
-                currency: Arc::clone(currency),
-            },
-            plan.clone(),
+    let Some(cadence_secs) = plan.client_revocation.reload_cadence_secs() else {
+        return (
+            workers,
+            Arc::new(ClientRevocationCurrency::new(crls, false)),
         );
-        eprintln!(
-            "mcp-re-proxy: in-process CRL hot-reload enabled (every {cadence_secs}s, \
-             {custody} TLS custody; refreshed --client-crl honored without restart; \
-             failed reload keeps last-good)"
-        );
-    }
-    workers
+    };
+    let currency = Arc::new(ClientRevocationCurrency::new(crls, true));
+    let custody = material.label();
+    spawn_crl_reload_task(
+        &mut workers,
+        CrlReloadTask {
+            snapshot: Arc::clone(snapshot),
+            server_chain: reload_chain,
+            material,
+            crl_paths: reload_crl_paths,
+            interval_secs: cadence_secs,
+            revocation: revocation.clone(),
+            rebuild_state: Arc::clone(rebuild_state),
+            currency: Arc::clone(&currency),
+        },
+        plan.clone(),
+    );
+    eprintln!(
+        "mcp-re-proxy: in-process CRL hot-reload enabled (every {cadence_secs}s, \
+         {custody} TLS custody; refreshed --client-crl honored without restart; \
+         failed reload keeps last-good)"
+    );
+    (workers, currency)
 }
 
 pub(super) struct CrlReloadTask {
@@ -134,20 +135,14 @@ fn attempt_reload(
         // swapped in, after which every new handshake against that issuer failed closed and
         // this worker reported success. Building the evidence FIRST is what makes that
         // unreachable rather than merely checked: there is no inhabitant to install.
-        let evidence = ClientCrlEvidence::from_checked(&crls, now_unix)?;
+        let evidence = ClientCrlEvidence::from_checked(crls, now_unix)?;
         // The per-request index from the SAME bytes, BEFORE the verifier is rebuilt, so a
         // malformed CRL keeps last-good on both rather than swapping one and failing the
         // other.
-        let index = client_revocation::ClientRevocationIndex::from_crl_ders(
-            &crls
-                .iter()
-                .map(|crl| crl.as_ref().to_vec())
-                .collect::<Vec<_>>(),
-        )
-        .map_err(|e| e.to_string())?;
+        let index = evidence.revocation_index()?;
         let rebuilt =
             task.material
-                .rebuild(task.server_chain.clone(), crls, &task.rebuild_state)?;
+                .rebuild(task.server_chain.clone(), &evidence, &task.rebuild_state)?;
         if let Some(revocation) = task.revocation.as_ref() {
             revocation.store(index);
         }
