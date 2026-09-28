@@ -205,21 +205,20 @@ impl CollectingAuditSink {
         CollectingAuditSink::default()
     }
 
+    fn guard(&self) -> std::sync::MutexGuard<'_, Vec<AuditRecord>> {
+        let locked = self.records.lock();
+        locked.unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// Every record observed so far, in emission order.
     pub fn records(&self) -> Vec<AuditRecord> {
-        self.records
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
+        self.guard().clone()
     }
 }
 
 impl AuditSink for CollectingAuditSink {
     fn record(&self, record: &AuditRecord) {
-        self.records
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(record.clone());
+        self.guard().push(record.clone());
     }
 }
 
