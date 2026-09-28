@@ -89,9 +89,10 @@ pub struct ReservedBeforeDispatch {
 impl ReservedBeforeDispatch {
     /// Take the value that stands for an accepted, uncommitted obligation.
     ///
-    /// Called only by the store, once its marker is durable. Constructing one before that
-    /// would make possession mean *a write was attempted*, which is what the exchange
-    /// machine goes on to treat as *a refusal here is still free and still honest*.
+    /// Called only by the store's `reserve`, before it awaits the marker's publication so
+    /// that a cancelled `reserve` still rescinds, and handed to a caller only once that
+    /// publication is acknowledged durable — which is what possession means to the
+    /// exchange machine.
     pub(super) fn over(
         digest: EvidenceDigest,
         retained: RetainedRequest,
