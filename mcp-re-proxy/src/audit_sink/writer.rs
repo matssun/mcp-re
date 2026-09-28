@@ -52,8 +52,9 @@ pub(crate) static STDERR_AUDIT_WRITER: std::sync::OnceLock<
 /// Records that never reached the writer because the queue was full.
 pub(super) static STDERR_AUDIT_DROPPED: AtomicU64 = AtomicU64::new(0);
 
-/// Lines handed over and not yet written, so admission can reserve headroom. A
-/// `sync_channel` does not expose its occupancy, and the reservation needs it.
+/// Lines on the queue and not yet dequeued by the writer: the channel's line occupancy,
+/// which the admission reservation needs and a `sync_channel` does not expose. `Flush`
+/// messages are not counted.
 pub(super) static STDERR_AUDIT_QUEUED: AtomicUsize = AtomicUsize::new(0);
 
 /// Set the first time a write to stderr fails, or the writer thread fails to start.
