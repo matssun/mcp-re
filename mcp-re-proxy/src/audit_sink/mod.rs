@@ -207,13 +207,19 @@ impl CollectingAuditSink {
 
     /// Every record observed so far, in emission order.
     pub fn records(&self) -> Vec<AuditRecord> {
-        self.records.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+        self.records
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 }
 
 impl AuditSink for CollectingAuditSink {
     fn record(&self, record: &AuditRecord) {
-        self.records.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(record.clone());
+        self.records
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(record.clone());
     }
 }
 

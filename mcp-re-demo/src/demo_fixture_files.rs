@@ -38,7 +38,10 @@ impl DemoFixtures {
             &mismatched_client_cert_path,
             self.mismatched_client_cert_pem(),
         )?;
-        std::fs::write(&mismatched_client_key_path, self.mismatched_client_key_pem())?;
+        std::fs::write(
+            &mismatched_client_key_path,
+            self.mismatched_client_key_pem(),
+        )?;
         std::fs::write(&trust_path, self.trust_json())?;
         std::fs::write(&signing_seed_path, self.signing_seed_b64url())?;
         std::fs::write(&signer_seed_path, self.signer_seed_b64url())?;

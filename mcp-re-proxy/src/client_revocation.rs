@@ -127,9 +127,9 @@ impl ClientRevocationIndex {
             let (rest, crl) =
                 x509_parser::revocation_list::CertificateRevocationList::from_der(crl_der.as_ref())
                     .map_err(|e| TlsError::Verifier(format!("malformed client CRL: {e}")))?;
-            if !rest.is_empty() {
-                return Err(TlsError::Verifier("client CRL has trailing bytes".into()));
-            }
+            rest.is_empty()
+                .then_some(())
+                .ok_or_else(|| TlsError::Verifier("client CRL has trailing bytes".into()))?;
             let issuer = crl.issuer().as_raw().to_vec();
             let next_update_unix = crl
                 .next_update()
@@ -644,8 +644,8 @@ mod tests {
         use der::Encode;
         use x509_cert::der::Decode;
         let ca = test_ca("mcp-re-client-revocation-no-next-update-ca");
-        let mut list = x509_cert::crl::CertificateList::from_der(&ca.crl(&[], 2035))
-            .expect("fixture decodes");
+        let mut list =
+            x509_cert::crl::CertificateList::from_der(&ca.crl(&[], 2035)).expect("fixture decodes");
         list.tbs_cert_list.next_update = None;
         let stripped = list.to_der().expect("re-encodes");
         let err = ClientRevocationIndex::from_crl_ders(&[stripped])
