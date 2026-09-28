@@ -122,7 +122,7 @@ count = 0
 [[debt]]
 crate = "mcp-re-demo"
 lint = "arithmetic_side_effects"
-count = 2
+count = 0
 
 [[debt]]
 crate = "mcp-re-demo"
