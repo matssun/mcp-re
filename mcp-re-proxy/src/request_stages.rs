@@ -256,7 +256,8 @@ mod tests {
             .expect("an in-process inner always prepares");
         let ready = ReadyForDispatch::new(
             prepared,
-            SigningWindow::over(key, 1_699_999_000, 60),
+            SigningWindow::over(key, 1_699_999_000, 60)
+                .expect("a live credential opens a window"),
             RetentionDisposition::NotConfigured,
         );
 
