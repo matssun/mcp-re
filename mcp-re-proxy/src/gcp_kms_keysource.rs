@@ -801,9 +801,6 @@ fn read_body(resp: ureq::Response) -> Result<Vec<u8>, KeyError> {
     Ok(buf)
 }
 
-/// Read a bounded, lossy string from an HTTP *error* response body (diagnostics
-/// only). An emulator/overridden endpoint could otherwise return an arbitrarily
-/// large body; cap it rather than `into_string()`'s unbounded read.
 /// The `asymmetricSign` request body for an Ed25519 (`EC_SIGN_ED25519`) key — raw
 /// `data` (PureEdDSA), never `digest`.
 fn sign_request_body(preimage: &[u8]) -> Vec<u8> {
@@ -872,9 +869,6 @@ fn parse_sign_response(body: &[u8]) -> Result<Vec<u8>, KeyError> {
         .map_err(|e| KeyError::Malformed(format!("gcp-kms: signature base64: {e}")))
 }
 
-/// How long the delegated-TLS path stops calling Cloud KMS after Cloud KMS has
-/// reported that the project is over its cryptographic-operations quota.
-///
 /// The handshake path and the root-issuance path share one project quota, and only the
 /// handshake path can be driven by an unauthenticated peer: TLS 1.3 emits the server
 /// `CertificateVerify` — one `asymmetricSign` — before it has seen a client
