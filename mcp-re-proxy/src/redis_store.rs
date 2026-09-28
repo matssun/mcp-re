@@ -28,6 +28,10 @@ use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
+use crate::async_redis_store::retention_promise;
+use crate::async_redis_store::retention_promise::config_get_value;
+use crate::async_redis_store::retention_promise::retention_verdict;
+use crate::async_redis_store::retention_promise::MAXMEMORY_POLICY_PARAM;
 use crate::shared_replay::AtomicReplayStore;
 use crate::shared_replay::ReplayStoreError;
 use mcp_re_core::ReplayDecision;
@@ -51,6 +55,10 @@ const DEFAULT_REDIS_TIMEOUT: Duration = Duration::from_secs(30);
 /// path, so the watchdog deadline = `connect_timeout + HANDSHAKE_GRACE`). Kept
 /// short so a silent backend still fails closed promptly.
 const HANDSHAKE_GRACE: Duration = Duration::from_secs(5);
+
+/// Read-timeout headroom over a declared `WAIT` window, so the socket bound never
+/// expires before the server's own `WAIT` timeout answers.
+const WAIT_READ_HEADROOM: Duration = Duration::from_secs(2);
 
 /// Hard ceiling on how many connect/handshake watchdog threads may be
 /// concurrently in flight (running OR abandoned-but-still-blocked) across the
@@ -159,15 +167,16 @@ impl Drop for ConnectPermit {
     }
 }
 
-/// The production [`UnixClock`]: reads the system clock. A clock that predates the
-/// Unix epoch (impossible on a sane host) clamps to 0 rather than panicking.
+/// The production [`UnixClock`]: reads the system clock. An unreadable (pre-epoch)
+/// clock reads as the latest representable instant, so every retain-until is already
+/// past and the pre-store staleness guard refuses every insert (`Unavailable`)
+/// instead of a zero `now` deriving a decades-long `PX`.
 pub fn system_clock() -> UnixClock {
-    Box::new(|| {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0)
-    })
+    Box::new(|| unix_seconds(SystemTime::now().duration_since(UNIX_EPOCH)))
+}
+
+fn unix_seconds(since_epoch: Result<Duration, std::time::SystemTimeError>) -> i64 {
+    since_epoch.map_or(i64::MAX, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
 }
 
 /// Compute the Redis `PX` TTL (milliseconds) from the already-skew-folded
@@ -184,7 +193,7 @@ pub fn system_clock() -> UnixClock {
 ///
 /// NOTE: in production this function is only ever reached for a STRICTLY-POSITIVE
 /// remaining window — [`insert_if_absent`](RedisAtomicReplayStore::insert_if_absent)
-/// rejects a non-positive window pre-store via [`is_nonpositive_ttl`] (MCPS-08).
+/// rejects a non-positive window pre-store via [`is_stale_pre_store`](crate::shared_replay::is_stale_pre_store) (MCPS-08).
 /// Because the remaining window is measured in WHOLE SECONDS, any admitted window
 /// is `>= 1 s`, so the result is `>= 1000 ms`; the trailing `.max(1)` is therefore
 /// an unreachable defensive floor for an admitted nonce. It only takes effect if
@@ -193,28 +202,6 @@ pub fn system_clock() -> UnixClock {
 pub(crate) fn compute_ttl_ms(expires_at_unix: i64, now_unix: i64) -> u64 {
     let ttl_secs = expires_at_unix.saturating_sub(now_unix).max(0);
     (ttl_secs as u64).saturating_mul(1000).max(1)
-}
-
-/// MCPS-08 defensive pre-store guard: `true` when the remaining window
-/// `retain_until - now` is NON-POSITIVE (the retain-until is at or before `now`),
-/// i.e. the request is ALREADY STALE and MUST be rejected BEFORE the shared store
-/// is consulted, fail closed — never SET NX'd and reported `Fresh`.
-///
-/// Pure (no clock, no I/O) so the boundary is unit-testable without a live Redis,
-/// mirroring [`wait_quorum_satisfied`] / [`classify_fresh_insert_wait`]. The
-/// caller reads the store's OWN injected clock for `now_unix` (the trait's
-/// `now_unix = 0` is vestigial). Equality (`retain_until == now`) counts as
-/// non-positive: at the retain-until boundary the nonce can no longer pass the
-/// freshness window, so admitting it as `Fresh` would only ever record an
-/// already-expired sighting.
-///
-/// This enforces the ADR's explicit pre-store rejection AT THIS LAYER rather than
-/// depending solely on the upstream `mcp-re-core` freshness step
-/// (`now > expires_at + skew → reject`) running before replay; if that ordering ever
-/// regresses, this guard still fails closed instead of clamping an expired window to
-/// a minimal positive TTL and admitting the nonce.
-pub(crate) fn is_nonpositive_ttl(expires_at_unix: i64, now_unix: i64) -> bool {
-    expires_at_unix.saturating_sub(now_unix) <= 0
 }
 
 /// The connection parameters retained so a transient-failure RECONNECT (M19) uses
@@ -242,12 +229,10 @@ struct ConnectParams {
 /// [`ReplayStoreError::Unavailable`] (fail closed — an outage is NEVER silently
 /// treated as a fresh nonce).
 ///
-/// M19 resilience: a *transient* connection/IO error on an op no longer
-/// permanently degrades the backend. The op RECONNECTS once (bounded by the SAME
-/// #4065 timeouts) and retries; only if the reconnect also fails does it surface
-/// `Unavailable` (fail closed). The old code retained an UNUSED `client` field and
-/// never re-established the connection, so one transient blip wedged the replay
-/// backend forever.
+/// A *transient* connection/IO error on an op RECONNECTS once (bounded by the
+/// SAME #4065 timeouts) and retries; only if the reconnect also fails does it
+/// surface `Unavailable` (fail closed).
+///
 /// WAIT durability parameters for the `REDIS_WAIT_QUORUM` tier (ADR-MCPS-020):
 /// after a fresh insert, require `quorum` replica acknowledgements within
 /// `timeout_ms` before reporting `Fresh`, else fail closed (the nonce is not
@@ -334,23 +319,16 @@ impl RedisAtomicReplayStore {
     /// `REDIS_ASYNC` / `SINGLE_STORE_FAIL_CLOSED` plain `SET NX PX` path.
     pub fn with_wait_quorum(mut self, quorum: u32, timeout_ms: u64) -> Self {
         self.wait_quorum = Some(WaitQuorum { quorum, timeout_ms });
+        let wait_bound = Duration::from_millis(timeout_ms).saturating_add(WAIT_READ_HEADROOM);
+        self.params.read_timeout = self.params.read_timeout.map(|t| t.max(wait_bound));
+        // `set_read_timeout` refuses only a zero duration and `wait_bound` >= 2 s; a
+        // narrower surviving bound can only fail WAIT closed.
+        let _ = self
+            .conn
+            .get_mut()
+            .map(|conn| conn.set_read_timeout(self.params.read_timeout));
         self
     }
-}
-
-/// The clock-WIRING path, isolated from any Redis connection: read `clock` for the
-/// current Unix time and derive the `PX` TTL. This is the exact TTL computation
-/// [`RedisAtomicReplayStore::insert_if_absent`] performs once it has passed the
-/// MCPS-08 pre-store staleness guard, so a unit test that injects a fixed clock
-/// proves the store derives the TTL from a REAL `now` (the H-8/H-9 fix), not the
-/// trait's hard-wired `0`, with NO live Redis.
-///
-/// Test-only since the MCPS-08 pre-store guard inlined the single clock read into
-/// [`RedisAtomicReplayStore::insert_if_absent`] (the guard and the TTL now share one
-/// `now`); this helper remains the deterministic unit-test seam for that wiring.
-#[cfg(test)]
-fn ttl_ms_via_clock(clock: &UnixClock, expires_at_unix: i64) -> u64 {
-    compute_ttl_ms(expires_at_unix, clock())
 }
 
 /// Open a single Redis connection bounded by `params` — the SHARED connect path
@@ -416,7 +394,7 @@ fn bounded_connect(params: &ConnectParams) -> Result<redis::Connection, ReplaySt
                     details: format!("redis client open failed: {e}"),
                 }
             })?;
-            let conn = c
+            let mut conn = c
                 .get_connection_with_timeout(connect_timeout)
                 .map_err(|e| ReplayStoreError::Unavailable {
                     details: format!("redis connection failed: {e}"),
@@ -431,6 +409,7 @@ fn bounded_connect(params: &ConnectParams) -> Result<redis::Connection, ReplaySt
                 .map_err(|e| ReplayStoreError::Unavailable {
                     details: format!("redis set_write_timeout failed: {e}"),
                 })?;
+            assert_no_eviction(&mut conn)?;
             Ok(conn)
         })();
         // A receiver that has already timed out is gone; ignore the send error.
@@ -448,6 +427,24 @@ fn bounded_connect(params: &ConnectParams) -> Result<redis::Connection, ReplaySt
             ),
         }),
     }
+}
+
+/// Refuse a server whose `maxmemory-policy` evicts keys or cannot be read: the replay
+/// record must outlive its TTL window, so the verdict is the async store's.
+fn assert_no_eviction(conn: &mut redis::Connection) -> Result<(), ReplayStoreError> {
+    let reply = redis::cmd("CONFIG")
+        .arg("GET")
+        .arg(MAXMEMORY_POLICY_PARAM)
+        .query::<redis::Value>(conn)
+        .ok();
+    let policy = reply
+        .as_ref()
+        .and_then(|reply| config_get_value(reply, MAXMEMORY_POLICY_PARAM));
+    retention_verdict(policy.as_deref(), &retention_promise::REPLAY).map_err(|details| {
+        ReplayStoreError::Unavailable {
+            details: format!("redis replay store refused: {details}"),
+        }
+    })
 }
 
 /// Whether a Redis `WAIT` reply (the number of replicas that acknowledged the
@@ -596,15 +593,10 @@ impl AtomicReplayStore for RedisAtomicReplayStore {
         // so the guard and the `PX` window agree on a single `now`.
         let now_unix = (self.clock)();
 
-        // MCPS-08 defensive pre-store rejection: if the (already skew-folded)
-        // retain-until is at or before `now`, the request is ALREADY STALE. Reject
-        // it BEFORE touching Redis (fail closed → `Unavailable`), instead of the old
-        // behaviour that clamped the window to a minimal 1 ms TTL, SET NX'd it, and
-        // reported `Fresh`. This enforces the ADR's pre-store rejection AT THIS
-        // LAYER rather than relying solely on the upstream `mcp-re-core` freshness
-        // step running before replay; if that ordering ever regressed, an expired
-        // nonce would otherwise be admitted here.
-        if is_nonpositive_ttl(expires_at_unix, now_unix) {
+        // MCPS-08 pre-store rejection: a retain-until at or before `now` is already
+        // stale, so it is refused BEFORE touching Redis (fail closed → `Unavailable`)
+        // rather than clamped to a minimal TTL and recorded as `Fresh`.
+        if crate::shared_replay::is_stale_pre_store(expires_at_unix, now_unix) {
             return Err(ReplayStoreError::Unavailable {
                 details: format!(
                     "replay request already stale: retain_until ({expires_at_unix}) \
@@ -614,23 +606,26 @@ impl AtomicReplayStore for RedisAtomicReplayStore {
             });
         }
 
-        // Derive a server-side TTL from the (already skew-folded) retain-until
-        // instant relative to the store's OWN clock — NOT the trait's `now_unix`,
-        // which is 0 (the pure `ReplayCache` carries no clock). Trusting that 0
-        // was the H-8/H-9 bug: it made `PX = retain_until` (an absolute Unix
-        // ~1.78e9) × 1000 ≈ 56 years, so keys ~never expired → unbounded keyspace
-        // growth (DoS). Reading the real `now` here makes `PX` the intended
-        // `retain_until - now` WINDOW.
+        // The server-side TTL is the retain-until window relative to the store's OWN
+        // clock — NOT the trait's `now_unix`, which is 0 (the pure `ReplayCache`
+        // carries no clock).
         let ttl_ms = compute_ttl_ms(expires_at_unix, now_unix);
         // Copied out of `self` so the op closure (Fn) captures a plain value.
         let wait_quorum = self.wait_quorum;
 
-        let mut conn = self
-            .conn
-            .lock()
-            .map_err(|e| ReplayStoreError::Unavailable {
-                details: format!("redis connection mutex poisoned: {e}"),
-            })?;
+        // A panic mid-command can leave an unread reply on the RESP stream, and the
+        // next SET would read it (a stale `+OK` is a false Fresh). A poisoned
+        // connection is therefore REPLACED, never reused; a failed reconnect leaves
+        // the mutex poisoned so the next op retries the same bounded reconnect.
+        let mut conn = match self.conn.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                let mut guard = poisoned.into_inner();
+                *guard = bounded_connect(&self.params)?;
+                self.conn.clear_poison();
+                guard
+            }
+        };
 
         // Single atomic op: SET key 1 NX PX <ttl_ms>. The reply is a bulk string
         // "OK" when the key was absent and is now set, or NIL when NX found the
@@ -672,22 +667,11 @@ impl AtomicReplayStore for RedisAtomicReplayStore {
                             }
                         }
                     }
-                    // NX found the key present ⇒ Replay. NOTE (audit #97, finding 1):
-                    // `SET … NX` is NOT idempotent under the M19 reconnect-retry. If a
-                    // FRESH request's first `SET NX` actually LANDED the key on the
-                    // primary but the reply read then failed transiently, the bounded
-                    // reconnect re-runs the SAME `SET NX`, now finds its own just-written
-                    // key, and returns None here ⇒ a fresh request is reported as Replay.
-                    // This is accepted BY DESIGN: it FAILS CLOSED — it can only ever
-                    // REJECT a legitimate request, never ADMIT a replay (the safe
-                    // direction), and it is covered by the documented F4 contract that a
-                    // client treats `mcp-re.replay_cache_unavailable` as
-                    // retry-with-a-FRESH-nonce (a new nonce ⇒ a new key ⇒ Fresh). We do
-                    // NOT add any compensating path (e.g. read-back / DEL on retry) that
-                    // could turn a real Replay into an Ok; preserving the never-admit-a-
-                    // replay invariant outweighs the rare spurious-reject availability
-                    // cost. (Same non-idempotency reasoning as the WAIT-shortfall Fatal
-                    // path in `classify_fresh_insert_wait`.)
+                    // NX found the key present ⇒ Replay. `SET … NX` is not idempotent
+                    // under the M19 reconnect-retry: a first SET that landed but whose
+                    // reply read failed is re-run, finds its own key, and reports
+                    // Replay. That fails closed (it can only reject a legitimate
+                    // request, never admit a replay); clients retry with a FRESH nonce.
                     Ok(None) => OpAttempt::Done(ReplayDecision::Replay),
                     Err(e) => {
                         let store_error = ReplayStoreError::Unavailable {
@@ -729,9 +713,8 @@ mod tests {
 
     use super::classify_fresh_insert_wait;
     use super::compute_ttl_ms;
-    use super::is_nonpositive_ttl;
     use super::run_with_reconnect;
-    use super::ttl_ms_via_clock;
+    use super::unix_seconds;
     use super::wait_quorum_satisfied;
     use super::ConnectPermit;
     use super::OpAttempt;
@@ -741,7 +724,13 @@ mod tests {
     use super::UnixClock;
     use super::INFLIGHT_CONNECTS;
     use super::MAX_INFLIGHT_CONNECTS;
+    use crate::async_redis_store::retention_promise::scripted_server::serve;
+    use crate::async_redis_store::retention_promise::scripted_server::Commands;
+    use crate::async_redis_store::retention_promise::scripted_server::Script;
+    use crate::shared_replay::is_stale_pre_store;
+    use crate::shared_replay::AtomicReplayStore;
     use std::sync::atomic::Ordering;
+    use std::time::UNIX_EPOCH;
 
     /// A BUILD-capability assertion, no Redis needed: this binary can open a
     /// `rediss://` endpoint, so an operator can encrypt and authenticate the hop that
@@ -849,29 +838,63 @@ mod tests {
         );
     }
 
-    /// PURE, no-Redis proof of the H-8/H-9 clock WIRING: the store derives the TTL
-    /// from a REAL `now` read through its INJECTED clock, NOT the trait's hard-wired
-    /// `now = 0`. Inject a fixed clock, drive the exact TTL path the store uses, and
-    /// assert `ttl_secs == retain_until - now`. A regression to `now = 0` would make
-    /// the TTL the absolute epoch — caught here deterministically, everywhere.
+    /// The scripted RESP server on its own thread (it needs a runtime the blocking
+    /// store does not have). Returns its `redis://` URL and the command recording.
+    fn scripted(script: Script) -> (String, Commands) {
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime");
+            runtime.block_on(async {
+                tx.send(serve(script).await).expect("send");
+                std::future::pending::<()>().await;
+            });
+        });
+        rx.recv().expect("scripted server")
+    }
+
+    fn noeviction_script(recorded: &str, reply: &str) -> Script {
+        Script {
+            policy: Some("noeviction".into()),
+            recorded: vec![recorded.into()],
+            reply: reply.into(),
+        }
+    }
+
+    fn connect_at(url: &str, now: i64) -> RedisAtomicReplayStore {
+        let clock: UnixClock = Box::new(move || now);
+        let timeout = Duration::from_secs(5);
+        RedisAtomicReplayStore::connect_with(url, timeout, Some(timeout), Some(timeout), clock)
+            .unwrap_or_else(|e| panic!("connect must succeed: {e:?}"))
+    }
+
+    fn recorded(seen: &Commands) -> Vec<Vec<String>> {
+        seen.lock().expect("commands").clone()
+    }
+
+    fn command(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|p| (*p).to_string()).collect()
+    }
+
+    /// The store derives the TTL from a REAL `now` read through its INJECTED clock,
+    /// NOT the trait's hard-wired `now = 0`: the `SET` it issues carries the
+    /// `retain_until - now` window as `PX`.
     #[test]
     fn injected_clock_makes_ttl_the_window_not_the_now_zero_epoch() {
+        let _guard = super::tests_support::connect_count_lock();
         let retain_until: i64 = 1_779_998_730;
-        let fixed_now: i64 = retain_until - 600;
-        let clock: UnixClock = Box::new(move || fixed_now);
+        let (url, seen) = scripted(noeviction_script("SET", "+OK\r\n"));
+        let store = connect_at(&url, retain_until - 600);
 
-        let ttl_ms = ttl_ms_via_clock(&clock, retain_until);
+        let decision = store.insert_if_absent("k", retain_until, 0);
 
+        assert!(matches!(decision, Ok(ReplayDecision::Fresh)));
         assert_eq!(
-            ttl_ms,
-            (retain_until - fixed_now) as u64 * 1000,
-            "TTL must be (retain_until - injected_now), proving the clock is read, not 0"
-        );
-        // The now=0 bug would have produced this instead — assert we are NOT it.
-        let now_zero_bug_ms = compute_ttl_ms(retain_until, 0);
-        assert_ne!(
-            ttl_ms, now_zero_bug_ms,
-            "the injected-clock TTL must differ from the now=0 absolute-epoch TTL"
+            recorded(&seen),
+            vec![command(&["SET", "k", "1", "NX", "PX", "600000"])],
+            "PX must be (retain_until - injected_now) ms"
         );
     }
 
@@ -879,7 +902,7 @@ mod tests {
     /// positive TTL (never 0, never negative) — exercised here by calling the pure
     /// function directly. In production it is only ever REACHED for a
     /// strictly-positive window, because `insert_if_absent` rejects a non-positive
-    /// window pre-store (see `is_nonpositive_ttl` and the regression test below);
+    /// window pre-store (see `is_stale_pre_store` and the regression test below);
     /// an admitted whole-second window is `>= 1000 ms`, so the `.max(1)` floor is
     /// an unreachable defensive guard for an admitted nonce.
     #[test]
@@ -903,55 +926,169 @@ mod tests {
     fn nonpositive_window_is_flagged_stale_pre_store() {
         // Boundary: retain_until exactly at now is non-positive → reject.
         assert!(
-            is_nonpositive_ttl(1_000, 1_000),
+            is_stale_pre_store(1_000, 1_000),
             "exactly-now is non-positive → reject"
         );
         // Already past → reject.
         assert!(
-            is_nonpositive_ttl(900, 1_000),
+            is_stale_pre_store(900, 1_000),
             "already-past is non-positive → reject"
         );
         // A strictly-positive window (1s remaining) is admitted to the store.
         assert!(
-            !is_nonpositive_ttl(1_001, 1_000),
+            !is_stale_pre_store(1_001, 1_000),
             "a positive window is admitted"
         );
         // And the historical now=0 vestigial path: a real future retain-until with
         // now=0 is a huge positive window (NOT stale) — the guard must not over-fire.
         assert!(
-            !is_nonpositive_ttl(1_779_998_730, 0),
+            !is_stale_pre_store(1_779_998_730, 0),
             "future retain-until is not stale"
         );
     }
 
-    /// MCPS-08 regression (finding #142) — proof that the SAME injected clock the
-    /// store reads for its TTL also drives the pre-store staleness gate, so the gate
-    /// and the `PX` window agree on one `now`. With a fixed clock at `now`, a
-    /// retain-until in the past is flagged stale (→ pre-store reject), while a
-    /// retain-until in the future yields a positive TTL window (→ admitted). This is
-    /// the deterministic, no-Redis half of the wiring; the real `insert_if_absent`
-    /// SET path is exercised by the gated live-Redis e2e (same split as the other
-    /// store ops, which prove their logic via pure helpers, not a live connection).
+    /// MCPS-08 regression (finding #142) — the SAME injected clock the store reads for
+    /// its TTL drives the pre-store staleness gate: a retain-until at or before `now`
+    /// is refused without any command reaching Redis, while a future window is SET.
     #[test]
     fn injected_clock_drives_the_pre_store_staleness_gate() {
+        let _guard = super::tests_support::connect_count_lock();
         let now: i64 = 1_779_998_730;
-        let clock: UnixClock = Box::new(move || now);
+        let (url, seen) = scripted(noeviction_script("SET", "+OK\r\n"));
+        let store = connect_at(&url, now);
 
-        // Past retain-until → stale → would be rejected pre-store.
+        for retain_until in [now, now - 1] {
+            assert!(matches!(
+                store.insert_if_absent("k", retain_until, 0),
+                Err(ReplayStoreError::Unavailable { .. })
+            ));
+        }
         assert!(
-            is_nonpositive_ttl(now - 100, clock()),
-            "a retain-until before the injected now must be flagged stale"
+            recorded(&seen).is_empty(),
+            "a stale request must not reach Redis"
         );
-        // Future retain-until → positive window → admitted, TTL is the window.
-        assert!(
-            !is_nonpositive_ttl(now + 600, clock()),
-            "a retain-until after the injected now must NOT be flagged stale"
-        );
-        assert_eq!(
-            ttl_ms_via_clock(&clock, now + 600),
-            600 * 1000,
-            "the admitted window TTL is (retain_until - injected_now) ms"
-        );
+
+        assert!(matches!(
+            store.insert_if_absent("k", now + 600, 0),
+            Ok(ReplayDecision::Fresh)
+        ));
+        assert_eq!(recorded(&seen).len(), 1, "the recorder must see a SET");
+    }
+
+    /// A `WAIT` shortfall is issued with the declared quorum and window, and fails closed.
+    #[test]
+    fn a_wait_shortfall_is_issued_and_fails_closed() {
+        let _guard = super::tests_support::connect_count_lock();
+        let now: i64 = 1_779_998_730;
+        let (url, seen) = scripted(noeviction_script("WAIT", ":1\r\n"));
+        let store = connect_at(&url, now).with_wait_quorum(2, 100);
+
+        match store.insert_if_absent("k", now + 600, 0) {
+            Err(ReplayStoreError::Unavailable { details }) => {
+                assert!(details.contains("not durably replicated"), "{details}");
+            }
+            _ => panic!("a WAIT shortfall must fail closed"),
+        }
+        assert_eq!(recorded(&seen), vec![command(&["WAIT", "2", "100"])]);
+    }
+
+    /// A declared `WAIT` window widens the socket read bound past the window.
+    #[test]
+    fn a_declared_wait_window_widens_the_read_bound() {
+        let _guard = super::tests_support::connect_count_lock();
+        let (url, _seen) = scripted(Script::reporting("noeviction"));
+        let store = RedisAtomicReplayStore::connect_with(
+            &url,
+            Duration::from_secs(5),
+            Some(Duration::from_millis(500)),
+            Some(Duration::from_secs(5)),
+            Box::new(|| 0),
+        )
+        .unwrap_or_else(|e| panic!("connect must succeed: {e:?}"))
+        .with_wait_quorum(1, 5_000);
+
+        assert!(store.params.read_timeout >= Some(Duration::from_millis(5_000)));
+    }
+
+    /// An evicting Redis is refused at connect.
+    #[test]
+    fn the_sync_store_refuses_to_connect_to_an_evicting_redis() {
+        let _guard = super::tests_support::connect_count_lock();
+        let (url, _seen) = scripted(Script::reporting("volatile-lru"));
+        let timeout = Duration::from_secs(5);
+        match RedisAtomicReplayStore::connect_with(
+            &url,
+            timeout,
+            Some(timeout),
+            Some(timeout),
+            Box::new(|| 0),
+        ) {
+            Err(ReplayStoreError::Unavailable { details }) => {
+                assert!(details.contains("maxmemory-policy"), "{details}");
+                assert!(details.contains("volatile-lru"), "{details}");
+            }
+            _ => panic!("an evicting redis must be refused"),
+        }
+    }
+
+    /// A Redis that will not report its eviction policy is refused at connect.
+    #[test]
+    fn the_sync_store_refuses_a_redis_whose_policy_it_cannot_read() {
+        let _guard = super::tests_support::connect_count_lock();
+        let (url, _seen) = scripted(Script::recording(&[], ""));
+        let timeout = Duration::from_secs(5);
+        assert!(matches!(
+            RedisAtomicReplayStore::connect_with(
+                &url,
+                timeout,
+                Some(timeout),
+                Some(timeout),
+                Box::new(|| 0),
+            ),
+            Err(ReplayStoreError::Unavailable { .. })
+        ));
+    }
+
+    /// The positive control: a `noeviction` Redis is accepted.
+    #[test]
+    fn the_sync_store_accepts_a_noeviction_redis() {
+        let _guard = super::tests_support::connect_count_lock();
+        let (url, _seen) = scripted(Script::reporting("noeviction"));
+        let _store = connect_at(&url, 0);
+    }
+
+    /// A pre-epoch clock reads as the latest instant, so every insert is stale.
+    #[test]
+    fn an_unreadable_clock_refuses_every_insert_pre_store() {
+        let pre_epoch = UNIX_EPOCH.duration_since(UNIX_EPOCH + Duration::from_secs(1));
+        assert!(pre_epoch.is_err(), "the probe must reach the error arm");
+        assert!(is_stale_pre_store(1_779_998_730, unix_seconds(pre_epoch)));
+    }
+
+    /// A poisoned connection is replaced, not reused: the next insert runs on a fresh
+    /// connection and the mutex is healthy again.
+    #[test]
+    fn a_poisoned_connection_is_replaced_not_reused() {
+        let _guard = super::tests_support::connect_count_lock();
+        let now: i64 = 1_779_998_730;
+        let (url, _seen) = scripted(noeviction_script("SET", "$-1\r\n"));
+        let store = connect_at(&url, now);
+
+        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut guard = store.conn.lock().expect("lock");
+            guard
+                .send_packed_command(b"*1\r\n$4\r\nPING\r\n")
+                .expect("write PING without reading its reply");
+            panic!("poison");
+        }));
+        assert!(poisoned.is_err());
+        assert!(store.conn.is_poisoned());
+
+        assert!(matches!(
+            store.insert_if_absent("k", now + 600, 0),
+            Ok(ReplayDecision::Replay)
+        ));
+        assert!(!store.conn.is_poisoned());
     }
 
     /// H-10 regression — runs ANYWHERE, no real Redis. A TCP SINKHOLE (binds,

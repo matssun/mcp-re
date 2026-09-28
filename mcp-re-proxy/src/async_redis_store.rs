@@ -27,7 +27,7 @@
 //! audited but not enforced.
 //!
 //! TTL derivation and the MCPS-08 pre-store staleness guard reuse the SAME pure
-//! helpers as the sync backend ([`compute_ttl_ms`] / [`is_nonpositive_ttl`]),
+//! helpers as the sync backend ([`compute_ttl_ms`] / [`is_stale_pre_store`](crate::shared_replay::is_stale_pre_store)),
 //! reading the store's own clock, so the `PX` window is the intended
 //! `retain_until - now` and an already-stale request is rejected before Redis is
 //! touched.
@@ -55,10 +55,10 @@ use crate::async_replay::ReplayDecisionFuture;
 use crate::async_replay::ReplayInsert;
 use crate::redis_store::classify_wait_acks;
 use crate::redis_store::compute_ttl_ms;
-use crate::redis_store::is_nonpositive_ttl;
 use crate::redis_store::system_clock;
 use crate::redis_store::UnixClock;
 use crate::redis_store::WaitQuorum;
+use crate::shared_replay::is_stale_pre_store;
 use crate::shared_replay::ReplayStoreError;
 
 /// A durable, cross-process ASYNC authoritative replay store backed by Redis
@@ -257,7 +257,7 @@ impl AsyncAtomicReplayStore for RedisAsyncAtomicReplayStore {
             // MCPS-08 pre-store staleness guard: an already-stale request (a
             // non-positive remaining window) is rejected fail-closed BEFORE Redis is
             // touched — never recorded and reported Fresh.
-            if is_nonpositive_ttl(expires_at_unix, now) {
+            if is_stale_pre_store(expires_at_unix, now) {
                 return Err(ReplayStoreError::Unavailable {
                     details: format!(
                         "replay request already stale: retain_until ({expires_at_unix}) is at \
