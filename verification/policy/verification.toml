@@ -904,6 +904,8 @@ paths = [
   "mcp-re-proxy/src/tls_plane/crl_evidence.rs",
   "mcp-re-proxy/src/tls_plane/revocation_currency.rs",
   "mcp-re-proxy/src/tls_plane/crl_reload_worker/supervision.rs",
+  # Carries the unit's own clause: each successful reload republishes what it installed.
+  "mcp-re-proxy/src/tls_plane/crl_reload_worker/mod.rs",
   # Also in `proxy.tls_listener_state`, and deliberately: this file has two halves. Loading
   # and indexing the CRLs is what a listener is built with; RENDERING the posture is what
   # the deployment says about them. A change to either dirties both units, which is the
@@ -933,6 +935,9 @@ tested_symbols = [
   "lib#tls_plane::crl_reload_worker::supervision::tests::a_failed_reload_is_degraded_and_a_dead_worker_is_stopped",
   "lib#tls_plane::client_revocation_posture::revocation_posture_tests::with_no_crl_the_per_request_check_is_reported_as_not_configured",
   "lib#tls_plane::client_revocation_posture::revocation_posture_tests::every_loaded_crl_reports_its_own_digest_and_window",
+  "lib#tls_plane::crl_reload_worker::tests::a_halted_reload_loop_retracts_the_cadence_it_advertised",
+  "lib#tls_plane::crl_reload_worker::tests::a_successful_reload_republishes_the_evidence_it_installed",
+  "lib#tls_plane::crl_reload_worker::tests::a_failed_rebuild_keeps_last_good_index_and_is_degraded_not_stopped",
 ]
 
 # ---------------------------------------------------------------------------------------
