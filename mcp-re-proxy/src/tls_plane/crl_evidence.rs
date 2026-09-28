@@ -192,6 +192,6 @@ mod tests {
             ClientCrlEvidence::from_checked(vec![crl], next_update - 1).expect("inside its window");
         assert!(!evidence.revocation_index().expect("index").is_empty());
         let none = ClientCrlEvidence::from_checked(Vec::new(), 0).expect("no CRLs is legal");
-        assert!(none.revocation_index().expect("index").is_empty());
+        assert!(none.revocation_index().is_err());
     }
 }
