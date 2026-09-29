@@ -71,7 +71,6 @@ identity must be recorded separately before it may report a PASS.
 state = "resolved"
 verus = "sha256:72b8b03b8341580500306e9b422360a7361c5a61ffde282874f960e58ed99550"
 rust_verify = "sha256:51b413e6160f06d44d6b1fcb05e1f36386f9d0e30c57e2af16d4eff0954e4966"
-cargo-verus = "sha256:b9204f01a05d06bbe73fb02af4a76b41c8afa938ac822d044299e9f37a9410a0"
 note = """
 R9-C083. Every key is a file name under `verus.install_root`, digested. Nothing identified
 these before: the lane checked `vstd.vir` and the commit `version.json` DECLARES, and a

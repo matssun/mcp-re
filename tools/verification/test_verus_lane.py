@@ -245,7 +245,10 @@ def test_the_lock_identifies_the_prover_binaries_and_the_solver_by_digest():
     with nothing. A solver answering `unsat` to everything discharges every proof in the
     repository."""
     pinned = LANE._pinned_files(load_toolchains())
-    assert {"libvstd.rlib", "z3", "verus", "rust_verify", "cargo-verus"} <= set(pinned)
+    assert {"libvstd.rlib", "z3", "verus", "rust_verify"} <= set(pinned)
+    # The lane runs `verus` and `rust_verify` as a Bazel action; Cargo's front end is no
+    # part of the trusted prover, so it is not pinned as one.
+    assert "cargo-verus" not in pinned
     for name, digest in pinned.items():
         assert digest.startswith("sha256:"), f"{name} is identified by {digest!r}"
 

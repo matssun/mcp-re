@@ -173,8 +173,8 @@ def _pinned_file_mismatch(toolchains: dict, install_root: Path) -> str | None:
     # where a digest belongs is a defect in the lock, and it is one whether or not the
     # prover is installed — so it must not be reachable only after every file above it
     # alphabetically happens to be present. Interleaving the two checks let an absent
-    # `cargo-verus` mask the solver's unusable `identity`, which is the finding hiding
-    # behind an unrelated symptom.
+    # binary mask the solver's unusable `identity`, which is the finding hiding behind an
+    # unrelated symptom.
     for name, pinned in sorted(pinned_files.items()):
         if not pinned.startswith("sha256:"):
             return (
