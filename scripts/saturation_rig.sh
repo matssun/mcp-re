@@ -20,9 +20,6 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# A benchmark built by a different compiler than CI is not comparable to anything.
-. scripts/use_pinned_toolchain.sh
-
 # The replay fleet the rig requires, shared with the liveness lane so the two cannot
 # drift into measuring different admission postures.
 . scripts/lib/sat_replay_fleet.sh

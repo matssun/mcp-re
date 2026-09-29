@@ -106,7 +106,7 @@ check "two verdict lines exit non-zero" nonzero "$?"
 # --- 6. A STATUS OTHER THAN 1 SURVIVES ---------------------------------------------
 # The command's own status is propagated, not flattened to 1 — a killed gate (137/143)
 # and a failed one are different facts.
-gate="$(make_gate killed_gate 143 'LOCAL GATE: FAIL (stage 2 — cargo suites)')"
+gate="$(make_gate killed_gate 143 'LOCAL GATE: FAIL (stage 2 — Rust suites)')"
 "$RUN_GATE" --log "$TMP/log6" -- "$gate" >/dev/null 2>&1
 status=$?
 if [[ "$status" -eq 143 ]]; then

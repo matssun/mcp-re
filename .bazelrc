@@ -24,3 +24,8 @@ build:lint --aspects=@rules_rust//rust:defs.bzl%rust_clippy_aspect
 build:lint --output_groups=+clippy_checks
 build:lint --@rules_rust//rust/settings:clippy_flag=-Dwarnings
 build:lint --@rules_rust//rust/settings:clippy.toml=//:.clippy.toml
+
+# The Rust format lane: rustfmt's check over every first-party target. `bazel build
+# --config=rustfmt //...` is what `cargo fmt --all -- --check` was.
+build:rustfmt --aspects=@rules_rust//rust:defs.bzl%rustfmt_aspect
+build:rustfmt --output_groups=+rustfmt_checks
