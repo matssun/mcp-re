@@ -22,24 +22,14 @@ exports_files([
     "src/http_profile_dispatch/core_projection.rs",
 ])
 
-# ADR-MCPS-048 / MCPS-69 — these HITL live-cloud KMS tests are intentionally
-# cargo-only (no Bazel target): each is `#![cfg(feature = "…kms…")]` + `#[ignore]`
-# and runs ONLY in the manual live-infra lane (`cargo test --features … --
-# --ignored` against real AWS/GCP KMS):
-#   tests/integration_live/ — eleven suites in one cargo binary
-#     (aws_kms_delegated_required, aws_kms_delegated_signing, aws_kms_delegated_tls,
-#     aws_kms_http_profile, aws_kms_live, aws_kms_root_rotation,
-#     gcp_kms_delegated_required, gcp_kms_delegated_signing, gcp_kms_delegated_tls,
-#     gcp_kms_http_profile, gcp_kms_root_rotation)
-#   tests/gcp_kms_live_test.rs — its own binary: it mutates process environment
-# Each carries `#[ignore]` LIVE tests; the http-profile and delegated-signing files
-# ALSO carry non-ignored `*_offline_local_seed` twins, which the cargo
-# feature-gated-backends CI job runs on every push (they need no cloud).
-# NOTE: gazelle_rust's `generate_from_cargo` mode enumerates test targets from
-# Cargo metadata, so `# gazelle:exclude <file>` does NOT suppress them — gazelle
-# will always PROPOSE a target for each in `-mode diff`. This is a documented
-# advisory-diff false-positive; MCPS-70's staleness gate must allowlist them (and
-# not auto-adopt gazelle write output wholesale). Do NOT add Bazel targets here.
+# The HITL live-cloud KMS tests: each is `#![cfg(feature = "…kms…")]` + `#[ignore]` and
+# needs real AWS/GCP KMS, so it runs only in .github/workflows/cloud-kms-live.yml as
+# `bazel test --test_arg=--ignored` against the targets below:
+#   :integration_live_test — tests/integration_live/, eleven suites in one binary; the
+#     http-profile and delegated-signing files ALSO carry non-ignored
+#     `*_offline_local_seed` twins, which run in every `bazel test //...`
+#   :gcp_kms_live_test — tests/gcp_kms_live_test.rs, its own binary because it mutates the
+#     process environment; `manual`, since every case in it is live.
 
 # Single source of truth for the mcp_re_proxy library sources. The default
 # `:mcp_re_proxy` library and the feature-flavored `:mcp_re_proxy_fault` /
@@ -1543,6 +1533,7 @@ nt_rust_test(
     edition = "2021",
     env_inherit = [
         "MCP_RE_TEST_REDIS_URL",
+        "MCP_RE_TEST_REDIS_REPLICA_URL",
         "MCP_RE_TEST_ETCD_URL",
         "MCP_RE_TEST_OCSP_RESPONDER_URL",
         "MCP_RE_TEST_OCSP_ISSUER_DER",
@@ -1565,7 +1556,9 @@ nt_rust_test(
 )
 
 # The cloud-KMS suites. Every `*_live` case is `#[ignore]`d and needs real AWS or Google
-# credentials; the `*_offline_local_seed` cases are not live and run here.
+# credentials; the `*_offline_local_seed` cases are not live and run here. The live cases
+# run in .github/workflows/cloud-kms-live.yml as `bazel test --test_arg=--ignored`, which is
+# why the target inherits the endpoint, key and credential variables they read.
 nt_rust_test(
     name = "integration_live_test",
     srcs = glob(["tests/integration_live/*.rs"]) + [
@@ -1577,6 +1570,29 @@ nt_rust_test(
     bazel_build_cfg = False,
     crate_features = ["async_serve"] + _PROXY_EXT_FEATURES,
     edition = "2021",
+    env_inherit = [
+        "AWS_ACCESS_KEY_ID",
+        "AWS_ROLE_ARN",
+        "AWS_ROLE_SESSION_NAME",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "AWS_WEB_IDENTITY_TOKEN_FILE",
+        "MCP_RE_AWS_KMS_ENDPOINT",
+        "MCP_RE_AWS_KMS_KEY_ID",
+        "MCP_RE_AWS_KMS_REGION",
+        "MCP_RE_AWS_KMS_TLS_KEY_ID",
+        "MCP_RE_AWS_ROOT_A_KEY_ID",
+        "MCP_RE_AWS_ROOT_B_KEY_ID",
+        "MCP_RE_AWS_STS_ENDPOINT",
+        "MCP_RE_AWS_USE_WEB_IDENTITY",
+        "MCP_RE_GCP_ACCESS_TOKEN",
+        "MCP_RE_GCP_KEY_VERSION",
+        "MCP_RE_GCP_KEY_VERSION_TLS",
+        "MCP_RE_GCP_KMS_ENDPOINT",
+        "MCP_RE_GCP_USE_METADATA",
+        "MCP_RE_ROOT_A_KEY_VERSION",
+        "MCP_RE_ROOT_B_KEY_VERSION",
+    ],
     deps = [
         ":mcp_re_proxy_ext_pre052",  # keep
         "//mcp-re-client-core:mcp_re_client_core_pre052",  # keep
@@ -1586,6 +1602,30 @@ nt_rust_test(
         "@crates_mcp_re//:rustls",
         "@crates_mcp_re//:rustls-pki-types",
         "@crates_mcp_re//:tokio",
+    ],
+)
+
+# The GCP Cloud KMS signature lane, its own binary because it mutates the process
+# environment. Every case is `#[ignore]`d and live, so the target is `manual`: it runs only
+# in .github/workflows/cloud-kms-live.yml, with `--test_arg=--ignored`.
+nt_rust_test(
+    name = "gcp_kms_live_test",
+    srcs = ["tests/gcp_kms_live_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = ["gcp_kms_keysource"],
+    edition = "2021",
+    env_inherit = [
+        "MCP_RE_GCP_ACCESS_TOKEN",
+        "MCP_RE_GCP_KEY_VERSION",
+        "MCP_RE_GCP_KEY_VERSION_RSA",
+        "MCP_RE_GCP_KMS_ENDPOINT",
+        "MCP_RE_GCP_USE_METADATA",
+    ],
+    tags = ["manual"],
+    deps = [
+        ":mcp_re_proxy_ext",
+        "//mcp-re-core:mcp_re_core",
     ],
 )
 
