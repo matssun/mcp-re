@@ -104,3 +104,28 @@ Unchanged by the migration; listed so the count is complete.
   through THM-0023); THM-0099 (THM-0098); THM-0074, THM-0075, THM-0076, THM-0082 (several
   premises, including ones this branch moved).
 - Never reviewed: THM-0130, THM-0131.
+
+## 5. Claim-correction chains carried forward
+
+THM-0074, THM-0075, THM-0076 and THM-0105 publish on `origin/main` through recorded claim
+corrections. The lane wording moved THM-0105's own claim and the other three's premises, so
+each chain gained one link under `authority = "bazel-lane-wording-2026-09-29"`
+(`verification/claim-corrections/<THM>-bazel-lane-wording-2026-09-29.json`), from the
+fingerprint the chain ended at on `origin/main` to the branch's. Every entry quotes its lines.
+
+## 6. Awaiting the owner — `scripts/claim_surface_gate.py` refuses them on this branch
+
+The gate enforces every theorem whose claim moved on the branch. These five moved only by lane
+wording here, but each also carries a change from BEFORE the branch that no review or
+correction record covers, so neither the bounded event nor a correction link may carry it:
+
+| theorem | unreviewed change on `origin/main` |
+|---|---|
+| THM-0119 | scope: `proxy.trust_plane_runtime` → `proxy.trust_resolution_window` and `proxy.trust_reload_cadence` |
+| THM-0123 | scope: `client.local_ingress_authority` → `client.bind_scope`, `client.accepted_authority`, `client.caller_shape_admission` |
+| THM-0126 | scope: `client.response_acceptance` → `client.response_signer_authorization` / `client.response_binding_disposition` |
+| THM-0127 | scope: `client.config_lattice` → `client.local_leg_declaration` |
+| THM-0082 | premises THM-0089, THM-0108, THM-0116: recorded closure digests that no text in the tree at its review reproduces |
+
+The first four are ADR-069 unit renames in scope prose. A review of each at its current
+fingerprint clears the gate.
