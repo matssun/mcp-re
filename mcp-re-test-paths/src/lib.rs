@@ -41,12 +41,15 @@ pub fn resolve_runfile(env_key: &str) -> PathBuf {
         }
     }
     candidates.push(PathBuf::from(&rel));
-    candidates.into_iter().find(|c| c.exists()).unwrap_or_else(|| {
-        panic!(
-            "mcp_re_test_paths: env key '{env_key}' names '{rel}', which is under no runfiles \
+    candidates
+        .into_iter()
+        .find(|c| c.exists())
+        .unwrap_or_else(|| {
+            panic!(
+                "mcp_re_test_paths: env key '{env_key}' names '{rel}', which is under no runfiles \
              root — list the input in this test target's `data`"
-        )
-    })
+            )
+        })
 }
 
 #[cfg(test)]

@@ -1,34 +1,22 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""A test-only cargo feature may be enabled only by a dev-dependency.
+"""A test-only crate feature is compiled only into test-only targets.
 
-WHY THIS IS NOT `fixture_boundary.rs`'S JOB. That module owns three controls over the same
-boundary and all three read `mcp-re-host/Cargo.toml` through `include_str!`. That is the
-right instrument for the two halves it names — the `#[cfg]` on each item, and the feature not
-being defaulted — because both are facts about the crate's own files.
+A test-only feature — `mcp-re-host`'s `test-fixtures`, `mcp-re-http-profile`'s
+`pre_052_fixtures` — puts something on a crate's surface that no deployment may be given: a
+nonce source with no entropy and a frozen clock, or a removed direct-root response signer.
+Bazel compiles a crate's features per TARGET, so the feature reaches a build exactly through
+a target that names it in `crate_features` and whatever depends on that target.
 
-It cannot see the third mechanism, and the third mechanism is the one that fired:
+`testonly = True` closes the second half: Bazel refuses, at analysis, any target depending on
+a test-only one that is not test-only itself. So the whole boundary is one fact per target:
+every target compiling a registered crate with its test-only feature on is test-only. That is
+what this gate checks, over `verification/generated/rust-targets.json` — the build graph's
+own table, whose freshness `tools/verification/rust-targets --check` holds.
 
-    mcp-re-demo/Cargo.toml
-        mcp-re-host = { path = "../mcp-re-host", features = ["test-fixtures"] }
-
-`mcp-re-demo` is a default workspace member, the workspace is `resolver = "2"`, and cargo
-unifies features across NORMAL dependencies within one invocation. So every workspace build
-compiled one `mcp-re-host` with `test-fixtures` on, and that is the rlib `mcp-re-client`
-links. Measured on the production closure at the time this gate was written:
-
-    cargo tree -e features,no-dev --workspace | grep -c 'test-fixtures'   ->  1
-
-A control that reads only its own crate's manifest is structurally incapable of reporting
-that: the offending line is in a sibling's file. `the_fixture_feature_is_enabled_only_as_a_dev_dependency`
-was not weak, it was scoped — it tests the SELF dependency, and the self dependency was
-correct the whole time. Three doors of four.
-
-WHAT THIS GATE RANGES OVER. Every `Cargo.toml` in the workspace, including the root. A
-dependency line enabling a feature named in `TEST_ONLY_FEATURES` is refused unless it sits in
-a dev-dependency table — `[dev-dependencies]`, `[target.'cfg(...)'.dev-dependencies]`, or a
-`[dev-dependencies.<name>]` block. Dev-dependency features do not unify into a normal build,
-which is exactly why that placement is the sanctioned one.
+`fixture_boundary.rs` states the same boundary from inside `mcp-re-host`, for its own
+BUILD file. This gate ranges over every target in the graph: a flavor compiling the crate's
+sources from ANOTHER package is found by its crate root, not by where it is declared.
 
 The registry is deliberately a small literal list rather than a discovered set. A feature is
 test-only because someone decided it is; discovering the property from the name would make
@@ -37,109 +25,89 @@ the gate agree with whatever it found.
 
 from __future__ import annotations
 
-import re
 import sys
-import tomllib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "tools" / "verification"))
 
-#: Features that must never be enabled by a normal or build dependency, as `crate/feature`.
-#: Adding one here is a decision; the gate does not infer membership from the name.
+import _rust_targets  # noqa: E402
+
+#: Features no production target may compile, keyed by the Bazel package of the crate that
+#: declares them. Adding one here is a decision; the gate does not infer membership.
 TEST_ONLY_FEATURES: dict[str, str] = {
     "mcp-re-host": "test-fixtures",
-    # ADR-MCPRE-052: the pre-052 direct-root response emitters. Same class, same door —
-    # a normal-dependency edge would put a removed signing mode back into every build in
-    # the graph, which is exactly the property the relocation was for.
+    # ADR-MCPRE-052: the pre-052 direct-root response emitters. A production target
+    # compiling them would put a removed signing mode back into the build.
     "mcp-re-http-profile": "pre_052_fixtures",
 }
 
-#: Tables whose feature edges do NOT unify into a normal build.
-_DEV_TABLE = re.compile(r"^\s*\[(?:target\.[^\]]+\.)?dev-dependencies(?:\.[A-Za-z0-9_-]+)?\]")
-#: Any other table header ends a dev-dependency region.
-_ANY_TABLE = re.compile(r"^\s*\[")
 
-
-def _dev_regions(text: str) -> list[range]:
-    """Line ranges (0-based) that live under a dev-dependency table."""
-    regions: list[range] = []
-    start: int | None = None
-    for index, line in enumerate(text.splitlines()):
-        if _DEV_TABLE.match(line):
-            if start is None:
-                start = index
-        elif _ANY_TABLE.match(line):
-            if start is not None:
-                regions.append(range(start, index))
-                start = None
-    if start is not None:
-        regions.append(range(start, len(text.splitlines())))
-    return regions
-
-
-def offences(text: str, where: str) -> list[str]:
-    """Every line enabling a test-only feature outside a dev-dependency table."""
-    dev = _dev_regions(text)
+def problems(rows: dict[str, dict]) -> list[str]:
+    """Every target compiling a test-only feature without being test-only, and every
+    registered feature with no production library or no flavor to measure."""
     found: list[str] = []
-    for index, line in enumerate(text.splitlines()):
-        stripped = line.strip()
-        if stripped.startswith("#") or "features" not in stripped:
-            continue
-        for crate, feature in TEST_ONLY_FEATURES.items():
-            if crate not in stripped or f'"{feature}"' not in stripped:
-                continue
-            if any(index in region for region in dev):
-                continue
+    for package, feature in sorted(TEST_ONLY_FEATURES.items()):
+        compiled = {
+            label: row
+            for label, row in rows.items()
+            if row["root"].startswith(f"{package}/") and row["kind"] != "charon_llbc"
+        }
+        flavors = {label: row for label, row in compiled.items() if feature in row["features"]}
+        production = [
+            label
+            for label, row in compiled.items()
+            if row["kind"] == "rust_library" and feature not in row["features"]
+        ]
+        if not production:
             found.append(
-                f"{where}:{index + 1}: enables `{crate}/{feature}` outside a dev-dependency "
-                f"table. Cargo unifies features across normal dependencies, so this puts the "
-                f"feature on every build whose graph contains this crate — including the "
-                f"library a production consumer links.\n      {stripped}"
+                f"{package}: no rust_library compiles it without `{feature}`, so there is no "
+                "production library whose surface this boundary protects"
             )
+        if not flavors:
+            found.append(
+                f"{package}/{feature}: no target compiles the feature. A registered boundary "
+                "with nothing on its test side measures nothing; retire the registry entry "
+                "with the feature."
+            )
+        for label, row in sorted(flavors.items()):
+            if not row["testonly"]:
+                found.append(
+                    f"{label} compiles {package} with `{feature}` and is not testonly, so "
+                    "a production target may depend on it and ship the feature."
+                )
     return found
 
 
-def _manifests() -> list[Path]:
-    root = REPO / "Cargo.toml"
-    members: list[Path] = [root]
-    data = tomllib.loads(root.read_text(encoding="utf-8"))
-    for name in data.get("workspace", {}).get("members", []):
-        manifest = REPO / name / "Cargo.toml"
-        if manifest.is_file():
-            members.append(manifest)
-    return members
+def _row(root: str, kind: str, features: list[str], testonly: bool) -> dict:
+    return {"root": root, "kind": kind, "features": features, "testonly": testonly}
 
 
 def selftest() -> int:
-    """Prove the gate goes RED on the exact shape that shipped, and GREEN on the fix.
-
-    The same bytes in the two placements, so the only thing the verdicts can be reading is
-    which table the line is under.
-    """
-    line = 'mcp-re-host = { path = "../mcp-re-host", features = ["test-fixtures"] }'
-    red = f"[package]\nname = \"x\"\n\n[dependencies]\n{line}\n"
-    green = f"[package]\nname = \"x\"\n\n[dependencies]\n\n[dev-dependencies]\n{line}\n"
-
-    if not offences(red, "probe"):
-        print("fixture-feature gate selftest: FAIL — a normal-dependency edge was not refused")
+    """RED on each way the boundary opens, GREEN on the shape the tree has."""
+    lib = _row("mcp-re-host/src/lib.rs", "rust_library", [], False)
+    flavor = _row("mcp-re-host/src/lib.rs", "rust_library", ["test-fixtures"], True)
+    pre = _row("mcp-re-http-profile/src/lib.rs", "rust_library", [], False)
+    pre_flavor = _row("mcp-re-http-profile/src/lib.rs", "rust_library", ["pre_052_fixtures"], True)
+    green = {"//h:lib": lib, "//h:fx": flavor, "//p:lib": pre, "//p:fx": pre_flavor}
+    cases = {
+        "a flavor that is not testonly": {**green, "//h:fx": {**flavor, "testonly": False}},
+        "the production library carrying the feature": {
+            **green, "//h:lib": {**lib, "features": ["test-fixtures"]},
+        },
+        "a registered feature no target compiles": {k: v for k, v in green.items() if k != "//p:fx"},
+        "a flavor declared in another package": {
+            **green, "//elsewhere:fx": _row("mcp-re-host/src/lib.rs", "rust_library", ["test-fixtures"], False),
+        },
+    }
+    if problems(green):
+        print(f"fixture-feature gate selftest: FAIL — the green shape was refused: {problems(green)}")
         return 1
-    if offences(green, "probe"):
-        print("fixture-feature gate selftest: FAIL — a dev-dependency edge was refused")
-        return 1
-
-    # The regions scanner must end a dev region at the next table, or a normal-dependency
-    # table written AFTER the dev one would be silently exempt.
-    trailing = f"[dev-dependencies]\n\n[dependencies]\n{line}\n"
-    if not offences(trailing, "probe"):
-        print("fixture-feature gate selftest: FAIL — a dev region swallowed the table after it")
-        return 1
-
-    # And a commented-out edge is not an edge.
-    if offences(f"[dependencies]\n# {line}\n", "probe"):
-        print("fixture-feature gate selftest: FAIL — a commented line was read as an edge")
-        return 1
-
-    print("fixture-feature gate selftest: PASS")
+    for name, rows in cases.items():
+        if not problems(rows):
+            print(f"fixture-feature gate selftest: FAIL — {name} was not refused")
+            return 1
+    print(f"fixture-feature gate selftest: PASS ({len(cases) + 1} cases)")
     return 0
 
 
@@ -147,22 +115,23 @@ def main() -> int:
     if "--selftest" in sys.argv:
         return selftest()
 
-    manifests = _manifests()
-    problems: list[str] = []
-    for manifest in manifests:
-        where = manifest.relative_to(REPO).as_posix()
-        problems.extend(offences(manifest.read_text(encoding="utf-8"), where))
-
-    if problems:
-        print(f"fixture-feature gate: FAIL — {len(problems)} problem(s)")
-        for problem in problems:
+    rows = _rust_targets.table()
+    found = problems(rows)
+    if found:
+        print(f"fixture-feature gate: FAIL — {len(found)} problem(s)")
+        for problem in found:
             print(f"  - {problem}")
         return 1
 
-    registry = ", ".join(f"{c}/{f}" for c, f in sorted(TEST_ONLY_FEATURES.items()))
+    registry = ", ".join(f"{p}/{f}" for p, f in sorted(TEST_ONLY_FEATURES.items()))
+    flavors = sum(
+        1
+        for package, feature in TEST_ONLY_FEATURES.items()
+        for row in rows.values()
+        if row["root"].startswith(f"{package}/") and feature in row["features"]
+    )
     print(
-        f"fixture-feature gate: OK — {len(manifests)} workspace manifest(s) read; "
-        f"no normal or build dependency enables {registry}."
+        f"fixture-feature gate: OK — {flavors} target(s) compile {registry}, every one testonly."
     )
     return 0
 

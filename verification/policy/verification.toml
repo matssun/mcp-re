@@ -845,7 +845,7 @@ exported_contracts = []
 # Its three `doc#` items were ```compile_fail bodies: real controls, but on the pinned
 # stable toolchain rustdoc checks only that they fail, never WHY, so `compile_fail,E0308`
 # and bare `compile_fail` were the same declaration. The doctests remain in the source and
-# still run in the ordinary cargo lane; what changed is which mechanism the registry names
+# still run in their `rust_doc_test` target; what changed is which mechanism the registry names
 # as the evidence, and that one compares the error code itself. Keeping the field would
 # leave a battery no declared lane selects.
 evidence_class = "structural"
@@ -3898,7 +3898,7 @@ evidence = ["test://proxy/serving/dispatch_commitment_boundary", "mutation://pro
 # posture's provenance from the configured policy). Both propositions are `critical`, both
 # gates run in `ci.yml` and in `local_gate.sh`, and until this entry NO unit named either
 # one — so softening a rule moved no digest and invalidated no attestation. They are not in
-# `paths`: a `.py` entry collapses a cargo unit's ecosystem. They enter the fingerprint as
+# `paths`: a `.py` entry collapses a Rust unit's ecosystem. They enter the fingerprint as
 # their own component, and M174/M175 are the falsifiers that make them load-bearing.
 gate_controls = [
   "scripts/serving_product_provenance_gate.py",
@@ -3957,8 +3957,7 @@ tested_symbols = [
   # `signing_window.rs`, which IS this unit's, and the three siblings above — M160/M161's
   # `expect_red` — already measure this file's integration controls red in the same lane.
   #
-  # LANE: measured, default cargo. Present in the 167-test default listing and the 197-test
-  # `async_serve` listing alike.
+  # LANE: `//mcp-re-proxy:integration_async_test`, which compiles without `async_serve`.
   "//mcp-re-proxy:integration_async_test#delegated_serving_test::a_request_that_cannot_be_answered_never_reaches_the_backend",
   "//mcp-re-proxy:integration_async_test#delegated_serving_test::an_inner_plane_that_states_no_completion_bound_is_refused_before_the_backend_runs",
 ]
@@ -4022,7 +4021,7 @@ evidence = [
   "mutation://proxy/refusal/pre_dispatch_retention",
 ]
 # ADR-MCPRE-069 disposition REGISTER. THM-0081's own scope names this gate's clause 12c as
-# what holds the served mint to one call site ACROSS THE WORKSPACE — a width no cargo control
+# what holds the served mint to one call site ACROSS THE WORKSPACE — a width no Rust control
 # in this crate can reach — and says why a type cannot do it: `ServedHttpResponse` is a wire
 # frame with public fields that the async fleet, the blocking harness and external embedders
 # all construct, so "deleting the battery leaves an out-of-lifecycle exit compiling". Until
@@ -6043,10 +6042,9 @@ tested_symbols = [
   # (`issuance_failure_serves_the_valid_key_then_fails_closed_at_expiry`, above) stood for
   # it. This is the same clause driven through the public rotor/signer API with a root
   # issuer that goes away after the first mint, so what it adds is that the COMPOSITION
-  # fails closed rather than that the reader does. It selects in the DEFAULT cargo lane:
-  # measured, `--test integration_async -- --list` reports all ten `root_key_lifecycle_test`
-  # controls with and without `--features async_serve`, so no `test_features` is declared
-  # and none would be true.
+  # fails closed rather than that the reader does. It selects in
+  # `//mcp-re-proxy:integration_async_test`, which compiles `root_key_lifecycle_test`
+  # without `async_serve`.
   # ADR-MCPRE-069 NP-155, CO-S3-2. The NEVER-ISSUED transition, read on the serving path.
   # THM-0062 states the signer "yields none before the first rotation", and its
   # security_consequence states what the caller gets instead — "there is no longer-lived or
@@ -6124,7 +6122,7 @@ id = "proxy.outstanding_id_provenance"
 class = "V0"
 description = "That the serving path decides what a request IS exactly once — by envelope validation, ahead of every stage that reads the body for meaning — and never reads the outstanding id from the body a second time, carrying the decided value to its terminal instead."
 # Separate from `http_profile.request_envelope` because the two halves are in different
-# CARGO PACKAGES, and a unit's test lane runs in one. That is not merely a mechanical split:
+# BAZEL PACKAGES, and a unit's test lane runs in one. That is not merely a mechanical split:
 # the vocabulary is the profile's and the single decision is the serving path's, so the
 # packages and the authorities agree.
 paths = [
@@ -6194,9 +6192,9 @@ tested_symbols = [
 # exchange execution threshold. The guard spans the handler, so grace expiry can cancel a
 # task suspended inside it (owner correction, 2026-09-06).
 #
-# LANE IDENTITY. The battery exists only under `async_serve`, so `test_features` names it —
-# a plain `cargo test --workspace` compiles this file to zero tests and would report a green
-# that measured nothing. The Bazel target additionally sets `RUST_TEST_THREADS=1`; measured
+# LANE IDENTITY. The battery exists only under `async_serve`, so its selectors name the
+# `async_serve` test target — the default-feature targets compile this file to zero tests
+# and would report a green that measured nothing. That target sets `RUST_TEST_THREADS=1`; measured
 # on 2026-09-06, the battery passes identically with and without it (0.9s parallel, 2.8s
 # serial), so the lane this evidence is taken in is stated rather than assumed.
 #
@@ -6350,10 +6348,8 @@ tested_symbols = [
   # `signing_window.rs` opened, verified through the credential-to-root chain, and asserted
   # NOT to carry the root's kid.
   #
-  # LANE: measured, not assumed. `cargo test -p mcp-re-proxy --test integration_async --
-  # --list` selects 167 tests and `--features async_serve` selects 197; all four names below
-  # are in BOTH. They compile in the DEFAULT cargo lane, so this unit declares no
-  # `test_features` and declaring `async_serve` would have been false.
+  # LANE: `//mcp-re-proxy:integration_async_test`, which compiles all four without
+  # `async_serve`.
   "//mcp-re-proxy:integration_async_test#delegated_serving_test::delegated_bound_rejection_verifies",
   "//mcp-re-proxy:integration_async_test#delegated_serving_test::delegated_preflight_rejection_verifies_unbound",
   "//mcp-re-proxy:integration_async_test#delegated_serving_test::delegated_success_response_verifies_and_root_touched_once",
@@ -6611,8 +6607,7 @@ tested_symbols = [
   # that weakening the accepted record carries the response event type and the lookup this
   # control performs finds nothing.
   #
-  # LANE: measured, DEFAULT cargo — the same 167-test listing the four rows above were
-  # measured into. This unit declares no `test_features`.
+  # LANE: `//mcp-re-proxy:integration_async_test`, as for the four rows above.
   "//mcp-re-proxy:integration_async_test#delegated_client_server_e2e_test::an_unconfigured_deployments_records_say_so_rather_than_claiming_an_authorization",
   "//mcp-re-proxy:integration_async_test#pdp_authorization_serving_test::a_core_verification_failure_still_records_its_frozen_core_reason",
 ]
@@ -7260,7 +7255,7 @@ evidence = ["test://proxy/continuation_materialization/selected_capability_is_in
 #
 # `PostureLog::assert_complete` is the strong check and is NEVER REACHED hermetically: the
 # posture phase sits after the replay tier is established, and every tier validation accepts
-# needs a live Redis or etcd. So in `cargo test --workspace` and `bazel test //...` it
+# needs a live Redis or etcd. So in `bazel test //...` it
 # measures nothing about a real startup, and the controls below measure it over a
 # constructed log instead — which is honest, and weaker than it looks.
 #
@@ -7436,9 +7431,8 @@ evidence = [
 # production `HttpProfileProxy`, which is the only thing that can say the gate is CONSULTED.
 # A unit citing either alone would be evidence for half a claim.
 #
-# `tests/integration_async` is an ordinary cargo test target with no `required-features` —
-# measured, because six of its FILES are `#![cfg(feature = "async_serve")]` and these two are
-# not: the default lane lists 159 tests there and the feature lane 189.
+# `tests/integration_async` compiles into two targets: six of its FILES are
+# `#![cfg(feature = "async_serve")]` and these two are not, so both targets carry them.
 tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#admission_enforcer::tests::a_new_enforcer_has_a_window_nobody_earned",
   "//mcp-re-proxy:proxy_unit_test#admission_enforcer::degraded_window::tests::a_replica_that_never_reached_the_authority_has_no_window",
@@ -8140,7 +8134,7 @@ tested_symbols = [
   # would have broken serving outright, which every other control in this file also reports.
   # A probe naming it would be satisfied by the lane's own breakage.
   #
-  # LANE: measured, default cargo (167-test listing), not `async_serve`.
+  # LANE: `//mcp-re-proxy:integration_async_test`, not the `async_serve` target.
   "//mcp-re-proxy:integration_async_test#delegated_client_server_e2e_test::serving_without_an_audit_sink_still_round_trips",
   "//mcp-re-proxy:proxy_unit_test#audit_sink::drain::tests::the_unknown_outcome_is_its_own_case",
   "//mcp-re-proxy:proxy_unit_test#audit_sink::writer::tests::a_failed_line_write_latches_the_failure",
@@ -8768,10 +8762,8 @@ tested_symbols = [
 # at once, which is the shape ADR-MCPRE-061 records as invisible to every single-feature lane.
 #
 # LANE IDENTITY. `redis_store`/`async_redis_store` exist only under `redis_replay`;
-# `etcd_store`/`async_etcd_store` only under `cpstore_etcd`. A plain `cargo test --workspace`
-# compiles both to zero tests. `test_features` names each lane, which `verify-mutations` has
-# honoured since #822 — before that fix every probe over these batteries would have returned
-# MEASUREMENT FAILURE.
+# `etcd_store`/`async_etcd_store` only under `cpstore_etcd`. The default-feature targets
+# compile both to zero tests, so each unit's selectors name its feature target.
 
 [[unit]]
 id = "proxy.redis_replay_adapter"
@@ -8977,12 +8969,11 @@ tested_symbols = [
   # injector is what makes an untrusted or wrong-identity server certificate accepted — so
   # the three rejections above are the real verifier's and not an artefact of a test that
   # never presented a bad certificate. It compiles only under the `fault_accept_any_server`
-  # cargo feature, which is off by default and never in the normal build, and
-  # `cargo test -p mcp-re-transport --test fault_injection_test` reports ZERO tests without
-  # it — a green run over nothing.
+  # crate feature, which is off by default and never in the normal build; the default-feature
+  # target compiles it to ZERO tests — a green run over nothing.
   #
-  # A unit's `test_features` are ONE set for the WHOLE battery, and this battery cannot run
-  # under that feature: `untrusted_server_cert_is_rejected` is the control the feature exists
+  # A test target compiles its whole battery under one feature set, and this battery cannot
+  # run under that feature: `untrusted_server_cert_is_rejected` is the control the feature exists
   # to break. **An anti-vacuity control whose purpose is to falsify the property cannot live
   # in the same battery as the property.** It is NP-169.
 ]
@@ -9130,7 +9121,7 @@ tested_symbols = [
 # on every rule they implement, and they implemented these two THEMSELVES. That is the
 # defect class this campaign closed once already with `mcp-re-operator-display`: two
 # independently authored copies of one rule, in the two files with the widest external
-# blast radius, neither of which compiles in `cargo test --workspace` or `bazel test //...`.
+# blast radius, neither of which compiles in `bazel test //...`.
 #
 # So the rules moved to the crate both bindings already depend on, and these units measure
 # them THERE — in the default cargo lane, where a mutation probe can reach them. What the
@@ -9228,6 +9219,8 @@ paths = [
   "mcp-re-test-paths/src/rust_source/brace_scan.rs",
   # The resolver each walked tree's key goes through.
   "mcp-re-test-paths/src/lib.rs",
+  # The build graph's crate set, which the scope-identity control holds the scanned set to.
+  "verification/generated/rust-targets.json",
 ]
 exported_contracts = []
 # ADR-MCPRE-068 Phase 0D, §12.2. MEASURED, not tested, and the repository had already built
@@ -9256,7 +9249,7 @@ evidence_class = "measured"
 direct_consequence_severity = "medium"
 evidence = ["measured://conformance/audit_vocabulary/verdict_scope"]
 measurement_protocol = "The workspace walk in `audit_vocabulary_guard_test`, executed with its scope-identity control, emitting one `MEASURED:` line per observation. Registered as a runnable argv in verification/policy/measurements.toml (MSR-0001)."
-measurement_scope = "Every crate in the workspace that has a source tree, derived from the root Cargo.toml at compile time rather than from a hand-list, so a new member cannot be scanned by nobody. Production halves only: test regions are excluded by `rust_source::production_half`."
+measurement_scope = "Every first-party crate package the build graph compiles, both SDK bindings included, derived from the committed target table at compile time rather than from a hand-list, so a new crate cannot be scanned by nobody; the clippy activation probes are the one named exclusion. Production halves only: test regions are excluded by `rust_source::production_half`."
 measurement_artifact = "verdict-vocabulary-scope.txt"
 measurement_control = "Sensitivity: removing `mcp-re-core` from the scanned set must change exactly one observation, and the walk must read fewer files. The control reports `APPARATUS-MOVED: <n>`, and the lane reads the COUNT rather than the exit status — a control that selected nothing exits 0 exactly like one that perturbed everything."
 
@@ -9283,7 +9276,7 @@ paths = [
   "mcp-re-host/src/nonce.rs",
   "mcp-re-host/src/clock.rs",
   "mcp-re-host/src/fixture_boundary.rs",
-  "mcp-re-host/Cargo.toml",
+  "mcp-re-host/BUILD.bazel",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -9293,10 +9286,10 @@ evidence = [
   "mutation://host/request_freshness_inputs",
 ]
 # Three groups. The entropy controls are about the production source; the gating controls are
-# about the fixtures NOT being on the production surface, which is a two-part boundary — the
-# `#[cfg]` on each item AND the feature not being default and not being a normal dependency.
-# The manifest half is why `Cargo.toml` is a path: enabling `test-fixtures` by default would
-# satisfy every `#[cfg]` in the crate with no source line changing.
+# about the fixtures NOT being on the production surface — the `#[cfg]` on each item, the
+# production library compiling no fixture feature, and the fixture flavor being `testonly`.
+# The build half is why `BUILD.bazel` is a path: `crate_features = ["test-fixtures"]` on the
+# production library would satisfy every `#[cfg]` in the crate with no source line changing.
 tested_symbols = [
   "//mcp-re-host:mcp_re_host_test#nonce::tests::the_nonce_is_at_least_the_specs_minimum_entropy",
   "//mcp-re-host:mcp_re_host_test#nonce::tests::the_production_source_fills_every_byte_it_is_given",
@@ -9310,8 +9303,8 @@ tested_symbols = [
   "//mcp-re-host:mcp_re_host_test#clock::tests::the_production_clock_reads_a_real_time",
   "//mcp-re-host:mcp_re_host_test#clock::tests::the_fixture_clock_is_frozen_at_its_value",
   "//mcp-re-host:mcp_re_host_test#fixture_boundary::tests::every_fixture_item_is_compiled_only_under_test_or_the_explicit_feature",
-  "//mcp-re-host:mcp_re_host_test#fixture_boundary::tests::the_fixture_feature_is_not_a_default_feature",
-  "//mcp-re-host:mcp_re_host_test#fixture_boundary::tests::the_fixture_feature_is_enabled_only_as_a_dev_dependency",
+  "//mcp-re-host:mcp_re_host_test#fixture_boundary::tests::the_production_library_compiles_no_fixture_feature",
+  "//mcp-re-host:mcp_re_host_test#fixture_boundary::tests::the_fixture_flavor_is_testonly",
 ]
 
 # v0.17 assurance-closure mandate, priority 3: the transparency remainder. Five files were
@@ -9428,8 +9421,8 @@ evidence = [
   "mutation://proxy/remote_signer_call/quota_verdict_aws",
 ]
 # The lane this arm is compiled by. Named rather than left to another lane: the module does
-# not exist in the default crate at all, so a plain `cargo test --workspace` compiles it to
-# ZERO tests and would report a green that measured nothing.
+# not exist in the default crate at all, so the default-feature targets compile it to ZERO
+# tests and would report a green that measured nothing.
 tested_symbols = [
   "//mcp-re-proxy:proxy_ext_unit_test#remote_signer_call::tests::a_status_failure_keeps_both_halves_and_renders_with_them",
   "//mcp-re-proxy:proxy_ext_unit_test#remote_signer_call::tests::a_rendered_failure_passes_its_own_diagnosis_through_unchanged",
@@ -9525,8 +9518,8 @@ tested_symbols = [
 # the right key, or reaches the endpoint a deployment intended. These units are that.
 #
 # ONE UNIT PER PROVIDER, because a green result under one feature is not evidence about
-# another: each of these modules exists only under its own non-default feature, and a plain
-# `cargo test --workspace` compiles all three to zero tests.
+# another: each of these modules exists only under its own non-default feature, and the
+# default-feature targets compile all three to zero tests.
 [[unit]]
 id = "proxy.aws_kms_adapter"
 class = "V0"
@@ -9621,7 +9614,7 @@ paths = [
   "mcp-re-proxy/src/pkcs11_keysource/token.rs",
   "mcp-re-proxy/src/pkcs11_native.rs",
   "mcp-re-proxy/tests/pkcs11_keysource_e2e_test.rs",
-  # The Cryptoki fault injector this unit's e2e control drives lives in the SEPARATE Cargo
+  # The Cryptoki fault injector this unit's e2e control drives lives in the SEPARATE Bazel
   # package `mcp-re-proxy/tests/mock-pkcs11`. It is deliberately NOT named here: a unit's
   # battery can only select controls inside the source it measures, in the project it
   # measures them in, and widening `paths` across a package boundary pulls a neighbouring
@@ -11598,7 +11591,7 @@ evidence = [
   "mutation://proxy/signing_plane/epoch_read_refusal",
 ]
 # THE LANE IS THE REASON THIS IS A UNIT OF ITS OWN. The control is
-# `#[cfg(feature = "redis_replay")]`, so the default cargo lane compiles it to ZERO tests,
+# `#[cfg(feature = "redis_replay")]`, so the default-feature targets compile it to ZERO tests,
 # and `proxy.delegated_signing_credential` — which already holds `signing_plane/mod.rs` and
 # every other refusal on this path — declares no `test_features` and says in its own closure
 # note that naming this control there would claim default-lane evidence for a feature-lane

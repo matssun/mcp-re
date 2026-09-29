@@ -5,17 +5,22 @@
 //! implementations DO, and this owns the boundary that keeps their test doubles off the
 //! surface a downstream crate compiles.
 //!
-//! Audit #81 made that boundary ENFORCED rather than documented, and it has two halves that
+//! Audit #81 made that boundary ENFORCED rather than documented, and it has three parts that
 //! fail independently:
 //!
 //! ```text
-//! the #[cfg] on each item      a fixture item without it compiles into every build
-//! the feature not defaulted    `default = ["test-fixtures"]` satisfies every #[cfg] in
-//!                              the crate with no source line changing
+//! the #[cfg] on each item          a fixture item without it compiles into every build
+//! the production target            `crate_features = ["test-fixtures"]` on `:mcp_re_host`
+//!   compiles no fixture feature    satisfies every #[cfg] with no source line changing
+//! the fixture flavor is testonly   without it, a production target may depend on the
+//!                                  flavor and link the fixtures
 //! ```
 //!
-//! Both are read from the files that are actually built — `include_str!`, at compile time —
-//! so a control here cannot pass over a copy of the source or a stale manifest.
+//! All three are read from the files that are actually built — `include_str!`, at compile
+//! time — so a control here cannot pass over a copy of the source or a stale BUILD file.
+//! `testonly` is Bazel's to enforce: analysis refuses a target that is not test-only
+//! depending on one that is. `scripts/fixture_feature_gate.py` states the same boundary over
+//! every target in the graph.
 //!
 //! There is no production item in this module. It exists because the fact it measures has no
 //! other home: it is a property of the crate's build configuration, and neither of the two
@@ -60,48 +65,50 @@ mod tests {
         }
     }
 
-    /// The other half. `default = ["test-fixtures"]` would satisfy every `#[cfg]` above with
-    /// no source line changing, and put both fixtures on every downstream production surface.
+    /// The target block `name` declares in this crate's BUILD file.
+    fn target_block<'a>(build: &'a str, name: &str) -> &'a str {
+        let marker = format!("    name = \"{name}\",\n");
+        let at = build
+            .find(&marker)
+            .unwrap_or_else(|| panic!("BUILD.bazel declares no target `{name}`"));
+        let open = build[..at]
+            .rfind("(\n")
+            .expect("the target opens a rule call");
+        let close = build[at..].find("\n)\n").expect("the rule call closes");
+        &build[open..at + close]
+    }
+
+    /// The production half. A `crate_features` entry on `:mcp_re_host` would satisfy every
+    /// `#[cfg]` above with no source line changing, and put both fixtures on every
+    /// downstream production surface.
     #[test]
-    fn the_fixture_feature_is_not_a_default_feature() {
-        let manifest = include_str!("../Cargo.toml");
-        let features = manifest
-            .split_once("[features]")
-            .map(|(_, rest)| rest)
-            .expect("the manifest declares a [features] table");
-        let default_line = features
-            .lines()
-            .map(str::trim)
-            .find(|line| line.starts_with("default"))
-            .expect("the [features] table declares `default`");
-        assert_eq!(
-            default_line, "default = []",
-            "`test-fixtures` must stay off by default: it compiles a nonce source with no \
-             entropy and a frozen clock"
+    fn the_production_library_compiles_no_fixture_feature() {
+        let library = target_block(include_str!("../BUILD.bazel"), "mcp_re_host");
+        assert!(
+            library.contains("crate_name = \"mcp_re_host\""),
+            "the scan is not reading the production library"
         );
         assert!(
-            features.contains("test-fixtures = []"),
-            "the fixture feature is not declared where this control reads it"
+            !library.contains("crate_features") && !library.contains("test-fixtures"),
+            "`:mcp_re_host` compiles a feature: `test-fixtures` must stay off the production \
+             library, because it compiles a nonce source with no entropy and a frozen clock"
         );
     }
 
-    /// And the third way in. The self-dependency that turns the feature on for THIS crate's
-    /// own tests is scoped to `[dev-dependencies]`; moving it to `[dependencies]` would
-    /// enable it for every downstream consumer, which is the same failure as defaulting it.
+    /// And the consumer half. The flavor that turns the feature on is `testonly`, so Bazel
+    /// refuses any production target that depends on it; without that, one dependency edge
+    /// links the fixtures into a deployable binary.
     #[test]
-    fn the_fixture_feature_is_enabled_only_as_a_dev_dependency() {
-        let manifest = include_str!("../Cargo.toml");
-        let (before_dev, dev) = manifest
-            .split_once("[dev-dependencies]")
-            .expect("the manifest declares [dev-dependencies]");
+    fn the_fixture_flavor_is_testonly() {
+        let flavor = target_block(include_str!("../BUILD.bazel"), "mcp_re_host_test_fixtures");
         assert!(
-            dev.contains("features = [\"test-fixtures\"]"),
-            "the self dev-dependency enabling the fixtures is not where this control reads it"
+            flavor.contains("crate_features = [\"test-fixtures\"]"),
+            "the fixture flavor is not where this control reads it"
         );
         assert!(
-            !before_dev.contains("features = [\"test-fixtures\"]"),
-            "a non-dev dependency enables `test-fixtures`, which puts the entropy-free nonce \
-             source and the frozen clock on every downstream production surface"
+            flavor.contains("testonly = True"),
+            "`:mcp_re_host_test_fixtures` is not testonly, so a production target may depend \
+             on it and link the entropy-free nonce source and the frozen clock"
         );
     }
 }

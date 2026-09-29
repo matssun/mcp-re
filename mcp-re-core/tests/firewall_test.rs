@@ -9,18 +9,19 @@
 //! this core clean — "the firewall test is updated: `mcp-re-core` MUST remain pure
 //! (no networking/async/fs); the proxy serving path MAY use the async stack."
 //!
-//! This guard encodes exactly that split. It is scoped to `mcp-re-core`'s own
-//! declared dependencies; the proxy is deliberately NOT guarded here — its use of
-//! the async stack is the sanctioned carve-out, not a violation. The sibling guard
-//! `mcp_re_host_carries_no_networking_or_async_dependencies` enforces the same
-//! discipline for `mcp-re-host`.
+//! This guard encodes exactly that split. It is scoped to what `mcp-re-core`
+//! links — the crates in its dependency closure, direct and transitive — read off
+//! the build graph by the `mcp_re_core_dependency_closure` genquery; the proxy is
+//! deliberately NOT guarded here — its use of the async stack is the sanctioned
+//! carve-out, not a violation.
 //!
-//! The manifest and BUILD file are baked in at COMPILE time (`include_str!` +
-//! `compile_data` in BUILD.bazel), so the guard runs fully inside the bazel test
-//! sandbox with no runfiles wiring, and identically under `cargo test`.
+//! The closure is a runfile of this test, so the test reruns whenever the graph it
+//! describes changes.
 
-const CARGO_TOML: &str = include_str!("../Cargo.toml");
-const BUILD_BAZEL: &str = include_str!("../BUILD.bazel");
+fn dependency_closure() -> String {
+    let path = mcp_re_test_paths::resolve_runfile("MCP_RE_CORE_DEPENDENCY_CLOSURE");
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"))
+}
 
 /// Networking / async crate substrings that must NEVER appear in `mcp-re-core`'s
 /// declared dependencies. Matching is on whole crate-name tokens (see
@@ -72,108 +73,84 @@ const FORBIDDEN_FS_CRATES: &[&str] = &[
     "notify", "memmap", "memmap2", "walkdir", "tempfile", "fs-err", "fs_err",
 ];
 
-/// Higher MCP-RE crates. `mcp-re-core` is the BASE of the stack — it must depend on
-/// nothing else in the workspace; every other crate depends on it, never the
-/// reverse. Both the hyphenated Cargo name and the underscored Bazel target name
-/// are listed so a dependency in either manifest is caught.
+/// Higher MCP-RE crates, by Bazel package. `mcp-re-core` is the BASE of the stack —
+/// it must depend on nothing else in the workspace; every other crate depends on it,
+/// never the reverse.
 const FORBIDDEN_UPSTACK_CRATES: &[&str] = &[
     "mcp-re-proxy",
-    "mcp_re_proxy",
     "mcp-re-http-profile",
-    "mcp_re_http_profile",
     "mcp-re-transport",
-    "mcp_re_transport",
     "mcp-re-host",
-    "mcp_re_host",
     "mcp-re-policy",
-    "mcp_re_policy",
     "mcp-re-client-core",
-    "mcp_re_client_core",
 ];
 
-/// Strip `#` line comments (TOML and Starlark both use them). Dependency
-/// declarations never live in a comment, but prose comments legitimately NAME
-/// forbidden crates (e.g. this crate's manifest says "no tokio/reqwest/axum") —
-/// tokenizing those would self-poison the guard with false positives. We cut each
-/// line at its first `#`; no dependency line in these manifests contains one.
-fn strip_line_comments(text: &str) -> String {
-    text.lines()
-        .map(|line| match line.find('#') {
-            Some(idx) => &line[..idx],
-            None => line,
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+/// The crate a closure label names, spelled with hyphens: the hub repository's
+/// `<crate>-<version>` for a third-party crate (`…crates_mcp_re__ed25519-dalek-3.0.0//:…`),
+/// the package for a first-party one (`//mcp-re-core:mcp_re_core`).
+fn crate_of(label: &str) -> Option<String> {
+    if let Some(package) = label.strip_prefix("//") {
+        return package.split(':').next().map(str::to_string);
+    }
+    let repo = label.split("//").next()?;
+    let (_, crate_and_version) = repo.rsplit_once("__")?;
+    // The version starts at the first `-` followed by a digit; a pre-release suffix
+    // (`1.0.0-rc.1`) has further hyphens after it.
+    let split = crate_and_version
+        .match_indices('-')
+        .map(|(at, _)| at)
+        .find(|&at| crate_and_version[at + 1..].starts_with(|c: char| c.is_ascii_digit()))?;
+    Some(crate_and_version[..split].replace('_', "-"))
 }
 
-/// Split text into crate-name tokens (alphanumerics plus `-` / `_`), lowercased.
-/// A forbidden crate is flagged only on a WHOLE-token match, so `getrandom` or
-/// `serde_json` can never trip a substring like "rand" or "async".
-fn name_tokens(text: &str) -> std::collections::BTreeSet<String> {
-    let mut tokens = std::collections::BTreeSet::new();
-    let mut current = String::new();
-    for ch in text.chars() {
-        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
-            current.push(ch.to_ascii_lowercase());
-        } else if !current.is_empty() {
-            tokens.insert(std::mem::take(&mut current));
-        }
-    }
-    if !current.is_empty() {
-        tokens.insert(current);
-    }
-    tokens
+/// Every crate the closure names, hyphenated and lowercased. Matching is on WHOLE
+/// crate names, so `getrandom` or `serde_json` can never trip a substring like
+/// "rand" or "async".
+fn closure_crates(closure: &str) -> std::collections::BTreeSet<String> {
+    closure
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .filter_map(crate_of)
+        .map(|name| name.to_ascii_lowercase())
+        .collect()
 }
 
 #[test]
 fn mcp_re_core_stays_pure_no_networking_async_fs_or_upstack_dependencies() {
-    // Guard inputs are non-empty (a renamed/empty file cannot silently pass).
-    assert!(
-        CARGO_TOML.contains("[dependencies]"),
-        "Cargo.toml has a [dependencies] section"
-    );
-    assert!(
-        BUILD_BAZEL.contains("nt_rust_library"),
-        "BUILD.bazel declares the library"
-    );
+    let crates = closure_crates(&dependency_closure());
 
-    let cargo_tokens = name_tokens(&strip_line_comments(CARGO_TOML));
-    let build_tokens = name_tokens(&strip_line_comments(BUILD_BAZEL));
+    // Positive sanity: the legitimate pure-crypto/serialization deps ARE present,
+    // proving the reader actually parsed the closure (a guard that parses nothing
+    // would vacuously pass), and the closure is transitive: `curve25519-dalek` is
+    // reached only through `ed25519-dalek`.
+    for present in [
+        "mcp-re-core",
+        "serde-json",
+        "ed25519-dalek",
+        "sha2",
+        "base64",
+        "curve25519-dalek",
+    ] {
+        assert!(
+            crates.contains(present),
+            "{present} is not in mcp-re-core's dependency closure {crates:?}"
+        );
+    }
 
-    let mut offenders: Vec<String> = Vec::new();
-    let all_forbidden = FORBIDDEN_ASYNC_NETWORKING_CRATES
+    let offenders: Vec<&str> = FORBIDDEN_ASYNC_NETWORKING_CRATES
         .iter()
         .chain(FORBIDDEN_FS_CRATES)
-        .chain(FORBIDDEN_UPSTACK_CRATES);
-    for forbidden in all_forbidden {
-        let token = forbidden.to_ascii_lowercase();
-        if cargo_tokens.contains(&token) {
-            offenders.push(format!("{forbidden} (Cargo.toml)"));
-        }
-        if build_tokens.contains(&token) {
-            offenders.push(format!("{forbidden} (BUILD.bazel)"));
-        }
-    }
+        .chain(FORBIDDEN_UPSTACK_CRATES)
+        .copied()
+        .filter(|forbidden| crates.contains(&forbidden.replace('_', "-").to_ascii_lowercase()))
+        .collect();
 
     assert!(
         offenders.is_empty(),
         "mcp-re-core MUST stay pure (ADR-MCPS-011/012; ADR-MCPRE-051): forbidden \
-         networking/async/fs/up-stack crate(s) found in its dependency declarations: \
-         {offenders:?}. The async stack (tokio/hyper/tokio-rustls) is admitted into the \
-         PROXY serving path only, never into the verification core."
+         networking/async/fs/up-stack crate(s) in the crates it links: {offenders:?}. \
+         The async stack (tokio/hyper/tokio-rustls) is admitted into the PROXY serving \
+         path only, never into the verification core."
     );
-
-    // Positive sanity: the legitimate pure-crypto/serialization deps ARE present,
-    // proving the tokenizer actually parsed the dependency declarations (a guard
-    // that parses nothing would vacuously pass).
-    assert!(
-        cargo_tokens.contains("serde_json"),
-        "serde_json dep present"
-    );
-    assert!(
-        cargo_tokens.contains("ed25519-dalek"),
-        "ed25519-dalek dep present"
-    );
-    assert!(cargo_tokens.contains("sha2"), "sha2 dep present");
-    assert!(cargo_tokens.contains("base64"), "base64 dep present");
 }

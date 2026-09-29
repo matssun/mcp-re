@@ -15,8 +15,6 @@ package(default_visibility = ["//visibility:public"])
 nt_rust_test(
     name = "method_transparency_test",
     srcs = ["tests/method_transparency_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [
         "//mcp-re-core:mcp_re_core",
@@ -35,8 +33,6 @@ nt_rust_test(
 nt_rust_test(
     name = "method_name_drift_guard_test",
     srcs = ["tests/method_name_drift_guard_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     data = [
         "//mcp-re-core:src_files",
         "//mcp-re-core:src/lib.rs",
@@ -62,9 +58,7 @@ nt_rust_test(
 nt_rust_test(
     name = "audit_vocabulary_guard_test",
     srcs = ["tests/audit_vocabulary_guard_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    compile_data = ["//:Cargo.toml"],
+    compile_data = ["//:verification/generated/rust-targets.json"],
     data = [
         "//mcp-re-core:src_files",
         "//mcp-re-core:src/error.rs",
@@ -101,6 +95,10 @@ nt_rust_test(
         "//mcp-re-test-paths:src/lib.rs",
         "//mcp-re-operator-display:guard_src_files",
         "//mcp-re-operator-display:src/lib.rs",
+        "//sdk/python:guard_src_files",
+        "//sdk/python:src/lib.rs",
+        "//sdk/typescript:guard_src_files",
+        "//sdk/typescript:src/lib.rs",
     ],
     edition = "2021",
     env = {
@@ -130,9 +128,12 @@ nt_rust_test(
         "MCP_RE_SRC_TREE_DEMO": "$(rlocationpath //mcp-re-demo:src/lib.rs)",
         "MCP_RE_SRC_TREE_TEST_PATHS": "$(rlocationpath //mcp-re-test-paths:src/lib.rs)",
         "MCP_RE_SRC_TREE_OPERATOR_DISPLAY": "$(rlocationpath //mcp-re-operator-display:src/lib.rs)",
+        "MCP_RE_SRC_TREE_SDK_PYTHON": "$(rlocationpath //sdk/python:src/lib.rs)",
+        "MCP_RE_SRC_TREE_SDK_TYPESCRIPT": "$(rlocationpath //sdk/typescript:src/lib.rs)",
     },
     deps = [
         "//mcp-re-test-paths:mcp_re_test_paths",
+        "@crates_mcp_re//:serde_json",
     ],
 )
 
@@ -149,8 +150,6 @@ nt_rust_test(
 nt_rust_test(
     name = "forbidden_claim_guard_test",
     srcs = ["tests/forbidden_claim_guard_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     data = [
         "//docs:SECURITY_BOUNDARY.md",
         "//docs:spec/security-boundary.md",
@@ -184,8 +183,6 @@ nt_rust_test(
 nt_rust_test(
     name = "security_traceability_guard_test",
     srcs = ["tests/security_traceability_guard_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     data = [
         "security_traceability_manifest.json",
         "BUILD.bazel",
@@ -266,8 +263,6 @@ nt_rust_test(
 nt_rust_test(
     name = "http_profile_vectors_test",
     srcs = ["tests/http_profile_vectors_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     data = glob(["tests/vectors/http-profile/**"]),
     edition = "2021",
     env = {
@@ -290,8 +285,6 @@ nt_rust_test(
 nt_rust_test(
     name = "rfc9421_cross_verification_test",
     srcs = ["tests/rfc9421_cross_verification_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     data = glob(["tests/vectors/http-profile/**"]),
     edition = "2021",
     env = {
@@ -320,8 +313,6 @@ nt_rust_test(
 nt_rust_test(
     name = "scitt_interop_test",
     srcs = ["tests/scitt_interop_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     data = glob(["tests/vectors/scitt/**"]),
     edition = "2021",
     env = {
@@ -347,8 +338,6 @@ nt_rust_test(
 nt_rust_test(
     name = "scitt_retained_corpus_test",
     srcs = ["tests/scitt_retained_corpus_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     data = glob(["tests/vectors/scitt/**"]),
     edition = "2021",
     env = {
@@ -372,8 +361,6 @@ nt_rust_test(
 nt_rust_test(
     name = "scitt_cross_verification_test",
     srcs = ["tests/scitt_cross_verification_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     data = glob(["tests/vectors/scitt/**"]),
     edition = "2021",
     env = {
@@ -390,8 +377,6 @@ nt_rust_test(
 nt_rust_test(
     name = "scitt_vectors_test",
     srcs = ["tests/scitt_vectors_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     data = glob(["tests/vectors/scitt/**"]),
     edition = "2021",
     env = {
@@ -408,8 +393,6 @@ nt_rust_test(
 nt_rust_test(
     name = "delegation_vectors_test",
     srcs = ["tests/delegation_vectors_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     data = glob(["tests/vectors/delegation-profile/**"]),
     edition = "2021",
     env = {
@@ -433,8 +416,6 @@ nt_rust_test(
 nt_rust_test(
     name = "delegation_cross_verification_test",
     srcs = ["tests/delegation_cross_verification_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     data = glob(["tests/vectors/delegation-profile/**"]),
     edition = "2021",
     env = {
@@ -459,8 +440,6 @@ nt_rust_test(
 nt_rust_test(
     name = "full_profile_parity_test",
     srcs = ["tests/full_profile_parity_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [
         "//mcp-re-core:mcp_re_core",
@@ -474,8 +453,6 @@ nt_rust_test(
 nt_rust_test(
     name = "rfc9421_security_properties_test",
     srcs = ["tests/rfc9421_security_properties_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [
         "//mcp-re-core:mcp_re_core",
@@ -486,8 +463,6 @@ nt_rust_test(
 nt_rust_test(
     name = "corpus_pinning_test",
     srcs = ["tests/corpus_pinning_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     data = glob([
         "tests/vectors/http-profile/**",
         "tests/vectors/delegation-profile/**",
@@ -507,8 +482,6 @@ nt_rust_test(
 nt_rust_test(
     name = "mcp_2026_07_28_alignment_test",
     srcs = ["tests/mcp_2026_07_28_alignment_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [
         "//mcp-re-client-core:mcp_re_client_core",

@@ -40,8 +40,6 @@ nt_rust_library(
 nt_rust_test(
     name = "mcp_re_transport_test",
     crate = ":mcp_re_transport",
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [
         "//mcp-re-client-core:mcp_re_client_core",
@@ -59,8 +57,6 @@ nt_rust_test(
 nt_rust_test(
     name = "mtls_client_test",
     srcs = ["tests/mtls_client_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [
         ":mcp_re_transport",
@@ -79,8 +75,6 @@ nt_rust_test(
 nt_rust_test(
     name = "dos_hardening_test",
     srcs = ["tests/dos_hardening_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [
         ":mcp_re_transport",
@@ -107,8 +101,6 @@ nt_rust_test(
 nt_rust_test(
     name = "fault_injection_test",
     srcs = ["tests/fault_injection_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     crate_features = ["fault_accept_any_server"],
     edition = "2021",
     deps = [
@@ -132,6 +124,7 @@ nt_rust_test(
 # measured as "the trait bound `MtlsRemoteTransport: RemoteTransport` is not satisfied".
 nt_rust_library(
     name = "mcp_re_transport_pre052",
+    testonly = True,
     srcs = glob(["src/**/*.rs"]),
     crate_name = "mcp_re_transport",
     edition = "2021",

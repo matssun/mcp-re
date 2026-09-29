@@ -14,6 +14,7 @@
    "srcs": [
     "config/clippy-strict/probes/activation.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//config/clippy-strict:nest_probe": {
@@ -28,6 +29,7 @@
    "srcs": [
     "config/clippy-strict/probes/nest.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-client-core:mcp_re_client_core": {
@@ -65,6 +67,7 @@
     "mcp-re-client-core/src/trust_manifest/mod.rs",
     "mcp-re-client-core/src/trust_manifest/preimage.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-client-core:mcp_re_client_core_doc_test": {
@@ -99,6 +102,7 @@
     "mcp-re-client-core/src/trust_manifest/mod.rs",
     "mcp-re-client-core/src/trust_manifest/preimage.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-client-core:mcp_re_client_core_pre052": {
@@ -136,6 +140,7 @@
     "mcp-re-client-core/src/trust_manifest/mod.rs",
     "mcp-re-client-core/src/trust_manifest/preimage.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-client-core:mcp_re_client_core_test": {
@@ -173,6 +178,7 @@
     "mcp-re-client-core/src/trust_manifest/mod.rs",
     "mcp-re-client-core/src/trust_manifest/preimage.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-client-proxy:mcp_re_client_proxy": {
@@ -195,6 +201,7 @@
     "mcp-re-client-proxy/src/transport.rs",
     "mcp-re-client-proxy/src/verified_outcome.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-client-proxy:mcp_re_client_proxy_pre052": {
@@ -217,6 +224,7 @@
     "mcp-re-client-proxy/src/transport.rs",
     "mcp-re-client-proxy/src/verified_outcome.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-client-proxy:mcp_re_client_proxy_test": {
@@ -240,6 +248,7 @@
     "mcp-re-client-proxy/src/transport.rs",
     "mcp-re-client-proxy/src/verified_outcome.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-client:local_leg_e2e_test": {
@@ -261,6 +270,7 @@
    "srcs": [
     "mcp-re-client/tests/local_leg_e2e_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-client:mcp_re_client": {
@@ -300,6 +310,7 @@
     "mcp-re-client/src/serve/response.rs",
     "mcp-re-client/src/startup.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-client:mcp_re_client_cli": {
@@ -317,6 +328,7 @@
     "mcp-re-client/src/main.rs",
     "mcp-re-client/src/startup.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-client:mcp_re_client_cli_test": {
@@ -337,6 +349,7 @@
     "mcp-re-client/src/main.rs",
     "mcp-re-client/src/startup.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-client:mcp_re_client_test": {
@@ -377,6 +390,7 @@
     "mcp-re-client/src/serve/response.rs",
     "mcp-re-client/src/startup.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-conformance:audit_vocabulary_guard_test": {
@@ -393,6 +407,7 @@
    "srcs": [
     "mcp-re-conformance/tests/audit_vocabulary_guard_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-conformance:corpus_pinning_test": {
@@ -407,6 +422,7 @@
    "srcs": [
     "mcp-re-conformance/tests/corpus_pinning_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-conformance:delegation_cross_verification_test": {
@@ -424,6 +440,7 @@
    "srcs": [
     "mcp-re-conformance/tests/delegation_cross_verification_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-conformance:delegation_vectors_test": {
@@ -441,6 +458,7 @@
    "srcs": [
     "mcp-re-conformance/tests/delegation_vectors_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-conformance:forbidden_claim_guard_test": {
@@ -457,6 +475,7 @@
    "srcs": [
     "mcp-re-conformance/tests/forbidden_claim_guard_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-conformance:full_profile_parity_test": {
@@ -474,6 +493,7 @@
    "srcs": [
     "mcp-re-conformance/tests/full_profile_parity_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-conformance:http_profile_vectors_test": {
@@ -491,6 +511,7 @@
    "srcs": [
     "mcp-re-conformance/tests/http_profile_vectors_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-conformance:mcp_2026_07_28_alignment_test": {
@@ -509,6 +530,7 @@
    "srcs": [
     "mcp-re-conformance/tests/mcp_2026_07_28_alignment_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-conformance:method_name_drift_guard_test": {
@@ -525,6 +547,7 @@
    "srcs": [
     "mcp-re-conformance/tests/method_name_drift_guard_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-conformance:method_transparency_test": {
@@ -542,6 +565,7 @@
    "srcs": [
     "mcp-re-conformance/tests/method_transparency_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-conformance:rfc9421_cross_verification_test": {
@@ -558,6 +582,7 @@
    "srcs": [
     "mcp-re-conformance/tests/rfc9421_cross_verification_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-conformance:rfc9421_security_properties_test": {
@@ -575,6 +600,7 @@
    "srcs": [
     "mcp-re-conformance/tests/rfc9421_security_properties_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-conformance:scitt_cross_verification_test": {
@@ -592,6 +618,7 @@
    "srcs": [
     "mcp-re-conformance/tests/scitt_cross_verification_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-conformance:scitt_interop_test": {
@@ -609,6 +636,7 @@
    "srcs": [
     "mcp-re-conformance/tests/scitt_interop_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-conformance:scitt_retained_corpus_test": {
@@ -626,6 +654,7 @@
    "srcs": [
     "mcp-re-conformance/tests/scitt_retained_corpus_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-conformance:scitt_vectors_test": {
@@ -643,6 +672,7 @@
    "srcs": [
     "mcp-re-conformance/tests/scitt_vectors_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-conformance:security_traceability_guard_test": {
@@ -659,13 +689,15 @@
    "srcs": [
     "mcp-re-conformance/tests/security_traceability_guard_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-core:firewall_test": {
    "crate": "",
    "crate_name": "firewall_test",
    "deps": [
-    "//mcp-re-core:mcp_re_core"
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-test-paths:mcp_re_test_paths"
    ],
    "features": [],
    "kind": "rust_test",
@@ -675,6 +707,7 @@
    "srcs": [
     "mcp-re-core/tests/firewall_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-core:mcp_re_core": {
@@ -704,6 +737,7 @@
     "mcp-re-core/src/verus_std_specs.rs",
     "mcp-re-core/src/wire.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-core:mcp_re_core_llbc": {
@@ -733,6 +767,7 @@
     "mcp-re-core/src/verus_std_specs.rs",
     "mcp-re-core/src/wire.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-core:mcp_re_core_test": {
@@ -762,6 +797,7 @@
     "mcp-re-core/src/verus_std_specs.rs",
     "mcp-re-core/src/wire.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-core:mcp_re_core_verus": {
@@ -793,6 +829,7 @@
     "mcp-re-core/src/verus_std_specs.rs",
     "mcp-re-core/src/wire.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-demo:demo_fixtures_test": {
@@ -811,6 +848,7 @@
    "srcs": [
     "mcp-re-demo/tests/demo_fixtures_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-demo:emit_mtls_fixtures": {
@@ -828,6 +866,7 @@
    "srcs": [
     "mcp-re-demo/examples/emit_mtls_fixtures.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-demo:mcp_re_demo": {
@@ -846,6 +885,7 @@
     "mcp-re-demo/src/demo_fixtures.rs",
     "mcp-re-demo/src/lib.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-demo:mcp_re_demo_test": {
@@ -862,6 +902,7 @@
     "mcp-re-demo/src/demo_fixtures.rs",
     "mcp-re-demo/src/lib.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-host:mcp_re_host": {
@@ -883,6 +924,7 @@
     "mcp-re-host/src/nonce.rs",
     "mcp-re-host/src/signer.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-host:mcp_re_host_test": {
@@ -906,6 +948,7 @@
     "mcp-re-host/src/nonce.rs",
     "mcp-re-host/src/signer.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-host:mcp_re_host_test_fixtures": {
@@ -929,6 +972,7 @@
     "mcp-re-host/src/nonce.rs",
     "mcp-re-host/src/signer.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-http-profile:admission_binding_test": {
@@ -946,6 +990,7 @@
    "srcs": [
     "mcp-re-http-profile/tests/admission_binding_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-http-profile:algorithm_confusion_test": {
@@ -963,6 +1008,7 @@
    "srcs": [
     "mcp-re-http-profile/tests/algorithm_confusion_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-http-profile:binding_identifier_test": {
@@ -980,6 +1026,7 @@
    "srcs": [
     "mcp-re-http-profile/tests/binding_identifier_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-http-profile:bodyless_202_test": {
@@ -997,6 +1044,7 @@
    "srcs": [
     "mcp-re-http-profile/tests/bodyless_202_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-http-profile:chain_reconstruction_test": {
@@ -1014,6 +1062,7 @@
    "srcs": [
     "mcp-re-http-profile/tests/chain_reconstruction_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-http-profile:delegated_202_test": {
@@ -1031,6 +1080,7 @@
    "srcs": [
     "mcp-re-http-profile/tests/delegated_202_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-http-profile:delegation_e2e_test": {
@@ -1048,6 +1098,7 @@
    "srcs": [
     "mcp-re-http-profile/tests/delegation_e2e_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-http-profile:dispatch_test": {
@@ -1065,6 +1116,7 @@
    "srcs": [
     "mcp-re-http-profile/tests/dispatch_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-http-profile:full_profile_test": {
@@ -1082,6 +1134,7 @@
    "srcs": [
     "mcp-re-http-profile/tests/full_profile_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-http-profile:json_mode_test": {
@@ -1099,6 +1152,7 @@
    "srcs": [
     "mcp-re-http-profile/tests/json_mode_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-http-profile:mcp_re_http_profile": {
@@ -1233,6 +1287,7 @@
     "mcp-re-http-profile/src/verify/mod.rs",
     "mcp-re-http-profile/src/verus_std_specs.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-http-profile:mcp_re_http_profile_doc_test": {
@@ -1365,6 +1420,7 @@
     "mcp-re-http-profile/src/verify/mod.rs",
     "mcp-re-http-profile/src/verus_std_specs.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-http-profile:mcp_re_http_profile_pre052": {
@@ -1501,6 +1557,7 @@
     "mcp-re-http-profile/src/verify/mod.rs",
     "mcp-re-http-profile/src/verus_std_specs.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-http-profile:mcp_re_http_profile_test": {
@@ -1635,6 +1692,7 @@
     "mcp-re-http-profile/src/verify/mod.rs",
     "mcp-re-http-profile/src/verus_std_specs.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-http-profile:mcp_re_http_profile_verus": {
@@ -1769,6 +1827,7 @@
     "mcp-re-http-profile/src/verify/mod.rs",
     "mcp-re-http-profile/src/verus_std_specs.rs"
    ],
+   "testonly": false,
    "verus_deps": [
     "//mcp-re-core:mcp_re_core_verus"
    ]
@@ -1788,6 +1847,7 @@
    "srcs": [
     "mcp-re-http-profile/tests/mcp_transport_headers_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-http-profile:proof_path_test": {
@@ -1805,6 +1865,7 @@
    "srcs": [
     "mcp-re-http-profile/tests/proof_path_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-http-profile:rfc9421_kat": {
@@ -1822,6 +1883,7 @@
    "srcs": [
     "mcp-re-http-profile/tests/rfc9421_kat.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-http-profile:signer_seam_test": {
@@ -1839,6 +1901,7 @@
    "srcs": [
     "mcp-re-http-profile/tests/signer_seam_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-http-profile:structured_fields_strictness_test": {
@@ -1856,6 +1919,7 @@
    "srcs": [
     "mcp-re-http-profile/tests/structured_fields_strictness_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-operator-display:mcp_re_operator_display": {
@@ -1871,6 +1935,7 @@
     "mcp-re-operator-display/src/lib.rs",
     "mcp-re-operator-display/src/locator.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-operator-display:mcp_re_operator_display_test": {
@@ -1886,6 +1951,7 @@
     "mcp-re-operator-display/src/lib.rs",
     "mcp-re-operator-display/src/locator.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-policy:mcp_re_policy": {
@@ -1902,6 +1968,7 @@
     "mcp-re-policy/src/lib.rs",
     "mcp-re-policy/src/revocation.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-policy:mcp_re_policy_test": {
@@ -1918,6 +1985,7 @@
     "mcp-re-policy/src/lib.rs",
     "mcp-re-policy/src/revocation.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-proxy:admission_propagation_measure_test": {
@@ -1944,6 +2012,7 @@
    "srcs": [
     "mcp-re-proxy/tests/admission_propagation_measure_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-proxy:async_drain_test": {
@@ -1962,6 +2031,7 @@
    "srcs": [
     "mcp-re-proxy/tests/async_drain_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-proxy:aws_irsa_web_identity_test": {
@@ -1989,6 +2059,7 @@
    "srcs": [
     "mcp-re-proxy/tests/aws_irsa_web_identity_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-proxy:dev_env_key_source_test": {
@@ -2008,6 +2079,7 @@
    "srcs": [
     "mcp-re-proxy/tests/dev_env_key_source_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-proxy:fault_injection_test": {
@@ -2026,6 +2098,7 @@
    "srcs": [
     "mcp-re-proxy/tests/fault_injection_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-proxy:gcp_kms_live_test": {
@@ -2045,6 +2118,7 @@
    "srcs": [
     "mcp-re-proxy/tests/gcp_kms_live_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-proxy:http_profile_client": {
@@ -2063,6 +2137,7 @@
     "mcp-re-proxy/examples/hpp_common/mod.rs",
     "mcp-re-proxy/examples/http_profile_client.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-proxy:http_profile_proxy": {
@@ -2087,6 +2162,7 @@
     "mcp-re-proxy/examples/hpp_common/mod.rs",
     "mcp-re-proxy/examples/http_profile_proxy.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-proxy:integration_async_ext_test": {
@@ -2138,6 +2214,7 @@
     "mcp-re-proxy/tests/integration_async/transparency_e2e_test.rs",
     "mcp-re-proxy/tests/integration_async/verified_context_carrier_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-proxy:integration_async_test": {
@@ -2183,6 +2260,7 @@
     "mcp-re-proxy/tests/integration_async/transparency_e2e_test.rs",
     "mcp-re-proxy/tests/integration_async/verified_context_carrier_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-proxy:integration_ext_test": {
@@ -2214,6 +2292,7 @@
     "mcp-re-proxy/tests/integration_ext/redis_replay_e2e_test.rs",
     "mcp-re-proxy/tests/integration_ext/redis_trust_epoch_e2e_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-proxy:integration_kms_test": {
@@ -2265,6 +2344,7 @@
     "mcp-re-proxy/tests/serving_fixtures/mod.rs",
     "mcp-re-proxy/tests/startup_transcript/mod.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-proxy:integration_live_test": {
@@ -2304,6 +2384,7 @@
     "mcp-re-proxy/tests/integration_live/gcp_kms_root_rotation_live_test.rs",
     "mcp-re-proxy/tests/integration_live/main.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-proxy:integration_test": {
@@ -2348,6 +2429,7 @@
     "mcp-re-proxy/tests/serving_fixtures/mod.rs",
     "mcp-re-proxy/tests/startup_transcript/mod.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-proxy:key_source_dev_env_test": {
@@ -2367,6 +2449,7 @@
    "srcs": [
     "mcp-re-proxy/tests/key_source_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-proxy:key_source_test": {
@@ -2384,6 +2467,7 @@
    "srcs": [
     "mcp-re-proxy/tests/key_source_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-proxy:mcp_re_auditor_cli": {
@@ -2400,6 +2484,7 @@
    "srcs": [
     "mcp-re-proxy/src/bin/mcp-re-auditor.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-proxy:mcp_re_proxy": {
@@ -2800,6 +2885,7 @@
     "mcp-re-proxy/src/trust_plane/trust_cache.rs",
     "mcp-re-proxy/src/trust_plane/window_policy.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-proxy:mcp_re_proxy_async": {
@@ -3202,6 +3288,7 @@
     "mcp-re-proxy/src/trust_plane/trust_cache.rs",
     "mcp-re-proxy/src/trust_plane/window_policy.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-proxy:mcp_re_proxy_async_pre052": {
@@ -3604,6 +3691,7 @@
     "mcp-re-proxy/src/trust_plane/trust_cache.rs",
     "mcp-re-proxy/src/trust_plane/window_policy.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-proxy:mcp_re_proxy_auditor": {
@@ -4006,6 +4094,7 @@
     "mcp-re-proxy/src/trust_plane/trust_cache.rs",
     "mcp-re-proxy/src/trust_plane/window_policy.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-proxy:mcp_re_proxy_cli": {
@@ -4024,6 +4113,7 @@
    "srcs": [
     "mcp-re-proxy/src/main.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-proxy:mcp_re_proxy_deploy": {
@@ -4429,6 +4519,7 @@
     "mcp-re-proxy/src/trust_plane/trust_cache.rs",
     "mcp-re-proxy/src/trust_plane/window_policy.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-proxy:mcp_re_proxy_deploy_bin": {
@@ -4454,6 +4545,7 @@
    "srcs": [
     "mcp-re-proxy/src/main.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-proxy:mcp_re_proxy_dev_env": {
@@ -4856,6 +4948,7 @@
     "mcp-re-proxy/src/trust_plane/trust_cache.rs",
     "mcp-re-proxy/src/trust_plane/window_policy.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-proxy:mcp_re_proxy_ext": {
@@ -5263,6 +5356,7 @@
     "mcp-re-proxy/src/trust_plane/trust_cache.rs",
     "mcp-re-proxy/src/trust_plane/window_policy.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-proxy:mcp_re_proxy_ext_bin": {
@@ -5290,6 +5384,7 @@
    "srcs": [
     "mcp-re-proxy/src/main.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-proxy:mcp_re_proxy_ext_pre052": {
@@ -5697,6 +5792,7 @@
     "mcp-re-proxy/src/trust_plane/trust_cache.rs",
     "mcp-re-proxy/src/trust_plane/window_policy.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-proxy:mcp_re_proxy_fault": {
@@ -6099,6 +6195,7 @@
     "mcp-re-proxy/src/trust_plane/trust_cache.rs",
     "mcp-re-proxy/src/trust_plane/window_policy.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-proxy:mcp_re_proxy_pre052": {
@@ -6499,6 +6596,7 @@
     "mcp-re-proxy/src/trust_plane/trust_cache.rs",
     "mcp-re-proxy/src/trust_plane/window_policy.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-proxy:mock_pkcs11": {
@@ -6513,6 +6611,7 @@
    "srcs": [
     "mcp-re-proxy/tests/mock-pkcs11/src/lib.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-proxy:pkcs11_keysource_e2e_test": {
@@ -6537,6 +6636,7 @@
    "srcs": [
     "mcp-re-proxy/tests/pkcs11_keysource_e2e_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-proxy:proxy_auditor_unit_test": {
@@ -6937,6 +7037,7 @@
     "mcp-re-proxy/src/trust_plane/trust_cache.rs",
     "mcp-re-proxy/src/trust_plane/window_policy.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-proxy:proxy_ext_unit_test": {
@@ -7344,6 +7445,7 @@
     "mcp-re-proxy/src/trust_plane/trust_cache.rs",
     "mcp-re-proxy/src/trust_plane/window_policy.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-proxy:proxy_unit_test": {
@@ -7742,6 +7844,7 @@
     "mcp-re-proxy/src/trust_plane/trust_cache.rs",
     "mcp-re-proxy/src/trust_plane/window_policy.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-proxy:replay_store_bench": {
@@ -7763,6 +7866,7 @@
    "srcs": [
     "mcp-re-proxy/examples/replay_store_bench.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-proxy:saturation_backend": {
@@ -7779,6 +7883,7 @@
    "srcs": [
     "mcp-re-proxy/examples/saturation_backend.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-proxy:saturation_loadgen": {
@@ -7798,6 +7903,7 @@
    "srcs": [
     "mcp-re-proxy/examples/saturation_loadgen.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-proxy:saturation_rig": {
@@ -7818,6 +7924,7 @@
    "srcs": [
     "mcp-re-proxy/examples/saturation_rig.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-proxy:tls_load_harness_bench": {
@@ -7844,6 +7951,7 @@
    "srcs": [
     "mcp-re-proxy/tests/tls_load_harness_bench.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-test-paths:mcp_re_test_paths": {
@@ -7860,6 +7968,7 @@
     "mcp-re-test-paths/src/rust_source.rs",
     "mcp-re-test-paths/src/rust_source/brace_scan.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-test-paths:mcp_re_test_paths_test": {
@@ -7876,6 +7985,7 @@
     "mcp-re-test-paths/src/rust_source.rs",
     "mcp-re-test-paths/src/rust_source/brace_scan.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-transport:dos_hardening_test": {
@@ -7893,6 +8003,7 @@
    "srcs": [
     "mcp-re-transport/tests/dos_hardening_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-transport:fault_injection_test": {
@@ -7912,6 +8023,7 @@
    "srcs": [
     "mcp-re-transport/tests/fault_injection_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-transport:mcp_re_transport": {
@@ -7937,6 +8049,7 @@
     "mcp-re-transport/src/response.rs",
     "mcp-re-transport/src/tls_config.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-transport:mcp_re_transport_doc_test": {
@@ -7959,6 +8072,7 @@
     "mcp-re-transport/src/response.rs",
     "mcp-re-transport/src/tls_config.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-transport:mcp_re_transport_fault": {
@@ -7986,6 +8100,7 @@
     "mcp-re-transport/src/response.rs",
     "mcp-re-transport/src/tls_config.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//mcp-re-transport:mcp_re_transport_pre052": {
@@ -8011,6 +8126,7 @@
     "mcp-re-transport/src/response.rs",
     "mcp-re-transport/src/tls_config.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-transport:mcp_re_transport_test": {
@@ -8036,6 +8152,7 @@
     "mcp-re-transport/src/response.rs",
     "mcp-re-transport/src/tls_config.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//mcp-re-transport:mtls_client_test": {
@@ -8053,6 +8170,7 @@
    "srcs": [
     "mcp-re-transport/tests/mtls_client_test.rs"
    ],
+   "testonly": true,
    "verus_deps": []
   },
   "//sdk/python:_core_shared": {
@@ -8071,6 +8189,7 @@
     "sdk/python/src/lib.rs",
     "sdk/python/src/trust.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   },
   "//sdk/typescript:native_shared": {
@@ -8089,6 +8208,7 @@
     "sdk/typescript/src/lib.rs",
     "sdk/typescript/src/trust.rs"
    ],
+   "testonly": false,
    "verus_deps": []
   }
  }

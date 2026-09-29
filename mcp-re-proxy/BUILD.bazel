@@ -724,6 +724,7 @@ _PROXY_LIB_DEPS_PRE052 = [
 # exercise the REFUSAL of direct-root response signing can construct one.
 nt_rust_library(
     name = "mcp_re_proxy_pre052",
+    testonly = True,
     srcs = _PROXY_LIB_SRCS,
     crate_name = "mcp_re_proxy",
     edition = "2021",
@@ -732,6 +733,7 @@ nt_rust_library(
 
 nt_rust_library(
     name = "mcp_re_proxy_async_pre052",
+    testonly = True,
     srcs = _PROXY_LIB_SRCS,
     crate_features = ["async_serve"],
     crate_name = "mcp_re_proxy",
@@ -861,8 +863,6 @@ nt_rust_binary(
 nt_rust_test(
     name = "proxy_auditor_unit_test",
     crate = ":mcp_re_proxy_auditor",
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     # A test compiles its `crate`'s sources with ITS OWN features, not the library's.
     # Without this line the binary is the default flavor again, 1475 tests with the
     # three `ureq_exchange` ones absent.
@@ -918,8 +918,6 @@ nt_rust_library(
 nt_rust_test(
     name = "fault_injection_test",
     srcs = ["tests/fault_injection_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     crate_features = ["fault_accept_any_client"],
     edition = "2021",
     deps = [
@@ -936,8 +934,6 @@ nt_rust_test(
 nt_rust_test(
     name = "proxy_unit_test",
     crate = ":mcp_re_proxy",
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [
         "//mcp-re-core:mcp_re_core",
@@ -954,8 +950,6 @@ nt_rust_test(
 nt_rust_test(
     name = "key_source_test",
     srcs = ["tests/key_source_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     edition = "2021",
     deps = [
         ":mcp_re_proxy",
@@ -970,8 +964,6 @@ nt_rust_test(
 nt_rust_test(
     name = "key_source_dev_env_test",
     srcs = ["tests/key_source_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     crate_features = ["dev_env_key_source"],
     edition = "2021",
     deps = [
@@ -1003,8 +995,6 @@ nt_rust_library(
 nt_rust_test(
     name = "async_drain_test",
     srcs = ["tests/async_drain_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     crate_features = ["async_serve"],
     edition = "2021",
     # Each drain case stands up its own multi-thread runtime and holds several
@@ -1098,9 +1088,7 @@ nt_rust_test(
         "tests/serving_fixtures/mod.rs",
         "tests/startup_transcript/mod.rs",
     ],
-    auto_cargo_toml = False,
     crate_root = "tests/integration/main.rs",
-    bazel_build_cfg = False,
     data = [
         "//docs:sidecar-deployment-guide.md",
         ":mcp_re_proxy_cli",
@@ -1150,10 +1138,8 @@ nt_rust_test(
         "tests/serving_fixtures/mod.rs",
         "tests/startup_transcript/mod.rs",
     ],
-    auto_cargo_toml = False,
     crate_root = "tests/integration/main.rs",
     crate_features = _PROXY_EXT_FEATURES,
-    bazel_build_cfg = False,
     data = [
         "//docs:sidecar-deployment-guide.md",
         ":mcp_re_proxy_ext_bin",
@@ -1270,9 +1256,7 @@ nt_rust_test(
         # `main.rs` reaches the shared helpers via `#[path = "../common/mod.rs"]`.
         "tests/common/mod.rs",
     ],
-    auto_cargo_toml = False,
     crate_root = "tests/integration_async/main.rs",
-    bazel_build_cfg = False,
     crate_features = ["async_serve"],
     # The transparency suite runs the SHIPPED auditor as a child process. A composition
     # root proved only in-process is a composition root nobody can run, so the lane needs
@@ -1323,9 +1307,7 @@ nt_rust_test(
         # `main.rs` reaches the shared helpers in tests/common/mod.rs.
         "tests/common/mod.rs",
     ],
-    auto_cargo_toml = False,
     crate_root = "tests/integration_async/main.rs",
-    bazel_build_cfg = False,
     crate_features = ["async_serve"] + _PROXY_EXT_FEATURES,
     env_inherit = [
         "MCP_RE_TEST_REDIS_URL",
@@ -1382,8 +1364,6 @@ nt_rust_test(
 nt_rust_test(
     name = "tls_load_harness_bench",
     srcs = ["tests/tls_load_harness_bench.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     crate_features = _PROXY_DEPLOY_FEATURES,
     tags = ["manual"],
     data = [
@@ -1451,8 +1431,6 @@ nt_rust_library(
 nt_rust_test(
     name = "dev_env_key_source_test",
     srcs = ["tests/dev_env_key_source_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     crate_features = ["dev_env_key_source"],
     edition = "2021",
     deps = [
@@ -1486,6 +1464,7 @@ nt_rust_library(
 # that need both the ext features and the fixtures.
 nt_rust_library(
     name = "mcp_re_proxy_ext_pre052",
+    testonly = True,
     srcs = _PROXY_LIB_SRCS,
     crate_features = _PROXY_EXT_FEATURES,
     crate_name = "mcp_re_proxy",
@@ -1510,8 +1489,6 @@ nt_rust_library(
 nt_rust_test(
     name = "proxy_ext_unit_test",
     crate = ":mcp_re_proxy_ext",  # keep
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     crate_features = _PROXY_EXT_FEATURES,
     edition = "2021",
     deps = _PROXY_LIB_DEPS + _PROXY_EXT_CRATES + [
@@ -1531,8 +1508,6 @@ nt_rust_test(
 nt_rust_test(
     name = "aws_irsa_web_identity_test",
     srcs = ["tests/aws_irsa_web_identity_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     crate_features = _PROXY_EXT_FEATURES,
     edition = "2021",
     deps = _PROXY_LIB_DEPS + _PROXY_EXT_CRATES + [":mcp_re_proxy_ext"],
@@ -1574,9 +1549,7 @@ nt_rust_test(
 nt_rust_test(
     name = "integration_ext_test",
     srcs = glob(["tests/integration_ext/*.rs"]),
-    auto_cargo_toml = False,
     crate_root = "tests/integration_ext/main.rs",
-    bazel_build_cfg = False,
     # Each suite is `#![cfg(feature = ...)]`; without these the binary links and runs
     # ZERO tests while reporting PASSED.
     crate_features = ["async_serve"] + _PROXY_EXT_FEATURES,
@@ -1615,9 +1588,7 @@ nt_rust_test(
         # `main.rs` reaches the shared helpers in tests/common/mod.rs.
         "tests/common/mod.rs",
     ],
-    auto_cargo_toml = False,
     crate_root = "tests/integration_live/main.rs",
-    bazel_build_cfg = False,
     crate_features = ["async_serve"] + _PROXY_EXT_FEATURES,
     edition = "2021",
     env_inherit = [
@@ -1661,8 +1632,6 @@ nt_rust_test(
 nt_rust_test(
     name = "gcp_kms_live_test",
     srcs = ["tests/gcp_kms_live_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     crate_features = ["gcp_kms_keysource"],
     edition = "2021",
     env_inherit = [
@@ -1684,8 +1653,6 @@ nt_rust_test(
 nt_rust_test(
     name = "admission_propagation_measure_test",
     srcs = ["tests/admission_propagation_measure_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     crate_features = ["async_serve"] + _PROXY_EXT_FEATURES,
     edition = "2021",
     env_inherit = [
@@ -1723,8 +1690,6 @@ rust_shared_library(
 nt_rust_test(
     name = "pkcs11_keysource_e2e_test",
     srcs = ["tests/pkcs11_keysource_e2e_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
     crate_features = _PROXY_EXT_FEATURES,
     data = [":mock_pkcs11"],
     edition = "2021",

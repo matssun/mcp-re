@@ -188,8 +188,6 @@ def nt_rust_test(
         serial_tests = [],
         skip_tests = [],
         extra_args = [],
-        auto_cargo_toml = True,
-        bazel_build_cfg = True,
         use_libtest_harness = True,
         **kwargs):
     """Thin wrapper over rust_test.
@@ -206,12 +204,6 @@ def nt_rust_test(
 
     skip_tests: test paths to omit from the main target via --skip=.
 
-    auto_cargo_toml: when True (default), Cargo.toml is added to
-        compile_data so rstest's proc-macro-crate can locate the manifest.
-
-    bazel_build_cfg: when True (default), `--cfg=bazel_build` is added to
-        rustc_flags so upstream sources can gate tests with
-        `#[cfg_attr(bazel_build, ignore)]`.
     """
     fixture_data, fixture_env = _fixture_env_and_data(
         fixture_files = fixture_files,
@@ -229,12 +221,7 @@ def nt_rust_test(
             test_data.append(label)
 
     test_compile_data = list(compile_data)
-    if auto_cargo_toml and "Cargo.toml" not in test_compile_data:
-        test_compile_data = ["Cargo.toml"] + test_compile_data
-
     test_rustc_flags = list(rustc_flags)
-    if bazel_build_cfg and "--cfg=bazel_build" not in test_rustc_flags:
-        test_rustc_flags = ["--cfg=bazel_build"] + test_rustc_flags
 
     skip_args = (
         ["--skip=" + t for t in skip_tests] +

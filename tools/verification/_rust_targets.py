@@ -34,6 +34,8 @@ One row per first-party `rust_*` rule, keyed by label:
                   imports.
   * `deps`      — the target's first-party dependencies (third-party crates are the lock's).
   * `manual`    — whether `bazel test //...` skips it.
+  * `testonly`  — whether the target is test-only, so that Bazel refuses any consumer that
+                  is not (a test rule is test-only by definition).
 
 The crate root is resolved the way rules_rust resolves it — the `crate_root` attribute, else
 the only source, else the conventional file name — and a target none of those decides is a
@@ -138,6 +140,7 @@ def rows_from_query(lines: list[str]) -> dict[str, dict]:
             "verus_deps": sorted(_strings(attrs, "verus_deps")),
             "deps": sorted(d for d in _strings(attrs, "deps") if d.startswith("//")),
             "manual": "manual" in _strings(attrs, "tags"),
+            "testonly": bool(attrs.get("testonly", {}).get("booleanValue", False)),
         }
         rows[label] = row
         if crate:
