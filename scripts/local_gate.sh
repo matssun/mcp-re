@@ -412,14 +412,14 @@ stage_sat_liveness() {
 # The two downloader artefacts. `cargo test --workspace` cannot reach them: both SDKs
 # are their OWN Cargo workspaces linking mcp-re-client-core by path, and their suites
 # exercise the bindings from Python and Node, not from Rust. So a change to the core's
-# emission contract compiles, passes every cargo and Bazel lane, and fails only in CI —
+# emission contract compiles, passes every Bazel lane, and fails only in CI —
 # which is how a nonce-length floor in build_signed_request_with reached a PR with both
 # downloader jobs red and four green stages above them.
 stage_sdk() {
   sdk_typescript && sdk_python
 }
 
-# Mirrors the "downloader — TypeScript napi package" job: the published build, the
+# Mirrors the "downloader — TypeScript napi package (Bazel)" job: the published build, the
 # generated-loader drift check, and the coverage-gated suite.
 sdk_typescript() {
   if ! command -v npm >/dev/null 2>&1; then
@@ -428,7 +428,7 @@ sdk_typescript() {
   fi
   # `npm ci` when the installed tree does not match the LOCK, not merely when it is
   # absent. `[[ -d node_modules ]] || npm ci` measures whatever the box happens to hold:
-  # a tree installed from a different lock is reused, `napi build` then regenerates with
+  # a tree installed from a different lock is reused, the loader is then rendered by
   # the wrong CLI, and the loader drift check reports a diff that is not in the tree —
   # or, worse, reports in-sync because a stale generator agreed with a stale artifact.
   # That happened here the day `@napi-rs/cli` moved 3.9.0 -> 3.9.1. CI runs a clean

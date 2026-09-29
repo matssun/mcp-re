@@ -501,7 +501,6 @@ dependencies = [
  "mcp-re-client-core",
  "mcp-re-core",
  "napi",
- "napi-build",
  "napi-derive",
  "serde",
  "serde_json",

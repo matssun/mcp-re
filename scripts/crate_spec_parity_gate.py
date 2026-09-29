@@ -54,7 +54,7 @@ SPEC_BLOCK = re.compile(r"^crate\.spec\((.*?)^\)", re.M | re.S)
 
 
 #: Separate Cargo workspaces whose crate Bazel builds, each with its own lock.
-EXTRA_WORKSPACES = ("sdk/python",)
+EXTRA_WORKSPACES = ("sdk/python", "sdk/typescript")
 
 #: Specs no manifest requests, each with why the Bazel build needs it anyway. Their locked
 #: packages are exempt from LOCKS for the same reason: no Cargo lock can hold them.

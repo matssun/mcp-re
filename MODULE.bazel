@@ -369,6 +369,22 @@ crate.spec(
     for name in ("pyo3-build-config", "pyo3-ffi")
 ]
 
+# The TypeScript SDK's Node addon (sdk/typescript). napi-rs without its tokio runtime: the
+# binding is synchronous. napi-derive also writes the type definitions
+# `//sdk/typescript:native_type_defs` collects.
+crate.spec(
+    package = "napi",
+    version = "3",
+    default_features = False,
+    features = ["napi8"],
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "napi-derive",
+    version = "3",
+    repositories = ["crates_mcp_re"],
+)
+
 crate.from_specs(
     name = "crates_mcp_re",
     cargo_lockfile = "//bazel:crates.lock",

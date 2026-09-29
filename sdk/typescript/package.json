@@ -51,8 +51,8 @@
     ]
   },
   "scripts": {
-    "build:native": "napi build --platform --release --manifest-path Cargo.toml --output-dir native --js binding.js --dts binding.d.ts",
-    "build:native:debug": "napi build --platform --manifest-path Cargo.toml --output-dir native --js binding.js --dts binding.d.ts",
+    "build:native": "node scripts/build-native.mjs",
+    "build:native:debug": "node scripts/build-native.mjs --debug",
     "build:ts": "tsc -p tsconfig.json",
     "build": "npm run build:native && npm run build:ts",
     "test": "npm run build && vitest run"
