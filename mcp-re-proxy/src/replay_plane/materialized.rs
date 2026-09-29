@@ -51,8 +51,12 @@ pub struct MaterializedReplay {
     /// The authoritative tier the per-core request path awaits.
     tier: AsyncReplayTier,
     /// Fleet-strict dispatch and the declared durability tier, which the serving path
-    /// reports. Set together with the tier so a deployment cannot advertise a durability
-    /// claim the store it actually holds does not implement.
+    /// reports. The posture's tier is `ReplayPlan::tier()`, the tier that
+    /// `ReplayState::materialization_plan` paired with this plan's store and `backends`
+    /// copies in unchanged. `accept` checks only the volatile floor (`assert_durable`); it
+    /// does not compare the advertised tier against the store, and cannot, because
+    /// `ReplayDurabilityClass` has no class finer than `Durable`. The store/tier
+    /// correspondence is the plan's invariant, not this value's.
     dispatch: ProxyDispatchConfig,
     /// See [`DurabilityWitness`]. Never read: possession is the whole content.
     _durable: DurabilityWitness,
@@ -101,10 +105,11 @@ impl MaterializedReplay {
 
     /// The handover: both halves, moved out together.
     ///
-    /// One projection rather than two accessors, because the pairing is the point. Handing
-    /// out `tier()` and `dispatch()` separately would let a caller carry one half onward
-    /// beside a posture from somewhere else — the terms of a validated relation passed back
-    /// as independently replaceable arguments.
+    /// The seal ends at this call. What possession guaranteed (the tier passed
+    /// `assert_durable`) is not carried by either half afterwards, and
+    /// `ProxyDispatchConfig` is a plain value with public fields any module of the crate can
+    /// build, so the tuple does not keep the halves paired. The sole consumer (`app.rs`)
+    /// moves both directly into `HttpProfileProxy::new_delegated`.
     pub fn into_parts(self) -> (AsyncReplayTier, ProxyDispatchConfig) {
         (self.tier, self.dispatch)
     }
