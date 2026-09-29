@@ -265,7 +265,7 @@ fn decode_json<T: for<'de> Deserialize<'de>>(seg: &str) -> Result<T, HttpProfile
 // would be assuming the freshness result rather than proving it. Its own freshness
 // obligations are a separate unit, not this one's.
 #[cfg_attr(feature = "verify", verus_verify(external_body))]
-pub fn verify_admission_assertion(
+fn verify_admission_assertion(
     compact_jws: &str,
     expected_profile: &str,
     verifier_audiences: &[&str],
@@ -808,8 +808,8 @@ mod tests {
 
     #[test]
     fn degraded_mode_serves_within_p_but_not_beyond() {
-        // Within P: a recent assertion is served, marked degraded.
-        let recent = claims(5, AdmissionStatus::Admitted, NOW - 20);
+        // Within P: an assertion older than max_clock_skew (30) alone is served only because P (60) admits it, marked degraded.
+        let recent = claims(5, AdmissionStatus::Admitted, NOW - 80);
         let v = check(&recent, None, &policy(true, 60)).expect("within P");
         assert!(
             matches!(v, AdmissionVerdict::DegradedCandidate(_)),
