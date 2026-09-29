@@ -292,7 +292,7 @@ fn replayed_request_is_rejected_by_the_replay_tier() {
     let key = posture
         .admit_replay_tier(cache.durability_class())
         .expect("the reference cache's class is not load-bearing outside fleet-strict")
-        .prepare_http_dispatch(&verified, None)
+        .prepare(&verified, None)
         .expect("dispatch prep");
     let key = key.replay_key();
     assert_eq!(

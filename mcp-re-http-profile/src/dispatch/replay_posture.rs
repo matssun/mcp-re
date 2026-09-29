@@ -95,7 +95,7 @@ impl PostureDecision {
 /// Evidence that the replay store's durability class was decided under a stated posture.
 ///
 /// Possessing one means [`DispatchConfig::admit_replay_tier`] ran and did not refuse. It
-/// is the only key to [`ReplayTierAdmitted::prepare_http_dispatch`], and the only producer
+/// is the only key to [`ReplayTierAdmitted::prepare`], and the only producer
 /// is that gate: the field is private to this module, there is no public constructor, no
 /// `Default`, and no `Clone` — a decision is taken per dispatch, not stashed and reused.
 #[derive(Debug)]
@@ -157,7 +157,7 @@ impl ReplayTierAdmitted {
     ///
     /// Consumes the witness: one posture decision admits one preparation, and the arm that
     /// decided travels into the product rather than being discarded here.
-    pub fn prepare_http_dispatch(
+    pub fn prepare(
         self,
         verified: &VerifiedMcpRequest,
         continuation_ctx: Option<RetainedContinuation<'_>>,

@@ -123,7 +123,7 @@ pub fn dispatch_request(
     let admitted = config.admit_replay_tier(replay.durability_class())?;
 
     // 2–3. Replay-key construction + MRTR continuation binding (non-side-effecting).
-    let prepared = admitted.prepare_http_dispatch(verified, continuation_ctx)?;
+    let prepared = admitted.prepare(verified, continuation_ctx)?;
 
     // 4. Replay admission LAST — the only side-effecting step. Freshness is read through
     //    the verified product's own projection, the way the async sibling reads it.
@@ -150,7 +150,7 @@ pub fn dispatch_request(
 /// [`HttpReplayKey::to_core_replay_key`](crate::HttpReplayKey::to_core_replay_key).
 ///
 /// Private to this module, and reached only through
-/// [`ReplayTierAdmitted::prepare_http_dispatch`]. The fleet-strict single-process refusal
+/// [`ReplayTierAdmitted::prepare`]. The fleet-strict single-process refusal
 /// (step 1) is [`DispatchConfig::admit_replay_tier`], whose product is that witness — so
 /// no path to this function exists that has not decided the durability posture first.
 ///

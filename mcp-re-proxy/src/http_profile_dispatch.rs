@@ -176,7 +176,7 @@ pub async fn dispatch_request_with_async_tier(
     //      outcome of its own, the proved `continuation_verified` having no construction
     //      site outside the seam that proves it.
     let prepared = admitted
-        .prepare_http_dispatch(verified, continuation_ctx)
+        .prepare(verified, continuation_ctx)
         .map_err(ProxyDispatchError::Dispatch)?;
 
     // 4. Awaited atomic admission LAST — the only side-effecting step. A store

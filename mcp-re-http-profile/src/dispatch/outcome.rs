@@ -72,7 +72,7 @@ impl PreparedDispatch {
     /// The only constructor, and it consumes the posture witness.
     ///
     /// `pub(in crate::dispatch)`: the legitimate producer is
-    /// [`ReplayTierAdmitted::prepare_http_dispatch`], which is in this subtree. Nothing
+    /// [`ReplayTierAdmitted::prepare`], which is in this subtree. Nothing
     /// outside it — including `mcp-re-proxy`, which used to build the outcome itself — can
     /// name this function or the fields it fills.
     ///
