@@ -1,16 +1,17 @@
 """batch_gate.py — the gate that runs once per batch, not once per file.
 
 The per-file gate (`check.py post`) is what can be attributed to one writer:
-the lanes that compile the file, its own tests, the module-size ratchet. What it
+the targets that compile the file, its own tests, the module-size ratchet. What it
 leaves out is the work that costs minutes and says the same thing whether it runs
 after one fix or after six: the whole-workspace clippy ratchet, the structural
-gates, and each touched crate's full test suite. Running those per file would
+gates, and the touched closure — every Rust target that depends on a touched file,
+linted under `--config=lint`, and every test target in it. Running those per file would
 serialize the writer lane behind them; running them per batch costs one run, and
 the per-file commits make a failure bisectable to the file that caused it.
 
-Run it BEFORE the first batch of a run (`--crates` empty): the lane's attribution
+Run it BEFORE the first batch of a run (`--files` empty): the lane's attribution
 rests on starting from a tree measured green. Run it AFTER each batch with the
-crates the batch touched.
+files the batch touched.
 
 Two lanes are left to the pre-handover gate (`scripts/local_gate.sh`) and are NOT
 claimed here: `bazel test //...` (the only lane that runs the `async_serve` drain
@@ -24,7 +25,7 @@ never read as a pass. A change that touches lint configuration, the ratchet mach
 shared compiler settings is a reason to stop and ask for the ratchet instead.
 
 Usage:
-  batch_gate.py [--crates a,b] [--no-clippy-ratchet] --work-dir DIR
+  batch_gate.py [--files a,b] [--no-clippy-ratchet] --work-dir DIR
 Exit 0 green, 1 a gate failed, 2 a gate could not run.
 """
 from __future__ import annotations
@@ -36,7 +37,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import cargo_gate  # noqa: E402
+import rust_gate  # noqa: E402
 
 RATCHET = "scripts/clippy_ratchet_gate.py"
 STRUCTURAL = [
@@ -66,7 +67,7 @@ def _tail(log: str, n: int = 6) -> list[str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="once-per-batch gate")
-    ap.add_argument("--crates", default="", help="cargo packages the batch touched")
+    ap.add_argument("--files", default="", help="files the batch touched, comma-separated")
     ap.add_argument("--work-dir", required=True)
     ap.add_argument("--no-clippy-ratchet", action="store_true",
                     help="omit the workspace clippy ratchet (single-file run); reported as skipped")
@@ -86,15 +87,23 @@ def main() -> int:
         results.append({"gate": cmd[0], "verdict": "ok" if rc == 0 else "new-failures",
                         "log": log, **({} if rc == 0 else {"tail": _tail(log)})})
 
-    lane = cargo_gate.feature_lane()
-    for pkg in [c.strip() for c in a.crates.split(",") if c.strip()]:
-        crate_dir = next((d for d in _crate_dirs() if cargo_gate.package_name(d) == pkg), None)
-        feats = [f for f in lane if crate_dir and f in cargo_gate.crate_features(crate_dir)]
-        for name, fs in [("default", [])] + ([("features", feats)] if feats else []):
-            log = os.path.join(a.work_dir, "batch-test-%s-%s.log" % (pkg, name))
-            cmd = cargo_gate.cargo() + ["test", "-p", pkg] + (["--features", ",".join(fs)] if fs else [])
-            rc = _run(cmd, log)
-            results.append({"gate": "cargo test -p %s (%s)" % (pkg, name),
+    files = [f.strip() for f in a.files.split(",") if f.strip()]
+    labels = [lbl for lbl in (rust_gate.file_label(f) for f in files) if lbl]
+    if labels:
+        closure = "rdeps(//..., set(%s))" % " ".join(labels)
+        rust = rust_gate.query('kind("^(%s) rule$", %s)' % (rust_gate.RUST_RULES, closure))
+        tests = rust_gate.query('kind(".*_test rule$", %s) except attr(tags, "\\bmanual\\b", //...)'
+                                % closure)
+        for name, targets, cmd in (
+                ("lint the touched closure", rust, ["build", "--config=lint", "--keep_going"]),
+                ("test the touched closure", tests, ["test", "--test_output=errors", "--keep_going"])):
+            if not targets:
+                results.append({"gate": name, "verdict": "infra",
+                                "why": "the closure of %s holds no such target" % ", ".join(files)})
+                continue
+            log = os.path.join(a.work_dir, "batch-%s.log" % name.split()[0])
+            rc = _run(rust_gate.bazel() + cmd + targets, log)
+            results.append({"gate": name, "targets": len(targets),
                             "verdict": "ok" if rc == 0 else "new-failures", "log": log,
                             **({} if rc == 0 else {"tail": _tail(log)})})
 
@@ -103,11 +112,6 @@ def main() -> int:
     skipped = [r["gate"] for r in results if r["verdict"] == "skipped"]
     print(json.dumps({"verdict": worst, "skipped": skipped, "gates": results}, indent=1))
     return {"ok": 0, "new-failures": 1}.get(worst, 2)
-
-
-def _crate_dirs() -> list[str]:
-    p = subprocess.run(["git", "ls-files", "*Cargo.toml"], capture_output=True, text=True)
-    return [os.path.dirname(m) for m in p.stdout.split()]
 
 
 if __name__ == "__main__":

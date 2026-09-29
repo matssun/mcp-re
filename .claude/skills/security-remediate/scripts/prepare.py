@@ -226,10 +226,12 @@ def all_ignored(test_file: str) -> bool:
 
 
 def it_target(root: str, test_file: str) -> str:
-    """The cargo integration-test target a file under `<root>/tests/` compiles into:
-    `tests/<name>.rs` is target `<name>`, anything under `tests/<dir>/` is target `<dir>`."""
-    rel = os.path.relpath(test_file, os.path.join(root, "tests")).split(os.sep)
-    return os.path.splitext(rel[0])[0]
+    """The Bazel test target(s) a file under `<root>/tests/` is compiled into, as the
+    labels `--it` takes. A shared module (`tests/<dir>/…`) can belong to several."""
+    import rust_gate  # noqa: PLC0415 — only the Rust branch needs the build graph
+    labels = [t for t in rust_gate.compiling_targets([test_file])
+              if t in set(rust_gate.query('kind("^rust_test rule$", //%s/...)' % root))]
+    return ",".join(labels) or "(no Bazel test target compiles it)"
 
 
 def rust_module(path: str) -> str:
@@ -248,7 +250,7 @@ def _rs_binds(cand: str, own: str, src: str) -> bool:
     if re.search(r"\b%s::|::%s\b" % (re.escape(mod), re.escape(mod)), src):
         return True
     # Another crate reaching the item through the crate root's re-export.
-    crate = (cargo_package(own) or "").replace("-", "_")
+    crate = rust_crate(own) or ""
     return bool(crate) and not cand.startswith(component_root(own) + "/src/") \
         and re.search(r"\b%s::" % re.escape(crate), src) is not None
 
@@ -323,17 +325,10 @@ def component_root(path: str) -> str:
     return os.path.dirname(path)
 
 
-def cargo_package(path: str) -> str | None:
-    """`name` from the nearest Cargo.toml — the `cargo -p` handle for the file's crate."""
-    d = os.path.dirname(path)
-    while d:
-        manifest = os.path.join(d, "Cargo.toml")
-        if os.path.exists(manifest):
-            m = re.search(r'^\[package\][^\[]*?^name\s*=\s*"([^"]+)"',
-                          open(manifest, encoding="utf-8").read(), re.M | re.S)
-            return m.group(1) if m else None
-        d = os.path.dirname(d)
-    return None
+def rust_crate(path: str) -> str | None:
+    """The crate `path` belongs to, as the Bazel library targets name it."""
+    from rust_resolver import RustResolver  # noqa: PLC0415
+    return RustResolver(".").crate_of(path)
 
 
 SIZE_GATE = "scripts/module_size_gate.py"
@@ -458,8 +453,13 @@ def main() -> int:
     w("## 3. Build and tests")
     w("- owning BUILD.bazel: %s" % (owning_build(a.file) or "NONE FOUND"))
     if a.file.endswith(".rs"):
-        w("- cargo package: %s   in-file #[test] fns: %d"
-          % (cargo_package(a.file) or "NONE FOUND", rust_inline_tests(src)))
+        import rust_gate  # noqa: PLC0415
+        compiled_by = rust_gate.compiling_targets([a.file])
+        w("- crate: %s   in-file #[test] fns: %d" % (rust_crate(a.file) or "NONE FOUND",
+                                                     rust_inline_tests(src)))
+        w("- Bazel targets compiling it: %s" % (", ".join(compiled_by) or "NONE FOUND"))
+        w("- unit-test targets: %s" % (", ".join(rust_gate.unit_test_targets(compiled_by))
+                                       or "NONE FOUND"))
         size = module_size(a.file, src)
         if size:
             w("- module size: " + size)
