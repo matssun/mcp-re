@@ -2004,9 +2004,9 @@ evidence = [
 ]
 # The battery spans two targets on purpose, and the split is the parser boundary.
 #
-# The `lib#` members exercise the PURE selector over an interpreted field set: they are
-# the only way to state a property about a field set the X.509 encoder cannot express, and
-# they are what a future proof would replace. The `tests/integration#` members drive the
+# The `proxy_unit_test#` members exercise the PURE selector over an interpreted field set: they
+# are the only way to state a property about a field set the X.509 encoder cannot express, and
+# they are what a future proof would replace. The `integration_test#` members drive the
 # same law through real DER, so the adapter is measured too — a selector that is right
 # about `CertificateIdentityFields` and an adapter that mis-orders SANs would leave the
 # first group green.
@@ -7556,7 +7556,7 @@ evidence = [
 # antecedent was unaudited. The call site is `pre_admission/standing.rs`.
 #
 # THE MEASUREMENT THAT MADE THIS A UNIT. Nineteen
-# `tests/integration_async#admission_currency_serving_test::*` controls witness that the
+# `//mcp-re-proxy:integration_async_test#admission_currency_serving_test::*` controls witness that the
 # gate RUNS and what it refuses — 18 of them go red if the stage is deleted. What none of
 # them witnesses is that it CANNOT BE SKIPPED, and before this unit's seal the deletion
 # COMPILED: `admission_stage` and `transport_binding_stage` returned the same type, so
@@ -10835,8 +10835,8 @@ tested_symbols = [
 # Ten `http_profile.*` units already name `mcp-re-core/src/crypto.rs` and
 # `mcp-re-core/src/error.rs` in their `paths`, and not one of them declares the primitive
 # that does the verifying or the taxonomy that renders the verdict. They cannot: every one
-# of them sets `test_package = "mcp-re-http-profile"`, and `_validate_in_crate_selectors`
-# resolves a `lib#crypto::tests::*` selector against THAT package's `src` tree, where the
+# of them selects `mcp-re-http-profile` test targets, and `_validate_in_crate_selectors`
+# resolves a `crypto::tests::*` selector against THAT target's crate root, where the
 # module does not exist. R1 is unavailable rather than declined, so these are two new units
 # over the files the existing batteries already measure.
 #
@@ -11900,7 +11900,7 @@ tested_symbols = [
 #
 # THM-0112's own statement ends "A record this implementation writes reads back as the bytes
 # it was written from." — a claim about a WRITE and a READ — and `proxy.retained_record_
-# content` measures it over the encoder alone, because `verify --manifests` refuses a `lib#`
+# content` measures it over the encoder alone, because `verify --manifests` refuses an in-crate
 # selector whose module a unit does not measure and `transparency/durability.rs` is not in
 # its `paths`. Its own battery comment records that refusal and names these controls NP-048.
 #

@@ -58,8 +58,8 @@
 #                are both STALE, because a probe that cannot identify its site is not
 #                testing what it claims to.
 #   weakening    the replacement — the check deleted, or made non-load-bearing
-#   expect_red   declared `tested_symbols` members, VERBATIM — `tests/<target>#<symbol>` or
-#                `lib#<symbol>`. Test identity is TARGET plus symbol, never the symbol
+#   expect_red   declared `tested_symbols` members, VERBATIM — `//<package>:<test target>#<symbol>`.
+#                Test identity is TARGET plus symbol, never the symbol
 #                alone: two targets may hold a test of the same name, and a probe that
 #                matched on the bare name could be satisfied by a failure in a target it
 #                never intended to touch.
@@ -10666,7 +10666,7 @@ conjunct = "A publication taken before the exchange may dispatch"
 #
 # What this probe measures that nothing else did: the refusal's CAUSE is already defended
 # where it is decided, by `no_pre_dispatch_fault_claims_the_backend_ran` in
-# `http_profile_serve::retention` — a lib# control over `pre_dispatch_refusal` alone, which
+# `http_profile_serve::retention` — an in-crate control over `pre_dispatch_refusal` alone, which
 # this weakening does not touch and which stays green while the backend runs. Only a control
 # that COUNTS inner dispatches goes red, and there is exactly one.
 path = "mcp-re-proxy/src/http_profile_serve/retention/mod.rs"
