@@ -99,6 +99,12 @@ def bazel(*args: str) -> str:
     return done.stdout
 
 
+def doctest_items(log: str) -> list[str]:
+    """The items a rustdoc test log ran a doctest for. A crate-level doctest names no item
+    (`test src/lib.rs - (line 35) - compile ... ok`), and is the empty item."""
+    return sorted(set(re.findall(r"^test \S+ - (?:(\S+) )?\(line \d+\)", log, re.M)))
+
+
 def collect() -> dict:
     """Build every `rust_test` and list what each binary contains; run the doctest targets
     (their runner forwards no arguments, so `--list` cannot reach them) and read the items
@@ -130,7 +136,7 @@ def collect() -> dict:
         for label in docs:
             package, name = label[2:].split(":")
             log = (logs / package / name / "test.log").read_text()
-            items = sorted(set(re.findall(r"^test \S+ - (\S+) \(line \d+\)", log, re.M)))
+            items = doctest_items(log)
             doctests.append({"label": label, "package": package, "items": items})
     return {"binaries": binaries, "doctests": doctests}
 
@@ -184,6 +190,11 @@ def selftest() -> int:
         failures.append(f"static: an unreached test file must be the one gap, got {gaps}")
     if static_gaps(files, {"a/src/lib.rs", "a/tests/orphan.rs"}):
         failures.append("static: a reached file is not a gap")
+    log = ("test a/src/lib.rs - (line 35) - compile ... ok\n"
+           "test a/src/lib.rs - Item (line 9) ... ok\n"
+           "test a/src/m.rs - m::Other::new (line 4) - compile fail ... ok\n")
+    if doctest_items(log) != ["", "Item", "m::Other::new"]:
+        failures.append(f"doctest items: a crate-level doctest must be the empty item, got {doctest_items(log)}")
 
     class C:
         def __init__(self, project, identity):
