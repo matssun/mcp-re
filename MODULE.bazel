@@ -385,9 +385,19 @@ crate.spec(
     repositories = ["crates_mcp_re"],
 )
 
+# The platforms MCP-RE builds for. A dependency the crates declare only for another
+# target (the `windows-*` family, `wasi`) is not in the build graph, so it is neither
+# compiled nor assessed by the supply-chain gate (scripts/supply_chain_gate.py), which
+# reads the graph `bazel query` reports.
 crate.from_specs(
     name = "crates_mcp_re",
     cargo_lockfile = "//bazel:crates.lock",
+    supported_platform_triples = [
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-apple-darwin",
+        "x86_64-unknown-linux-gnu",
+    ],
 )
 use_repo(crate, "crates_mcp_re")
 

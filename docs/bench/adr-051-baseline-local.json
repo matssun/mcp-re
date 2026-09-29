@@ -20,7 +20,7 @@
     "rust_toolchain": "1.97.1 (pinned in rust-toolchain.toml and MODULE.bazel; enforced locally by scripts/use_pinned_toolchain.sh)",
     "serving_mode": "delegated-required-only (ADR-MCPRE-052; delegated-credential-backed response signature per request)",
     "carrier": "RFC 9421 HTTP Message Signatures + RFC 9530 Content-Digest (signature in HTTP headers; no object/JCS _meta signature)",
-    "crypto_generation": "RustCrypto digest 0.11 (sha2 0.11, ed25519-dalek 3, hmac 0.13, curve25519-dalek 5) — ONE generation; //deny.toml denies a second via deny-multiple-versions",
+    "crypto_generation": "RustCrypto digest 0.11 (sha2 0.11, ed25519-dalek 3, hmac 0.13, curve25519-dalek 5) — ONE generation; //config/supply-chain.toml denies a second via deny-multiple-versions",
     "commit": "cd5e2dc",
     "serving_topology": "ADR-MCPRE-051 §1 as amended 2026-08-06: sharded work-stealing runtimes. This anchor declares 1 core, so it runs ONE shard whose pool is the auto default min(8, cpus) = 8 workers. Reproduce with the lane's defaults; `--workers-per-shard 1` restores the pre-amendment single-threaded shard that produced the v5 anchor."
   },

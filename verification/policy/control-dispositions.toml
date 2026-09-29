@@ -13604,3 +13604,11 @@ likely_owner = "None. Both native seam files are in no unit's paths. The client.
 consequence = "high"
 root_relationship = "This is the published-surface twin, for each SDK, of three client-core units. It sits under THM-0094/THM-0095 on the request side, which THM-0094's scope places outside its closure for authorization artefacts. That is the same position NP-020..NP-024 occupy."
 record = "docs/architecture/control-dispositions.md#np-223"
+
+[[disposition]]
+id = "CD-20119"
+project = ""
+control = "gate#scripts/supply_chain_gate.py"
+decision = "not-evidence"
+reason_family = "ND-006"
+recorded = "2026-09-29"

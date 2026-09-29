@@ -1,0 +1,135 @@
+# MCP-RE supply-chain policy (audit gap G-4, MCPS-077, issue #3980).
+#
+# Enforced by `scripts/supply_chain_gate.py`, run by
+# `.github/workflows/mcp-re-supply-chain.yml` on every dependency change and daily. The
+# policy is evaluated over the crates the Bazel build graph actually reaches
+# (`bazel query deps(//...)`), for the platforms MODULE.bazel's crate universe supports —
+# the proxy, both SDK native modules and the mock PKCS#11 provider are one graph, so one
+# evaluation covers every crate any of them compiles, build-script and proc-macro
+# dependencies included. Each crate's version, source and edges come from
+# `bazel/crates.lock`; its license from the manifest Bazel fetched.
+#
+# Every key below is one the gate reads. A key it does not know is refused, so the file
+# cannot state a rule nothing enforces.
+
+# ---------------------------------------------------------------------------
+# [sources] — only crates.io is a trusted origin. A crate from any other registry, or
+# from git, fails the gate (no vendored git dependencies).
+# ---------------------------------------------------------------------------
+[sources]
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+# ---------------------------------------------------------------------------
+# [advisories] — RustSec advisory database. Every vulnerability, unmaintained and unsound
+# advisory affecting a crate version in the graph fails the gate; so does a yanked
+# version. `ignore` is intentionally empty: genuine findings surface and are triaged,
+# never silently suppressed.
+# ---------------------------------------------------------------------------
+[advisories]
+ignore = []
+
+# ---------------------------------------------------------------------------
+# [licenses] — explicit allow-list, derived from the resolved graph. The workspace itself
+# is Apache-2.0. No "allow everything", no copyleft slipping through. An entry is a
+# license id, or a full `<id> WITH <exception>` expression.
+# ---------------------------------------------------------------------------
+[licenses]
+allow = [
+    "Apache-2.0",   # workspace license + most of the RustCrypto/rustls tree
+    "MIT",          # dual-licensed crates (serde, libc, syn, ...) + memchr's "Unlicense OR MIT"
+    "BSD-3-Clause", # curve25519-dalek, ed25519-dalek, subtle, redis
+    "ISC",          # rustls, rustls-webpki, untrusted, and part of ring
+    "Unicode-3.0",  # unicode-ident
+    "Unlicense",    # memchr (offered as "Unlicense OR MIT")
+    # webpki-roots (0.26 shim + 1.0), reached via ureq's `tls` feature. CDLA-
+    # Permissive-2.0 is a DATA license: the crate ships the Mozilla CA root set,
+    # and the CDLA governs that data, not code linked into MCP-RE. It is
+    # permissive with no reciprocal/share-alike obligation on downstream output.
+    # This is the crate's ONLY license (no dual-license alternative to fall back
+    # on), so the id has to be allowed for the gate to see the graph at all.
+    "CDLA-Permissive-2.0",
+    # target-lexicon, a build dependency of pyo3 (the Python SDK's native module). The
+    # LLVM exception only RELAXES Apache-2.0 (it removes the object-code attribution
+    # requirement), so allowing it grants nothing beyond plain Apache-2.0, which is
+    # already allowed above. Listed as the full expression rather than allowing the
+    # exception on its own.
+    "Apache-2.0 WITH LLVM-exception",
+    # xxhash-rust, reached via redis 1.x (it hashes cluster slot keys). BSL-1.0 is
+    # OSI-approved and FSF Free/Libre, permissive, with no reciprocal/share-alike
+    # obligation and no binary-attribution requirement at all — strictly weaker
+    # obligations than the MIT and Apache-2.0 already allowed above. It is the
+    # crate's ONLY license (no dual-license alternative), so the id has to be
+    # allowed for the gate to see the graph.
+    "BSL-1.0",
+]
+# `ring` is the well-known non-trivial case: its SPDX expression is "Apache-2.0 AND ISC"
+# (Apache-2.0 for ring's own code, ISC/BoringSSL for the vendored crypto). Both ids are
+# allowed above, so ring passes honestly with no per-crate override.
+
+# ---------------------------------------------------------------------------
+# [bans] — duplicate versions, and wildcard version requirements.
+# ---------------------------------------------------------------------------
+[bans]
+# Duplicates are REPORTED in general: a transitive bump that pulls a second major of
+# e.g. getrandom or thiserror should be visible, not block the gate on a non-security
+# issue. The graph carries several such duplicates — webpki-roots 0.26.11 (a thin
+# re-export shim) alongside 1.0.7 from ureq; asn1-rs 0.6/0.7 from the two x509-parser
+# generations; thiserror 1/2.
+#
+# ...but NOT for the crates that decide how MCP-RE hashes. `sha2` is the implementation
+# the canonical preimage runs through and `block-buffer` is its internal buffer. Two
+# versions of those in one graph does not mean "an old copy lingers" — it means the
+# signing binary links TWO independent SHA-256 implementations, and which one executes
+# depends on which crate called it: our preimage hashing with one while ed25519-dalek
+# hashes internally with the other. For a product whose entire claim is a reproducible
+# signed preimage, that is a split-brain in the one primitive the claim rests on. It must
+# fail the gate rather than scroll past in a list — which is exactly how it got in: sha2
+# 0.11 landed via an unattended Dependabot bump (PR #457) and forked all four lockfiles
+# with nothing going red.
+#
+# `digest` and `crypto-common` are the TRAIT crates of that generation and are listed
+# too, with one documented exception (`skip-tree` below): `x509-ocsp` 0.2.1 (its
+# `builder` feature => digest + signature) has no digest-0.11 release, and it is the
+# last crate in the graph holding 0.10. The exception is scoped to its subtree, NOT
+# granted globally, because x509-ocsp hashes nothing we sign — it uses those traits for
+# OCSP CertID/DER machinery, and our own call site deliberately avoids handing it our
+# `Sha256` (see the hand-built CertID in mcp-re-proxy/src/ocsp.rs). Delete the skip-tree
+# the day x509-ocsp ships on digest 0.11; `sha2` and `block-buffer` stay unconditionally
+# single-version.
+#
+# `rand_core` cannot be unified today, so it is constrained rather than left loose. The
+# 0.6.4 instance sits inside the `x509-ocsp` skip-tree, so this rule catches a rand_core
+# appearing anywhere OUTSIDE that subtree, which is the case worth failing on. Both sides
+# are forced by upstream and neither is ours to move:
+#
+#   0.10.1  p256["ecdsa"] -> ecdsa/algorithm -> HARD dep:rfc6979 -> crypto-bigint
+#           /rand_core. `rand_core` is optional in crypto-bigint, but ecdsa 0.17 has
+#           no verify-only feature — `algorithm` is the umbrella and enables rfc6979
+#           unconditionally — so no feature combination reaches P-256 verification
+#           without it.
+#   0.6.4   x509-ocsp 0.2.1 -> signature 2.2.0. 0.2.1 is the latest release; there is
+#           nothing to bump to.
+#
+# Unifying would mean giving up either ES256 receipt verification (MCPRE-501) or OCSP.
+# `rand_core` is a trait crate, so two copies mean two trait definitions rather than two
+# RNG implementations, and no MCP-RE signing path uses either: Ed25519 signing goes
+# through ed25519-dalek, and the P-256 code verifies only. Revisit when x509-ocsp
+# publishes against signature 3, or ecdsa exposes verification without rfc6979 — at
+# which point this entry should be deleted, not widened.
+deny-multiple-versions = ["block-buffer", "crypto-common", "digest", "rand_core", "sha2"]
+
+# A `crate.spec` in MODULE.bazel whose version requirement is `*` fails the gate: it
+# lets the next re-pin pull any release at all.
+deny-wildcard-specs = true
+
+# The single documented holdout — rationale above. `x509-ocsp` 0.2.1 is the latest
+# release and still pulls signature 2 / digest 0.10 / crypto-common 0.1 through its
+# `builder` feature. Its subtree is exempt from `deny-multiple-versions`, so the
+# duplicate cannot appear anywhere else in the graph unnoticed. `depth` counts edges
+# from the named crate (depth 0); 5 reaches crypto-common, the deepest node of the
+# held-back generation (x509-ocsp -> signature -> digest -> crypto-common). Kept bounded
+# so the exception cannot silently swallow unrelated duplicates.
+[[bans.skip-tree]]
+name = "x509-ocsp"
+version = "0.2.1"
+depth = 5

@@ -258,6 +258,12 @@ disposition says where the control sits, not how much it matters, and `tracked_s
 exists precisely because a previous version of this guard was described in a template, was
 allowlisted as a permanent exemption, and had never existed at all.
 
+**Added 2026-09-29:** `scripts/supply_chain_gate.py` — `config/supply-chain.toml` over the
+third-party crates the Bazel build graph reaches: sources, licenses, single-version bans,
+RustSec advisories and yanked versions. Its subject is the dependency graph the build draws
+from; a release claim may cite it, and no proposition about dispatch, signing, admission or
+attribution changes truth value with it.
+
 ## ND-007 — architecture shape rules
 
 **Covers:** `semantic_altitude_gate.py`, `lifecycle_purity_gate.py`, and

@@ -55,7 +55,7 @@ serde_json = "1.0"
 # cannot serialise its rcgen-minted issuer key.
 ed25519-dalek = { version = "3", features = ["zeroize", "pkcs8", "alloc"] }
 # The RustCrypto hashing core moves as ONE generation — see the matching
-# `deny-multiple-versions` entries in //deny.toml, which fail the build if a
+# `deny-multiple-versions` entries in //config/supply-chain.toml, which fail the gate if a
 # second one ever enters the graph. sha2 0.11 / ed25519-dalek 3 / hmac 0.13 /
 # curve25519-dalek 5 / signature 3 are all the `digest 0.11` generation and are
 # bumped together here; taking any one of them alone does not migrate the tree,
@@ -123,7 +123,7 @@ time = { version = "0.3", default-features = false, features = ["std"] }
 # RAW FFI crate `cryptoki-sys` (libloading only) and own a small safe wrapper in
 # mcp-re-proxy/src/pkcs11_native.rs, rather than the high-level `cryptoki` crate
 # which transitively pulls the UNMAINTAINED `paste` (RUSTSEC-2024-0436) and fails
-# the cargo-deny gate. Pinned to the exact version already in Cargo.lock.
+# the supply-chain gate. Pinned to the exact version already in Cargo.lock.
 cryptoki-sys = "0.5.0"
 # Shared atomic ReplayCache backend (sync redis; default-features off = no aio/tokio).
 # `tls-rustls` is what makes a `rediss://` URL usable at all: the replay tier and the

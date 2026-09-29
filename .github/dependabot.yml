@@ -5,10 +5,11 @@
 # gone bad — nothing was opening the pull request that fixes it, so every bump was
 # a manual errand. This closes that loop.
 #
-# Enforcement is unchanged: `.github/workflows/mcp-re-supply-chain.yml` runs
-# cargo-deny over //deny.toml on every lockfile change, so a Dependabot PR that
-# pulls a crate with a disallowed license, a RustSec advisory, or a yanked version
-# fails the gate like any other change. Dependabot proposes; the gate decides.
+# Dependabot proposes; the gates decide. Bazel builds from `bazel/crates.lock`, so a
+# bump that lands only in a Cargo.lock fails `scripts/crate_spec_parity_gate.py` until
+# the Bazel lock is re-pinned with it; the re-pinned graph then meets
+# `.github/workflows/mcp-re-supply-chain.yml` (//config/supply-chain.toml), which fails
+# a crate with a disallowed license, a RustSec advisory, or a yanked version.
 #
 # Updates are GROUPED per ecosystem: ~250 resolved crates across four lockfiles
 # would otherwise generate a PR per crate per week, and a review queue nobody
@@ -59,7 +60,7 @@ updates:
       # implementations. That is precisely how sha2 0.11 first landed (PR #457,
       # unattended) and forked all four lockfiles with nothing going red.
       #
-      # //deny.toml now denies the duplicate outright, so such a PR could only ever
+      # //config/supply-chain.toml denies the duplicate outright, so such a PR could only ever
       # be a red one; these entries stop it being opened at all. Bump this set by
       # hand, together, in a single change.
       - dependency-name: "sha2"

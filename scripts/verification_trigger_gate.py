@@ -41,9 +41,8 @@ with every unit silently `DIRTY_SELF` and nothing re-running to notice. The
 attestations on `main` would have kept reading FRESH over a dependency graph no
 lane had measured.
 
-`.github/workflows/mcp-re-supply-chain.yml` already states the rule this gate
-enforces: "A dependency change lands in a Cargo.lock, so that is the file that
-has to re-trigger the gate."
+`.github/workflows/mcp-re-supply-chain.yml` states the same rule for its own
+trigger set: every file that decides the dependency graph re-triggers the gate.
 
 Run:  python3 scripts/verification_trigger_gate.py
       python3 scripts/verification_trigger_gate.py --selftest
