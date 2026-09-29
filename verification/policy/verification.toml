@@ -291,6 +291,8 @@ tested_symbols = [
   "lib#digest::tests::sha256_member_absent_from_present_header_is_malformed",
   "lib#policy::tests::an_algorithm_without_a_verifier_cannot_be_allowlisted",
   "lib#policy::tests::the_registry_maps_tokens_to_implemented_verifiers",
+  "lib#verify::floor::request::tests::a_valid_request_consults_the_trust_seam_once_in_the_request_slot",
+  "lib#verify::floor::request::tests::a_body_that_misses_its_digest_never_reaches_the_trust_seam",
 ]
 
 # THM-0015's owner.
@@ -353,6 +355,7 @@ tested_symbols = [
   "tests/full_profile_test#a_carried_decision_that_is_not_the_bound_document_is_refused",
   "tests/full_profile_test#a_pdp_decision_binding_with_no_carried_decision_is_refused",
   "lib#pdp_decision::binding::tests::a_different_document_does_not",
+  "lib#verify::full::request::tests::audience_mismatch_is_refused",
 ]
 
 # Stated once for three operations, because it IS one proposition: the three differ in what
@@ -630,6 +633,9 @@ tested_symbols = [
   "tests/full_profile_test#cryptographic_req_splice_still_fails_at_the_floor",
   "tests/full_profile_test#a_valid_exchange_cannot_be_verified_as_the_answer_to_a_different_request",
   "tests/full_profile_test#two_requests_differing_only_in_a_signed_parameter_have_different_handles",
+  "lib#block::tests::response_block_foreign_profile_fails_closed",
+  "lib#block::tests::response_block_unknown_field_fails_closed",
+  "lib#block::tests::response_block_round_trips_and_validates",
 ]
 
 # THM-0019's owner.
@@ -1647,6 +1653,8 @@ tested_symbols = [
   "tests/binding_identifier_test#unknown_binding_type_fails_closed",
   "tests/binding_identifier_test#opaque_binding_carrying_reference_fields_is_malformed",
   "tests/binding_identifier_test#reference_binding_missing_its_reference_fields_is_malformed",
+  "lib#block::artifact_binding::tests::a_foreign_digest_alg_is_refused",
+  "lib#block::artifact_binding::tests::an_opaque_binding_with_a_reference_field_is_refused",
 ]
 
 # ---------------------------------------------------------------------------
@@ -1821,6 +1829,8 @@ tested_symbols = [
   "lib#block::tests::tampered_request_state_breaks_the_digest",
   "lib#block::tests::splice_across_continuation_boundary_fails",
   "lib#block::tests::wrong_continuation_type_is_malformed",
+  "lib#block::tests::a_wrong_role_handle_from_handles_is_refused_by_verify",
+  "lib#block::tests::from_handles_over_role_labeled_digests_is_wire_identical_to_build",
 ]
 proved_symbols = ["mcp_re_http_profile::block::HttpContinuation::verify"]
 features = ["verify"]
@@ -6078,6 +6088,7 @@ tested_symbols = [
   # falsifier for exactly this conjunct.
   "tests/integration_async#delegated_production_wiring_test::delegated_required_wiring_serves_verifies_and_rotates",
   "tests/integration_async#root_key_lifecycle_test::root_issuance_failure_serves_until_delegated_key_expiry_then_fails_closed",
+  "lib#delegated_server_signer::terminal_retirement_tests::a_rotor_retire_after_permanent_retirement_cannot_reopen_publish",
 ]
 
 [[unit]]
@@ -6368,6 +6379,9 @@ tested_symbols = [
   # the double citation is measured twice rather than claimed twice.
   "tests/integration_async#delegated_production_wiring_test::delegated_required_wiring_serves_verifies_and_rotates",
   "lib#http_profile_serve::receipt::artifact::last_resort_receipt_tests::an_unstated_disposition_adds_no_claim",
+  "lib#http_profile_serve::signing_window::tests::a_non_positive_ttl_opens_no_window",
+  "lib#http_profile_serve::signing_window::tests::open_yields_a_window_only_while_the_signer_holds_a_live_credential",
+  "lib#http_profile_serve::signing_window::tests::the_window_advertises_the_instant_it_was_opened_at",
 ]
 
 [[unit]]
@@ -6950,6 +6964,7 @@ tested_symbols = [
   # control is among them and passes there. It is NOT feature-gated — it selects in the
   # default lane too — so joining this battery costs it no coverage.
   "tests/integration#app_startup_characterization_test::a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host",
+  "lib#kms_endpoint_policy::tests::a_legitimate_endpoint_is_still_admitted_after_the_substitution",
 ]
 # The features `endpoint.rs` is compiled by, named rather than taken wholesale.
 test_features = ["aws_kms_keysource", "gcp_kms_keysource"]
@@ -7148,6 +7163,8 @@ tested_symbols = [
   #       against a `0555` directory, and the read projection over the same path. Opening is
   #       not a stage, and the asymmetry is the serving posture's — THM-0077 carries "an
   #       unopenable retention directory refuses rather than resolving to OFF" in terms.
+  "lib#transparency::durability::tests::a_lost_acknowledgement_for_a_pre_dispatch_job_is_unresolved",
+  "lib#transparency::durability::tests::a_reserve_cancelled_at_its_await_leaves_no_marker",
 ]
 
 [[unit]]
@@ -7708,6 +7725,7 @@ tested_symbols = [
   "lib#custody::key_window::tests::a_legal_pair_is_a_window_and_projects_what_it_was_given",
   "lib#custody::key_window::tests::the_magnitude_ceiling_is_not_this_types_to_apply",
   "tests/delegation_e2e_test#custody_signed_response_verifies_via_attestation_chain",
+  "lib#custody::active_key::tests::a_credential_carrying_a_claim_the_request_did_not_is_refused",
 ]
 
 [[unit]]
@@ -8141,6 +8159,8 @@ tested_symbols = [
   # LANE: measured, default cargo (167-test listing), not `async_serve`.
   "tests/integration_async#delegated_client_server_e2e_test::serving_without_an_audit_sink_still_round_trips",
   "lib#audit_sink::drain::tests::the_unknown_outcome_is_its_own_case",
+  "lib#audit_sink::writer::tests::a_failed_line_write_latches_the_failure",
+  "lib#audit_sink::writer::tests::a_flush_is_acknowledged_behind_the_lines_ahead_of_it",
 ]
 
 # ---------------------------------------------------------------------------------------
@@ -8818,6 +8838,19 @@ tested_symbols = [
   "lib#redis_store::tests::ttl_ms_is_window_not_absolute_epoch",
   "lib#redis_store::tests::wait_quorum_is_met_only_with_enough_acks",
   "lib#redis_store::tests::wait_quorum_shortfall_fails_closed_with_fresh_nonce_contract",
+  "lib#async_redis_store::tests::a_black_holed_set_fails_closed_within_the_owned_bound",
+  "lib#async_redis_store::tests::a_declared_quorum_is_enforced_by_the_store_it_was_connected_with",
+  "lib#async_redis_store::tests::a_fresh_insert_sends_the_clock_derived_window",
+  "lib#async_redis_store::tests::a_set_error_fails_closed",
+  "lib#async_redis_store::tests::a_stale_window_never_reaches_redis",
+  "lib#async_redis_store::tests::a_stalled_connect_is_refused_not_hung",
+  "lib#async_redis_store::tests::every_tier_has_an_owned_round_trip_bound",
+  "lib#redis_store::tests::a_poisoned_connection_is_replaced_not_reused",
+  "lib#redis_store::tests::a_wait_shortfall_is_issued_and_fails_closed",
+  "lib#redis_store::tests::an_unreadable_clock_refuses_every_insert_pre_store",
+  "lib#redis_store::tests::the_sync_store_accepts_a_noeviction_redis",
+  "lib#redis_store::tests::the_sync_store_refuses_a_redis_whose_policy_it_cannot_read",
+  "lib#redis_store::tests::the_sync_store_refuses_to_connect_to_an_evicting_redis",
 ]
 test_features = ["redis_replay"]
 
@@ -9650,6 +9683,14 @@ tested_symbols = [
   # declared battery states only what the adapter rejects, and an adapter that had
   # stopped reaching the token at all would keep it green.
   "tests/pkcs11_keysource_e2e_test#pkcs11_sign_verifies_against_token_public_key",
+  "lib#pkcs11_keysource::session::tests::an_abandoned_operation_retires_the_session_rather_than_wedging_it",
+  "lib#pkcs11_keysource::session::tests::classify_runs_the_fatal_builder_only_for_a_fatal_status",
+  "lib#pkcs11_keysource::session::tests::genuine_operation_failures_are_still_fatal_and_never_retried",
+  "lib#pkcs11_keysource::session::tests::wrapper_shape_errors_are_never_transient",
+  "lib#pkcs11_keysource::token::tests::a_point_that_is_not_32_bytes_is_refused",
+  "lib#pkcs11_keysource::token::tests::an_spki_is_only_built_from_an_accepted_point",
+  "lib#pkcs11_keysource::token::tests::both_conformant_ec_point_encodings_yield_the_same_32_byte_point",
+  "tests/pkcs11_keysource_e2e_test#pkcs11_sign_response_refuses_a_token_signature_that_does_not_verify",
 ]
 
 # The two credential acquirers, which are a different authority from the signers above: what
@@ -9742,6 +9783,7 @@ tested_symbols = [
   # durability would be wired as if it were shared.
   "lib#replay::tests::in_memory_reference_declares_single_process_non_durable",
   "lib#replay::tests::durability_class_defaults_to_single_process_reference",
+  "lib#replay::tests::a_poisoned_clone_cannot_be_reconfigured_into_admitting",
 ]
 
 [[unit]]
@@ -10317,6 +10359,7 @@ tested_symbols = [
   "lib#config_state::server_identity::tests::a_request_missing_both_coordinates_reports_both_in_one_pass",
   "lib#config_state::server_identity::tests::a_whitespace_coordinate_is_empty_and_names_itself",
   "lib#config_state::server_identity::tests::the_identity_keyid_follows_the_resolved_issuer_not_the_server_key_id",
+  "lib#config_state::server_identity::tests::the_trust_domain_projection_is_the_canonical_actors_own_coordinate",
 ]
 
 [[unit]]
@@ -10686,6 +10729,7 @@ tested_symbols = [
   "lib#startup_plan::tests::the_build_refusal_is_stated_once_and_names_both_consequences",
   "lib#startup_plan::tests::the_old_alias_is_refused_rather_than_reinterpreted",
   "lib#startup_plan::tests::the_requirement_is_the_or_of_every_contributor",
+  "lib#startup_plan::tests::a_networked_locator_is_readable_only_through_the_build_verdict",
 ]
 
 [[unit]]
@@ -11170,6 +11214,7 @@ tested_symbols = [
   # question — which is the half a refusal-only battery cannot state.
   "lib#dispatch::replay_posture::tests::fleet_strict_refuses_a_single_process_reference_store_class",
   "lib#dispatch::replay_posture::tests::outside_fleet_strict_the_reference_class_is_a_decision_and_not_an_absence",
+  "lib#dispatch::replay_posture::tests::fleet_strict_admits_a_durable_store_class",
 ]
 
 # ---------------------------------------------------------------------------
@@ -11561,6 +11606,7 @@ tested_symbols = [
   # by a fleet that refuses everything.
   "lib#async_fleet::refusal_order_tests::the_delegated_tls_depth_refusal_precedes_the_first_bind",
   "lib#async_fleet::refusal_order_tests::an_admitted_configuration_reaches_the_listener_and_fails_there",
+  "lib#async_fleet::shard_depth::tests::the_same_depth_from_two_provenances_is_two_values",
 ]
 
 [[unit]]
