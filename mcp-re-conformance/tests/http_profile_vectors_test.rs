@@ -15,8 +15,9 @@
 //!      byte-compares the oracle fields — a third party checks itself against
 //!      the frozen bytes, not this project's regenerated opinion (S8/S15).
 //!
-//! Regenerate: cargo test -p mcp-re-conformance --test http_profile_vectors_test \
-//!   write_http_profile_fixtures -- --ignored --exact
+//! Regenerate: `bazel build //mcp-re-conformance:http_profile_vectors_test`, then run
+//!   `MCP_RE_HTTP_PROFILE_VECTORS_MANIFEST=$PWD/mcp-re-conformance/tests/vectors/http-profile/manifest.json \
+//!   bazel-bin/mcp-re-conformance/http_profile_vectors_test write_http_profile_fixtures --ignored --exact`
 
 use serde::Deserialize;
 use serde::Serialize;
@@ -1472,7 +1473,12 @@ fn chain_hop(
     let mut request = HttpRequest {
         method: "POST".into(),
         target_uri: CHAIN_TARGET.into(),
-        headers: vec![("Content-Type".into(), "application/json".into())],
+        // The DPoP `ath` binding commits to the bearer token in the covered
+        // `Authorization` header, and only there.
+        headers: vec![
+            ("Content-Type".into(), "application/json".into()),
+            ("Authorization".into(), "Bearer tok".into()),
+        ],
         body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
     };
     let req_evidence = sign_request_full(

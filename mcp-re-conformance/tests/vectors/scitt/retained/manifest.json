@@ -1,7 +1,7 @@
 {
   "artifacts": {
-    "retained-hops.json": "e877ccc3346a9a7b34fcf171d87a66d69d78dc32e4424067478e49a9953a5612",
-    "signed-statement.cbor": "e4136d46b7bb51ecd8b99c066f3a128ff3d781ac7305f59ebfed9d04baf1d5d8"
+    "retained-hops.json": "cd0afe25b01e5b721c66a729eccb591162203a60773e0503de51a092ed37fea5",
+    "signed-statement.cbor": "b7125d3705643147b4b4d0a2e8bd1cd2891db8dd2059f76a795eb12fb80514e7"
   },
   "does_not_establish": "interoperability — every byte here is MCP-RE's own; that is the interop corpus's question and this does not answer it. Nothing about registration, a transparency service, or the confidentiality of retained evidence.",
   "establishes": "retained-evidence correspondence over a real MCP-RE multi-hop call: the statement identifies the submission the retained messages reproduce, and every hop verified",
