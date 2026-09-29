@@ -205,6 +205,8 @@ protections over production code. A crate that failed to opt in would compile wi
 writes an `unwrap`, and THAT is caught by the ratchet. The gate protects the enforcement, not
 the property.
 
+**Added 2026-09-29:** `scripts/stage_image_binaries.sh` — builds the deploy images' binaries with Bazel and stages them for the Dockerfiles. It decides nothing about admissibility; it is the image build's wiring.
+
 ## ND-005 — mirrored and documented values
 
 **Covers:** `jcs_vocabulary_gate.py`, `proxy_flag_doc_gate.py`, `check_port_registry.py`, and

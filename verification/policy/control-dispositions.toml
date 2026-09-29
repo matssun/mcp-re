@@ -13170,6 +13170,14 @@ decision = "new-proposition"
 proposition = "NP-223"
 recorded = "2026-09-29"
 
+[[disposition]]
+id = "CD-20118"
+project = ""
+control = "gate#scripts/stage_image_binaries.sh"
+decision = "not-evidence"
+reason_family = "ND-004"
+recorded = "2026-09-29"
+
 [[proposition]]
 id = "NP-174"
 title = "The client posture line reports the floor the deployment actually has"

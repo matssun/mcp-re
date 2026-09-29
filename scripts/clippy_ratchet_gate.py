@@ -444,7 +444,7 @@ def activation_probe() -> int:
         )
         return 1
     print(
-        "activation probe: PASS — an 80-line function, a depth-3 block and an "
+        "activation probe: PASS — a 70-line function, a depth-3 block and an "
         "unconstrained `x + 1` fired; saturating, wrapping, `Wrapping`, float and const "
         "arithmetic did not (ADR-MCPRE-061 §6.1, §6.6)."
     )
