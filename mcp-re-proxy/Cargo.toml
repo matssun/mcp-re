@@ -221,5 +221,3 @@ name = "replay_store_bench"
 path = "examples/replay_store_bench.rs"
 required-features = ["redis_replay"]
 
-[lints]
-workspace = true

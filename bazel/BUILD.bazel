@@ -1,3 +1,73 @@
+load("@rules_rust//rust:defs.bzl", "rust_lint_config")
+
 package(default_visibility = ["//visibility:public"])
 
 exports_files(["defs.bzl"])
+
+# The workspace lint policy (ADR-MCPRE-061 Amendment 1 §3, Group A). Bazel is the Rust build
+# authority, so this is the only copy: every `nt_rust_*` target carries it by default
+# (`//bazel:defs.bzl`), rustc applies the `rustc` half on every build, and the clippy aspect
+# (`--config=lint`) applies the `clippy` half. `scripts/workspace_lints_gate.py` proves both.
+rust_lint_config(
+    name = "workspace_lints",
+    clippy = {
+        # Panic-freedom: a policy-enforcement point returns a refusal, never a panic. A
+        # reachable placeholder in a proxy is a remote denial of service.
+        "todo": "deny",
+        "unimplemented": "deny",
+        # No pointer laundering around the type system.
+        "transmute_ptr_to_ptr": "deny",
+        # Evidence stores read and classify files deliberately; `filetype_is_file` is a
+        # symlink confusion in the retained-evidence store, not a style preference.
+        "verbose_file_reads": "deny",
+        "filetype_is_file": "deny",
+        # The refusal taxonomy stays a taxonomy: one named error type per authority, and no
+        # `Err(x)?` laundering a conversion the taxonomy did not authorise.
+        "error_impl_error": "deny",
+        "try_err": "deny",
+        # A newly added security field cannot silently escape a match written to be exhaustive.
+        "rest_pat_in_fully_bound_structs": "deny",
+        # Structural clarity at an owner boundary.
+        "same_name_method": "deny",
+        "rc_buffer": "deny",
+        "pub_without_shorthand": "deny",
+        # A debugging macro is not an audit channel.
+        "dbg_macro": "deny",
+    },
+    # rustc's cfg checking: a misspelt cfg name or feature is reported rather than compiled
+    # away. `verus_keep_ghost` is set by Verus during prover runs. rules_rust declares neither
+    # `test` nor the crate features to the checker, so both are declared here — the features
+    # as the workspace's union, which a feature added to a target without being named here
+    # fails under `--config=lint`.
+    rustc_check_cfg = {
+        "feature": [
+            "async_serve",
+            "aws_kms_keysource",
+            "cpstore_etcd",
+            "dev-probe",
+            "dev_env_key_source",
+            "fault_accept_any_client",
+            "fault_accept_any_server",
+            "gcp_kms_keysource",
+            "online_ocsp",
+            "pkcs11_keysource",
+            "pre_052_fixtures",
+            "redis_replay",
+            "scitt_registration",
+            "test-fixtures",
+            "verify",
+        ],
+        "test": [],
+        "verus_keep_ghost": [],
+    },
+    rustc = {
+        "unexpected_cfgs": "warn",
+        # Homoglyph / trojan-source identifiers have no place in a security codebase.
+        "non_ascii_idents": "deny",
+        # Every unsafe operation sits in a visible `unsafe` block, edition 2021 included — so
+        # the two crates that DO hold unsafe cannot acquire an implicitly-unsafe `unsafe fn`.
+        "unsafe_op_in_unsafe_fn": "deny",
+        # A `macro_rules!` arm that misuses its metavariables is a correctness defect.
+        "meta_variable_misuse": "deny",
+    },
+)

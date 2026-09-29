@@ -68,14 +68,14 @@ pub(super) fn assemble_exported_key_config(
     #[cfg(feature = "fault_accept_any_client")]
     {
         let _ = verifier; // the verifying path is intentionally bypassed
-        return ServerConfig::builder_with_provider(provider.clone())
+        ServerConfig::builder_with_provider(provider.clone())
             .with_safe_default_protocol_versions()
             .map_err(|e| TlsError::Config(e.to_string()))?
             .with_client_cert_verifier(Arc::new(
                 crate::tls::fault_accept_any::AcceptAnyClientVerifier::new(provider),
             ))
             .with_single_cert(server_chain, server_key)
-            .map_err(|e| TlsError::Config(e.to_string()));
+            .map_err(|e| TlsError::Config(e.to_string()))
     }
 
     #[cfg(not(feature = "fault_accept_any_client"))]

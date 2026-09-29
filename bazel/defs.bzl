@@ -43,8 +43,8 @@ def _default_rust_common_kwargs(
     if "edition" not in out:
         out["edition"] = edition
 
-    if lint_config != None and "lint_config" not in out:
-        out["lint_config"] = lint_config
+    if "lint_config" not in out:
+        out["lint_config"] = lint_config if lint_config != None else Label("//bazel:workspace_lints")
 
     if tags:
         out["tags"] = list(tags)

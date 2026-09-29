@@ -638,18 +638,6 @@ jobs:
 
       # The clippy ratchet needs the toolchain, so it runs with the clippy lanes below.
 
-      # ADR-MCPRE-061 Amendment 1 §3. The Group A zero-debt protections live in ONE
-      # `[workspace.lints]` table in the root Cargo.toml — thirteen copies of the same
-      # deny block grew six files already registered in config/module-size-debt.toml.
-      # A workspace table reaches a member only through that member's `[lints]
-      # workspace = true`, so a member added without it is silently exempt and nothing
-      # else in the build reports it. `--probe` runs after the toolchain is selected
-      # (below, with the clippy lanes) because proving the table is ENFORCED needs a
-      # build; a table that is merely present is the configuration-enforces-nothing
-      # failure this repo has already hit twice.
-      - name: Workspace-lints gate (every member opts into the one lint authority)
-        run: python3 scripts/workspace_lints_gate.py
-
       # The SCITT service-key fetcher refuses a plaintext redirect hop. `build_opener`
       # installs the permissive default redirect handler unless it is passed a
       # subclass, so a guard class that exists but is never consulted leaves the
@@ -1088,6 +1076,22 @@ jobs:
       # compiles; scripts/test_inventory_parity.py measures that weekly.
       - name: Bazel test parity (//...)
         run: bazel test //... --test_output=errors
+
+      # The Rust lint lane: clippy over every first-party target under the workspace lint
+      # policy (//bazel:workspace_lints) and .clippy.toml, warnings as errors.
+      - name: Rust lint lane (bazel build --config=lint //...)
+        run: bazel build --config=lint //...
+
+      # ADR-MCPRE-061 Amendment 1 §3. The Group A zero-debt protections are ONE
+      # `rust_lint_config`, which every `nt_rust_*` target carries by default. A target that
+      # overrides it, or is written with a raw rule, is silently exempt, so the gate checks
+      # every first-party Rust target in the graph; `--probe` proves the policy is ENFORCED
+      # by compiling a deliberate violation of each half. A policy merely attached is the
+      # configuration-enforces-nothing failure this repo has already hit twice.
+      - name: Workspace-lints gate (every Rust target carries the one lint authority)
+        run: |
+          python3 scripts/workspace_lints_gate.py
+          python3 scripts/workspace_lints_gate.py --probe
 
       # After a green run on main only: what the next PR restores. Saving on success
       # alone keeps a cache from a run that failed halfway out of the chain.

@@ -2,186 +2,136 @@
 # SPDX-License-Identifier: Apache-2.0
 """Workspace-lints gate — ADR-MCPRE-061 Amendment 1 §3, Group A.
 
-The Group A protections live in `[workspace.lints]` in the root `Cargo.toml` rather than
-as a `#![deny(...)]` block in thirteen crate roots. That buys one copy of the rationale
-and keeps six already-registered files from growing, and it costs the thing this gate
-repays: a workspace table applies to a member ONLY if that member opts in with
+The Group A protections are ONE `rust_lint_config`, `//bazel:workspace_lints`, which
+`//bazel:defs.bzl` hands to every `nt_rust_*` target by default. Bazel is the Rust build
+authority, so that target is the only copy of the policy: rustc applies its `rustc` half on
+every build, and the clippy aspect (`--config=lint`) applies its `clippy` half.
 
-    [lints]
-    workspace = true
-
-A member that never opts in, or one added later by someone who does not know the
-convention, is silently exempt. Nothing else in the build would notice — the table is
-still there, the lints are still spelled correctly, and the lane still exits 0. That is
-the shape this repository has already been bitten by twice: a configuration that
-parameterised nothing, and a gate whose exemption was part of its measurement.
+A default is only as good as the targets that keep it. A target that passes its own
+`lint_config`, or one written with a raw `rust_*` rule instead of the house macro, is
+silently exempt, and nothing else in the build would notice — the policy is still there,
+the lints are still spelled correctly, and the lane still exits 0. That is the shape this
+repository has been bitten by twice: a configuration that parameterised nothing, and a gate
+whose exemption was part of its measurement.
 
 Two checks, and neither is optional:
 
-  * MEMBERSHIP — every `[workspace] members` entry opts in. Reported with the count of
-    members actually examined, so an empty or mis-globbed scan fails loudly instead of
-    printing OK over nothing.
-  * --probe — the table is ENFORCED, not merely present. A deliberately violating item is
-    compiled inside a real workspace member and the build must fail with the expected
-    lint. A threshold is not an enforcement; the thing that turns the lint on is, and this
-    is what proves the opt-in mechanism carries the table to the member.
+  * MEMBERSHIP — every first-party Rust target in the build graph carries the policy.
+    Reported with the count of targets examined, so an empty or mis-scoped query fails
+    loudly instead of printing OK over nothing. `EXEMPT` names each target that is
+    deliberately outside, with its reason.
+  * --probe — the policy is ENFORCED, not merely attached. A deliberate violation of each
+    half is compiled inside a real target, and each build must fail with the expected
+    lint: `clippy::todo` under `--config=lint`, `non_ascii_idents` under a plain build
+    (rustc names the command-line level it enforced: `-D non-ascii-idents`).
 """
 
 from __future__ import annotations
 
-import json
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover
-    import tomli as tomllib  # type: ignore[no-redef]
-
 REPO = Path(__file__).resolve().parent.parent
-ROOT_MANIFEST = REPO / "Cargo.toml"
+POLICY = "//bazel:workspace_lints"
+RUST_RULES = "rust_library|rust_binary|rust_test|rust_shared_library|rust_static_library|rust_proc_macro"
 
-# The member the probe is compiled in. Any member would do; this one is small and has no
-# feature gates, so a probe failure is unambiguously the probe.
-PROBE_MEMBER = "mcp-re-policy"
+#: First-party Rust targets deliberately outside the policy, each with its reason.
+EXEMPT: dict[str, str] = {
+    "//mcp-re-proxy:mock_pkcs11": "a C-ABI PKCS#11 test fixture the e2e dlopens, not product code",
+}
+
+# The target each probe is compiled in. Small and feature-free, so a probe failure is
+# unambiguously the probe.
+PROBE_PACKAGE = "mcp-re-policy"
+PROBE_TARGET = "//mcp-re-policy:mcp_re_policy"
 PROBE_MODULE = "workspace_lints_probe"
-# `clippy::todo` is in the Group A table and is unambiguous — no other lint fires on this.
-PROBE_SRC = "//! Temporary gate probe. Removed by `workspace_lints_gate.py --probe`.\npub fn probe() -> u32 {\n    todo!()\n}\n"
-PROBE_EXPECT = "clippy::todo"
+PROBES = (
+    # (what it proves, extra bazel flags, source, the lint that must fire)
+    ("the clippy half", ["--config=lint"],
+     "pub fn probe() -> u32 {\n    todo!()\n}\n", "clippy::todo"),
+    ("the rustc half", [],
+     "pub fn probé() -> u32 {\n    0\n}\n", "-D non-ascii-idents"),
+)
 
 
-def cargo() -> list[str]:
-    """The pinned toolchain — Homebrew's cargo shadows rustup here and ignores
-    `rust-toolchain.toml`, so the channel is named explicitly."""
-    channel = "1.97.1"
-    tc = REPO / "rust-toolchain.toml"
-    if tc.exists():
-        for line in tc.read_text().splitlines():
-            if line.strip().startswith("channel"):
-                channel = line.split("=")[1].strip().strip('"')
-                break
-    if shutil.which("rustup"):
-        return ["rustup", "run", channel, "cargo"]
-    return ["cargo"]
+def bazel(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["bazel", *args], cwd=REPO, capture_output=True, text=True)
 
 
-def declared_lints() -> tuple[list[str], list[str]]:
-    data = tomllib.loads(ROOT_MANIFEST.read_text())
-    lints = data.get("workspace", {}).get("lints", {})
-    return sorted(lints.get("rust", {})), sorted(lints.get("clippy", {}))
+def query(expr: str) -> set[str]:
+    proc = bazel("query", "--output=label", "--keep_going", expr)
+    if proc.returncode not in (0, 3):
+        raise SystemExit(f"workspace-lints gate: bazel query failed\n{proc.stderr[-1500:]}")
+    return {line for line in proc.stdout.splitlines() if line.startswith("//")}
 
 
 def membership() -> tuple[list[str], int]:
-    """Every workspace member opts into the table."""
-    data = tomllib.loads(ROOT_MANIFEST.read_text())
-    members = data.get("workspace", {}).get("members", [])
-    if not members:
-        return ["root Cargo.toml declares no workspace members — this gate examined "
+    """Every first-party Rust target carries the policy."""
+    targets = query(f'kind("^({RUST_RULES}) rule$", //...)')
+    if not targets:
+        return ["the build graph holds no first-party Rust target — this gate examined "
                 "nothing, which is not a pass"], 0
-    problems: list[str] = []
-    examined = 0
-    for m in members:
-        manifest = REPO / m / "Cargo.toml"
-        if not manifest.exists():
-            problems.append(f"{m}: declared as a workspace member but has no Cargo.toml")
-            continue
-        examined += 1
-        crate = tomllib.loads(manifest.read_text())
-        lints = crate.get("lints")
-        if not isinstance(lints, dict) or lints.get("workspace") is not True:
-            problems.append(
-                f"{m}/Cargo.toml: missing `[lints]` / `workspace = true`. The Group A "
-                f"protections in the root `[workspace.lints]` table do NOT apply to a "
-                f"member that does not opt in, and nothing else in the build reports it."
-            )
-        for own in ("rust", "clippy"):
-            if isinstance(lints, dict) and own in lints:
-                problems.append(
-                    f"{m}/Cargo.toml: has its own `[lints.{own}]` table. Cargo rejects "
-                    f"that alongside `workspace = true`, and a per-crate table is a "
-                    f"second lint authority. Move the entries to `[workspace.lints.{own}]`."
-                )
-    return problems, examined
+    carrying = query(f'attr(lint_config, "{POLICY}", kind("^({RUST_RULES}) rule$", //...))')
+    problems = [
+        f"{t}: does not carry `{POLICY}`. The Group A protections do NOT apply to it, and "
+        f"nothing else in the build reports that. Build it with the `nt_rust_*` macro and "
+        f"leave `lint_config` unset."
+        for t in sorted(targets - carrying - EXEMPT.keys())
+    ]
+    problems += [f"EXEMPT names {t}, which is not a first-party Rust target"
+                 for t in sorted(EXEMPT.keys() - targets)]
+    return problems, len(targets)
 
 
 def probe() -> int:
-    """Compile a deliberate violation inside a real member; the table must reject it."""
-    member = REPO / PROBE_MEMBER
-    lib = member / "src" / "lib.rs"
-    probe_file = member / "src" / f"{PROBE_MODULE}.rs"
+    """Compile each deliberate violation inside a real target; the policy must reject it."""
+    lib = REPO / PROBE_PACKAGE / "src" / "lib.rs"
+    probe_file = REPO / PROBE_PACKAGE / "src" / f"{PROBE_MODULE}.rs"
     original = lib.read_text()
+    failures = 0
     try:
-        probe_file.write_text(PROBE_SRC)
         lib.write_text(original.rstrip("\n") + f"\n\nmod {PROBE_MODULE};\n")
-        proc = subprocess.run(
-            cargo() + ["clippy", "-p", PROBE_MEMBER, "--lib", "--quiet",
-                       "--message-format=json"],
-            cwd=REPO, capture_output=True, text=True,
-        )
-        combined = proc.stdout + proc.stderr
-        # Match the lint CODE, not the rendered message. `--message-format=short` omits
-        # the code entirely, so a text match there would have compared against prose that
-        # never contains it — a probe that fails on a correctly-firing lint.
-        fired = set()
-        for line in proc.stdout.splitlines():
-            line = line.strip()
-            if not line.startswith("{"):
-                continue
-            try:
-                m = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if m.get("reason") != "compiler-message":
-                continue
-            code = ((m.get("message") or {}).get("code") or {}).get("code") or ""
-            if code:
-                fired.add(code)
+        for what, flags, source, expect in PROBES:
+            probe_file.write_text(f"//! Temporary gate probe. Removed by the gate.\n{source}")
+            proc = bazel("build", *flags, PROBE_TARGET)
+            output = proc.stdout + proc.stderr
+            if proc.returncode == 0:
+                print(f"workspace-lints probe: FAIL — {what}: `{expect}` did NOT fire on a "
+                      f"deliberate violation in {PROBE_TARGET}. `{POLICY}` is attached but "
+                      f"is not reaching the build (a REMOVED lint reads as zero occurrences "
+                      f"and enforces nothing).")
+                failures += 1
+            elif expect not in output:
+                print(f"workspace-lints probe: FAIL — {what}: the build failed, but not with "
+                      f"`{expect}`. A failure for another reason is not evidence the policy is "
+                      f"enforced.\n{output[-1500:]}")
+                failures += 1
+            else:
+                print(f"workspace-lints probe: {what}: `{expect}` fired  OK")
     finally:
         lib.write_text(original)
         probe_file.unlink(missing_ok=True)
-
-    if proc.returncode == 0:
-        print(f"workspace-lints probe: FAIL — `{PROBE_EXPECT}` did NOT fire on a "
-              f"deliberate violation in {PROBE_MEMBER}. The `[workspace.lints]` table is "
-              f"present but is not reaching the member: check that its `[lints] "
-              f"workspace = true` opt-in survives, and that the lint is spelled the way "
-              f"this clippy names it (a REMOVED lint reads as zero occurrences and "
-              f"enforces nothing).")
+    if failures:
         return 1
-    if PROBE_EXPECT not in fired:
-        print(f"workspace-lints probe: FAIL — the probe build failed, but not with "
-              f"`{PROBE_EXPECT}`. A failure for another reason is not evidence the table "
-              f"is enforced. Lints that fired: {sorted(fired) or None}\n"
-              f"{combined[-1500:]}")
-        return 1
-    print(f"workspace-lints probe: PASS — `{PROBE_EXPECT}` fired on a deliberate "
-          f"violation compiled inside `{PROBE_MEMBER}`, so the root table reaches a "
-          f"member through its `[lints] workspace = true` opt-in.")
+    print(f"workspace-lints probe: PASS — both halves of `{POLICY}` reject a deliberate "
+          f"violation compiled inside {PROBE_TARGET}.")
     return 0
 
 
 def main() -> int:
     if "--probe" in sys.argv:
         return probe()
-
-    rust, clippy = declared_lints()
-    if not rust and not clippy:
-        print("workspace-lints gate: FAIL — the root `[workspace.lints]` table is empty. "
-              "Every member opting into nothing is not a pass.")
-        return 1
-
     problems, examined = membership()
     if problems:
         print(f"workspace-lints gate: FAIL — {len(problems)} problem(s)")
         for p in problems:
             print(f"  - {p}")
         return 1
-
-    print(f"workspace-lints gate: OK — {examined} workspace member(s) examined, all opt "
-          f"into `[workspace.lints]`; {len(rust)} rust + {len(clippy)} clippy lint(s) "
-          f"declared. Run with --probe to prove the table is enforced, not merely present.")
+    print(f"workspace-lints gate: OK — {examined} first-party Rust target(s) examined, all "
+          f"carry `{POLICY}` except {len(EXEMPT)} exempt: "
+          + "; ".join(f"{t} ({why})" for t, why in sorted(EXEMPT.items()))
+          + ". Run with --probe to prove the policy is enforced, not merely attached.")
     return 0
 
 

@@ -48,5 +48,3 @@ verify = true
 [dev-dependencies]
 hex = { workspace = true }
 
-[lints]
-workspace = true

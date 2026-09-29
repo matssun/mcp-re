@@ -73,6 +73,7 @@ gazelle(
 )
 
 exports_files([
+    ".clippy.toml",
     "Cargo.toml",
     "Cargo.lock",
 ])
