@@ -8207,7 +8207,7 @@ tested_symbols = [
   "tests/delegated_202_test#a_delegated_202_refuses_a_retransmission_of_the_same_notification",
   "tests/delegated_202_test#a_stale_trust_epoch_is_rejected",
   "lib#bodyless::acknowledged::tests::the_pinned_coordinate_is_the_root_anchor_and_not_the_rotating_delegated_kid",
-  "lib#bodyless::acknowledged::tests::taking_the_actor_is_the_only_way_to_consume_one",
+  "lib#bodyless::acknowledged::tests::into_actor_yields_the_established_delegated_actor",
   "lib#bodyless::delegated_credential::tests::a_credential_scoped_to_another_signer_is_refused",
   "lib#bodyless::delegated_credential::tests::the_scoped_keyid_is_read_through_the_actor_field_escape",
   "lib#bodyless::delegated_credential::tests::the_credential_header_is_present_exactly_once_and_bounded",
