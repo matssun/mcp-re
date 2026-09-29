@@ -175,7 +175,7 @@ against the unit whose proposition it establishes.
 
 ## ND-004 — build-system, toolchain and runner wiring
 
-**Covers:** `bazel_gazelle_gate.py`, `bazel_srcs_gate.py`, `cargo_test_target_gate.py`,
+**Covers:** `bazel_gazelle_gate.py`, `bazel_srcs_gate.py`, `test_target_gate.py`,
 `workspace_lints_gate.py`, `node_matrix_state.py`, `self_hosted_docker_gate.py`,
 `heavy_lane_disk_preflight.py`, `prepare_node_matrix.sh`, `prepare_python_matrix.sh`,
 `use_pinned_toolchain.sh`, `verification_runner_preflight.sh`, `crate_spec_parity_gate.py`

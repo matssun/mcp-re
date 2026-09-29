@@ -240,16 +240,17 @@ jobs:
           python3 scripts/conformance_claims_gate.py --selftest
           python3 scripts/conformance_claims_gate.py
 
-      # Named release-gate lanes are a table of test-binary names, and consolidating
-      # the proxy suites broke 24 of them across four workflows and two example
+      # Named release-gate lanes are a table of test-target labels, and consolidating
+      # the proxy suites once broke 24 of them across four workflows and two example
       # scripts. Only four went red — the cloud-KMS and several live-infra lanes are
       # gated, so their breakage would have surfaced the next time someone ran a
-      # billed nightly. This asserts every `--test` names a real target and every
-      # `module::` filter names a real module, before either is invoked.
-      - name: Cargo test-target gate
+      # billed nightly. This asserts every `bazel test` label is a test target of the
+      # build graph and every `module::` filter names a real module, before either is
+      # invoked.
+      - name: Test-target gate
         run: |
-          python3 scripts/cargo_test_target_gate.py --selftest
-          python3 scripts/cargo_test_target_gate.py
+          python3 scripts/test_target_gate.py --selftest
+          python3 scripts/test_target_gate.py
 
       # Lifecycle purity (ADR-MCPRE-056/057): `runtime_state.rs` and `exchange_state.rs`
       # are values, not behaviour. A `use` of a production module would let "is this
