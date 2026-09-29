@@ -1,0 +1,5 @@
+load(":defs.bzl", "rust_llvm_coverage_tools")
+
+rust_llvm_coverage_tools(
+    name = "llvm_tools",
+)
