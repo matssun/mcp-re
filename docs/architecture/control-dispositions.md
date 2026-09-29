@@ -2485,7 +2485,7 @@ Packet at `verification/reviews/packets/adr069-np-094-ratification-2026-09-19.md
 
 ## NP-100 — the evidence handle is domain-separated and derived, never a bare digest
 
-**Controls:** `mcp-re-http-profile/src/evidence.rs`, `mcp-re-http-profile/src/context/mod.rs`, `mcp-re-http-profile/src/digest.rs`, `mcp-re-http-profile/src/artifact.rs`, `mcp-re-http-profile/src/policy.rs`, `mcp-re-http-profile/src/replay.rs`, `mcp-re-http-profile/src/authoritative_admission/record/currentness.rs`.
+**Controls:** `mcp-re-http-profile/src/evidence.rs`, `mcp-re-http-profile/src/context.rs`, `mcp-re-http-profile/src/digest.rs`, `mcp-re-http-profile/src/artifact.rs`, `mcp-re-http-profile/src/policy.rs`, `mcp-re-http-profile/src/replay.rs`, `mcp-re-http-profile/src/authoritative_admission/record/currentness.rs`.
 **Statement.** *A handle is split-form and deterministic, is NOT a bare digest of the base, differs when the base differs, cannot confuse a label with an input, and separates roles by domain over IDENTICAL BYTES; the proxy's own meta keys are stripped and application meta preserved, with a meta of only proxy keys removed entirely and a strip without meta a no-op; a digest round-trips, a tampered body fails closed, and an absent sha-256 member of a present header is malformed.*
 **If false.** Two different roles over the same bytes produce the same handle, so evidence for one is evidence for the other — which is NP-087's injectivity failure at the handle rather than at the actor. 'Not a bare digest of the base' is what makes the domain separation structural instead of conventional.
 **Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
