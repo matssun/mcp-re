@@ -4203,15 +4203,10 @@ conjunct = "a pre-dispatch retention fault earns the answer its own kind deserve
 # see it.
 path = "mcp-re-proxy/src/http_profile_serve/retention/mod.rs"
 anchor = """
-            RetentionError::StoreRetired(_) => {
-                eprintln!(
-                    "evidence retention could not {attempted}, and this replica will not \\
-                     accept the next one either: {error}"
-                );
-                unavailable(500)
-            }
+            RetentionError::StoreRetired(_) => (Fault::Retired, unavailable(500)),
 """
 weakening = """
+            RetentionError::StoreRetired(_) => (Fault::Backpressure, unavailable(503)),
 """
 expect_red = [
   "lib#http_profile_serve::retention::tests::each_pre_dispatch_fault_earns_its_own_answer",
