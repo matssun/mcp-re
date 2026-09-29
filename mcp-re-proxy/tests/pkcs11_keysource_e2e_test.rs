@@ -275,9 +275,9 @@ fn pkcs11_sign_verifies_against_token_public_key() {
 /// well-formed bytes that verify under nobody advertised, and they are never emitted.
 #[test]
 fn pkcs11_sign_response_refuses_a_token_signature_that_does_not_verify() {
-    let Some(module) = require_mock_or_skip(
-        "pkcs11_sign_response_refuses_a_token_signature_that_does_not_verify",
-    ) else {
+    let Some(module) =
+        require_mock_or_skip("pkcs11_sign_response_refuses_a_token_signature_that_does_not_verify")
+    else {
         return;
     };
     let _guard = provisioning_lock();

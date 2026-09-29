@@ -188,10 +188,11 @@ where
         self.issue_now(now)?;
         // Only `adopt` writes `active`, and every adoption carries a fresh `jti` ordinal,
         // so differing credential bytes mean this call minted.
-        let successor = self
-            .active
-            .clone()
-            .filter(|a| previous.as_ref().is_none_or(|p| p.credential() != a.credential()));
+        let successor = self.active.clone().filter(|a| {
+            previous
+                .as_ref()
+                .is_none_or(|p| p.credential() != a.credential())
+        });
         if let (Some(_), Some(p)) = (&successor, &previous) {
             let event = self.retired(p, now);
             self.audit.push(event);
@@ -759,7 +760,8 @@ mod tests {
             .find(|e| e.event_type == "mcp-re.delegated_key.retired")
             .expect("the expired key is retired in the audit trail");
         assert_eq!(
-            retired.jti, c.audit()[0].jti,
+            retired.jti,
+            c.audit()[0].jti,
             "the retire names the credential it retires"
         );
     }
