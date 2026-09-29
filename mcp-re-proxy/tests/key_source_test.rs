@@ -7,6 +7,8 @@ use mcp_re_core::b64url_encode;
 use mcp_re_core::SigningKey;
 // MCPS-076 (audit gap G-3): EnvKeySource is dev/CI-only — compiled only under the
 // non-default `dev_env_key_source` feature (the `dev_env_key_source_test` target).
+use mcp_re_proxy::capability_materialization::key_file_custody::CheckedKeyFile;
+use mcp_re_proxy::config_state::KeyFileAccessPolicy;
 #[cfg(feature = "dev_env_key_source")]
 use mcp_re_proxy::key_source::EnvKeySource;
 use mcp_re_proxy::key_source::FileKeySource;
@@ -41,6 +43,18 @@ fn tmp(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("mcp_re_ks_{}_{name}", std::process::id()))
 }
 
+/// Write `content` owner-only and admit it — the only way to hand a key file to a
+/// `FileKeySource`.
+fn admitted(path: &PathBuf, content: &str) -> CheckedKeyFile {
+    fs::write(path, content).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    CheckedKeyFile::open(&path.to_string_lossy(), KeyFileAccessPolicy::OwnerOnly).unwrap()
+}
+
 fn expected_pubkey() -> String {
     SigningKey::from_seed_bytes(&SEED).public_key().to_b64url()
 }
@@ -52,17 +66,16 @@ fn file_source_loads_all_material() {
     let cert_p = tmp("file_cert");
     let key_p = tmp("file_key");
     let ca_p = tmp("file_ca");
-    fs::write(&seed_p, &seed).unwrap();
     fs::write(&cert_p, &cert).unwrap();
-    fs::write(&key_p, &key).unwrap();
     fs::write(&ca_p, &ca).unwrap();
 
-    let source = FileKeySource {
-        signing_key_seed_path: seed_p.to_string_lossy().into_owned(),
-        tls_cert_path: cert_p.to_string_lossy().into_owned(),
-        tls_key_path: key_p.to_string_lossy().into_owned(),
-        client_ca_path: ca_p.to_string_lossy().into_owned(),
-    };
+    let source = FileKeySource::from_checked(
+        admitted(&seed_p, &seed),
+        &cert_p.to_string_lossy(),
+        Some(admitted(&key_p, &key)),
+        &ca_p.to_string_lossy(),
+    )
+    .unwrap();
 
     assert_eq!(
         source.signing_key().unwrap().public_key().to_b64url(),
@@ -77,34 +90,21 @@ fn file_source_loads_all_material() {
     }
 }
 
+/// A missing key file never reaches the source: the check that produces its material
+/// refuses it, naming the file.
 #[test]
-fn file_source_missing_file_is_not_found() {
-    let source = FileKeySource {
-        signing_key_seed_path: "/nonexistent/mcp-re/seed".to_string(),
-        tls_cert_path: "/nonexistent/mcp-re/cert".to_string(),
-        tls_key_path: "/nonexistent/mcp-re/key".to_string(),
-        client_ca_path: "/nonexistent/mcp-re/ca".to_string(),
-    };
-    assert!(matches!(
-        source.signing_key().unwrap_err(),
-        KeyError::NotFound(_)
-    ));
+fn file_source_missing_file_is_refused_at_the_check() {
+    let err = CheckedKeyFile::open("/nonexistent/mcp-re/seed", KeyFileAccessPolicy::OwnerOnly)
+        .unwrap_err();
+    assert!(err.contains("/nonexistent/mcp-re/seed"), "{err}");
 }
 
 #[test]
 fn file_source_bad_seed_is_malformed() {
     let seed_p = tmp("bad_seed");
-    fs::write(&seed_p, "not-base64-!!!").unwrap();
-    let source = FileKeySource {
-        signing_key_seed_path: seed_p.to_string_lossy().into_owned(),
-        tls_cert_path: "x".to_string(),
-        tls_key_path: "x".to_string(),
-        client_ca_path: "x".to_string(),
-    };
-    assert!(matches!(
-        source.signing_key().unwrap_err(),
-        KeyError::Malformed(_)
-    ));
+    let err = FileKeySource::from_checked(admitted(&seed_p, "not-base64-!!!"), "x", None, "x")
+        .unwrap_err();
+    assert!(matches!(err, KeyError::Malformed(_)));
     let _ = fs::remove_file(seed_p);
 }
 
@@ -159,14 +159,7 @@ fn key_errors_never_leak_secret_material() {
     // or Debug) — errors are logged, secrets must not be.
     let secret = "SUPER_SECRET_SEED_VALUE_THAT_MUST_NOT_BE_LOGGED";
     let seed_p = tmp("leak_seed");
-    fs::write(&seed_p, secret).unwrap();
-    let source = FileKeySource {
-        signing_key_seed_path: seed_p.to_string_lossy().into_owned(),
-        tls_cert_path: "x".to_string(),
-        tls_key_path: "x".to_string(),
-        client_ca_path: "x".to_string(),
-    };
-    let err = source.signing_key().unwrap_err();
+    let err = FileKeySource::from_checked(admitted(&seed_p, secret), "x", None, "x").unwrap_err();
     let rendered = format!("{err} | {err:?}");
     assert!(
         !rendered.contains(secret),

@@ -1,37 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Reading the PKCS#11 User PIN, at the one point it is used.
 
+use crate::capability_materialization::key_file_custody::CheckedKeyFile;
 use crate::deployment_request::SecretString;
 use crate::key_source::KeyError;
 
-/// Read the PKCS#11 User PIN from `path` into a short-lived [`SecretString`].
+/// The PKCS#11 User PIN, from its admitted file, as a short-lived [`SecretString`].
 ///
-/// Enforces the key-file permission floor here as well as at startup: `run()` checks it
-/// via `key_files_read_from_disk`, but `build_key_source` is a public entry point a test
-/// or an embedding binary can reach directly, and a secret-reading function that trusts
-/// its caller to have checked is one refactor from not being checked at all.
+/// Takes the [`CheckedKeyFile`] rather than a path: the PIN unlocks the token holding the
+/// signing keys, so the bytes used are the bytes of the object whose permission posture
+/// the custody check observed, and nothing here reopens the name.
 ///
 /// Trailing whitespace is trimmed — a PIN file written with `echo` ends in a newline, and
 /// a token would reject the PIN with an opaque error that looks like a wrong PIN. Interior
 /// whitespace is preserved: it may be part of the PIN.
-pub fn read_pkcs11_pin(path: &str) -> Result<SecretString, KeyError> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let meta = std::fs::metadata(path).map_err(|e| {
-            KeyError::NotFound(format!("--pkcs11-pin-file {path} cannot be read: {e}"))
-        })?;
-        let mode = meta.permissions().mode();
-        if crate::config_state::key_file_access::mode_is_insecure(mode) {
-            return Err(KeyError::NotFound(format!(
-                "--pkcs11-pin-file {path} is group/world-accessible (mode {:o}); it unlocks \
-                 the token holding the signing keys, so restrict it to 0600",
-                mode & 0o777
-            )));
-        }
-    }
-    let raw = std::fs::read_to_string(path)
-        .map_err(|e| KeyError::NotFound(format!("--pkcs11-pin-file {path} cannot be read: {e}")))?;
+pub fn read_pkcs11_pin(pin_file: CheckedKeyFile) -> Result<SecretString, KeyError> {
+    let path = pin_file.path().to_owned();
+    let bytes = pin_file.into_bytes();
+    let raw = std::str::from_utf8(&bytes)
+        .map_err(|_| KeyError::Malformed(format!("--pkcs11-pin-file {path} is not UTF-8")))?;
     let pin = SecretString::new(raw.trim_end());
     if pin.expose().is_empty() {
         return Err(KeyError::NotFound(format!(
@@ -44,6 +31,7 @@ pub fn read_pkcs11_pin(path: &str) -> Result<SecretString, KeyError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config_state::KeyFileAccessPolicy;
 
     #[test]
     fn a_secret_string_does_not_print_its_value_or_length() {
@@ -86,14 +74,18 @@ mod tests {
             }
         }
 
-        let pin = read_pkcs11_pin(ok_path.to_str().unwrap()).expect("reads");
+        let checked = |p: &std::path::Path| {
+            CheckedKeyFile::open(p.to_str().unwrap(), KeyFileAccessPolicy::OwnerOnly)
+                .expect("a 0600 PIN file is admitted")
+        };
+        let pin = read_pkcs11_pin(checked(&ok_path)).expect("reads");
         assert_eq!(
             pin.expose(),
             "1234",
             "the trailing newline is not part of the PIN"
         );
         assert!(
-            read_pkcs11_pin(empty_path.to_str().unwrap()).is_err(),
+            read_pkcs11_pin(checked(&empty_path)).is_err(),
             "an empty PIN file must not yield a blank PIN"
         );
         let _ = std::fs::remove_file(&ok_path);
@@ -103,8 +95,8 @@ mod tests {
     #[test]
     fn a_group_readable_pin_file_is_refused() {
         // The PIN unlocks the token holding the signing keys, so it sits behind the same
-        // permission floor as a key file. Checked in the reader itself, not only at
-        // startup: build_key_source is a public entry point.
+        // permission floor as a key file — enforced where its material is produced, so
+        // the reader cannot be handed an unchecked file at all.
         use std::os::unix::fs::PermissionsExt;
         let path = std::env::temp_dir().join(format!("mcp-re-pin-lax-{}", std::process::id()));
         // A PIN that cannot occur in the path itself. `b"1234"` could: the file is named
@@ -114,10 +106,10 @@ mod tests {
         std::fs::write(&path, PIN).expect("write pin");
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640))
             .expect("chmod 0640");
-        let err = read_pkcs11_pin(path.to_str().unwrap()).unwrap_err();
-        let message = format!("{err:?}");
+        let message = CheckedKeyFile::open(path.to_str().unwrap(), KeyFileAccessPolicy::OwnerOnly)
+            .unwrap_err();
         assert!(
-            message.contains("group/world-accessible"),
+            message.contains("group-accessible"),
             "expected a permission refusal, got: {message}"
         );
         assert!(

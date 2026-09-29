@@ -239,7 +239,7 @@ fn fleet_strict_admits_redis_wait_quorum_tier() {
     };
     let outcome = dispatch_request_with_tier_gate(&verified, &cache, None, &cfg)
         .expect("redis-wait-quorum meets the strict-production minimum");
-    assert!(!outcome.continuation_verified);
+    assert!(!outcome.continuation_verified());
 }
 
 #[test]
@@ -324,7 +324,7 @@ fn http_profile_request_flows_verify_dispatch_serve_end_to_end() {
     let outcome = dispatch_request_with_tier_gate(&verified_request, &cache, None, &cfg)
         .expect("verified request admitted through the adapter");
     assert!(
-        !outcome.continuation_verified,
+        !outcome.continuation_verified(),
         "first-leg request carries no continuation"
     );
 

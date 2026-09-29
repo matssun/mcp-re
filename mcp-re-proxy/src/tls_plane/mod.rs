@@ -21,8 +21,10 @@
 //!   refused where it is read ([`crate::client_crl_publication::crl_next_update_required`]), at startup and on
 //!   every reload, because it would never fall out of force. Past `nextUpdate` the
 //!   verdict for that issuer is `Unknown`,
-//!   and unknown status is refused unconditionally — no builder on either the handshake
-//!   or the per-request side takes a policy input at all. So a CRL nobody is refreshing
+//!   and unknown status is refused unconditionally — no CRL builder on either the handshake
+//!   or the per-request side takes a policy input at all. The online OCSP checker does
+//!   carry `soft_fail`; what keeps it from falsifying the second clause is THM-0013 (no
+//!   validated deployment enables online OCSP client revocation), not an absence. So a CRL nobody is refreshing
 //!   converges on refusing that issuer's certificates rather than on admitting revoked
 //!   ones. The artifact bounds itself; the plane does not have to.
 //!
@@ -65,6 +67,7 @@ mod revocation_currency;
 
 pub use crl_evidence::ClientCrlEvidence;
 pub(crate) use revocation_currency::ClientRevocationCurrency;
+use revocation_currency::CrlMaintenance;
 
 /// Transport custody: the serving TLS configuration and what keeps it current.
 pub struct TlsPlane {
@@ -167,6 +170,16 @@ impl TlsPlane {
     }
 }
 
+impl TlsPlane {
+    /// The fleet CRL bound this replica may state, given whether its cadence is being kept.
+    pub(crate) fn fleet_crl_bound(
+        &self,
+        plan: &crate::startup_plan::ChannelEstablishmentPlan,
+    ) -> String {
+        fleet_crl_bound(plan, self.currency.maintenance())
+    }
+}
+
 impl Drop for TlsPlane {
     fn drop(&mut self) {
         // No security transition, unlike `trust_plane` and `signing_plane`: a CRL past its
@@ -176,6 +189,10 @@ impl Drop for TlsPlane {
         // The posture is a different obligation from the transition, and it is not
         // discretionary. Once this plane retires, nothing re-reads the CRLs — so a replica
         // that goes on reporting a cadence is reporting a control it does not have.
+        //
+        // The retraction deliberately precedes the halt: a straggler reload completing in
+        // between can republish evidence or clear `degraded` but never clear `stopped`, so
+        // the window understates the control rather than overstating it.
         self.currency.mark_stopped();
         self.workers.halt_and_reclaim();
     }
@@ -232,12 +249,12 @@ impl TlsPlane {
             ));
         }
         let crl_paths = plan.client_revocation.paths();
-        let (client_crls, crls) = load_and_check_crls(crl_paths, startup_now_unix)?;
+        let crls = load_and_check_crls(crl_paths, startup_now_unix)?;
         // Cloned because the initial build below consumes the original; the reload
         // re-reads only the CRLs, never this.
         let reload_chain = server_chain.clone();
         let reload_crl_paths = crl_paths.to_vec();
-        let revocation = build_revocation_index(&client_crls)?;
+        let revocation = build_revocation_index(&crls)?;
 
         // Created once, before the first build, and handed to every later one: the trust
         // anchors, the session cache and the trust epoch survive a reload, and so does the
@@ -246,7 +263,7 @@ impl TlsPlane {
 
         // The same construction a CRL reload performs, so the serving config a reload
         // installs cannot diverge from the one startup installed.
-        let server_config = material.rebuild(server_chain, client_crls, &rebuild_state)?;
+        let server_config = material.rebuild(server_chain, &crls, &rebuild_state)?;
         // ADR-MCPRE-051 §6 (MCPRE-116): the serve loop reads the current config from a
         // versioned, atomically-swappable snapshot instead of a fixed `Arc`. With no
         // `--client-crl-reload-secs` the snapshot is never swapped, so behavior is
@@ -255,11 +272,7 @@ impl TlsPlane {
             server_config,
         )));
 
-        let currency = Arc::new(ClientRevocationCurrency::new(
-            crls,
-            plan.client_revocation.reload_cadence_secs().is_some(),
-        ));
-        let workers = start_reload_worker(
+        let (workers, currency) = start_reload_worker(
             deployment,
             plan,
             material,
@@ -268,7 +281,7 @@ impl TlsPlane {
             reload_crl_paths,
             revocation.clone(),
             &rebuild_state,
-            &currency,
+            crls,
         );
         Ok(TlsPlane {
             snapshot,
@@ -338,15 +351,15 @@ impl TlsKeyMaterial {
     fn rebuild(
         &self,
         server_chain: Vec<rustls_pki_types::CertificateDer<'static>>,
-        crls: Vec<rustls_pki_types::CertificateRevocationListDer<'static>>,
+        crls: &ClientCrlEvidence,
         state: &TlsListenerSecurityState,
     ) -> Result<rustls::ServerConfig, String> {
         match self {
             TlsKeyMaterial::Exported(key) => state
-                .build_exported_key_config(server_chain, key.clone_key(), crls)
+                .build_exported_key_config(server_chain, key.clone_key(), crls.ders().to_vec())
                 .map_err(|e| e.to_string()),
             TlsKeyMaterial::Delegated(signer) => state
-                .build_delegated_config(server_chain, Arc::clone(signer), crls)
+                .build_delegated_config(server_chain, Arc::clone(signer), crls.ders().to_vec())
                 .map_err(|e| e.to_string()),
         }
     }
@@ -365,17 +378,21 @@ impl TlsKeyMaterial {
 /// bounds the exposure:
 ///
 /// - no CRL at all: only the client-cert lifetime bounds it;
-/// - a CRL with a reload cadence: the cadence IS the bound, and it applies per request on
-///   established connections as well as at the handshake, so a peer holding a connection
-///   open does not escape a republished index;
-/// - a CRL without a cadence: the CRL's own `nextUpdate`, or a restart.
+/// - a CRL with a reload cadence the currency reports kept: the cadence IS the bound, and it
+///   applies per request on established connections as well as at the handshake, so a peer
+///   holding a connection open does not escape a republished index;
+/// - a CRL without a cadence, or with one nothing is keeping: the CRL's own `nextUpdate`,
+///   or a restart.
 ///
 /// One `match` over [`CredentialCurrencyBound`], the semantic posture. The arms ARE the
 /// postures, so a new mechanism would not compile until it stated its own bound — a posture
 /// falling through to another's sentence is exactly how an operator gets a number nothing
 /// enforces. The posture is generic and this rendering is not, deliberately: the sentence
 /// names CRLs because CRLs are what it tells an operator to configure.
-pub fn fleet_crl_bound(plan: &crate::startup_plan::ChannelEstablishmentPlan) -> String {
+pub(crate) fn fleet_crl_bound(
+    plan: &crate::startup_plan::ChannelEstablishmentPlan,
+    maintenance: CrlMaintenance,
+) -> String {
     match crate::config_state::credential_currency_bound(
         &plan.client_revocation,
         &plan.credential_window,
@@ -383,11 +400,16 @@ pub fn fleet_crl_bound(plan: &crate::startup_plan::ChannelEstablishmentPlan) -> 
         CredentialCurrencyBound::CredentialLifetime { window_secs } => {
             format!("short-lived-cert only (exposure_window {window_secs}s); no client CRL")
         }
-        CredentialCurrencyBound::PublicationRefresh { cadence_secs } => format!(
-            "bounded {cadence_secs}s (the --client-crl-reload-secs cadence), enforced per \
+        CredentialCurrencyBound::PublicationRefresh { cadence_secs }
+            if maintenance == CrlMaintenance::Maintained =>
+        {
+            format!(
+                "bounded {cadence_secs}s (the --client-crl-reload-secs cadence), enforced per \
              request on established connections as well as at the handshake"
-        ),
-        CredentialCurrencyBound::PublicationValidity => {
+            )
+        }
+        CredentialCurrencyBound::PublicationRefresh { .. }
+        | CredentialCurrencyBound::PublicationValidity => {
             "the CRL nextUpdate / a restart (no --client-crl-reload-secs) — a fleet's \
              CRL-rollout window"
                 .to_string()
@@ -438,13 +460,14 @@ mod handle_lifetime_tests {
     fn a_snapshot_that_outlives_the_plane_still_serves() {
         let observed = Arc::new(AtomicBool::new(false));
         let snapshot;
+        let config = test_server_config();
         {
-            let plane = plane(test_server_config(), Arc::clone(&observed));
+            let plane = plane(Arc::clone(&config), Arc::clone(&observed));
             assert_eq!(plane.worker_count(), 1);
             snapshot = plane.snapshot();
             assert!(
-                Arc::strong_count(&snapshot.load()) > 0,
-                "a live plane must publish a serving config"
+                Arc::ptr_eq(&snapshot.load(), &config),
+                "a live plane must publish the serving config it was built over"
             );
         }
         assert!(
@@ -453,7 +476,10 @@ mod handle_lifetime_tests {
         );
         // Still serving: the artifact bounds itself through its CRLs' own nextUpdate,
         // so the plane performs no fail-closed transition here.
-        let _still_serving = snapshot.load();
+        assert!(
+            Arc::ptr_eq(&snapshot.load(), &config),
+            "the plane performs no transition on the snapshot when it retires"
+        );
     }
 
     /// A retired plane stops CLAIMING a cadence, even though it keeps serving.
@@ -651,7 +677,7 @@ mod trust_epoch_binding_tests {
         let state = TlsListenerSecurityState::new(anchors.clone());
 
         let first = material
-            .rebuild(chain.clone(), Vec::new(), &state)
+            .rebuild(chain.clone(), &ClientCrlEvidence::default(), &state)
             .expect("initial build");
         assert!(first
             .session_storage
@@ -659,7 +685,7 @@ mod trust_epoch_binding_tests {
         let after_first = *state.epoch();
 
         material
-            .rebuild(chain, Vec::new(), &state)
+            .rebuild(chain, &ClientCrlEvidence::default(), &state)
             .expect("rebuild");
         assert_eq!(
             *state.epoch(),
@@ -685,6 +711,7 @@ mod trust_epoch_binding_tests {
 #[cfg(test)]
 mod fleet_crl_bound_tests {
     use super::fleet_crl_bound;
+    use super::CrlMaintenance;
     use crate::startup_plan::ChannelEstablishmentPlan;
 
     /// A plan in the posture under test. The postures are enumerated as VARIANTS, so a
@@ -711,10 +738,10 @@ mod fleet_crl_bound_tests {
     /// rather than imply a revocation mechanism exists.
     #[test]
     fn without_a_crl_the_bound_is_the_certificate_lifetime() {
-        let bound = fleet_crl_bound(&plan(
-            crate::config_state::test_support::crl_plan(&[], None),
-            3600,
-        ));
+        let bound = fleet_crl_bound(
+            &plan(crate::config_state::test_support::crl_plan(&[], None), 3600),
+            CrlMaintenance::NotScheduled,
+        );
         assert!(bound.contains("exposure_window 3600s"), "got: {bound}");
         assert!(bound.contains("no client CRL"), "got: {bound}");
     }
@@ -725,10 +752,13 @@ mod fleet_crl_bound_tests {
     /// than the number alone suggests.
     #[test]
     fn a_reload_cadence_bounds_established_connections_not_only_handshakes() {
-        let bound = fleet_crl_bound(&plan(
-            crate::config_state::test_support::crl_plan(&["/crl.pem"], Some(300)),
-            3600,
-        ));
+        let bound = fleet_crl_bound(
+            &plan(
+                crate::config_state::test_support::crl_plan(&["/crl.pem"], Some(300)),
+                3600,
+            ),
+            CrlMaintenance::Maintained,
+        );
         assert!(bound.contains("bounded 300s"), "got: {bound}");
         assert!(
             bound.contains("established connections"),
@@ -736,14 +766,33 @@ mod fleet_crl_bound_tests {
         );
     }
 
+    /// A cadence nothing is keeping is not a bound: the last-good CRL's `nextUpdate` is.
+    #[test]
+    fn a_cadence_nothing_is_keeping_is_not_claimed_as_the_bound() {
+        for maintenance in [CrlMaintenance::Stopped, CrlMaintenance::Degraded] {
+            let bound = fleet_crl_bound(
+                &plan(
+                    crate::config_state::test_support::crl_plan(&["/crl.pem"], Some(300)),
+                    3600,
+                ),
+                maintenance,
+            );
+            assert!(bound.contains("nextUpdate"), "got: {bound}");
+            assert!(!bound.contains("bounded 300s"), "got: {bound}");
+        }
+    }
+
     /// Without a cadence the bound is the CRL's own expiry or a restart — never zero, and
     /// never the cert lifetime, which does not apply once a CRL is present.
     #[test]
     fn without_a_cadence_the_bound_is_the_crls_own_expiry() {
-        let bound = fleet_crl_bound(&plan(
-            crate::config_state::test_support::crl_plan(&["/crl.pem"], None),
-            60,
-        ));
+        let bound = fleet_crl_bound(
+            &plan(
+                crate::config_state::test_support::crl_plan(&["/crl.pem"], None),
+                60,
+            ),
+            CrlMaintenance::NotScheduled,
+        );
         assert!(bound.contains("nextUpdate"), "got: {bound}");
         assert!(
             !bound.contains("exposure_window"),

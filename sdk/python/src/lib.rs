@@ -23,17 +23,15 @@ use mcp_re_client_core::build_signed_request;
 use mcp_re_client_core::build_signed_request_with_signer;
 use mcp_re_client_core::verify_delegated_accepted_202;
 use mcp_re_client_core::verify_delegated_response;
-use mcp_re_client_core::ArtifactBinding;
-use mcp_re_client_core::ArtifactType;
 use mcp_re_client_core::AudienceTuple;
 use mcp_re_client_core::CompositeResponseTrust;
+use mcp_re_client_core::ContinuationHandles;
 use mcp_re_client_core::DelegationPolicy;
-use mcp_re_client_core::HttpContinuation;
+use mcp_re_client_core::DpopCredential;
 use mcp_re_client_core::HttpProfileError;
 use mcp_re_client_core::HttpRequest;
 use mcp_re_client_core::HttpResponse;
 use mcp_re_client_core::ProvidedAuthorization;
-use mcp_re_client_core::RequestEvidenceDigest;
 use mcp_re_client_core::RequestSigningInputs;
 use mcp_re_client_core::ResponseExpectation;
 use mcp_re_client_core::StaticRevocationList;
@@ -73,10 +71,14 @@ fn params_object(params_json: &str) -> PyResult<Map<String, Value>> {
 /// tuple, the DPoP artifact binding whose credential is the covered `Authorization`
 /// header, and — for an ADR-MCPS-047 MRTR answer leg — the signed continuation.
 ///
-/// The continuation is folded in only when all five handles are present, built from
-/// the two evidence-handle digests the client already holds (its OPEN-leg sign handle
-/// and the verified response handle) plus the opaque `requestState`; no raw signature
-/// bases are retained.
+/// FALLIBLE, and both refusals are `mcp-re-client-core`'s rather than this file's, so the
+/// N-API binding cannot disagree with this one about either rule:
+///
+/// * an EMPTY `dpop_token` is refused ([`DpopCredential`]) instead of minting a binding
+///   over zero bytes beside a signed `Authorization: Bearer ` header carrying nothing;
+/// * a PARTIALLY supplied continuation is refused ([`ContinuationHandles`]) instead of
+///   being dropped, which used to turn an answer leg into an ordinary new call with no
+///   error anywhere.
 #[allow(clippy::too_many_arguments)]
 fn signing_inputs(
     key_id: &str,
@@ -93,51 +95,41 @@ fn signing_inputs(
     cont_irr_value: Option<String>,
     cont_request_state: Option<String>,
     provided: ProvidedAuthorization,
-) -> RequestSigningInputs {
+) -> PyResult<RequestSigningInputs> {
     let audience = AudienceTuple {
         audience_id: audience_id.to_owned(),
         target_uri: target_uri.to_owned(),
         route,
     };
     // DPoP stays the built-in, header-derived binding: its credential is the covered
-    // `Authorization: Bearer` header, so it is never provider-supplied. Provider bindings
-    // are appended after it.
-    let mut bindings = vec![ArtifactBinding::opaque_digest(
-        ArtifactType::OauthDpop,
-        dpop_token.as_bytes(),
-    )];
+    // `Authorization: Bearer` header, so it is never provider-supplied — `build_authorization`
+    // refuses a provider that presents one. Provider bindings are appended after it.
+    let credential = DpopCredential::present(dpop_token)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+    let mut bindings = vec![credential.binding()];
     bindings.extend(provided.bindings);
     let mut inputs = RequestSigningInputs::new(key_id, audience, bindings, nonce, created, expires)
         .with_headers(vec![(
             "Authorization".to_owned(),
-            format!("Bearer {dpop_token}"),
+            credential.authorization_header_value(),
         )]);
-    if let (Some(pa), Some(pv), Some(ia), Some(iv), Some(state)) = (
+    let handles = ContinuationHandles::from_optional(
         cont_prev_alg,
         cont_prev_value,
         cont_irr_alg,
         cont_irr_value,
         cont_request_state,
-    ) {
-        let continuation = HttpContinuation::from_handles(
-            RequestEvidenceDigest {
-                digest_alg: pa,
-                digest_value: pv,
-            },
-            RequestEvidenceDigest {
-                digest_alg: ia,
-                digest_value: iv,
-            },
-            state.as_bytes(),
-        );
-        inputs = inputs.with_continuation(continuation);
+    )
+    .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+    if let Some(handles) = handles {
+        inputs = inputs.with_continuation(handles.continuation());
     }
     if let Some(jws) = provided.decision {
         // The document goes in; the `pdp-decision` binding over it is minted there, from
         // these exact bytes, so nothing in this file can make the two disagree.
         inputs = inputs.with_authorization_decision(jws);
     }
-    inputs
+    Ok(inputs)
 }
 
 /// Deserialize a provider list into the bindings and decision it contributes.
@@ -165,10 +157,15 @@ fn to_signed_request(signed: mcp_re_client_core::SignedRequest) -> PySignedReque
     }
 }
 
-/// The audited SDK core version string.
+/// The audited core's version — `mcp-re-client-core`'s, not this binding crate's.
+///
+/// r12 R12-1474: this used to return `env!("CARGO_PKG_VERSION")`, which is the pyo3
+/// wrapper's own version (`0.1.x`) and moves independently of the code that was audited.
+/// A consumer calling a function named `core_version` to learn which audited core they
+/// have was told the version of the shim in front of it.
 #[pyfunction]
 fn core_version() -> &'static str {
-    env!("CARGO_PKG_VERSION")
+    mcp_re_client_core::CORE_VERSION
 }
 
 /// The RFC 9421 profile tag the signature is emitted/verified under.
@@ -278,7 +275,7 @@ fn sign_request(
         cont_irr_value,
         cont_request_state,
         provided_authorization(bindings_json.as_deref())?,
-    );
+    )?;
     let signed =
         build_signed_request(&id, method, params, target_uri, &inputs, &key).map_err(err)?;
     Ok(to_signed_request(signed))
@@ -345,7 +342,7 @@ fn sign_request_with_signer(
         cont_irr_value,
         cont_request_state,
         provided_authorization(bindings_json.as_deref())?,
-    );
+    )?;
     // The device seam. Any failure — the callback raising, returning a non-bytes
     // value, or returning a wrong-length signature — is an unusable signature and
     // fails closed rather than emitting unsigned or malformed evidence.
@@ -479,7 +476,7 @@ fn notification_inputs(
     expires: i64,
     bindings_json: Option<String>,
 ) -> PyResult<RequestSigningInputs> {
-    Ok(signing_inputs(
+    signing_inputs(
         key_id,
         audience_id,
         target_uri,
@@ -494,7 +491,7 @@ fn notification_inputs(
         None,
         None,
         provided_authorization(bindings_json.as_deref())?,
-    ))
+    )
 }
 
 /// The outcome of verifying a delegated-signed bodyless `202 Accepted`.

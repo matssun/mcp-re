@@ -1080,6 +1080,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "mcp-re-operator-display"
+version = "0.17.0"
+
+[[package]]
 name = "mcp-re-policy"
 version = "0.17.0"
 dependencies = [
@@ -1106,6 +1110,7 @@ dependencies = [
  "mcp-re-client-proxy",
  "mcp-re-core",
  "mcp-re-http-profile",
+ "mcp-re-operator-display",
  "mcp-re-policy",
  "mcp-re-test-paths",
  "mcp-re-transport",

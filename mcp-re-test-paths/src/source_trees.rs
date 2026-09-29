@@ -29,6 +29,10 @@ pub(super) const SOURCE_TREES: &[(&str, &str)] = &[
     ("MCP_RE_SRC_TREE_HTTP_PROFILE", "mcp-re-http-profile"),
     ("MCP_RE_SRC_TREE_DEMO", "mcp-re-demo"),
     ("MCP_RE_SRC_TREE_TEST_PATHS", "mcp-re-test-paths"),
+    (
+        "MCP_RE_SRC_TREE_OPERATOR_DISPLAY",
+        "mcp-re-operator-display",
+    ),
 ];
 
 /// The sentinel path for `env_key`, or `None` if it names no source tree.

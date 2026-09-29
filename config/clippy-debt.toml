@@ -122,7 +122,7 @@ count = 0
 [[debt]]
 crate = "mcp-re-demo"
 lint = "arithmetic_side_effects"
-count = 2
+count = 0
 
 [[debt]]
 crate = "mcp-re-demo"
@@ -155,7 +155,7 @@ count = 0
 [[debt]]
 crate = "mcp-re-http-profile"
 lint = "excessive_nesting"
-count = 15
+count = 14
 
 [[debt]]
 crate = "mcp-re-http-profile"
@@ -182,7 +182,7 @@ count = 0
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "excessive_nesting"
-count = 70
+count = 65
 
 [[debt]]
 crate = "mcp-re-proxy"

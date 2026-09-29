@@ -107,20 +107,94 @@ pub(crate) fn enforce_full_profile_bindings(
     }
     Ok(())
 }
-/// Obtain the credential bytes a binding commits to. DPoP `ath` binds the access
-/// token in the covered `Authorization` header (falling back to caller material
-/// if the header is absent); every other artifact type is caller-supplied. A
-/// `None` here means the credential surface is unavailable — the caller treats
-/// that as `artifact_binding_failed`.
+/// Obtain the credential bytes a binding commits to. DPoP `ath` binds only the access
+/// token in the covered `Authorization: Bearer` header; its absence is `None`, never a
+/// caller-supplied substitute. Every other artifact type is caller-supplied. A `None`
+/// here means the credential surface is unavailable — the caller treats that as
+/// `artifact_binding_failed`.
 fn resolve_artifact_credential(
     binding: &ArtifactBinding,
     headers: &[(String, String)],
     artifact_material: &dyn Fn(&ArtifactBinding) -> Option<Vec<u8>>,
 ) -> Option<Vec<u8>> {
     match binding.artifact_type {
-        ArtifactType::OauthDpop => {
-            authorization_bearer_bytes(headers).or_else(|| artifact_material(binding))
+        ArtifactType::OauthDpop => authorization_bearer_bytes(headers),
+        ArtifactType::OauthMtls
+        | ArtifactType::OauthRar
+        | ArtifactType::PdpDecision
+        | ArtifactType::DtrApproval
+        | ArtifactType::ClassifierResult
+        | ArtifactType::HumanApproval => artifact_material(binding),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn audience() -> AudienceTuple {
+        AudienceTuple {
+            audience_id: "did:example:server".into(),
+            target_uri: "https://mcp.example.com/mcp".into(),
+            route: None,
         }
-        _ => artifact_material(binding),
+    }
+
+    fn request(headers: Vec<(String, String)>) -> HttpRequest {
+        HttpRequest {
+            method: "POST".into(),
+            target_uri: "https://mcp.example.com/mcp".into(),
+            headers,
+            body: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn dpop_credential_is_never_taken_from_caller_material() {
+        let binding = ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, b"tok");
+        let material = |_: &ArtifactBinding| Some(b"tok".to_vec());
+        assert_eq!(resolve_artifact_credential(&binding, &[], &material), None);
+    }
+
+    #[test]
+    fn dpop_credential_comes_from_the_covered_bearer_header() {
+        let binding = ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, b"tok");
+        let headers = vec![("authorization".to_owned(), "Bearer tok".to_owned())];
+        let material = |_: &ArtifactBinding| Some(b"other".to_vec());
+        assert_eq!(
+            resolve_artifact_credential(&binding, &headers, &material),
+            Some(b"tok".to_vec())
+        );
+    }
+
+    #[test]
+    fn non_dpop_credential_is_caller_material() {
+        let binding = ArtifactBinding::opaque_digest(ArtifactType::OauthMtls, b"cert");
+        let material = |_: &ArtifactBinding| Some(b"cert".to_vec());
+        assert_eq!(
+            resolve_artifact_credential(&binding, &[], &material),
+            Some(b"cert".to_vec())
+        );
+    }
+
+    #[test]
+    fn audience_mismatch_is_refused() {
+        let block = HttpRequestEvidenceBlock {
+            profile: "mcp-re-http-v1".into(),
+            audience: AudienceTuple {
+                audience_id: "did:example:other".into(),
+                ..audience()
+            },
+            artifact_bindings: Vec::new(),
+            continuation: None,
+            admission: None,
+            admission_assertion: None,
+            authorization_decision: None,
+        };
+        let material = |_: &ArtifactBinding| None;
+        let err =
+            enforce_full_profile_bindings(&request(Vec::new()), &block, &audience(), &material)
+                .expect_err("audience differs");
+        assert!(matches!(err, HttpProfileError::AudienceMismatch));
     }
 }

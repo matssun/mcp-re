@@ -286,6 +286,20 @@ whole; it is not a place to park work.
    and are switched on by `scripts/clippy_ratchet_gate.py` over production targets only. Run
    that gate before claiming a unit is clean.
 
+## No compatibility layer for a superseded internal representation
+
+MCP-RE is new software. **A compatibility layer is not created merely because an earlier
+internal representation existed.** Replace the representation and migrate the tree
+atomically: update every fixture, test and caller to the one current form and DELETE the
+superseded one rather than preserving it.
+
+No absence-as-v1, no legacy parsing, no migration flags, no fallback representations, no
+dual readers — unless an explicit owner ruling says otherwise for that specific case.
+
+This applies to internal representations. It is not a licence to break a PUBLISHED wire
+contract; those are governed by the ADR that published them
+([[published-vocabulary-is-not-a-type-name]]).
+
 ## Working rules
 
 Read [`docs/AGENT_INSTRUCTIONS.md`](docs/AGENT_INSTRUCTIONS.md) before editing any ADR,

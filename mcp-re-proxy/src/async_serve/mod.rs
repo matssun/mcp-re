@@ -47,6 +47,7 @@ use hyper::StatusCode;
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
+use crate::async_fleet::HandshakeBound;
 use crate::communication_assurance::AuthenticatedChannelPeer;
 
 use crate::tls::ServerOptions;
@@ -159,22 +160,6 @@ const DRAIN_POLL_INTERVAL: Duration = Duration::from_millis(5);
 /// `--max-header-bytes` is clamped up to it rather than passed through.
 const MIN_HYPER_BUF_BYTES: usize = 8192;
 
-/// How many TLS handshakes may be in progress at once on a core whose handshake
-/// signature is produced by a device or a KMS.
-///
-/// On that path `acceptor.accept` occupies its worker thread for a whole `C_Sign` /
-/// `asymmetricSign`, and nothing else on the runtime runs meanwhile: the future does not
-/// yield, so the handshake deadline cannot preempt it. `async_fleet` answers this with a
-/// small worker pool per core, but a pool is not a bound — a peer needs only as many
-/// concurrent connections as there are workers to occupy every one of them, and it needs
-/// no client certificate to do it, because TLS 1.3 signs `CertificateVerify` before the
-/// client's `Certificate` is ever seen.
-///
-/// This is the bound. Held strictly below the per-core worker pool, so a core under
-/// handshake flood always retains workers for its accept loop, its established
-/// connections and its in-flight requests. Raising it re-opens exactly what it closes.
-const DELEGATED_TLS_HANDSHAKES_PER_CORE: usize = 2;
-
 /// RAII counter of requests currently being served on a core (MCPRE-115). Constructed
 /// once a request is admitted and about to be processed; the increment/decrement pair
 /// is exactly balanced by `Drop`, so the count reflects live in-flight requests on
@@ -199,19 +184,27 @@ impl Drop for InFlightGuard {
 /// TLS-terminated (`tokio-rustls`) and served over `hyper` (keep-alive + H2). One
 /// shared `Proxy` (behind `handler`) serves every connection — the whole point of
 /// `Proxy: Send + Sync`.
+///
+/// `handshake_bound` comes from the [`crate::async_fleet::CorePool`] that built the runtime
+/// this loop is running on, which is the only thing that knows how many workers a blocking
+/// handshake signature may occupy without starving the rest of the core. It is a parameter
+/// rather than a constant read here because a bound sized without the depth is not a bound.
+/// It must be the pool decided from the SAME `options`, since the pool reads this
+/// deployment's signing custody from them.
 pub async fn serve<H: AsyncRequestHandler>(
     listener: TcpListener,
     config: Arc<crate::config_snapshot::ServerConfigSnapshot>,
     options: Arc<ServerOptions>,
     handler: Arc<H>,
     shutdown: Arc<AtomicBool>,
+    handshake_bound: HandshakeBound,
 ) {
     let connections = Arc::new(tokio::sync::Semaphore::new(
         options.limits.max_concurrent_connections,
     ));
     // Every bound this core admits against, taken once. Per-core, so the request path
     // stays lock-free ACROSS cores (ADR-MCPRE-051 §1 share-nothing).
-    let admission = CoreAdmission::for_core(&options);
+    let admission = CoreAdmission::for_core(&options, handshake_bound);
 
     while !shutdown.load(Ordering::SeqCst) {
         // Poll-with-timeout so the shutdown flag is observed within one interval
@@ -435,34 +428,64 @@ mod target_uri_tests {
 mod admission_bound_tests {
     use super::*;
 
-    /// R7-C022: the handshake bound must stay strictly below the per-core worker pool.
+    /// R7-C022 / R12-648: the handshake bound must stay strictly below the worker pool the
+    /// core was ACTUALLY built with.
     ///
-    /// `async_fleet` gives a delegated-TLS core a small multi-worker runtime
-    /// (`DELEGATED_TLS_WORKERS_PER_CORE`, 4) because `acceptor.accept` occupies its
-    /// worker for a whole device/KMS signature. A pool is not a bound: a peer with no
-    /// credentials needs only as many concurrent connections as there are workers to
-    /// occupy every one, since TLS 1.3 signs `CertificateVerify` before the client's
-    /// `Certificate` is seen. Raising this to the pool size re-opens exactly that.
+    /// `acceptor.accept` occupies its worker for a whole device/KMS signature. A pool is
+    /// not a bound: a peer with no credentials needs only as many concurrent connections as
+    /// there are workers to occupy every one, since TLS 1.3 signs `CertificateVerify`
+    /// before the client's `Certificate` is seen.
     ///
-    /// The comparison is against the OTHER CONSTANT, not a copy of its value. This
-    /// assertion read `< 4`, which pins the wrong relation: lowering
-    /// `DELEGATED_TLS_WORKERS_PER_CORE` to 2 leaves `2 < 4` true and this test green while
-    /// the property it exists to protect — a worker left over for the rest of the core —
-    /// is violated. A guard on a literal only looks load-bearing.
+    /// A guard on a literal only looks load-bearing, and so does a guard on two constants:
+    /// a fleet's pool depth is RESOLVED from the host and the operator's configuration, and
+    /// a resolved depth wins over any constant the pool would otherwise have used, so two
+    /// symbols agreeing with each other says nothing about the pair the core ran. Hence a
+    /// statement over the FUNCTION, ranging across the depths a fleet can resolve: the
+    /// bound and the depth are read from one [`crate::async_fleet::CorePool`], which is the
+    /// same value the runtime was built from.
     #[test]
     fn the_handshake_bound_leaves_workers_for_the_rest_of_the_core() {
-        const {
+        // Every depth a fleet can RESOLVE, under both signing custodies and both
+        // provenances — `resolve_topology` produces a stated depth or a derived one, and
+        // the pair (delegated custody, stated 1) is refused rather than resolved, so it is
+        // not a depth a fleet can reach and is excluded here. Its own controls are
+        // `async_fleet::core_runtime`'s.
+        let depths = (1..=16usize).flat_map(|depth| {
+            [
+                crate::async_fleet::ShardDepth::stated(depth),
+                crate::async_fleet::ShardDepth::derived(depth),
+            ]
+        });
+        let cases = depths.flat_map(|depth| [(depth, false), (depth, true)]);
+        for (depth, tls_signing_may_block) in cases {
+            let options = ServerOptions {
+                tls_signing_may_block,
+                ..Default::default()
+            };
+            let Ok(pool) = crate::async_fleet::CorePool::for_core(depth, &options) else {
+                assert!(
+                    tls_signing_may_block && depth == crate::async_fleet::ShardDepth::stated(1),
+                    "{depth:?}: only the operator-stated single thread under delegated \
+                     custody has no safe shape"
+                );
+                continue;
+            };
+            let Some(permits) = pool.handshake_bound().permits() else {
+                assert!(
+                    !tls_signing_may_block,
+                    "{depth:?}: a blocking signature must always be bounded"
+                );
+                continue;
+            };
+            let built = pool.worker_threads().expect("a bounded core runs a pool");
             // A bound of zero would refuse every handshake.
-            assert!(DELEGATED_TLS_HANDSHAKES_PER_CORE >= 1);
+            assert!(permits >= 1, "{depth:?}: a bound of zero");
             // The PROPERTY: a core under a full handshake flood still has a worker for its
-            // accept loop, its established connections and its in-flight requests. Stated
-            // as the subtraction rather than as an inequality against the pool size,
-            // because the leftover worker is the thing that matters — the ordering is just
-            // today's way of obtaining it.
+            // accept loop, its established connections and its in-flight requests.
             assert!(
-                crate::async_fleet::DELEGATED_TLS_WORKERS_PER_CORE
-                    .saturating_sub(DELEGATED_TLS_HANDSHAKES_PER_CORE)
-                    >= 1
+                permits < built,
+                "{depth:?}: {permits} handshakes on {built} workers leaves none \
+                 for the rest of the core"
             );
         }
     }

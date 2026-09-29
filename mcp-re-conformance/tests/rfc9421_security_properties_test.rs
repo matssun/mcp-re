@@ -276,15 +276,25 @@ fn strict_tier_policy_restores_exact_freshness() {
 #[test]
 fn replayed_request_is_rejected_by_the_replay_tier() {
     use mcp_re_core::InMemoryReplayCache;
+    use mcp_re_core::ReplayCache;
     use mcp_re_core::ReplayDecision;
     let (req, _) = signed("n-replay", CALL);
     let verified = Verifier::new(&VerifierPolicy::default(), &resolver())
         .verify_request(&req, &audience(), &no_material(), NOW)
         .expect("verifies");
-    let key = mcp_re_http_profile::prepare_http_dispatch(&verified, None)
-        .expect("dispatch prep")
-        .0;
     let cache = InMemoryReplayCache::new(0);
+    // The posture decision is a precondition of preparing a dispatch, not an optional
+    // extra: this vector is not a fleet-strict deployment, and saying so is what yields
+    // the witness the profile crate requires.
+    let posture = mcp_re_http_profile::DispatchConfig {
+        fleet_strict: false,
+    };
+    let key = posture
+        .admit_replay_tier(cache.durability_class())
+        .expect("the reference cache's class is not load-bearing outside fleet-strict")
+        .prepare(&verified, None)
+        .expect("dispatch prep");
+    let key = key.replay_key();
     assert_eq!(
         key.check_and_insert(&cache, EXPIRES).unwrap(),
         ReplayDecision::Fresh

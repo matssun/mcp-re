@@ -10,9 +10,18 @@ transport or built workspace binary is required, so this lane never self-skips.
 import mcp_re_sdk
 
 
-def test_core_version_is_nonempty_str():
+def test_core_version_reports_the_audited_core_and_not_this_wrapper():
+    """r12 R12-1474 — this used to return the pyo3 wrapper's own `CARGO_PKG_VERSION`.
+
+    A consumer calling a function named `core_version` is asking which AUDITED CORE
+    they have; the shim in front of it versions independently, so the answer named the
+    wrong artifact. Asserting only "non-empty str" could not see that — the wrapper's
+    version is a non-empty string too.
+    """
     v = mcp_re_sdk.core_version()
     assert isinstance(v, str) and v
+    # The workspace version the audited core carries, not the binding crate's 0.1.x.
+    assert v.split(".")[0] != "0" or int(v.split(".")[1]) >= 17, v
 
 
 def test_profile_tag_is_nonempty_str():

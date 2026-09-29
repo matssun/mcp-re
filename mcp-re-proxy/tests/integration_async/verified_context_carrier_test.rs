@@ -246,15 +246,26 @@ async fn trusted_channel_carries_the_peps_verified_context() {
         keyid: CLIENT_KEY_ID.into(),
     }
     .actor_id();
-    assert_eq!(ctx.actor_id, expected_actor);
+    assert_eq!(ctx.claimed_actor_id(), expected_actor);
     assert_ne!(
-        ctx.actor_id, ctx.key_id,
+        ctx.claimed_actor_id(),
+        ctx.claimed_key_id(),
         "actor_id is resolved, not the presented selector"
     );
-    assert_eq!(ctx.key_id, CLIENT_KEY_ID, "keyid is carried for audit only");
-    assert_eq!(ctx.profile, PROFILE_TAG);
-    assert_eq!(ctx.verified_at, NOW);
-    assert_eq!(ctx.audience.as_ref().unwrap().audience_id, AUDIENCE);
+    assert_eq!(
+        ctx.claimed_key_id(),
+        CLIENT_KEY_ID,
+        "keyid is carried for audit only"
+    );
+    assert_eq!(ctx.claimed_profile(), PROFILE_TAG);
+    assert_eq!(ctx.claimed_verified_at(), NOW);
+    // The block the PEP writes always states its audience, so an inner server reading
+    // this channel never has to decide what silence meant — and since Owner Ruling 8
+    // the reader refuses a block that omitted it, so silence is not a case at all.
+    assert_eq!(ctx.claimed_audience().audience_id, AUDIENCE);
+    // The conclusion carries the expiry of the signature it was drawn from, so a
+    // consumer can bound it rather than treat a copied block as timeless.
+    assert_eq!(ctx.claimed_request_expires(), EXPIRES);
 }
 
 #[tokio::test]
@@ -311,8 +322,11 @@ async fn a_caller_seeded_verified_context_never_reaches_the_inner_server() {
             // the caller's was replaced, not merged.
             VerifiedContextPolicy::Trusted => {
                 let ctx = extract_verified_context(&forwarded).expect("PEP context present");
-                assert_eq!(ctx.key_id, CLIENT_KEY_ID);
-                assert_ne!(ctx.actor_id, "admin@example.com#did:example:root-admin");
+                assert_eq!(ctx.claimed_key_id(), CLIENT_KEY_ID);
+                assert_ne!(
+                    ctx.claimed_actor_id(),
+                    "admin@example.com#did:example:root-admin"
+                );
             }
             // With the carrier off, the reserved key is gone entirely — the guard
             // does not depend on the carrier being enabled. A deployment must not
@@ -356,6 +370,100 @@ async fn unrelated_application_meta_survives_the_guard() {
         assert!(
             v["_meta"].get("se.syncom/mcp-re.http.request").is_none(),
             "{policy:?}: the consumed request-evidence block should not be forwarded"
+        );
+    }
+}
+
+/// A signed request that seeds the reserved key under `params._meta` instead of at the
+/// top level. An inner server reading the reserved key from `params._meta` sees the same
+/// thing, so guarding only the top level would leave the bypass reachable one level down.
+fn signed_request_seeding_params_meta(nonce: &str, forged: serde_json::Value) -> HttpRequest {
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "read",
+            "_meta": {
+                VERIFIED_CONTEXT_BLOCK_KEY: forged,
+                "application.example/keep": "value",
+            },
+        }
+    });
+    let mut req = HttpRequest {
+        method: "POST".into(),
+        target_uri: TARGET.into(),
+        headers: vec![
+            ("Content-Type".into(), "application/json".into()),
+            ("Authorization".into(), "Bearer tok".into()),
+        ],
+        body: serde_json::to_vec(&body).unwrap(),
+    };
+    let block = HttpRequestEvidenceBlock {
+        profile: PROFILE_TAG.into(),
+        audience: audience(),
+        artifact_bindings: vec![ArtifactBinding::opaque_digest(
+            ArtifactType::OauthDpop,
+            b"tok",
+        )],
+        continuation: None,
+        admission: None,
+        admission_assertion: None,
+        authorization_decision: None,
+    };
+    sign_request_full(
+        &mut req,
+        &block,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        nonce,
+    )
+    .expect("signing succeeds");
+    req
+}
+
+/// The SECOND reserved position, on the real served path. The caller signs a body whose
+/// `params._meta` carries a forged verified context; the guard must reach it, and the
+/// unrelated application entry beside it must survive.
+#[tokio::test]
+async fn a_params_meta_seeded_verified_context_never_reaches_the_inner_server() {
+    let forged = serde_json::json!({
+        "profile": PROFILE_TAG,
+        "actor_id": "admin@example.com#did:example:root-admin",
+        "key_id": "totally-legit",
+        "request_evidence": { "digest_alg": "sha256", "digest_value": "AAAA" },
+        "verified_at": NOW
+    });
+
+    for policy in [
+        VerifiedContextPolicy::Trusted,
+        VerifiedContextPolicy::Disabled,
+    ] {
+        let seen: Seen = Arc::new(Mutex::new(Vec::new()));
+        let p = proxy(policy, Arc::clone(&seen));
+        let req = signed_request_seeding_params_meta("n-forge-params", forged.clone());
+        assert_eq!(p.handle(served(&req), NOW).await.status, 200);
+
+        let forwarded = seen.lock().unwrap()[0].clone();
+        let text = String::from_utf8_lossy(&forwarded).to_string();
+        assert!(
+            !text.contains("root-admin") && !text.contains("totally-legit"),
+            "{policy:?}: a params._meta forged context leaked to the inner server"
+        );
+        let v: serde_json::Value = serde_json::from_slice(&forwarded).unwrap();
+        assert!(
+            v["params"]["_meta"]
+                .get(VERIFIED_CONTEXT_BLOCK_KEY)
+                .is_none(),
+            "{policy:?}: the reserved key survived under params._meta"
+        );
+        // POSITIVE CONTROL: the application's own `params._meta` entry is untouched.
+        assert_eq!(
+            v["params"]["_meta"]["application.example/keep"],
+            serde_json::json!("value"),
+            "{policy:?}: the PEP destroyed metadata it does not own"
         );
     }
 }

@@ -129,9 +129,8 @@ impl EtcdAsyncAtomicReplayStore {
     /// EVERY insert closed and take the whole serving path down. The value is also
     /// clamped to [`MAX_ETCD_OP_TIMEOUT`].
     pub fn connect_with_timeout(base_url: &str, clock: UnixClock, op_timeout: Duration) -> Self {
-        let client = Client::builder(TokioExecutor::new()).build_http();
         EtcdAsyncAtomicReplayStore {
-            client,
+            client: Client::builder(TokioExecutor::new()).build_http(),
             base_url: base_url.trim_end_matches('/').to_string(),
             clock,
             op_timeout: op_timeout.clamp(Duration::from_millis(1), MAX_ETCD_OP_TIMEOUT),
@@ -220,7 +219,7 @@ impl EtcdAsyncAtomicReplayStore {
             .header(header::CONTENT_TYPE, "application/json")
             .body(Full::new(Bytes::from(payload)))
             .map_err(|e| ReplayStoreError::Unavailable {
-                details: format!("build etcd request {url}: {e}"),
+                details: format!("build etcd request for {path}: {e}"),
             })?;
         let resp = client
             .request(req)
@@ -662,6 +661,57 @@ mod tests {
             default.op_timeout(),
             DEFAULT_ETCD_OP_TIMEOUT,
             "connect() is bounded too"
+        );
+    }
+
+    /// LOAD-BEARING (Owner Ruling 6): `--cpstore-etcd-endpoint` is operator-supplied, and a
+    /// WELL-FORMED URL is exactly the shape that carries a password — the shape check is
+    /// not the boundary. The request-build failure names the crate-internal PATH, which no
+    /// operator input reaches, and says nothing about the endpoint at all: a projection
+    /// would render `<unparseable>` here for every reachable failure, since `Request::
+    /// builder().uri()` and the projection share one parser, and printing the endpoint's
+    /// path would reinstate the exposure for a credential carried as a path segment.
+    #[tokio::test]
+    async fn a_request_build_failure_leaks_neither_the_credential_nor_the_configured_url() {
+        const CONFIGURED: &str = "http://ops:hunter2@etcd internal:2379";
+        let client = Client::builder(TokioExecutor::new()).build_http();
+        let err =
+            EtcdAsyncAtomicReplayStore::post_inner(&client, CONFIGURED, "/v3/kv/txn", &Value::Null)
+                .await
+                .expect_err("a URI hyper cannot parse must not build a request");
+        let ReplayStoreError::Unavailable { details } = err;
+        assert!(
+            !details.contains("hunter2"),
+            "the configured password reached the diagnostic: {details}"
+        );
+        assert!(
+            !details.contains(CONFIGURED) && !details.contains("etcd internal"),
+            "the complete configured endpoint was echoed: {details}"
+        );
+        assert!(
+            details.contains("build etcd request"),
+            "an operator still learns which stage failed: {details}"
+        );
+    }
+
+    /// The positive control for the redaction above: it changed what a failure SAYS, not
+    /// which endpoints are usable. A credential-bearing endpoint that parses must still
+    /// build its request and fail (if at all) at the transport, not at the builder.
+    #[tokio::test]
+    async fn a_well_formed_credential_bearing_endpoint_still_reaches_the_transport() {
+        let client = Client::builder(TokioExecutor::new()).build_http();
+        let err = EtcdAsyncAtomicReplayStore::post_inner(
+            &client,
+            "http://ops:hunter2@127.0.0.1:1",
+            "/v3/kv/txn",
+            &Value::Null,
+        )
+        .await
+        .expect_err("nothing is listening on port 1");
+        let ReplayStoreError::Unavailable { details } = err;
+        assert!(
+            !details.contains("build etcd request"),
+            "a well-formed endpoint must reach the transport, not be refused here: {details}"
         );
     }
 }

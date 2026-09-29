@@ -133,6 +133,26 @@ impl Drop for EvidenceRetention {
     }
 }
 
+/// A writer that stopped before acknowledging: a pre-dispatch write is then unresolved.
+fn writer_lost(pre_dispatch: bool) -> RetentionError {
+    let lost = std::io::Error::new(
+        std::io::ErrorKind::BrokenPipe,
+        "retention writer stopped before acknowledging the write",
+    );
+    if pre_dispatch {
+        RetentionError::Unresolved(lost)
+    } else {
+        RetentionError::Store(lost)
+    }
+}
+
+/// The digest token a marker file name carries at the given suffix, if it is one.
+fn marker_digest(name: &str, suffix: &str) -> Option<String> {
+    let token = name.strip_suffix(suffix)?;
+    let digest = EvidenceDigest::from_token(token).ok()?;
+    Some(digest.as_str().to_owned())
+}
+
 #[cfg(test)]
 impl EvidenceRetention {
     /// Put this store in the state a returned or panicked write loop leaves it: holding a
@@ -141,10 +161,18 @@ impl EvidenceRetention {
     /// `#[cfg(test)]`, so it is not a production surface. It exists because the terminal
     /// fault is otherwise reachable only by making the writer thread panic, and a test that
     /// panicked a thread to reach it would be measuring the panic rather than the answer.
-    fn retire_writer_for_test(&mut self) {
+    pub(crate) fn retire_writer_for_test(&mut self) {
         let (orphaned, receiver) = std::sync::mpsc::sync_channel(1);
         drop(receiver);
         self.jobs = orphaned;
+    }
+
+    /// Put this store in the state a writer that drops every job unanswered leaves it: the
+    /// queue accepts, and no acknowledgement ever comes back.
+    fn swallow_jobs_for_test(&mut self) {
+        let (swallowing, receiver) = std::sync::mpsc::sync_channel(8);
+        std::thread::spawn(move || while receiver.recv().is_ok() {});
+        self.jobs = swallowing;
     }
 }
 
@@ -188,7 +216,8 @@ impl EvidenceRetention {
     ///
     /// The `await` is the point of the whole arrangement: the runtime worker is free
     /// while the fsync runs. Every failure mode — a full queue, a dead writer, a dropped
-    /// acknowledgement — is a store failure, never a silent success.
+    /// acknowledgement — is a failure, never a silent success. A dropped acknowledgement
+    /// for a pre-dispatch job is unresolved: the store's state is unknown.
     ///
     /// `slot` is the permit this call was admitted against, and the job holds it too. The
     /// caller's future can be dropped at the `await` — hyper does exactly that when a
@@ -201,6 +230,7 @@ impl EvidenceRetention {
         kind: JobKind,
         slot: Arc<AdmissionPermit>,
     ) -> Result<(), RetentionError> {
+        let pre_dispatch = kind.is_pre_dispatch();
         let (ack, acked) = tokio::sync::oneshot::channel();
         // `Full` and `Disconnected` are two facts and they demand two answers. A full queue
         // is genuine backpressure and an ordinary retry is correct — the capacity argument
@@ -226,20 +256,20 @@ impl EvidenceRetention {
             Ok(Ok(())) => Ok(()),
             Ok(Err(JobFault::NotPublished(e))) => Err(RetentionError::Store(e)),
             Ok(Err(JobFault::Unwithdrawn(e))) => Err(RetentionError::Unresolved(e)),
-            Err(_) => Err(RetentionError::Store(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                "retention writer stopped before acknowledging the write",
-            ))),
+            Err(_) => Err(writer_lost(pre_dispatch)),
         }
     }
 
     /// The path for a marker at `stage`.
     ///
-    /// The digest is base64url, so it is already a safe single path segment; the extension
-    /// keeps it out of the content-addressed namespace, which is read back by bare digest
-    /// and can therefore never resolve to one of these.
-    fn marker_path(&self, digest: &EvidenceDigest, stage: &str) -> PathBuf {
-        self.root.join(format!("{}.{stage}", digest.as_str()))
+    /// The name is the object path plus the stage extension, so it is refused unless the
+    /// archive accepts the digest as a token; the extension keeps it out of the
+    /// content-addressed namespace, which is read back by bare digest and can therefore
+    /// never resolve to one of these.
+    fn marker_path(&self, digest: &EvidenceDigest, stage: &str) -> Result<PathBuf, RetentionError> {
+        let mut name = self.object_path(digest)?.into_os_string();
+        name.push(format!(".{stage}"));
+        Ok(PathBuf::from(name))
     }
 
     /// Accept durable responsibility for an exchange, WITHOUT asserting that anything ran.
@@ -286,24 +316,23 @@ impl EvidenceRetention {
             &serde_json::to_vec(&retained)
                 .map_err(|_| RetentionError::Malformed("retained request does not serialize"))?,
         );
-        let marker = self.marker_path(&digest, RESERVED_EXTENSION);
-        // A marker that is not durable proves nothing about an obligation the exchange is
-        // about to rely on, so the acknowledgement is awaited before the caller may go on.
+        let marker = self.marker_path(&digest, RESERVED_EXTENSION)?;
+        let bytes = ReservationMarker::of(&digest).to_bytes()?;
+        // Built before the await, so a request future cancelled there still rescinds the
+        // marker it may have published. A marker that is not durable proves nothing about
+        // an obligation the exchange is about to rely on, so the acknowledgement is
+        // awaited before the caller may go on.
+        let reserved =
+            ReservedBeforeDispatch::over(digest, retained, marker, self.jobs.clone(), permit);
         self.submit(
             JobKind::PublishOrWithdraw {
-                path: marker.clone(),
-                bytes: ReservationMarker::of(&digest).to_bytes()?,
+                path: reserved.marker().to_path_buf(),
+                bytes,
             },
-            Arc::clone(&permit),
+            reserved.permit(),
         )
         .await?;
-        Ok(ReservedBeforeDispatch::over(
-            digest,
-            retained,
-            marker,
-            self.jobs.clone(),
-            permit,
-        ))
+        Ok(reserved)
     }
 
     /// Record that this exchange is committing to a dispatch. **The execution threshold.**
@@ -334,7 +363,7 @@ impl EvidenceRetention {
         self.submit(
             JobKind::Commit {
                 reserved: reserved.marker().to_path_buf(),
-                committed: self.marker_path(&digest, PENDING_EXTENSION),
+                committed: self.marker_path(&digest, PENDING_EXTENSION)?,
             },
             reserved.permit(),
         )
@@ -383,7 +412,7 @@ impl EvidenceRetention {
             JobKind::Publish {
                 path: self.object_path(&digest)?,
                 bytes,
-                clear_marker: Some(self.marker_path(committed.digest(), PENDING_EXTENSION)),
+                clear_marker: Some(self.marker_path(committed.digest(), PENDING_EXTENSION)?),
             },
             committed.permit(),
         )
@@ -428,10 +457,7 @@ impl EvidenceRetention {
         for entry in std::fs::read_dir(&self.root).map_err(RetentionError::Store)? {
             let entry = entry.map_err(RetentionError::Store)?;
             let name = entry.file_name();
-            let Some(name) = name.to_str() else { continue };
-            if let Some(digest) = name.strip_suffix(&suffix) {
-                found.push(digest.to_owned());
-            }
+            found.extend(name.to_str().and_then(|name| marker_digest(name, &suffix)));
         }
         found.sort();
         Ok(found)
@@ -496,6 +522,7 @@ impl EvidenceRetention {
 mod tests {
     use super::*;
     use crate::transparency::covered_set::covered_headers;
+    use std::future::Future;
 
     struct TempDir(std::path::PathBuf);
 
@@ -693,6 +720,101 @@ mod tests {
             ),
             "a missing hop refuses the whole chain"
         );
+    }
+
+    #[test]
+    fn a_marker_path_refuses_a_digest_that_is_not_a_token() {
+        let dir = TempDir::new("marker-hostile");
+        let retention = EvidenceRetention::open(&dir.0).expect("open");
+        let hostile: EvidenceDigest =
+            serde_json::from_str("\"../../etc/passwd\"").expect("deserializes");
+
+        assert!(retention.marker_path(&hostile, RESERVED_EXTENSION).is_err());
+    }
+
+    #[test]
+    fn an_enumerated_marker_is_a_well_formed_token() {
+        let dir = TempDir::new("marker-enumeration");
+        let retention = EvidenceRetention::open(&dir.0).expect("open");
+        std::fs::write(dir.0.join(format!(".{PENDING_EXTENSION}")), b"").expect("write");
+        std::fs::write(dir.0.join(format!("not-a-digest.{PENDING_EXTENSION}")), b"")
+            .expect("write");
+
+        assert!(retention.pending_reservations().expect("list").is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_lost_acknowledgement_for_a_pre_dispatch_job_is_unresolved() {
+        let dir = TempDir::new("lost-ack");
+        let mut retention = EvidenceRetention::open(&dir.0).expect("open");
+        let (request, response) = exchange();
+        let reserved = retention.reserve(&request).await.expect("reserve");
+        retention.swallow_jobs_for_test();
+
+        assert!(matches!(
+            retention.commit_to_dispatch(reserved).await,
+            Err(RetentionError::Unresolved(_))
+        ));
+        let mut other = request.clone();
+        other.body.extend_from_slice(b"other");
+        assert!(matches!(
+            retention.reserve(&other).await,
+            Err(RetentionError::Unresolved(_))
+        ));
+        assert!(matches!(
+            retention.retain(&request, &response).await,
+            Err(RetentionError::Store(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_reserve_cancelled_at_its_await_leaves_no_marker() {
+        let dir = TempDir::new("reserve-cancelled");
+        let retention = EvidenceRetention::open(&dir.0).expect("open");
+        let (request, response) = exchange();
+        {
+            let mut fut = std::pin::pin!(retention.reserve(&request));
+            let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+            assert!(fut.as_mut().poll(&mut cx).is_pending());
+        }
+        let mut other = request.clone();
+        other.body.extend_from_slice(b"other");
+        retention.retain(&other, &response).await.expect("retain");
+
+        assert!(retention.stale_reservations().expect("list").is_empty());
+    }
+
+    #[test]
+    fn the_write_does_not_run_on_the_blocking_pool() {
+        let dir = TempDir::new("blocking-pool");
+        let retention = EvidenceRetention::open(&dir.0).expect("open");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .max_blocking_threads(1)
+            .enable_time()
+            .build()
+            .expect("current-thread runtime");
+
+        runtime.block_on(async {
+            let (release, held) = std::sync::mpsc::channel::<()>();
+            let occupied = tokio::task::spawn_blocking(move || {
+                let _ = held.recv();
+            });
+            let (request, response) = exchange();
+            let writes = async {
+                for i in 0..4u32 {
+                    let mut request = request.clone();
+                    request.body.extend_from_slice(&i.to_be_bytes());
+                    retention.retain(&request, &response).await.expect("retain");
+                }
+            };
+            let outcome = tokio::time::timeout(std::time::Duration::from_secs(10), writes).await;
+            release.send(()).expect("release the blocking task");
+            occupied.await.expect("blocking task");
+            assert!(
+                outcome.is_ok(),
+                "a write queued behind the occupied blocking pool: it is running there"
+            );
+        });
     }
 
     /// R7-C001/C002/C028/C046: the write must not run on the runtime worker.

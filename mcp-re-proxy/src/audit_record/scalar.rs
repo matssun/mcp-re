@@ -16,14 +16,24 @@
 //! forward function: [`unescape_scalar`] is written as one and the round trip is a test, so
 //! the claim is checkable rather than argued.
 
-/// Whether a token or a field name can be rendered verbatim without breaking the grammar.
+/// Whether a token or a field name is already its own rendering.
 ///
 /// The record's other half: escaping values is worth nothing if a NAME can carry a space.
+///
+/// True of exactly the non-empty strings [`escape_scalar`] maps to themselves — the
+/// escape's fixed point, which is what makes "rendered verbatim" and "recoverable by
+/// [`unescape_scalar`]" the same set. Derived from the escape's own hazard set rather than
+/// restated as a second list, because a second list is a list that can disagree: a
+/// codepoint the escape spells and this predicate admits is one the record escapes inside a
+/// value and emits verbatim in a name.
 pub(crate) fn is_separator_free(text: &str) -> bool {
-    !text.is_empty()
-        && !text
-            .chars()
-            .any(|c| c == ' ' || c == '=' || c == '\\' || is_hazard(c))
+    !text.is_empty() && !text.starts_with('-') && !text.chars().any(is_escaped_char)
+}
+
+/// Whether [`escape_scalar`] spells `c` as something other than itself, apart from the
+/// positional leading-`-` rule its caller applies separately.
+fn is_escaped_char(c: char) -> bool {
+    c == '\\' || c == ' ' || c == '=' || (c as u32) < 0x20 || c as u32 == 0x7F || is_hazard(c)
 }
 
 /// The scalar escape.
@@ -200,6 +210,28 @@ mod tests {
             corpus.push(format!("head{seed}"));
             corpus.push(format!("head{seed}tail"));
         }
+        // Two escapes with nothing between them. The seeds above are each isolated by
+        // ordinary text, so they say nothing about an escape whose neighbour is another
+        // escape — and the backslash's escape is the one whose correctness depends on that
+        // neighbour. The cross product is over ONE representative of each family
+        // (backslash, the named escapes, the positional `-`, `\xNN`, `\u{...}`) rather than
+        // over every seed, which bounds it at 121 members and keeps it readable.
+        let families = [
+            "\\", "\n", "\r", "\t", " ", "=", "-", "\u{0}", "\u{7F}", "\u{202E}", "\u{2028}",
+        ];
+        for left in families {
+            for right in families {
+                corpus.push(format!("{left}{right}"));
+            }
+        }
+        // Values that are ALREADY images of the escape: a backslash followed by an escape
+        // body, written literally. Each must come back as the characters it is made of and
+        // never as the character that body names — `\x41` is four characters, not `A`.
+        for already_an_image in ["\\x41", "\\u{202e}", "\\n", "\\\\n", "\\e", "\\s", "-\\n"] {
+            corpus.push(already_an_image.to_owned());
+        }
+        let mut images: std::collections::HashMap<String, &String> =
+            std::collections::HashMap::new();
         for s in &corpus {
             let escaped = escape_scalar(s);
             assert_eq!(
@@ -214,6 +246,14 @@ mod tests {
                     && c as u32 != 0x7F
                     && !is_hazard(c)),
                 "the image carries a hazard: {s:?} -> {escaped:?}"
+            );
+            // Injectivity, stated rather than inferred: the word the proposition uses is
+            // the one the corpus is evidence for. A repeated corpus member is not a
+            // collision, so the comparison is between the preimages, not the images.
+            let collision = images.insert(escaped.clone(), s);
+            assert!(
+                !matches!(collision, Some(previous) if previous != s),
+                "{collision:?} and {s:?} share the image {escaped:?}"
             );
         }
     }
@@ -260,5 +300,57 @@ mod tests {
         assert!(!is_separator_free("a=b"));
         assert!(!is_separator_free("a\\b"));
         assert!(!is_separator_free("a\u{202E}b"));
+    }
+
+    /// The predicate is the escape's fixed point, not a second opinion about hazards.
+    ///
+    /// This is the tie that keeps the two from drifting: a hazard added to `escape_scalar`
+    /// and not to `is_separator_free` makes some string of the corpus escape to something
+    /// other than itself while the predicate still calls it verbatim, and the equality
+    /// below fails. The corpus is this test's own, because the question needs members on
+    /// BOTH sides of the predicate — ordinary names and tokens that must be fixed points,
+    /// which the round-trip corpus has no reason to carry — and one member of every escape
+    /// family, which must not be.
+    #[test]
+    fn is_separator_free_is_exactly_the_escapes_fixed_point() {
+        let mut corpus: Vec<String> = vec![
+            String::new(),
+            "-".to_owned(),
+            "-leading".to_owned(),
+            "a-b".to_owned(),
+            "event".to_owned(),
+            "authz_policy_reason".to_owned(),
+            "mcp-re.request.accepted".to_owned(),
+            "\\".to_owned(),
+            "=".to_owned(),
+            " ".to_owned(),
+            "\n".to_owned(),
+            "\r".to_owned(),
+            "\t".to_owned(),
+            "\u{7F}".to_owned(),
+            "\u{85}".to_owned(),
+            "\u{2028}".to_owned(),
+            "\u{202E}".to_owned(),
+            "\u{FEFF}".to_owned(),
+        ];
+        for code in (0..=0x1Fu32)
+            .chain(std::iter::once(0x7F))
+            .chain(0x80..=0x9F)
+        {
+            corpus.push(char::from_u32(code).expect("scalar value").to_string());
+        }
+        let seeds = corpus.clone();
+        for seed in &seeds {
+            corpus.push(format!("{seed}tail"));
+            corpus.push(format!("head{seed}"));
+            corpus.push(format!("head{seed}tail"));
+        }
+        for s in &corpus {
+            assert_eq!(
+                is_separator_free(s),
+                !s.is_empty() && escape_scalar(s) == *s,
+                "the predicate and the escape disagree about {s:?}"
+            );
+        }
     }
 }

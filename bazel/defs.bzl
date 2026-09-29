@@ -21,6 +21,7 @@ those labels resolve naturally.
 """
 
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+load(":version.bzl", "WORKSPACE_VERSION")
 
 # ----------------------------------------------------------------------
 # Internal helpers
@@ -42,6 +43,9 @@ def _default_rust_common_kwargs(
 
     if "edition" not in out:
         out["edition"] = edition
+
+    if "version" not in out:
+        out["version"] = WORKSPACE_VERSION
 
     if lint_config != None and "lint_config" not in out:
         out["lint_config"] = lint_config

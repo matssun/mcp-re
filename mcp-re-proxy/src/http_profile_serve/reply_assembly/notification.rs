@@ -49,7 +49,7 @@ impl HttpProfileProxy {
             a.credential(),
             a.key(),
             a.delegated_kid(),
-            now,
+            window.created(),
             window.expires(),
         ) {
             Ok(ack) => {

@@ -19,7 +19,9 @@
 //! at `C_Initialize`:
 //!   * `MOCK_PKCS11_TOKEN_LABEL` — the label reported by `C_GetTokenInfo`.
 //!   * `MOCK_PKCS11_OBJECTS`     — `;`-separated `label,keytype,id` entries, where
-//!     `keytype` is `ed25519` (a signable `CKK_EC_EDWARDS` key pair) or `ec` (a
+//!     `keytype` is `ed25519` (a signable `CKK_EC_EDWARDS` key pair),
+//!     `ed25519-misbound` (the same, but the private object signs with a key other than
+//!     the advertised one) or `ec` (a
 //!     `CKK_EC` object used only to prove a non-Ed25519 TLS key is rejected).
 //!
 //! Each entry materialises BOTH a `CKO_PRIVATE_KEY` and a `CKO_PUBLIC_KEY` object
@@ -50,6 +52,7 @@ use cryptoki_sys::CKR_MECHANISM_INVALID;
 use cryptoki_sys::CKR_OBJECT_HANDLE_INVALID;
 use cryptoki_sys::CKR_OK;
 use cryptoki_sys::CKR_SLOT_ID_INVALID;
+use cryptoki_sys::CKR_USER_ALREADY_LOGGED_IN;
 use cryptoki_sys::CK_ATTRIBUTE;
 use cryptoki_sys::CK_ATTRIBUTE_TYPE;
 use cryptoki_sys::CK_FUNCTION_LIST;
@@ -105,6 +108,9 @@ struct State {
     objects: Vec<KeyObject>,
     sessions: HashMap<CK_SESSION_HANDLE, Session>,
     next_session: CK_SESSION_HANDLE,
+    /// Login state is per application per token, not per session: set by the first
+    /// `C_Login`, cleared when the last session closes.
+    logged_in: bool,
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
@@ -133,6 +139,15 @@ impl State {
                     let sk = derive_signing_key(parts[0], id);
                     let point = sk.verifying_key().to_bytes().to_vec();
                     (CKK_EC_EDWARDS, Some(sk), point)
+                }
+                // Both objects advertise the point of `derive_signing_key(label, id)`, but
+                // the private object signs with a DIFFERENT key: `C_Sign` returns 64
+                // well-formed bytes that verify under no advertised key.
+                "ed25519-misbound" => {
+                    let advertised = derive_signing_key(parts[0], id);
+                    let point = advertised.verifying_key().to_bytes().to_vec();
+                    let signer = derive_signing_key(parts[0], &format!("{id}-misbound"));
+                    (CKK_EC_EDWARDS, Some(signer), point)
                 }
                 // A non-Ed25519 object: it exists so the client's Ed25519-typed
                 // find never matches it (proving a non-Ed25519 TLS key is rejected).
@@ -163,6 +178,7 @@ impl State {
             objects,
             sessions: HashMap::new(),
             next_session: 1,
+            logged_in: false,
         }
     }
 
@@ -339,6 +355,9 @@ unsafe extern "C" fn c_close_session(session: CK_SESSION_HANDLE) -> CK_RV {
         return CKR_GENERAL_ERROR;
     };
     state.sessions.remove(&session);
+    if state.sessions.is_empty() {
+        state.logged_in = false;
+    }
     CKR_OK
 }
 
@@ -348,7 +367,16 @@ unsafe extern "C" fn c_login(
     _pin: *mut c_uchar,
     _pin_len: c_ulong,
 ) -> CK_RV {
-    // The mock accepts any PIN; login is a no-op that always succeeds.
+    // The mock accepts any PIN, but models the token's login state: a login while
+    // the application is already logged in is refused, as on a real token.
+    let mut guard = STATE.lock().expect("mock state lock");
+    let Some(state) = guard.as_mut() else {
+        return CKR_GENERAL_ERROR;
+    };
+    if state.logged_in {
+        return CKR_USER_ALREADY_LOGGED_IN;
+    }
+    state.logged_in = true;
     CKR_OK
 }
 

@@ -22,6 +22,7 @@
 
 use cryptoki_sys::CKR_DEVICE_ERROR;
 use cryptoki_sys::CKR_DEVICE_REMOVED;
+use cryptoki_sys::CKR_OPERATION_ACTIVE;
 use cryptoki_sys::CKR_SESSION_CLOSED;
 use cryptoki_sys::CKR_SESSION_COUNT;
 use cryptoki_sys::CKR_SESSION_HANDLE_INVALID;
@@ -62,19 +63,6 @@ pub(crate) trait LoginSessionFactory {
     fn open_logged_in(&self) -> Result<Self::Session, KeyError>;
 }
 
-/// Amortizes the PKCS#11 LOGIN across operations (audit M16): instead of opening a
-/// fresh session and performing a `C_Login` on EVERY signed response — which makes
-/// signing latency/availability hostage to token login throughput and is a
-/// boundary DoS amplification — this holds ONE logged-in session behind a `Mutex`
-/// and reuses it. A fresh login happens only on first use or when the cached
-/// session has gone invalid (handle closed / token re-inserted / login lapsed), so
-/// N sequential signs perform far fewer than N logins.
-///
-/// Fail-closed is preserved: a *fatal* [`SessionOpError::Fatal`] (a real sign /
-/// lookup failure) is propagated immediately and never retried; only a
-/// [`SessionOpError::SessionInvalid`] triggers a single re-open-and-retry. If the
-/// re-open itself fails, that error is surfaced (no in-process fallback, no
-/// drop is the backstop for the one currently-cached handle.
 /// A cached, logged-in PKCS#11 session reduced to its raw `CK_SESSION_HANDLE`.
 ///
 /// This is the lifetime-free `S` that [`AmortizedSession`] caches for the real
@@ -86,7 +74,9 @@ pub(crate) trait LoginSessionFactory {
 /// [`SessionRef`](crate::pkcs11_native::SessionRef) against the live context.
 ///
 /// The handle is closed explicitly when this holder is retired (on a transient
-/// invalidation, via [`Pkcs11Context::close_session`]); `C_Finalize` on context
+/// invalidation, via its [`SessionCloser`], which keeps the context alive until the
+/// close has run); `C_Finalize` on context drop is the backstop for the one
+/// currently-cached handle.
 pub(crate) struct LoggedInSession {
     /// The raw open+logged-in session handle (owned: closed on retirement).
     pub(crate) handle: CK_SESSION_HANDLE,
@@ -110,6 +100,15 @@ impl Drop for LoggedInSession {
 /// the login lapsed, or the device had a transient fault). A `false` here means the
 /// error is intrinsic to the operation (bad mechanism, malformed object, …) and a
 /// reconnect would not help — fail closed (a real sign/lookup error is NOT retried).
+///
+/// `CKR_OPERATION_ACTIVE` is in the list because it is a property of the SESSION, not of
+/// the operation. A sign or find that was initiated and then abandoned — the length the
+/// module reported was refused, or its function list had no terminator — leaves that
+/// session carrying an operation it will never finish, and every later init on it returns
+/// this. Retiring the session discards that handle — its `Drop` runs `C_CloseSession`,
+/// which ends the operation with it — and the one retry runs on a clean session, where a
+/// fatal classification would instead keep the unusable handle cached for the process
+/// lifetime.
 pub(super) fn is_session_invalid(error: &Pkcs11Error) -> bool {
     match error {
         Pkcs11Error::Ck { rv, .. } => matches!(
@@ -120,6 +119,7 @@ pub(super) fn is_session_invalid(error: &Pkcs11Error) -> bool {
                 | CKR_USER_NOT_LOGGED_IN
                 | CKR_DEVICE_ERROR
                 | CKR_DEVICE_REMOVED
+                | CKR_OPERATION_ACTIVE
         ),
         // Load / missing-function / protocol shape errors are not transient session
         // faults — re-opening would not cure them. Fail closed.
@@ -144,5 +144,81 @@ pub(super) fn classify_op_error(
         )))
     } else {
         SessionOpError::Fatal(make_fatal(&error))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ck(rv: cryptoki_sys::CK_RV) -> Pkcs11Error {
+        Pkcs11Error::Ck {
+            op: "test".to_string(),
+            rv,
+        }
+    }
+
+    /// The NEGATIVE test for the operation-active retirement: an abandoned operation is a
+    /// property of the session, so the session is retired and one clean retry is run.
+    /// Reverting `CKR_OPERATION_ACTIVE` out of the `matches!` list turns this red.
+    #[test]
+    fn an_abandoned_operation_retires_the_session_rather_than_wedging_it() {
+        assert!(
+            is_session_invalid(&ck(cryptoki_sys::CKR_OPERATION_ACTIVE)),
+            "a session carrying an operation it will never finish is unusable, and keeping \
+             it cached disables it for the process lifetime"
+        );
+    }
+
+    /// The POSITIVE control for the same edit, and the one that matters: widening the
+    /// transient set must not start retrying GENUINE failures. A bad key handle, a bad
+    /// mechanism and a wrong data length are intrinsic to the operation — a fresh session
+    /// would produce them again — so each must still be fatal and propagate on the first
+    /// try. This is what goes red if the list is widened to `true` or to a wildcard.
+    #[test]
+    fn genuine_operation_failures_are_still_fatal_and_never_retried() {
+        for rv in [
+            cryptoki_sys::CKR_KEY_HANDLE_INVALID,
+            cryptoki_sys::CKR_MECHANISM_INVALID,
+            cryptoki_sys::CKR_DATA_LEN_RANGE,
+            cryptoki_sys::CKR_PIN_INCORRECT,
+        ] {
+            assert!(
+                !is_session_invalid(&ck(rv)),
+                "CK_RV 0x{rv:08x} is intrinsic to the operation; retrying it would mask a \
+                 real failure behind a reconnect"
+            );
+        }
+    }
+
+    /// The transient set is about CK statuses. A shape or bootstrap failure of the wrapper
+    /// itself is never cured by a fresh login.
+    #[test]
+    fn wrapper_shape_errors_are_never_transient() {
+        assert!(!is_session_invalid(&Pkcs11Error::Load("x".to_string())));
+        assert!(!is_session_invalid(&Pkcs11Error::MissingFunction(
+            "C_Sign".to_string()
+        )));
+        assert!(!is_session_invalid(&Pkcs11Error::Protocol("x".to_string())));
+    }
+
+    /// `classify_op_error` is where the distinction becomes the amortization layer's
+    /// decision: a transient status must not run `make_fatal`, and a fatal one must.
+    #[test]
+    fn classify_runs_the_fatal_builder_only_for_a_fatal_status() {
+        let transient = classify_op_error(ck(cryptoki_sys::CKR_OPERATION_ACTIVE), |_| {
+            KeyError::Malformed("must not be built for a transient fault".to_string())
+        });
+        assert!(matches!(transient, SessionOpError::SessionInvalid(_)));
+
+        let fatal = classify_op_error(ck(cryptoki_sys::CKR_KEY_HANDLE_INVALID), |_| {
+            KeyError::Malformed("the caller's context".to_string())
+        });
+        match fatal {
+            SessionOpError::Fatal(KeyError::Malformed(message)) => {
+                assert_eq!(message, "the caller's context");
+            }
+            _ => panic!("a genuine operation failure must be Fatal with the caller's context"),
+        }
     }
 }

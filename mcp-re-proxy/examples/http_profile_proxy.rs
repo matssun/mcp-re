@@ -124,21 +124,15 @@ async fn main() {
                 let tier = ReplayDurabilityTier::parse(&tier_str).expect("HPP_REPLAY_TIER");
                 #[cfg(feature = "redis_replay")]
                 {
-                    // The order is the shipped one (`replay_plane::backends::establish_redis`):
-                    // the client-side response timeout is sized for the DECLARED wait timeout
-                    // BEFORE connecting, and the quorum is applied to the store that serves —
-                    // otherwise the startup line advertises a window the store never waits.
-                    let wait_timeout_ms = tier.wait_quorum_params().map(|(_, ms)| ms);
-                    let mut store = RedisAsyncAtomicReplayStore::connect_with_wait_timeout(
+                    // As the shipped `replay_plane::backends::establish_redis`: the declared
+                    // tier is a construction parameter of the store that serves.
+                    let store = RedisAsyncAtomicReplayStore::connect_with_wait_quorum(
                         &url,
                         mcp_re_proxy::redis_store::system_clock(),
-                        wait_timeout_ms,
+                        tier.wait_quorum_params(),
                     )
                     .await
                     .unwrap_or_else(|e| panic!("connect redis {url}: {e:?}"));
-                    if let Some((quorum, timeout_ms)) = tier.wait_quorum_params() {
-                        store = store.with_wait_quorum(quorum, timeout_ms);
-                    }
                     eprintln!("{}", tier.startup_audit_line("redis"));
                     (
                         AsyncReplayTier::new(
@@ -295,11 +289,11 @@ async fn handle(
         None => None,
     };
     let continuation_ctx = match (&retained, &answer_state) {
-        (Some(bases), Some(request_state)) => Some(RetainedContinuation {
-            previous_request_base: &bases.previous_request_base,
-            input_required_response_base: &bases.input_required_response_base,
-            request_state: request_state.as_bytes(),
-        }),
+        (Some(bases), Some(request_state)) => Some(RetainedContinuation::from_correlation(
+            &bases.previous_request_base,
+            &bases.input_required_response_base,
+            request_state.as_bytes(),
+        )),
         // A continuation was signed but nothing was retained for it: pass None so the
         // dispatcher fails closed rather than admit an unbindable answer leg.
         _ => None,

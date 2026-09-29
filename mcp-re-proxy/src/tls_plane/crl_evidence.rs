@@ -38,6 +38,9 @@ pub struct ClientCrlEvidence {
     /// One entry per loaded CRL. Empty when offline client-cert revocation is not
     /// configured, which is a different posture — not an empty one.
     postures: Vec<CrlPosture>,
+    /// The bytes those postures were classified from, and the only bytes the index and the
+    /// verifier are built from.
+    ders: Vec<rustls_pki_types::CertificateRevocationListDer<'static>>,
 }
 
 impl ClientCrlEvidence {
@@ -50,7 +53,7 @@ impl ClientCrlEvidence {
     /// operator install a refresh before the cutover, and it was absent from the reload
     /// path entirely.
     pub(super) fn from_checked(
-        crls: &[rustls_pki_types::CertificateRevocationListDer<'static>],
+        crls: Vec<rustls_pki_types::CertificateRevocationListDer<'static>>,
         now_unix: i64,
     ) -> Result<Self, String> {
         let mut postures = Vec::with_capacity(crls.len());
@@ -61,7 +64,24 @@ impl ClientCrlEvidence {
                     .map_err(|e| e.to_string())?,
             );
         }
-        Ok(ClientCrlEvidence { postures })
+        Ok(ClientCrlEvidence {
+            postures,
+            ders: crls,
+        })
+    }
+
+    /// The CRL bytes that passed the gate, in load order.
+    pub(super) fn ders(&self) -> &[rustls_pki_types::CertificateRevocationListDer<'static>] {
+        &self.ders
+    }
+
+    /// The per-request index over the gated bytes, so it cannot be built from CRLs the
+    /// gate did not classify.
+    pub(super) fn revocation_index(
+        &self,
+    ) -> Result<crate::client_revocation::ClientRevocationIndex, String> {
+        crate::client_revocation::ClientRevocationIndex::from_crl_ders(&self.ders)
+            .map_err(|e| e.to_string())
     }
 
     /// Whether offline client-cert revocation is configured at all.
@@ -83,7 +103,10 @@ impl ClientCrlEvidence {
     /// two distinguishable ones rather than two real signed CRLs that say the same thing.
     #[cfg(test)]
     pub(super) fn from_postures(postures: Vec<CrlPosture>) -> Self {
-        ClientCrlEvidence { postures }
+        ClientCrlEvidence {
+            postures,
+            ders: Vec::new(),
+        }
     }
 }
 
@@ -141,10 +164,10 @@ mod tests {
             .next_update_unix
             .expect("the fixture states one");
         assert!(
-            ClientCrlEvidence::from_checked(std::slice::from_ref(&crl), next_update - 1).is_ok(),
+            ClientCrlEvidence::from_checked(vec![crl.clone()], next_update - 1).is_ok(),
             "inside its window it is installable"
         );
-        let refusal = ClientCrlEvidence::from_checked(std::slice::from_ref(&crl), next_update + 1)
+        let refusal = ClientCrlEvidence::from_checked(vec![crl], next_update + 1)
             .expect_err("past its nextUpdate it is not");
         assert!(refusal.contains("STALE"), "{refusal}");
     }
@@ -152,8 +175,23 @@ mod tests {
     /// An empty set is a configured-off posture, not a failed one.
     #[test]
     fn no_crls_is_evidence_of_a_deployment_without_them() {
-        let evidence = ClientCrlEvidence::from_checked(&[], 0).expect("no CRLs is legal");
+        let evidence = ClientCrlEvidence::from_checked(Vec::new(), 0).expect("no CRLs is legal");
         assert!(evidence.is_empty());
         assert!(evidence.postures().is_empty());
+    }
+
+    /// The index is a projection of the gated evidence, not of a sibling copy of the bytes.
+    #[test]
+    fn the_revocation_index_is_derived_from_the_gated_evidence() {
+        let crl = crate::client_crl_publication::test_support::crl_with_next_update();
+        let next_update = crate::client_crl_publication::crl_posture(crl.as_ref())
+            .expect("posture")
+            .next_update_unix
+            .expect("the fixture states one");
+        let evidence =
+            ClientCrlEvidence::from_checked(vec![crl], next_update - 1).expect("inside its window");
+        assert!(!evidence.revocation_index().expect("index").is_empty());
+        let none = ClientCrlEvidence::from_checked(Vec::new(), 0).expect("no CRLs is legal");
+        assert!(none.revocation_index().is_err());
     }
 }

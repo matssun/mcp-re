@@ -24,6 +24,14 @@ use crate::pkcs11_native::SessionRef;
 use super::session::classify_op_error;
 use super::session::SessionOpError;
 
+/// Locate the single Ed25519 key object of the given class with `key_label`
+/// against an open session view, classified for the amortization layer.
+///
+/// A transient session fault during the find is [`SessionOpError::SessionInvalid`]
+/// (retry once); any other wrapper error is [`SessionOpError::Fatal`] with the SAME
+/// `NotFound` context text as the pre-amortization path. The count cases are
+/// intrinsic, never a session fault: zero matches is a [`KeyError::NotFound`] Fatal;
+/// more than one is a [`KeyError::Malformed`] Fatal (an ambiguous token config must
 /// fail closed, never silently pick one). A re-open would not change these.
 pub(crate) fn find_key(
     view: &SessionRef<'_>,
@@ -66,12 +74,14 @@ pub(crate) fn find_token_slot(
     token_label: &str,
 ) -> Result<CK_SLOT_ID, KeyError> {
     // `token_slots` enumerates present-token slots and reads each token's label
-    // with the 32-byte 0x20 padding already trimmed.
+    // with the 32-byte 0x20 padding already trimmed. The comparison is over those
+    // BYTES: this is what decides which physical device receives the User PIN, so
+    // two labels are the same label only when the token reported the same bytes.
     let slots = context
         .token_slots()
         .map_err(|e| KeyError::NotFound(format!("pkcs11: enumerate token slots: {e}")))?;
     for (slot, label) in slots {
-        if label.trim_end() == token_label {
+        if label == token_label.as_bytes() {
             return Ok(slot);
         }
     }
@@ -118,4 +128,60 @@ pub(crate) fn ed25519_spki_from_ec_point(ec_point: &[u8]) -> Result<Vec<u8>, Key
     let raw = raw_ed25519_point(ec_point)?;
     let der = crate::communication_assurance::Ed25519PublicKeyValue::spki_der_for_point(raw);
     Ok(der)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The point grammar is exact on purpose: a token may return `CKA_EC_POINT` bare or
+    /// wrapped in a DER OCTET STRING, and both are conformant.
+    #[test]
+    fn both_conformant_ec_point_encodings_yield_the_same_32_byte_point() {
+        let point = [7u8; ED25519_PUBLIC_KEY_LEN];
+        let mut wrapped = vec![0x04, ED25519_PUBLIC_KEY_LEN as u8];
+        wrapped.extend_from_slice(&point);
+        assert_eq!(raw_ed25519_point(&point).expect("bare point"), point);
+        assert_eq!(raw_ed25519_point(&wrapped).expect("wrapped point"), point);
+    }
+
+    /// The 32-byte length is what discriminates Ed25519 from the rest of `CKK_EC_EDWARDS`
+    /// — the lookup template cannot, since `CKK_EC_EDWARDS` covers Ed448 too. An Ed448
+    /// point is 57 bytes, and it must not be accepted as this deployment's signing key.
+    #[test]
+    fn a_point_that_is_not_32_bytes_is_refused() {
+        for length in [0usize, 31, 33, 57] {
+            let point = vec![7u8; length];
+            assert!(
+                raw_ed25519_point(&point).is_err(),
+                "a {length}-byte point is not an Ed25519 point"
+            );
+        }
+        // A 34-byte value that is not the OCTET STRING encoding is refused too: the
+        // wrapper is recognised by its tag and length, never by its size alone.
+        let mut mistagged = vec![0x05, ED25519_PUBLIC_KEY_LEN as u8];
+        mistagged.extend_from_slice(&[7u8; ED25519_PUBLIC_KEY_LEN]);
+        assert!(raw_ed25519_point(&mistagged).is_err());
+    }
+
+    /// The SPKI the relying party verifies against is built from a point that passed the
+    /// grammar, so a refused point never reaches an SPKI.
+    #[test]
+    fn an_spki_is_only_built_from_an_accepted_point() {
+        let point = [7u8; ED25519_PUBLIC_KEY_LEN];
+        let der = ed25519_spki_from_ec_point(&point).expect("a 32-byte point");
+        assert!(
+            der.len() > ED25519_PUBLIC_KEY_LEN && der.ends_with(&point),
+            "the RFC 8410 SPKI carries the point after its header: {der:?}"
+        );
+        assert!(ed25519_spki_from_ec_point(&[7u8; 57]).is_err());
+    }
+
+    /// The class name is what the refusal messages say; an object-class mix-up in a
+    /// startup failure sends an operator to the wrong token object.
+    #[test]
+    fn each_object_class_names_itself() {
+        assert_eq!(class_name(ObjectClass::Private), "CKO_PRIVATE_KEY");
+        assert_eq!(class_name(ObjectClass::Public), "CKO_PUBLIC_KEY");
+    }
 }

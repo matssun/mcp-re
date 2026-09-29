@@ -28,12 +28,19 @@
 // `unsafe` here means deleting this line: an architectural decision, reviewed as one.
 #![forbid(unsafe_code)]
 pub mod binding_spec;
+/// The five MRTR answer-leg handles as ONE value: present whole, absent whole, or refused.
+mod continuation_handles;
 /// Which Core verdict each of this crate's refusals IS — the one place that decides
 /// (ADR-MCPRE-066 Slice 2). Every `wire_code` in the crate is derived from it.
 mod core_projection;
+/// Which audited core a binding reports — this crate's version, never the wrapper's.
+mod core_version;
 mod delegated_evidence;
 mod delegated_trust;
 mod delegation_policy;
+/// The OAuth credential a request is bound to — the one place the binding and the covered
+/// `Authorization` header are derived from it, so neither can exist over nothing.
+mod dpop_credential;
 /// What a verified rejection receipt says about whether the work ran (ADR-MCPRE-058 §10).
 mod execution_contract;
 pub mod request;
@@ -49,6 +56,9 @@ pub use binding_spec::BindingForm;
 pub use binding_spec::BindingSpec;
 pub use binding_spec::BindingSpecRefusal;
 pub use binding_spec::ProvidedAuthorization;
+pub use continuation_handles::ContinuationHandles;
+pub use continuation_handles::PartialContinuation;
+pub use core_version::CORE_VERSION;
 pub use delegated_evidence::DelegatedResponseEvidence;
 pub use delegated_trust::CompositeResponseTrust;
 pub use delegated_trust::DelegatedResponseTrust;
@@ -56,6 +66,8 @@ pub use delegated_trust::RevocationSource;
 pub use delegated_trust::StaticRevocationList;
 pub use delegated_trust::TrustedIssuerSet;
 pub use delegation_policy::DelegationPolicy;
+pub use dpop_credential::DpopCredential;
+pub use dpop_credential::EmptyDpopCredential;
 pub use execution_contract::ExecutionContract;
 pub use execution_contract::ExecutionStatus;
 pub use execution_contract::RetrySafety;

@@ -41,7 +41,7 @@
 //! one tagged value and the bound is a `NonZeroU64` carried by the arm that opens a window.
 
 use crate::deployment_request::{
-    AdmissionAvailabilityRequest, AdmissionRequest, DeploymentRequest,
+    AdmissionAvailabilityRequest, AdmissionRequest, DeploymentRequest, RedactedLocator,
 };
 use mcp_re_core::VerificationKey;
 use std::num::NonZeroU64;
@@ -428,9 +428,10 @@ pub(crate) fn validated_admission_authority(
     let record_store = gate.store.locator();
     if !record_store.contains("://") {
         return Err(format!(
-            "--admission-redis-url {record_store:?} is not a URL: it names the shared \
+            "--admission-redis-url {} is not a URL: it names the shared \
              authoritative record currency is compared against, so a value that cannot name \
-             a store leaves every call failing closed on an unreachable authority"
+             a store leaves every call failing closed on an unreachable authority",
+            RedactedLocator::of(record_store)
         ));
     }
     Ok(Some(AdmissionAuthority {
@@ -662,6 +663,31 @@ mod tests {
                 "a gate missing {flag} was accepted: {violations:?}"
             );
         }
+    }
+
+    /// A locator with no scheme is the ONLY value this clause refuses, and
+    /// `user:password@host:port` is exactly that shape. The refusal is therefore the one
+    /// place an operator's password could reach a log, so it names the locator instead of
+    /// echoing it.
+    #[test]
+    fn the_locator_refusal_names_a_credential_bearing_value_without_echoing_it() {
+        let (_, violations) = run(|c| {
+            c.admission =
+                AdmissionRequest::Required(crate::deployment_request::AdmissionGateRequest {
+                    store: crate::deployment_request::SharedStoreRequest::redis(
+                        "mats:hunter2@redis.internal:6379",
+                    ),
+                    ..gate()
+                });
+        });
+        let refusal = violations
+            .iter()
+            .find(|v| v.contains("--admission-redis-url"))
+            .expect("a value that names no store is refused");
+        assert!(
+            !refusal.contains("hunter2"),
+            "the password reached the diagnostic: {refusal}"
+        );
     }
 
     #[test]

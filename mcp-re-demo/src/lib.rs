@@ -18,8 +18,9 @@
 // (unlike `deny`) cannot be overridden by an inner `#[allow]` anywhere in it. Acquiring
 // `unsafe` here means deleting this line: an architectural decision, reviewed as one.
 #![forbid(unsafe_code)]
+mod demo_fixture_files;
 pub mod demo_fixtures;
 
-pub use demo_fixtures::DemoFixtureFiles;
+pub use demo_fixture_files::DemoFixtureFiles;
 pub use demo_fixtures::DemoFixtureSpec;
 pub use demo_fixtures::DemoFixtures;

@@ -27,7 +27,7 @@
 //! and a cargo feature with `Replay` is not a semantic edge. The endpoints may name the
 //! same Redis, and when they do that is an operator's deployment choice.
 
-use crate::deployment_request::{DeploymentRequest, SharedStoreRequest};
+use crate::deployment_request::{DeploymentRequest, RedactedLocator, SharedStoreRequest};
 
 /// Which continuation-control state a configuration requests.
 ///
@@ -135,9 +135,10 @@ pub fn classify_and_validate(
     {
         if !url.contains("://") {
             violations.push(format!(
-                "--continuation-control-redis-url {url:?} is not a URL: give a \
+                "--continuation-control-redis-url {} is not a URL: give a \
                  scheme-bearing URL such as redis://host:6379, or omit the flag to run \
-                 with MRTR continuation correlation OFF"
+                 with MRTR continuation correlation OFF",
+                RedactedLocator::of(url)
             ));
         }
     }
@@ -196,6 +197,25 @@ mod tests {
         assert!(
             violations.iter().any(|v| v.contains("is not a URL")),
             "{violations:?}"
+        );
+    }
+
+    /// The clause fires exactly when the value has no `://`, which is the shape a
+    /// credential-bearing typo takes. It names the locator rather than echoing it.
+    #[test]
+    fn the_locator_refusal_does_not_echo_a_credential() {
+        let (_, violations) = run(|c| {
+            c.continuation_control.shared = Some(SharedStoreRequest::redis(
+                "mats:hunter2@redis.internal:6379",
+            ));
+        });
+        let refusal = violations
+            .iter()
+            .find(|v| v.contains("--continuation-control-redis-url"))
+            .expect("a value that names no store is refused");
+        assert!(
+            !refusal.contains("hunter2"),
+            "the password reached the diagnostic: {refusal}"
         );
     }
 

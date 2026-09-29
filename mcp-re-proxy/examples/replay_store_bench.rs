@@ -86,17 +86,14 @@ fn main() {
     };
 
     let connect = |url: String| async move {
-        let mut store = RedisAsyncAtomicReplayStore::connect_pooled(
+        let store = RedisAsyncAtomicReplayStore::connect_pooled(
             &url,
             system_clock(),
-            wait_quorum.map(|_| wait_timeout_ms),
+            wait_quorum.map(|q| (q, wait_timeout_ms)),
             pool,
         )
         .await
         .expect("connect redis");
-        if let Some(quorum) = wait_quorum {
-            store = store.with_wait_quorum(quorum, wait_timeout_ms);
-        }
         Arc::new(store)
     };
 

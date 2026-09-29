@@ -37,9 +37,10 @@ pub(crate) struct SigningWindow {
     created: i64,
     /// Unix seconds this response may claim validity until.
     ///
-    /// Never later than `key.exp`. There is no constructor that takes this value, so the
-    /// relation holds for every window that exists rather than for the ones whose caller
-    /// remembered to clamp.
+    /// Never later than `key.exp`, and always after `created`. There is no constructor
+    /// that takes this value, so both relations hold for every window that exists rather
+    /// than for the ones whose caller remembered to clamp; a window that would not satisfy
+    /// them is refused.
     expires: i64,
 }
 
@@ -50,23 +51,26 @@ impl SigningWindow {
     pub(crate) fn open(signer: &DelegatedSigningReader, now: i64, ttl_secs: i64) -> Option<Self> {
         signer
             .current(now)
-            .map(|key| Self::over(key, now, ttl_secs))
+            .and_then(|key| Self::over(key, now, ttl_secs))
     }
 
-    /// Open a window over a credential already snapshotted earlier in this exchange.
+    /// Open a window over a credential already snapshotted earlier in this exchange, or
+    /// `None` when no window can exist over it.
     ///
     /// The same derivation as [`SigningWindow::open`]: a refusal minted late in an
     /// exchange signs under the credential that exchange took, and advertises no more
-    /// validity for having been reached by a different path.
-    pub(crate) fn over(key: Arc<ActiveDelegatedKey>, now: i64, ttl_secs: i64) -> Self {
-        let exp = key.exp();
-        Self {
+    /// validity for having been reached by a different path. A credential already past its
+    /// `exp`, or a non-positive TTL, leaves nothing to advertise, so no window is made —
+    /// as [`ActiveDelegatedKey::issued`] refuses `nbf >= exp`.
+    pub(crate) fn over(key: Arc<ActiveDelegatedKey>, now: i64, ttl_secs: i64) -> Option<Self> {
+        // `now + ttl_secs` is the configured window; `exp` is the credential's own.
+        // The response advertises whichever closes first.
+        let expires = now.saturating_add(ttl_secs).min(key.exp());
+        (now < expires).then_some(Self {
             key,
             created: now,
-            // `now + ttl_secs` is the configured window; `exp` is the credential's own.
-            // The response advertises whichever closes first.
-            expires: now.saturating_add(ttl_secs).min(exp),
-        }
+            expires,
+        })
     }
 
     /// Would a conforming verifier still admit a response advertising this window, at
@@ -123,6 +127,12 @@ impl SigningWindow {
         Arc::clone(&self.key)
     }
 
+    /// Unix seconds the signed response advertises its validity FROM — the exchange's one
+    /// clock reading.
+    pub(crate) fn created(&self) -> i64 {
+        self.created
+    }
+
     /// Unix seconds the signed response may claim validity until.
     pub(crate) fn expires(&self) -> i64 {
         self.expires
@@ -143,21 +153,64 @@ mod tests {
     /// credential has plenty of life left.
     #[test]
     fn the_configured_ttl_bounds_a_window_inside_the_credential() {
-        assert_eq!(SigningWindow::over(key(10_000), 1_000, 60).expires(), 1_060);
+        assert_eq!(
+            SigningWindow::over(key(10_000), 1_000, 60)
+                .expect("a live credential opens a window")
+                .expires(),
+            1_060
+        );
     }
 
     /// ADR-MCPRE-052 §4: past the credential's own `exp` the signature authorizes
     /// nothing, so no configured TTL can advertise validity there.
     #[test]
     fn the_credential_bounds_a_ttl_that_would_outlive_it() {
-        assert_eq!(SigningWindow::over(key(1_030), 1_000, 60).expires(), 1_030);
+        assert_eq!(
+            SigningWindow::over(key(1_030), 1_000, 60)
+                .expect("a live credential opens a window")
+                .expires(),
+            1_030
+        );
     }
 
-    /// A credential already past its bound yields a window claiming no validity at all
-    /// rather than one running backwards from the configured TTL.
+    /// A credential at or past its bound opens no window rather than one running
+    /// backwards from the configured TTL.
     #[test]
-    fn an_expired_credential_advertises_no_future_validity() {
-        assert_eq!(SigningWindow::over(key(900), 1_000, 60).expires(), 900);
+    fn an_expired_credential_opens_no_window() {
+        assert!(SigningWindow::over(key(900), 1_000, 60).is_none());
+        assert!(SigningWindow::over(key(1_000), 1_000, 60).is_none());
+    }
+
+    /// A TTL that leaves no time after `created` opens no window.
+    #[test]
+    fn a_non_positive_ttl_opens_no_window() {
+        assert!(SigningWindow::over(key(10_000), 1_000, 0).is_none());
+        assert!(SigningWindow::over(key(10_000), 1_000, -1).is_none());
+    }
+
+    /// The window advertises the instant it was opened at.
+    #[test]
+    fn the_window_advertises_the_instant_it_was_opened_at() {
+        let window = SigningWindow::over(key(10_000), 1_000, 60).expect("a live credential");
+        assert_eq!(window.created(), 1_000);
+    }
+
+    /// `open` yields a window only while the signer holds a live credential.
+    #[test]
+    fn open_yields_a_window_only_while_the_signer_holds_a_live_credential() {
+        let signer = Arc::new(crate::delegated_server_signer::DelegatedServerSigner::new());
+        let reader = signer.reader();
+        assert!(SigningWindow::open(&reader, 0, 60).is_none());
+        signer.publish(crate::delegated_wiring::test_support::issued_expiring_at(
+            100, 7,
+        ));
+        assert_eq!(
+            SigningWindow::open(&reader, 50, 60)
+                .expect("a live credential opens a window")
+                .expires(),
+            100
+        );
+        assert!(SigningWindow::open(&reader, 100, 60).is_none());
     }
 
     /// The clamp is arithmetic that cannot be skipped by choosing a large TTL: a
@@ -165,7 +218,9 @@ mod tests {
     #[test]
     fn a_saturating_ttl_does_not_wrap_past_the_credential() {
         assert_eq!(
-            SigningWindow::over(key(2_000), i64::MAX - 1, i64::MAX).expires(),
+            SigningWindow::over(key(2_000), 1_000, i64::MAX)
+                .expect("a live credential opens a window")
+                .expires(),
             2_000
         );
     }
@@ -179,7 +234,8 @@ mod tests {
     /// has executed. `exp` is 30s out and the plane may take 60s.
     #[test]
     fn a_credential_shorter_than_the_dispatch_budget_does_not_cover_it() {
-        let window = SigningWindow::over(key(1_030), 1_000, 300);
+        let window =
+            SigningWindow::over(key(1_030), 1_000, 300).expect("a live credential opens a window");
         assert!(!window.covers(DispatchCompletionBound::Within(Duration::from_secs(60))));
     }
 
@@ -190,7 +246,8 @@ mod tests {
     /// returned `false`, which would refuse every dispatch this deployment ever makes.
     #[test]
     fn a_credential_longer_than_the_dispatch_budget_covers_it() {
-        let window = SigningWindow::over(key(1_030), 1_000, 300);
+        let window =
+            SigningWindow::over(key(1_030), 1_000, 300).expect("a live credential opens a window");
         assert!(window.covers(DispatchCompletionBound::Within(Duration::from_secs(20))));
     }
 
@@ -203,7 +260,8 @@ mod tests {
     /// told.
     #[test]
     fn a_plane_that_states_no_bound_is_refused_however_long_the_credential_lives() {
-        let window = SigningWindow::over(key(i64::MAX - 1), 1_000, 300);
+        let window = SigningWindow::over(key(i64::MAX - 1), 1_000, 300)
+            .expect("a live credential opens a window");
         assert!(!window.covers(DispatchCompletionBound::Unstated));
     }
 
@@ -216,7 +274,8 @@ mod tests {
     fn a_sub_second_budget_is_measured_at_the_second_it_can_still_be_running_in() {
         // `expires` is 1_030; the verifier admits while `now < expires`, so 1_029 is
         // admissible and 1_030 is not.
-        let window = SigningWindow::over(key(1_030), 1_000, 300);
+        let window =
+            SigningWindow::over(key(1_030), 1_000, 300).expect("a live credential opens a window");
         assert!(
             window.covers(DispatchCompletionBound::Within(Duration::from_millis(
                 28_500
@@ -237,7 +296,8 @@ mod tests {
     /// floor.
     #[test]
     fn admissibility_ends_at_expires_exactly_as_the_floor_says_it_does() {
-        let window = SigningWindow::over(key(1_030), 1_000, 300);
+        let window =
+            SigningWindow::over(key(1_030), 1_000, 300).expect("a live credential opens a window");
         assert!(window.admissible_at(1_029));
         assert!(!window.admissible_at(1_030));
         assert!(!window.admissible_at(1_031));

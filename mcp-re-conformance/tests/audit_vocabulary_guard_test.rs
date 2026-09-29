@@ -551,6 +551,10 @@ const CRATE_SOURCE_TREES: &[(&str, &str)] = &[
     ("mcp-re-http-profile", "MCP_RE_SRC_TREE_HTTP_PROFILE"),
     ("mcp-re-demo", "MCP_RE_SRC_TREE_DEMO"),
     ("mcp-re-test-paths", "MCP_RE_SRC_TREE_TEST_PATHS"),
+    (
+        "mcp-re-operator-display",
+        "MCP_RE_SRC_TREE_OPERATOR_DISPLAY",
+    ),
 ];
 
 /// Workspace members with no `src/` tree at all. Named rather than inferred: a crate that

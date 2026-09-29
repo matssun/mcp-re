@@ -178,11 +178,7 @@ fn signed_request(block: &HttpRequestEvidenceBlock, nonce: &str) -> (HttpRequest
 }
 
 fn matching_ctx() -> RetainedContinuation<'static> {
-    RetainedContinuation {
-        previous_request_base: PREV_BASE,
-        input_required_response_base: IRR_BASE,
-        request_state: REQ_STATE,
-    }
+    RetainedContinuation::from_correlation(PREV_BASE, IRR_BASE, REQ_STATE)
 }
 
 /// A shared/durable replay cache stand-in so the integrated path runs under the
@@ -236,7 +232,10 @@ fn full_exchange_activates_all_blocks() {
     let cache = strict_cache();
     let outcome = dispatch_request(&verified, &cache, Some(matching_ctx()), &strict_cfg())
         .expect("dispatch admits");
-    assert!(outcome.continuation_verified, "continuation must be active");
+    assert!(
+        outcome.continuation_verified(),
+        "continuation must be active"
+    );
 
     // Response body block is active: server_signer + request_evidence bound.
     let mut rsp = HttpResponse {
@@ -415,10 +414,8 @@ fn continuation_mismatch_fails_in_integrated_path() {
     let cache = strict_cache();
 
     // Tampered requestState against the retained bases.
-    let bad_ctx = RetainedContinuation {
-        request_state: b"tampered-request-state",
-        ..matching_ctx()
-    };
+    let bad_ctx =
+        RetainedContinuation::from_correlation(PREV_BASE, IRR_BASE, b"tampered-request-state");
     let err = dispatch_request(&verified, &cache, Some(bad_ctx), &strict_cfg()).unwrap_err();
     assert_eq!(
         err,

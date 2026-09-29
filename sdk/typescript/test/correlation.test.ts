@@ -275,6 +275,70 @@ describe("an input-required result associates without consuming", () => {
     expect(answer.body.toString()).toContain("tools/call");
   });
 
+  it("refuses a partially supplied continuation instead of dropping it", () => {
+    // r12 R12-1455/1456/1466 — the five handles used to be folded in under one
+    // `if let (Some, Some, Some, Some, Some)`. With one to four present the `if let`
+    // did not fire, the request was signed and returned carrying NO continuation and
+    // NO error, and a server processed it as an unrelated new call — so a caller bug
+    // silently converted an approved-continuation flow into an UNapproved fresh request.
+    const full = ["sha-256", "cHJldg", "sha-256", "aXJy", "opaque-state"];
+    const answer = (handles: (string | null)[]): void => {
+      signRequest(
+        SEED,
+        "key-1",
+        "2",
+        "tools/call",
+        "{}",
+        "https://proxy.internal:8600/mcp",
+        "did:example:server-1",
+        null,
+        "dpop-token",
+        "nonce-corr-partial-128bit",
+        CREATED,
+        EXPIRES,
+        handles[0],
+        handles[1],
+        handles[2],
+        handles[3],
+        handles[4],
+      );
+    };
+    // Every proper non-empty subset of the five, not a sampled one: the old `if let`
+    // fell through on each of the 30 identically.
+    for (let mask = 1; mask < 31; mask += 1) {
+      const given = full.map((h, i) => ((mask & (1 << i)) !== 0 ? h : null));
+      const supplied = given.filter((h) => h !== null).length;
+      expect(() => answer(given)).toThrow(new RegExp(`${supplied} of 5`));
+    }
+    // POSITIVE CONTROL: all five still sign, so this is not satisfied by a signer that
+    // refuses every answer leg. (All-absent is covered by `sign()` throughout the file.)
+    expect(() => answer(full)).not.toThrow();
+  });
+
+  it("refuses an empty dpop token rather than binding over nothing", () => {
+    // r12 R12-1460/1461/1462 — measured unrefused ANYWHERE before this: an empty token
+    // minted a binding whose digest is the digest of zero bytes beside a signed
+    // `Authorization: Bearer ` header carrying no credential.
+    expect(() =>
+      signRequest(
+        SEED,
+        "key-1",
+        "1",
+        "tools/list",
+        "{}",
+        "https://proxy.internal:8600/mcp",
+        "did:example:server-1",
+        null,
+        "",
+        "nonce-corr-empty-dpop-128b",
+        CREATED,
+        EXPIRES,
+      ),
+    ).toThrow(/empty/);
+    // POSITIVE CONTROL: an ordinary token still signs.
+    expect(sign().body.length).toBeGreaterThan(0);
+  });
+
   it("still lets the terminal answer take the open leg", () => {
     const store = new CorrelationStore();
     const cid = store.record(sign(), ARGS());

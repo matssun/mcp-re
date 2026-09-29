@@ -330,12 +330,21 @@ fn spawn(snapshot: Arc<ServerConfigSnapshot>, revocation: Arc<SharedClientRevoca
                 client_revocation: Some(revocation),
                 ..Default::default()
             };
+            // The handshake bound comes from the pool that built this runtime (4 workers),
+            // never from a constant that never saw the depth.
+            let handshake_bound = mcp_re_proxy::async_fleet::CorePool::for_core(
+                mcp_re_proxy::async_fleet::ShardDepth::stated(4),
+                &options,
+            )
+            .expect("a stated depth above one is a shape every custody has")
+            .handshake_bound();
             async_serve::serve(
                 listener,
                 snapshot,
                 Arc::new(options),
                 Arc::new(handler),
                 shutdown_srv,
+                handshake_bound,
             )
             .await;
         });

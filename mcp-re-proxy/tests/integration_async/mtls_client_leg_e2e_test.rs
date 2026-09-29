@@ -328,6 +328,14 @@ fn spawn_server(server_ca: &Ca, client_ca: &Ca) -> RunningServer {
                     let proxy = Arc::clone(&proxy);
                     Box::pin(async move { proxy.handle(req, NOW).await })
                 };
+            // The handshake bound comes from the pool that built this runtime (2 workers),
+            // never from a constant that never saw the depth.
+            let handshake_bound = mcp_re_proxy::async_fleet::CorePool::for_core(
+                mcp_re_proxy::async_fleet::ShardDepth::stated(2),
+                &options,
+            )
+            .expect("a stated depth above one is a shape every custody has")
+            .handshake_bound();
             async_serve::serve(
                 listener,
                 Arc::new(mcp_re_proxy::config_snapshot::ServerConfigSnapshot::new(
@@ -336,6 +344,7 @@ fn spawn_server(server_ca: &Ca, client_ca: &Ca) -> RunningServer {
                 Arc::new(options),
                 Arc::new(handler),
                 shutdown_srv,
+                handshake_bound,
             )
             .await;
         });

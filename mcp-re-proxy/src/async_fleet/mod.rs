@@ -60,7 +60,11 @@ use crate::async_serve::AsyncRequestHandler;
 use crate::tls::ServerOptions;
 
 mod core_runtime;
-use core_runtime::build_core_runtime;
+mod shard_depth;
+pub use core_runtime::CorePool;
+pub use core_runtime::HandshakeBound;
+pub use shard_depth::DelegatedTlsDepthRefusal;
+pub use shard_depth::ShardDepth;
 
 /// The `listen(2)` backlog for each per-core `SO_REUSEPORT` listener. A generous
 /// default: the kernel bounds it to `net.core.somaxconn` anyway, and admission
@@ -78,7 +82,12 @@ pub struct FleetConfig {
     /// "auto" — one per cpu (see [`resolve_topology`]).
     pub cores: usize,
     /// Tokio worker threads inside EACH shard's runtime. `0` means auto (`min(8, cpus)`);
-    /// an explicit `1` restores the single-threaded share-nothing runtime.
+    /// an explicit `1` asks for the single-threaded share-nothing runtime.
+    ///
+    /// `0` AND `1` ARE DIFFERENT REQUESTS past the point [`resolve_topology`] fills one in
+    /// ([`ShardDepth`]): `1` is a choice, `0` declines to make one, and under delegated TLS
+    /// custody that decides between a startup refusal and a derived depth. The four cases
+    /// are [`CorePool::for_core`]'s — the other half of each is the signing custody.
     ///
     /// Depth parallelises POLLING; shards parallelise `accept`. Which dominates depends
     /// on the connection profile, so neither substitutes for the other — see
@@ -194,6 +203,17 @@ where
     // cores (each core enforces its own share; no shared global semaphore).
     let options = apply_global_admission(options, cfg.max_in_flight_total, cores);
 
+    // The per-core runtime shape and the blocking-handshake bound that shape supports,
+    // decided once from the resolved depth and this deployment's signing custody. Every
+    // core of a fleet is the same shape, so the decision is taken here and not per core.
+    // BEFORE THE FIRST BIND and before any runtime is built (Owner Ruling 7). That
+    // `serve_fleet` fails only before a listener exists is what `materialized_runtime` reads
+    // to decide which lifecycle events happened, so a refusal after this line would not just
+    // be worse advice — it would be a false event.
+    let pool = CorePool::for_core(workers_per_shard, &options)
+        .map_err(|refusal| std::io::Error::new(std::io::ErrorKind::InvalidInput, refusal))?;
+    let handshake_bound = pool.handshake_bound();
+
     // Bind the first listener to resolve the concrete port (cfg.addr may be `:0`),
     // then bind the remaining listeners to that resolved address so the whole fleet
     // shares ONE port via SO_REUSEPORT.
@@ -211,7 +231,7 @@ where
         // failure. Neither is an invariant of this program — `build` allocates threads and
         // an event loop, `set_nonblocking` is an `fcntl` — and a core the OS declines must
         // not leave the fleet reporting a successful bind with one fewer server behind it.
-        let runtime = build_core_runtime(core_index, workers_per_shard, &options)?;
+        let runtime = pool.build_runtime(core_index)?;
         listener.set_nonblocking(true)?;
         let config = Arc::clone(&config);
         let options = Arc::clone(&options);
@@ -225,23 +245,8 @@ where
                 // failure to pin is ignored (logged nowhere hot).
                 pin_current_thread_to_core(core_index);
 
-                // One current-thread runtime per core is the share-nothing default
-                // (ADR-MCPRE-051 §1): no work stealing, no cross-core hot-path state.
-                //
-                // DELEGATED TLS custody breaks the assumption that runtime holds. The
-                // handshake signature is produced by rustls' SYNCHRONOUS
-                // `Signer::sign`, which on that path is a blocking KMS round trip or a
-                // PKCS#11 `C_Sign`. On a current-thread runtime one such call freezes
-                // the core outright — its accept loop, its keep-alive connections and
-                // every in-flight signed request — for the duration, and no timer can
-                // preempt it because the future never yields. Any peer opening
-                // connections triggers it, so it is a trivially-reachable DoS.
-                //
-                // Those deployments get a small worker pool per core instead, so a
-                // stalled signature costs one worker rather than a whole core. The
-                // share-nothing default is unchanged for the exported-key path, where
-                // signing is in-memory and never blocks.
-                // See `build_core_runtime` for which runtime this core got and why.
+                // `CorePool` decided which runtime this core got and how much blocking
+                // handshake work it may admit onto it; both are stated there, once.
                 runtime.block_on(async move {
                     // Class A. `from_std` needs a non-blocking socket — established
                     // before this thread was spawned — and a runtime context, which is
@@ -251,7 +256,15 @@ where
                     #[allow(clippy::expect_used)]
                     let listener = tokio::net::TcpListener::from_std(listener)
                         .expect("the listener registers with the runtime running it");
-                    serve(listener, config, options, handler, shutdown).await;
+                    serve(
+                        listener,
+                        config,
+                        options,
+                        handler,
+                        shutdown,
+                        handshake_bound,
+                    )
+                    .await;
                 });
             })?;
         workers.push(worker);
@@ -311,16 +324,6 @@ pub fn derived_per_core_ceiling(
     }
 }
 
-/// Worker threads per core when the TLS handshake signature can block.
-///
-/// Sized so a handful of concurrent stalled handshakes still leaves the core serving.
-/// It is not a throughput knob: on the exported-key path the runtime stays
-/// single-threaded, and raising this would not make a wedged token any less wedged —
-/// it only widens the window before the pool is exhausted.
-/// `pub(crate)` so `async_serve`'s handshake bound can be checked AGAINST it rather than
-/// against a copy of its value. The two constants are one decision.
-pub(crate) const DELEGATED_TLS_WORKERS_PER_CORE: usize = 4;
-
 /// Resolve the configured core count: `0` → [`std::thread::available_parallelism`]
 /// (min 1), otherwise the configured value.
 pub fn resolve_core_count(configured: usize) -> usize {
@@ -367,7 +370,14 @@ const DEFAULT_MAX_WORKERS_PER_SHARD: usize = 8;
 /// This remains a STARTING POINT, not a claim of optimality: cache domains, SMT,
 /// P/E-core asymmetry and epoll-vs-kqueue wakeups all move the optimum, and so does the
 /// connection profile. Measure a given host with `scripts/runtime_topology_sweep.sh`.
-pub fn resolve_topology(configured_shards: usize, configured_workers: usize) -> (usize, usize) {
+///
+/// The depth comes back as a [`ShardDepth`], not a number: this is the function that spends
+/// `0 = auto`, and a `usize` return would collapse an explicit `1` and a single-cpu host's
+/// derived `1` — the difference the delegated-TLS refusal downstream turns on.
+pub fn resolve_topology(
+    configured_shards: usize,
+    configured_workers: usize,
+) -> (usize, ShardDepth) {
     let available = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1);
@@ -377,9 +387,9 @@ pub fn resolve_topology(configured_shards: usize, configured_workers: usize) -> 
         available
     };
     let workers = if configured_workers != 0 {
-        configured_workers
+        ShardDepth::stated(configured_workers)
     } else {
-        DEFAULT_MAX_WORKERS_PER_SHARD.min(available).max(1)
+        ShardDepth::derived(DEFAULT_MAX_WORKERS_PER_SHARD.min(available).max(1))
     };
     (shards, workers)
 }
@@ -566,6 +576,101 @@ fn online_cpu_count() -> usize {
 }
 
 #[cfg(test)]
+mod refusal_order_tests {
+    use super::*;
+    use rustls::crypto::ring;
+    use rustls::pki_types::PrivateKeyDer;
+    use rustls::pki_types::PrivatePkcs8KeyDer;
+
+    /// A self-signed server-only config built in-process. The fleet never reaches a
+    /// handshake in these tests — it exists because `serve_fleet` takes a snapshot.
+    fn dummy_snapshot() -> Arc<crate::config_snapshot::ServerConfigSnapshot> {
+        let key = rcgen::KeyPair::generate().expect("key");
+        let params = rcgen::CertificateParams::new(vec!["localhost".to_string()]).expect("params");
+        let cert = params.self_signed(&key).expect("self-signed");
+        let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
+        let config =
+            rustls::ServerConfig::builder_with_provider(Arc::new(ring::default_provider()))
+                .with_safe_default_protocol_versions()
+                .expect("versions")
+                .with_no_client_auth()
+                .with_single_cert(vec![cert.der().clone()], key_der)
+                .expect("server config");
+        Arc::new(crate::config_snapshot::ServerConfigSnapshot::new(Arc::new(
+            config,
+        )))
+    }
+
+    /// An address no host can bind, so a run that reaches the listener loop FAILS THERE
+    /// with an OS error. That is what makes the ordering observable: the two failures are
+    /// distinguishable, and only one of them can come first.
+    const UNBINDABLE: &str = "240.0.0.1:1";
+
+    fn start(workers_per_shard: usize, tls_signing_may_block: bool) -> std::io::Error {
+        let options = Arc::new(ServerOptions {
+            tls_signing_may_block,
+            ..Default::default()
+        });
+        serve_fleet(
+            FleetConfig {
+                addr: UNBINDABLE.parse().expect("a literal address"),
+                cores: 1,
+                workers_per_shard,
+                listen_backlog: DEFAULT_LISTEN_BACKLOG,
+                max_in_flight_total: None,
+            },
+            dummy_snapshot(),
+            options,
+            |_core| {
+                Arc::new(|_req: crate::async_serve::ServedHttpRequest| -> crate::async_serve::HandlerResponseFuture {
+                    unreachable!("no connection is ever accepted in these tests")
+                })
+            },
+            Arc::new(AtomicBool::new(true)),
+        )
+        .err()
+        .expect("an unbindable address never serves")
+    }
+
+    /// OWNER RULING 7, END TO END: the refused pair is refused BEFORE the serving fleet is
+    /// established.
+    ///
+    /// LOAD-BEARING, and the reason the address is unbindable: if the listener loop ran
+    /// first this call would still fail, just for the other reason. Asserting only that it
+    /// fails would pass on the defect. What is asserted is WHICH failure came back —
+    /// `InvalidInput` naming the flag, not the OS refusing the address.
+    #[test]
+    fn the_delegated_tls_depth_refusal_precedes_the_first_bind() {
+        let refusal = start(1, true);
+        assert_eq!(
+            refusal.kind(),
+            std::io::ErrorKind::InvalidInput,
+            "a configuration refusal, not an OS failure: {refusal}"
+        );
+        let text = refusal.to_string();
+        assert!(text.contains("--workers-per-shard"), "{text}");
+        assert!(text.contains("DELEGATED"), "{text}");
+    }
+
+    /// THE CONTROL THAT MAKES THE ONE ABOVE MEAN SOMETHING: the same unbindable address
+    /// under an ADMITTED configuration gets the OS failure, because the run reaches the
+    /// listener loop. Without this, a `serve_fleet` that refused every configuration would
+    /// satisfy the test above.
+    #[test]
+    fn an_admitted_configuration_reaches_the_listener_and_fails_there() {
+        for (workers, may_block) in [(1, false), (2, true), (0, true)] {
+            let failure = start(workers, may_block);
+            assert_ne!(
+                failure.kind(),
+                std::io::ErrorKind::InvalidInput,
+                "{workers}/{may_block}: this configuration has a safe shape and must reach \
+                 the bind: {failure}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
 mod topology_tests {
     use super::*;
 
@@ -573,11 +678,32 @@ mod topology_tests {
     /// measured their own hardware must not be second-guessed.
     #[test]
     fn explicit_topology_is_never_overridden() {
-        assert_eq!(resolve_topology(4, 4), (4, 4));
-        assert_eq!(resolve_topology(1, 16), (1, 16));
+        assert_eq!(resolve_topology(4, 4), (4, ShardDepth::stated(4)));
+        assert_eq!(resolve_topology(1, 16), (1, ShardDepth::stated(16)));
         // An explicit 1 is how the old single-threaded share-nothing shard is restored,
         // so it must survive as 1 and not be auto-filled to the default depth.
-        assert_eq!(resolve_topology(8, 1), (8, 1));
+        assert_eq!(resolve_topology(8, 1), (8, ShardDepth::stated(1)));
+    }
+
+    /// OWNER RULING 7, at the resolver: a configured depth comes back as the OPERATOR'S
+    /// and an auto-filled one comes back as the HOST'S, and the two are distinguishable
+    /// afterwards. This is the fact `CorePool::for_core` refuses on — collapsing both to a
+    /// number here is the defect, one layer before it becomes visible.
+    #[test]
+    fn a_resolved_depth_says_whether_the_operator_or_the_host_chose_it() {
+        let (_, stated) = resolve_topology(0, 1);
+        assert!(
+            stated.is_operator_stated(),
+            "--workers-per-shard 1 is a request, not a default"
+        );
+        assert_eq!(stated.get(), 1);
+
+        let (_, derived) = resolve_topology(0, 0);
+        assert!(
+            !derived.is_operator_stated(),
+            "an absent flag is the operator declining to choose"
+        );
+        assert!(derived.get() >= 1);
     }
 
     /// The default keeps ONE SHARD PER CPU and adds depth on top; it never trades shards
@@ -621,5 +747,18 @@ mod topology_tests {
     /// suite.
     fn auto_for(cpus: usize) -> (usize, usize) {
         (cpus, DEFAULT_MAX_WORKERS_PER_SHARD.min(cpus).max(1))
+    }
+
+    /// `auto_for` models `resolve_topology`'s auto arm, so it has to be held to it: the
+    /// arm must produce a DERIVED depth of exactly that number, or the expectations above
+    /// are about a formula nothing runs.
+    #[test]
+    fn the_auto_model_matches_the_resolver_on_this_host() {
+        let available = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        let (shards, depth) = resolve_topology(0, 0);
+        assert_eq!((shards, depth.get()), auto_for(available));
+        assert!(!depth.is_operator_stated());
     }
 }

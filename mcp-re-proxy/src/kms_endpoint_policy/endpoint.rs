@@ -29,6 +29,7 @@
 
 use std::time::Duration;
 
+use crate::deployment_request::RedactedLocator;
 use crate::outbound_fetch::{CredentialEgress, VettedDestination};
 
 /// A KMS/STS endpoint the rule admitted, and the authority a request to it reaches.
@@ -64,8 +65,15 @@ impl KmsEndpoint {
         let authority = super::kms_endpoint_authority(value)?;
         #[cfg(not(feature = "aws_kms_keysource"))]
         super::kms_endpoint_authority(value)?;
-        let destination = VettedDestination::operator_configured(value)
-            .ok_or_else(|| format!("has a scheme no outbound fetch may use (got {value:?})"))?;
+        // Named through the projection, never as configured: this value is the same
+        // operator input the parent rule refuses, and a well-formed URL is exactly the
+        // shape that carries a credential.
+        let destination = VettedDestination::operator_configured(value).ok_or_else(|| {
+            format!(
+                "has a scheme no outbound fetch may use (got {})",
+                RedactedLocator::of(value)
+            )
+        })?;
         Ok(KmsEndpoint {
             destination,
             #[cfg(feature = "aws_kms_keysource")]

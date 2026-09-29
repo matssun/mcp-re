@@ -77,6 +77,9 @@ for f in Cargo.toml */Cargo.toml; do
   stage "$f" "s/^version = \"${OLD//./\\.}\"\$/version = \"$NEW\"/"
 done
 
+# 2b. The version Bazel gives every Rust target as CARGO_PKG_VERSION.
+stage bazel/version.bzl "s/^WORKSPACE_VERSION = \"${OLD//./\\.}\"\$/WORKSPACE_VERSION = \"$NEW\"/"
+
 # 3. The deploy/runbook surface: image tags only.
 for f in "${TARGETED[@]}"; do
   stage "$f" "s/(mcp-re-[a-z-]+):${OLD//./\\.}/\\1:$NEW/g"

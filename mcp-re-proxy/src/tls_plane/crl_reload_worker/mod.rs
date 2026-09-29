@@ -31,12 +31,9 @@ use supervision::spawn_crl_reload_task;
 /// Start the CRL reload worker the posture calls for, and nothing otherwise.
 ///
 /// Only the `Reloading` posture starts one, and the cadence comes from that variant rather
-/// than from an `Option` beside it. There was a branch here for a cadence with NO CRLs,
-/// which printed "no CRL reload scheduled" and carried on; it is gone because it is now
-/// unreachable — that combination is refused at the boundary (CF-04: a cadence for
-/// re-reading an empty set states a control the deployment does not have). The same shape
-/// as `ReplayPlan::Memory` — a branch that survived because nothing had ever asked whether
-/// a configuration could reach it.
+/// than from an `Option` beside it. The currency is created here, so a cadence is claimed
+/// only where a worker was spawned.
+// allow: the task is built here because its currency is, and only for a scheduled cadence.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn start_reload_worker(
     deployment: Arc<std::sync::atomic::AtomicBool>,
@@ -47,32 +44,37 @@ pub(super) fn start_reload_worker(
     reload_crl_paths: Vec<String>,
     revocation: Option<Arc<client_revocation::SharedClientRevocation>>,
     rebuild_state: &Arc<TlsListenerSecurityState>,
-    currency: &Arc<ClientRevocationCurrency>,
-) -> WorkerSet {
+    crls: ClientCrlEvidence,
+) -> (WorkerSet, Arc<ClientRevocationCurrency>) {
     let mut workers = WorkerSet::new(deployment);
-    if let Some(cadence_secs) = plan.client_revocation.reload_cadence_secs() {
-        let custody = material.label();
-        spawn_crl_reload_task(
-            &mut workers,
-            CrlReloadTask {
-                snapshot: Arc::clone(snapshot),
-                server_chain: reload_chain,
-                material,
-                crl_paths: reload_crl_paths,
-                interval_secs: cadence_secs,
-                revocation: revocation.clone(),
-                rebuild_state: Arc::clone(rebuild_state),
-                currency: Arc::clone(currency),
-            },
-            plan.clone(),
+    let Some(cadence_secs) = plan.client_revocation.reload_cadence_secs() else {
+        return (
+            workers,
+            Arc::new(ClientRevocationCurrency::new(crls, false)),
         );
-        eprintln!(
-            "mcp-re-proxy: in-process CRL hot-reload enabled (every {cadence_secs}s, \
-             {custody} TLS custody; refreshed --client-crl honored without restart; \
-             failed reload keeps last-good)"
-        );
-    }
-    workers
+    };
+    let currency = Arc::new(ClientRevocationCurrency::new(crls, true));
+    let custody = material.label();
+    spawn_crl_reload_task(
+        &mut workers,
+        CrlReloadTask {
+            snapshot: Arc::clone(snapshot),
+            server_chain: reload_chain,
+            material,
+            crl_paths: reload_crl_paths,
+            interval_secs: cadence_secs,
+            revocation: revocation.clone(),
+            rebuild_state: Arc::clone(rebuild_state),
+            currency: Arc::clone(&currency),
+        },
+        plan.clone(),
+    );
+    eprintln!(
+        "mcp-re-proxy: in-process CRL hot-reload enabled (every {cadence_secs}s, \
+         {custody} TLS custody; refreshed --client-crl honored without restart; \
+         failed reload keeps last-good)"
+    );
+    (workers, currency)
 }
 
 pub(super) struct CrlReloadTask {
@@ -105,8 +107,10 @@ pub(super) fn crl_reload_loop(task: CrlReloadTask, halt: &crate::managed_worker:
     let mut consecutive_failures: u32 = 0;
     loop {
         // Naps in small increments, so a halt is observed within one increment rather than
-        // after a whole reload interval.
+        // after a whole reload interval. A halt ends re-reading while the plane still
+        // serves, so the cadence is retracted here.
         if halt.sleep(Duration::from_secs(task.interval_secs)) {
+            task.currency.mark_stopped();
             return;
         }
         let (outcome, installed) = attempt_reload(&task);
@@ -134,20 +138,14 @@ fn attempt_reload(
         // swapped in, after which every new handshake against that issuer failed closed and
         // this worker reported success. Building the evidence FIRST is what makes that
         // unreachable rather than merely checked: there is no inhabitant to install.
-        let evidence = ClientCrlEvidence::from_checked(&crls, now_unix)?;
+        let evidence = ClientCrlEvidence::from_checked(crls, now_unix)?;
         // The per-request index from the SAME bytes, BEFORE the verifier is rebuilt, so a
         // malformed CRL keeps last-good on both rather than swapping one and failing the
         // other.
-        let index = client_revocation::ClientRevocationIndex::from_crl_ders(
-            &crls
-                .iter()
-                .map(|crl| crl.as_ref().to_vec())
-                .collect::<Vec<_>>(),
-        )
-        .map_err(|e| e.to_string())?;
+        let index = evidence.revocation_index()?;
         let rebuilt =
             task.material
-                .rebuild(task.server_chain.clone(), crls, &task.rebuild_state)?;
+                .rebuild(task.server_chain.clone(), &evidence, &task.rebuild_state)?;
         if let Some(revocation) = task.revocation.as_ref() {
             revocation.store(index);
         }
@@ -195,5 +193,146 @@ fn report(
             );
             failures
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client_revocation::{ClientRevocationIndex, SharedClientRevocation};
+    use crate::config_snapshot::{ReloadOutcome, ServerConfigSnapshot};
+    use crate::tls_plane::revocation_currency::CrlMaintenance;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    fn task(
+        server_chain: Vec<rustls_pki_types::CertificateDer<'static>>,
+        crl_paths: Vec<String>,
+        revocation: Option<Arc<client_revocation::SharedClientRevocation>>,
+        currency: Arc<ClientRevocationCurrency>,
+    ) -> CrlReloadTask {
+        let key = rcgen::KeyPair::generate().expect("server key");
+        let cert = rcgen::CertificateParams::new(vec!["localhost".to_string()])
+            .expect("server params")
+            .self_signed(&key)
+            .expect("server cert");
+        let chain = vec![cert.der().clone()];
+        let key_der = || {
+            rustls_pki_types::PrivateKeyDer::from(rustls_pki_types::PrivatePkcs8KeyDer::from(
+                key.serialize_der(),
+            ))
+        };
+        let rebuild_state = Arc::new(TlsListenerSecurityState::new(chain.clone()));
+        let initial = rebuild_state
+            .build_exported_key_config(chain.clone(), key_der(), Vec::new())
+            .expect("initial config");
+        CrlReloadTask {
+            snapshot: Arc::new(ServerConfigSnapshot::new(Arc::new(initial))),
+            server_chain: if server_chain.is_empty() {
+                server_chain
+            } else {
+                chain
+            },
+            material: TlsKeyMaterial::Exported(key_der()),
+            crl_paths,
+            interval_secs: 1,
+            revocation,
+            rebuild_state,
+            currency,
+        }
+    }
+
+    /// A fresh CRL on disk under a unique name; the caller removes it.
+    fn crl_file(tag: &str) -> String {
+        let path = std::env::temp_dir().join(format!(
+            "crl-reload-worker-{tag}-{}.der",
+            std::process::id()
+        ));
+        let der = crate::client_crl_publication::test_support::crl_with_next_update();
+        std::fs::write(&path, der.as_ref()).expect("write crl");
+        path.to_string_lossy().into_owned()
+    }
+
+    fn chain_for_task() -> Vec<rustls_pki_types::CertificateDer<'static>> {
+        let key = rcgen::KeyPair::generate().expect("key");
+        let cert = rcgen::CertificateParams::new(vec!["localhost".to_string()])
+            .expect("params")
+            .self_signed(&key)
+            .expect("cert");
+        vec![cert.der().clone()]
+    }
+
+    #[test]
+    fn a_halted_reload_loop_retracts_the_cadence_it_advertised() {
+        let deployment = Arc::new(AtomicBool::new(false));
+        let workers = WorkerSet::new(Arc::clone(&deployment));
+        let halt = workers.halt();
+        let currency = Arc::new(ClientRevocationCurrency::new(
+            ClientCrlEvidence::default(),
+            true,
+        ));
+        assert_eq!(
+            currency.maintenance(),
+            crate::tls_plane::revocation_currency::CrlMaintenance::Maintained
+        );
+        let t = task(chain_for_task(), Vec::new(), None, Arc::clone(&currency));
+
+        deployment.store(true, Ordering::SeqCst);
+        crl_reload_loop(t, &halt);
+
+        assert_eq!(currency.maintenance(), CrlMaintenance::Stopped);
+    }
+
+    #[test]
+    fn a_successful_reload_republishes_the_evidence_it_installed() {
+        let path = crl_file("ok");
+        let currency = Arc::new(ClientRevocationCurrency::new(
+            ClientCrlEvidence::default(),
+            true,
+        ));
+        currency.mark_degraded();
+        let revocation = Arc::new(SharedClientRevocation::new(ClientRevocationIndex::empty()));
+        let t = task(
+            chain_for_task(),
+            vec![path.clone()],
+            Some(Arc::clone(&revocation)),
+            Arc::clone(&currency),
+        );
+
+        let (outcome, installed) = attempt_reload(&t);
+        assert!(matches!(outcome, ReloadOutcome::Swapped));
+        let failures = report(&currency, outcome, installed, 1);
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(failures, 0);
+        assert!(!currency.evidence().is_empty());
+        assert_eq!(currency.maintenance(), CrlMaintenance::Maintained);
+        assert!(!revocation.load().is_empty());
+    }
+
+    #[test]
+    fn a_failed_rebuild_keeps_last_good_index_and_is_degraded_not_stopped() {
+        let path = crl_file("bad-rebuild");
+        let currency = Arc::new(ClientRevocationCurrency::new(
+            ClientCrlEvidence::default(),
+            true,
+        ));
+        let revocation = Arc::new(SharedClientRevocation::new(ClientRevocationIndex::empty()));
+        let before = revocation.load();
+        let t = task(
+            Vec::new(),
+            vec![path.clone()],
+            Some(Arc::clone(&revocation)),
+            Arc::clone(&currency),
+        );
+
+        let (outcome, installed) = attempt_reload(&t);
+        assert!(matches!(outcome, ReloadOutcome::KeptLastGood { .. }));
+        let failures = report(&currency, outcome, installed, 0);
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(failures, 1);
+        assert!(Arc::ptr_eq(&before, &revocation.load()));
+        assert!(currency.evidence().is_empty());
+        assert_eq!(currency.maintenance(), CrlMaintenance::Degraded);
     }
 }

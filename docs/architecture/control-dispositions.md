@@ -310,6 +310,8 @@ about shape and the disposition becomes `new-proposition`. For the firewall the 
 sharper still — a Core verdict that depends on something the Core reads from outside its
 inputs. On that day purity is a runtime property and this is the wrong family.
 
+**Added 2026-09-29 (r12 remediation residue):** `mcp-re-http-profile` `doc#dispatch::retained_continuation::RetainedContinuation` — the `#[non_exhaustive]` seal it documents is a shape rule: `from_correlation` is public over the same three slices, so a weakening changes what can be constructed by no value.
+
 ## ND-009 — data-structure API robustness with no security proposition
 
 **Covers:** `sdk/python/tests/test_correlation.py::TestRecordAndTake::test_iterating_yields_the_outstanding_requests`,
@@ -337,6 +339,8 @@ failure would make it false.
 
 **What would move a control out.** A control here that exercises the store on a path a
 remote peer can drive. These three are driven by the test, not by a reply.
+
+**Added 2026-09-29 (r12 remediation residue):** `mcp-re-proxy` `lib#audit_sink::tests::a_poisoned_collector_still_records_and_reports_what_it_holds` — `CollectingAuditSink` is a harness sink that no deployment constructs; and `lib#audit_sink::writer::tests::an_unpaired_line_does_not_wrap_the_occupancy_counter` — an unpaired `Line` is unreachable because `offer()` reserves before `try_send`. Should a producer ever send a `Line` without `reserve_slot`, the second moves to `proxy.audit_delivery`.
 
 ## ND-010 — a `compile_fail` doctest superseded by a structural probe
 
@@ -465,6 +469,8 @@ words: *a demo runner, not a control*.
 **What would move a control out.** A fixture that becomes a conformance vector. Then its
 pinning is NP-080's subject and it is claimed there.
 
+**Added 2026-09-29 (r12 remediation residue):** the in-crate `mcp-re-demo` controls `lib#demo_fixture_files::tests::write_files_creates_an_owner_only_directory_and_refuses_an_existing_one`, `lib#demo_fixtures::tests::generate_refuses_a_mismatched_identity_equal_to_the_subject` and `lib#demo_fixtures::tests::generate_refuses_equal_signer_and_server_seeds` — the same demo material, measured from inside the crate.
+
 ## ND-014 — an inert measurement apparatus no production path reads
 
 **Covers:** `mcp-re-proxy` `lib#stage_timers::tests::` (7):
@@ -570,6 +576,23 @@ the proposition failed, and the unit that would hold it. **None is registered ag
 existing unit**, because §5 forbids widening a unit to swallow a proposition it does not
 state — and in every one of these cases the nearby unit's proposition is about something
 else.
+
+## ND-015 — a reachability control in a feature lane no owning unit declares
+
+**Covers:** `mcp-re-proxy` `lib#replay_plane::materialized::tests::a_build_linking_cpstore_etcd_reaches_the_linearizable_state`.
+**Recorded:** 2026-09-29, Owner Ruling 9 (r12 remediation).
+
+A positive control that a build linking `cpstore_etcd` reaches the linearizable replay state.
+
+**Why it is not evidence.** Owner Ruling 9: the control passes, and passing is all it does. It
+compiles only under `cpstore_etcd`; `proxy.replay_materialization` declares no `test_features`
+for that lane, and no mutation probe in that lane can turn it red. It shows the linked build does
+not fall over — it reaches a state — not that the tier cannot be made to lie. The ruling forbids
+parking it in assurance debt to satisfy the census, and offers this disposition as the alternative
+to a real owner.
+
+**What would move a control out.** An honest `cpstore_etcd` verification owner plus an independent
+falsifier that can go red in that lane (Ruling 9 option 1). The control then registers there.
 
 ## NP-001 — the SDK runtime support claim
 
@@ -1610,7 +1633,7 @@ states it.
 **Packet:** `verification/reviews/packets/adr069-np-048-ratification-2026-09-20.md`.
 ## NP-046 — no durable write blocks a runtime worker
 
-**Control:** `mcp-re-proxy/src/transparency/durability.rs::the_fsync_does_not_run_on_the_runtime_worker`.
+**Controls:** `mcp-re-proxy/src/transparency/durability.rs` (2) — `the_fsync_does_not_run_on_the_runtime_worker`, and `the_write_does_not_run_on_the_blocking_pool` (added 2026-09-29), which shows the durable write runs on the dedicated writer thread and not on the runtime's blocking pool either.
 **Statement.** *The fsync that makes a retention record durable does not run on a runtime
 worker.*
 **If false.** A durable write stalls the async runtime, and the proxy stops serving while it
@@ -1676,9 +1699,11 @@ registry edit.
 
 ## NP-054 — key-file access policy
 
-**Controls:** `config_state/key_file_access.rs` (5), and — added in batch 12 —
-`mcp-re-proxy/src/app.rs` (10): the composition root applying the policy to every key file
-it actually opens. A world-readable key file is refused; a group-readable one is refused
+**Controls:** `config_state/key_file_access.rs` (5), and
+`mcp-re-proxy/src/capability_materialization/key_file_custody/covered_files.rs` (2): which key
+files the policy is applied to. Batch 12 recorded ten `app.rs` controls here; the r12 file-11
+extraction moved key-file custody into `capability_materialization::key_file_custody`, where
+the rest are claimed by that owner's battery, and these two remain. What the ten established: A world-readable key file is refused; a group-readable one is refused
 without the opt-in and accepted with it only when the process is in that group; group write
 is refused even with the opt-in; an owner-only file is accepted; an absent file is not an
 error; a file whose posture cannot be established is refused; the PKCS#11 PIN file is
@@ -1805,7 +1830,7 @@ has no ratified theorem, so they are R6. The prepared packet is
 
 ## NP-062 — a malformed client CRL is refused at construction rather than skipped
 
-**Control:** `mcp-re-proxy/src/client_revocation.rs::a_malformed_crl_is_refused_rather_than_skipped`.
+**Controls:** `mcp-re-proxy/src/client_revocation.rs` (2) — `a_malformed_crl_is_refused_rather_than_skipped`, and `a_crl_with_trailing_bytes_is_refused` (added 2026-09-29: two CRLs concatenated into one element are refused, not indexed as the first).
 **Carrier:** `ClientRevocationIndex::from_crl_ders`.
 **Statement.** *A malformed CRL among the bytes an index is built from is a hard error, so no
 index exists, rather than being skipped and leaving the request path enforcing a smaller
@@ -2247,7 +2272,7 @@ controls establish, and each of them is a premise of every unit above it.
 
 ## NP-087 — the evidence block is injective and closed
 
-**Controls:** `mcp-re-http-profile/src/block.rs` (7).
+**Controls:** `mcp-re-http-profile/src/block.rs` (8) — including, from 2026-09-29, `an_absent_route_and_an_empty_route_are_one_audience_slot`, which pins the one designed equivalence in the audience encoding.
 **Statement.** *No two distinct evidence blocks produce the same identifier: the actor id is
 deterministic, pinned, and INJECTIVE ACROSS COLON BOUNDARIES; the separator cannot be forged
 across fields; the escape marker itself creates no collision; a separator inside a field does
@@ -2485,7 +2510,7 @@ Packet at `verification/reviews/packets/adr069-np-094-ratification-2026-09-19.md
 
 ## NP-100 — the evidence handle is domain-separated and derived, never a bare digest
 
-**Controls:** `mcp-re-http-profile/src/evidence.rs`, `mcp-re-http-profile/src/context.rs`, `mcp-re-http-profile/src/digest.rs`, `mcp-re-http-profile/src/artifact.rs`, `mcp-re-http-profile/src/policy.rs`, `mcp-re-http-profile/src/replay.rs`, `mcp-re-http-profile/src/authoritative_admission/record/currentness.rs`.
+**Controls:** `mcp-re-http-profile/src/evidence.rs`, `mcp-re-http-profile/src/context/mod.rs`, `mcp-re-http-profile/src/digest.rs`, `mcp-re-http-profile/src/artifact.rs`, `mcp-re-http-profile/src/policy.rs`, `mcp-re-http-profile/src/replay.rs`, `mcp-re-http-profile/src/authoritative_admission/record/currentness.rs`.
 **Statement.** *A handle is split-form and deterministic, is NOT a bare digest of the base, differs when the base differs, cannot confuse a label with an input, and separates roles by domain over IDENTICAL BYTES; the proxy's own meta keys are stripped and application meta preserved, with a meta of only proxy keys removed entirely and a strip without meta a no-op; a digest round-trips, a tampered body fails closed, and an absent sha-256 member of a present header is malformed.*
 **If false.** Two different roles over the same bytes produce the same handle, so evidence for one is evidence for the other — which is NP-087's injectivity failure at the handle rather than at the actor. 'Not a bare digest of the base' is what makes the domain separation structural instead of conventional.
 **Likely owner:** none. The `http_profile.*` units that measure these files are each about what their own verdict means.
@@ -3068,10 +3093,11 @@ surviving_handles_do_not_keep_the_refresh_workers_alive}`.
 
 ## NP-140 — what a CRL-less or cadence-less deployment is actually bounded by
 
-**Controls:** `mcp-re-proxy/src/tls_plane` (4) —
+**Controls:** `mcp-re-proxy/src/tls_plane` (5) —
 `fleet_crl_bound_tests::{a_reload_cadence_bounds_established_connections_not_only_handshakes,
 without_a_cadence_the_bound_is_the_crls_own_expiry, without_a_crl_the_bound_is_the_certificate_lifetime}`,
-`handle_lifetime_tests::a_snapshot_that_outlives_the_plane_still_serves`.
+`handle_lifetime_tests::a_snapshot_that_outlives_the_plane_still_serves`, and (added 2026-09-29)
+`fleet_crl_bound_tests::a_cadence_nothing_is_keeping_is_not_claimed_as_the_bound`.
 **Statement.** *Every deployment has a STATED bound on how long a revoked client may keep a connection it already established, and the bound is a total function of what the deployment configured: with a reload cadence it is the cadence, and it applies to ESTABLISHED connections rather than only to new handshakes; without a cadence it is the CRL's own expiry; without a CRL at all it is the client certificate's lifetime. A snapshot taken before the plane retired goes on serving under the bound in force when it was taken.*
 **If false.** A revoked client keeps a connection it established before the revocation, with nothing in the handshake path able to see it — and an operator who configured no CRL is left with an unknown exposure rather than a stated one, when the truth is that the certificate lifetime bounds it.
 **Likely owner:** none.
@@ -3132,7 +3158,7 @@ are retired with it. The third is separated as NP-187.
 
 ## NP-146 — a budget refusal is diagnosable without the reporter being able to take the tier down
 
-**Controls:** `mcp-re-proxy/src/async_replay/budget_report.rs` (2),
+**Controls:** `mcp-re-proxy/src/async_replay/budget_report.rs` (4),
 `async_replay/retention_ledger.rs` (1).
 **Statement.** *The line that tells an operator a refusal was a BUDGET refusal and not a store
 outage is rendered OUTSIDE the ledger guard, is paced by the process while every refusal is
@@ -3165,10 +3191,14 @@ the reporter being able to stall or poison the tier is this record's.
 **One is split out under RR-002 C5.** `l1_fast_reject_never_fresh_and_evicts_fifo` is
 **NP-197**: THM-0105's scope excludes it by name — *"NOTHING ABOUT THE DORMANT L1."*
 **Packet:** `verification/reviews/packets/adr069-np-146-np-197-ratification-2026-09-20.md`.
+
+**Extended 2026-09-29.** The four `budget_report` controls that replaced `refusals_are_paced_by_the_process_and_counted_in_full` and `reporting_never_panics` also establish that a peer-influenced actor name cannot end a field or forge a line (`the_actor_cannot_forge_a_line_or_a_field`); the statement carries that clause from here.
+
 ## NP-147 — the automatic fleet topology is at least one shard of one worker
 
-**Controls:** `mcp-re-proxy/src/async_fleet` (2) —
-`topology_tests::{auto_is_always_at_least_one_shard_of_one_worker, auto_keeps_a_shard_per_cpu_and_adds_depth}`.
+**Controls:** `mcp-re-proxy/src/async_fleet` (3) —
+`topology_tests::{auto_is_always_at_least_one_shard_of_one_worker, auto_keeps_a_shard_per_cpu_and_adds_depth}`, and
+(added 2026-09-29) `topology_tests::the_auto_model_matches_the_resolver_on_this_host`, which ties the model to the production resolver.
 **Statement.** *Where the operator stated nothing, the automatic topology keeps a shard per CPU, adds depth on top up to the default maximum, and is never degenerate — at least one shard of one worker on any host the runtime reports.*
 **If false.** A deployment that configured no topology starts with zero shards and serves nothing, or trades shards away for depth on a profile where shards are what parallelise `accept`.
 **Likely owner:** none.
@@ -3234,7 +3264,7 @@ the merge path checks.
 
 ## NP-152 — the listener's own admission, the historical identity facade's returns, and the delegated TLS handshakes
 
-**Controls:** `mcp-re-proxy/tests/integration/tls_test.rs` (25), `mcp-re-proxy/tests/integration/mtls_transport_binding_test.rs` (3), `mcp-re-proxy/tests/fault_injection_test.rs` (2).
+**Controls:** `mcp-re-proxy/tests/integration/tls_test.rs` (25), `mcp-re-proxy/tests/integration/mtls_transport_binding_test.rs` (3), `mcp-re-proxy/tests/fault_injection_test.rs` (2), `mcp-re-proxy/src/aws_kms_keysource.rs` (1).
 **Statement.** *End to end over a real listener, and over the two things that listener is built from: a client certificate that is untrusted, revoked, expired or over-long is refused during the handshake and the transport binding holds between the channel peer and the request actor, with the declared fault injector as the anti-vacuity arm; the historical `extract_identity` facade returns the configured field of a real DER leaf and returns NOTHING rather than falling back to another one; the published CRL says how close it is to falling out of force and what its own digest and dates are; and a delegated TLS listener — local, AWS-KMS-backed or GCP-KMS-backed — completes a real handshake whose CertificateVerify the delegated signer produced, and fails it when that signature is corrupted.*
 **If false.** The listener admits a peer it was configured to refuse; or a deployment that configured URI SANs is silently downgraded to a Common Name by a facade the authority's own no-fallback controls do not measure; or a handshake is signed by a key the served certificate does not present. The fault-injection controls are here because a handshake refusal nobody can make fail is a refusal nobody has measured.
 **Likely owner:** none — a composition's source is every unit under it.
@@ -3265,7 +3295,7 @@ Packet: [`../../verification/reviews/packets/adr069-np-153-ratification-2026-09-
 
 ## NP-154 — the shipped auditor over a served archive, and the retention posture the serving path refuses under
 
-**Controls:** `mcp-re-proxy/tests/integration_async/transparency_e2e_test.rs` (15).
+**Controls:** `mcp-re-proxy/tests/integration_async/transparency_e2e_test.rs` (15), `mcp-re-proxy/src/http_profile_serve/retention/mod.rs` (2).
 **Statement.** *Over a real exchange, and then over the archive it left behind: a deployment that turned retention on refuses what it cannot account for and one that did not keeps nothing; the shipped `mcp-re-auditor` turns a served call into a portable attestation and refuses — writing nothing — an archive it cannot reconstruct, a tampered object or an illegal service pin; and that attestation registers with a transparency service over either of two mechanisms, hermetically, and against a live external one when a deployment opts in.*
 **If false.** The answerability record and the exchange diverge on the live path, which is where they are relied on; or the shipped auditor attests a record it should refuse, which is worse than refusing one it should attest, because the artifact is the thing a third party reads.
 **Likely owner:** none — a composition's source is every unit under it.
@@ -3470,7 +3500,7 @@ control proves impossible is one the theorem already declines to reason about. P
 
 ## NP-164 — the file and dev key sources' own load and refusal behaviour, and the PKCS#11 token's second key
 
-**Controls:** `mcp-re-proxy/tests/key_source_test.rs` (6), `mcp-re-proxy/tests/dev_env_key_source_test.rs` (4), `mcp-re-proxy/tests/pkcs11_keysource_e2e_test.rs` (5).
+**Controls:** `mcp-re-proxy/tests/key_source_test.rs` (6), `mcp-re-proxy/tests/dev_env_key_source_test.rs` (4), `mcp-re-proxy/tests/pkcs11_keysource_e2e_test.rs` (6), `mcp-re-proxy/src/key_source/file_key_source.rs` (2).
 **Statement.** *Each source opened DIRECTLY, not through the materializer: the file source loads the signing seed, the channel credential and the client anchors and tells a missing file from a malformed seed; the dev-only environment source does the same without mutating the process and scrubs its seed temporaries; neither source's error carries the secret; and the token's SECOND object — the delegated TLS handshake key — is established at `open` or the deployment does not start.*
 **If false.** A source reports material it did not load, or names the wrong failure, and an operator debugs the wrong half of a deployment; or a secret seed reaches a log through an error value; or the proxy serves a handshake under a token key nobody established, which is the one case where the delegated-TLS correspondence gate compares a key the signer did not actually sign with.
 **Likely owner:** none — a composition's source is every unit under it.
@@ -3479,6 +3509,8 @@ control proves impossible is one the theorem already declines to reason about. P
 **The three file-source rows are refused because no ratified theorem claims what a key source LOADS.** THM-0082 was the proposed home and it refuses them in its own scope: *"`FileKeySource` and the KMS adapters are public constructors, as external embedders need, so a root that opened one beside it would compile."* These three controls construct `FileKeySource` literally — the struct with four public path fields — so they exercise precisely the route THM-0082 names as the DEFECT it measures against, never the materializer whose use is its claim. THM-0064, the other candidate, excludes the custody class by name: *"it establishes nothing about a deployment that selects file custody, which is `ProcessReadable` and honestly says so."* The carrier is `mcp-re-proxy/src/key_source.rs`, which is in no unit's `paths`, and not `capability_materialization/key_source/**` as the slice's analysis recorded.
 **The five delegated-TLS rows are refused because THM-0116 is the RESPONSE signer's theorem.** Its statement opens *"Each non-exporting response signer — AWS KMS, GCP Cloud KMS, PKCS#11 — establishes the key it advertises BEFORE it will sign anything"*, and THM-0073 is the registry's own authority for the two roles being different things: *"the response-signing role and the channel-signing role resolve to the same cryptographic signing-key identity"* is the condition it REFUSES. `Pkcs11TlsSigner::open` proves a second, differently labelled token object exists, is Ed25519 and is UNAMBIGUOUS; no theorem states any of that, and the ambiguity rule — two objects under one label — is stated nowhere in the registry at all. Two of the five are excluded a second time by THM-0116's own scope: *"NOT A CUSTODY CLAIM. That the private key never leaves the KMS or the token is the provider's property and the trait's shape"* and *"NOT A PROTOCOL-CONFORMANCE CLAIM."*
 **Packet:** [`verification/reviews/packets/adr069-np-164-ratification-2026-09-20.md`](../../verification/reviews/packets/adr069-np-164-ratification-2026-09-20.md).
+
+**Extended 2026-09-29.** The file source now lives at `mcp-re-proxy/src/key_source/file_key_source.rs`; its in-crate controls (`the_signing_key_is_the_admitted_seed`, `malformed_material_refuses_construction_without_leaking_it`) and the e2e refusal of a TLS label equal to the response label (`pkcs11_tls_label_equal_to_response_label_is_refused`, the token's second-key clause) cite this record.
 
 ## NP-166 — the verified-context carrier is attached only where the inner channel is trusted
 
@@ -3998,3 +4030,271 @@ deterministic fixtures cannot reach a production build. This proposition is a **
 that claim rather than a restatement of it: the theorem is about the items and their gate, and
 this is about whether any consumer turns the gate on. The claim was not narrowed and no fixture
 was deleted to satisfy this gate — what changed is that the claim became true of the workspace.
+
+## NP-200 — an artifact binding is admitted only in its well-formed shape
+
+**Controls:** `mcp-re-http-profile` `lib#block::artifact_binding::tests::opaque_digest_value_is_the_named_function_output`; `mcp-re-http-profile` `lib#block::artifact_binding::tests::a_one_character_digest_is_refused`; `mcp-re-http-profile` `lib#block::artifact_binding::tests::a_digest_one_character_short_or_long_is_refused`; `mcp-re-http-profile` `lib#block::artifact_binding::tests::a_reference_binding_missing_a_field_is_refused`; `mcp-re-http-profile` `lib#block::artifact_binding::tests::a_reference_binding_with_an_empty_field_is_refused`; `mcp-re-http-profile` `lib#block::artifact_binding::tests::a_fully_named_reference_binding_validates`.
+**Carrier:** `mcp-re-http-profile/src/block/artifact_binding.rs`.
+**Statement.** *`ArtifactBinding::validate` accepts a binding only if `digest_alg` is the evidence digest algorithm, `digest_value` is a base64url-no-pad token decoding to exactly that function's output width, and the reference fields are all absent for `opaque-digest` and all present and non-empty for `reference-digest`. The producer `opaque_digest` applies the function `digest_alg` names. False if a mislabeled, wrong-width or half-named binding validates, or if the producer's digest is not the named function's output.*
+**If false.** Evidence carries a binding whose digest function or width is not what it says, or a decision linkage that names an incomplete external reference. Retained evidence and audit then cite an artifact that nothing can resolve or recompute.
+**Likely owner:** none. `http_profile.artifact_typing` (THM-0007) and `http_profile.artifact_verification_boundary` (THM-0008) both carry this file, but ASM-0019 makes `validate` opaque to the typed-verifier theorem ('Its own contract ... is a separate property'). THM-0008 refuses every `ReferenceDigest` whatever `validate` returns, so the width and reference-form clauses are not needed by any branch verdict.
+**Severity:** `medium`.
+**Root relationship.** The structural premise ASM-0019 carves out beneath THM-0007/THM-0008, and one conjunct of THM-0015's 'validated under the profile tag'.
+**Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).
+
+## NP-201 — an inline evidence artifact travels paired with exactly the binding that commits to it
+
+**Controls:** `mcp-re-http-profile` `lib#block::tests::admission_binding_and_assertion_must_appear_together`; `mcp-re-http-profile` `lib#block::tests::admission_assertion_is_bounded_before_parsing`; `mcp-re-http-profile` `lib#block::tests::authorization_decision_without_an_evidence_binding_fails_closed`; `mcp-re-http-profile` `lib#block::tests::authorization_decision_with_two_evidence_bindings_fails_closed`; `mcp-re-http-profile` `lib#block::tests::authorization_decision_is_bounded_before_parsing`.
+**Carrier:** `mcp-re-http-profile/src/block.rs`.
+**Statement.** *The request evidence block validates only if each inline evidence artifact is paired with the binding that commits to it, both halves or neither. An admission assertion must come with its admission binding. An authorization decision must come with exactly one `pdp-decision`/`opaque-digest` binding, and a `reference-digest` entry never counts. Each inline artifact must be at most its length bound, checked before any parse. False if a half pair, an ambiguous pair, or an oversize inline JWS validates.*
+**If false.** A half pair verifies structurally and enforces nothing, which is worse than being absent. Two candidate bindings leave the verifier choosing which one the document answers. An unbounded JWS from an unauthenticated peer is a parse and memory surface reachable before trust.
+**Likely owner:** none. `http_profile.evidence_block_closure` is 'the CLOSURE half of the block and nothing else' and lists its facts. `http_profile.request_full_result`'s THM-0015 quantifies over declared bindings and disclaims admission, so a decision bound to nothing or bound twice to one document leaves it true.
+**Severity:** `high`.
+**Root relationship.** A structural premise under THM-0015's 'validated under the profile tag', and the verifier-side counterpart of the SDK-side NP-022/NP-024.
+**Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).
+
+## NP-202 — a DPoP binding is verified against the covered bearer token and nothing else
+
+**Controls:** `mcp-re-http-profile` `lib#verify::full::request::tests::dpop_credential_is_never_taken_from_caller_material`; `mcp-re-http-profile` `lib#verify::full::request::tests::dpop_credential_comes_from_the_covered_bearer_header`; `mcp-re-http-profile` `lib#verify::full::request::tests::non_dpop_credential_is_caller_material`.
+**Carrier:** `mcp-re-http-profile/src/verify/full/request.rs`.
+**Statement.** *In full-profile verification, the credential for an `oauth-dpop` binding is the access token in the request's covered `Authorization: Bearer` header. If that header is absent the credential is unobtainable. Caller-supplied artifact material neither substitutes for it nor overrides it. Every other artifact type is resolved from caller material. False if DPoP ath is ever checked against bytes that did not come from the signed Authorization header.*
+**If false.** The `ath` binding could be satisfied by a token the peer never presented under its signature. The DPoP binding would then tie the request to nothing the request actually carried.
+**Likely owner:** none. `http_profile.artifact_verification_boundary` and `http_profile.request_full_result` both carry this file. Their theorems exclude it in their own words: THM-0008 'nor that the supplied material is the credential the peer actually holds', and THM-0015 'only that the binding verified against what was supplied'.
+**Severity:** `high`.
+**Root relationship.** Under THM-0015. It composes THM-0014's coverage of the Authorization header (`authorization_header_is_covered_when_present`) with the credential-resolution rule, which no theorem states.
+**Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).
+
+## NP-203 — a dispatch product is evidence of the preparation that produced it
+
+**Controls:** `mcp-re-http-profile` `doc#dispatch::outcome::DispatchOutcome`; `mcp-re-http-profile` `doc#dispatch::outcome::PreparedDispatch`; `mcp-re-http-profile` `lib#dispatch::outcome::tests::a_first_leg_preparation_reports_no_continuation`; `mcp-re-http-profile` `lib#dispatch::outcome::tests::the_admitted_outcome_carries_the_preparation_unchanged`; `mcp-re-http-profile` `lib#dispatch::outcome::tests::the_outcome_states_which_posture_admitted_it`; `mcp-re-http-profile` `lib#dispatch::outcome::tests::the_prepared_product_reports_the_same_facts_as_the_outcome_it_becomes`; `mcp-re-http-profile` `lib#dispatch::replay_posture::tests::the_two_admitting_arms_are_distinguishable`.
+**Carrier:** `mcp-re-http-profile/src/dispatch/outcome.rs`.
+**Statement.** *No PreparedDispatch or DispatchOutcome exists that did not come from a DispatchConfig::admit_replay_tier decision followed by a successful prepare_http_dispatch. Turning a preparation into an admitted outcome changes none of its facts (replay key, continuation_verified, posture). The posture arm it carries, like the ReplayTierAdmitted witness it came from, renders the non-strict and fleet-strict admissions as different sentences.*
+**If false.** A holder of a DispatchOutcome could read continuation_verified == true for a continuation no preparation checked, report a replay key other than the one admitted, or have an audit line claim a fleet-strict clearance for a deployment that never asked for one.
+**Likely owner:** http_profile.continuation_unbypassability has the carriers in its paths, but THM-0009 covers only prepare_http_dispatch's return value and its scope calls the flag an informational witness. Taking the seal and the product's faithfulness would widen its statement.
+**Severity:** `medium` (the ADR-MCPRE-068 §4.1 floor).
+**Root relationship.** Extends THM-0009 from the proved function's returns to every inhabitant of the product type. Measured: the proxy serving path discards the outcome (answering_commitment.rs maps Ok(_) away) and admitting_posture has no production reader, so only prepared.replay_key() is consumed in production today.
+**Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).
+
+**Known defect in two of its controls.** `doc#dispatch::outcome::DispatchOutcome` and `doc#dispatch::outcome::PreparedDispatch` are `compile_fail` examples whose struct literals omit the `posture` field, so each fails with E0063 (missing field) whatever the fields' privacy is: neither can go red over the seal it documents. They are cited here because the proposition is what they are ABOUT; they are not yet evidence for it. Repairing them — or a structural probe requiring the privacy error — is what would make them so. Today the four unit tests carry the proposition.
+
+## NP-204 — a delegated snapshot and its lifecycle audit name this issuance's own identity and credential id
+
+**Controls:** `mcp-re-http-profile` `lib#custody::active_key::tests::an_identity_naming_another_keyid_is_refused`; `mcp-re-http-profile` `lib#custody::active_key::tests::an_identity_the_request_did_not_name_is_refused`; `mcp-re-http-profile` `lib#custody::active_key::tests::the_credential_id_is_read_out_of_the_credential`; `mcp-re-http-profile` `lib#custody::tests::a_reissue_retires_the_predecessor_under_its_own_credential_id_and_window`.
+**Carrier:** `mcp-re-http-profile/src/custody/active_key.rs`.
+**Statement.** *A published ActiveDelegatedKey signs under the server-signer identity the root signed, whose keyid is the credential's own delegated_kid. Its revocation identifier is the credential's own jti. A reissue records the retired predecessor under that predecessor's own jti, window and kid.*
+**If false.** Either a node publishes a snapshot whose response identity every verifier rejects, found only at the next request, or the lifecycle log names a retirement under an identifier that does not revoke the retired credential.
+**Likely owner:** http_profile.delegated_signing_custody: both carriers are in its paths, but its description covers only lifecycle clauses (root untouched, overlap rotation, epoch advance, window, fail-closed). Amending the description would let these four register beside the M97/M98 siblings.
+**Severity:** `high`.
+**Root relationship.** Beside the M97 (attested key) and M98 (echoed claim set) conjuncts already bound to http_profile.delegated_signing_custody; the third leg of 'the credential attests THIS issuance'.
+**Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).
+
+## NP-207 — retained continuation bases reach the binding in their own roles
+
+**Controls:** `mcp-re-http-profile` `lib#dispatch::retained_continuation::tests::the_constructor_keeps_the_three_slots_apart`.
+**Carrier:** `mcp-re-http-profile/src/dispatch/retained_continuation.rs`.
+**Statement.** *RetainedContinuation::from_correlation keeps the previous-request base, the input-required-response base and requestState in their own slots, so the dispatch seam hands each to HttpContinuation::verify in its own role.*
+**If false.** The seam refuses every legitimate answer leg and accepts a continuation whose request-role and response-role handles are permuted, which is the outcome THM-0010's security consequence excludes.
+**Likely owner:** http_profile.continuation_binding (THM-0010), whose paths (block.rs, ids.rs, verus_std_specs.rs) do not reach this carrier. continuation_unbypassability reaches it but claims only that verification ran.
+**Severity:** `medium`.
+**Root relationship.** The dispatch-side premise of THM-0010: role separation in the digest holds only if the seam supplies each input in its own role.
+**Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).
+
+## NP-205 — every failure the http-profile dispatch seam adds is a frozen Core verdict, and none is an admit
+
+**Controls:** `mcp-re-http-profile` `lib#dispatch::tests::a_refused_store_and_an_unreachable_one_are_the_same_verdict_to_a_caller`; `mcp-re-http-profile` `lib#dispatch::tests::an_operational_store_failure_fails_closed_and_never_admits`; `mcp-re-http-profile` `lib#dispatch::tests::every_failure_this_seam_adds_maps_to_a_frozen_core_token`.
+**Carrier:** `mcp-re-http-profile/src/dispatch.rs`.
+**Statement.** *A replay is mcp-re.replay_detected. Every operational replay-store failure and the fleet-strict store-class refusal are both mcp-re.replay_cache_unavailable, as distinct variants on one token. A continuation failure is mcp-re.continuation_binding_failed. No store failure converts into anything but a refusal.*
+**If false.** A dispatch-seam failure reaches the wire under a token outside the frozen vocabulary, or a store outage converts into something other than a refusal.
+**Likely owner:** http_profile.carrier_verdict_projection (THM-0111) states the projection, but its paths are error.rs and error/core_projection.rs and cannot be widened to dispatch.rs. THM-0111's scope also says it establishes nothing about whether the grouping is right.
+**Severity:** `medium`.
+**Root relationship.** The profile-layer twin of proxy.replay_admission_gate's 'a store that does not answer refuses rather than admitting', which is in another project.
+**Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).
+
+## NP-206 — the dispatch seam builds the replay key from the verified product and nothing else
+
+**Controls:** `mcp-re-http-profile` `lib#dispatch::tests::the_replay_key_is_built_from_the_verified_product_and_nothing_else`.
+**Carrier:** `mcp-re-http-profile/src/dispatch.rs`.
+**Statement.** *The five components of the HttpReplayKey that prepare_http_dispatch builds are the verified product's own: its profile id, the request label the verifier accepted under, the actor that trust resolution produced, its audience hash, and its nonce.*
+**If false.** A replay key built from wire values or an unresolved identity lets one signed exchange occupy a slot another actor or audience owns, or evade its own slot, so replay detection keys on something the signature did not establish.
+**Likely owner:** http_profile.replay_key (THM-0079): its paths are replay.rs only, and its statement is about injectivity and the cache decision, not the provenance of the components.
+**Severity:** `high`.
+**Root relationship.** A premise THM-0079 consumes without stating: an injective key protects only if its operands are the verified ones.
+**Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).
+
+## NP-215 — a refusal about an operator-configured locator never carries its credential or the configured string
+
+**Controls:** `mcp-re-proxy` `lib#async_etcd_store::tests::a_request_build_failure_leaks_neither_the_credential_nor_the_configured_url`; `mcp-re-proxy` `lib#async_redis_store::tests::a_credentialled_url_never_reaches_a_refusal`; `mcp-re-proxy` `lib#aws_kms_keysource::tests::a_path_refusal_names_the_authority_not_the_configured_endpoint`; `mcp-re-proxy` `lib#config_state::admission::tests::the_locator_refusal_names_a_credential_bearing_value_without_echoing_it`; `mcp-re-proxy` `lib#config_state::continuation_control::tests::the_locator_refusal_does_not_echo_a_credential`; `mcp-re-proxy` `lib#config_state::replay::tests::the_locator_shape_refusal_does_not_echo_a_credential`; `mcp-re-proxy` `lib#config_state::trust_revocation::tests::the_epoch_locator_refusal_does_not_echo_a_credential`; `mcp-re-proxy` `lib#config_state::validation::residue::tests::the_target_uri_refusal_does_not_echo_a_credential`; `mcp-re-proxy` `lib#gcp_kms_keysource::tests::a_metadata_endpoint_refusal_leaks_neither_the_credential_nor_the_configured_url`; `mcp-re-proxy` `lib#kms_endpoint_policy::tests::the_query_refusal_names_neither_the_token_nor_the_configured_endpoint`; `mcp-re-proxy` `lib#kms_endpoint_policy::tests::the_userinfo_refusal_names_the_effective_host_and_not_the_credential`; `mcp-re-proxy` `lib#redis_admission_source::tests::a_connect_diagnostic_names_the_endpoint_without_its_credentials`; `mcp-re-transport` `lib#remote::tests::the_refusal_names_the_operation_and_never_the_configured_target`; `mcp-re-proxy` `lib#transparency::auditor::registration::endpoint::tests::a_register_to_refusal_leaks_neither_the_credential_nor_the_configured_url`; `mcp-re-proxy` `lib#trust_epoch::tests::an_open_failure_names_the_store_without_the_credential_or_the_configured_url`; `mcp-re-proxy` `lib#async_etcd_store::tests::a_well_formed_credential_bearing_endpoint_still_reaches_the_transport`.
+**Carrier:** the refusal sites of operator-configured locators across mcp-re-proxy (config_state/{admission,continuation_control,replay,trust_revocation,validation/residue}.rs, kms_endpoint_policy/mod.rs, aws_kms_keysource.rs, gcp_kms_keysource.rs, async_etcd_store.rs, async_redis_store.rs, redis_admission_source/mod.rs, trust_epoch.rs, transparency/auditor/registration/endpoint/mod.rs) and mcp-re-transport/src/remote.rs.
+**Statement.** *Every refusal or operational diagnostic produced on a path that receives an operator-configured locator reports the locator only by the flag that supplied it, or by a credential-free projection of it (scheme, host and port, with removed components named by COMPONENT and never by content). This covers store URLs (replay redis/etcd, admission redis, continuation redis, trust-epoch redis), KMS and metadata endpoints, --register-to, and the client --target-uri. The rule holds on every refusal branch, including those reached by a WELL-FORMED credential-bearing URL and those reached by a scheme-less typo. Such a refusal never contains the userinfo, password, path secret or query token it held, nor the complete configured string, and redaction changes only what a refusal says, never which locators are admitted. The statement is false if any such site interpolates the raw configured value, or an error that embeds it, into a message an operator or log pipeline receives.*
+**If false.** A store password, a KMS access token or a transparency-service credential reaches operator transcripts and the log pipeline behind them on a startup or connect failure. The replay-store credential is enough to delete nonces and so re-open replay. The failure path is the one a credential-bearing typo takes, so the leak occurs exactly when an operator is least careful.
+**Likely owner:** none. mcp-re-operator-display.locator_projection states what the RedactedLocator projection RENDERS, is in a different crate and project, and cannot reach proxy carriers without widening its paths (SF-1). It does not state that every consumer's refusal goes through it, and 4 of the 14 carriers (async_etcd_store, async_redis_store, aws_kms_keysource, mcp-re-transport/src/remote.rs) do not use it at all. proxy.operator_facing_redaction's paths are limited to deployment_request/{secret_string,inner_backend_display}.rs, and its description explicitly keeps only the backend-list consumer local. NP-185 is PIN value and length at the consumer; NP-137 is refusal vocabulary for certificates and currency; NP-192 is heap residency of the GCP token. None of these states locator non-echo, and no theorem in theorems.toml claims redaction.
+**Severity:** `high`.
+**Root relationship.** The consumer-side premise beside mcp-re-operator-display.locator_projection: that unit makes the projection safe, and this one makes every refusal site use a safe rendering. It is the property Owner Ruling 6 (r12 CF-005) mandated with 'a negative control per site', and no theorem states it.
+**Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).
+
+**Lanes.** Seven of these controls exist only under non-default features — `aws_kms_keysource`, `gcp_kms_keysource`, `cpstore_etcd`, `redis_replay` — so a default-lane run measures none of them. **Strength.** The admission, continuation-control and trust-revocation locator controls assert only that the password is absent; the 'nor the complete configured string' clause is established by the others. `async_redis_store`'s control also measures a third-party property: that the redis crate's error does not echo the URL. The etcd control `a_well_formed_credential_bearing_endpoint_still_reaches_the_transport` is the positive half: redaction changes what a refusal says, never which endpoints are usable.
+
+## NP-208 — a declared WAIT window is answerable within the store's own round-trip bound
+
+**Controls:** `mcp-re-proxy` `lib#redis_store::tests::a_declared_wait_window_widens_the_read_bound`.
+**Carrier:** `mcp-re-proxy/src/redis_store.rs`.
+**Statement.** *When the sync Redis replay store is built with a WAIT quorum and window, its socket read bound is at least that window, so the server's WAIT verdict decides the insert rather than a read timeout firing first.*
+**If false.** Every insert under the REDIS_WAIT_QUORUM tier times out before WAIT can answer. The deployment that chose the stronger tier refuses every request, a self-inflicted fleet-wide outage. It fails closed, so it is not a bypass. The timed-out reply may also stay unread on the connection.
+**Likely owner:** proxy.redis_replay_adapter owns the file, but THM-0106 says 'NOT A LIVENESS CLAIM', and this is a liveness fact about the declared tier.
+**Severity:** `medium`.
+**Root relationship.** Beside THM-0106: the theorem guarantees a WAIT shortfall fails closed, and this guarantees WAIT is given the time to report one.
+**Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).
+
+## NP-214 — an AWS KMS request is never signed at a date the clock owner calls faulted
+
+**Controls:** `mcp-re-proxy` `lib#aws_kms_keysource::tests::a_faulted_host_clock_is_refused_rather_than_signed_as_1970`.
+**Carrier:** `mcp-re-proxy/src/aws_kms_keysource.rs`.
+**Statement.** *`amz_date_at` refuses a clock reading that is negative or that `startup_plan::host_clock_is_faulted` marks faulted (epoch, pre-2000), naming the host clock. A plausible reading is formatted as its SigV4 date.*
+**If false.** A credential-bearing KMS request is signed and sent with a 1970 X-Amz-Date. KMS rejects it for skew, and the operator sees an AWS signature error instead of a refusal naming the host clock.
+**Likely owner:** none. proxy.aws_kms_adapter states 'minimal audited SigV4' but no clock clause. NP-065 is about startup refusal ('and not elsewhere'), and NP-128 is about the clock's own readings.
+**Severity:** `medium` (the ADR-MCPRE-068 §4.1 floor).
+**Root relationship.** A runtime consumer of the clock-fault predicate whose startup use is NP-065 and whose measurement is NP-128.
+**Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).
+
+## NP-213 — a KMS endpoint cannot make the signing thread buffer an unbounded response
+
+**Controls:** `mcp-re-proxy` `lib#aws_kms_keysource::tests::a_kms_body_over_the_cap_is_refused_and_one_at_the_cap_is_accepted`.
+**Carrier:** mcp-re-proxy/src/aws_kms_keysource.rs (read_kms_response).
+**Statement.** *An AWS KMS success-path response body is read to at most MAX_KMS_RESPONSE_BYTES + 1. A body strictly larger than the cap is refused as malformed, and a body exactly at the cap is accepted.*
+**If false.** An operator-overridable, substituted or MITM KMS endpoint streams an arbitrarily large body into the blocking signing thread and chooses this process's memory use on the response-signing path.
+**Likely owner:** none. proxy.remote_signer_egress_bound has the carrier in its paths, but its statement is ONE shared deadline, a time bound. proxy.remote_signer_call_aws registers the error-body cap from wire_limits.rs, but this carrier is not in its paths and its statement is about reading quota.
+**Severity:** `medium`.
+**Root relationship.** A sibling of THM-0089/THM-0090's substituted-endpoint concern. Those keep the credential from going to the wrong host; this bounds what any reached host can make the process hold.
+**Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).
+
+## NP-212 — each AWS KMS request is signed under the credential its source supplies at that request
+
+**Controls:** `mcp-re-proxy` `lib#aws_kms_keysource::tests::a_refreshed_credential_signs_the_next_request_and_a_failed_refresh_keeps_it`.
+**Carrier:** `mcp-re-proxy/src/aws_kms_keysource.rs`.
+**Statement.** *Before every KMS request, the AWS KMS client asks its credential source again and signs under what it returns, so a rotated or re-exchanged credential signs the very next request. A failed refresh keeps the last-good credential and is reported once per failing episode, not per call.*
+**If false.** A credential captured at startup is presented until the process restarts. After an STS session expires, the whole fleet loses response signing. And a credential an operator rotated away keeps being presented.
+**Likely owner:** none. proxy.aws_kms_adapter's description states key spec, SPKI and verify-before-return only. proxy.aws_sts_credentials and THM-0117 state the acquirer's lifetime algebra over aws_sts.rs, not whether the consumer uses the current credential.
+**Severity:** `high`.
+**Root relationship.** The consumer-side complement to THM-0117. THM-0117 says an acquired credential's lifetime is never extended. This says the signer actually uses the credential the acquirer currently holds.
+**Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).
+
+## NP-209 — a PKCS#11 module is mapped only from a path nobody but its owner can replace
+
+**Controls:** `mcp-re-proxy` `lib#config_state::key_file_access::tests::a_0644_module_in_an_owner_only_directory_is_not_the_refused_component`; `mcp-re-proxy` `lib#config_state::key_file_access::tests::a_module_in_a_group_writable_directory_is_refused`; `mcp-re-proxy` `lib#config_state::key_file_access::tests::a_module_path_that_resolves_to_nothing_is_refused`; `mcp-re-proxy` `lib#config_state::key_file_access::tests::a_packaged_system_library_posture_is_still_loadable`; `mcp-re-proxy` `lib#config_state::key_file_access::tests::a_world_writable_module_file_is_refused`; `mcp-re-proxy` `lib#config_state::key_file_access::tests::group_write_alone_is_refused_on_the_directory_and_on_the_file`; `mcp-re-proxy` `lib#config_state::key_file_access::tests::world_write_alone_is_refused_on_the_directory_and_on_the_file`; `mcp-re-proxy` `lib#pkcs11_native::tests::a_world_writable_module_is_refused_before_it_is_loaded`; `mcp-re-proxy` `lib#pkcs11_native::tests::an_ordinary_system_path_passes_the_floor_and_reaches_the_loader`.
+**Carrier:** mcp-re-proxy/src/config_state/key_file_access.rs (executable_path_violation), applied at mcp-re-proxy/src/pkcs11_native.rs.
+**Statement.** *Before `Pkcs11Context::load_and_initialize` maps a module and runs its initializers, the canonicalized module path and every directory above it are examined. Any group- or world-WRITE bit on any of them (each half of the 0o022 mask on its own), or a path that cannot be resolved or read, refuses the load and names the offending component and its mode. A root-owned 0644 file under 0755 directories, and a 0644 file under a 0700 directory, pass the floor and reach the loader.*
+**If false.** Anyone who can write the module file or unlink it from its directory runs arbitrary code inside the process that holds the User PIN and the token session. That is a signing oracle over the response and TLS keys without extracting either one. The other direction is a floor that refuses every packaged module, which makes the PKCS#11 custody class undeployable.
+**Likely owner:** none. key_file_access.rs is in no unit's paths. proxy.pkcs11_adapter has pkcs11_native.rs in its paths, but its description and THM-0116 say nothing about which code is loaded, and THM-0116's scope declines custody ('NOT A CUSTODY CLAIM'). NP-054 is the read-floor for key files (disclosure harm, any group or world bit), and the source says the two floors differ.
+**Severity:** `critical`.
+**Root relationship.** A premise of the PKCS#11 adapter units under THM-0116. The emit guard assumes the code signing in-process is the configured module. Sits beside NP-054 in the key-file access family under THM-0077.
+**Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).
+
+## NP-211 — every Cryptoki status other than CKR_OK is a refusal that names what failed
+
+**Controls:** `mcp-re-proxy` `lib#pkcs11_keysource::token::tests::each_object_class_names_itself`; `mcp-re-proxy` `lib#pkcs11_native::tests::every_wrapper_error_renders_its_context`; `mcp-re-proxy` `lib#pkcs11_native::tests::only_ckr_ok_passes_the_status_check`.
+**Carrier:** `mcp-re-proxy/src/pkcs11_native.rs`.
+**Statement.** *`check` passes only CKR_OK. Every other CK_RV becomes Pkcs11Error::Ck carrying the operation name and the raw status. Every wrapper error renders with its context (the operation and status, or the missing function-list entry), never as a bare code, and a key-lookup refusal names the object class that was requested.*
+**If false.** A failing Cryptoki call is treated as success and the adapter continues on an unauthenticated session or an unwritten buffer. Or a startup refusal sends the operator to the wrong call or the wrong token object.
+**Likely owner:** proxy.pkcs11_adapter has pkcs11_native.rs and token.rs in its paths. Its retry clauses presuppose this classification but do not state it, and neither the unit nor THM-0116 states a rendering clause.
+**Severity:** `medium`.
+**Root relationship.** A premise of proxy.pkcs11_adapter's fail-closed clauses. The rendering half is the operator-facing axis NP-145 and NP-193 sit on.
+**Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).
+
+## NP-210 — the token that receives the PIN, and the key object used, are exactly the ones the configuration names
+
+**Controls:** `mcp-re-proxy` `lib#pkcs11_native::tests::a_token_label_keeps_its_interior_bytes_and_loses_only_its_padding`; `mcp-re-proxy` `lib#pkcs11_native::tests::an_ordinary_utf8_label_still_matches_its_configured_form`; `mcp-re-proxy` `lib#pkcs11_native::tests::byte_distinct_token_labels_do_not_compare_equal`; `mcp-re-proxy` `lib#pkcs11_native::tests::the_lookup_template_constrains_class_key_type_and_label`.
+**Carrier:** `mcp-re-proxy/src/pkcs11_native.rs`.
+**Statement.** *A token's reported CK_TOKEN_INFO label is compared as bytes, with only trailing 0x20/NUL padding removed. Byte-distinct labels, including ones that differ only in invalid UTF-8, never compare equal, and an ordinary UTF-8 label still matches its configured form. The key object is looked up with exactly CKA_CLASS (the requested class), CKA_KEY_TYPE=CKK_EC_EDWARDS and CKA_LABEL as the exact configured bytes, with no NUL terminator and no padding.*
+**If false.** The User PIN is sent to a device other than the configured one (for example an inserted token whose label aliases the real one under a lossy comparison), or a key object of the wrong class or key type is selected.
+**Likely owner:** proxy.pkcs11_adapter has the carrier in its paths but cannot take this. Its description and THM-0116 state what is established about the key once found, and THM-0108/THM-0116 scopes explicitly leave 'selects the right key' unestablished. Taking it would widen the unit's statement.
+**Severity:** `high`.
+**Root relationship.** A premise of THM-0116 for the PKCS#11 arm: 'establishes the key it advertises' presupposes the key was looked up on the device the operator named.
+**Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).
+
+## NP-221 — the delegated-TLS depth refusal names both conflicting settings and both remedies
+
+**Controls:** `mcp-re-proxy` `lib#async_fleet::shard_depth::tests::the_refusal_names_both_settings_and_both_ways_out`.
+**Carrier:** mcp-re-proxy/src/async_fleet/shard_depth.rs (impl Display for DelegatedTlsDepthRefusal).
+**Statement.** *DelegatedTlsDepthRefusal renders a sentence naming --workers-per-shard and DELEGATED TLS custody, and both ways out: raise the depth to 2 or more, or move TLS to an exported key.*
+**If false.** An operator refused at startup is sent to change only the depth, or cannot tell from the message which two settings disagree, and may choose a remedy their deployment does not want.
+**Likely owner:** proxy.delegated_tls_depth_refusal owns the file, but states only that the pair is refused, 'There is no acknowledgement or unsafe flag'. The refusal holds whatever the sentence says, so this is operator-facing prose, the axis NP-123 and NP-145 were referred on.
+**Severity:** `medium` (the ADR-MCPRE-068 §4.1 floor).
+**Root relationship.** An operator-facing promise about a startup refusal; no theorem states what a refusal must tell an operator.
+**Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).
+
+## NP-216 — every audit line reaches stderr in one write call
+
+**Controls:** `mcp-re-proxy` `lib#audit_sink::writer::tests::a_drop_report_is_one_write_call`; `mcp-re-proxy` `lib#audit_sink::writer::tests::a_record_is_one_write_call`.
+**Carrier:** mcp-re-proxy/src/audit_sink/writer.rs (write_record, report_drops).
+**Statement.** *Every line the audit writer emits (a record, or a drop report) is one newline-terminated physical record handed to the OS in a SINGLE write call, so a pipe receives it whole or not at all. A drop report that fails to land therefore emitted nothing, and its put-back count is reported once, later, rather than after a fragment.*
+**If false.** A record or drop report torn across two writes can interleave with another stderr writer, or leave an unterminated fragment that fuses with the next record. The one-line-per-record grammar an auditor parses then breaks, and a partially emitted drop report is re-reported, overstating or garbling the loss count.
+**Likely owner:** proxy.audit_text_rendering states 'one logical audit record renders to exactly one physical record' but its paths are audit_record/{scalar,text}.rs, so the SF-1 rule forbids reaching writer.rs. proxy.audit_delivery owns writer.rs, but THM-0070 enumerates seq, order, drop, flood, ceiling and drain clauses and no atomicity clause.
+**Severity:** `medium`.
+**Root relationship.** The emission-side twin of the rendering claim beneath THM-0069/THM-0070; delivery integrity at the syscall boundary, which neither theorem states.
+**Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).
+
+## NP-217 — no production path builds a per-request revocation index that admits by default or never ages out
+
+**Controls:** `mcp-re-proxy` `lib#client_revocation::tests::a_crl_without_next_update_is_refused_at_construction`; `mcp-re-proxy` `lib#client_revocation::tests::no_crls_build_no_index`; `mcp-re-proxy` `lib#tls_plane::crl_evidence::tests::the_revocation_index_is_derived_from_the_gated_evidence`.
+**Carrier:** mcp-re-proxy/src/client_revocation.rs (from_crl_ders) and mcp-re-proxy/src/tls_plane/crl_evidence.rs (revocation_index).
+**Statement.** *ClientRevocationIndex::from_crl_ders refuses an empty CRL set and refuses a CRL that states no nextUpdate, so the admit-everything index is reachable only through the #[cfg(test)] `empty()` and no list is held in force forever. The index the TLS plane installs is built only from the CRL bytes that passed the ClientCrlEvidence gate, and evidence with no CRLs yields no index rather than an empty one.*
+**If false.** The per-request revocation check silently admits every client certificate (the one admission granted without a Good verdict), or enforces a list that never falls out of force, while the handshake verifier refuses. The request path fails open on a warm connection, and nothing in the posture says so.
+**Likely owner:** none. proxy.client_revocation_index_verdict (THM-0032) states what an EXISTING index answers, and NP-062's record measured that a constructor refusal cannot falsify a clause about a value that exists. proxy.client_revocation_currency (THM-0131) states the nextUpdate installability gate and excludes 'the per-request index beside it'.
+**Severity:** `critical`.
+**Root relationship.** Under the client-certificate roots, beside NP-062: the other constructor refusals of the same builder, whose failure direction is admission rather than a smaller revoked set.
+**Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).
+
+## NP-218 — the response signer serves a credential only from its nbf
+
+**Controls:** `mcp-re-proxy` `lib#delegated_server_signer::terminal_retirement_tests::a_snapshot_is_not_served_before_its_nbf`.
+**Carrier:** mcp-re-proxy/src/delegated_server_signer/mod.rs (DelegatedServerSigner::current).
+**Statement.** *DelegatedServerSigner::current yields a published delegated credential only inside [nbf, exp). Before the credential's nbf it yields none, exactly as it does past exp.*
+**If false.** Responses and signed refusals are produced under a credential its issuer has not yet made valid. A verifier enforcing nbf refuses them only after the backend has acted, and one that does not is shown validity the credential does not grant.
+**Likely owner:** proxy.delegated_signing_credential owns the file, but THM-0062 enumerates the none-cases (before first rotation, past expiry, after fail-closed or terminal retirement) without nbf. Registration needs THM-0062 to state the lower bound, which is an owner decision.
+**Severity:** `medium`.
+**Root relationship.** The lower-bound conjunct of THM-0062's credential-existence claim, which that theorem currently states only at the upper bound.
+**Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).
+
+## NP-219 — a retention-fault diagnostic cannot unwind the refusal path, and a flood of one class cannot silence another
+
+**Controls:** `mcp-re-proxy` `lib#http_profile_serve::retention::fault_report::tests::a_failing_sink_is_discarded_not_unwound`; `mcp-re-proxy` `lib#http_profile_serve::retention::fault_report::tests::a_flood_of_one_fault_class_does_not_pace_another`; `mcp-re-proxy` `lib#http_profile_serve::retention::fault_report::tests::the_first_fault_is_reported_and_the_next_is_paced`.
+**Carrier:** `mcp-re-proxy/src/http_profile_serve/retention/fault_report.rs`.
+**Statement.** *The operator line for a retention fault never panics: a failing stderr write is discarded. It is paced per fault class: the first fault of a class is always reported, later ones at most once per LINE_INTERVAL_MS, each carrying the running total counted in full. Each class has its own slot, so a backpressure flood cannot suppress the post-dispatch indeterminate-execution line.*
+**If false.** A peer that fills the retention queue sets the process's stderr write rate, or buries the one line saying an executed exchange is indeterminate and must not be blindly retried. A panicking diagnostic unwinds the serving refusal path it was describing.
+**Likely owner:** none. fault_report.rs is covered only by refusal_site_totality's glob, and _validate_in_crate_selectors needs the literal path. That unit's THM-0081 is the site set anyway. NP-146 states the same shape for replay budget refusals in a different carrier.
+**Severity:** `high`.
+**Root relationship.** The retention-side sibling of NP-146; no theorem states what a refusal-path diagnostic may cost the path.
+**Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).
+
+## NP-222 — the authorization to serve carries exactly the fleet configuration it was issued for
+
+**Controls:** `mcp-re-proxy` `lib#materialized_runtime::fleet_serve_authorized::tests::the_authorized_fleet_is_the_issued_fleet`.
+**Carrier:** `mcp-re-proxy/src/materialized_runtime/fleet_serve_authorized.rs`.
+**Statement.** *`FleetServeAuthorized::into_fleet_config` returns exactly the `FleetConfig` the witness was issued over, so the authorization is a precondition to serving and never a second opinion about what is served.*
+**If false.** The serving fleet runs a configuration other than the one `MaterializedRuntime::serve` authorized, while every structural check that the witness was obtained still passes.
+**Likely owner:** proxy.fleet_serve_sole_route states this clause and has the carrier in its paths, but it is a `structural`-class unit with only structural:// evidence; registering a test there changes the unit's evidence shape (a test:// battery on a structural unit), which is an owner decision this disposition does not take.
+**Severity:** `medium`.
+**Root relationship.** The runtime half of Owner Ruling 11's R12-626 witness, beside the structural sole-route control proxy.fleet_serve_sole_route carries.
+**Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).
+
+## NP-220 — the crossing reconciliation read reports only well-formed exchange digests
+
+**Controls:** `mcp-re-proxy` `lib#transparency::durability::tests::an_enumerated_marker_is_a_well_formed_token`.
+**Carrier:** mcp-re-proxy/src/transparency/durability.rs (markers_at, marker_digest).
+**Statement.** *EvidenceRetention::pending_reservations (and stale_reservations at its own stage) reports a marker only when the file stem at that stage's suffix parses as an EvidenceDigest token. A file named '.pending' or 'not-a-digest.pending' is never reported as a crossing.*
+**If false.** An auditor asking which calls crossed the execution threshold without landing a hop is shown entries that name no exchange: phantom indeterminate calls from stray or planted files, reported as answerability debt.
+**Likely owner:** proxy.retention_commitment owns the file, but THM-0088's statement is WHEN responsibility was accepted and crossed, and says nothing about what the enumeration may return. proxy.retained_record_at_the_store (THM-0112) 'claims nothing about how the object is NAMED'.
+**Severity:** `medium`.
+**Root relationship.** The read-back half of THM-0088's stage naming, which the audit lane consumes; unstated by any theorem.
+**Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).
+
+## NP-223 — the SDK's published signing surface admits no request the client core refuses
+
+**Controls:** `sdk/python` `pytest#tests/test_authorization.py::TestDpopStaysBuiltIn::test_a_provider_may_not_present_the_built_in_dpop_binding`; `sdk/python` `pytest#tests/test_correlation.py::TestInputRequiredAssociatesWithoutConsuming::test_a_partially_supplied_continuation_is_refused_not_dropped`; `sdk/python` `pytest#tests/test_correlation.py::TestInputRequiredAssociatesWithoutConsuming::test_an_empty_dpop_token_is_refused_rather_than_bound_over_nothing`; `sdk/typescript` `vitest#test/authorization.test.ts > DPoP stays built-in > refuses a provider that presents the built-in dpop binding`; `sdk/typescript` `vitest#test/correlation.test.ts > an input-required result associates without consuming > refuses a partially supplied continuation instead of dropping it`; `sdk/typescript` `vitest#test/correlation.test.ts > an input-required result associates without consuming > refuses an empty dpop token rather than binding over nothing`.
+**Carrier:** sdk/python/src/lib.rs and sdk/typescript/src/lib.rs (`signing_inputs` / `provided_authorization`).
+**Statement.** *Each SDK's native signing seam (`sdk/python/src/lib.rs` for PyO3 `sign_request`, `sdk/typescript/src/lib.rs` for napi `signRequest`) builds a request only through mcp-re-client-core's classifiers. So at the published surface, an empty DPoP token (`DpopCredential::present`), a partially supplied MRTR continuation (`ContinuationHandles::from_optional`), and a provider-presented `oauth-dpop` binding (`build_authorization`) each raise instead of being signed. An ordinary token, all five handles, and a non-DPoP provider binding still sign.*
+**If false.** The seam carries a rule of its own that disagrees with the core. This is the r12 R12-1455/1460/1463 shape: the five handles folded under one `if let (Some,...)` meant a partial continuation was silently dropped, and an approved-continuation answer went out as an unapproved new call. The other failures are a signed `Authorization: Bearer ` binding over zero bytes, or a second `oauth-dpop` binding attesting to a credential no covered header carries. Every client.* unit would stay green, because each measures the core at its own API and not the binding the application actually calls.
+**Likely owner:** None. Both native seam files are in no unit's paths. The client.* units that own the three rules (`client.dpop_credential_exists`, `client.continuation_all_or_nothing`, `client.binding_spec_refusal`) are project mcp-re-client-core, so they cannot select pytest or vitest controls. The sdk_* units' paths are the Python/TS wrapper and transport files, and widening them to lib.rs is the SF-1 defect. `sdk_*.authorization_binding` (policy permits) and `sdk_*.continuation_drive` (the adapter's answer leg) do not state the clause.
+**Severity:** `high`.
+**Root relationship.** This is the published-surface twin, for each SDK, of three client-core units. It sits under THM-0094/THM-0095 on the request side, which THM-0094's scope places outside its closure for authorization artefacts. That is the same position NP-020..NP-024 occupy.
+**Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).

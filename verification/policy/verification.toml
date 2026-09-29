@@ -101,6 +101,27 @@ pilot = "verus-candidate"
 #
 # This unit is why THM-0012 needed no claim correction: the statement was already right, and
 # what was missing was the evidence for a sentence it had asserted since it was ratified.
+# THE SERVING FLEET HAS ONE ROUTE, and it is a compile-time fact (r12 R12-626, owner ruling
+# option (b)). `app::serve_fleet` is the phase-1 primitive beneath `MaterializedRuntime::serve`;
+# it was `pub(crate)` with plain arguments, so any crate code could serve past the lifecycle
+# gate. It now requires a `FleetServeAuthorized` that only `materialized_runtime` can mint,
+# inside `serve`. Three routes to a forged serve, three refusals: calling without the witness,
+# minting it elsewhere, and writing its literal.
+[[unit]]
+id = "proxy.fleet_serve_sole_route"
+class = "V0"
+description = "Crate code cannot execute the serving fleet except through `MaterializedRuntime::serve`: `app::serve_fleet` cannot be called without a `FleetServeAuthorized`, which carries the fleet configuration it authorizes and is spent to obtain it; its field is private to `materialized_runtime::fleet_serve_authorized`, its only producer `issue` is `pub(super)` so only `materialized_runtime` can name it, and `serve` — which holds a lifecycle that legally reached `Materialized` by value — is where it is issued. No `Default`, `Clone` or serialization produces one."
+# The issuer is in the closure: "only `serve` issues it" is a fact about `materialized_runtime.rs`,
+# so a change there must move this unit's fingerprint.
+paths = [
+  "mcp-re-proxy/src/materialized_runtime.rs",
+  "mcp-re-proxy/src/materialized_runtime/fleet_serve_authorized.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "medium"
+evidence = ["structural://proxy/fleet_serve/sole_route"]
+
 [[unit]]
 id = "proxy.runtime_lifecycle_sole_mutator"
 class = "V0"
@@ -270,6 +291,8 @@ tested_symbols = [
   "lib#digest::tests::sha256_member_absent_from_present_header_is_malformed",
   "lib#policy::tests::an_algorithm_without_a_verifier_cannot_be_allowlisted",
   "lib#policy::tests::the_registry_maps_tokens_to_implemented_verifiers",
+  "lib#verify::floor::request::tests::a_valid_request_consults_the_trust_seam_once_in_the_request_slot",
+  "lib#verify::floor::request::tests::a_body_that_misses_its_digest_never_reaches_the_trust_seam",
 ]
 
 # THM-0015's owner.
@@ -332,6 +355,7 @@ tested_symbols = [
   "tests/full_profile_test#a_carried_decision_that_is_not_the_bound_document_is_refused",
   "tests/full_profile_test#a_pdp_decision_binding_with_no_carried_decision_is_refused",
   "lib#pdp_decision::binding::tests::a_different_document_does_not",
+  "lib#verify::full::request::tests::audience_mismatch_is_refused",
 ]
 
 # Stated once for three operations, because it IS one proposition: the three differ in what
@@ -374,6 +398,7 @@ paths = [
   "mcp-re-http-profile/src/verified_response/bound.rs",
   "mcp-re-http-profile/src/rejection/mod.rs",
   "mcp-re-http-profile/src/rejection/retry_contract.rs",
+  "mcp-re-http-profile/src/verify/full/delegated/bound.rs",
 ]
 exported_contracts = []
 test_package = "mcp-re-http-profile"
@@ -389,6 +414,11 @@ tested_symbols = [
   "lib#rejection::pre_052_direct_root::tests::tampered_message_does_not_change_the_trusted_wire_code",
   "lib#rejection::pre_052_direct_root::tests::spliced_rejection_onto_a_different_request_fails",
   "tests/delegation_e2e_test#body_tamper_is_caught_by_content_digest",
+  "tests/delegation_e2e_test#a_delegated_bound_response_with_a_content_encoding_is_refused",
+  "tests/delegation_e2e_test#a_delegated_bound_response_that_is_not_json_is_refused",
+  "tests/delegation_e2e_test#a_delegated_bound_response_outside_its_signature_window_is_refused",
+  "tests/delegation_e2e_test#a_delegated_bound_response_not_covering_a_req_component_is_refused",
+  "tests/delegation_e2e_test#a_delegated_bound_response_whose_req_binding_is_to_another_request_is_refused",
 ]
 
 # THM-0016's owner.
@@ -493,6 +523,9 @@ tested_symbols = [
   "lib#rejection::pre_052_direct_root::tests::unbound_rejection_verifies_without_request_context",
   "tests/delegation_e2e_test#a_req_component_is_refused_on_the_delegated_unbound_path",
   "tests/delegation_e2e_test#an_unbound_receipt_body_tamper_is_caught_by_content_digest",
+  "tests/delegation_e2e_test#an_unbound_receipt_with_a_content_encoding_is_refused",
+  "tests/delegation_e2e_test#an_unbound_receipt_that_is_not_json_is_refused",
+  "tests/delegation_e2e_test#an_unbound_receipt_outside_its_signature_window_is_refused",
 ]
 
 # THE ONE LEAF THIS SPLIT LEAVES OWING, and making it visible is half the point of the
@@ -600,6 +633,9 @@ tested_symbols = [
   "tests/full_profile_test#cryptographic_req_splice_still_fails_at_the_floor",
   "tests/full_profile_test#a_valid_exchange_cannot_be_verified_as_the_answer_to_a_different_request",
   "tests/full_profile_test#two_requests_differing_only_in_a_signed_parameter_have_different_handles",
+  "lib#block::tests::response_block_foreign_profile_fails_closed",
+  "lib#block::tests::response_block_unknown_field_fails_closed",
+  "lib#block::tests::response_block_round_trips_and_validates",
 ]
 
 # THM-0019's owner.
@@ -883,6 +919,8 @@ paths = [
   "mcp-re-proxy/src/tls_plane/crl_evidence.rs",
   "mcp-re-proxy/src/tls_plane/revocation_currency.rs",
   "mcp-re-proxy/src/tls_plane/crl_reload_worker/supervision.rs",
+  # Carries the unit's own clause: each successful reload republishes what it installed.
+  "mcp-re-proxy/src/tls_plane/crl_reload_worker/mod.rs",
   # Also in `proxy.tls_listener_state`, and deliberately: this file has two halves. Loading
   # and indexing the CRLs is what a listener is built with; RENDERING the posture is what
   # the deployment says about them. A change to either dirties both units, which is the
@@ -912,6 +950,9 @@ tested_symbols = [
   "lib#tls_plane::crl_reload_worker::supervision::tests::a_failed_reload_is_degraded_and_a_dead_worker_is_stopped",
   "lib#tls_plane::client_revocation_posture::revocation_posture_tests::with_no_crl_the_per_request_check_is_reported_as_not_configured",
   "lib#tls_plane::client_revocation_posture::revocation_posture_tests::every_loaded_crl_reports_its_own_digest_and_window",
+  "lib#tls_plane::crl_reload_worker::tests::a_halted_reload_loop_retracts_the_cadence_it_advertised",
+  "lib#tls_plane::crl_reload_worker::tests::a_successful_reload_republishes_the_evidence_it_installed",
+  "lib#tls_plane::crl_reload_worker::tests::a_failed_rebuild_keeps_last_good_index_and_is_degraded_not_stopped",
 ]
 
 # ---------------------------------------------------------------------------------------
@@ -1612,6 +1653,8 @@ tested_symbols = [
   "tests/binding_identifier_test#unknown_binding_type_fails_closed",
   "tests/binding_identifier_test#opaque_binding_carrying_reference_fields_is_malformed",
   "tests/binding_identifier_test#reference_binding_missing_its_reference_fields_is_malformed",
+  "lib#block::artifact_binding::tests::a_foreign_digest_alg_is_refused",
+  "lib#block::artifact_binding::tests::an_opaque_binding_with_a_reference_field_is_refused",
 ]
 
 # ---------------------------------------------------------------------------
@@ -1634,6 +1677,17 @@ class = "V1"
 description = "MCPRE-102 dispatch preparation: a request whose evidence block carries an MRTR continuation can never be prepared successfully with continuation_verified == false."
 paths = [
   "mcp-re-http-profile/src/dispatch.rs",
+  # The only entry to the proved function. `prepare_http_dispatch` is now private to the
+  # `dispatch` module and reachable solely as a method on `ReplayTierAdmitted`, so the
+  # file holding that method is on the path from a caller to the postcondition.
+  "mcp-re-http-profile/src/dispatch/replay_posture.rs",
+  # UC-1: both are `mod` declarations of the measured `dispatch.rs`, so a closure naming
+  # only the parent would keep fingerprinting it alone while the proved product's own
+  # type moved underneath. `outcome.rs` holds what the postcondition is sealed INTO;
+  # `retained_continuation.rs` holds the type the transparent Verus mirror reflects, and
+  # whose field visibility the proof is measurably sensitive to.
+  "mcp-re-http-profile/src/dispatch/outcome.rs",
+  "mcp-re-http-profile/src/dispatch/retained_continuation.rs",
   "mcp-re-http-profile/src/block.rs",
   # The product this postcondition is about is built by the full-profile request stage,
   # over the floor stage's result. Both, not the whole `verify/` subtree: the delegated and
@@ -1658,9 +1712,16 @@ evidence = [
 # — the labelled digest as a function of its arguments, and the two policy getters. They
 # are premises of this unit and are named here for the same reason they are scoped to it:
 # one relation, declared in both manifests, and the two must agree.
-# Unbypassability is a property of `prepare_http_dispatch`, so the battery is the dispatch
-# integration target rather than any unit test: `dispatch.rs` carries no test module, and a
-# battery declared over the lib alone would run zero of the cases that matter.
+# Unbypassability is a property of `prepare_http_dispatch` driven end to end, so the battery
+# is the dispatch integration target rather than the lib: the integration cases reach the
+# proved function through a signed exchange, and a battery declared over the lib alone would
+# run none of them. `dispatch.rs` DOES now carry a test module — it gained one in the file-9
+# pass that sealed the product — and its `a_claimed_continuation_with_no_retained_bases_is_
+# refused` is the lib-side twin of `continuation_without_retained_context_fails_closed`
+# below. It is deliberately not added here: it is a duplicate reading of a conjunct this
+# battery already carries, and a battery is not improved by counting the same fact twice.
+# The controls that test module added which state something NEW belong to
+# `http_profile.continuation_offer_agreement`, which is where they are declared.
 tested_symbols = [
   "tests/dispatch_test#continuation_round_trips_through_dispatch",
   "tests/dispatch_test#continuation_changed_request_state_fails",
@@ -1672,6 +1733,54 @@ tested_symbols = [
 proved_symbols = ["mcp_re_http_profile::dispatch::prepare_http_dispatch"]
 features = ["verify"]
 pilot = "verus-wp2"
+
+
+# ---------------------------------------------------------------------------
+# The other half of the continuation seam's `iff` — r12 file 9, R12-288/289
+# ---------------------------------------------------------------------------
+#
+# `continuation_unbypassability` above answers "a continuation that IS carried cannot be
+# admitted unverified". It says nothing about the opposite disagreement, and until the
+# file-9 pass there was nothing to say: retained bases offered for a request whose signed
+# block claimed no continuation were DISCARDED, and the caller received an ordinary
+# first-leg admission it would read as a resumption.
+#
+# That is a different proposition with a different failure, so it is a different unit
+# rather than a clause bolted onto the theorem above. The proved postcondition is about
+# what a successful preparation guarantees; this is about which disagreements between the
+# caller's belief and the signed request are refused at all. Keeping them apart is what
+# stops the proved unit's description from growing an "and" it has no proof for.
+
+[[unit]]
+id = "http_profile.continuation_offer_agreement"
+class = "V0"
+description = "THE CALLER'S OFFER AND THE SIGNED REQUEST'S CLAIM MUST AGREE, IN BOTH DIRECTIONS, AND EITHER DISAGREEMENT IS REFUSED BEFORE THE NONCE IS BURNED: retained continuation bases supplied for a request whose evidence block carries no continuation are refused rather than discarded, and a carried continuation with no retained bases to bind against is refused rather than admitted. Says NOTHING about whether a bound continuation's three handles are the right handles — that is `http_profile.continuation_binding` — and nothing about unbypassability, which is the proved unit above."
+paths = [
+  "mcp-re-http-profile/src/dispatch.rs",
+]
+exported_contracts = []
+# TWO classes, for the reason the refusal direction always needs them: both conjuncts are
+# `return Err` arms in one `match`, so "the battery is green" and "the battery would notice
+# an arm being turned back into a discard" are different facts. M412 deletes the arm the
+# way the defect had it — `(None, _) => false` — and the control below goes red.
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = [
+  "test://http_profile/dispatch/continuation_offer_agreement",
+  "mutation://http_profile/dispatch/continuation_offer_agreement",
+]
+tested_symbols = [
+  # The R12-288/289 repair itself.
+  "lib#dispatch::tests::retained_bases_offered_for_a_request_that_claims_no_continuation_are_refused",
+  # The mirror image, stated here as this unit's own conjunct. Its integration twin lives
+  # in `continuation_unbypassability`'s battery; the two units measure the same arm for
+  # different reasons, and neither may be deleted on the strength of the other.
+  "lib#dispatch::tests::a_claimed_continuation_with_no_retained_bases_is_refused",
+  # THE POSITIVE CONTROLS. Without them both conjuncts above are satisfied by a seam that
+  # refuses every request, which would establish nothing about the ones that dispatch.
+  "lib#dispatch::tests::a_first_leg_request_prepares_with_no_continuation",
+  "lib#dispatch::tests::an_answer_leg_prepares_against_the_retained_bases",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -1720,6 +1829,8 @@ tested_symbols = [
   "lib#block::tests::tampered_request_state_breaks_the_digest",
   "lib#block::tests::splice_across_continuation_boundary_fails",
   "lib#block::tests::wrong_continuation_type_is_malformed",
+  "lib#block::tests::a_wrong_role_handle_from_handles_is_refused_by_verify",
+  "lib#block::tests::from_handles_over_role_labeled_digests_is_wire_identical_to_build",
 ]
 proved_symbols = ["mcp_re_http_profile::block::HttpContinuation::verify"]
 features = ["verify"]
@@ -2951,6 +3062,155 @@ tested_symbols = [
 # propagates out of `run` instead of resolving to an OFF posture or a softer tier, and that
 # is a fact about the `?` operators in `run_validated`. M358 weakens exactly that.
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# The fail-closed input to the fsGroup relaxation — r12 R12-631
+# ---------------------------------------------------------------------------
+#
+# `KeyFileAccessPolicy::violation` admits a group-readable key file only when the file's
+# group is one this process is ACTUALLY in. That is what makes the Kubernetes `fsGroup`
+# relaxation a narrow one rather than a blanket permission — and it makes the group set an
+# input to a fail-closed decision, not a diagnostic.
+#
+# The two-call `getgroups` idiom extended that set with the WHOLE BUFFER, checking only
+# that the second call had not failed. The call returns how many entries it WROTE, and the
+# supplementary list can shrink between the two calls: the tail then still holds its
+# initialiser, `0`, and gid 0 — root — entered the set of groups this process is in. Under
+# `--allow-group-readable-key-files`, a 0640 key file owned by group root would be admitted
+# by a process that is not in group root.
+#
+# The race needs a concurrent privileged `setgroups` and no realistic attacker drives it.
+# It is registered because it is a fail-OPEN direction in a guard whose entire job is to
+# fail closed, and because the decision is now a pure function that can be measured without
+# a kernel — which is the only reason it has controls at all.
+
+# ---------------------------------------------------------------------------
+# WHICH files the permission floor is enforced against — r12 R12-620
+# ---------------------------------------------------------------------------
+#
+# The guard's own doc already states the rule: "the rule follows the files, not the
+# key-source name", written when gating the whole check on `key_source == File` had skipped
+# the one private key that DOES land in the pod. The projection then reintroduced the same
+# shape one level up — an EARLY RETURN on the RESPONSE-signing custody's answer about ITS
+# locators, before the CHANNEL machine's file was appended.
+#
+# The two are separate machines (ADR-MCPRE-067 §10) and nothing makes them agree, so an
+# `EnvSeed` response custody beside an exported channel key produced an EMPTY list while
+# `key_source.tls_server_key()` read that file anyway: a TLS server private key at
+# Kubernetes' default 0644 booted silently, with the deployment advertising a hardened
+# key-custody posture. Reachable only in `dev_env_key_source` builds today, because that is
+# the only place `--key-source env` parses — which bounds the exposure, not the defect.
+
+# The composition of the three roles, which is its own proposition: the scope can be right
+# and every observation correct while the ROOT forgets to hold the result — which is what
+# `app.rs` did for its whole life, by running a loop and discarding what it learned. The
+# earned product is what makes "every key file was admitted" a value rather than a habit.
+
+[[unit]]
+id = "proxy.key_file_custody_admission"
+class = "V0"
+description = "EVERY PRIVATE-KEY FILE THIS DEPLOYMENT WILL READ HAD ITS PERMISSION POSTURE OBSERVED AND FOUND LEGAL, AND THAT IS A VALUE RATHER THAN AN EVENT: `admit_key_files` walks the covered set, applies the policy to each observed object, and yields an `AdmittedKeyFiles` whose representation is private and whose only producer is that walk — so holding one means the observation happened, over a named scope. It carries the material read from each admitted object and the custody states it was admitted for, and `build_key_source` takes it as its only input, so a key source is built from exactly that material: `take` surrenders a file's material once and refuses a path the walk never covered. The first refusal stops the walk, because a deployment with one illegal key file does not start. Says nothing about WHICH files are covered (`proxy.key_file_floor_scope`), what a mode means (`config_state::KeyFileAccessPolicy`), or which groups this process is in (`proxy.process_group_set`); it is the composition of exactly those three."
+paths = [
+  "mcp-re-proxy/src/capability_materialization/key_file_custody/mod.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = [
+  "test://proxy/key_file/custody_admission",
+  "mutation://proxy/key_file/custody_admission",
+]
+tested_symbols = [
+  "lib#capability_materialization::key_file_custody::tests::the_admitted_product_names_the_scope_it_walked",
+  "lib#capability_materialization::key_file_custody::tests::one_illegal_key_file_refuses_the_whole_admission",
+  "lib#capability_materialization::key_file_custody::tests::the_admission_surrenders_each_walked_file_once_and_nothing_else",
+  # The same-object claim through the REAL loader: admit, replace the path, then build.
+  "lib#capability_materialization::key_file_custody::tests::the_loader_consumes_the_admitted_seed_when_the_path_is_replaced",
+]
+
+[[unit]]
+id = "proxy.key_file_floor_scope"
+class = "V0"
+description = "WHICH FILES THE STARTUP PERMISSION FLOOR IS ENFORCED AGAINST: every private-key file this configuration causes the proxy to READ, asked of the owner that knows — each custody machine answers for its own locators and no machine's answer suppresses another's file. The PKCS#11 User PIN is included because it unlocks the token holding the keys; an environment-variable seed is excluded because stat'ing a variable NAME as a path is a check that passes for the wrong reason. Says nothing about what the floor then DECIDES about a file's mode, which is `config_state::KeyFileAccessPolicy`'s, and nothing about the group set that decision is taken against, which is `proxy.process_group_set`'s."
+paths = [
+  "mcp-re-proxy/src/capability_materialization/key_file_custody/covered_files.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = [
+  "test://proxy/key_file/floor_scope",
+  "mutation://proxy/key_file/floor_scope",
+]
+tested_symbols = [
+  # THE DEFECT: one machine's answer suppressing another machine's file. The assertion is
+  # on the EXACT vector, so it is simultaneously the other direction — the env-var seed
+  # name is absent, and a fix that checked everything would fail it too.
+  "lib#capability_materialization::key_file_custody::covered_files::tests::an_env_seed_response_custody_does_not_suppress_the_channel_key_file",
+  # The PIN file is in scope because it unlocks the token, and is NOT claimed for a source
+  # that reads no PIN — the second half is what stops the first from being satisfied by a
+  # projection that names every path it can find.
+  "lib#capability_materialization::key_file_custody::covered_files::tests::the_pkcs11_pin_file_is_permission_checked",
+]
+
+[[unit]]
+id = "proxy.key_file_posture_observation"
+class = "V0"
+description = "THE OBJECT WHOSE POSTURE WAS CHECKED IS THE OBJECT WHOSE BYTES ARE CONSUMED, AND EVERY WAY OF NOT KNOWING THAT POSTURE IS A REFUSAL: the configured name is resolved ONCE — opened, following symlinks as any open does — the open handle is `fstat`ed, the policy applied to that metadata, and the key material read from the same handle into a sealed `CheckedKeyFile` that holds bytes and never a path to reopen (r12 R12-630, R12-634). An open or `fstat` that fails for any reason other than `no such file` refuses because the posture of a file the proxy is about to READ is either established or it is not, and a target whose mode bits do not exist refuses for the same reason permanently rather than returning success. `NotFound` is the one non-refusal — there is no file whose permissions could be wrong, and the loader reports the absence itself. This role does not see `--allow-group-readable-key-files` and could not re-derive the rule from it: the rule is three conditions and a boolean is one term in it, which is `config_state::KeyFileAccessPolicy`'s."
+paths = [
+  "mcp-re-proxy/src/capability_materialization/key_file_custody/checked_key_file.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/key_file/posture_observation",
+  "mutation://proxy/key_file/posture_observation",
+]
+tested_symbols = [
+  # The policy applied to what was observed, in both directions and at the opt-in's edge.
+  "lib#capability_materialization::key_file_custody::checked_key_file::tests::a_world_readable_key_file_is_refused",
+  "lib#capability_materialization::key_file_custody::checked_key_file::tests::a_group_readable_key_file_is_refused_without_the_opt_in",
+  "lib#capability_materialization::key_file_custody::checked_key_file::tests::a_group_readable_key_file_owned_by_our_group_is_accepted_with_the_opt_in",
+  "lib#capability_materialization::key_file_custody::checked_key_file::tests::group_write_is_refused_even_with_the_opt_in",
+  # THE POSITIVE CONTROL. Without it every refusal above is satisfied by a role that
+  # refuses every key file, which would start no deployment at all.
+  "lib#capability_materialization::key_file_custody::checked_key_file::tests::an_owner_only_key_file_is_accepted",
+  # NOT KNOWING, in its two shapes: an unstat'able file refuses, an absent one does not.
+  "lib#capability_materialization::key_file_custody::checked_key_file::tests::a_key_file_whose_posture_cannot_be_established_is_refused",
+  "lib#capability_materialization::key_file_custody::checked_key_file::tests::an_absent_key_file_is_not_an_error",
+  # THE SAME-OBJECT CLAIM, as the attack: the path is replaced by a world-readable file
+  # after the check, and the value still yields the checked object's bytes.
+  "lib#capability_materialization::key_file_custody::checked_key_file::tests::the_checked_object_is_the_consumed_object_when_the_path_is_replaced",
+  # Symlinks stay supported, and the posture checked is the RESOLVED target's.
+  "lib#capability_materialization::key_file_custody::checked_key_file::tests::a_symlink_is_followed_and_its_resolved_target_is_checked_and_read",
+]
+
+[[unit]]
+id = "proxy.process_group_set"
+class = "V0"
+description = "THE GROUP SET THE KEY-FILE GUARD IS HANDED IS WHAT THE KERNEL REPORTED AND NOTHING ELSE: only the prefix `getgroups` actually wrote is taken, so an unwritten tail cannot contribute a group — in particular gid 0 — that this process is not in; a failed call yields NO supplementary groups, which is the fail-closed reading because a smaller set can only make the policy refuse more files; and a count past the buffer is clamped rather than trusted. Says nothing about what the policy then DECIDES from that set, which is `config_state::KeyFileAccessPolicy`'s."
+paths = [
+  "mcp-re-proxy/src/capability_materialization/key_file_custody/process_groups.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = [
+  "test://proxy/key_file/process_group_set",
+  "mutation://proxy/key_file/process_group_set",
+]
+tested_symbols = [
+  # THE DEFECT: the unwritten tail is the initialiser, not a group.
+  "lib#capability_materialization::key_file_custody::process_groups::tests::the_unwritten_tail_is_not_a_group_this_process_is_in",
+  "lib#capability_materialization::key_file_custody::process_groups::tests::a_failed_call_yields_no_supplementary_groups",
+  "lib#capability_materialization::key_file_custody::process_groups::tests::a_count_past_the_buffer_is_clamped_not_trusted",
+  # THE POSITIVE CONTROLS. Without them the three above are satisfied by a function that
+  # always returns nothing — which would refuse every fsGroup mount the relaxation exists
+  # to admit, and would look like a fix.
+  "lib#capability_materialization::key_file_custody::process_groups::tests::a_fully_written_buffer_is_taken_whole",
+  "lib#capability_materialization::key_file_custody::process_groups::tests::the_effective_gid_is_always_in_the_set",
+]
 
 [[unit]]
 id = "proxy.unestablishable_capability_refusal"
@@ -5828,6 +6088,7 @@ tested_symbols = [
   # falsifier for exactly this conjunct.
   "tests/integration_async#delegated_production_wiring_test::delegated_required_wiring_serves_verifies_and_rotates",
   "tests/integration_async#root_key_lifecycle_test::root_issuance_failure_serves_until_delegated_key_expiry_then_fails_closed",
+  "lib#delegated_server_signer::terminal_retirement_tests::a_rotor_retire_after_permanent_retirement_cannot_reopen_publish",
 ]
 
 [[unit]]
@@ -6081,7 +6342,7 @@ evidence = [
 tested_symbols = [
   "lib#http_profile_serve::signing_window::tests::the_configured_ttl_bounds_a_window_inside_the_credential",
   "lib#http_profile_serve::signing_window::tests::the_credential_bounds_a_ttl_that_would_outlive_it",
-  "lib#http_profile_serve::signing_window::tests::an_expired_credential_advertises_no_future_validity",
+  "lib#http_profile_serve::signing_window::tests::an_expired_credential_opens_no_window",
   "lib#http_profile_serve::signing_window::tests::a_saturating_ttl_does_not_wrap_past_the_credential",
   "lib#http_profile_serve::receipt::artifact::last_resort_receipt_tests::a_spent_approval_last_resort_receipt_names_the_consumed_continuation",
   "lib#http_profile_serve::receipt::artifact::last_resort_receipt_tests::a_retention_indeterminate_last_resort_receipt_still_names_the_failed_obligation",
@@ -6118,6 +6379,9 @@ tested_symbols = [
   # the double citation is measured twice rather than claimed twice.
   "tests/integration_async#delegated_production_wiring_test::delegated_required_wiring_serves_verifies_and_rotates",
   "lib#http_profile_serve::receipt::artifact::last_resort_receipt_tests::an_unstated_disposition_adds_no_claim",
+  "lib#http_profile_serve::signing_window::tests::a_non_positive_ttl_opens_no_window",
+  "lib#http_profile_serve::signing_window::tests::open_yields_a_window_only_while_the_signer_holds_a_live_credential",
+  "lib#http_profile_serve::signing_window::tests::the_window_advertises_the_instant_it_was_opened_at",
 ]
 
 [[unit]]
@@ -6425,6 +6689,14 @@ tested_symbols = [
   "lib#audit_record::text::tests::the_absent_marker_is_not_producible_by_any_scalar",
   "lib#audit_record::text::tests::no_field_name_contains_a_separator",
   "lib#audit_record::text::tests::a_rendered_record_parses_back_to_the_fields_that_were_written",
+  "lib#audit_record::scalar::tests::is_separator_free_is_exactly_the_escapes_fixed_point",
+  "lib#audit_record::text::tests::a_token_carrying_a_newline_still_renders_one_physical_record",
+  "lib#audit_record::text::tests::a_field_name_carrying_a_separator_cannot_add_a_field",
+  "lib#audit_record::text::tests::a_token_that_is_the_bare_absent_marker_is_not_the_absent_marker",
+  "lib#audit_record::text::tests::every_field_name_a_real_record_renders_is_separator_free",
+  "lib#audit_record::text::tests::every_name_and_token_a_real_record_renders_is_rendered_verbatim",
+  "lib#audit_record::text::tests::a_real_record_parses_back_to_the_fields_that_were_written",
+  "lib#audit_record::text::tests::the_recoverable_object_is_the_record_substring_not_the_physical_line",
 ]
 
 # ADR-MCPRE-059 §28 / issue #742. TWO owners, not one, and the split is the finding: R9's
@@ -6692,6 +6964,7 @@ tested_symbols = [
   # control is among them and passes there. It is NOT feature-gated — it selects in the
   # default lane too — so joining this battery costs it no coverage.
   "tests/integration#app_startup_characterization_test::a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host",
+  "lib#kms_endpoint_policy::tests::a_legitimate_endpoint_is_still_admitted_after_the_substitution",
 ]
 # The features `endpoint.rs` is compiled by, named rather than taken wholesale.
 test_features = ["aws_kms_keysource", "gcp_kms_keysource"]
@@ -6890,6 +7163,8 @@ tested_symbols = [
   #       against a `0555` directory, and the read projection over the same path. Opening is
   #       not a stage, and the asymmetry is the serving posture's — THM-0077 carries "an
   #       unopenable retention directory refuses rather than resolving to OFF" in terms.
+  "lib#transparency::durability::tests::a_lost_acknowledgement_for_a_pre_dispatch_job_is_unresolved",
+  "lib#transparency::durability::tests::a_reserve_cancelled_at_its_await_leaves_no_marker",
 ]
 
 [[unit]]
@@ -6944,6 +7219,32 @@ tested_symbols = [
 # and everything after the split is `app.rs`'s. A single unit would let one owner's
 # fingerprint stand for both, and a defect in the installation step falsifies the claim while
 # every local `Established<T>` control stays green.
+
+# THE SEAL, and it is a different proposition from the unit above. That one says the tier
+# handed over is the one the plan SELECTED and that a volatile tier is never handed over —
+# a statement about what materialization decides, measured by its battery. This one says
+# nobody can hand the serving path a value that skipped that decision, which no test can
+# establish: a test exercises the paths that exist, and the question is whether another
+# path could be written. Same split the tree already makes at
+# `proxy.continuation_materialization` / `..._sole_producer` and
+# `proxy.admission_configuration_state` / `..._sole_producer`.
+
+[[unit]]
+id = "proxy.replay_materialization_sole_producer"
+class = "V0"
+description = "No code outside `replay_plane::materialized` can assemble a `MaterializedReplay`, so possession of one IS the statement that `assert_durable` accepted the tier it was built around. Two mechanisms, and the second is why field privacy alone would not do: the three fields are bare-private, AND the checked path returns a `DurabilityWitness` the module does not export, so the struct literal stays unwritable even if someone restored `pub` on the fields. The handover is `into_parts`, which moves both halves out together rather than projecting them separately, so the validated pairing cannot be split back into independently replaceable arguments."
+paths = [
+  "mcp-re-proxy/src/replay_plane/materialized.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+# A forged handover is a deployment advertising cross-replica replay protection while every
+# replica holds a private in-process map: a nonce burned on replica A is Fresh on replica B,
+# so a captured signed request replays against any other replica inside its window.
+direct_consequence_severity = "critical"
+evidence = [
+  "structural://proxy/replay_plane/materialization_sole_producer",
+]
 
 [[unit]]
 id = "proxy.continuation_materialization"
@@ -7247,6 +7548,55 @@ direct_consequence_severity = "high"
 evidence = [
   "structural://proxy/config_state/admission_sole_producer",
 ]
+# ---------------------------------------------------------------------------
+# The §7 gate cannot be SKIPPED — ADR-MCPRE-053, the pre-admission region
+# ---------------------------------------------------------------------------
+#
+# A gate that is never consulted is not a gate, and until this unit nothing in the registry
+# said the §7 currency gate is on the serving path at all. The r12 packet nominated
+# `http_profile_serve/request_admission.rs` as the call site; that file contains no
+# admission code, so the reviewer correctly reported that every G1-G20 guarantee's
+# antecedent was unaudited. The call site is `pre_admission/standing.rs`.
+#
+# THE MEASUREMENT THAT MADE THIS A UNIT. Nineteen
+# `tests/integration_async#admission_currency_serving_test::*` controls witness that the
+# gate RUNS and what it refuses — 18 of them go red if the stage is deleted. What none of
+# them witnesses is that it CANNOT BE SKIPPED, and before this unit's seal the deletion
+# COMPILED: `admission_stage` and `transport_binding_stage` returned the same type, so
+# handing authorization the transport binding in the gate's place was type-invisible. That
+# is the R-SEAL shape — the check was performed at the one call site and remembered, not
+# owned.
+#
+# The evidence is therefore STRUCTURAL and not the test lane. Citing the serving battery
+# here would overclaim: those controls stay green under a pipeline that never reaches the
+# gate, because they exercise the pipeline that does.
+#
+# The neighbouring stage already had this. `pre_admission/action.rs` states that a pipeline
+# dropping the AUTHORIZATION stage would not compile at the dispatch, because
+# `ReadyForDispatch` carries a body only `AuthorizationPosture::release` produces. The gate
+# ordered FIRST — the one that stops a revoked workload being served, placed before
+# anything irreversible — had no equivalent.
+
+[[unit]]
+id = "proxy.admission_gate_unskippable"
+class = "V0"
+description = "That the §7 admission-currency gate cannot be omitted from the serving path: `authorization_stage` requires an `AdmissionDecidedOver`, whose field is bare-private to `standing` and whose sole producer is `admission_stage` — on BOTH arms, so a deployment with no enforcer still passes through the gate and records `NotConfigured` rather than skipping it. A pipeline that dropped the gate and handed authorization the transport binding directly does not compile. States nothing about what the gate DECIDES, which is `http_profile.admission_currency`'s, nor about what a source may hand it, which is `proxy.admission_state_source`'s."
+paths = [
+  # A triangle, and an edit to any corner dissolves the property: the producer, the
+  # consumer that demands the product, and the funnel that wires them.
+  "mcp-re-proxy/src/http_profile_serve/pre_admission/standing.rs",
+  "mcp-re-proxy/src/http_profile_serve/pre_admission/action.rs",
+  "mcp-re-proxy/src/http_profile_serve/pre_admission/mod.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+# A served exchange that never reached the gate is a revoked workload served, with every
+# control in the admission owner green.
+direct_consequence_severity = "critical"
+evidence = [
+  "structural://proxy/serving/admission_gate_unskippable",
+]
+
 [[unit]]
 id = "proxy.authorization_capability"
 class = "V0"
@@ -7354,7 +7704,6 @@ tested_symbols = [
   "lib#custody::tests::a_declined_reissue_leaves_the_predecessor_untouched",
   "lib#custody::tests::the_minted_credential_carries_the_configured_scope_and_trust_epoch",
   "lib#custody::tests::an_unrepresentable_expiry_refuses_rather_than_wrapping",
-  "lib#custody::tests::a_signature_window_that_cannot_be_computed_clamps_to_the_credential",
   "lib#custody::issuance_terms::tests::every_term_fails_restrictively",
   "lib#custody::issuance_terms::tests::the_retry_interval_has_a_floor",
   "lib#custody::issuance_terms::tests::an_uncomputable_rotation_threshold_reads_as_due",
@@ -7376,6 +7725,7 @@ tested_symbols = [
   "lib#custody::key_window::tests::a_legal_pair_is_a_window_and_projects_what_it_was_given",
   "lib#custody::key_window::tests::the_magnitude_ceiling_is_not_this_types_to_apply",
   "tests/delegation_e2e_test#custody_signed_response_verifies_via_attestation_chain",
+  "lib#custody::active_key::tests::a_credential_carrying_a_claim_the_request_did_not_is_refused",
 ]
 
 [[unit]]
@@ -7641,10 +7991,64 @@ tested_symbols = [
   "lib#http_profile_serve::continuation::retirement::tests::a_tier_that_does_not_answer_the_spend_is_its_own_outcome",
 ]
 
+# ---------------------------------------------------------------------------
+# How an operator-configured locator is rendered — one owner, one workspace crate
+# ---------------------------------------------------------------------------
+#
+# Owner instruction, 2026-09-22. The projection used to live inside `mcp-re-proxy`, and
+# `mcp-re-transport` could not reach it, so `--target-uri` was echoed in full one crate
+# over. The two available fixes were both wrong: duplicating the algorithm makes two lists
+# that can disagree, and moving it into `mcp-re-core` would put operator-facing display
+# inside the crate that owns protocol and security verification semantics.
+#
+# So it is its own workspace crate with a narrow authority and NO dependencies. The
+# zero-dependency property is load-bearing rather than tidy: the decomposition is
+# hand-written over `std`, so what a diagnostic renders cannot change because a URL parser
+# upstream changed its mind about a shape.
+#
+# A SEPARATE UNIT, not a widened one. `proxy.operator_facing_redaction` is a different
+# project, and a unit's battery is source- and project-scoped — citing this crate's
+# controls from there would attribute one project's evidence to another.
+
+[[unit]]
+id = "mcp-re-operator-display.locator_projection"
+class = "V0"
+description = "An operator-configured locator reaches a human-readable line only through a projection whose private representation is established by its sole constructor, and that projection renders SCHEME, HOST and PORT alone. Userinfo, path, query and fragment are all removed, because nothing here proves any of them free of credentials; their removal is reported by COMPONENT and never by content. A shape the decomposition cannot confidently take apart is named rather than echoed, so the failure path — which is the path a credential-bearing typo takes — publishes nothing about what it held."
+paths = [
+  # UC-1/UC-2: the root declares the module and re-exports the type, and the projection
+  # itself lives beside it. Both, so neither can move under a standing attestation.
+  "mcp-re-operator-display/src/lib.rs",
+  "mcp-re-operator-display/src/locator.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+# A leaked locator is a store password, a bearer token or a KMS credential in whatever
+# reads the startup output.
+direct_consequence_severity = "high"
+evidence = [
+  "test://operator_display/locator_projection",
+  "mutation://operator_display/locator_projection",
+]
+tested_symbols = [
+  # The five the owner's ruling requires, in its order.
+  "lib#locator::tests::userinfo_never_reaches_the_rendered_locator",
+  "lib#locator::tests::the_complete_configured_locator_never_appears_in_the_rendering",
+  "lib#locator::tests::a_credential_in_query_material_never_reaches_the_rendering",
+  "lib#locator::tests::a_shape_the_projection_cannot_decompose_is_named",
+  "lib#locator::tests::a_credential_free_locator_renders_without_the_marker",
+  # The path is removed for the same reason the query is — nothing proves it safe, and
+  # CF-006 was the live finding that the previous projection published a path segment.
+  "lib#locator::tests::a_path_is_removed_and_its_removal_is_reported",
+  # And the markers report a component, not its contents: a report that named what it
+  # removed would be the leak wearing the projection's clothes.
+  "lib#locator::tests::the_removal_markers_do_not_carry_what_was_removed",
+  "lib#locator::tests::a_scheme_less_credential_bearing_locator_is_named_not_echoed",
+]
+
 [[unit]]
 id = "proxy.operator_facing_redaction"
 class = "V0"
-description = "What of a deployment REQUEST may reach an operator's eyes. Two fields carry credentials and neither may be printed as configured: the PKCS#11 User PIN, which unlocks a token holding the response-signing key and so sits in the same custody class as the key, and `--inner-http-url`, whose authority component is a place credentials ride along. Both are owned by a type whose sole constructor performs the removal and whose representation is private, so possession of the rendered form IS the statement that the secret is already gone — never a call site that remembered to redact."
+description = "What of a deployment REQUEST may reach an operator's eyes, in the PROXY: the PKCS#11 User PIN, which unlocks a token holding the response-signing key and so sits in the same custody class as the key, and the inner-backend URL LIST. Each is owned by a type whose sole constructor performs the removal and whose representation is private, so possession of the rendered form IS the statement that the secret is already gone — never a call site that remembered to redact. What ONE operator-configured locator becomes is NOT this unit's: that owner is `mcp-re-operator-display`, a different crate and a different project, and `mcp-re-operator-display.locator_projection` claims it. This unit CONSUMES that owner — `RedactedLocator` is re-exported here and the backend list is a projection over it — so what remains local is that the list renders through the shared owner rather than through a second redaction of its own."
 paths = [
   "mcp-re-proxy/src/deployment_request/secret_string.rs",
   "mcp-re-proxy/src/deployment_request/inner_backend_display.rs",
@@ -7663,6 +8067,9 @@ evidence = [
 tested_symbols = [
   "lib#deployment_request::secret_string::tests::the_debug_rendering_carries_no_part_of_the_secret",
   "lib#deployment_request::secret_string::tests::the_value_is_still_readable_where_it_is_needed",
+  # The LIST projection, over the shared owner in `mcp-re-operator-display`. Those four
+  # controls moved WITH the implementation; a battery is source- and project-scoped, so
+  # citing them from here would attribute another project's evidence to this unit.
   "lib#deployment_request::inner_backend_display::tests::userinfo_never_reaches_the_rendered_text",
   "lib#deployment_request::inner_backend_display::tests::a_credential_free_url_renders_without_the_marker",
   "lib#deployment_request::inner_backend_display::tests::a_shape_the_projection_cannot_decompose_is_named_not_echoed",
@@ -7752,6 +8159,8 @@ tested_symbols = [
   # LANE: measured, default cargo (167-test listing), not `async_serve`.
   "tests/integration_async#delegated_client_server_e2e_test::serving_without_an_audit_sink_still_round_trips",
   "lib#audit_sink::drain::tests::the_unknown_outcome_is_its_own_case",
+  "lib#audit_sink::writer::tests::a_failed_line_write_latches_the_failure",
+  "lib#audit_sink::writer::tests::a_flush_is_acknowledged_behind_the_lines_ahead_of_it",
 ]
 
 # ---------------------------------------------------------------------------------------
@@ -7818,7 +8227,7 @@ tested_symbols = [
   "tests/delegated_202_test#a_delegated_202_refuses_a_retransmission_of_the_same_notification",
   "tests/delegated_202_test#a_stale_trust_epoch_is_rejected",
   "lib#bodyless::acknowledged::tests::the_pinned_coordinate_is_the_root_anchor_and_not_the_rotating_delegated_kid",
-  "lib#bodyless::acknowledged::tests::taking_the_actor_is_the_only_way_to_consume_one",
+  "lib#bodyless::acknowledged::tests::into_actor_yields_the_established_delegated_actor",
   "lib#bodyless::delegated_credential::tests::a_credential_scoped_to_another_signer_is_refused",
   "lib#bodyless::delegated_credential::tests::the_scoped_keyid_is_read_through_the_actor_field_escape",
   "lib#bodyless::delegated_credential::tests::the_credential_header_is_present_exactly_once_and_bounded",
@@ -8388,6 +8797,11 @@ description = "The deployable Redis replay backend, sync and async: it refuses a
 paths = [
   "mcp-re-proxy/src/redis_store.rs",
   "mcp-re-proxy/src/async_redis_store.rs",
+  # The eviction decision itself. It moved out of `async_redis_store.rs` when the admission
+  # source turned out to need the same question answered, so the file that can falsify this
+  # unit's first clause is now this one — a closure that named only the caller would attest
+  # a policy check it does not measure.
+  "mcp-re-proxy/src/async_redis_store/retention_promise.rs",
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -8403,6 +8817,11 @@ tested_symbols = [
   "lib#async_redis_store::tests::a_store_refuses_to_connect_to_an_evicting_redis",
   "lib#async_redis_store::tests::every_evicting_policy_is_refused_and_so_is_an_unreadable_one",
   "lib#async_redis_store::tests::the_policy_is_read_out_of_either_protocols_reply",
+  # The shared decision, where it is now decided. The four symbols above drive it through
+  # this tier's own connect over a scripted server; these two pin the decision itself —
+  # every evicting policy by name, an unreadable one, and both RESP reply shapes.
+  "lib#async_redis_store::retention_promise::tests::only_noeviction_is_a_retention_promise",
+  "lib#async_redis_store::retention_promise::tests::the_policy_is_read_out_of_either_resp_protocols_reply",
   "lib#redis_store::tests::abandoned_connect_threads_are_bounded_by_a_ceiling_failing_closed",
   "lib#redis_store::tests::fatal_error_does_not_reconnect",
   "lib#redis_store::tests::injected_clock_drives_the_pre_store_staleness_gate",
@@ -8419,6 +8838,19 @@ tested_symbols = [
   "lib#redis_store::tests::ttl_ms_is_window_not_absolute_epoch",
   "lib#redis_store::tests::wait_quorum_is_met_only_with_enough_acks",
   "lib#redis_store::tests::wait_quorum_shortfall_fails_closed_with_fresh_nonce_contract",
+  "lib#async_redis_store::tests::a_black_holed_set_fails_closed_within_the_owned_bound",
+  "lib#async_redis_store::tests::a_declared_quorum_is_enforced_by_the_store_it_was_connected_with",
+  "lib#async_redis_store::tests::a_fresh_insert_sends_the_clock_derived_window",
+  "lib#async_redis_store::tests::a_set_error_fails_closed",
+  "lib#async_redis_store::tests::a_stale_window_never_reaches_redis",
+  "lib#async_redis_store::tests::a_stalled_connect_is_refused_not_hung",
+  "lib#async_redis_store::tests::every_tier_has_an_owned_round_trip_bound",
+  "lib#redis_store::tests::a_poisoned_connection_is_replaced_not_reused",
+  "lib#redis_store::tests::a_wait_shortfall_is_issued_and_fails_closed",
+  "lib#redis_store::tests::an_unreadable_clock_refuses_every_insert_pre_store",
+  "lib#redis_store::tests::the_sync_store_accepts_a_noeviction_redis",
+  "lib#redis_store::tests::the_sync_store_refuses_a_redis_whose_policy_it_cannot_read",
+  "lib#redis_store::tests::the_sync_store_refuses_to_connect_to_an_evicting_redis",
 ]
 test_features = ["redis_replay"]
 
@@ -8664,7 +9096,7 @@ tested_symbols = [
 [[unit]]
 id = "client.binding_spec_refusal"
 class = "V0"
-description = "Which provider lists are a legal contribution to a signed request, and which Core verdict each refusal IS. The narrowing — an opaque provider asked to mint a `pdp-decision` binding — is half of a Mode-2 pair and is refused rather than constructed; every refusal derives its wire token from an exhaustive Core projection instead of a table of strings."
+description = "Which provider lists are a legal contribution to a signed request, and which Core verdict each refusal IS. Two narrowings: an opaque provider asked to mint a `pdp-decision` binding is half of a Mode-2 pair and is refused rather than constructed, and a provider presenting `oauth-dpop` IN ANY FORM is refused because that binding is header-derived and a provider-supplied one would attest to a credential no covered header carries. Every refusal derives its wire token from an exhaustive Core projection instead of a table of strings."
 paths = [
   "mcp-re-client-core/src/binding_spec/mod.rs",
   "mcp-re-client-core/src/binding_spec/refusal.rs",
@@ -8701,6 +9133,101 @@ tested_symbols = [
   "lib#binding_spec::tests::a_decision_does_not_also_name_an_external_grant_handle",
   "lib#binding_spec::tests::a_decision_is_text_or_it_is_not_a_compact_jws",
   "lib#binding_spec::tests::other_artifact_types_keep_the_generic_opaque_form",
+  # r12 R12-1463/1464/1473 — the SECOND narrowing. Until this slice the rule was asserted
+  # in a COMMENT three lines above the `bindings.extend(provided.bindings)` that broke it,
+  # in both published SDKs. The positive control is not optional: a rule that refused the
+  # whole provider seam would satisfy the refusal and delete the feature it guards.
+  "lib#binding_spec::tests::a_provider_may_not_present_the_header_derived_dpop_binding",
+  "lib#binding_spec::tests::a_provider_binding_of_another_artifact_type_is_still_accepted",
+]
+
+# ---------------------------------------------------------------------------
+# What the two published SDK bindings may not decide for themselves — r12 file 10
+# ---------------------------------------------------------------------------
+#
+# `sdk/python/src/lib.rs` and `sdk/typescript/src/lib.rs` are byte-for-byte the same shape
+# on every rule they implement, and they implemented these two THEMSELVES. That is the
+# defect class this campaign closed once already with `mcp-re-operator-display`: two
+# independently authored copies of one rule, in the two files with the widest external
+# blast radius, neither of which compiles in `cargo test --workspace` or `bazel test //...`.
+#
+# So the rules moved to the crate both bindings already depend on, and these units measure
+# them THERE — in the default cargo lane, where a mutation probe can reach them. What the
+# SDK lanes then establish is only that the bindings CALL the owner, which is a different
+# and much smaller claim; it is carried by the pytest and vitest batteries, not here.
+
+[[unit]]
+id = "client.continuation_all_or_nothing"
+class = "V0"
+description = "AN MRTR CONTINUATION IS PRESENT WHOLE, ABSENT WHOLE, OR REFUSED — never partially supplied and silently dropped. `ContinuationHandles::from_optional` is a total classifier over the five optional handles with exactly three outcomes, so the state a caller could previously reach — a fully valid signed request carrying no continuation, no warning and no error, which a server processes as an unrelated new call rather than as the answer to the approval it was meant to answer — is not constructible. The refusal carries HOW MANY handles were supplied and none of their values, because `requestState` is correlation material. Says nothing about whether the handles are the RIGHT ones for this correlation: that binding is checked by the server against the bases it retained, and is `http_profile.continuation_binding`'s."
+paths = [
+  "mcp-re-client-core/src/continuation_handles.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://client/continuation/all_or_nothing",
+  "mutation://client/continuation/all_or_nothing",
+]
+tested_symbols = [
+  # THE DEFECT, over all 30 proper non-empty subsets rather than a sampled few: the old
+  # `if let` fell through on each of them identically, so a control over one subset would
+  # have left the other 29 unpinned.
+  "lib#continuation_handles::tests::every_partial_set_is_refused_and_says_how_many_were_supplied",
+  # THE TWO POSITIVE CONTROLS. Without them the refusal is satisfied by a classifier that
+  # refuses every answer leg, which would establish nothing about the requests that sign.
+  "lib#continuation_handles::tests::no_handles_at_all_is_an_ordinary_request",
+  "lib#continuation_handles::tests::all_five_handles_build_an_answer_leg",
+  # The refusal is a line a client logs, and `requestState` does not belong in one.
+  "lib#continuation_handles::tests::the_refusal_carries_a_count_and_no_correlation_material",
+]
+
+[[unit]]
+id = "client.dpop_credential_exists"
+class = "V0"
+description = "A REQUEST THAT CARRIES A DPoP BINDING CARRIES A CREDENTIAL: the artifact binding and the covered `Authorization` header are both projections of one private `DpopCredential` whose only constructor refuses an empty token, so they still cannot describe DIFFERENT credentials and can no longer both describe NOTHING. Measured before the repair: an empty token minted a binding over zero bytes that `ArtifactBinding::validate` ACCEPTS — the digest of nothing is a well-formed base64url token — beside a signed `Authorization: Bearer ` header carrying no credential, and no serving-side check refuses a zero-length artifact. Only EMPTINESS is decided here: a token's shape is the issuer's business and a client that guessed would refuse credentials its own provider issued."
+paths = [
+  "mcp-re-client-core/src/dpop_credential.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = [
+  "test://client/dpop/credential_exists",
+  "mutation://client/dpop/credential_exists",
+]
+tested_symbols = [
+  "lib#dpop_credential::tests::an_empty_credential_is_refused_rather_than_bound_over_nothing",
+  # The property the two projections have TOGETHER, which is the one the repair had to
+  # preserve: one private field, so a binding and a covered header that came from the same
+  # value describe the same credential.
+  "lib#dpop_credential::tests::the_binding_and_the_covered_header_cannot_describe_different_credentials",
+  # POSITIVE CONTROL: the binding an ordinary credential mints is unchanged. This closes a
+  # hole; it does not change what a correctly-bound request looks like on the wire.
+  "lib#dpop_credential::tests::a_present_credential_mints_the_binding_it_always_did",
+  # The stated limit, as its own control rather than as a sentence in a doc comment.
+  "lib#dpop_credential::tests::only_emptiness_is_decided_here",
+  "lib#dpop_credential::tests::the_refusal_names_the_rule_without_carrying_a_credential",
+]
+
+[[unit]]
+id = "client.reported_core_version"
+class = "V0"
+description = "THE VERSION A PUBLISHED BINDING REPORTS AS `core_version` IS THE AUDITED CORE'S, NOT THE BINDING CRATE'S. `env!(\"CARGO_PKG_VERSION\")` is evaluated where it is WRITTEN, so both SDKs' `core_version()` returned their own `0.1.x` shim version while the audited code is this crate at the workspace version — a consumer asking which core they hold was told the version of the wrapper in front of it. The constant is correct only because of the module it lives in, which is why it has one."
+paths = [
+  "mcp-re-client-core/src/core_version.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "low"
+evidence = ["test://client/core_version/reports_the_audited_core"]
+# NO mutation URI, and the reason is stated rather than left as an omission: the only
+# weakening of a one-line constant is to write a different literal, which the control below
+# reads directly. There is no mechanism here for a probe to delete — the value IS the
+# mechanism, and the file's own doc says the mechanism is WHERE the line lives.
+tested_symbols = [
+  "lib#core_version::tests::the_reported_version_is_the_audited_cores_and_not_a_bindings",
 ]
 
 # The measurement that replaced the producer list. `no_producer_outside_core_mints_a_wire_token`
@@ -9114,6 +9641,15 @@ paths = [
   "mcp-re-proxy/src/pkcs11_keysource/amortized_session.rs",
   "mcp-re-proxy/src/pkcs11_keysource/tls_signer.rs",
   "mcp-re-proxy/src/pkcs11_keysource/token.rs",
+  "mcp-re-proxy/src/pkcs11_native.rs",
+  "mcp-re-proxy/tests/pkcs11_keysource_e2e_test.rs",
+  # The Cryptoki fault injector this unit's e2e control drives lives in the SEPARATE Cargo
+  # package `mcp-re-proxy/tests/mock-pkcs11`. It is deliberately NOT named here: a unit's
+  # battery can only select controls inside the source it measures, in the project it
+  # measures them in, and widening `paths` across a package boundary pulls a neighbouring
+  # authority's machinery into this unit's source closure. The honest consequence is that
+  # the mock can be weakened under the same symbol names without moving this fingerprint —
+  # that residual is the twin proposition, not something this entry may paper over.
 ]
 exported_contracts = []
 evidence_class = "tested"
@@ -9147,6 +9683,14 @@ tested_symbols = [
   # declared battery states only what the adapter rejects, and an adapter that had
   # stopped reaching the token at all would keep it green.
   "tests/pkcs11_keysource_e2e_test#pkcs11_sign_verifies_against_token_public_key",
+  "lib#pkcs11_keysource::session::tests::an_abandoned_operation_retires_the_session_rather_than_wedging_it",
+  "lib#pkcs11_keysource::session::tests::classify_runs_the_fatal_builder_only_for_a_fatal_status",
+  "lib#pkcs11_keysource::session::tests::genuine_operation_failures_are_still_fatal_and_never_retried",
+  "lib#pkcs11_keysource::session::tests::wrapper_shape_errors_are_never_transient",
+  "lib#pkcs11_keysource::token::tests::a_point_that_is_not_32_bytes_is_refused",
+  "lib#pkcs11_keysource::token::tests::an_spki_is_only_built_from_an_accepted_point",
+  "lib#pkcs11_keysource::token::tests::both_conformant_ec_point_encodings_yield_the_same_32_byte_point",
+  "tests/pkcs11_keysource_e2e_test#pkcs11_sign_response_refuses_a_token_signature_that_does_not_verify",
 ]
 
 # The two credential acquirers, which are a different authority from the signers above: what
@@ -9239,6 +9783,7 @@ tested_symbols = [
   # durability would be wired as if it were shared.
   "lib#replay::tests::in_memory_reference_declares_single_process_non_durable",
   "lib#replay::tests::durability_class_defaults_to_single_process_reference",
+  "lib#replay::tests::a_poisoned_clone_cannot_be_reconfigured_into_admitting",
 ]
 
 [[unit]]
@@ -9814,6 +10359,7 @@ tested_symbols = [
   "lib#config_state::server_identity::tests::a_request_missing_both_coordinates_reports_both_in_one_pass",
   "lib#config_state::server_identity::tests::a_whitespace_coordinate_is_empty_and_names_itself",
   "lib#config_state::server_identity::tests::the_identity_keyid_follows_the_resolved_issuer_not_the_server_key_id",
+  "lib#config_state::server_identity::tests::the_trust_domain_projection_is_the_canonical_actors_own_coordinate",
 ]
 
 [[unit]]
@@ -10015,6 +10561,62 @@ tested_symbols = [
   "lib#communication_assurance::credential_currency::x509_adapter::tests::rubbish_der_reads_no_facts",
 ]
 
+# ---------------------------------------------------------------------------
+# What the admission record's ABSENCE is allowed to mean, and the store posture
+# that keeps the answer honest
+# ---------------------------------------------------------------------------
+#
+# Its own unit rather than a clause of the two beside it, because question 2 of the twelve
+# separates them: `proxy.admission_state_source` decides what an ANSWER means and
+# `proxy.admission_record_addressing` decides which key an answer is about, while this one
+# is about the store's promise to still HAVE an answer. Folding it into either would make
+# that unit's statement need an "and".
+#
+# The premise it protects is unusual and worth stating: an admission record deliberately
+# carries NO TTL, because the serving path reads absence as a definitive negative and an
+# expiring key would drop every workload out of admission on a timer. Setting no expiry is
+# only half of that — an evicting instance drops the key anyway at `maxmemory` — so the
+# no-TTL argument is sound only against a store that promised not to. The failure direction
+# is CLOSED, which is why this is availability rather than bypass: under `Required`
+# enforcement it is a fleet-wide admission outage with no diagnosis.
+#
+# `--admission-redis-url` is an INDEPENDENT endpoint from `--replay-redis-url`, so the
+# replay tier's identical assertion establishes nothing about this instance. Both reach the
+# same decision, which is why `retention_promise.rs` is in both closures.
+
+[[unit]]
+id = "proxy.admission_record_retention"
+class = "V0"
+description = "The instance backing the authoritative admission record is refused AT CONNECT unless it promises never to evict a key nobody set an expiry on, and refused likewise when it will not say what its eviction policy is — an unverifiable policy is not evidence of a safe one. The refusal names the policy it read and the admission consequence, so an operator is told which store's guarantee broke rather than the other store's."
+paths = [
+  "mcp-re-proxy/src/redis_admission_source/mod.rs",
+  "mcp-re-proxy/src/async_redis_store/retention_promise.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "medium"
+evidence = [
+  "test://proxy/admission/record_retention",
+  "mutation://proxy/admission/record_retention",
+]
+# The Redis half does not exist in the default crate, and a lane that compiled it to
+# zero tests would report this battery green having measured nothing.
+test_features = ["redis_replay"]
+tested_symbols = [
+  # THE CALL SITE, and the reason this unit exists. Deleting the check from `connect` left
+  # the whole 1554-test lane green before this control: the check was reached by
+  # remembering, not established by anything. It drives `connect` against a scripted
+  # server, so it is the caller that is measured and not only the decision.
+  "lib#redis_admission_source::tests::an_evicting_redis_is_refused_by_the_admission_connect_itself",
+  # Its positive half, and it is not optional: without it the control above is satisfied by
+  # a connect that refuses EVERY instance, and by a scripted server too broken to answer.
+  "lib#redis_admission_source::tests::a_noeviction_redis_is_accepted_by_the_admission_connect",
+  # The verdict-to-error mapping in this source's own error type, including that the
+  # sentence an operator reads is the ADMISSION consequence and names this endpoint's flag.
+  "lib#redis_admission_source::tests::an_evicting_admission_instance_is_refused_with_the_admission_consequence",
+  "lib#async_redis_store::retention_promise::tests::each_store_states_its_own_consequence",
+]
+
 [[unit]]
 id = "proxy.admission_record_addressing"
 class = "V0"
@@ -10127,6 +10729,7 @@ tested_symbols = [
   "lib#startup_plan::tests::the_build_refusal_is_stated_once_and_names_both_consequences",
   "lib#startup_plan::tests::the_old_alias_is_refused_rather_than_reinterpreted",
   "lib#startup_plan::tests::the_requirement_is_the_or_of_every_contributor",
+  "lib#startup_plan::tests::a_networked_locator_is_readable_only_through_the_build_verdict",
 ]
 
 [[unit]]
@@ -10586,8 +11189,15 @@ tested_symbols = [
 [[unit]]
 id = "http_profile.fleet_strict_store_class"
 class = "V0"
-description = "THE STORE-CLASS HALF OF THE FLEET-STRICT REFUSAL, MEASURED WHERE THE HTTP-PROFILE DISPATCH PATH WIRES IT: under the fleet-strict posture a replay store that SELF-REPORTS the single-process reference class is refused as `NonSharedReplayTier` before the store is touched at all, and a durable one is admitted — so the gate is a refusal of a declared class rather than a refusal of everything. The `paths` is the production site `dispatch.rs`, whose step 1 is that gate; the battery is the integration lane that drives it end to end. Says nothing about the DECLARED tier, which is the operator's statement checked in `proxy.replay_admission_gate`, and nothing about what an acknowledgement durably established — that is per-mechanism and registered as ASM-0040 / ASM-0041."
-paths = ["mcp-re-http-profile/src/dispatch.rs"]
+description = "THE STORE-CLASS HALF OF THE FLEET-STRICT REFUSAL, MEASURED WHERE THE HTTP-PROFILE DISPATCH PATH WIRES IT: under the fleet-strict posture a replay store that SELF-REPORTS the single-process reference class is refused as `NonSharedReplayTier` before the store is touched at all, and a durable one is admitted — so the gate is a refusal of a declared class rather than a refusal of everything. The `paths` are the production sites: `dispatch/replay_posture.rs`, which is the sole decision procedure, and `dispatch.rs`, whose step 1 consults it. The battery is the integration lane that drives it end to end, plus the decision procedure's own controls. Says nothing about the DECLARED tier, which is the operator's statement checked in `proxy.replay_admission_gate`, and nothing about what an acknowledgement durably established — that is per-mechanism and registered as ASM-0040 / ASM-0041."
+paths = [
+  "mcp-re-http-profile/src/dispatch.rs",
+  # Where the gate now IS. It moved out of `dispatch_request`'s step 1 into the one
+  # decision procedure both entry points consult, which also produces the witness
+  # preparation requires — so the file that can falsify this statement is this one, and a
+  # closure naming only the caller would attest a gate it does not measure.
+  "mcp-re-http-profile/src/dispatch/replay_posture.rs",
+]
 exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "critical"
@@ -10598,6 +11208,13 @@ evidence = [
 tested_symbols = [
   "tests/dispatch_test#fleet_strict_admits_durable_cache",
   "tests/dispatch_test#fleet_strict_rejects_single_process_reference_cache",
+  # The decision procedure's own arms. The integration pair above drives the sync entry
+  # point; these say what the procedure decides, including that a deployment outside
+  # fleet-strict DECIDED the class is not load-bearing rather than having skipped the
+  # question — which is the half a refusal-only battery cannot state.
+  "lib#dispatch::replay_posture::tests::fleet_strict_refuses_a_single_process_reference_store_class",
+  "lib#dispatch::replay_posture::tests::outside_fleet_strict_the_reference_class_is_a_decision_and_not_an_absence",
+  "lib#dispatch::replay_posture::tests::fleet_strict_admits_a_durable_store_class",
 ]
 
 # ---------------------------------------------------------------------------
@@ -10826,10 +11443,79 @@ tested_symbols = [
   "lib#serving_capabilities::tests::an_unopenable_retention_directory_refuses_startup_naming_the_flag",
 ]
 
+# ---------------------------------------------------------------------------
+# The per-core pool and the handshake bound are ONE decision — ADR-MCPRE-051 §1
+# ---------------------------------------------------------------------------
+#
+# r12's R12-647/R12-648. The pool depth and the blocking-handshake bound were decided in two
+# places from two different inputs, and they stopped agreeing: `build_core_runtime` used the
+# RESOLVED depth, `CoreAdmission::for_core` used a constant. A 2-cpu host resolved to two
+# workers and still admitted two concurrent blocking handshakes, so a peer holding NO client
+# credential — TLS 1.3 signs `CertificateVerify` before the client's `Certificate` is seen —
+# occupied both workers and froze the accept loop, the established connections and every
+# in-flight request on that core.
+#
+# WHAT MAKES THIS A UNIT RATHER THAN A FIXED BUG. The guard that existed to prevent exactly
+# this compared `DELEGATED_TLS_WORKERS_PER_CORE` with `DELEGATED_TLS_HANDSHAKES_PER_CORE` —
+# two constants, neither of which the builder used on the failing path — and was green
+# throughout. Its own doc comment said "a guard on a literal only looks load-bearing". The
+# proposition worth registering is not "the constants are ordered" but "the bound is a
+# function of the depth the core was ACTUALLY built with", which is a statement about a
+# function and is measured over the depths a fleet can resolve.
+
+[[unit]]
+id = "proxy.core_pool_handshake_bound"
+class = "V0"
+description = "The blocking-handshake bound a serving core admits is derived from the pool depth that core was actually built with, never from a constant: `CorePool` decides both from one input, the bound is `depth - 1` capped by a ceiling, and it is strictly below the depth at every depth a fleet can resolve — so a core under a full handshake flood always retains a worker for its accept loop, its established connections and its in-flight requests. The exported-key path, where the signature is in-memory and cannot block, keeps the share-nothing runtime and is bounded by nothing. Says nothing about what the RESOLVER does with an operator's stated depth, which is `proxy.fleet_topology_provenance`'s."
+paths = [
+  "mcp-re-proxy/src/async_fleet/core_runtime.rs",
+  # The consumer. The bound reaching the semaphore is the half a statement about the
+  # function cannot carry: `for_core` could take the bound and size the semaphore from a
+  # literal anyway, which was green across the whole 1516-test lane until its control
+  # existed.
+  "mcp-re-proxy/src/async_serve/core_admission.rs",
+  # CLOSURE, NOT CLAIM. `admission_bound_tests` — the control that states the relation over
+  # every resolvable depth — lives here, so a closure omitting this file would cite a
+  # battery whose source it does not measure and the guard could be rewritten under the
+  # same name without moving the fingerprint. That is the SF-1 defect, and the manifest
+  # gate refuses it. This unit claims nothing about the accept loop or the drain, which is
+  # `proxy.serving_drain`'s over the same file.
+  "mcp-re-proxy/src/async_serve/mod.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://proxy/serving/core_pool_handshake_bound",
+  "mutation://proxy/serving/core_pool_handshake_bound",
+]
+tested_symbols = [
+  # The relation, over every depth a fleet can resolve and both signing custodies — and,
+  # since Owner Ruling 7, over both PROVENANCES, because a stated depth and a derived one
+  # are no longer the same input at 1.
+  "lib#async_serve::admission_bound_tests::the_handshake_bound_leaves_workers_for_the_rest_of_the_core",
+  # The depth table, which is what separates "bounded" from "bounded CORRECTLY": it is the
+  # only control that sees the ceiling being dropped, and the only one that sees depth 2
+  # admitting two.
+  "lib#async_fleet::core_runtime::tests::the_bound_follows_the_built_depth_and_is_capped_by_the_ceiling",
+  "lib#async_fleet::core_runtime::tests::a_delegated_tls_core_is_always_pooled_and_always_bounded",
+  # The negative halves. Without them the battery is satisfied by a pool that bounds
+  # everything, which would cost the exported-key path throughput for nothing.
+  "lib#async_fleet::core_runtime::tests::a_share_nothing_core_has_no_pool_and_no_handshake_bound",
+  "lib#async_fleet::core_runtime::tests::a_pool_without_delegated_tls_bounds_no_handshakes",
+  # The derived-depth arm, which is where a delegated-TLS deployment now gets its pool
+  # from. Ruling 7 removed the stated-1 path into this arm, so without this control the
+  # only remaining evidence that the arm fires at all would be the two above — and neither
+  # of them is about delegated custody.
+  "lib#async_fleet::core_runtime::tests::delegated_custody_over_a_derived_depth_derives_the_safe_one",
+  # The bound REACHING the semaphore, observed as a permit count rather than as a call.
+  "lib#async_serve::core_admission::tests::the_handshake_semaphore_carries_the_pools_bound",
+]
+
 [[unit]]
 id = "proxy.fleet_topology_provenance"
 class = "V0"
-description = "AN EXPLICITLY CONFIGURED FLEET TOPOLOGY IS CARRIED THROUGH UNCHANGED: a stated shard count and a stated worker depth are the ones the fleet runs, including the explicit `1` that restores the single-shard share-nothing deployment, so the serving runtime cannot disagree with the operator about the shape it was told to take. It is the provenance half ONLY. What the automatic path computes when nothing was stated — a shard per cpu, the depth it adds on top, and the floor of one shard of one worker — is a throughput and availability policy rather than a security posture, and it stays in the ADR-069 census under NP-147."
+description = "AN EXPLICITLY CONFIGURED FLEET TOPOLOGY IS RESOLVED UNCHANGED: a stated shard count and a stated worker depth survive topology resolution exactly as stated, including the explicit `1`, so the RESOLVER cannot disagree with the operator about the shape it was told to take. It is the provenance half of the resolver ONLY. What the automatic path computes when nothing was stated — a shard per cpu, the depth it adds on top, and the floor of one shard of one worker — is a throughput and availability policy rather than a security posture, and it stays in the ADR-069 census under NP-147. THE NAMED EXCEPTION IS WITHDRAWN, because the behaviour it named is gone. It read: under delegated TLS custody `CorePool::for_core` raises a resolved depth of 1 to a multi-worker pool, so a stated `1` reaches the resolver intact but does not reach the runtime. Owner Ruling 7 made that silent widening a STARTUP REFUSAL, so a stated `1` now either reaches the runtime as stated (exported key) or refuses the deployment (delegated custody) — it is never converted. What survives is that a DERIVED depth of 1 is still raised, which is the resolver filling in rather than overriding and is `proxy.delegated_tls_depth_refusal`'s to state. This unit still claims nothing about the per-shard runtime builder."
 # CLOSURE, NOT CLAIM. `core_runtime.rs` is here because `mod core_runtime;` in the file
 # above resolves to it and UC-1 requires a measured file's own modules to be measured —
 # a unit that fingerprinted the topology function while its sibling module could be
@@ -10852,6 +11538,75 @@ evidence = [
 # would put a control that cannot fail inside a battery.
 tested_symbols = [
   "lib#async_fleet::topology_tests::explicit_topology_is_never_overridden",
+]
+
+# ---------------------------------------------------------------------------
+# The one serving topology with no safe shape — Owner Ruling 7
+# ---------------------------------------------------------------------------
+#
+# The two units above divide the topology between them: one says a stated shape survives
+# resolution, the other says the handshake bound follows the depth actually built. Between
+# them sat a configuration neither could refuse, because neither was about a PAIR.
+#
+# An explicit `--workers-per-shard 1` is how an operator asks for the single-threaded
+# share-nothing runtime. Under delegated TLS custody the handshake signature is a blocking
+# KMS or PKCS#11 round trip inside rustls' synchronous `Signer::sign`, so one such call
+# freezes the whole core — accept loop, keep-alive connections, every in-flight request —
+# for a peer that needs no credential to open the connection. The tree's answer was to
+# widen the depth to four workers and say nothing, which serves a topology the operator was
+# explicit about not wanting on the axis they were most explicit about.
+#
+# WHY IT IS A UNIT AND NOT A CLAUSE. Neither half is a defect: an exported key with a
+# stated 1 is fine, and delegated custody over a DERIVED 1 is fine and is raised for the
+# same reason. Only the conjunction has no safe shape, and a proposition about a pair
+# cannot be carried by a unit whose description is about one of its terms — which is
+# exactly how the configuration reached the runtime unrefused while both neighbours were
+# green.
+
+[[unit]]
+id = "proxy.delegated_tls_depth_refusal"
+class = "V0"
+description = "A DEPLOYMENT WHOSE OPERATOR EXPLICITLY ASKED FOR THE SINGLE-THREADED SHARE-NOTHING RUNTIME AND WHOSE TLS CUSTODY IS DELEGATED IS REFUSED AT STARTUP, BEFORE ANY LISTENER IS BOUND OR RUNTIME BUILT, rather than being silently widened to a worker pool. The refusal turns on the PAIR: an exported key with a stated depth of 1 is served as asked, a derived depth of 1 under delegated custody is raised to the safe depth because `auto` is the operator declining to choose, and a stated depth of 2 or more is honoured exactly. The depth's provenance is carried by `ShardDepth` rather than reconstructed, so the resolver cannot collapse the two meanings of 1. There is no acknowledgement or unsafe flag. Says nothing about what the bound then is — that is `proxy.core_pool_handshake_bound`'s — and nothing about the automatic path's throughput policy, which stays in the ADR-069 census under NP-147."
+paths = [
+  # Where the decision is, and the type that makes it possible.
+  "mcp-re-proxy/src/async_fleet/core_runtime.rs",
+  "mcp-re-proxy/src/async_fleet/shard_depth.rs",
+  # The ORDERING half: the resolver that produces the provenance, and the one call site
+  # that must consult the decision before it binds anything. A closure without this file
+  # would attest a refusal while the line that has to come first could move.
+  "mcp-re-proxy/src/async_fleet/mod.rs",
+]
+exported_contracts = []
+# TWO classes. The refusal is one `return Err` reached by a two-term condition, and the
+# ordering is one statement's position in a function — both are deletable while the tree
+# still builds and every other serving control stays green. M413 deletes the refusal; M414
+# turns the pair back into the silent widening by reading the depth without its provenance.
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://proxy/async_fleet/delegated_tls_depth_refusal",
+  "mutation://proxy/async_fleet/delegated_tls_depth_refusal",
+]
+tested_symbols = [
+  # THE FOUR CASES the ruling names, one control each.
+  "lib#async_fleet::core_runtime::tests::a_share_nothing_core_has_no_pool_and_no_handshake_bound",
+  "lib#async_fleet::core_runtime::tests::delegated_custody_with_a_stated_single_thread_is_refused",
+  "lib#async_fleet::core_runtime::tests::delegated_custody_over_a_derived_depth_derives_the_safe_one",
+  "lib#async_fleet::core_runtime::tests::the_bound_follows_the_built_depth_and_is_capped_by_the_ceiling",
+  # THE PAIR, stated as a pair: neither term refuses alone. Without it the four above are
+  # satisfied by a rule that refuses delegated custody outright, or every stated 1.
+  "lib#async_fleet::core_runtime::tests::neither_half_of_the_refused_pair_refuses_on_its_own",
+  # THE PROVENANCE, at the resolver that spends `0 = auto`. This is the fact the refusal
+  # turns on, and it is established one layer before the refusal can see it.
+  "lib#async_fleet::topology_tests::a_resolved_depth_says_whether_the_operator_or_the_host_chose_it",
+  # BEFORE THE FIRST BIND, driven through `serve_fleet` itself against an address no host
+  # can bind — so a run that reached the listener loop fails with an OS error instead, and
+  # the two verdicts are distinguishable. The second is the positive control: an admitted
+  # configuration DOES reach the bind, which is what stops the first from being satisfied
+  # by a fleet that refuses everything.
+  "lib#async_fleet::refusal_order_tests::the_delegated_tls_depth_refusal_precedes_the_first_bind",
+  "lib#async_fleet::refusal_order_tests::an_admitted_configuration_reaches_the_listener_and_fails_there",
+  "lib#async_fleet::shard_depth::tests::the_same_depth_from_two_provenances_is_two_values",
 ]
 
 [[unit]]
@@ -10959,7 +11714,7 @@ tested_symbols = [
 [[unit]]
 id = "proxy.transport_binding_application"
 class = "V0"
-description = "THE INSTALLABLE BINDING APPLIES THE RELATION AND REFUSES AN ABSENCE: the policy the serving path can hold relates an authenticated channel peer to a verified request subject and succeeds only where the two name one principal, the coordinate is the resolved actor's SUBJECT rather than the `role:trust_domain:subject:keyid` composite, an absent channel peer is refused rather than treated as nothing to compare, and a policy written to admit everything cannot manufacture the binding fact because the only producer of `RequestPeerBindingFacts` is the authority's own relation. It states nothing the relation itself states — what the comparison DECIDES and why the subject is the coordinate are `proxy.request_peer_binding`'s — and nothing about WHICH binding modes a deployment may select, which the configuration owner decides."
+description = "THE INSTALLABLE BINDING APPLIES THE RELATION AND REFUSES AN ABSENCE: the policy the serving path can hold relates an authenticated channel peer to a verified request subject and succeeds only where the two name one principal, the coordinate is the resolved actor's SUBJECT rather than the `role:trust_domain:subject:keyid` composite, an absent channel peer is refused rather than treated as nothing to compare — and a permissive or fact-replaying `TransportBindingPolicy` is expressible but not installable, because `TransportBinding`'s policy field is private and `exact_match()` is its only constructor; that exclusion is a visibility fact read from source, not a tested one. It states nothing the relation itself states — what the comparison DECIDES and why the subject is the coordinate are `proxy.request_peer_binding`'s — and nothing about WHICH binding modes a deployment may select, which the configuration owner decides."
 # UC-1: `transport/mod.rs` declares `mod identity;` and `pub mod ingress;`, so both
 # resolve inside this unit's source closure and must be measured with it — a unit that
 # fingerprinted only the declaring file could have either body rewritten under it without
@@ -10983,7 +11738,6 @@ tested_symbols = [
   "lib#transport::tests::the_composite_actor_id_is_not_the_binding_coordinate",
   "lib#transport::tests::an_absent_channel_peer_fails_closed",
   "lib#transport::tests::the_installable_binding_is_exact_match",
-  "lib#transport::tests::a_permissive_policy_cannot_manufacture_the_binding_fact",
 ]
 
 [[unit]]
@@ -11214,4 +11968,181 @@ tested_symbols = [
   "lib#transparency::durability::tests::only_the_signed_headers_are_retained",
   "lib#transparency::durability::tests::a_record_without_the_schema_token_is_refused",
   "lib#transparency::durability::tests::a_retained_exchange_comes_back_byte_identical",
+]
+
+[[unit]]
+id = "http_profile.reserved_context_key_guard"
+class = "V0"
+description = "What the §10 reserved-field guard ESTABLISHES about the body it returns: the reserved verified-context key and the consumed request-evidence block are absent from every `_meta` position an inner server can read one from — the top level, `params._meta`, and every object element of a positional `params` — every other `_meta` entry is unaltered, and a body shape whose reserved-key positions the guard cannot enumerate is REFUSED rather than reported clean. The guard runs under every policy, so a deployment with the carrier disabled is not one reserved-key rename away from forwarding caller-authored context."
+paths = [
+  "mcp-re-http-profile/src/context/reserved_key_strip.rs",
+  "mcp-re-http-profile/src/context/seeded_meta_positions.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://http_profile/verified_context/reserved_key_positions_guarded",
+  "mutation://http_profile/verified_context/reserved_key_positions_guarded",
+]
+tested_symbols = [
+  "lib#context::reserved_key_strip::tests::the_top_level_position_is_guarded",
+  "lib#context::reserved_key_strip::tests::the_params_object_position_is_guarded",
+  "lib#context::reserved_key_strip::tests::every_positional_params_element_is_guarded",
+  "lib#context::reserved_key_strip::tests::every_seeded_position_is_named_at_once",
+  "lib#context::reserved_key_strip::tests::a_body_that_is_not_a_json_object_is_refused",
+  "lib#context::reserved_key_strip::tests::a_params_that_is_neither_an_object_nor_an_array_is_refused",
+  "lib#context::reserved_key_strip::tests::strip_removes_proxy_keys_and_preserves_application_meta",
+  "lib#context::reserved_key_strip::tests::a_meta_containing_only_proxy_keys_is_removed_entirely",
+  "lib#context::reserved_key_strip::tests::a_callers_own_empty_meta_survives",
+  "lib#context::reserved_key_strip::tests::an_ordinary_application_body_passes_through_untouched",
+  "lib#context::reserved_key_strip::tests::a_non_object_meta_carries_no_reserved_key_and_is_left_alone",
+  "lib#context::reserved_key_strip::tests::strip_is_noop_without_meta",
+  "lib#context::reserved_key_strip::tests::a_nested_position_below_params_is_guarded_and_named",
+  "lib#context::reserved_key_strip::tests::a_non_object_meta_is_provably_empty_not_uninspectable",
+  "lib#context::reserved_key_strip::tests::the_consumed_request_evidence_block_is_removed_without_being_reported",
+  "lib#context::seeded_meta_positions::tests::a_report_names_the_positions_it_was_built_from",
+  "lib#context::seeded_meta_positions::tests::an_empty_report_names_nothing",
+]
+
+[[unit]]
+id = "http_profile.verified_context_conclusion"
+class = "V0"
+description = "That possession of a `VerifiedContext` means this crate's verifier produced it. The representation is private to its module, `from_verified` is its sole producer, it projects named semantic accessors rather than fields, and it carries no `Deserialize`, so the wire cannot mint one. The write capability follows the deployment act: `insert_verified_context` requires a witness whose sole producer is `VerifiedContextPolicy::trusted_inner_channel`, so a `Disabled` deployment cannot mint the block at all rather than relying on a caller to consult a selector."
+paths = [
+  "mcp-re-http-profile/src/context/verified.rs",
+  "mcp-re-http-profile/src/context/policy.rs",
+  "mcp-re-http-profile/src/context/mod.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+evidence = [
+  "test://http_profile/verified_context/conclusion_sole_producer",
+  "mutation://http_profile/verified_context/conclusion_sole_producer",
+]
+tested_symbols = [
+  "lib#context::verified::tests::the_conclusion_projects_the_resolved_actor_not_the_presented_keyid",
+  "lib#context::verified::tests::a_trusted_deployment_writes_the_block_under_the_reserved_key",
+  "lib#context::verified::tests::what_the_insert_writes_is_what_the_strip_removes",
+  "lib#context::verified::tests::the_conclusion_carries_the_verified_requests_own_expiry",
+  "lib#context::policy::tests::only_the_trusted_deployment_yields_the_carrier_capability",
+  "lib#context::policy::tests::the_default_deployment_cannot_carry_the_block",
+  "lib#context::verified::tests::the_write_fails_closed_when_the_callers_meta_occupies_the_write_position",
+  "lib#context::verified::tests::what_the_writer_emits_the_reader_accepts_with_nothing_unstated",
+]
+
+[[unit]]
+id = "http_profile.unauthenticated_context_claim"
+class = "V0"
+description = "That a verified-context block READ from a body is typed as the assertion it is, never as the conclusion a verifier drew: the read returns a distinct type whose projections are all named `claimed_`, and EVERY member the PEP writes is required, so a block missing one — or carrying an unknown one — fails closed as malformed rather than arriving with a field quietly defaulted. The `NotStated` clause this description used to carry is GONE, not weakened: `audience` and `request_expires` were `Option` + `serde(default)` for a compatibility window, and Owner Ruling 8 closed it, so there is no absent case for a consumer to read permissively. What makes closing it correct rather than a rolling-upgrade outage is the discriminator, which is `http_profile.verified_context_block_schema`'s."
+paths = [
+  "mcp-re-http-profile/src/context/claim.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://http_profile/verified_context/received_claim_proof_strength",
+  "mutation://http_profile/verified_context/received_claim_proof_strength",
+]
+# TWO SYMBOLS RENAMED rather than deleted, because the property each one carried was
+# REPLACED by Owner Ruling 8 and its replacement belongs at the same site:
+# `an_omitted_audience_is_not_stated_rather_than_absent` is now
+# `an_omitted_audience_is_refused`, and `a_block_without_an_expiry_reads_and_states_nothing
+# _about_one` is now `a_block_without_an_expiry_is_refused`. Both renames land in the same
+# commit as this edit, so no lane ever selected a name the tree did not hold.
+tested_symbols = [
+  "lib#context::claim::tests::a_complete_block_reads_through_the_claimed_projections",
+  "lib#context::claim::tests::an_omitted_audience_is_refused",
+  "lib#context::claim::tests::a_block_without_an_expiry_is_refused",
+  "lib#context::claim::tests::a_block_missing_a_required_member_fails_closed",
+  "lib#context::claim::tests::a_decorated_block_is_refused",
+  "lib#context::claim::tests::a_body_without_the_block_reports_the_block_missing",
+]
+
+# ---------------------------------------------------------------------------
+# The block declares its own shape — Owner Ruling 8 / r12 RA1-003
+# ---------------------------------------------------------------------------
+#
+# Without a discriminator, "this member is absent because the writer predates it" and "this
+# member is absent because someone removed it" are the same bytes. A reader that tolerates
+# the first tolerates the second, and the tolerance can never be withdrawn — there is
+# nothing it could be withdrawn ON. On a block whose only integrity is an operator's
+# assertion about channel isolation, that left any writer able to hand a consumer no
+# audience constraint and no bound at will, forever.
+#
+# WHY IT IS A UNIT OF ITS OWN. The proposition spans BOTH halves of the carrier — the
+# writer always emits it, the reader requires it — and the two halves are in different
+# files owned by different units. A clause in either one would be a claim about half a
+# round trip, and the failure a mandatory discriminator introduces is precisely the
+# disagreement between the halves: a build whose writer emits a schema its own reader
+# refuses.
+
+[[unit]]
+id = "http_profile.verified_context_block_schema"
+class = "V0"
+description = "THE VERIFIED-CONTEXT BLOCK DECLARES ITS OWN REPRESENTATION, AND EXACTLY ONE IS CURRENT: the writer emits the discriminator on every block and has no other value it could emit, a block carrying no discriminator is refused, and a block naming a schema this build does not write is refused rather than read as the one it does. There is no absence-as-v1, no legacy parser, no migration flag and no second reader — when the representation changes, the constant changes and the tree migrates atomically. `BlockSchema` is how that is structural rather than remembered: one inhabitant, deserializing from one string, so a claim holding one has already had the discriminator checked and there is no branch to forget. Says nothing about which FACTS the block carries, which is `http_profile.unauthenticated_context_claim`'s and `http_profile.verified_context_conclusion`'s."
+paths = [
+  "mcp-re-http-profile/src/context/block_schema.rs",
+  # Both halves. The proposition is about the writer and the reader AGREEING, and a closure
+  # naming one of them would attest a round trip it measures half of.
+  "mcp-re-http-profile/src/context/claim.rs",
+  "mcp-re-http-profile/src/context/verified.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "high"
+evidence = [
+  "test://http_profile/verified_context/block_schema_discriminator",
+  "mutation://http_profile/verified_context/block_schema_discriminator",
+]
+tested_symbols = [
+  # The owner's own arms: what is emitted, what is refused, and that the refusal does not
+  # echo a string that arrived on a channel whose isolation is an assertion.
+  "lib#context::block_schema::tests::the_only_inhabitant_serializes_as_the_current_schema",
+  "lib#context::block_schema::tests::a_schema_this_build_does_not_write_is_refused",
+  "lib#context::block_schema::tests::a_discriminator_that_is_not_a_string_is_refused",
+  "lib#context::block_schema::tests::the_refusal_does_not_echo_what_the_block_declared",
+  "lib#context::block_schema::tests::what_the_writer_emits_the_reader_accepts",
+  # THROUGH THE BLOCK, not just through the type: the two refusals driven by a whole
+  # verified-context block rather than by a bare string.
+  "lib#context::claim::tests::a_block_with_no_schema_discriminator_is_refused",
+  "lib#context::claim::tests::a_block_declaring_another_schema_is_refused",
+  # THE WRITER'S HALF, asserted on the emitted BYTES. A round trip alone would stay green
+  # for a build that stopped emitting the discriminator AND stopped requiring it.
+  "lib#context::verified::tests::the_written_block_declares_the_current_schema",
+  "lib#context::verified::tests::what_the_writer_emits_the_reader_accepts_with_nothing_unstated",
+]
+
+[[unit]]
+id = "proxy.verified_context_carrier_boundary"
+class = "V0"
+description = "That the serving path composes the §10 guard and the carrier write as one boundary: the PEP-owned `_meta` keys are removed from every request regardless of policy, the PEP's own context is written only under an explicitly trusted channel, and the forwarded bytes cannot be obtained without a caller's attempt on the reserved key being named. A body the guard cannot reach is refused rather than forwarded."
+paths = [
+  "mcp-re-proxy/src/http_profile_serve/body_boundary.rs",
+  "mcp-re-proxy/src/http_profile_serve/dispatch_commitment.rs",
+]
+exported_contracts = []
+evidence_class = "tested"
+direct_consequence_severity = "critical"
+test_features = ["async_serve"]
+evidence = [
+  "test://proxy/verified_context/carrier_boundary_serving_path",
+  "mutation://proxy/verified_context/carrier_boundary_serving_path",
+]
+tested_symbols = [
+  "lib#http_profile_serve::body_boundary::tests::application_meta_survives_the_pep_owned_strip",
+  "lib#http_profile_serve::body_boundary::tests::a_body_the_guard_cannot_reach_is_refused_rather_than_forwarded",
+  "lib#http_profile_serve::body_boundary::tests::the_seeded_positions_are_named_on_the_forwarded_body",
+  "tests/integration_async#verified_context_carrier_test::trusted_channel_carries_the_peps_verified_context",
+  "tests/integration_async#verified_context_carrier_test::disabled_by_default_the_inner_server_sees_clean_mcp",
+  "tests/integration_async#verified_context_carrier_test::a_caller_seeded_verified_context_never_reaches_the_inner_server",
+  "tests/integration_async#verified_context_carrier_test::a_params_meta_seeded_verified_context_never_reaches_the_inner_server",
+  "tests/integration_async#verified_context_carrier_test::unrelated_application_meta_survives_the_guard",
+  "lib#http_profile_serve::body_boundary::tests::prepare_strips_the_reserved_key_under_every_policy",
+  "lib#http_profile_serve::body_boundary::tests::prepare_writes_the_peps_block_only_under_trusted",
+  "lib#http_profile_serve::body_boundary::tests::prepare_refuses_a_body_the_verified_request_does_not_cover",
+  "lib#http_profile_serve::body_boundary::tests::prepare_fails_closed_under_trusted_when_the_block_cannot_be_written",
+  "lib#http_profile_serve::body_boundary::tests::the_seeding_report_names_positions_escapes_the_actor_and_is_bounded",
 ]

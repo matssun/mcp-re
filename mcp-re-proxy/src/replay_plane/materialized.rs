@@ -51,8 +51,12 @@ pub struct MaterializedReplay {
     /// The authoritative tier the per-core request path awaits.
     tier: AsyncReplayTier,
     /// Fleet-strict dispatch and the declared durability tier, which the serving path
-    /// reports. Set together with the tier so a deployment cannot advertise a durability
-    /// claim the store it actually holds does not implement.
+    /// reports. The posture's tier is `ReplayPlan::tier()`, the tier that
+    /// `ReplayState::materialization_plan` paired with this plan's store and `backends`
+    /// copies in unchanged. `accept` checks only the volatile floor (`assert_durable`); it
+    /// does not compare the advertised tier against the store, and cannot, because
+    /// `ReplayDurabilityClass` has no class finer than `Durable`. The store/tier
+    /// correspondence is the plan's invariant, not this value's.
     dispatch: ProxyDispatchConfig,
     /// See [`DurabilityWitness`]. Never read: possession is the whole content.
     _durable: DurabilityWitness,
@@ -101,10 +105,11 @@ impl MaterializedReplay {
 
     /// The handover: both halves, moved out together.
     ///
-    /// One projection rather than two accessors, because the pairing is the point. Handing
-    /// out `tier()` and `dispatch()` separately would let a caller carry one half onward
-    /// beside a posture from somewhere else — the terms of a validated relation passed back
-    /// as independently replaceable arguments.
+    /// The seal ends at this call. What possession guaranteed (the tier passed
+    /// `assert_durable`) is not carried by either half afterwards, and
+    /// `ProxyDispatchConfig` is a plain value with public fields any module of the crate can
+    /// build, so the tuple does not keep the halves paired. The sole consumer (`app.rs`)
+    /// moves both directly into `HttpProfileProxy::new_delegated`.
     pub fn into_parts(self) -> (AsyncReplayTier, ProxyDispatchConfig) {
         (self.tier, self.dispatch)
     }
@@ -281,29 +286,17 @@ mod tests {
     /// If this ever fails, the question to ask is which replay state became reachable.
     /// The fix is NOT to restore an in-memory arm: that would make materialization
     /// describe a state layer A refuses to represent, which is the defect CF-01 removed.
+    ///
+    /// The `cfg` is the claim's own scope: BF-01 is a property of a build carrying
+    /// neither backend, so in a lane carrying one this test does not exist. A lane that
+    /// linked a backend and still reported this test GREEN would be reporting a measured
+    /// property it never measured.
+    #[cfg(not(any(feature = "redis_replay", feature = "cpstore_etcd")))]
     #[test]
     fn a_build_with_no_replay_backend_can_reach_no_replay_state() {
         let etcd = crate::config_state::test_support::linearizable_replay_plan();
         let redis = crate::config_state::test_support::redis_replay_plan();
         let freshness = crate::config_state::test_support::freshness(60);
-
-        if cfg!(feature = "cpstore_etcd") {
-            // Only the etcd arm can be probed without a control runtime once its backend
-            // is linked; the Redis arm CONSUMES one, and handing it `None` would assert
-            // the runtime contract rather than reachability. One reachable state is
-            // enough to show the build is a serving binary.
-            assert!(
-                MaterializedReplay::materialize(&etcd, freshness, None).is_ok(),
-                "a build linking cpstore_etcd must reach the linearizable state"
-            );
-            return;
-        }
-        if cfg!(feature = "redis_replay") {
-            // Redis linked, etcd not: the etcd arm refuses for want of ITS backend, which
-            // says nothing about BF-01 either way. Reachability of the Redis arm needs a
-            // runtime, so it is asserted where a runtime exists, not here.
-            return;
-        }
 
         for plan in [&etcd, &redis] {
             assert!(
@@ -311,5 +304,43 @@ mod tests {
                 "BF-01: with neither backend linked, no replay state may be reachable"
             );
         }
+    }
+
+    /// The converse of BF-01, in the one lane that can state it without a control
+    /// runtime: a build that LINKS `cpstore_etcd` reaches the linearizable state. This is
+    /// a reachability fact about a build WITH a backend, not BF-01, which is why it is a
+    /// separate test in a lane where the BF-01 test does not exist.
+    ///
+    /// Only the etcd arm can be probed with `None`; the Redis arm CONSUMES a control
+    /// runtime, and handing it `None` would assert the runtime contract rather than
+    /// reachability. One reachable state is enough to show such a build is a serving
+    /// binary.
+    ///
+    /// # NOT EVIDENCE, and that is recorded here rather than left to be discovered
+    ///
+    /// Owner Ruling 9. This control is useful integration coverage and it is not
+    /// standalone assurance evidence, for a reason that is measured rather than
+    /// stylistic: **no falsifier can reach it.** It compiles only under `cpstore_etcd`,
+    /// a unit's `test_features` are ONE set for its whole battery, and
+    /// `proxy.replay_materialization` — the unit that owns this file — declares none, so
+    /// declaring this control there would claim default-lane evidence for a feature-lane
+    /// fact. No `cpstore_etcd` mutation probe exists anywhere in the registry either.
+    ///
+    /// Re-measured before this note was written, as the ruling required: the search was
+    /// for a narrower ADAPTER-LOCAL proposition with an independent falsifier, and there
+    /// is none. What this asserts is that a build with a backend linked can reach a state
+    /// — a composition-level fact, which NP-150 already classifies as having no single
+    /// unit owner. So it gets no unit, and it is not parked in assurance debt merely to
+    /// satisfy a census that cannot see it. It stays because it is worth running.
+    #[cfg(feature = "cpstore_etcd")]
+    #[test]
+    fn a_build_linking_cpstore_etcd_reaches_the_linearizable_state() {
+        let etcd = crate::config_state::test_support::linearizable_replay_plan();
+        let freshness = crate::config_state::test_support::freshness(60);
+
+        assert!(
+            MaterializedReplay::materialize(&etcd, freshness, None).is_ok(),
+            "a build linking cpstore_etcd must reach the linearizable state"
+        );
     }
 }

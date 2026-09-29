@@ -87,6 +87,8 @@ use crate::trust_plane::TrustPlane;
 use crate::HttpProfileProxy;
 use crate::ServerOptions;
 
+pub(crate) mod fleet_serve_authorized;
+
 /// Everything startup established, owned together so that teardown can be ordered.
 ///
 /// Each field is `Option` only so [`shutdown`](Self::shutdown) can take it at the right
@@ -172,7 +174,8 @@ impl MaterializedRuntime {
     /// (ADR-MCPRE-057 §3). Taking it BY VALUE is what makes that a real precondition
     /// rather than a comment: the only way to hold one in that state is to have applied
     /// every preceding transition, so a caller cannot serve a runtime whose lifecycle
-    /// skipped validation or planning.
+    /// skipped validation or planning. It is also the sole issuer of the fleet's
+    /// [`FleetServeAuthorized`](fleet_serve_authorized::FleetServeAuthorized).
     pub(crate) fn serve(
         mut self,
         config_snapshot: Arc<config_snapshot::ServerConfigSnapshot>,
@@ -188,15 +191,12 @@ impl MaterializedRuntime {
                 .as_ref()
                 .ok_or("the runtime has no proxy to drain")?,
         );
+        let authorized = fleet_serve_authorized::FleetServeAuthorized::issue(fleet_cfg);
         let served =
-            crate::app::serve_fleet(proxy, config_snapshot, serve_options, fleet_cfg, shutdown);
+            crate::app::serve_fleet(proxy, config_snapshot, serve_options, authorized, shutdown);
 
-        // WHICH lifecycle events are applied is decided by `served`, because `served` is
-        // the only thing that knows whether any of them happened. `serve_fleet` fails ONLY
-        // before a listener exists — starting the fleet — and
-        // otherwise returns `Ok` only after `shutdown_and_join`. So `Ok` is simultaneously
-        // the proof that the fleet accepted requests and the proof that it drained, and
-        // `Err` is the proof that neither ever happened.
+        // WHICH lifecycle events are applied is decided by `served`, the only thing that
+        // knows whether any of them happened; `serving_events` states why.
         //
         // Applying them ahead of the call would make them intentions, which is what
         // `RuntimeEvent` is defined not to be (ADR-MCPRE-057 §18: planned != established).

@@ -35,10 +35,6 @@
 //! demo crate (the demo bin generates certs at runtime for `bazel run`), kept OUT
 //! of `mcp-re-core` / `mcp-re-host`, which stay pure / transport-free.
 
-use std::path::PathBuf;
-
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use mcp_re_core::b64url_encode;
 use mcp_re_core::SigningKey;
 
@@ -226,7 +222,8 @@ fn dns(value: &str) -> SanType {
 /// transport client (PEM directly) or write it to files with
 /// [`DemoFixtures::write_files`] for the proxy CLI flags.
 ///
-/// Consistency guarantees (proven by this crate's unit test):
+/// Consistency guarantees (proven by `tests/demo_fixtures_test.rs`, an integration test;
+/// `generate` refuses a spec that breaks the last one):
 ///   * the positive client leaf chains to `client_ca_pem`;
 ///   * the mismatched client leaf chains to the SAME `client_ca_pem`;
 ///   * the server leaf chains to `server_ca_pem`;
@@ -260,6 +257,10 @@ impl DemoFixtures {
     /// Mint the full material set from `spec`. Pure in-memory generation (no I/O);
     /// use [`Self::write_files`] to materialize the proxy CLI's file inputs.
     pub fn generate(spec: DemoFixtureSpec) -> Self {
+        assert!(
+            spec.mismatched_identity != spec.subject() && spec.signer_seed != spec.server_seed,
+            "the T3 mismatched identity must differ from the signer subject and the signer and server seeds must differ"
+        );
         let server_ca = make_ca("mcp-re-demo-server-ca");
         let (server_leaf, server_leaf_key) = make_leaf(
             &server_ca,
@@ -269,28 +270,23 @@ impl DemoFixtures {
         );
 
         let client_ca = make_ca("mcp-re-demo-client-ca");
-        // RFC 9421 `exact` transport binding compares the URI SAN to the resolved
-        // actor id (role:trust_domain:subject:keyid), NOT the bare signer.
+        // The positive leaves carry the bare subject, which is what the `exact` binding compares.
         let client_subject = spec.subject();
         let (client_leaf, client_leaf_key) =
             make_leaf(&client_ca, vec![uri(&client_subject)], None, true);
         // A short-lived (< strict 3600s ceiling) client leaf, same identity + CA,
         // valid from ~1min ago to +50min so it is currently valid AND its lifetime
         // (window duration) is ≤ 3600s. `now`-relative — expires ~50min out.
-        let now = OffsetDateTime::from_unix_timestamp(
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("clock after epoch")
-                .as_secs() as i64,
-        )
-        .expect("valid unix time");
+        let now = OffsetDateTime::now_utc();
         let (short_client_leaf, short_client_leaf_key) = make_leaf_windowed(
             &client_ca,
             vec![uri(&client_subject)],
             None,
             true,
-            now - time::Duration::seconds(60),
-            now + time::Duration::seconds(SHORT_LIVED_CLIENT_CERT_SECS),
+            now.checked_sub(time::Duration::seconds(60))
+                .expect("not_before in range"),
+            now.checked_add(time::Duration::seconds(SHORT_LIVED_CLIENT_CERT_SECS))
+                .expect("not_after in range"),
         );
         let (mismatched_leaf, mismatched_leaf_key) =
             make_leaf(&client_ca, vec![uri(&spec.mismatched_identity)], None, true);
@@ -355,9 +351,8 @@ impl DemoFixtures {
     pub fn trust_domain(&self) -> &str {
         &self.spec.trust_domain
     }
-    /// The resolved RFC 9421 actor id (`role:trust_domain:signer:keyid`) that the
-    /// positive/short-lived client cert URI SAN carries and the proxy's `exact`
-    /// transport binding compares against.
+    /// The bare subject the positive/short-lived client URI SAN carries and the
+    /// `exact` binding compares, see [`DemoFixtureSpec::subject`].
     pub fn subject(&self) -> String {
         self.spec.subject()
     }
@@ -460,147 +455,27 @@ impl DemoFixtures {
             .public_key()
             .to_b64url()
     }
-
-    /// Materialize the proxy CLI's file inputs into a fresh temp directory and
-    /// return their paths (cleaned up when the returned [`DemoFixtureFiles`] is
-    /// dropped). The same `DemoFixtures` can also be consumed directly as PEM by
-    /// the in-process transport client without ever touching disk.
-    pub fn write_files(&self) -> std::io::Result<DemoFixtureFiles> {
-        let dir = std::env::temp_dir().join(format!(
-            "mcp_re_demo_fixtures_{}_{}",
-            std::process::id(),
-            next_counter(),
-        ));
-        std::fs::create_dir_all(&dir)?;
-
-        let server_cert_path = dir.join("server_cert.pem");
-        let server_key_path = dir.join("server_key.pem");
-        let server_ca_path = dir.join("server_ca.pem");
-        let client_ca_path = dir.join("client_ca.pem");
-        let client_cert_path = dir.join("client_cert.pem");
-        let client_key_path = dir.join("client_key.pem");
-        let mismatched_client_cert_path = dir.join("mismatched_client_cert.pem");
-        let mismatched_client_key_path = dir.join("mismatched_client_key.pem");
-        let trust_path = dir.join("trust.json");
-        let signing_seed_path = dir.join("signing_seed");
-        let signer_seed_path = dir.join("signer_seed");
-
-        std::fs::write(&server_cert_path, &self.server_cert_pem)?;
-        std::fs::write(&server_key_path, &self.server_key_pem)?;
-        std::fs::write(&server_ca_path, &self.server_ca_pem)?;
-        std::fs::write(&client_ca_path, &self.client_ca_pem)?;
-        std::fs::write(&client_cert_path, &self.client_cert_pem)?;
-        std::fs::write(&client_key_path, &self.client_key_pem)?;
-        std::fs::write(
-            &mismatched_client_cert_path,
-            &self.mismatched_client_cert_pem,
-        )?;
-        std::fs::write(&mismatched_client_key_path, &self.mismatched_client_key_pem)?;
-        std::fs::write(&trust_path, &self.trust_json)?;
-        std::fs::write(&signing_seed_path, &self.signing_seed_b64url)?;
-        std::fs::write(&signer_seed_path, self.signer_seed_b64url())?;
-
-        Ok(DemoFixtureFiles {
-            dir,
-            server_cert_path,
-            server_key_path,
-            server_ca_path,
-            client_ca_path,
-            client_cert_path,
-            client_key_path,
-            mismatched_client_cert_path,
-            mismatched_client_key_path,
-            trust_path,
-            signing_seed_path,
-            signer_seed_path,
-        })
-    }
 }
 
-/// A monotonic counter so two `write_files` calls in the same process land in
-/// distinct temp directories.
-fn next_counter() -> u64 {
-    use std::sync::atomic::AtomicU64;
-    use std::sync::atomic::Ordering;
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    COUNTER.fetch_add(1, Ordering::Relaxed)
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// The on-disk materialization of [`DemoFixtures`]: PEM/seed/trust files under a
-/// private temp directory, whose paths line up with the `mcp_re_proxy_cli` flags
-/// and the `mcp-re-demo` client bin flags. The directory and all files are removed
-/// when this is dropped.
-#[derive(Debug)]
-pub struct DemoFixtureFiles {
-    dir: PathBuf,
-    server_cert_path: PathBuf,
-    server_key_path: PathBuf,
-    server_ca_path: PathBuf,
-    client_ca_path: PathBuf,
-    client_cert_path: PathBuf,
-    client_key_path: PathBuf,
-    mismatched_client_cert_path: PathBuf,
-    mismatched_client_key_path: PathBuf,
-    trust_path: PathBuf,
-    signing_seed_path: PathBuf,
-    signer_seed_path: PathBuf,
-}
+    #[test]
+    #[should_panic(expected = "must differ")]
+    fn generate_refuses_a_mismatched_identity_equal_to_the_subject() {
+        DemoFixtures::generate(DemoFixtureSpec {
+            mismatched_identity: DemoFixtureSpec::default().signer,
+            ..DemoFixtureSpec::default()
+        });
+    }
 
-impl DemoFixtureFiles {
-    /// The temp directory holding every file (removed on drop).
-    pub fn dir(&self) -> &std::path::Path {
-        &self.dir
-    }
-    /// Server leaf cert path (`mcp_re_proxy_cli --tls-cert`).
-    pub fn server_cert_path(&self) -> &std::path::Path {
-        &self.server_cert_path
-    }
-    /// Server leaf key path (`mcp_re_proxy_cli --tls-key`).
-    pub fn server_key_path(&self) -> &std::path::Path {
-        &self.server_key_path
-    }
-    /// Server CA path (the client bin's `--server-ca-file`).
-    pub fn server_ca_path(&self) -> &std::path::Path {
-        &self.server_ca_path
-    }
-    /// Client CA path (`mcp_re_proxy_cli --client-ca`).
-    pub fn client_ca_path(&self) -> &std::path::Path {
-        &self.client_ca_path
-    }
-    /// Positive client leaf cert path (the client bin's `--client-cert-file`).
-    pub fn client_cert_path(&self) -> &std::path::Path {
-        &self.client_cert_path
-    }
-    /// Positive client leaf key path (the client bin's `--client-key-file`).
-    pub fn client_key_path(&self) -> &std::path::Path {
-        &self.client_key_path
-    }
-    /// Mismatched client leaf cert path (T3 `--client-cert-file`).
-    pub fn mismatched_client_cert_path(&self) -> &std::path::Path {
-        &self.mismatched_client_cert_path
-    }
-    /// Mismatched client leaf key path (T3 `--client-key-file`).
-    pub fn mismatched_client_key_path(&self) -> &std::path::Path {
-        &self.mismatched_client_key_path
-    }
-    /// trust.json path (`mcp_re_proxy_cli --trust`).
-    pub fn trust_path(&self) -> &std::path::Path {
-        &self.trust_path
-    }
-    /// SERVER signing-seed file path (`mcp_re_proxy_cli --signing-key-seed`).
-    pub fn signing_seed_path(&self) -> &std::path::Path {
-        &self.signing_seed_path
-    }
-    /// SIGNER (client) signing-seed file path (the client bin's
-    /// `--signing-key-seed-file`).
-    pub fn signer_seed_path(&self) -> &std::path::Path {
-        &self.signer_seed_path
-    }
-}
-
-impl Drop for DemoFixtureFiles {
-    fn drop(&mut self) {
-        // Best-effort cleanup of the private temp directory and its contents.
-        let _ = std::fs::remove_dir_all(&self.dir);
+    #[test]
+    #[should_panic(expected = "must differ")]
+    fn generate_refuses_equal_signer_and_server_seeds() {
+        DemoFixtures::generate(DemoFixtureSpec {
+            server_seed: [1u8; 32],
+            ..DemoFixtureSpec::default()
+        });
     }
 }

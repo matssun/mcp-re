@@ -26,11 +26,15 @@
 //! # Paced by the process, not by the caller
 //!
 //! A peer over its quota drives the refusal on every request. One line per refusal would
-//! hand that peer the write rate of this process's stderr. The first is reported, then a
-//! decade scale — 1, 10, 100, … — and every line carries the running total, so a reader can
-//! tell a single over-quota actor from a sustained one without a line per refusal.
+//! hand that peer the write rate of this process's stderr. The first refusal is reported,
+//! then at most one line per `LINE_INTERVAL_MS` for the whole level, each carrying the
+//! running total, so a sustained refuser stays visible at any count.
 
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
+
+/// The shortest gap between two lines from one level.
+const LINE_INTERVAL_MS: u64 = 10_000;
 
 /// Why one reserve was refused, as a value that outlives the guard.
 ///
@@ -72,9 +76,21 @@ impl BudgetRefusal {
 }
 
 /// A per-level counter that paces the line. Never taken under the refusal's lock.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(super) struct BudgetRefusalReporter {
     reported: AtomicU64,
+    origin: Instant,
+    last_line_ms: AtomicU64,
+}
+
+impl Default for BudgetRefusalReporter {
+    fn default() -> Self {
+        BudgetRefusalReporter {
+            reported: AtomicU64::new(0),
+            origin: Instant::now(),
+            last_line_ms: AtomicU64::new(0),
+        }
+    }
 }
 
 impl BudgetRefusalReporter {
@@ -89,37 +105,41 @@ impl BudgetRefusalReporter {
         refusal: BudgetRefusal,
         actor: &str,
     ) -> super::ReplayStoreError {
-        let _ = self.report(level_name, &refusal, actor);
+        if let Some(total) = self.admit_line(self.elapsed_ms()) {
+            write_line(
+                &mut std::io::stderr().lock(),
+                level_name,
+                &refusal,
+                actor,
+                total,
+            );
+        }
         refusal.into_unavailable(level_name)
     }
 
-    /// Report `refusal` if this is the first, or the next on the decade scale.
+    fn elapsed_ms(&self) -> u64 {
+        u64::try_from(self.origin.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+
+    /// Count this refusal; `Some(running total)` when a line is due at `now_ms`.
     ///
-    /// `level` names which of the two budget levels refused, so one line is not mistaken
-    /// for the other. Returns whether a line was emitted — which is what lets a battery
-    /// COUNT the emissions instead of re-deriving the pacing rule and agreeing with itself.
-    pub(super) fn report(&self, level: &'static str, refusal: &BudgetRefusal, actor: &str) -> bool {
-        use std::io::Write;
+    /// The first refusal is always due; after that one line per `LINE_INTERVAL_MS`, and
+    /// under concurrency only the caller that wins the window's swap gets it.
+    fn admit_line(&self, now_ms: u64) -> Option<u64> {
         let seen = self.reported.fetch_add(1, Ordering::Relaxed);
-        // Class C: `ilog10` of a non-zero `u64` is at most 19 and the `min` caps the
-        // exponent at 6, so the `pow` cannot overflow.
-        #[allow(clippy::arithmetic_side_effects)]
-        let decade = 10u64.pow(seen.checked_ilog10().unwrap_or(0).min(6));
-        if seen != 0 && !seen.is_multiple_of(decade) {
-            return false;
-        }
         let total = seen.saturating_add(1);
-        let _ = writeln!(
-            std::io::stderr().lock(),
-            "mcp-re-proxy: replay budget refusal (NOT a store outage): actor holds {} of its \
-             {} entries with the {level} at {} of {}; actor={actor}; {total} such refusals so \
-             far on this replica",
-            refusal.held,
-            refusal.budget,
-            refusal.level,
-            refusal.max_entries,
-        );
-        true
+        if seen == 0 {
+            self.last_line_ms.store(now_ms, Ordering::Relaxed);
+            return Some(total);
+        }
+        let last = self.last_line_ms.load(Ordering::Relaxed);
+        if now_ms.saturating_sub(last) < LINE_INTERVAL_MS {
+            return None;
+        }
+        self.last_line_ms
+            .compare_exchange(last, now_ms, Ordering::Relaxed, Ordering::Relaxed)
+            .ok()
+            .map(|_| total)
     }
 
     /// How many refusals have been counted. Every refusal is counted even when its line is
@@ -128,6 +148,25 @@ impl BudgetRefusalReporter {
     pub(super) fn counted(&self) -> u64 {
         self.reported.load(Ordering::Relaxed)
     }
+}
+
+/// The write result is discarded: a failed diagnostic write is lost, never unwound. The
+/// actor is peer-influenced, so it is rendered `{:?}`-escaped and cannot end the field or
+/// the line.
+fn write_line(
+    sink: &mut impl std::io::Write,
+    level: &'static str,
+    refusal: &BudgetRefusal,
+    actor: &str,
+    total: u64,
+) {
+    let _ = writeln!(
+        sink,
+        "mcp-re-proxy: replay budget refusal (NOT a store outage): actor holds {} of its \
+         {} entries with the {level} at {} of {}; actor={actor:?}; {total} such refusals so \
+         far on this replica",
+        refusal.held, refusal.budget, refusal.level, refusal.max_entries,
+    );
 }
 
 #[cfg(test)]
@@ -143,37 +182,60 @@ mod tests {
         }
     }
 
-    /// A peer over its quota cannot set this process's stderr write rate. 120 refusals do
-    /// not make 120 lines — and every one is still counted, so the totals stay true.
+    /// 120 refusals inside one window make one line, and every one is still counted.
     #[test]
-    fn refusals_are_paced_by_the_process_and_counted_in_full() {
+    fn a_burst_within_one_window_yields_one_line_and_is_counted_in_full() {
         let reporter = BudgetRefusalReporter::default();
-        // COUNTED, not predicted. Re-deriving the pacing rule here would produce a test
-        // that agrees with the implementation by construction and would keep agreeing
-        // with it after the rule was weakened.
         let lines = (0..120u64)
-            .filter(|_| reporter.report("tier", &refusal(), "greedy"))
+            .filter(|_| reporter.admit_line(0).is_some())
             .count();
+        assert_eq!(lines, 1);
         assert_eq!(reporter.counted(), 120, "every refusal is counted");
-        assert!(
-            lines < 30,
-            "120 refusals must not produce 120 lines, produced {lines}"
-        );
-        assert!(lines > 0, "the first refusal is always reported");
-        // The shape the pacing promises: the first, then thinning out. Without this a
-        // reporter that emitted ONLY the first line would pass the bound above.
-        assert!(
-            lines > 2,
-            "the scale must keep reporting as the total grows, emitted {lines}"
-        );
+    }
+
+    /// The pacing does not thin out with the count: a new window reports again.
+    #[test]
+    fn a_sustained_refuser_stays_visible_at_any_count() {
+        let reporter = BudgetRefusalReporter::default();
+        for _ in 0..200_000u64 {
+            let _ = reporter.admit_line(0);
+        }
+        assert_eq!(reporter.admit_line(LINE_INTERVAL_MS), Some(200_001));
+        assert_eq!(reporter.admit_line(LINE_INTERVAL_MS), None);
+    }
+
+    struct FailingWriter;
+
+    impl std::io::Write for FailingWriter {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("closed pipe"))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::other("closed pipe"))
+        }
     }
 
     /// The write result is discarded rather than unwrapped, so a failed write cannot take
-    /// the caller down. Exercised by reporting with no assumption about stderr's state —
-    /// the property is that this returns at all.
+    /// the caller down.
     #[test]
-    fn reporting_never_panics() {
-        let reporter = BudgetRefusalReporter::default();
-        assert!(reporter.report("store", &refusal(), "actor-with-\u{1F}-control-bytes"));
+    fn a_failed_diagnostic_write_does_not_unwind() {
+        write_line(&mut FailingWriter, "store", &refusal(), "actor", 1);
+        let reached = true;
+        assert!(reached);
+    }
+
+    #[test]
+    fn the_actor_cannot_forge_a_line_or_a_field() {
+        let actor = "a\u{1F}b\nmcp-re-proxy: replay budget refusal (NOT a store outage); \
+                     actor=victim; 0 such refusals so far on this replica";
+        let mut out = Vec::new();
+        write_line(&mut out, "store", &refusal(), actor, 7);
+        let text = String::from_utf8(out).expect("utf8");
+        assert_eq!(text.matches('\n').count(), 1);
+        assert!(text.ends_with('\n'));
+        assert!(text.ends_with("; 7 such refusals so far on this replica\n"));
+        assert!(text.contains("\\n"));
+        assert!(text.contains("\\u{1f}"));
     }
 }

@@ -110,7 +110,7 @@ impl ResponseSigning {
                 a.credential(),
                 a.key(),
                 a.delegated_kid(),
-                ex.now,
+                window.created(),
                 window.expires(),
             )
         };

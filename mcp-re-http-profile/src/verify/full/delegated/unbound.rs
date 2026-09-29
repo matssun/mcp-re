@@ -48,7 +48,7 @@ use crate::verified_response::VerifiedDelegatedUnboundResponse;
 /// Verify a delegated-key-signed response with NO request binding (ADR-MCPRE-052;
 /// the preflight-unbound rejection case, MCPRE-122). The credential chain to the
 /// root (§3 steps 1–7) and the response signature under `cnf.jwk` (§3 step 8) are
-/// verified exactly as in [`verify_delegated_response_full`], but the signature
+/// verified exactly as in [`super::delegated_bound_response`], but the signature
 /// covers only the response components — there is no `;req` binding and no
 /// request-evidence comparison, because no trustworthy request context exists.
 ///

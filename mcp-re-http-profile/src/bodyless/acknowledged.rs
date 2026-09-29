@@ -103,12 +103,10 @@ mod tests {
     }
 
     #[test]
-    fn taking_the_actor_is_the_only_way_to_consume_one() {
-        // Private fields, one producer. The anchor cannot be supplied beside an actor that
-        // never chained to it.
-        assert_eq!(
-            acknowledged("root-kid-1").into_actor().identity.subject,
-            "did:example:server"
-        );
+    fn into_actor_yields_the_established_delegated_actor() {
+        let actor = acknowledged("root-kid-1").into_actor();
+        assert_eq!(actor.identity.subject, "did:example:server");
+        assert_eq!(actor.identity.keyid, "delegated-kid-1");
+        assert_eq!(actor.slot, crate::block::SignerSlot::Response);
     }
 }

@@ -61,12 +61,13 @@ impl ResponseSigning {
         // The exchange's own snapshot when it reached one, so a refusal signs with the key
         // the reply itself would have used rather than re-asking a signer that may have been
         // retired in between. Either way the window is derived once, by its owner.
-        let resp = match snapshot
-            .map(|a| SigningWindow::over(a, now, self.sig_ttl_secs))
-            .or_else(|| SigningWindow::open(&self.signer, now, self.sig_ttl_secs))
-        {
+        let window = match snapshot {
+            Some(a) => SigningWindow::over(a, now, self.sig_ttl_secs),
+            None => SigningWindow::open(&self.signer, now, self.sig_ttl_secs),
+        };
+        let resp = match window {
             Some(w) => {
-                let (a, expires) = (w.key(), w.expires());
+                let (a, created, expires) = (w.key(), w.created(), w.expires());
                 let built = match bound {
                     Some(ev) => build_delegated_rejection(
                         request,
@@ -77,7 +78,7 @@ impl ResponseSigning {
                         a.credential(),
                         a.key(),
                         a.delegated_kid(),
-                        now,
+                        created,
                         expires,
                     ),
                     None => build_delegated_rejection_preflight(
@@ -88,7 +89,7 @@ impl ResponseSigning {
                         a.credential(),
                         a.key(),
                         a.delegated_kid(),
-                        now,
+                        created,
                         expires,
                     ),
                 };
