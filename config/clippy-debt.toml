@@ -172,42 +172,55 @@ crate = "mcp-re-http-profile"
 lint = "too_many_lines"
 count = 0
 
+# MEASUREMENT CORRECTION, 2026-09-29 — not growth. This entry was baselined by
+# `cargo clippy --lib --bins` on DEFAULT features, which never compiled the feature-gated
+# modules: the cloud KMS and STS signers, Redis, etcd, OCSP and PKCS#11. The Bazel
+# measurement lints every shipped flavor, and `_ext` and `_deploy` compile them. The default
+# flavor alone still measures exactly the old baseline; every added site is in those modules,
+# and the deploy image ships the AWS/GCP KMS and Redis ones. MCPRE-176's zero held for the
+# default feature set only. The count is the measured one, pinned: it may only fall.
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "arithmetic_side_effects"
-count = 0
+count = 35
 
 # 72 -> 71: R11-014 replaced the enforcer's `.map(|_| ())` tail, which discarded the
 # verdict, with a match on its two arms. The nesting site went with the discarded value.
+# 65 -> 92: the same measurement correction as `arithmetic_side_effects` above.
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "excessive_nesting"
-count = 65
+count = 92
 
+# 0 -> 4: the same measurement correction as `arithmetic_side_effects` above.
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "expect_used"
-count = 0
+count = 4
 
+# 0 -> 21: the same measurement correction as `arithmetic_side_effects` above.
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "indexing_slicing"
-count = 0
+count = 21
 
+# 0 -> 3: the same measurement correction as `arithmetic_side_effects` above.
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "too_many_lines"
-count = 0
+count = 3
 
+# 3 -> 0: the runfiles-only resolver replaced the source-tree fallbacks.
 [[debt]]
 crate = "mcp-re-test-paths"
 lint = "excessive_nesting"
-count = 3
+count = 0
 
+# 1 -> 0: likewise.
 [[debt]]
 crate = "mcp-re-test-paths"
 lint = "expect_used"
-count = 1
+count = 0
 
 [[debt]]
 crate = "mcp-re-transport"
