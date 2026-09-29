@@ -29,7 +29,7 @@ before any verification toolchain exists — which is exactly the state they are
 | `evidence-graph` | declared units and typed edges | works; freshness is Phase 4 |
 | `verify-verus` | whole-crate Verus verification for the declared scope: each crate's `verus_verify` target, the pinned prover as a Bazel action | works; Verus is pinned and resolved |
 | `verify-lean` | lake build and theorem check | reports NOT_REQUIRED — pinned, but no V2/V3 unit is declared |
-| `regenerate-lean` | Charon → LLBC → Aeneas → Lean extraction | refuses — pipeline pinned, regeneration not implemented |
+| `regenerate-lean` | Charon → LLBC → Aeneas → Lean extraction: each unit crate's `charon_llbc` target under the pinned Bazel launcher, inside the extraction container | works; runs only in the pinned extraction container |
 | `check-generated` | drift gate for BOTH generated artifacts: the Lean model and the assurance views | works for the views; Lean reports "nothing to drift" |
 | `generate-views` | renders `verification/generated/` from the four catalogues | works |
 | `review-frontier` | minimum review obligation | Phase 4; falls back to everything-dirty |

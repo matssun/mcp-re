@@ -261,6 +261,15 @@ jobs:
           python3 scripts/test_inventory_gate.py --selftest
           python3 scripts/test_inventory_gate.py
 
+      # Rust build and test execution is Bazel's. A workflow step, script, hook, lane,
+      # harness or maintained command that invokes `cargo` — directly, or through a
+      # wrapper such as `maturin build` or `charon cargo` — is a second execution authority
+      # whose results the Bazel graph never sees.
+      - name: No-Cargo-execution gate
+        run: |
+          python3 scripts/no_cargo_execution_gate.py --selftest
+          python3 scripts/no_cargo_execution_gate.py
+
       # Lifecycle purity (ADR-MCPRE-056/057): `runtime_state.rs` and `exchange_state.rs`
       # are values, not behaviour. A `use` of a production module would let "is this
       # transition legal?" answer two ways on the same arguments, which is what SL-04

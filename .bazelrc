@@ -31,3 +31,7 @@ build:lint --@rules_rust//rust/settings:clippy.toml=//:.clippy.toml
 # --config=rustfmt //...` is what `cargo fmt --all -- --check` was.
 build:rustfmt --aspects=@rules_rust//rust:defs.bzl%rustfmt_aspect
 build:rustfmt --output_groups=+rustfmt_checks
+
+# The Lean extraction lane (//bazel/charon): the crates Charon reads are built on the
+# nightly its driver is compiled against. Only tools/verification/regenerate-lean sets it.
+build:charon --@rules_rust//rust/toolchain/channel=nightly

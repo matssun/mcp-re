@@ -79,7 +79,7 @@ def test_the_build_configuration_is_measured_and_names_the_lockfile():
 
 
 def test_a_formal_units_fingerprint_covers_the_whole_verified_crate():
-    """`cargo verus verify -p <crate>` verifies the crate, not the four files the unit
+    """The crate's `verus_verify` target verifies the crate, not the four files the unit
     lists. `check_params` quantifies over `SignatureParams`, defined in sigbase.rs, which no
     unit declares: editing it changed what the theorem says while every component stayed
     identical and the graph answered FRESH."""
@@ -854,7 +854,7 @@ def test_a_v0_unit_whose_paths_do_not_reach_the_seam_is_untouched():
 def test_a_formal_units_cone_reaches_a_seam_its_declared_paths_do_not():
     """This test previously asserted the OPPOSITE, and the assertion was wrong.
 
-    A V1 unit declaring `hash.rs` is verified by `cargo verus verify -p mcp-re-core`, so the
+    A V1 unit declaring `hash.rs` is verified by `//mcp-re-core:mcp_re_core_verus`, so the
     prover checks the whole crate — including the `external_body` in `time/mod.rs`. The
     proof really does consume that unproved proposition, and the old rule could not see it
     because it compared the boundary against DECLARED PATHS. Declared paths are what a unit
@@ -989,7 +989,7 @@ def test_a_clock_acquisition_site_alone_is_not_a_trusted_premise():
     rightly names it. It carries no trusted seam, and a V1 unit over it consumes no
     unproved proposition FROM IT: to verify at all, the author would have to mark the
     acquisition `external_body` — at which point a seam exists and the cap fires. Until
-    then `cargo verus verify` simply fails, so there is no route to passing V1 evidence
+    then the Verus lane simply fails, so there is no route to passing V1 evidence
     that this rule lets through.
 
     Refusing on the bare file was the source-level conflation the ruling forbids: an
@@ -1226,7 +1226,7 @@ def test_control_6_a_lean_units_invalidation_cone_is_still_the_whole_crate():
     """CONTROL 6. Narrowing what counts as a CROSSING must not narrow what counts as an
     INPUT — control 3's property, restated for the lane control 5 exempts.
 
-    `charon cargo --start-from <item>` compiles the whole crate and follows the named item
+    Charon's `--start-from <item>` compiles the whole crate and follows the named item
     into whatever it calls, so which files the extracted model depends on is decided inside
     the tool and is not reported by it. The cone stays the crate, and a file that
     contributes no premise still stales the evidence.

@@ -1,5 +1,5 @@
 {
- "query": "kind(\"^(rust_library|rust_binary|rust_test|rust_shared_library|rust_static_library|rust_proc_macro|rust_doc_test|verus_verify) rule$\", //...)",
+ "query": "kind(\"^(rust_library|rust_binary|rust_test|rust_shared_library|rust_static_library|rust_proc_macro|rust_doc_test|verus_verify|charon_llbc) rule$\", //...)",
  "schema": 1,
  "targets": {
   "//config/clippy-strict:activation_probe": {
@@ -684,6 +684,35 @@
    "features": [],
    "kind": "rust_library",
    "manual": false,
+   "package": "mcp-re-core",
+   "root": "mcp-re-core/src/lib.rs",
+   "srcs": [
+    "mcp-re-core/src/audit.rs",
+    "mcp-re-core/src/audit/half.rs",
+    "mcp-re-core/src/audit/reason_label.rs",
+    "mcp-re-core/src/crypto.rs",
+    "mcp-re-core/src/encoding.rs",
+    "mcp-re-core/src/error.rs",
+    "mcp-re-core/src/hash.rs",
+    "mcp-re-core/src/ids.rs",
+    "mcp-re-core/src/lib.rs",
+    "mcp-re-core/src/replay.rs",
+    "mcp-re-core/src/resolver.rs",
+    "mcp-re-core/src/time/format.rs",
+    "mcp-re-core/src/time/mod.rs",
+    "mcp-re-core/src/verus_proofs.rs",
+    "mcp-re-core/src/verus_std_specs.rs",
+    "mcp-re-core/src/wire.rs"
+   ],
+   "verus_deps": []
+  },
+  "//mcp-re-core:mcp_re_core_llbc": {
+   "crate": "//mcp-re-core:mcp_re_core",
+   "crate_name": "mcp_re_core",
+   "deps": [],
+   "features": [],
+   "kind": "charon_llbc",
+   "manual": true,
    "package": "mcp-re-core",
    "root": "mcp-re-core/src/lib.rs",
    "srcs": [

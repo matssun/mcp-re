@@ -223,7 +223,9 @@ claim to accept.
 
 The nightly is a THIRD Rust toolchain, distinct from both the [rust] channel and the one
 Verus requires. This is the divergence the [rust] note anticipates, recorded rather than
-resolved: it is confined to the extraction step and never compiles production code.
+resolved: it is confined to the extraction step and never compiles production code. The
+crates Charon reads are built on it by Bazel (`MODULE.bazel` registers the same date, and
+`regenerate-lean` refuses if the two differ).
 
 Resolved together with [extraction_container]: a commit alone does not identify what a
 build of it produces; the pair (commit, image digest) does.
@@ -280,6 +282,19 @@ The Aeneas Lean backend/package revision, which moves independently of Aeneas it
 the pinned Aeneas commit the backend ships in-tree, so its revision is that commit; the
 mathlib revision comes from the backend's own lake-manifest.json and is recorded because a
 theorem proved with a different mathlib is a theorem proved in a different environment.
+"""
+
+[bazelisk]
+state = "resolved"
+version = "1.29.0"
+linux_arm64_url = "https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/bazelisk-linux-arm64"
+linux_arm64_sha256 = "sha256:e20e8b0f4f240091b7a55bf17b9398bd4f40ee70ae0208dff95dd4c445fb4010"
+note = """
+The Bazel launcher the extraction lane runs inside the pinned container. The crates Charon
+reads are built by Bazel, on the nightly Charon's driver is compiled against, so the lane
+needs a Bazel there; `regenerate-lean` provisions this launcher into the machine-local
+`.verification/tools/` and refuses one whose bytes are not these. The Bazel release it
+starts is `.bazelversion`'s.
 """
 
 # ---------------------------------------------------------------------------

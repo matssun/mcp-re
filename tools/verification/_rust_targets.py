@@ -60,6 +60,7 @@ RULES = (
     "rust_proc_macro",
     "rust_doc_test",
     "verus_verify",
+    "charon_llbc",
 )
 TEST_RULES = ("rust_test", "rust_doc_test")
 QUERY = 'kind("^(%s) rule$", //...)' % "|".join(RULES)

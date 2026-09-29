@@ -99,10 +99,23 @@ verus_install(
     lock = "//:verification/policy/toolchains.lock.toml",
 )
 
+# The extraction container's Charon, for the Lean extraction lane (//bazel/charon); only
+# the `manual` `charon_llbc` targets use it, inside that container.
+charon_install = use_repo_rule("//bazel/charon:repo.bzl", "charon_install")
+
+charon_install(name = "charon")
+
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
 rust.toolchain(
     edition = "2021",
-    versions = ["1.97.1"],
+    # 1.97.1 builds everything. The nightly is the extraction lane's alone (//bazel/charon):
+    # Charon's driver is built against it, so the crates it reads must be too. It is
+    # selected only by `--@rules_rust//rust/toolchain/channel=nightly`, which nothing but
+    # that lane sets.
+    versions = [
+        "1.97.1",
+        "nightly/2026-06-01",
+    ],
     # Cross-compile the image binaries to Linux from a darwin host: amd64 for the
     # registry images, arm64 for the local kind fleet on Apple Silicon
     # (scripts/stage_image_binaries.sh).

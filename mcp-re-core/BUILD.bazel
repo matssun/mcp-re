@@ -1,4 +1,5 @@
 load("//bazel:defs.bzl", "nt_rust_library", "nt_rust_test")
+load("//bazel/charon:defs.bzl", "charon_llbc")
 load("//bazel/verus:defs.bzl", "verus_verify")
 
 package(default_visibility = ["//visibility:public"])
@@ -75,5 +76,15 @@ verus_verify(
     name = "mcp_re_core_verus",
     crate = ":mcp_re_core",
     spec_features = ["verify"],
+    tags = ["manual"],
+)
+
+# The Lean extraction lane (ADR-MCPRE-059 §8): Charon's LLBC of this crate, built on the
+# nightly Charon's driver is compiled against. `manual`: it runs only inside the pinned
+# extraction container; `tools/verification/regenerate-lean` builds it with the units'
+# `extracted_symbols`.
+charon_llbc(
+    name = "mcp_re_core_llbc",
+    crate = ":mcp_re_core",
     tags = ["manual"],
 )
