@@ -20,7 +20,7 @@
 #     skip themselves while their MCP_RE_TEST_* variables are unset.
 #   - BLOCKING: the `release-gates` job runs the ADR-MCPRE-051 §7 release gates as
 #     named lanes under Bazel, the load harness's Docker tests, and the
-#     saturation rig's liveness check, which stays a cargo example.
+#     saturation rig's liveness check, built and run as Bazel binaries.
 #   - BLOCKING: `cargo fmt --check` and `cargo clippy -D warnings`. The tree carries
 #     zero warnings, so any new one is a build failure rather than a line of scroll-
 #     back nobody reads. Both run over EVERY cargo universe (the root workspace, the
@@ -984,13 +984,9 @@ jobs:
       - name: Release gate — local-regression gate comparability (self-test)
         run: python3 scripts/adr051_slo_gate.py --selftest
 
-      # The saturation rig below is a cargo example, not yet a Bazel target.
-      - name: Select pinned toolchain (from rust-toolchain.toml)
-        run: rustup show && rustc --version && cargo --version
-
       # LIVENESS of the standardized capacity instrument, not a measurement.
       #
-      # The saturation rig is a cargo example driven by a script, so no test target
+      # The saturation rig is a Bazel binary driven by a script, so no test target
       # reaches it and no gate above can see it. When ADR-MCPRE-064 Slice 4 moved the
       # channel-binding operand to the request SUBJECT, the rig kept minting a client
       # leaf naming the composed actor id: every request it sent was refused

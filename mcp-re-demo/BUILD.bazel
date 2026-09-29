@@ -33,6 +33,16 @@ nt_rust_library(
     ],
 )
 
+# The library's own unit tests (the `#[cfg(test)]` modules in src/), compiled against the
+# library crate so they see its private items.
+nt_rust_test(
+    name = "mcp_re_demo_test",
+    crate = ":mcp_re_demo",
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+)
+
 # MCPS-055 (MCP-RE-EPIC-P6.6, Child Issue 3): the shared demo fixtures helper. Proves
 # the ONE-source-of-truth material set is internally consistent — the positive
 # client identity drives a REAL mcp_re_proxy::serve_once mTLS round trip wired
