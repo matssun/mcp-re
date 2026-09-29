@@ -373,8 +373,8 @@ stage_suites() {
 # bind-mounted, so one directory is reachable from both environments.
 #
 # A HOST WITHOUT THE ARTIFACT FAILS HERE, and that is correct rather than harsh. This gate
-# already requires a provisioned box — Verus under /opt/verification, a rustup that resolves
-# the pinned channel, `uv` and `npx` for the SDK batteries — and the extraction artifact is
+# already requires a provisioned box — Verus under /opt/verification, `uv` and `npx` for the
+# SDK batteries — and the extraction artifact is
 # one more thing the machine must have to state the verdict. It is never rebuilt to get
 # past this: a rebuild of that definition resolves apt and opam afresh, and the opam
 # libraries are linked into the Aeneas binary, so it would be a different instrument.
@@ -411,10 +411,10 @@ stage_sat_liveness() {
   bash scripts/saturation_liveness.sh
 }
 
-# The two downloader artefacts. `cargo test --workspace` cannot reach them: both SDKs
-# are their OWN Cargo workspaces linking mcp-re-client-core by path, and their suites
-# exercise the bindings from Python and Node, not from Rust. So a change to the core's
-# emission contract compiles, passes every Bazel lane, and fails only in CI —
+# The two downloader artefacts. No Rust test reaches them: their suites exercise the
+# bindings from Python and Node, over the native modules Bazel builds from
+# mcp-re-client-core. So a change to the core's emission contract compiles, passes every
+# Rust lane, and fails only in CI —
 # which is how a nonce-length floor in build_signed_request_with reached a PR with both
 # downloader jobs red and four green stages above them.
 stage_sdk() {

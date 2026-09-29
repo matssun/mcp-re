@@ -27,7 +27,7 @@ before any verification toolchain exists — which is exactly the state they are
 | `check-assumptions` | the proof escape-hatch gate | works |
 | `fingerprint` | deterministic `ReviewFingerprint` per unit | works, partial components |
 | `evidence-graph` | declared units and typed edges | works; freshness is Phase 4 |
-| `verify-verus` | full `cargo verus verify` for the declared scope | works; Verus is pinned and resolved |
+| `verify-verus` | whole-crate Verus verification for the declared scope: each crate's `verus_verify` target, the pinned prover as a Bazel action | works; Verus is pinned and resolved |
 | `verify-lean` | lake build and theorem check | reports NOT_REQUIRED — pinned, but no V2/V3 unit is declared |
 | `regenerate-lean` | Charon → LLBC → Aeneas → Lean extraction | refuses — pipeline pinned, regeneration not implemented |
 | `check-generated` | drift gate for BOTH generated artifacts: the Lean model and the assurance views | works for the views; Lean reports "nothing to drift" |

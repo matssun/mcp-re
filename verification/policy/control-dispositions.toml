@@ -13557,3 +13557,11 @@ control = "gate#scripts/supply_chain_gate.py"
 decision = "not-evidence"
 reason_family = "ND-006"
 recorded = "2026-09-29"
+
+[[disposition]]
+id = "CD-20120"
+project = ""
+control = "gate#scripts/no_cargo_execution_gate.py"
+decision = "not-evidence"
+reason_family = "ND-004"
+recorded = "2026-09-29"

@@ -207,6 +207,8 @@ the property.
 
 **Added 2026-09-29:** `scripts/stage_image_binaries.sh` — builds the deploy images' binaries with Bazel and stages them for the Dockerfiles. It decides nothing about admissibility; it is the image build's wiring.
 
+**Added 2026-09-29:** `scripts/no_cargo_execution_gate.py` — refuses a workflow, script, tool, hook, lane, container, registry argv or maintained command that invokes Cargo, so every Rust build and test runs where the platform measures it: in Bazel. Its failure mode is a lane measuring a build other than the one shipped.
+
 ## ND-005 — mirrored and documented values
 
 **Covers:** `jcs_vocabulary_gate.py`, `proxy_flag_doc_gate.py`, `check_port_registry.py`, and

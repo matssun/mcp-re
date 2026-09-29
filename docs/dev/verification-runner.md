@@ -33,17 +33,15 @@ The runner service does not inherit the operator's login shell. Its job environm
 comes from the `.env` file next to `svc.sh`:
 
 ```
-PATH=/Users/mats/.cargo/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+PATH=/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 ```
 
-Two requirements are load-bearing, and both were discovered by the lane failing:
+Two requirements are load-bearing:
 
-- **`/Users/mats/.cargo/bin` must come first.** Verus ships its own Z3 but no compiler;
-  it shells out to `rustup` to resolve the pinned channel. This box also has Homebrew's
-  `rust` formula, whose `cargo` is a real binary rather than a rustup shim — if it wins
-  the PATH race, toolchain pinning silently does not apply, and a proof gets checked by
-  a compiler the lock file never named. The symptom was
-  `verus: rustup not found, or not executable`.
+- **A Bazel that starts must be on the PATH.** Every Rust lane — tests, mutations,
+  structural probes, measurements, and Verus — builds and runs through it, on the Rust
+  toolchain MODULE.bazel pins. The prover runs as a Bazel action on that toolchain's own
+  compiler driver, so the box needs no rustup for it.
 - **A Python with `tomllib` must precede `/usr/bin`.** Both lanes parse
   `verification/policy/toolchains.lock.toml` with the standard library. macOS ships a
   3.9 at `/usr/bin/python3` that satisfies `python3` and fails only on import. The
@@ -61,10 +59,8 @@ host missing either one reports the missing prerequisite rather than a downstrea
 confusion. It also runs locally, which is how to test a runner rebuild before pushing
 anything at it.
 
-The rustup check resolves the pinned channel rather than inspecting PATH layout. A
-directory-prefix heuristic calls the developer MacBook healthy while its `cargo` is
-Homebrew's — the question is not whether the PATH looks right but whether `rustup run
-<channel> rustc` hands back the pinned compiler.
+The Bazel check starts Bazel rather than inspecting PATH layout: a launcher that is on the
+PATH and cannot fetch or start the pinned release fails there, naming itself.
 
 ## The preserved extraction artifact
 

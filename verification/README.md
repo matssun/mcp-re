@@ -167,10 +167,10 @@ unprivileged, no Docker socket inside the job, clean workspace, controlled cache
    so it reports `NOT_REQUIRED` while no V2 unit is declared and `UNAVAILABLE` once one
    is. Both keep the aggregate below PASS. The split must never become a way for Lean
    evidence to be assumed because the machine that could check it was elsewhere.
-2. **Local Verus is still not authoritative on its own.** `cargo verus focus` skips
-   dependency re-verification and stores partial artifacts; full `cargo verus verify` runs
-   before commit and in the gate. The lane split changes where tools run, not what counts
-   as evidence.
+2. **Local Verus is still not authoritative on its own.** A partial run — `verus
+   --verify-module` over one module — skips the rest of the crate; the whole-crate
+   `verus_verify` targets run before commit and in the gate. The lane split changes where
+   tools run, not what counts as evidence.
 
 ### Three meanings of "authoritative"
 
@@ -178,8 +178,8 @@ Worth separating, because they are routinely conflated:
 
 | Claim | Requires |
 |---|---|
-| local iteration | `cargo verus focus` — convenience only, never evidence |
-| authoritative **Verus evidence** | full `cargo verus verify` under the pinned environment — may run locally or in CI |
+| local iteration | a partial Verus run over one module — convenience only, never evidence |
+| authoritative **Verus evidence** | the whole-crate `verus_verify` target under the pinned environment — may run locally or in CI |
 | authoritative **repository verdict** | every required lane for the manifest fingerprint has completed |
 
 So a Mac reporting *full Verus PASS, Lean unavailable* has produced valid Verus evidence
@@ -243,7 +243,7 @@ one" is not a reason.
    write proofs, and challenge a result. Invalidation is deterministic tooling over
    explicit inputs, and an agent must never edit an attestation or baseline to make a gate
    pass.
-5. **`cargo verus focus` is never authoritative CI evidence.**
+5. **A partial Verus run is never authoritative CI evidence.**
 6. **Generated Lean is never hand-edited evidence.**
 7. **No unregistered `assume`/axiom/external-body shortcut may merge.**
 8. **A sealed contract edge must be declared before it can stop invalidation** — never
@@ -313,7 +313,7 @@ one" is not a reason.
     unit, fingerprint, and trigger set whose proposition depends on it.** This is the
     formal-verification analogue of moving a Rust function without moving its tests, and
     ordinary Rust tooling cannot see the omission: the code compiles, the tests pass, and
-    `cargo clippy` is clean, because the loss is in what the manifest *declares*, not in
+    the lint lane is clean, because the loss is in what the manifest *declares*, not in
     what the compiler *checks*. Splitting `ArtifactBinding` out of
     `mcp-re-http-profile/src/block.rs` into `block/artifact_binding.rs` produced both
     halves of the failure at once — `check-assumptions` found a Verus annotation in a file
