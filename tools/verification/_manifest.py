@@ -873,10 +873,9 @@ def expand_paths(patterns) -> set[str]:
 #: declared symbols. Defined here rather than in the fingerprint because the fingerprint and
 #: the boundary rule must agree about what a unit's evidence covers.
 #:
-#: V2 is here for the reason V1 is, one tool along. `cargo verus verify -p <crate>` checks
-#: the whole crate; `charon cargo --start-from <item>` compiles the whole crate and follows
-#: the named item into whatever it calls, so the extracted model's cone is decided inside
-#: the tool and is not reported by it. Both are wider than the declared paths, and a
+#: V2 is here for the reason V1 is, one tool along. The Verus lane checks the whole crate;
+#: Charon compiles the whole crate and follows the named item into whatever it calls, so
+#: the extracted model's cone is decided inside the tool and is not reported by it. Both are wider than the declared paths, and a
 #: fingerprint narrower than the measured cone lets source a proof stands on change while
 #: the graph still answers FRESH.
 FORMAL_CLASSES = {"V1", "V2", "V3"}
@@ -889,37 +888,12 @@ FORMAL_CLASSES = {"V1", "V2", "V3"}
 RUST_SEAM_CONSUMERS = {"V1", "V3"}
 
 
-def path_dependency_closure(project: str, seen: set[str]) -> set[str]:
-    """Workspace projects reachable from `project` by path dependency, transitively.
-
-    The `verify` feature travels down this closure — `mcp-re-http-profile/verify` turns on
-    `mcp-re-core/verify` — so the prover compiles and checks these projects as part of the
-    run whose result the unit claims.
-    """
-    manifest = REPO_ROOT / project / "Cargo.toml"
-    if project in seen or not manifest.is_file():
-        return seen
-    seen.add(project)
-    with manifest.open("rb") as handle:
-        doc = tomllib.load(handle)
-    for spec in doc.get("dependencies", {}).values():
-        if not isinstance(spec, dict) or "path" not in spec:
-            continue
-        resolved = (manifest.parent / spec["path"]).resolve()
-        try:
-            path_dependency_closure(resolved.relative_to(REPO_ROOT).as_posix(), seen)
-        except ValueError:
-            continue
-    return seen
-
-
 def evidence_cone(unit: dict) -> set[str]:
     """INVALIDATION REACHABILITY: every source file whose change must stale this evidence.
 
-    For a formal unit that is the whole crate plus the projects the `verify` feature reaches
-    through, because `verify-verus` runs `cargo verus verify -p <crate>` and the prover
-    checks all of it. For a V0 unit it is the declared paths, which is what its battery
-    measures.
+    For a formal unit that is the whole crate plus the first-party crates it depends on,
+    because the whole-crate run — the prover, the extractor — compiles all of them. For a V0
+    unit it is the declared paths, which is what its battery measures.
 
     This is the FIRST of the two graphs R9-C022 turned out to be about, and it is
     deliberately generous: a file in here changing invalidates the evidence even if it
@@ -931,7 +905,7 @@ def evidence_cone(unit: dict) -> set[str]:
         return declared
     projects: set[str] = set()
     for project in unit_projects(unit):
-        path_dependency_closure(project, projects)
+        projects |= _rust_targets.dependency_closure(project)
     cone = set(declared)
     for project in sorted(projects):
         cone |= expand_paths([f"{project}/src/**/*.rs"])

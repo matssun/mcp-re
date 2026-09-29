@@ -1,9 +1,11 @@
 {
- "query": "kind(\"^(rust_library|rust_binary|rust_test|rust_shared_library|rust_static_library|rust_proc_macro|rust_doc_test) rule$\", //...)",
+ "query": "kind(\"^(rust_library|rust_binary|rust_test|rust_shared_library|rust_static_library|rust_proc_macro|rust_doc_test|verus_verify) rule$\", //...)",
  "schema": 1,
  "targets": {
   "//config/clippy-strict:activation_probe": {
    "crate": "",
+   "crate_name": "activation_probe",
+   "deps": [],
    "features": [],
    "kind": "rust_library",
    "manual": true,
@@ -11,10 +13,13 @@
    "root": "config/clippy-strict/probes/activation.rs",
    "srcs": [
     "config/clippy-strict/probes/activation.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//config/clippy-strict:nest_probe": {
    "crate": "",
+   "crate_name": "nest_probe",
+   "deps": [],
    "features": [],
    "kind": "rust_library",
    "manual": true,
@@ -22,10 +27,16 @@
    "root": "config/clippy-strict/probes/nest.rs",
    "srcs": [
     "config/clippy-strict/probes/nest.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-client-core:mcp_re_client_core": {
    "crate": "",
+   "crate_name": "mcp_re_client_core",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile"
+   ],
    "features": [],
    "kind": "rust_library",
    "manual": false,
@@ -53,10 +64,13 @@
     "mcp-re-client-core/src/result_classification.rs",
     "mcp-re-client-core/src/trust_manifest/mod.rs",
     "mcp-re-client-core/src/trust_manifest/preimage.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-client-core:mcp_re_client_core_doc_test": {
    "crate": "//mcp-re-client-core:mcp_re_client_core",
+   "crate_name": "mcp_re_client_core",
+   "deps": [],
    "features": [],
    "kind": "rust_doc_test",
    "manual": false,
@@ -84,10 +98,16 @@
     "mcp-re-client-core/src/result_classification.rs",
     "mcp-re-client-core/src/trust_manifest/mod.rs",
     "mcp-re-client-core/src/trust_manifest/preimage.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-client-core:mcp_re_client_core_pre052": {
    "crate": "",
+   "crate_name": "mcp_re_client_core",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile_pre052"
+   ],
    "features": [],
    "kind": "rust_library",
    "manual": false,
@@ -115,10 +135,16 @@
     "mcp-re-client-core/src/result_classification.rs",
     "mcp-re-client-core/src/trust_manifest/mod.rs",
     "mcp-re-client-core/src/trust_manifest/preimage.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-client-core:mcp_re_client_core_test": {
    "crate": "//mcp-re-client-core:mcp_re_client_core_pre052",
+   "crate_name": "mcp_re_client_core",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile_pre052"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -146,10 +172,16 @@
     "mcp-re-client-core/src/result_classification.rs",
     "mcp-re-client-core/src/trust_manifest/mod.rs",
     "mcp-re-client-core/src/trust_manifest/preimage.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-client-proxy:mcp_re_client_proxy": {
    "crate": "",
+   "crate_name": "mcp_re_client_proxy",
+   "deps": [
+    "//mcp-re-client-core:mcp_re_client_core",
+    "//mcp-re-core:mcp_re_core"
+   ],
    "features": [],
    "kind": "rust_library",
    "manual": false,
@@ -162,10 +194,16 @@
     "mcp-re-client-proxy/src/route.rs",
     "mcp-re-client-proxy/src/transport.rs",
     "mcp-re-client-proxy/src/verified_outcome.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-client-proxy:mcp_re_client_proxy_pre052": {
    "crate": "",
+   "crate_name": "mcp_re_client_proxy",
+   "deps": [
+    "//mcp-re-client-core:mcp_re_client_core_pre052",
+    "//mcp-re-core:mcp_re_core"
+   ],
    "features": [],
    "kind": "rust_library",
    "manual": false,
@@ -178,10 +216,17 @@
     "mcp-re-client-proxy/src/route.rs",
     "mcp-re-client-proxy/src/transport.rs",
     "mcp-re-client-proxy/src/verified_outcome.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-client-proxy:mcp_re_client_proxy_test": {
    "crate": "//mcp-re-client-proxy:mcp_re_client_proxy",
+   "crate_name": "mcp_re_client_proxy",
+   "deps": [
+    "//mcp-re-client-core:mcp_re_client_core",
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -194,10 +239,20 @@
     "mcp-re-client-proxy/src/route.rs",
     "mcp-re-client-proxy/src/transport.rs",
     "mcp-re-client-proxy/src/verified_outcome.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-client:local_leg_e2e_test": {
    "crate": "",
+   "crate_name": "local_leg_e2e_test",
+   "deps": [
+    "//mcp-re-client-core:mcp_re_client_core",
+    "//mcp-re-client-proxy:mcp_re_client_proxy",
+    "//mcp-re-client:mcp_re_client",
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile",
+    "//mcp-re-proxy:mcp_re_proxy_async"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -205,10 +260,19 @@
    "root": "mcp-re-client/tests/local_leg_e2e_test.rs",
    "srcs": [
     "mcp-re-client/tests/local_leg_e2e_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-client:mcp_re_client": {
    "crate": "",
+   "crate_name": "mcp_re_client",
+   "deps": [
+    "//mcp-re-client-core:mcp_re_client_core",
+    "//mcp-re-client-proxy:mcp_re_client_proxy",
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-host:mcp_re_host",
+    "//mcp-re-transport:mcp_re_transport"
+   ],
    "features": [],
    "kind": "rust_library",
    "manual": false,
@@ -235,10 +299,15 @@
     "mcp-re-client/src/serve/request.rs",
     "mcp-re-client/src/serve/response.rs",
     "mcp-re-client/src/startup.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-client:mcp_re_client_cli": {
    "crate": "",
+   "crate_name": "mcp_re_client_cli",
+   "deps": [
+    "//mcp-re-client:mcp_re_client"
+   ],
    "features": [],
    "kind": "rust_binary",
    "manual": false,
@@ -247,10 +316,18 @@
    "srcs": [
     "mcp-re-client/src/main.rs",
     "mcp-re-client/src/startup.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-client:mcp_re_client_cli_test": {
    "crate": "//mcp-re-client:mcp_re_client_cli",
+   "crate_name": "mcp_re_client_cli",
+   "deps": [
+    "//mcp-re-client-core:mcp_re_client_core",
+    "//mcp-re-client-proxy:mcp_re_client_proxy",
+    "//mcp-re-client:mcp_re_client",
+    "//mcp-re-core:mcp_re_core"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -259,10 +336,20 @@
    "srcs": [
     "mcp-re-client/src/main.rs",
     "mcp-re-client/src/startup.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-client:mcp_re_client_test": {
    "crate": "//mcp-re-client:mcp_re_client",
+   "crate_name": "mcp_re_client",
+   "deps": [
+    "//mcp-re-client-core:mcp_re_client_core",
+    "//mcp-re-client-proxy:mcp_re_client_proxy",
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-host:mcp_re_host",
+    "//mcp-re-http-profile:mcp_re_http_profile",
+    "//mcp-re-transport:mcp_re_transport"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -289,10 +376,15 @@
     "mcp-re-client/src/serve/request.rs",
     "mcp-re-client/src/serve/response.rs",
     "mcp-re-client/src/startup.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-conformance:audit_vocabulary_guard_test": {
    "crate": "",
+   "crate_name": "audit_vocabulary_guard_test",
+   "deps": [
+    "//mcp-re-test-paths:mcp_re_test_paths"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -300,10 +392,13 @@
    "root": "mcp-re-conformance/tests/audit_vocabulary_guard_test.rs",
    "srcs": [
     "mcp-re-conformance/tests/audit_vocabulary_guard_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-conformance:corpus_pinning_test": {
    "crate": "",
+   "crate_name": "corpus_pinning_test",
+   "deps": [],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -311,10 +406,16 @@
    "root": "mcp-re-conformance/tests/corpus_pinning_test.rs",
    "srcs": [
     "mcp-re-conformance/tests/corpus_pinning_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-conformance:delegation_cross_verification_test": {
    "crate": "",
+   "crate_name": "delegation_cross_verification_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -322,10 +423,16 @@
    "root": "mcp-re-conformance/tests/delegation_cross_verification_test.rs",
    "srcs": [
     "mcp-re-conformance/tests/delegation_cross_verification_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-conformance:delegation_vectors_test": {
    "crate": "",
+   "crate_name": "delegation_vectors_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile_pre052"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -333,10 +440,15 @@
    "root": "mcp-re-conformance/tests/delegation_vectors_test.rs",
    "srcs": [
     "mcp-re-conformance/tests/delegation_vectors_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-conformance:forbidden_claim_guard_test": {
    "crate": "",
+   "crate_name": "forbidden_claim_guard_test",
+   "deps": [
+    "//mcp-re-test-paths:mcp_re_test_paths"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -344,10 +456,16 @@
    "root": "mcp-re-conformance/tests/forbidden_claim_guard_test.rs",
    "srcs": [
     "mcp-re-conformance/tests/forbidden_claim_guard_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-conformance:full_profile_parity_test": {
    "crate": "",
+   "crate_name": "full_profile_parity_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile_pre052"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -355,10 +473,16 @@
    "root": "mcp-re-conformance/tests/full_profile_parity_test.rs",
    "srcs": [
     "mcp-re-conformance/tests/full_profile_parity_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-conformance:http_profile_vectors_test": {
    "crate": "",
+   "crate_name": "http_profile_vectors_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile_pre052"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -366,10 +490,17 @@
    "root": "mcp-re-conformance/tests/http_profile_vectors_test.rs",
    "srcs": [
     "mcp-re-conformance/tests/http_profile_vectors_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-conformance:mcp_2026_07_28_alignment_test": {
    "crate": "",
+   "crate_name": "mcp_2026_07_28_alignment_test",
+   "deps": [
+    "//mcp-re-client-core:mcp_re_client_core",
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -377,10 +508,15 @@
    "root": "mcp-re-conformance/tests/mcp_2026_07_28_alignment_test.rs",
    "srcs": [
     "mcp-re-conformance/tests/mcp_2026_07_28_alignment_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-conformance:method_name_drift_guard_test": {
    "crate": "",
+   "crate_name": "method_name_drift_guard_test",
+   "deps": [
+    "//mcp-re-test-paths:mcp_re_test_paths"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -388,10 +524,16 @@
    "root": "mcp-re-conformance/tests/method_name_drift_guard_test.rs",
    "srcs": [
     "mcp-re-conformance/tests/method_name_drift_guard_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-conformance:method_transparency_test": {
    "crate": "",
+   "crate_name": "method_transparency_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -399,10 +541,15 @@
    "root": "mcp-re-conformance/tests/method_transparency_test.rs",
    "srcs": [
     "mcp-re-conformance/tests/method_transparency_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-conformance:rfc9421_cross_verification_test": {
    "crate": "",
+   "crate_name": "rfc9421_cross_verification_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -410,10 +557,16 @@
    "root": "mcp-re-conformance/tests/rfc9421_cross_verification_test.rs",
    "srcs": [
     "mcp-re-conformance/tests/rfc9421_cross_verification_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-conformance:rfc9421_security_properties_test": {
    "crate": "",
+   "crate_name": "rfc9421_security_properties_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile_pre052"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -421,10 +574,16 @@
    "root": "mcp-re-conformance/tests/rfc9421_security_properties_test.rs",
    "srcs": [
     "mcp-re-conformance/tests/rfc9421_security_properties_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-conformance:scitt_cross_verification_test": {
    "crate": "",
+   "crate_name": "scitt_cross_verification_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -432,10 +591,16 @@
    "root": "mcp-re-conformance/tests/scitt_cross_verification_test.rs",
    "srcs": [
     "mcp-re-conformance/tests/scitt_cross_verification_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-conformance:scitt_interop_test": {
    "crate": "",
+   "crate_name": "scitt_interop_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -443,10 +608,16 @@
    "root": "mcp-re-conformance/tests/scitt_interop_test.rs",
    "srcs": [
     "mcp-re-conformance/tests/scitt_interop_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-conformance:scitt_retained_corpus_test": {
    "crate": "",
+   "crate_name": "scitt_retained_corpus_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -454,10 +625,16 @@
    "root": "mcp-re-conformance/tests/scitt_retained_corpus_test.rs",
    "srcs": [
     "mcp-re-conformance/tests/scitt_retained_corpus_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-conformance:scitt_vectors_test": {
    "crate": "",
+   "crate_name": "scitt_vectors_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -465,10 +642,15 @@
    "root": "mcp-re-conformance/tests/scitt_vectors_test.rs",
    "srcs": [
     "mcp-re-conformance/tests/scitt_vectors_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-conformance:security_traceability_guard_test": {
    "crate": "",
+   "crate_name": "security_traceability_guard_test",
+   "deps": [
+    "//mcp-re-test-paths:mcp_re_test_paths"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -476,10 +658,15 @@
    "root": "mcp-re-conformance/tests/security_traceability_guard_test.rs",
    "srcs": [
     "mcp-re-conformance/tests/security_traceability_guard_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-core:firewall_test": {
    "crate": "",
+   "crate_name": "firewall_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -487,10 +674,13 @@
    "root": "mcp-re-core/tests/firewall_test.rs",
    "srcs": [
     "mcp-re-core/tests/firewall_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-core:mcp_re_core": {
    "crate": "",
+   "crate_name": "mcp_re_core",
+   "deps": [],
    "features": [],
    "kind": "rust_library",
    "manual": false,
@@ -513,10 +703,13 @@
     "mcp-re-core/src/verus_proofs.rs",
     "mcp-re-core/src/verus_std_specs.rs",
     "mcp-re-core/src/wire.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-core:mcp_re_core_test": {
    "crate": "//mcp-re-core:mcp_re_core",
+   "crate_name": "mcp_re_core",
+   "deps": [],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -539,10 +732,48 @@
     "mcp-re-core/src/verus_proofs.rs",
     "mcp-re-core/src/verus_std_specs.rs",
     "mcp-re-core/src/wire.rs"
-   ]
+   ],
+   "verus_deps": []
+  },
+  "//mcp-re-core:mcp_re_core_verus": {
+   "crate": "//mcp-re-core:mcp_re_core",
+   "crate_name": "mcp_re_core",
+   "deps": [],
+   "features": [
+    "verify"
+   ],
+   "kind": "verus_verify",
+   "manual": true,
+   "package": "mcp-re-core",
+   "root": "mcp-re-core/src/lib.rs",
+   "srcs": [
+    "mcp-re-core/src/audit.rs",
+    "mcp-re-core/src/audit/half.rs",
+    "mcp-re-core/src/audit/reason_label.rs",
+    "mcp-re-core/src/crypto.rs",
+    "mcp-re-core/src/encoding.rs",
+    "mcp-re-core/src/error.rs",
+    "mcp-re-core/src/hash.rs",
+    "mcp-re-core/src/ids.rs",
+    "mcp-re-core/src/lib.rs",
+    "mcp-re-core/src/replay.rs",
+    "mcp-re-core/src/resolver.rs",
+    "mcp-re-core/src/time/format.rs",
+    "mcp-re-core/src/time/mod.rs",
+    "mcp-re-core/src/verus_proofs.rs",
+    "mcp-re-core/src/verus_std_specs.rs",
+    "mcp-re-core/src/wire.rs"
+   ],
+   "verus_deps": []
   },
   "//mcp-re-demo:demo_fixtures_test": {
    "crate": "",
+   "crate_name": "demo_fixtures_test",
+   "deps": [
+    "//mcp-re-demo:mcp_re_demo",
+    "//mcp-re-proxy:mcp_re_proxy",
+    "//mcp-re-transport:mcp_re_transport"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -550,10 +781,16 @@
    "root": "mcp-re-demo/tests/demo_fixtures_test.rs",
    "srcs": [
     "mcp-re-demo/tests/demo_fixtures_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-demo:emit_mtls_fixtures": {
    "crate": "",
+   "crate_name": "emit_mtls_fixtures",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-demo:mcp_re_demo"
+   ],
    "features": [],
    "kind": "rust_binary",
    "manual": false,
@@ -561,10 +798,15 @@
    "root": "mcp-re-demo/examples/emit_mtls_fixtures.rs",
    "srcs": [
     "mcp-re-demo/examples/emit_mtls_fixtures.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-demo:mcp_re_demo": {
    "crate": "",
+   "crate_name": "mcp_re_demo",
+   "deps": [
+    "//mcp-re-core:mcp_re_core"
+   ],
    "features": [],
    "kind": "rust_library",
    "manual": false,
@@ -574,10 +816,13 @@
     "mcp-re-demo/src/demo_fixture_files.rs",
     "mcp-re-demo/src/demo_fixtures.rs",
     "mcp-re-demo/src/lib.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-demo:mcp_re_demo_test": {
    "crate": "//mcp-re-demo:mcp_re_demo",
+   "crate_name": "mcp_re_demo",
+   "deps": [],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -587,10 +832,16 @@
     "mcp-re-demo/src/demo_fixture_files.rs",
     "mcp-re-demo/src/demo_fixtures.rs",
     "mcp-re-demo/src/lib.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-host:mcp_re_host": {
    "crate": "",
+   "crate_name": "mcp_re_host",
+   "deps": [
+    "//mcp-re-client-core:mcp_re_client_core",
+    "//mcp-re-core:mcp_re_core"
+   ],
    "features": [],
    "kind": "rust_library",
    "manual": false,
@@ -602,10 +853,16 @@
     "mcp-re-host/src/lib.rs",
     "mcp-re-host/src/nonce.rs",
     "mcp-re-host/src/signer.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-host:mcp_re_host_test": {
    "crate": "//mcp-re-host:mcp_re_host_test_fixtures",
+   "crate_name": "mcp_re_host",
+   "deps": [
+    "//mcp-re-client-core:mcp_re_client_core",
+    "//mcp-re-core:mcp_re_core"
+   ],
    "features": [
     "test-fixtures"
    ],
@@ -619,10 +876,16 @@
     "mcp-re-host/src/lib.rs",
     "mcp-re-host/src/nonce.rs",
     "mcp-re-host/src/signer.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-host:mcp_re_host_test_fixtures": {
    "crate": "",
+   "crate_name": "mcp_re_host",
+   "deps": [
+    "//mcp-re-client-core:mcp_re_client_core",
+    "//mcp-re-core:mcp_re_core"
+   ],
    "features": [
     "test-fixtures"
    ],
@@ -636,10 +899,16 @@
     "mcp-re-host/src/lib.rs",
     "mcp-re-host/src/nonce.rs",
     "mcp-re-host/src/signer.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-http-profile:admission_binding_test": {
    "crate": "",
+   "crate_name": "admission_binding_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -647,10 +916,16 @@
    "root": "mcp-re-http-profile/tests/admission_binding_test.rs",
    "srcs": [
     "mcp-re-http-profile/tests/admission_binding_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-http-profile:algorithm_confusion_test": {
    "crate": "",
+   "crate_name": "algorithm_confusion_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -658,10 +933,16 @@
    "root": "mcp-re-http-profile/tests/algorithm_confusion_test.rs",
    "srcs": [
     "mcp-re-http-profile/tests/algorithm_confusion_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-http-profile:binding_identifier_test": {
    "crate": "",
+   "crate_name": "binding_identifier_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -669,10 +950,16 @@
    "root": "mcp-re-http-profile/tests/binding_identifier_test.rs",
    "srcs": [
     "mcp-re-http-profile/tests/binding_identifier_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-http-profile:bodyless_202_test": {
    "crate": "",
+   "crate_name": "bodyless_202_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile_pre052"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -680,10 +967,16 @@
    "root": "mcp-re-http-profile/tests/bodyless_202_test.rs",
    "srcs": [
     "mcp-re-http-profile/tests/bodyless_202_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-http-profile:chain_reconstruction_test": {
    "crate": "",
+   "crate_name": "chain_reconstruction_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -691,10 +984,16 @@
    "root": "mcp-re-http-profile/tests/chain_reconstruction_test.rs",
    "srcs": [
     "mcp-re-http-profile/tests/chain_reconstruction_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-http-profile:delegated_202_test": {
    "crate": "",
+   "crate_name": "delegated_202_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -702,10 +1001,16 @@
    "root": "mcp-re-http-profile/tests/delegated_202_test.rs",
    "srcs": [
     "mcp-re-http-profile/tests/delegated_202_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-http-profile:delegation_e2e_test": {
    "crate": "",
+   "crate_name": "delegation_e2e_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile_pre052"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -713,10 +1018,16 @@
    "root": "mcp-re-http-profile/tests/delegation_e2e_test.rs",
    "srcs": [
     "mcp-re-http-profile/tests/delegation_e2e_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-http-profile:dispatch_test": {
    "crate": "",
+   "crate_name": "dispatch_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -724,10 +1035,16 @@
    "root": "mcp-re-http-profile/tests/dispatch_test.rs",
    "srcs": [
     "mcp-re-http-profile/tests/dispatch_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-http-profile:full_profile_test": {
    "crate": "",
+   "crate_name": "full_profile_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile_pre052"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -735,10 +1052,16 @@
    "root": "mcp-re-http-profile/tests/full_profile_test.rs",
    "srcs": [
     "mcp-re-http-profile/tests/full_profile_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-http-profile:json_mode_test": {
    "crate": "",
+   "crate_name": "json_mode_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile_pre052"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -746,10 +1069,15 @@
    "root": "mcp-re-http-profile/tests/json_mode_test.rs",
    "srcs": [
     "mcp-re-http-profile/tests/json_mode_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-http-profile:mcp_re_http_profile": {
    "crate": "",
+   "crate_name": "mcp_re_http_profile",
+   "deps": [
+    "//mcp-re-core:mcp_re_core"
+   ],
    "features": [],
    "kind": "rust_library",
    "manual": false,
@@ -875,10 +1203,13 @@
     "mcp-re-http-profile/src/verify/full/response.rs",
     "mcp-re-http-profile/src/verify/mod.rs",
     "mcp-re-http-profile/src/verus_std_specs.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-http-profile:mcp_re_http_profile_doc_test": {
    "crate": "//mcp-re-http-profile:mcp_re_http_profile",
+   "crate_name": "mcp_re_http_profile",
+   "deps": [],
    "features": [],
    "kind": "rust_doc_test",
    "manual": false,
@@ -1004,10 +1335,15 @@
     "mcp-re-http-profile/src/verify/full/response.rs",
     "mcp-re-http-profile/src/verify/mod.rs",
     "mcp-re-http-profile/src/verus_std_specs.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-http-profile:mcp_re_http_profile_pre052": {
    "crate": "",
+   "crate_name": "mcp_re_http_profile",
+   "deps": [
+    "//mcp-re-core:mcp_re_core"
+   ],
    "features": [
     "pre_052_fixtures"
    ],
@@ -1135,10 +1471,15 @@
     "mcp-re-http-profile/src/verify/full/response.rs",
     "mcp-re-http-profile/src/verify/mod.rs",
     "mcp-re-http-profile/src/verus_std_specs.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-http-profile:mcp_re_http_profile_test": {
    "crate": "//mcp-re-http-profile:mcp_re_http_profile",
+   "crate_name": "mcp_re_http_profile",
+   "deps": [
+    "//mcp-re-core:mcp_re_core"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -1264,10 +1605,152 @@
     "mcp-re-http-profile/src/verify/full/response.rs",
     "mcp-re-http-profile/src/verify/mod.rs",
     "mcp-re-http-profile/src/verus_std_specs.rs"
+   ],
+   "verus_deps": []
+  },
+  "//mcp-re-http-profile:mcp_re_http_profile_verus": {
+   "crate": "//mcp-re-http-profile:mcp_re_http_profile",
+   "crate_name": "mcp_re_http_profile",
+   "deps": [],
+   "features": [
+    "verify"
+   ],
+   "kind": "verus_verify",
+   "manual": true,
+   "package": "mcp-re-http-profile",
+   "root": "mcp-re-http-profile/src/lib.rs",
+   "srcs": [
+    "mcp-re-http-profile/src/admission/mod.rs",
+    "mcp-re-http-profile/src/admission/verdict.rs",
+    "mcp-re-http-profile/src/admission_policy.rs",
+    "mcp-re-http-profile/src/artifact.rs",
+    "mcp-re-http-profile/src/authoritative_admission/mod.rs",
+    "mcp-re-http-profile/src/authoritative_admission/record/currentness.rs",
+    "mcp-re-http-profile/src/authoritative_admission/record/mod.rs",
+    "mcp-re-http-profile/src/authoritative_admission/record/verified.rs",
+    "mcp-re-http-profile/src/block.rs",
+    "mcp-re-http-profile/src/block/artifact_binding.rs",
+    "mcp-re-http-profile/src/body/carried_number.rs",
+    "mcp-re-http-profile/src/body/decimal_token.rs",
+    "mcp-re-http-profile/src/body/mod.rs",
+    "mcp-re-http-profile/src/body/representable.rs",
+    "mcp-re-http-profile/src/bodyless/acknowledged.rs",
+    "mcp-re-http-profile/src/bodyless/delegated_ack.rs",
+    "mcp-re-http-profile/src/bodyless/delegated_credential.rs",
+    "mcp-re-http-profile/src/bodyless/mod.rs",
+    "mcp-re-http-profile/src/bodyless/pre_052_fixtures.rs",
+    "mcp-re-http-profile/src/chain/hop.rs",
+    "mcp-re-http-profile/src/chain/mod.rs",
+    "mcp-re-http-profile/src/chain/reconstruction.rs",
+    "mcp-re-http-profile/src/chain/record.rs",
+    "mcp-re-http-profile/src/chain/submitted_identity.rs",
+    "mcp-re-http-profile/src/context/block_schema.rs",
+    "mcp-re-http-profile/src/context/claim.rs",
+    "mcp-re-http-profile/src/context/mod.rs",
+    "mcp-re-http-profile/src/context/policy.rs",
+    "mcp-re-http-profile/src/context/reserved_key_strip.rs",
+    "mcp-re-http-profile/src/context/seeded_meta_positions.rs",
+    "mcp-re-http-profile/src/context/verified.rs",
+    "mcp-re-http-profile/src/custody/active_key.rs",
+    "mcp-re-http-profile/src/custody/issuance_terms.rs",
+    "mcp-re-http-profile/src/custody/key_window.rs",
+    "mcp-re-http-profile/src/custody/mod.rs",
+    "mcp-re-http-profile/src/delegation/issue.rs",
+    "mcp-re-http-profile/src/delegation/mod.rs",
+    "mcp-re-http-profile/src/delegation/parse.rs",
+    "mcp-re-http-profile/src/delegation/verify.rs",
+    "mcp-re-http-profile/src/digest.rs",
+    "mcp-re-http-profile/src/dispatch.rs",
+    "mcp-re-http-profile/src/dispatch/outcome.rs",
+    "mcp-re-http-profile/src/dispatch/replay_posture.rs",
+    "mcp-re-http-profile/src/dispatch/retained_continuation.rs",
+    "mcp-re-http-profile/src/envelope/mod.rs",
+    "mcp-re-http-profile/src/envelope/request.rs",
+    "mcp-re-http-profile/src/envelope/response.rs",
+    "mcp-re-http-profile/src/error.rs",
+    "mcp-re-http-profile/src/error/core_projection.rs",
+    "mcp-re-http-profile/src/evidence.rs",
+    "mcp-re-http-profile/src/ids.rs",
+    "mcp-re-http-profile/src/keyid.rs",
+    "mcp-re-http-profile/src/lib.rs",
+    "mcp-re-http-profile/src/mcp_name_source.rs",
+    "mcp-re-http-profile/src/mcp_transport/agreement.rs",
+    "mcp-re-http-profile/src/mcp_transport/mod.rs",
+    "mcp-re-http-profile/src/message.rs",
+    "mcp-re-http-profile/src/pdp_decision/binding.rs",
+    "mcp-re-http-profile/src/pdp_decision/claims.rs",
+    "mcp-re-http-profile/src/pdp_decision/issue.rs",
+    "mcp-re-http-profile/src/pdp_decision/mod.rs",
+    "mcp-re-http-profile/src/pdp_decision/verify.rs",
+    "mcp-re-http-profile/src/policy.rs",
+    "mcp-re-http-profile/src/rejection/mod.rs",
+    "mcp-re-http-profile/src/rejection/pre_052_direct_root.rs",
+    "mcp-re-http-profile/src/rejection/retry_contract.rs",
+    "mcp-re-http-profile/src/replay.rs",
+    "mcp-re-http-profile/src/result_class.rs",
+    "mcp-re-http-profile/src/scitt/commitment/correspondence.rs",
+    "mcp-re-http-profile/src/scitt/commitment/mod.rs",
+    "mcp-re-http-profile/src/scitt/cose_key/mod.rs",
+    "mcp-re-http-profile/src/scitt/cose_key/verify.rs",
+    "mcp-re-http-profile/src/scitt/merkle.rs",
+    "mcp-re-http-profile/src/scitt/mod.rs",
+    "mcp-re-http-profile/src/scitt/offline.rs",
+    "mcp-re-http-profile/src/scitt/prototype/mod.rs",
+    "mcp-re-http-profile/src/scitt/prototype/tree.rs",
+    "mcp-re-http-profile/src/scitt/receipt/mod.rs",
+    "mcp-re-http-profile/src/scitt/receipt/parse.rs",
+    "mcp-re-http-profile/src/scitt/retained.rs",
+    "mcp-re-http-profile/src/scitt/service.rs",
+    "mcp-re-http-profile/src/scitt/statement/issuance.rs",
+    "mcp-re-http-profile/src/scitt/statement/mod.rs",
+    "mcp-re-http-profile/src/scitt/statement/parse.rs",
+    "mcp-re-http-profile/src/scitt/trust_pin/document.rs",
+    "mcp-re-http-profile/src/scitt/trust_pin/mod.rs",
+    "mcp-re-http-profile/src/scitt/wire.rs",
+    "mcp-re-http-profile/src/sigbase.rs",
+    "mcp-re-http-profile/src/sign.rs",
+    "mcp-re-http-profile/src/verified_request/floor.rs",
+    "mcp-re-http-profile/src/verified_request/mod.rs",
+    "mcp-re-http-profile/src/verified_response/bound.rs",
+    "mcp-re-http-profile/src/verified_response/facts.rs",
+    "mcp-re-http-profile/src/verified_response/mod.rs",
+    "mcp-re-http-profile/src/verified_response/unbound.rs",
+    "mcp-re-http-profile/src/verifier.rs",
+    "mcp-re-http-profile/src/verify/bound_request.rs",
+    "mcp-re-http-profile/src/verify/floor/components.rs",
+    "mcp-re-http-profile/src/verify/floor/covered_components.rs",
+    "mcp-re-http-profile/src/verify/floor/mod.rs",
+    "mcp-re-http-profile/src/verify/floor/params.rs",
+    "mcp-re-http-profile/src/verify/floor/request.rs",
+    "mcp-re-http-profile/src/verify/floor/response.rs",
+    "mcp-re-http-profile/src/verify/floor/sf_dictionary.rs",
+    "mcp-re-http-profile/src/verify/floor/signature.rs",
+    "mcp-re-http-profile/src/verify/floor/signature_input.rs",
+    "mcp-re-http-profile/src/verify/floor/signature_parameters.rs",
+    "mcp-re-http-profile/src/verify/floor/transport_headers.rs",
+    "mcp-re-http-profile/src/verify/floor/trust_slot.rs",
+    "mcp-re-http-profile/src/verify/full/delegated/bound.rs",
+    "mcp-re-http-profile/src/verify/full/delegated/credential_chain.rs",
+    "mcp-re-http-profile/src/verify/full/delegated/expectations.rs",
+    "mcp-re-http-profile/src/verify/full/delegated/mod.rs",
+    "mcp-re-http-profile/src/verify/full/delegated/unbound.rs",
+    "mcp-re-http-profile/src/verify/full/mod.rs",
+    "mcp-re-http-profile/src/verify/full/request.rs",
+    "mcp-re-http-profile/src/verify/full/response.rs",
+    "mcp-re-http-profile/src/verify/mod.rs",
+    "mcp-re-http-profile/src/verus_std_specs.rs"
+   ],
+   "verus_deps": [
+    "//mcp-re-core:mcp_re_core_verus"
    ]
   },
   "//mcp-re-http-profile:mcp_transport_headers_test": {
    "crate": "",
+   "crate_name": "mcp_transport_headers_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -1275,10 +1758,16 @@
    "root": "mcp-re-http-profile/tests/mcp_transport_headers_test.rs",
    "srcs": [
     "mcp-re-http-profile/tests/mcp_transport_headers_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-http-profile:proof_path_test": {
    "crate": "",
+   "crate_name": "proof_path_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile_pre052"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -1286,10 +1775,16 @@
    "root": "mcp-re-http-profile/tests/proof_path_test.rs",
    "srcs": [
     "mcp-re-http-profile/tests/proof_path_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-http-profile:rfc9421_kat": {
    "crate": "",
+   "crate_name": "rfc9421_kat",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -1297,10 +1792,16 @@
    "root": "mcp-re-http-profile/tests/rfc9421_kat.rs",
    "srcs": [
     "mcp-re-http-profile/tests/rfc9421_kat.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-http-profile:signer_seam_test": {
    "crate": "",
+   "crate_name": "signer_seam_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -1308,10 +1809,16 @@
    "root": "mcp-re-http-profile/tests/signer_seam_test.rs",
    "srcs": [
     "mcp-re-http-profile/tests/signer_seam_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-http-profile:structured_fields_strictness_test": {
    "crate": "",
+   "crate_name": "structured_fields_strictness_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -1319,10 +1826,13 @@
    "root": "mcp-re-http-profile/tests/structured_fields_strictness_test.rs",
    "srcs": [
     "mcp-re-http-profile/tests/structured_fields_strictness_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-operator-display:mcp_re_operator_display": {
    "crate": "",
+   "crate_name": "mcp_re_operator_display",
+   "deps": [],
    "features": [],
    "kind": "rust_library",
    "manual": false,
@@ -1331,10 +1841,13 @@
    "srcs": [
     "mcp-re-operator-display/src/lib.rs",
     "mcp-re-operator-display/src/locator.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-operator-display:mcp_re_operator_display_test": {
    "crate": "//mcp-re-operator-display:mcp_re_operator_display",
+   "crate_name": "mcp_re_operator_display",
+   "deps": [],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -1343,10 +1856,13 @@
    "srcs": [
     "mcp-re-operator-display/src/lib.rs",
     "mcp-re-operator-display/src/locator.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-policy:mcp_re_policy": {
    "crate": "",
+   "crate_name": "mcp_re_policy",
+   "deps": [],
    "features": [],
    "kind": "rust_library",
    "manual": false,
@@ -1356,10 +1872,13 @@
     "mcp-re-policy/src/error.rs",
     "mcp-re-policy/src/lib.rs",
     "mcp-re-policy/src/revocation.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-policy:mcp_re_policy_test": {
    "crate": "//mcp-re-policy:mcp_re_policy",
+   "crate_name": "mcp_re_policy",
+   "deps": [],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -1369,10 +1888,17 @@
     "mcp-re-policy/src/error.rs",
     "mcp-re-policy/src/lib.rs",
     "mcp-re-policy/src/revocation.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:admission_propagation_measure_test": {
    "crate": "",
+   "crate_name": "admission_propagation_measure_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile_pre052",
+    "//mcp-re-proxy:mcp_re_proxy_ext_pre052"
+   ],
    "features": [
     "async_serve",
     "aws_kms_keysource",
@@ -1388,10 +1914,15 @@
    "root": "mcp-re-proxy/tests/admission_propagation_measure_test.rs",
    "srcs": [
     "mcp-re-proxy/tests/admission_propagation_measure_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:async_drain_test": {
    "crate": "",
+   "crate_name": "async_drain_test",
+   "deps": [
+    "//mcp-re-proxy:mcp_re_proxy_async"
+   ],
    "features": [
     "async_serve"
    ],
@@ -1401,10 +1932,19 @@
    "root": "mcp-re-proxy/tests/async_drain_test.rs",
    "srcs": [
     "mcp-re-proxy/tests/async_drain_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:aws_irsa_web_identity_test": {
    "crate": "",
+   "crate_name": "aws_irsa_web_identity_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile",
+    "//mcp-re-operator-display:mcp_re_operator_display",
+    "//mcp-re-policy:mcp_re_policy",
+    "//mcp-re-proxy:mcp_re_proxy_ext"
+   ],
    "features": [
     "aws_kms_keysource",
     "cpstore_etcd",
@@ -1419,10 +1959,16 @@
    "root": "mcp-re-proxy/tests/aws_irsa_web_identity_test.rs",
    "srcs": [
     "mcp-re-proxy/tests/aws_irsa_web_identity_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:dev_env_key_source_test": {
    "crate": "",
+   "crate_name": "dev_env_key_source_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-proxy:mcp_re_proxy_dev_env"
+   ],
    "features": [
     "dev_env_key_source"
    ],
@@ -1432,10 +1978,15 @@
    "root": "mcp-re-proxy/tests/dev_env_key_source_test.rs",
    "srcs": [
     "mcp-re-proxy/tests/dev_env_key_source_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:fault_injection_test": {
    "crate": "",
+   "crate_name": "fault_injection_test",
+   "deps": [
+    "//mcp-re-proxy:mcp_re_proxy_fault"
+   ],
    "features": [
     "fault_accept_any_client"
    ],
@@ -1445,10 +1996,16 @@
    "root": "mcp-re-proxy/tests/fault_injection_test.rs",
    "srcs": [
     "mcp-re-proxy/tests/fault_injection_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:gcp_kms_live_test": {
    "crate": "",
+   "crate_name": "gcp_kms_live_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-proxy:mcp_re_proxy_ext"
+   ],
    "features": [
     "gcp_kms_keysource"
    ],
@@ -1458,10 +2015,16 @@
    "root": "mcp-re-proxy/tests/gcp_kms_live_test.rs",
    "srcs": [
     "mcp-re-proxy/tests/gcp_kms_live_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:http_profile_client": {
    "crate": "",
+   "crate_name": "http_profile_client",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile"
+   ],
    "features": [],
    "kind": "rust_binary",
    "manual": false,
@@ -1470,10 +2033,17 @@
    "srcs": [
     "mcp-re-proxy/examples/hpp_common/mod.rs",
     "mcp-re-proxy/examples/http_profile_client.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:http_profile_proxy": {
    "crate": "",
+   "crate_name": "http_profile_proxy",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile",
+    "//mcp-re-proxy:mcp_re_proxy_deploy"
+   ],
    "features": [
     "aws_kms_keysource",
     "gcp_kms_keysource",
@@ -1487,10 +2057,22 @@
    "srcs": [
     "mcp-re-proxy/examples/hpp_common/mod.rs",
     "mcp-re-proxy/examples/http_profile_proxy.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:integration_async_ext_test": {
    "crate": "",
+   "crate_name": "integration_async_ext_test",
+   "deps": [
+    "//mcp-re-client-core:mcp_re_client_core_pre052",
+    "//mcp-re-client-proxy:mcp_re_client_proxy_pre052",
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile_pre052",
+    "//mcp-re-policy:mcp_re_policy",
+    "//mcp-re-proxy:mcp_re_proxy_ext_pre052",
+    "//mcp-re-test-paths:mcp_re_test_paths",
+    "//mcp-re-transport:mcp_re_transport_pre052"
+   ],
    "features": [
     "async_serve",
     "aws_kms_keysource",
@@ -1526,10 +2108,22 @@
     "mcp-re-proxy/tests/integration_async/root_key_lifecycle_test.rs",
     "mcp-re-proxy/tests/integration_async/transparency_e2e_test.rs",
     "mcp-re-proxy/tests/integration_async/verified_context_carrier_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:integration_async_test": {
    "crate": "",
+   "crate_name": "integration_async_test",
+   "deps": [
+    "//mcp-re-client-core:mcp_re_client_core_pre052",
+    "//mcp-re-client-proxy:mcp_re_client_proxy_pre052",
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile_pre052",
+    "//mcp-re-policy:mcp_re_policy",
+    "//mcp-re-proxy:mcp_re_proxy_async_pre052",
+    "//mcp-re-test-paths:mcp_re_test_paths",
+    "//mcp-re-transport:mcp_re_transport_pre052"
+   ],
    "features": [
     "async_serve"
    ],
@@ -1559,10 +2153,17 @@
     "mcp-re-proxy/tests/integration_async/root_key_lifecycle_test.rs",
     "mcp-re-proxy/tests/integration_async/transparency_e2e_test.rs",
     "mcp-re-proxy/tests/integration_async/verified_context_carrier_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:integration_ext_test": {
    "crate": "",
+   "crate_name": "integration_ext_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile",
+    "//mcp-re-proxy:mcp_re_proxy_ext"
+   ],
    "features": [
     "async_serve",
     "aws_kms_keysource",
@@ -1583,10 +2184,20 @@
     "mcp-re-proxy/tests/integration_ext/redis_continuation_e2e_test.rs",
     "mcp-re-proxy/tests/integration_ext/redis_replay_e2e_test.rs",
     "mcp-re-proxy/tests/integration_ext/redis_trust_epoch_e2e_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:integration_kms_test": {
    "crate": "",
+   "crate_name": "integration_kms_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile_pre052",
+    "//mcp-re-proxy:mcp_re_proxy_ext_bin",
+    "//mcp-re-proxy:mcp_re_proxy_ext_pre052",
+    "//mcp-re-test-paths:mcp_re_test_paths",
+    "//mcp-re-transport:mcp_re_transport"
+   ],
    "features": [
     "aws_kms_keysource",
     "cpstore_etcd",
@@ -1624,10 +2235,18 @@
     "mcp-re-proxy/tests/integration/tls_test.rs",
     "mcp-re-proxy/tests/serving_fixtures/mod.rs",
     "mcp-re-proxy/tests/startup_transcript/mod.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:integration_live_test": {
    "crate": "",
+   "crate_name": "integration_live_test",
+   "deps": [
+    "//mcp-re-client-core:mcp_re_client_core_pre052",
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile_pre052",
+    "//mcp-re-proxy:mcp_re_proxy_ext_pre052"
+   ],
    "features": [
     "async_serve",
     "aws_kms_keysource",
@@ -1655,10 +2274,20 @@
     "mcp-re-proxy/tests/integration_live/gcp_kms_http_profile_live_test.rs",
     "mcp-re-proxy/tests/integration_live/gcp_kms_root_rotation_live_test.rs",
     "mcp-re-proxy/tests/integration_live/main.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:integration_test": {
    "crate": "",
+   "crate_name": "integration_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile_pre052",
+    "//mcp-re-proxy:mcp_re_proxy_cli",
+    "//mcp-re-proxy:mcp_re_proxy_pre052",
+    "//mcp-re-test-paths:mcp_re_test_paths",
+    "//mcp-re-transport:mcp_re_transport"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -1689,10 +2318,16 @@
     "mcp-re-proxy/tests/integration/tls_test.rs",
     "mcp-re-proxy/tests/serving_fixtures/mod.rs",
     "mcp-re-proxy/tests/startup_transcript/mod.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:key_source_dev_env_test": {
    "crate": "",
+   "crate_name": "key_source_dev_env_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-proxy:mcp_re_proxy_dev_env"
+   ],
    "features": [
     "dev_env_key_source"
    ],
@@ -1702,10 +2337,16 @@
    "root": "mcp-re-proxy/tests/key_source_test.rs",
    "srcs": [
     "mcp-re-proxy/tests/key_source_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:key_source_test": {
    "crate": "",
+   "crate_name": "key_source_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-proxy:mcp_re_proxy"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -1713,10 +2354,15 @@
    "root": "mcp-re-proxy/tests/key_source_test.rs",
    "srcs": [
     "mcp-re-proxy/tests/key_source_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:mcp_re_auditor_cli": {
    "crate": "",
+   "crate_name": "mcp_re_auditor_cli",
+   "deps": [
+    "//mcp-re-proxy:mcp_re_proxy_auditor"
+   ],
    "features": [],
    "kind": "rust_binary",
    "manual": false,
@@ -1724,10 +2370,18 @@
    "root": "mcp-re-proxy/src/bin/mcp-re-auditor.rs",
    "srcs": [
     "mcp-re-proxy/src/bin/mcp-re-auditor.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:mcp_re_proxy": {
    "crate": "",
+   "crate_name": "mcp_re_proxy",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile",
+    "//mcp-re-operator-display:mcp_re_operator_display",
+    "//mcp-re-policy:mcp_re_policy"
+   ],
    "features": [],
    "kind": "rust_library",
    "manual": false,
@@ -2116,10 +2770,18 @@
     "mcp-re-proxy/src/trust_plane/snapshot.rs",
     "mcp-re-proxy/src/trust_plane/trust_cache.rs",
     "mcp-re-proxy/src/trust_plane/window_policy.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:mcp_re_proxy_async": {
    "crate": "",
+   "crate_name": "mcp_re_proxy",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile",
+    "//mcp-re-operator-display:mcp_re_operator_display",
+    "//mcp-re-policy:mcp_re_policy"
+   ],
    "features": [
     "async_serve"
    ],
@@ -2510,10 +3172,18 @@
     "mcp-re-proxy/src/trust_plane/snapshot.rs",
     "mcp-re-proxy/src/trust_plane/trust_cache.rs",
     "mcp-re-proxy/src/trust_plane/window_policy.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:mcp_re_proxy_async_pre052": {
    "crate": "",
+   "crate_name": "mcp_re_proxy",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile_pre052",
+    "//mcp-re-operator-display:mcp_re_operator_display",
+    "//mcp-re-policy:mcp_re_policy"
+   ],
    "features": [
     "async_serve"
    ],
@@ -2904,10 +3574,18 @@
     "mcp-re-proxy/src/trust_plane/snapshot.rs",
     "mcp-re-proxy/src/trust_plane/trust_cache.rs",
     "mcp-re-proxy/src/trust_plane/window_policy.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:mcp_re_proxy_auditor": {
    "crate": "",
+   "crate_name": "mcp_re_proxy",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile",
+    "//mcp-re-operator-display:mcp_re_operator_display",
+    "//mcp-re-policy:mcp_re_policy"
+   ],
    "features": [
     "scitt_registration"
    ],
@@ -3298,10 +3976,17 @@
     "mcp-re-proxy/src/trust_plane/snapshot.rs",
     "mcp-re-proxy/src/trust_plane/trust_cache.rs",
     "mcp-re-proxy/src/trust_plane/window_policy.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:mcp_re_proxy_cli": {
    "crate": "",
+   "crate_name": "mcp_re_proxy_cli",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-policy:mcp_re_policy",
+    "//mcp-re-proxy:mcp_re_proxy"
+   ],
    "features": [],
    "kind": "rust_binary",
    "manual": false,
@@ -3309,10 +3994,18 @@
    "root": "mcp-re-proxy/src/main.rs",
    "srcs": [
     "mcp-re-proxy/src/main.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:mcp_re_proxy_deploy": {
    "crate": "",
+   "crate_name": "mcp_re_proxy",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile",
+    "//mcp-re-operator-display:mcp_re_operator_display",
+    "//mcp-re-policy:mcp_re_policy"
+   ],
    "features": [
     "aws_kms_keysource",
     "gcp_kms_keysource",
@@ -3706,10 +4399,19 @@
     "mcp-re-proxy/src/trust_plane/snapshot.rs",
     "mcp-re-proxy/src/trust_plane/trust_cache.rs",
     "mcp-re-proxy/src/trust_plane/window_policy.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:mcp_re_proxy_deploy_bin": {
    "crate": "",
+   "crate_name": "mcp_re_proxy_deploy_bin",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile",
+    "//mcp-re-operator-display:mcp_re_operator_display",
+    "//mcp-re-policy:mcp_re_policy",
+    "//mcp-re-proxy:mcp_re_proxy_deploy"
+   ],
    "features": [
     "aws_kms_keysource",
     "gcp_kms_keysource",
@@ -3722,10 +4424,18 @@
    "root": "mcp-re-proxy/src/main.rs",
    "srcs": [
     "mcp-re-proxy/src/main.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:mcp_re_proxy_dev_env": {
    "crate": "",
+   "crate_name": "mcp_re_proxy",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile",
+    "//mcp-re-operator-display:mcp_re_operator_display",
+    "//mcp-re-policy:mcp_re_policy"
+   ],
    "features": [
     "dev_env_key_source"
    ],
@@ -4116,10 +4826,18 @@
     "mcp-re-proxy/src/trust_plane/snapshot.rs",
     "mcp-re-proxy/src/trust_plane/trust_cache.rs",
     "mcp-re-proxy/src/trust_plane/window_policy.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:mcp_re_proxy_ext": {
    "crate": "",
+   "crate_name": "mcp_re_proxy",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile",
+    "//mcp-re-operator-display:mcp_re_operator_display",
+    "//mcp-re-policy:mcp_re_policy"
+   ],
    "features": [
     "aws_kms_keysource",
     "cpstore_etcd",
@@ -4515,10 +5233,19 @@
     "mcp-re-proxy/src/trust_plane/snapshot.rs",
     "mcp-re-proxy/src/trust_plane/trust_cache.rs",
     "mcp-re-proxy/src/trust_plane/window_policy.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:mcp_re_proxy_ext_bin": {
    "crate": "",
+   "crate_name": "mcp_re_proxy_ext_bin",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile",
+    "//mcp-re-operator-display:mcp_re_operator_display",
+    "//mcp-re-policy:mcp_re_policy",
+    "//mcp-re-proxy:mcp_re_proxy_ext"
+   ],
    "features": [
     "aws_kms_keysource",
     "cpstore_etcd",
@@ -4533,10 +5260,18 @@
    "root": "mcp-re-proxy/src/main.rs",
    "srcs": [
     "mcp-re-proxy/src/main.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:mcp_re_proxy_ext_pre052": {
    "crate": "",
+   "crate_name": "mcp_re_proxy",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile_pre052",
+    "//mcp-re-operator-display:mcp_re_operator_display",
+    "//mcp-re-policy:mcp_re_policy"
+   ],
    "features": [
     "aws_kms_keysource",
     "cpstore_etcd",
@@ -4932,10 +5667,18 @@
     "mcp-re-proxy/src/trust_plane/snapshot.rs",
     "mcp-re-proxy/src/trust_plane/trust_cache.rs",
     "mcp-re-proxy/src/trust_plane/window_policy.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:mcp_re_proxy_fault": {
    "crate": "",
+   "crate_name": "mcp_re_proxy",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile",
+    "//mcp-re-operator-display:mcp_re_operator_display",
+    "//mcp-re-policy:mcp_re_policy"
+   ],
    "features": [
     "fault_accept_any_client"
    ],
@@ -5326,10 +6069,18 @@
     "mcp-re-proxy/src/trust_plane/snapshot.rs",
     "mcp-re-proxy/src/trust_plane/trust_cache.rs",
     "mcp-re-proxy/src/trust_plane/window_policy.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:mcp_re_proxy_pre052": {
    "crate": "",
+   "crate_name": "mcp_re_proxy",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile_pre052",
+    "//mcp-re-operator-display:mcp_re_operator_display",
+    "//mcp-re-policy:mcp_re_policy"
+   ],
    "features": [],
    "kind": "rust_library",
    "manual": false,
@@ -5718,10 +6469,13 @@
     "mcp-re-proxy/src/trust_plane/snapshot.rs",
     "mcp-re-proxy/src/trust_plane/trust_cache.rs",
     "mcp-re-proxy/src/trust_plane/window_policy.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:mock_pkcs11": {
    "crate": "",
+   "crate_name": "mock_pkcs11",
+   "deps": [],
    "features": [],
    "kind": "rust_shared_library",
    "manual": false,
@@ -5729,10 +6483,16 @@
    "root": "mcp-re-proxy/tests/mock-pkcs11/src/lib.rs",
    "srcs": [
     "mcp-re-proxy/tests/mock-pkcs11/src/lib.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:pkcs11_keysource_e2e_test": {
    "crate": "",
+   "crate_name": "pkcs11_keysource_e2e_test",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-proxy:mcp_re_proxy_ext"
+   ],
    "features": [
     "aws_kms_keysource",
     "cpstore_etcd",
@@ -5747,10 +6507,16 @@
    "root": "mcp-re-proxy/tests/pkcs11_keysource_e2e_test.rs",
    "srcs": [
     "mcp-re-proxy/tests/pkcs11_keysource_e2e_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:proxy_auditor_unit_test": {
    "crate": "//mcp-re-proxy:mcp_re_proxy_auditor",
+   "crate_name": "mcp_re_proxy",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-policy:mcp_re_policy"
+   ],
    "features": [
     "scitt_registration"
    ],
@@ -6141,10 +6907,18 @@
     "mcp-re-proxy/src/trust_plane/snapshot.rs",
     "mcp-re-proxy/src/trust_plane/trust_cache.rs",
     "mcp-re-proxy/src/trust_plane/window_policy.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:proxy_ext_unit_test": {
    "crate": "//mcp-re-proxy:mcp_re_proxy_ext",
+   "crate_name": "mcp_re_proxy",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-http-profile:mcp_re_http_profile",
+    "//mcp-re-operator-display:mcp_re_operator_display",
+    "//mcp-re-policy:mcp_re_policy"
+   ],
    "features": [
     "aws_kms_keysource",
     "cpstore_etcd",
@@ -6540,10 +7314,16 @@
     "mcp-re-proxy/src/trust_plane/snapshot.rs",
     "mcp-re-proxy/src/trust_plane/trust_cache.rs",
     "mcp-re-proxy/src/trust_plane/window_policy.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:proxy_unit_test": {
    "crate": "//mcp-re-proxy:mcp_re_proxy",
+   "crate_name": "mcp_re_proxy",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-policy:mcp_re_policy"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -6932,10 +7712,15 @@
     "mcp-re-proxy/src/trust_plane/snapshot.rs",
     "mcp-re-proxy/src/trust_plane/trust_cache.rs",
     "mcp-re-proxy/src/trust_plane/window_policy.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:replay_store_bench": {
    "crate": "",
+   "crate_name": "replay_store_bench",
+   "deps": [
+    "//mcp-re-proxy:mcp_re_proxy_deploy"
+   ],
    "features": [
     "aws_kms_keysource",
     "gcp_kms_keysource",
@@ -6948,10 +7733,15 @@
    "root": "mcp-re-proxy/examples/replay_store_bench.rs",
    "srcs": [
     "mcp-re-proxy/examples/replay_store_bench.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:saturation_backend": {
    "crate": "",
+   "crate_name": "saturation_backend",
+   "deps": [
+    "//mcp-re-core:mcp_re_core"
+   ],
    "features": [],
    "kind": "rust_binary",
    "manual": false,
@@ -6959,10 +7749,16 @@
    "root": "mcp-re-proxy/examples/saturation_backend.rs",
    "srcs": [
     "mcp-re-proxy/examples/saturation_backend.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:saturation_loadgen": {
    "crate": "",
+   "crate_name": "saturation_loadgen",
+   "deps": [
+    "//mcp-re-client-core:mcp_re_client_core",
+    "//mcp-re-core:mcp_re_core"
+   ],
    "features": [
     "async_serve"
    ],
@@ -6972,10 +7768,16 @@
    "root": "mcp-re-proxy/examples/saturation_loadgen.rs",
    "srcs": [
     "mcp-re-proxy/examples/saturation_loadgen.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:saturation_rig": {
    "crate": "",
+   "crate_name": "saturation_rig",
+   "deps": [
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-proxy:mcp_re_proxy"
+   ],
    "features": [
     "async_serve",
     "redis_replay"
@@ -6986,10 +7788,20 @@
    "root": "mcp-re-proxy/examples/saturation_rig.rs",
    "srcs": [
     "mcp-re-proxy/examples/saturation_rig.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-proxy:tls_load_harness_bench": {
    "crate": "",
+   "crate_name": "tls_load_harness_bench",
+   "deps": [
+    "//mcp-re-client-core:mcp_re_client_core",
+    "//mcp-re-core:mcp_re_core",
+    "//mcp-re-host:mcp_re_host",
+    "//mcp-re-http-profile:mcp_re_http_profile",
+    "//mcp-re-proxy:mcp_re_proxy_deploy",
+    "//mcp-re-test-paths:mcp_re_test_paths"
+   ],
    "features": [
     "aws_kms_keysource",
     "gcp_kms_keysource",
@@ -7002,10 +7814,13 @@
    "root": "mcp-re-proxy/tests/tls_load_harness_bench.rs",
    "srcs": [
     "mcp-re-proxy/tests/tls_load_harness_bench.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-test-paths:mcp_re_test_paths": {
    "crate": "",
+   "crate_name": "mcp_re_test_paths",
+   "deps": [],
    "features": [],
    "kind": "rust_library",
    "manual": false,
@@ -7015,10 +7830,13 @@
     "mcp-re-test-paths/src/lib.rs",
     "mcp-re-test-paths/src/rust_source.rs",
     "mcp-re-test-paths/src/rust_source/brace_scan.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-test-paths:mcp_re_test_paths_test": {
    "crate": "//mcp-re-test-paths:mcp_re_test_paths",
+   "crate_name": "mcp_re_test_paths",
+   "deps": [],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -7028,10 +7846,16 @@
     "mcp-re-test-paths/src/lib.rs",
     "mcp-re-test-paths/src/rust_source.rs",
     "mcp-re-test-paths/src/rust_source/brace_scan.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-transport:dos_hardening_test": {
    "crate": "",
+   "crate_name": "dos_hardening_test",
+   "deps": [
+    "//mcp-re-proxy:mcp_re_proxy",
+    "//mcp-re-transport:mcp_re_transport"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -7039,10 +7863,16 @@
    "root": "mcp-re-transport/tests/dos_hardening_test.rs",
    "srcs": [
     "mcp-re-transport/tests/dos_hardening_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-transport:fault_injection_test": {
    "crate": "",
+   "crate_name": "fault_injection_test",
+   "deps": [
+    "//mcp-re-proxy:mcp_re_proxy",
+    "//mcp-re-transport:mcp_re_transport_fault"
+   ],
    "features": [
     "fault_accept_any_server"
    ],
@@ -7052,10 +7882,16 @@
    "root": "mcp-re-transport/tests/fault_injection_test.rs",
    "srcs": [
     "mcp-re-transport/tests/fault_injection_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-transport:mcp_re_transport": {
    "crate": "",
+   "crate_name": "mcp_re_transport",
+   "deps": [
+    "//mcp-re-client-core:mcp_re_client_core",
+    "//mcp-re-client-proxy:mcp_re_client_proxy"
+   ],
    "features": [],
    "kind": "rust_library",
    "manual": false,
@@ -7071,10 +7907,13 @@
     "mcp-re-transport/src/request.rs",
     "mcp-re-transport/src/response.rs",
     "mcp-re-transport/src/tls_config.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-transport:mcp_re_transport_doc_test": {
    "crate": "//mcp-re-transport:mcp_re_transport",
+   "crate_name": "mcp_re_transport",
+   "deps": [],
    "features": [],
    "kind": "rust_doc_test",
    "manual": false,
@@ -7090,10 +7929,16 @@
     "mcp-re-transport/src/request.rs",
     "mcp-re-transport/src/response.rs",
     "mcp-re-transport/src/tls_config.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-transport:mcp_re_transport_fault": {
    "crate": "",
+   "crate_name": "mcp_re_transport",
+   "deps": [
+    "//mcp-re-client-core:mcp_re_client_core",
+    "//mcp-re-client-proxy:mcp_re_client_proxy"
+   ],
    "features": [
     "fault_accept_any_server"
    ],
@@ -7111,10 +7956,16 @@
     "mcp-re-transport/src/request.rs",
     "mcp-re-transport/src/response.rs",
     "mcp-re-transport/src/tls_config.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-transport:mcp_re_transport_pre052": {
    "crate": "",
+   "crate_name": "mcp_re_transport",
+   "deps": [
+    "//mcp-re-client-core:mcp_re_client_core_pre052",
+    "//mcp-re-client-proxy:mcp_re_client_proxy_pre052"
+   ],
    "features": [],
    "kind": "rust_library",
    "manual": false,
@@ -7130,10 +7981,16 @@
     "mcp-re-transport/src/request.rs",
     "mcp-re-transport/src/response.rs",
     "mcp-re-transport/src/tls_config.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-transport:mcp_re_transport_test": {
    "crate": "//mcp-re-transport:mcp_re_transport",
+   "crate_name": "mcp_re_transport",
+   "deps": [
+    "//mcp-re-client-core:mcp_re_client_core",
+    "//mcp-re-client-proxy:mcp_re_client_proxy"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -7149,10 +8006,16 @@
     "mcp-re-transport/src/request.rs",
     "mcp-re-transport/src/response.rs",
     "mcp-re-transport/src/tls_config.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//mcp-re-transport:mtls_client_test": {
    "crate": "",
+   "crate_name": "mtls_client_test",
+   "deps": [
+    "//mcp-re-proxy:mcp_re_proxy",
+    "//mcp-re-transport:mcp_re_transport"
+   ],
    "features": [],
    "kind": "rust_test",
    "manual": false,
@@ -7160,10 +8023,16 @@
    "root": "mcp-re-transport/tests/mtls_client_test.rs",
    "srcs": [
     "mcp-re-transport/tests/mtls_client_test.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//sdk/python:_core_shared": {
    "crate": "",
+   "crate_name": "_core",
+   "deps": [
+    "//mcp-re-client-core:mcp_re_client_core",
+    "//mcp-re-core:mcp_re_core"
+   ],
    "features": [],
    "kind": "rust_shared_library",
    "manual": true,
@@ -7172,10 +8041,16 @@
    "srcs": [
     "sdk/python/src/lib.rs",
     "sdk/python/src/trust.rs"
-   ]
+   ],
+   "verus_deps": []
   },
   "//sdk/typescript:native_shared": {
    "crate": "",
+   "crate_name": "mcp_re_sdk_core",
+   "deps": [
+    "//mcp-re-client-core:mcp_re_client_core",
+    "//mcp-re-core:mcp_re_core"
+   ],
    "features": [],
    "kind": "rust_shared_library",
    "manual": false,
@@ -7184,7 +8059,8 @@
    "srcs": [
     "sdk/typescript/src/lib.rs",
     "sdk/typescript/src/trust.rs"
-   ]
+   ],
+   "verus_deps": []
   }
  }
 }

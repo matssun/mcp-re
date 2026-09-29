@@ -151,6 +151,11 @@ dead_tokens = 1
 status = "unreviewed"
 
 [[debt]]
+path = "docs/bench/adr-051-baseline-local.json"
+dead_tokens = 2
+status = "unreviewed"
+
+[[debt]]
 path = "docs/design/active-profile-and-legacy-quarantine.md"
 dead_tokens = 1
 status = "unreviewed"

@@ -121,10 +121,10 @@ derived from the same extraction declaration.
 `ENCODING_VERSION`, which is what a change of MEANING here must move; hashing the file
 would additionally invalidate every unit for a comment.
 
-The measured cone is the cone the LANE measures, not the paths the unit lists. `cargo verus
-verify -p <crate>` verifies the whole crate and compiles its `verify`-feature dependency
-closure, so a formal unit's `source_inputs` covers every `.rs` file in the crate its paths
-name and its `proof_dependencies` covers the workspace crates that crate depends on. A
+The measured cone is the cone the LANE measures, not the paths the unit lists. The Verus
+lane verifies the whole crate against its first-party dependencies, so a formal unit's
+`source_inputs` covers every `.rs` file in the crate its paths name and its
+`proof_dependencies` covers the first-party crates that crate depends on. A
 fingerprint narrower than the verified cone lets source the proof stands on change while
 the graph still answers FRESH.
 
@@ -201,30 +201,6 @@ def _unit_crates(unit: dict) -> list[str]:
     `_ecosystems`' (issue #745).
     """
     return unit_projects(unit)
-
-
-def _path_dependencies(crate: str, seen: set[str]) -> set[str]:
-    """Workspace crates reachable from `crate` by path dependency, transitively.
-
-    The `verify` feature travels down this closure — `mcp-re-http-profile/verify` turns on
-    `mcp-re-core/verify` — so the prover compiles and checks these crates as part of the
-    run whose result the unit claims.
-    """
-    manifest = REPO_ROOT / crate / "Cargo.toml"
-    if crate in seen or not manifest.is_file():
-        return seen
-    seen.add(crate)
-    with manifest.open("rb") as handle:
-        doc = tomllib.load(handle)
-    for spec in doc.get("dependencies", {}).values():
-        if not isinstance(spec, dict) or "path" not in spec:
-            continue
-        resolved = (manifest.parent / spec["path"]).resolve()
-        try:
-            _path_dependencies(resolved.relative_to(REPO_ROOT).as_posix(), seen)
-        except ValueError:
-            continue
-    return seen
 
 
 def _crate_sources(crates: list[str]) -> dict[str, str]:
@@ -740,7 +716,7 @@ def fingerprint_unit(
     if formal:
         closure: set[str] = set()
         for crate in crates:
-            _path_dependencies(crate, closure)
+            closure |= _rust_targets.dependency_closure(crate)
         formal_closure = sorted(closure - set(crates))
         proof_dependencies = _crate_sources(formal_closure)
     components = {
@@ -807,7 +783,7 @@ def fingerprint_unit(
     # ADR-MCPRE-068 Phase 1. The rules of a gate control are the production carrier of the
     # proposition it defends, so softening one is a reduction in evidence exactly as
     # deleting a runtime check is. The scripts cannot go in `paths` — a `.py` path in a
-    # cargo unit collapses `unit_ecosystem` to None and takes the test lane's target
+    # Rust unit collapses `unit_ecosystem` to None and takes the test lane's target
     # resolution with it — so they are digested as their own component instead.
     #
     # ADDED ONLY WHEN THE UNIT DECLARES ONE. A key present-but-empty on every other unit

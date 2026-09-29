@@ -25,8 +25,14 @@ One row per first-party `rust_*` rule, keyed by label:
                   `rust_doc_test` with a `crate`, the crate's own root: that test binary
                   compiles the crate's module tree, which is where its `#[test]`s live.
   * `srcs`      — every source the target compiles, the crate's included.
-  * `crate`     — the library a `rust_test`/`rust_doc_test` is built from, or "".
-  * `features`  — the crate features the target is compiled with.
+  * `crate`     — the library a `rust_test`/`rust_doc_test`/`verus_verify` is built from,
+                  or "".
+  * `crate_name`— the Rust crate name the target compiles.
+  * `features`  — the crate features the target is compiled with (for `verus_verify`, the
+                  specification features the prover turns on).
+  * `verus_deps`— for `verus_verify`, the verified dependencies whose specifications it
+                  imports.
+  * `deps`      — the target's first-party dependencies (third-party crates are the lock's).
   * `manual`    — whether `bazel test //...` skips it.
 
 The crate root is resolved the way rules_rust resolves it — the `crate_root` attribute, else
@@ -53,6 +59,7 @@ RULES = (
     "rust_static_library",
     "rust_proc_macro",
     "rust_doc_test",
+    "verus_verify",
 )
 TEST_RULES = ("rust_test", "rust_doc_test")
 QUERY = 'kind("^(%s) rule$", //...)' % "|".join(RULES)
@@ -125,7 +132,10 @@ def rows_from_query(lines: list[str]) -> dict[str, dict]:
             "root": "",
             "srcs": sorted(label_path(s) for s in srcs),
             "crate": crate,
-            "features": sorted(_strings(attrs, "crate_features")),
+            "crate_name": _string(attrs, "crate_name") or label.partition(":")[2].replace("-", "_"),
+            "features": sorted(_strings(attrs, "crate_features") + _strings(attrs, "spec_features")),
+            "verus_deps": sorted(_strings(attrs, "verus_deps")),
+            "deps": sorted(d for d in _strings(attrs, "deps") if d.startswith("//")),
             "manual": "manual" in _strings(attrs, "tags"),
         }
         rows[label] = row
@@ -138,6 +148,7 @@ def rows_from_query(lines: list[str]) -> dict[str, dict]:
         if base is None or base["crate"]:
             raise TargetTableError(f"{label}: crate {crate} is not a first-party library in the graph")
         row["root"] = base["root"]
+        row["crate_name"] = base["crate_name"]
         row["srcs"] = sorted(set(row["srcs"]) | set(base["srcs"]))
         row["features"] = sorted(set(row["features"]) | set(base["features"]))
     return rows
@@ -207,3 +218,24 @@ def root_identity(root: str, package: str) -> str:
     """A crate root as its package states it: `src/lib.rs`, `tests/integration/main.rs`."""
     prefix = f"{package}/" if package else ""
     return root[len(prefix):] if root.startswith(prefix) else root
+
+
+def dependency_closure(package: str) -> set[str]:
+    """`package` and every first-party package its libraries depend on, transitively.
+
+    What a whole-crate run compiles alongside the crate: the prover, the extractor and the
+    compiler all see these crates' sources through the crate's dependencies. Read from the
+    build graph — each library's first-party `deps`.
+    """
+    rows = table()
+    seen: set[str] = set()
+    pending = [package]
+    while pending:
+        current = pending.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        for row in rows.values():
+            if row["package"] == current and row["kind"] == "rust_library":
+                pending.extend(label_package(dep) for dep in row["deps"])
+    return seen

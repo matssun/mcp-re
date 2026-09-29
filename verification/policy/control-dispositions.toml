@@ -711,14 +711,6 @@ reason_family = "ND-004"
 recorded = "2026-09-19"
 
 [[disposition]]
-id = "CD-0034"
-project = ""
-control = "gate#scripts/use_pinned_toolchain.sh"
-decision = "not-evidence"
-reason_family = "ND-004"
-recorded = "2026-09-19"
-
-[[disposition]]
 id = "CD-0035"
 project = ""
 control = "gate#scripts/verification_runner_preflight.sh"

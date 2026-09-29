@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """The authoritative Verus lane — ADR-MCPRE-059 §16, Operational Rule 5.
 
-CI runs full verification for the selected scope (`cargo verus verify -p <crate>`).
-`cargo verus focus` is a local developer convenience and is NEVER authoritative evidence:
-a proof checked over part of a crate does not establish the crate's obligations, and a
-lane that accepted focus output would be reporting a proof it did not have.
+The lane verifies the whole crate: each V1/V3 unit's crate has a `verus_verify` target
+(`//bazel/verus:defs.bzl`) that runs the pinned prover over the crate Bazel builds, with its
+specification features on and its verified dependencies' specifications imported. A proof
+checked over part of a crate does not establish the crate's obligations, and a lane that
+accepted partial output would be reporting a proof it did not have.
 
 The lane resolves its prover from the pins in `verification/policy/toolchains.lock.toml`
 and never falls back to whatever `verus`/`z3` happen to be on PATH. A proof checked by a
@@ -32,11 +33,11 @@ None of this is a signature. What it closes is the weaker and more common case: 
 recorded in the lock and compared against nothing, which has exactly the standing of no
 check while the repository believes otherwise.
 
-The lane also NAMES its solver. It built its subprocess environment from `os.environ`, so
-`VERUS_Z3_PATH` passed through and the pinned prover ran against whichever solver the
-caller had exported — with every check above it still reading as fully pinned. It is now
-set from the lock, so the file this lane digested and the file the prover executes are the
-same path, stated once.
+The solver is NAMED, not inherited. The prover runs as a Bazel action with an environment
+the rule states: `VERUS_Z3_PATH` is the install's own `z3`, an input of the action, so the
+file this lane digested and the file the prover executes are the same one — a caller's
+exported `VERUS_Z3_PATH` never reaches it. So is the compiler: the prover runs on the
+registered Rust toolchain's `librustc_driver`, with no rustup.
 
 A lane with no V1/V3 unit to check is NOT_REQUIRED, whether or not the toolchain is
 pinned: the manifest asks nothing of it, which is a legitimately empty lane rather than a
@@ -49,7 +50,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -74,13 +74,10 @@ from _unit_selection import (  # noqa: E402
     selection_error,
 )
 from _verus_results import evaluate_unit, parse_reports  # noqa: E402
+from _ecosystems import unit_projects  # noqa: E402
+import _rust_targets  # noqa: E402
 
 REQUIRED = {"verus", "verus.binaries", "verus.vstd", "verus.z3", "rust"}
-
-#: The lane builds into its own target directory. The `verify` feature pulls in vstd and
-#: switches on a nightly feature gate, so sharing `target/` with ordinary builds would
-#: mean each one invalidating the other's artifacts.
-LANE_TARGET_DIR = REPO_ROOT / "target" / "verification-verus"
 
 #: Where this lane deposits what it measured. The record is written for a FAILED unit too:
 #: a failure at a known fingerprint is evidence, and suppressing it would leave the last
@@ -88,44 +85,49 @@ LANE_TARGET_DIR = REPO_ROOT / "target" / "verification-verus"
 EVIDENCE_STORE = evidence_store()
 
 
-def unit_target(unit: dict) -> tuple[str | None, list[str]]:
-    """The Cargo package and features that carry this unit's specifications.
+def unit_target(unit: dict) -> tuple[str | None, dict | None]:
+    """The `verus_verify` target that carries this unit's specifications, and its row.
 
     Derived from the unit's declared paths rather than configured separately: a unit
-    whose paths move to another crate must not keep verifying the crate it left.
+    whose paths move to another crate must not keep verifying the crate it left. None
+    unless the paths name exactly one Bazel package and it holds exactly one such target.
     """
-    crates = {
-        path.split("/", 1)[0]
-        for path in unit["paths"]
-        if "/" in path and (REPO_ROOT / path.split("/", 1)[0] / "Cargo.toml").is_file()
-    }
-    if len(crates) != 1:
-        return None, []
-    return crates.pop(), list(unit.get("features", []))
+    projects = unit_projects(unit)
+    if len(projects) != 1:
+        return None, None
+    found = [
+        (label, row)
+        for label, row in _rust_targets.table().items()
+        if row["kind"] == "verus_verify" and row["package"] == projects[0]
+    ]
+    return found[0] if len(found) == 1 else (None, None)
 
 
-def _lane_env(toolchains: dict, install_root: Path) -> dict[str, str]:
-    """The environment the prover runs in, with its solver NAMED rather than inherited.
+def build_and_read(label: str) -> tuple[str | None, str, str, int | None]:
+    """Build the unit's `verus_verify` target and read what the prover recorded.
 
-    R9-C070. The lane built its environment as `{**os.environ, …}`, so `VERUS_Z3_PATH`
-    passed straight through: the pinned prover ran against whichever solver the caller had
-    exported, and every check above it — the lock's `state = "resolved"`, the vstd digest,
-    the declared commit — kept reading as fully pinned. The docstring's promise that the
-    lane "never falls back to whatever `verus`/`z3` happen to be on PATH" was true of PATH
-    and silent about the variable that outranks it.
-
-    Setting it is the repair rather than deleting it. Unset, the prover resolves the solver
-    beside itself, which is the right file today and is resolution BY LAYOUT — the same
-    class of unstated identity, one directory down. Set from the lock, the file the lane
-    digested and the file the prover executes are the same path, stated once.
+    Returns (why the build could not run, report, log, prover exit status). The prover's
+    status is an OUTPUT of the action rather than the action's own: a failed proof is a
+    result to report, not a build error that would hide the report. A cached action is the
+    same measurement — every prover file, source and dependency is one of its inputs.
     """
-    return {
-        **os.environ,
-        "CARGO_TARGET_DIR": str(LANE_TARGET_DIR),
-        "VERUS_Z3_PATH": str(
-            install_root / str(toolchains["verus"].get("z3", {}).get("path", "z3"))
-        ),
-    }
+    proc = subprocess.run(
+        ["bazel", "build", label], cwd=REPO_ROOT, capture_output=True, text=True, check=False
+    )
+    if proc.returncode != 0:
+        return f"bazel build {label} failed:\n{proc.stderr[-3000:]}", "", "", None
+    listed = subprocess.run(
+        ["bazel", "cquery", "--output=files", label],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=False,
+    ).stdout.split()
+    outputs = {Path(f).suffix: REPO_ROOT / f for f in listed}
+    try:
+        report = outputs[".json"].read_text()
+        log = outputs[".log"].read_text()
+        status = int(outputs[".status"].read_text().strip())
+    except (KeyError, OSError, ValueError) as exc:
+        return f"{label} left no readable report, log and status ({exc})", "", "", None
+    return None, report, log, status
 
 
 def _pinned_files(toolchains: dict) -> dict[str, str]:
@@ -305,10 +307,10 @@ def main() -> int:
 
     pinned_commit = str(toolchains["verus"].get("commit", ""))
     install_root = Path(toolchains["verus"]["install_root"])
-    cargo_verus = install_root / "cargo-verus"
-    if not cargo_verus.is_file():
+    driver = install_root / "verus"
+    if not driver.is_file():
         print(
-            f"UNAVAILABLE: the pinned prover is not installed at {cargo_verus}.\n"
+            f"UNAVAILABLE: the pinned prover is not installed at {driver}.\n"
             "Not a FAIL — an absent toolchain is a missing measurement, not a failed one —\n"
             "and not a PASS, because nothing was proved.",
             file=sys.stderr,
@@ -326,6 +328,23 @@ def main() -> int:
             "The lock's recorded identity is compared against the installation before any "
             "proof is\nattributed to it. Re-install the pinned release, or re-pin the lock "
             "deliberately.",
+            file=sys.stderr,
+        )
+        print("VERDICT: FAIL")
+        return 1
+
+    # The prover runs on Bazel's Rust toolchain, and loads that toolchain's compiler driver:
+    # the release's declared toolchain must BE the pinned channel, or the driver it links
+    # is not there to load and every unit fails on a dynamic-loader error that names neither.
+    declared = str(
+        json.loads((install_root / "version.json").read_text()).get("verus", {}).get("toolchain", "")
+    )
+    channel = str(toolchains["rust"].get("channel", ""))
+    if not declared.startswith(f"{channel}-"):
+        print(
+            f"FAIL: the pinned Verus release is built against the {declared or 'unstated'} "
+            f"toolchain and the build pins {channel}. The prover runs on the build's own "
+            "compiler driver, so the two move together or the lane cannot run.",
             file=sys.stderr,
         )
         print("VERDICT: FAIL")
@@ -357,73 +376,34 @@ def main() -> int:
                 ),
             )
 
-        crate, features = unit_target(unit)
-        if crate is None:
+        label, row = unit_target(unit)
+        if label is None or row is None:
             print(
                 f"FAIL: unit {unit['id']} is class {unit['class']} but its paths name no "
-                "crate this lane can verify.",
+                "crate with a `verus_verify` target.",
                 file=sys.stderr,
             )
-            record("fail", "the unit's paths name no single crate this lane can verify")
+            record("fail", "the unit's paths name no single crate with a verus_verify target")
             failures += 1
             continue
-
-        argv = [str(cargo_verus), "verify", "-p", crate]
-        for feature in features:
-            # UNQUALIFIED, and `-p crate` above is why that is unambiguous.
-            #
-            # This used to pass `--features {crate}/{feature}`. Cargo resolves the
-            # `pkg/feat` form against the selected package's DEPENDENCIES, so the
-            # qualification is silently wrong for any crate that declares a dependency of
-            # its own name — the `mcp-re-host` self dev-dependency pattern, which
-            # `mcp-re-http-profile` adopted for the ADR-MCPRE-052 fixture feature. The
-            # feature then lands on the dev-dependency copy, the library Verus actually
-            # processes is built WITHOUT it, and `mcp-re-core/verify` is never enabled —
-            # so `vstd::prelude::*` is cfg'd out and every unit in the crate fails with
-            # "The verus_builtin crate was not imported", pointing at mcp-re-core rather
-            # than at the crate under test. Measured, with the lane's own flag:
-            #
-            #   --features mcp-re-http-profile/verify  -> vstd in the non-dev closure: 0
-            #   --features verify                      -> vstd in the non-dev closure: 7
-            #
-            # Every unit's `features` names a feature of its OWN crate, so dropping the
-            # qualification changes nothing else and removes the ambiguity for good.
-            argv += ["--features", feature]
-        # Everything after `--` goes to the prover itself. The structured report is what
-        # this lane reads; the human-readable log is kept only for the failure message.
-        argv += ["--", "--output-json"]
-        print(f"verify-verus: {unit['id']} -> {' '.join(argv[1:])}")
-
-        # Cargo's fingerprint cache is the lane's enemy here: an unchanged crate is
-        # "Finished" without re-running the prover, so the invocation prints no
-        # verification-results line and exits 0 — indistinguishable, to this lane, from a
-        # crate carrying no proofs at all. Discarding the crate's own artifacts (not its
-        # dependencies') makes every run a real check. Found by the guard, which is what
-        # the guard is for.
-        env = _lane_env(toolchains, install_root)
-        subprocess.run(
-            ["cargo", "clean", "-p", crate],
-            cwd=REPO_ROOT,
-            env=env,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-
-        # `check=False` and the tool's OWN returncode: piping Verus through anything
-        # replaces its status with the pipeline's, which is how a failed proof reads as a
-        # success. Streams are merged so a report interrupted by a compile error is still
-        # read from one place.
-        proc = subprocess.run(
-            argv,
-            cwd=REPO_ROOT,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            check=False,
-        )
-        output = proc.stdout
+        crate = str(row["crate_name"])
+        # The unit's specification features must be on in the run it claims. A target that
+        # verified the crate without them checked a crate whose specifications were cfg'd
+        # out — `vstd::prelude::*` absent, every proof vacuous.
+        absent = sorted(set(unit.get("features", [])) - set(row["features"]))
+        if absent:
+            detail = f"{label} does not turn on the unit's specification feature(s) {absent}"
+            print(f"FAIL: {unit['id']}: {detail}", file=sys.stderr)
+            record("fail", detail)
+            failures += 1
+            continue
+        print(f"verify-verus: {unit['id']} -> bazel build {label}")
+        problem, output, log, status = build_and_read(label)
+        if problem is not None:
+            print(f"  FAIL: {problem}", file=sys.stderr)
+            record("fail", problem)
+            failures += 1
+            continue
         reports = parse_reports(output)
         ok, detail = evaluate_unit(
             reports,
@@ -434,10 +414,10 @@ def main() -> int:
         prover = {"commit": pinned_commit}
         if reports:
             prover = {"commit": reports[0].commit, "version": reports[0].version}
-        if not ok or proc.returncode != 0:
-            print(f"  FAIL: {detail} (exit {proc.returncode})", file=sys.stderr)
-            print(output.strip()[-4000:], file=sys.stderr)
-            record("fail", f"{detail} (exit {proc.returncode})", prover)
+        if not ok or status != 0:
+            print(f"  FAIL: {detail} (exit {status})", file=sys.stderr)
+            print((log.strip() or output.strip())[-4000:], file=sys.stderr)
+            record("fail", f"{detail} (exit {status})", prover)
             failures += 1
         else:
             print(f"  PASS: {detail}")

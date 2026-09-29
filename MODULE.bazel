@@ -90,6 +90,15 @@ use_repo(
 # Rust toolchain — pinned to the workspace's required version
 ########################################
 
+# The pinned Verus release, for the Verus lane (//bazel/verus). Read from the toolchain lock,
+# which is the one statement of the pin; only the `manual` `verus_verify` targets use it.
+verus_install = use_repo_rule("//bazel/verus:repo.bzl", "verus_install")
+
+verus_install(
+    name = "verus",
+    lock = "//:verification/policy/toolchains.lock.toml",
+)
+
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
 rust.toolchain(
     edition = "2021",

@@ -69,8 +69,7 @@ REQS="$(mktemp -t mcp-re-python-matrix)"
 trap 'rm -f "$REQS"' EXIT
 uv export --quiet --extra dev --no-emit-project --no-hashes -o "$REQS"
 
-# Built with the same pinned Rust toolchain as every other lane: rustup walks up to the
-# repository's rust-toolchain.toml from here.
+# Built with the same pinned Rust toolchain as every other lane: Bazel's, from MODULE.bazel.
 echo "prepare_python_matrix: building the abi3 wheel once (bazel build //sdk/python:wheel)"
 ( cd "$ROOT" && bazel build //sdk/python:wheel ) >/dev/null
 WHEEL="$ROOT/$(cd "$ROOT" && bazel cquery --output=files //sdk/python:wheel 2>/dev/null | head -1)"

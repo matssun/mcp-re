@@ -1,4 +1,5 @@
 load("//bazel:defs.bzl", "nt_rust_library", "nt_rust_test")
+load("//bazel/verus:defs.bzl", "verus_verify")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -65,4 +66,14 @@ nt_rust_test(
     deps = [
         ":mcp_re_core",
     ],
+)
+
+# The Verus lane (ADR-MCPRE-059 §16): the pinned prover over this crate with its `verify`
+# specifications on. `manual`: it needs the pinned install, which only the Verus lane's
+# hosts carry; `tools/verification/verify-verus` builds it.
+verus_verify(
+    name = "mcp_re_core_verus",
+    crate = ":mcp_re_core",
+    spec_features = ["verify"],
+    tags = ["manual"],
 )
