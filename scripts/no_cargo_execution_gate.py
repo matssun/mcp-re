@@ -77,7 +77,7 @@ SHELL_RULES = (
     ("$CARGO", re.compile(_POSITION + r"[\"']?\$\{?CARGO(?:[:}][^\s\"']*)?[\"']?(?=\s)")),
     ("napi build", re.compile(r"\bnapi\s+build\b")),
     ("maturin", re.compile(_POSITION + r"maturin\s+(?:build|develop|publish)\b")),
-    ("charon cargo", re.compile(r"\bcharon\S*\s+cargo\b")),
+    ("charon cargo", re.compile(r"\bcharon\S*\s+cargo\b", re.IGNORECASE)),
     ("cross", re.compile(_POSITION + r"cross\s+(?:build|test|run)\b")),
 )
 PRINTS = re.compile(r"^\s*(?:-\s*)?(?:echo|printf)\b")
@@ -165,6 +165,17 @@ def python_hits(text: str) -> list[tuple[int, str, str]]:
     except SyntaxError:
         return shell_hits(text)
     out: list[tuple[int, str, str]] = []
+    # A shell script held in a name and handed to a shell by that name — `["bash", "-c",
+    # SCRIPT]` — is read as the script it names. Only names bound to one string constant.
+    scripts = {
+        target.id: node.value.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
     for node in ast.walk(tree):
         line = getattr(node, "lineno", 0)
         values = _string_list(node)
@@ -173,6 +184,9 @@ def python_hits(text: str) -> list[tuple[int, str, str]]:
                 out.append((line, "cargo argv", ast.unparse(node)[:120]))
             elif len(values) > 1 and "charon" in values[0] and values[1] == "cargo":
                 out.append((line, "charon cargo", ast.unparse(node)[:120]))
+            for flag, operand in zip(values, values[1:]):
+                if flag == "-c" and operand in scripts and shell_hits(scripts[operand]):
+                    out.append((line, "cargo shell script", f"{operand}: {scripts[operand].strip()[:100]}"))
         if isinstance(node, ast.Call):
             func = node.func
             name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
@@ -180,6 +194,9 @@ def python_hits(text: str) -> list[tuple[int, str, str]]:
             if name in _SPAWNS and isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                 if shell_hits(arg.value):
                     out.append((line, "cargo shell string", arg.value[:120]))
+            if name in _SPAWNS and isinstance(arg, ast.Name) and arg.id in scripts:
+                if shell_hits(scripts[arg.id]):
+                    out.append((line, "cargo shell script", f"{arg.id}: {scripts[arg.id].strip()[:100]}"))
     return out
 
 
@@ -321,6 +338,9 @@ def selftest() -> int:
         ("tools/x.py", 'subprocess.run(["cargo", "test"])\n', True),
         ("tools/x.py", 'argv = [charon, "cargo", "--preset=aeneas"]\n', True),
         ("tools/x.py", 'os.system("cargo build --release")\n', True),
+        ("tools/x.py", 'S = """\nset -e\n"$CHARON_EXE" cargo --preset=aeneas\n"""\nrun(["docker", "run", img, "bash", "-c", S])\n', True),
+        ("tools/x.py", 'S = "cargo test --workspace"\nsubprocess.run(S, shell=True)\n', True),
+        ("tools/x.py", 'S = "cargo is not run here"\nprint(S)\n', False),
         ("tools/x.py", 'RULES = (("cargo", re.compile("x")),)\n', False),
         ("verification/extraction/Dockerfile", "ENV CARGO_HOME=/opt/cargo \\\n", False),
         ("tools/x.py", 'print("cargo test-target gate: OK")\n', False),
