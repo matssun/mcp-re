@@ -224,8 +224,8 @@ impl AudienceTuple {
     /// `("x", "y", Some("z\u{1f}"))` and `("x", "y\u{1f}z", Some(""))` produced one
     /// byte string and therefore one [`audience_hash`](Self::audience_hash). Each
     /// field is escaped through the same [`field_escape`] the `actor_id` join uses,
-    /// which is reversible and leaves no `0x1F` in any slot, so distinct tuples
-    /// cannot collapse.
+    /// which is reversible and leaves no `0x1F` in any slot: two tuples share bytes only when
+    /// they differ solely by an absent versus an empty `route`, which are one slot by design.
     pub fn canonical_bytes(&self) -> Vec<u8> {
         let route = self.route.as_deref().unwrap_or("");
         let joined = format!(
@@ -341,8 +341,8 @@ impl HttpContinuation {
     /// answer-leg client's path (ADR-MCPS-047): after verifying an
     /// `InputRequiredResult` it already has both evidence digests (its own sent-
     /// request handle and the response's `response_signature_base_digest`) and never
-    /// needs to retain the raw signature bases. Wire-identical to a continuation
-    /// built via [`HttpContinuation::build`] over the same bases.
+    /// needs to retain the raw signature bases. The handles are not checked here: the result
+    /// equals [`HttpContinuation::build`] only over role-labeled digests; `verify` refuses others.
     pub fn from_handles(
         previous_request_evidence: RequestEvidenceDigest,
         input_required_response_evidence: RequestEvidenceDigest,
@@ -585,7 +585,7 @@ pub struct HttpResponseEvidenceBlock {
 }
 
 impl HttpResponseEvidenceBlock {
-    /// Structural validation, fail-closed: the profile tag matches.
+    /// Checks the profile tag only: the signer and request-handle relations are decided in `verify`.
     pub fn validate(&self, expected_profile: &str) -> Result<(), HttpProfileError> {
         if self.profile != expected_profile {
             return Err(HttpProfileError::UnknownProfileTag);
@@ -646,9 +646,9 @@ mod tests {
     #[test]
     fn unknown_field_fails_closed() {
         let json = r#"{"profile":"mcp-re-http-v1","audience":{"audience_id":"a","target_uri":"u"},"artifact_bindings":[],"surprise":1}"#;
-        let err = serde_json::from_str::<HttpRequestEvidenceBlock>(json);
+        let err = serde_json::from_str::<HttpRequestEvidenceBlock>(json).unwrap_err();
         assert!(
-            err.is_err(),
+            err.to_string().contains("unknown field `surprise`"),
             "deny_unknown_fields must reject stray members"
         );
     }
@@ -660,6 +660,145 @@ mod tests {
         assert_eq!(
             b.validate(PROFILE_TAG).unwrap_err(),
             HttpProfileError::MalformedEvidence("empty artifact_bindings")
+        );
+    }
+
+    fn admission_binding() -> crate::admission::AdmissionBinding {
+        crate::admission::AdmissionBinding {
+            binding_type: BindingType::OpaqueDigest,
+            admission_id: "w".into(),
+            generation: 1,
+            digest_alg: EVIDENCE_DIGEST_ALG.into(),
+            digest_value: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into(),
+        }
+    }
+
+    fn pdp_reference_binding() -> ArtifactBinding {
+        ArtifactBinding {
+            artifact_type: ArtifactType::PdpDecision,
+            binding_type: BindingType::ReferenceDigest,
+            digest_alg: EVIDENCE_DIGEST_ALG.into(),
+            digest_value: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into(),
+            authorization_system_id: Some("sys".into()),
+            reference_scheme_id: Some("scheme".into()),
+            reference_value: Some("handle".into()),
+        }
+    }
+
+    fn pdp_opaque_binding(credential: &[u8]) -> ArtifactBinding {
+        ArtifactBinding::opaque_digest(ArtifactType::PdpDecision, credential)
+    }
+
+    #[test]
+    fn admission_binding_and_assertion_must_appear_together() {
+        let together = "admission binding and assertion must appear together";
+        let mut b = block();
+        b.admission = Some(admission_binding());
+        assert_eq!(
+            b.validate(PROFILE_TAG).unwrap_err(),
+            HttpProfileError::MalformedEvidence(together)
+        );
+        let mut b = block();
+        b.admission_assertion = Some("a.b.c".into());
+        assert_eq!(
+            b.validate(PROFILE_TAG).unwrap_err(),
+            HttpProfileError::MalformedEvidence(together)
+        );
+        b.admission = Some(admission_binding());
+        b.validate(PROFILE_TAG).expect("both halves validate");
+    }
+
+    #[test]
+    fn admission_assertion_is_bounded_before_parsing() {
+        let mut b = block();
+        b.admission = Some(admission_binding());
+        b.admission_assertion = Some("a".repeat(MAX_ADMISSION_ASSERTION_LEN));
+        b.validate(PROFILE_TAG).expect("at the bound");
+        b.admission_assertion = Some("a".repeat(MAX_ADMISSION_ASSERTION_LEN + 1));
+        assert_eq!(
+            b.validate(PROFILE_TAG).unwrap_err(),
+            HttpProfileError::MalformedEvidence("admission assertion size")
+        );
+    }
+
+    #[test]
+    fn authorization_decision_without_an_evidence_binding_fails_closed() {
+        let expected = HttpProfileError::MalformedEvidence(
+            "authorization decision without a pdp-decision opaque-digest binding",
+        );
+        let mut b = block();
+        b.authorization_decision = Some("a.b.c".into());
+        assert_eq!(b.validate(PROFILE_TAG).unwrap_err(), expected);
+        b.artifact_bindings.push(pdp_reference_binding());
+        assert_eq!(b.validate(PROFILE_TAG).unwrap_err(), expected);
+    }
+
+    #[test]
+    fn authorization_decision_with_two_evidence_bindings_fails_closed() {
+        let mut b = block();
+        b.authorization_decision = Some("a.b.c".into());
+        b.artifact_bindings.push(pdp_opaque_binding(b"one"));
+        b.validate(PROFILE_TAG).expect("exactly one binding");
+        b.artifact_bindings.push(pdp_opaque_binding(b"two"));
+        assert_eq!(
+            b.validate(PROFILE_TAG).unwrap_err(),
+            HttpProfileError::MalformedEvidence("more than one pdp-decision opaque-digest binding")
+        );
+    }
+
+    #[test]
+    fn authorization_decision_is_bounded_before_parsing() {
+        let mut b = block();
+        b.artifact_bindings.push(pdp_opaque_binding(b"one"));
+        b.authorization_decision = Some("a".repeat(MAX_AUTHORIZATION_DECISION_LEN));
+        b.validate(PROFILE_TAG).expect("at the bound");
+        b.authorization_decision = Some("a".repeat(MAX_AUTHORIZATION_DECISION_LEN + 1));
+        assert_eq!(
+            b.validate(PROFILE_TAG).unwrap_err(),
+            HttpProfileError::MalformedEvidence("authorization decision size")
+        );
+    }
+
+    fn response_block() -> HttpResponseEvidenceBlock {
+        HttpResponseEvidenceBlock {
+            profile: PROFILE_TAG.into(),
+            server_signer: ActorIdentity {
+                role: "server".into(),
+                trust_domain: "example.com".into(),
+                subject: "did:example:server".into(),
+                keyid: "server-key-1".into(),
+            },
+            server_delegation: None,
+            request_evidence: RequestEvidenceDigest::over_labeled(EVIDENCE_LABEL_REQUEST, b"base"),
+        }
+    }
+
+    #[test]
+    fn response_block_round_trips_and_validates() {
+        let b = response_block();
+        let json = serde_json::to_string(&b).unwrap();
+        let back: HttpResponseEvidenceBlock = serde_json::from_str(&json).unwrap();
+        assert_eq!(b, back);
+        b.validate(PROFILE_TAG).expect("valid");
+    }
+
+    #[test]
+    fn response_block_unknown_field_fails_closed() {
+        let mut v = serde_json::to_value(response_block()).unwrap();
+        v.as_object_mut()
+            .unwrap()
+            .insert("surprise".into(), serde_json::json!(1));
+        let err = serde_json::from_value::<HttpResponseEvidenceBlock>(v).unwrap_err();
+        assert!(err.to_string().contains("unknown field `surprise`"));
+    }
+
+    #[test]
+    fn response_block_foreign_profile_fails_closed() {
+        let mut b = response_block();
+        b.profile = "someone-elses-profile".into();
+        assert_eq!(
+            b.validate(PROFILE_TAG).unwrap_err(),
+            HttpProfileError::UnknownProfileTag
         );
     }
 
@@ -844,7 +983,10 @@ mod tests {
     fn opaque_binding_with_reference_fields_fails_closed() {
         let mut b = dpop_binding();
         b.reference_value = Some("grant-123".into());
-        assert!(b.validate().is_err());
+        assert_eq!(
+            b.validate().unwrap_err(),
+            HttpProfileError::MalformedEvidence("opaque binding carries reference fields")
+        );
     }
 
     #[test]
@@ -858,7 +1000,10 @@ mod tests {
             reference_scheme_id: None,
             reference_value: None,
         };
-        assert!(b.validate().is_err());
+        assert_eq!(
+            b.validate().unwrap_err(),
+            HttpProfileError::MalformedEvidence("reference binding missing reference fields")
+        );
     }
 
     // ----- MRTR continuation (three handles) -----
@@ -915,6 +1060,45 @@ mod tests {
         assert_eq!(
             c.verify(PREV_BASE, IRR_BASE, REQ_STATE).unwrap_err(),
             HttpProfileError::MalformedEvidence("continuation type")
+        );
+    }
+
+    #[test]
+    fn an_absent_route_and_an_empty_route_are_one_audience_slot() {
+        let with_route = |route| AudienceTuple {
+            audience_id: "did:example:server".into(),
+            target_uri: "https://mcp.example.com/mcp".into(),
+            route,
+        };
+        let a = with_route(None);
+        let b = with_route(Some(String::new()));
+        assert_ne!(a, b);
+        assert_eq!(a.canonical_bytes(), b.canonical_bytes());
+        assert_eq!(a.audience_hash(), b.audience_hash());
+    }
+
+    #[test]
+    fn from_handles_over_role_labeled_digests_is_wire_identical_to_build() {
+        assert_eq!(
+            HttpContinuation::from_handles(
+                RequestEvidenceDigest::over_labeled(EVIDENCE_LABEL_REQUEST, PREV_BASE),
+                RequestEvidenceDigest::over_labeled(EVIDENCE_LABEL_RESPONSE, IRR_BASE),
+                REQ_STATE
+            ),
+            HttpContinuation::build(PREV_BASE, IRR_BASE, REQ_STATE)
+        );
+    }
+
+    #[test]
+    fn a_wrong_role_handle_from_handles_is_refused_by_verify() {
+        let c = HttpContinuation::from_handles(
+            RequestEvidenceDigest::over_labeled(EVIDENCE_LABEL_RESPONSE, PREV_BASE),
+            RequestEvidenceDigest::over_labeled(EVIDENCE_LABEL_RESPONSE, IRR_BASE),
+            REQ_STATE,
+        );
+        assert_eq!(
+            c.verify(PREV_BASE, IRR_BASE, REQ_STATE).unwrap_err(),
+            HttpProfileError::ContinuationBindingFailed
         );
     }
 }
