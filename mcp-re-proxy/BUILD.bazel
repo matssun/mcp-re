@@ -1669,7 +1669,19 @@ nt_rust_binary(
     name = "saturation_rig",
     srcs = ["examples/saturation_rig.rs"],
     crate_features = ["async_serve", "redis_replay"],
+    # The three processes the rig spawns are build dependencies, not paths a script
+    # supplies; the rig resolves them through runfiles.
+    data = [
+        ":mcp_re_proxy_ext_bin",
+        ":saturation_backend",
+        ":saturation_loadgen",
+    ],
     edition = "2021",
+    env = {
+        "MCP_RE_PROXY_CLI": "$(rlocationpath :mcp_re_proxy_ext_bin)",
+        "MCP_RE_SAT_BACKEND": "$(rlocationpath :saturation_backend)",
+        "MCP_RE_SAT_LOADGEN": "$(rlocationpath :saturation_loadgen)",
+    },
     visibility = ["//visibility:public"],
     deps = [
         ":mcp_re_proxy",
@@ -1692,6 +1704,11 @@ nt_rust_binary(
     visibility = ["//visibility:public"],
     deps = [
         "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:http-body-util",
+        "@crates_mcp_re//:hyper",
+        "@crates_mcp_re//:hyper-util",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:tokio",
     ],
 )
 
@@ -1702,8 +1719,13 @@ nt_rust_binary(
     edition = "2021",
     visibility = ["//visibility:public"],
     deps = [
-        ":mcp_re_proxy",
+        "//mcp-re-client-core:mcp_re_client_core",
         "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:rustls",
+        "@crates_mcp_re//:rustls-pki-types",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:tokio",
+        "@crates_mcp_re//:tokio-rustls",
     ],
 )
 

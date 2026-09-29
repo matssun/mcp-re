@@ -148,6 +148,23 @@ struct Material {
     client_key_der: PathBuf,
 }
 
+/// Resolve a Bazel `data` dependency whose runfiles path the target's `env` names.
+fn runfile(env_key: &str) -> String {
+    let rel = std::env::var(env_key)
+        .unwrap_or_else(|_| panic!("{env_key} is not set — run the rig as a Bazel target"));
+    let root = std::env::var("RUNFILES_DIR").unwrap_or_else(|_| {
+        let exe = std::env::current_exe().expect("current_exe");
+        format!("{}.runfiles", exe.display())
+    });
+    let path = std::path::Path::new(&root).join(&rel);
+    assert!(
+        path.exists(),
+        "runfile {} ({env_key}) is missing",
+        path.display()
+    );
+    path.display().to_string()
+}
+
 fn write_material() -> Material {
     let server_ca = make_ca();
     let (server_leaf, server_leaf_key) = make_leaf(
@@ -615,19 +632,9 @@ fn main() {
         }
     }
 
-    let dir =
-        std::env::var("CARGO_BIN_EXE_DIR").unwrap_or_else(|_| "target/release/examples".into());
-    let gen_exe = format!("{dir}/saturation_loadgen");
-    let backend_exe = format!("{dir}/saturation_backend");
-    let proxy_cli =
-        std::env::var("MCP_RE_PROXY_CLI").unwrap_or_else(|_| "target/release/mcp-re-proxy".into());
-    for p in [&gen_exe, &backend_exe, &proxy_cli] {
-        assert!(
-            std::path::Path::new(p).exists(),
-            "missing binary {p} — build with: cargo build --release -p mcp-re-proxy \
-             --features async_serve,redis_replay --bins --examples"
-        );
-    }
+    let gen_exe = runfile("MCP_RE_SAT_LOADGEN");
+    let backend_exe = runfile("MCP_RE_SAT_BACKEND");
+    let proxy_cli = runfile("MCP_RE_PROXY_CLI");
 
     let m = write_material();
     let (backend, backend_addr) = spawn_backend(&backend_exe, backend_workers);

@@ -183,9 +183,9 @@ ALLOW_TRACKED_DRIFT = {
     # start or, worse, produce a number measured against contended CPU and report it as
     # a result. They are driven by scripts/saturation_rig.sh and
     # scripts/runtime_topology_sweep.sh. Structurally non-hermetic, not "not yet wired".
-    "saturation_rig": "ADR-MCPRE-051 §1 — cargo example; needs Docker Redis + a quiet box",
-    "saturation_loadgen": "ADR-MCPRE-051 §1 — cargo example; load generator process for the rig",
-    "saturation_backend": "ADR-MCPRE-051 §1 — cargo example; inner backend process for the rig",
+    "saturation_rig": "ADR-MCPRE-051 §1 — measurement binary; needs Docker Redis + a quiet box",
+    "saturation_loadgen": "ADR-MCPRE-051 §1 — measurement binary; load generator process for the rig",
+    "saturation_backend": "ADR-MCPRE-051 §1 — measurement binary; inner backend process for the rig",
     "replay_store_bench": "ADR-MCPRE-051 §1 — cargo example; needs Docker Redis, redis_replay feature",
 }
 

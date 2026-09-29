@@ -29,12 +29,8 @@ cd "$(dirname "$0")/.."
 trap sat_fleet_down EXIT
 sat_fleet_up || exit 2
 
-echo "saturation rig: building release binaries (proxy + rig)"
-cargo build --release -p mcp-re-proxy --features async_serve,redis_replay --bins --examples
-
-export MCP_RE_PROXY_CLI="target/release/mcp-re-proxy"
-export CARGO_BIN_EXE_DIR="target/release/examples"
-export MCP_RE_SAT_OUT="${MCP_RE_SAT_OUT:-target/saturation.json}"
+export MCP_RE_SAT_OUT="${MCP_RE_SAT_OUT:-work/saturation.json}"
+mkdir -p "$(dirname "$MCP_RE_SAT_OUT")"
 
 # The rig co-locates every tier on one box, so an unrelated build halves the result the
 # same way it does for the §7 lane. Refuse rather than silently measure noise.
@@ -52,4 +48,4 @@ fi
 
 # Not `exec`: replacing the shell discards the EXIT trap, which would leave the replay
 # fleet running after every measurement.
-target/release/examples/saturation_rig "$@"
+bazel run -c opt //mcp-re-proxy:saturation_rig -- "$@"
