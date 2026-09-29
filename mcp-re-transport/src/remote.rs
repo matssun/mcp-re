@@ -84,11 +84,25 @@ fn to_remote_error(error: TransportError) -> RemoteTransportError {
 /// origin form of it. Both sides derive the covered value from their own
 /// configuration, so this conversion never feeds the signature base — it only has
 /// to route the request at the peer.
+///
+/// The refusal names the OPERATION and nothing else. `--target-uri` is operator
+/// configured, and the one shape that reaches this refusal — a value with no `://` —
+/// is exactly the shape a credential rides in unannounced (`user:password@host:port`),
+/// which is why it has no scheme delimiter to begin with. There is nothing in such a
+/// value this function can prove safe to render, and an operator diagnosing it already
+/// knows which value they configured, so the fact worth carrying is what was wrong with
+/// it.
 fn origin_form(target_uri: &str) -> Result<String, TransportError> {
     // Class B: `split_once` yields the authority directly, so the scheme delimiter's
     // width is named once rather than repeated as an offset.
     let (_scheme, authority) = target_uri.split_once("://").ok_or_else(|| {
-        TransportError::InvalidRequest(format!("target-uri is not absolute: {target_uri:?}"))
+        TransportError::InvalidRequest(
+            "target-uri is not absolute: it must be <scheme>://<authority><path>. The \
+             configured value is not shown — a locator with no scheme delimiter is the \
+             shape that carries user:password@host, so echoing it here would publish the \
+             credential of anyone who typed one"
+                .to_string(),
+        )
     })?;
     match authority.find('/') {
         Some(offset) => Ok(authority.get(offset..).unwrap_or("/").to_string()),
@@ -123,5 +137,28 @@ mod tests {
             origin_form("/mcp?route=a"),
             Err(TransportError::InvalidRequest(_))
         ));
+    }
+
+    /// LOAD-BEARING: the ONLY value that reaches this refusal is one with no `://`, and
+    /// that is precisely the shape a credential rides in — so the refusal must name the
+    /// operation and echo nothing of what was configured.
+    #[test]
+    fn the_refusal_names_the_operation_and_never_the_configured_target() {
+        const CONFIGURED: &str = "mats:hunter2@proxy.internal:8600";
+        let Err(TransportError::InvalidRequest(message)) = origin_form(CONFIGURED) else {
+            panic!("a target-uri with no scheme delimiter must be refused");
+        };
+        assert!(
+            !message.contains("hunter2") && !message.contains("mats"),
+            "the configured credential reached the diagnostic: {message}"
+        );
+        assert!(
+            !message.contains(CONFIGURED) && !message.contains("proxy.internal"),
+            "the complete configured target-uri was echoed: {message}"
+        );
+        assert!(
+            message.contains("target-uri is not absolute"),
+            "an operator still learns which check refused: {message}"
+        );
     }
 }

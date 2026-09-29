@@ -295,16 +295,10 @@ fn build_delegated_epoch_watch(
     epoch: &crate::startup_plan::TrustEpochPlan,
     base_label: String,
 ) -> Result<Option<DelegatedEpochWatch>, String> {
-    let crate::startup_plan::TrustEpochPlan::Redis { url, key } = epoch else {
+    let Some(source) = epoch.networked_source()? else {
         return Ok(None);
     };
-    // Layer B, asked of the PLAN rather than of `cfg!` here, for the same reason the trust
-    // plane asks it: one owner for the question in every build, not an owner only in the
-    // build where it refuses. Always `None` in this lane.
-    if let Some(refusal) = epoch.unsupported_by_build() {
-        return Err(refusal);
-    }
-    match crate::trust_epoch::RedisEpochReader::connect_lazy(url, key) {
+    match crate::trust_epoch::RedisEpochReader::connect_lazy(source.url(), source.key()) {
         Ok(reader) => Ok(Some(DelegatedEpochWatch {
             reader: Box::new(reader),
             base_label,
@@ -577,10 +571,7 @@ mod epoch_watch_wiring_tests {
     /// this plane — so a scheme-bearing URL that is not a Redis URL passes validation and
     /// arrives here.
     fn planned(url: &str) -> TrustEpochPlan {
-        TrustEpochPlan::Redis {
-            url: url.to_string(),
-            key: crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY.to_string(),
-        }
+        TrustEpochPlan::redis(url, crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY)
     }
 
     /// An operator who configured a kill switch must not get a replica that mints without
@@ -865,10 +856,10 @@ mod rotation_owner_tests {
         let offline = Arc::new(AtomicBool::new(false));
         let calls = Arc::new(AtomicU64::new(0));
         let err = SigningPlane::materialize(
-            &plan(TrustEpochPlan::Redis {
-                url: format!("redis://127.0.0.1:{port}"),
-                key: crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY.to_string(),
-            }),
+            &plan(TrustEpochPlan::redis(
+                &format!("redis://127.0.0.1:{port}"),
+                crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY,
+            )),
             root(&offline, &calls),
             now_unix(),
             Arc::new(AtomicBool::new(false)),

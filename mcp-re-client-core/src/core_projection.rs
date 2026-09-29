@@ -45,7 +45,14 @@ impl From<&BindingSpecRefusal> for McpReError {
             | BindingSpecRefusal::MaterialNotBase64Url
             | BindingSpecRefusal::DecisionNotText
             | BindingSpecRefusal::DecisionCarriesReferenceFields
-            | BindingSpecRefusal::MoreThanOneDecision => McpReError::AuthorizationBindingMalformed,
+            | BindingSpecRefusal::MoreThanOneDecision
+            // A provider-supplied `oauth-dpop` binding. Reported as MALFORMED rather than
+            // as an unsupported TYPE: `oauth-dpop` is a supported artifact type and this
+            // spec uses a supported form — what is illegal is the SOURCE, a provider
+            // minting the one binding that must derive from the covered header.
+            | BindingSpecRefusal::DpopIsNotProviderSupplied => {
+                McpReError::AuthorizationBindingMalformed
+            }
             // The carrier already decided this one; re-spelling it here would hide which
             // layer spoke, and the carrier owns its own exhaustive projection.
             BindingSpecRefusal::Malformed(e) => McpReError::from(e),

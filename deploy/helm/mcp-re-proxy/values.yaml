@@ -229,6 +229,12 @@ admissionCurrency:
   # same reason — this hop decides whether a caller is still admitted, so an
   # unauthenticated peer who can write it can re-admit a revoked actor fleet-wide.
   # Use `rediss://` with credentials, supplied by overriding this from a Secret.
+  #
+  # This instance MUST also run `maxmemory-policy noeviction`, which the proxy reads
+  # back at connect. An admission record carries no TTL because its absence is a
+  # definitive negative, so an evicted record refuses every workload at once — a
+  # fleet-wide admission outage arriving on memory pressure. It is a separate endpoint
+  # from replay.redisUrl, so the replay instance's policy says nothing about it.
   redisUrl: ""
   allowDegraded: false
   degradedBoundSecs: 0

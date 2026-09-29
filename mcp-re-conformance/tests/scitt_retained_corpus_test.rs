@@ -41,8 +41,9 @@
 //!   2. the frozen runner verifies the COMMITTED bytes, so a change that alters what the
 //!      implementation emits is visible as a diff rather than absorbed silently.
 //!
-//! Regenerate: `cargo test -p mcp-re-conformance --test scitt_retained_corpus_test \
-//!   write_retained_corpus -- --ignored --exact`
+//! Regenerate: `bazel build //mcp-re-conformance:scitt_retained_corpus_test`, then run
+//!   `MCP_RE_SCITT_RETAINED_MANIFEST=$PWD/mcp-re-conformance/tests/vectors/scitt/retained/manifest.json \
+//!   bazel-bin/mcp-re-conformance/scitt_retained_corpus_test write_retained_corpus --ignored --exact`
 
 use std::path::PathBuf;
 
@@ -234,7 +235,12 @@ fn hop(
     let mut request = HttpRequest {
         method: "POST".into(),
         target_uri: TARGET.into(),
-        headers: vec![("Content-Type".into(), "application/json".into())],
+        // The DPoP `ath` binding commits to the bearer token in the covered
+        // `Authorization` header, and only there.
+        headers: vec![
+            ("Content-Type".into(), "application/json".into()),
+            ("Authorization".into(), "Bearer tok".into()),
+        ],
         body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
     };
     let req_evidence = mcp_re_http_profile::sign_request_full(

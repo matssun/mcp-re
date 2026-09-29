@@ -88,7 +88,7 @@ static STDERR_AUDIT_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::Atomi
 mod writer;
 
 use writer::{stderr_audit_writer, STDERR_AUDIT_DROPPED, STDERR_AUDIT_QUEUED};
-pub(crate) use writer::{AuditMessage, STDERR_AUDIT_WRITER};
+use writer::{AuditMessage, STDERR_AUDIT_WRITER};
 
 /// Bounded hand-off depth. Deep enough to absorb a burst while the writer is inside one
 /// `write` syscall, shallow enough that a stalled writer costs bounded memory.
@@ -191,7 +191,9 @@ impl AuditSink for NoAuditSink {
     fn record(&self, _record: &AuditRecord) {}
 }
 
-/// A test/embedding sink that retains every record in memory.
+/// A harness sink, not a deployment one: it retains every record in memory, unbounded and
+/// sized by request rate (including rejections an unauthenticated peer drives), with each
+/// resolved `actor_id` unredacted for the sink's life. Nothing is evicted.
 #[derive(Debug, Default)]
 pub struct CollectingAuditSink {
     records: std::sync::Mutex<Vec<AuditRecord>>,
@@ -203,17 +205,20 @@ impl CollectingAuditSink {
         CollectingAuditSink::default()
     }
 
+    fn guard(&self) -> std::sync::MutexGuard<'_, Vec<AuditRecord>> {
+        let locked = self.records.lock();
+        locked.unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// Every record observed so far, in emission order.
     pub fn records(&self) -> Vec<AuditRecord> {
-        self.records.lock().map(|r| r.clone()).unwrap_or_default()
+        self.guard().clone()
     }
 }
 
 impl AuditSink for CollectingAuditSink {
     fn record(&self, record: &AuditRecord) {
-        if let Ok(mut records) = self.records.lock() {
-            records.push(record.clone());
-        }
+        self.guard().push(record.clone());
     }
 }
 
@@ -253,6 +258,32 @@ mod tests {
         // `write_all(line)` + `write_all(b"\n")` therefore emits exactly one record, and the
         // forged `status=200` is inside the actor's value rather than beside it.
         assert_eq!(line.matches("status=").count(), 1, "{line}");
+    }
+
+    #[test]
+    fn a_poisoned_collector_still_records_and_reports_what_it_holds() {
+        let sink = CollectingAuditSink::new();
+        let record = AuditRecord {
+            subject: AuditSubject::request_accepted(
+                AuthorizationFacet::NotConfigured,
+                AdmissionFacet::NotConfigured,
+            ),
+            actor_id: None,
+            status: 200,
+            at_unix: 1,
+        };
+        sink.record(&record);
+        let joined = std::thread::scope(|s| {
+            s.spawn(|| {
+                let _guard = sink.records.lock();
+                panic!("poison the collector");
+            })
+            .join()
+        });
+        assert!(joined.is_err());
+        assert!(sink.records.is_poisoned());
+        sink.record(&record);
+        assert_eq!(sink.records().len(), 2);
     }
 
     #[test]

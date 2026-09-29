@@ -94,6 +94,11 @@ impl HttpProfileProxy {
     /// The prerequisite chain is CARRIED rather than re-derived: the binding reaches
     /// admission, and what admission decided over reaches authorization. Authorization
     /// receives the ADR-MCPRE-064 product whole; it never reopens it.
+    ///
+    /// The second link is checked by the compiler, not by this ordering:
+    /// [`HttpProfileProxy::authorization_stage`] takes a `standing::AdmissionDecidedOver`,
+    /// which only [`HttpProfileProxy::admission_stage`] can produce, so removing the §7
+    /// gate from this sequence is a type error rather than a silently shorter pipeline.
     pub(super) async fn admit_request(
         &self,
         ex: &mut Exchange<'_>,
@@ -118,7 +123,7 @@ impl HttpProfileProxy {
         // authorization line below follows, and for the same reason.
         ex.verdicts.admission = Some(admission);
         let authorized = self
-            .authorization_stage(ex, decided_over.as_ref())
+            .authorization_stage(ex, &decided_over)
             .map_err(|refusal| self.refuse(ex, refusal, progress))?;
         // The verdict this exchange was permitted under, recorded where it is obtained. A
         // refusal named by a later stage then reports what the policy decided, instead of

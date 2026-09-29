@@ -75,14 +75,19 @@ impl RegistrationTarget {
         timeout: Duration,
         interval: Duration,
     ) -> Result<Self, String> {
+        // Owner Ruling 6: `--register-to` is operator-supplied and BOTH refusals below fire
+        // on a WELL-FORMED URL — the scheme verdict and the plaintext rule each admit a
+        // string carrying `user:password@`. The configured text is therefore named through
+        // the one projection that cannot carry it, never echoed.
+        let locator = crate::deployment_request::RedactedLocator::of(base_url);
         if crate::outbound_fetch::VettedDestination::operator_configured(base_url).is_none() {
             return Err(format!(
-                "--register-to {base_url:?}: not a destination this proxy may fetch from",
+                "--register-to {locator}: not a destination this proxy may fetch from",
             ));
         }
         if !base_url.starts_with("https://") && !is_loopback(base_url) {
             return Err(format!(
-                "--register-to {base_url:?}: registration is HTTPS. Plaintext is admitted \
+                "--register-to {locator}: registration is HTTPS. Plaintext is admitted \
                  only to the loopback interface, where there is no network to observe it",
             ));
         }
@@ -117,9 +122,12 @@ impl RegistrationTarget {
             self.policy.timeout(),
         )
         .ok_or_else(|| {
+            // Defence in depth, and unreachable under the current legality model: `new`
+            // already put this value through the same vetting. Redacted regardless — a
+            // branch that cannot fire today is the one nobody re-reads when it can.
             RegistrationError::Refused(format!(
-                "{:?} is not a destination this proxy may fetch from",
-                self.base_url,
+                "{} is not a destination this proxy may fetch from",
+                crate::deployment_request::RedactedLocator::of(&self.base_url),
             ))
         })?;
         // The one place a target becomes a protocol. Which arm runs is the operator's
@@ -241,5 +249,37 @@ mod tests {
             Duration::from_secs(1),
         )
         .is_err());
+    }
+
+    /// LOAD-BEARING (Owner Ruling 6): `--register-to` is operator-supplied, and BOTH
+    /// refusals in `new` fire on a WELL-FORMED URL — the scheme verdict and the plaintext
+    /// rule each admit a string carrying `user:password@`, which is the whole point of the
+    /// ruling: the shape check is not the boundary. Neither the credential nor the complete
+    /// configured string may reach the message, on either branch.
+    #[test]
+    fn a_register_to_refusal_leaks_neither_the_credential_nor_the_configured_url() {
+        for configured in [
+            // refused by the scheme allowlist
+            "ftp://ops:hunter2@transparency.example.test/",
+            // ADMITTED by the allowlist, then refused as off-loopback plaintext
+            "http://ops:hunter2@transparency.example.test/",
+        ] {
+            let why = RegistrationTarget::new(
+                configured,
+                RegistrationProtocol::default(),
+                Duration::from_secs(1),
+                Duration::from_secs(1),
+            )
+            .expect_err("a credential-bearing endpoint on a refused branch");
+            assert!(!why.contains("hunter2"), "credential echoed: {why}");
+            assert!(
+                !why.contains(configured),
+                "the complete configured endpoint was echoed: {why}"
+            );
+            assert!(
+                why.contains("transparency.example.test"),
+                "an operator still learns which endpoint was refused: {why}"
+            );
+        }
     }
 }

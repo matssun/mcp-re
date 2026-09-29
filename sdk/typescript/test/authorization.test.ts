@@ -215,6 +215,16 @@ describe("DPoP stays built-in", () => {
     expect(Buffer.compare(sign().body, sign([], null).body)).toBe(0);
   });
 
+  it("refuses a provider that presents the built-in dpop binding", () => {
+    // r12 R12-1463/1464/1473 — the rule was a COMMENT, three lines above the code that
+    // appended provider bindings without inspecting their type. A provider-supplied
+    // `oauth-dpop` binding is minted from material no covered header carries, so a
+    // request would go out with TWO of them attesting to different credentials.
+    expect(() => sign([new OpaqueBytesProvider("oauth-dpop", Buffer.from("attacker"))])).toThrow(
+      /authorization_binding_malformed/,
+    );
+  });
+
   it("binds several providers in order", () => {
     const b = bindings(
       sign([

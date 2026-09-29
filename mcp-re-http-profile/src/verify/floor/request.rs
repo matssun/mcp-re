@@ -6,11 +6,19 @@
 //! window is current.** Nothing here is about what the request MEANS — that is
 //! [`crate::verify::full::request`].
 //!
-//! The ORDER is the argument, and it is the same one v0.11 grill C.1 fixed: content-digest,
-//! then evidence parse, then keyid resolution through the trust seam, then the signature
-//! over the reconstructed base, then handle derivation. Each numbered step below states why
-//! it sits where it does; the §4.1 transport contract is deliberately last, after the
-//! signature, because before it both sides of every comparison are attacker-chosen.
+//! Two wire preconditions run first, on unauthenticated headers. `Content-Encoding` must be
+//! absent or identity: it is not a coverable component, so its absence is a reception-time
+//! property the signature never binds and the product does not carry; checking it can only
+//! force a refusal. `Content-Type` must be JSON: it is a required covered component, so its
+//! value is later bound by the signature and a rewrite can only force a refusal.
+//!
+//! From the content-digest step on, the ORDER is the argument: content-digest, then
+//! evidence parse, then keyid resolution through the trust seam, then the signature over
+//! the reconstructed base, then the §4.1 transport contract, then handle derivation. Each
+//! numbered step below states why it sits where it does; the §4.1 transport contract sits
+//! after the signature because before it both sides of every comparison are
+//! attacker-chosen. The ordering argument is load-bearing only from the content-digest
+//! step on.
 
 use mcp_re_core::McpReError;
 
@@ -144,4 +152,107 @@ pub(crate) fn floor_request<R: Into<ResolverOutcome>>(
         nonce,
         key_id,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use mcp_re_core::SigningKey;
+
+    use super::*;
+    use crate::block::ActorIdentity;
+    use crate::block::ResolvedActor;
+    use crate::sign::sign_request;
+
+    const CREATED: i64 = 1_700_000_000;
+    const EXPIRES: i64 = 1_700_000_300;
+    const NOW: i64 = 1_700_000_100;
+    const KEY_ID: &str = "client-key-1";
+
+    fn key() -> SigningKey {
+        SigningKey::from_seed_bytes(&[11u8; 32])
+    }
+
+    fn signed(extra_headers: &[(&str, &str)]) -> HttpRequest {
+        let mut headers = vec![("Content-Type".to_owned(), "application/json".to_owned())];
+        headers.extend(
+            extra_headers
+                .iter()
+                .map(|(n, v)| ((*n).to_owned(), (*v).to_owned())),
+        );
+        let mut r = HttpRequest {
+            method: "POST".into(),
+            target_uri: "https://mcp.example.com/mcp".into(),
+            headers,
+            body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
+        };
+        sign_request(&mut r, &key(), KEY_ID, CREATED, EXPIRES, "n-floor")
+            .expect("signing succeeds");
+        r
+    }
+
+    fn resolver<'a>(
+        calls: &'a Cell<u32>,
+        seen: &'a Cell<Option<SignerSlot>>,
+    ) -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> + 'a {
+        move |key_id: &str, slot: SignerSlot| {
+            calls.set(calls.get() + 1);
+            seen.set(Some(slot));
+            (key_id == KEY_ID).then(|| ResolvedActor {
+                identity: ActorIdentity {
+                    role: "client".into(),
+                    trust_domain: "example.com".into(),
+                    subject: "did:example:client".into(),
+                    keyid: key_id.into(),
+                },
+                verification_key: key().public_key(),
+                slot,
+            })
+        }
+    }
+
+    #[test]
+    fn a_valid_request_consults_the_trust_seam_once_in_the_request_slot() {
+        let (calls, seen) = (Cell::new(0), Cell::new(None));
+        let req = signed(&[]);
+        let out = floor_request(
+            &req,
+            &resolver(&calls, &seen),
+            &VerifierPolicy::default(),
+            NOW,
+        );
+        assert!(out.is_ok());
+        assert_eq!(calls.get(), 1);
+        assert_eq!(seen.get(), Some(SignerSlot::Request));
+    }
+
+    #[test]
+    fn a_body_that_misses_its_digest_never_reaches_the_trust_seam() {
+        let (calls, seen) = (Cell::new(0), Cell::new(None));
+        let mut req = signed(&[]);
+        req.body[0] ^= 0x01;
+        let err = floor_request(
+            &req,
+            &resolver(&calls, &seen),
+            &VerifierPolicy::default(),
+            NOW,
+        )
+        .map(|_| ())
+        .unwrap_err();
+        assert_eq!(err, HttpProfileError::ContentDigestMismatch);
+        assert_eq!(calls.get(), 0);
+    }
+
+    #[test]
+    fn a_covered_mcp_method_contradicting_the_body_is_refused_without_a_transport_policy() {
+        let (calls, seen) = (Cell::new(0), Cell::new(None));
+        let req = signed(&[("Mcp-Method", "tools/list")]);
+        let policy = VerifierPolicy::default();
+        assert!(policy.mcp_transport().is_none());
+        let err = floor_request(&req, &resolver(&calls, &seen), &policy, NOW)
+            .map(|_| ())
+            .unwrap_err();
+        assert_eq!(err, HttpProfileError::McpMethodDivergence);
+    }
 }

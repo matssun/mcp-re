@@ -64,5 +64,11 @@ independent results, and this view exists so it cannot read as the latter.
 | ASM-0047 | external-boundary | Write access to the `mcp-re:cont:` keyspace of the shared correlation tier is confined to the fleet's own replicas, so an entry found there was written by an open leg of this deployment. | proxy.continuation_correlation_store | THM-0087 |
 | ASM-0048 | external-boundary | A Redis `DEL key` reply of 1 means THIS call removed a key that existed, and a `SET key v PX t` keeps the key readable for `t` milliseconds and then not — so the delete count is a one-shot verdict across replicas and the entry's lifetime is bounded. | proxy.continuation_correlation_store | THM-0087 |
 | ASM-0049 | assumed | For any two distinct trust-anchor sets this deployment admits across listener replacements, the canonical trust-epoch derivation produces distinct SHA-256 digest values. | proxy.epoch_bound_session_store, proxy.listener_state_assembly | THM-0048, THM-0103 |
+| ASM-0050 | external-boundary | The channel from the MCP-RE proxy to its inner server is writable by that proxy alone, whenever the verified-context carrier is enabled (`--verified-context-carrier trusted`). | http_profile.reserved_context_key_guard, http_profile.unauthenticated_context_claim, http_profile.verified_context_conclusion, proxy.verified_context_carrier_boundary | _no theorem_ |
+| ASM-0051 | external-boundary | The inner MCP server reads the verified-context block from the TOP-LEVEL `_meta` of the forwarded body — the one position the PEP writes it to. | http_profile.unauthenticated_context_claim, http_profile.verified_context_conclusion, proxy.verified_context_carrier_boundary | _no theorem_ |
+| ASM-0052 | external-boundary | The PKCS#11 token keeps the response-signing and TLS key objects `CKA_SENSITIVE` and non-extractable. | proxy.pkcs11_adapter | THM-0116 |
+| ASM-0053 | external-boundary | The shared object named by `--pkcs11-module` is a trustworthy Cryptoki implementation. | proxy.pkcs11_adapter | THM-0116 |
+| ASM-0054 | external-boundary | The PKCS#11 module is thread-safe, as requested by `CKF_OS_LOCKING_OK` at `C_Initialize`. | proxy.pkcs11_adapter | THM-0116 |
+| ASM-0055 | external-boundary | A token label is unique across the slots present when the proxy starts. | proxy.pkcs11_adapter | THM-0116 |
 
 19 assumption(s) are reached by more than one theorem.

@@ -111,11 +111,11 @@ pub(crate) enum ExchangeState {
     /// plane must leave nothing on disk: refusing after the crossing was recorded would
     /// assert that a request which provably never reached a backend had crossed.
     InnerPlaneAccepted,
-    /// The crossing of the execution threshold is DURABLY RECORDED, and reads as
-    /// possibly-executed: the record on disk says the exchange committed and the machine
-    /// must not disagree with it. The store ACCEPTING the obligation is a step before this
-    /// and deliberately not a state — same consequence, and the distinction that matters
-    /// lives in the store's two products and the two names its markers take (#741).
+    /// The crossing is DURABLY RECORDED where a store is installed, and nothing is retained
+    /// where none is; it reads as possibly-executed either way. The store ACCEPTING the
+    /// obligation is a step before this and deliberately not a state — same consequence,
+    /// and the distinction that matters lives in the store's two products and the two
+    /// names its markers take (#741).
     RetentionCommitted,
     /// The inner server has been handed the request. **The execution threshold.** No state
     /// at or after this may claim nothing happened.
@@ -183,7 +183,7 @@ pub(crate) enum ExchangeEvent {
     ForwardBodyPrepared,
     /// The inner plane took a permit and selected a live backend. Nothing is transmitted.
     InnerPlaneAccepted,
-    /// The crossing of the execution threshold was durably recorded.
+    /// The crossing was durably recorded, or nothing is retained where no store is set.
     RetentionCommitted,
     /// The inner server has been handed the request. Emitted at the dispatch, not around
     /// it: an event asserting that the threshold was crossed must not be emitted by a path

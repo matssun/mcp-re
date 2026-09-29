@@ -417,12 +417,7 @@ mod tests {
     fn inert_file_source() -> FileKeySource {
         // The delegated path never reads these; the object responses come from the
         // KMS backend and the TLS sign from the delegated signer.
-        FileKeySource {
-            signing_key_seed_path: "/dev/null".to_string(),
-            tls_cert_path: "/dev/null".to_string(),
-            tls_key_path: "/dev/null".to_string(),
-            client_ca_path: "/dev/null".to_string(),
-        }
+        FileKeySource::tls_only("/dev/null", None, "/dev/null").expect("no key to parse")
     }
 
     /// Issue #60 (test b): without a TLS key id the KMS source delegates NO TLS

@@ -60,6 +60,22 @@ impl ServerIdentityFacts {
     pub fn actor(&self) -> &ActorIdentity {
         &self.actor
     }
+
+    /// The trust domain, as the coordinate of EVERY actor this deployment names.
+    ///
+    /// The table above says `trust_domain` is that, and until r12 R12-629 nothing let a
+    /// consumer take it: the composition root minted the CLIENT actor from
+    /// `values.trust_domain.clone()` — the raw request — while the server actor took the
+    /// owner's. One coordinate, two derivations, which is the shape this owner exists to
+    /// remove and which had merely moved from the server actor to the client one.
+    ///
+    /// Both readings are the same string today, because the guard below refuses an empty
+    /// or whitespace domain before any validated deployment exists. `actor_id()` is a
+    /// replay-key component, so a future divergence would partition the replay namespace
+    /// between the two slots.
+    pub fn trust_domain(&self) -> &str {
+        &self.actor.trust_domain
+    }
 }
 
 /// Check this owner's guards and derive its fact.
@@ -129,6 +145,26 @@ mod tests {
     fn facts(config: &DeploymentRequest) -> (Option<ServerIdentityFacts>, Vec<String>) {
         let (delegated, _) = crate::config_state::delegated_signing::classify_and_validate(config);
         classify_and_validate(config, delegated.as_ref())
+    }
+
+    /// LOAD-BEARING (r12 R12-629): the trust domain a consumer takes IS the one inside the
+    /// canonical actor, so the client and server actors this deployment mints cannot
+    /// disagree about the coordinate. `actor_id()` is a replay-key component, so a
+    /// divergence would partition the replay namespace between the two slots.
+    ///
+    /// Asserted as an IDENTITY between the projection and the actor's own field rather
+    /// than against a literal: a literal would pass for a projection that returned a
+    /// constant that happened to match the fixture.
+    #[test]
+    fn the_trust_domain_projection_is_the_canonical_actors_own_coordinate() {
+        let config = legal_config();
+        let (identity, _) = facts(&config);
+        let identity = identity.expect("a legal request is inhabitable");
+        assert_eq!(identity.trust_domain(), identity.actor().trust_domain);
+        assert!(
+            !identity.trust_domain().is_empty(),
+            "the guard refuses an empty domain before any deployment is validated"
+        );
     }
 
     #[test]

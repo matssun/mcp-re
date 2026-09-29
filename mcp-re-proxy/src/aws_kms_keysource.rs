@@ -21,6 +21,8 @@ use crate::kms_endpoint_policy::KmsEndpoint;
 use crate::outbound_fetch::CredentialEgress;
 use crate::remote_signer_call::NETWORK_TIMEOUT;
 use std::io::Read;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
@@ -58,9 +60,6 @@ const TARGET_SIGN: &str = "TrentService.Sign";
 /// unbounded body into the blocking signing thread.
 const MAX_KMS_RESPONSE_BYTES: u64 = 256 * 1024;
 
-/// Cap on an HTTP *error* body read for diagnostics. Mirrors the GCP sibling: an
-/// emulator or substituted endpoint could otherwise return an arbitrarily large body
-/// on the error path, which is interpolated into a `KeyError` on every rotation attempt.
 /// The single Ed25519 key spec and signing mode this adapter accepts.
 const KEY_SPEC_ED25519: &str = "ECC_NIST_EDWARDS25519";
 const SIGNING_ALGORITHM_ED25519: &str = "ED25519_SHA_512";
@@ -106,6 +105,8 @@ pub(crate) struct UreqKmsClient {
     /// Obtainable only from `KmsEndpoint`: the rule is a property, not a call.
     egress: CredentialEgress,
     authority: String,
+    /// Set while the credential source is failing, so the failure is reported once per episode.
+    refresh_failing: AtomicBool,
 }
 
 impl UreqKmsClient {
@@ -134,6 +135,7 @@ impl UreqKmsClient {
             signer: std::sync::RwLock::new(signer),
             credential_source,
             authority: endpoint.authority().to_string(),
+            refresh_failing: AtomicBool::new(false),
             egress: endpoint.egress(NETWORK_TIMEOUT),
         })
     }
@@ -141,28 +143,22 @@ impl UreqKmsClient {
 
 impl KmsHttpClient for UreqKmsClient {
     fn post_kms(&self, target: &str, body: &[u8]) -> Result<Vec<u8>, RemoteSignerFailure> {
-        // Refresh before signing. Cheap on both sources (a `getenv`, or a cache hit
-        // until the refresh margin) and on the cold KMS path only — the root is off
-        // the request path — and it is what lets a re-exchanged IRSA session or a
-        // rotated env pair take effect without a restart. A refresh that fails leaves
-        // the last-good credentials in place: a transient failure to look must not be
-        // worse than not looking, and a credential that has genuinely expired fails
-        // at KMS with its own error rather than being papered over here.
-        //
-        // Both takes recover a poisoned lock rather than propagating it. Poison is sticky
-        // for the process, so the read take used to mean that ONE panic anywhere under this
-        // lock removed AWS KMS signing from the replica permanently — every delegated-TLS
-        // handshake fails and the cold-path rotor cannot mint a successor, so the replica
-        // fails closed on `delegated_signing_unavailable` at the current delegated key's
-        // `exp`. The guarded value is a whole-value credential swap with no half-written
-        // state for the poison to protect. Matches the GCP sibling, `delegated_server_signer`
-        // and `reloading_trust`.
-        if let Ok(refreshed) = self.credential_source.credentials() {
-            let mut signer = self.signer.write().unwrap_or_else(|p| p.into_inner());
-            signer.set_credentials(refreshed);
+        // Refresh before signing. A failed refresh keeps the last-good credentials and is
+        // reported once per failing episode. Both lock takes recover poison because the
+        // guarded value is a whole-value swap.
+        match self.credential_source.credentials() {
+            Ok(refreshed) => {
+                let mut signer = self.signer.write().unwrap_or_else(|p| p.into_inner());
+                signer.set_credentials(refreshed);
+                self.refresh_failing.store(false, Ordering::Relaxed);
+            }
+            Err(e) if !self.refresh_failing.swap(true, Ordering::Relaxed) => {
+                eprintln!("mcp-re-proxy: aws-kms credential refresh failed; signing continues on the last-good credentials: {e}");
+            }
+            Err(_) => {}
         }
         let signer = self.signer.read().unwrap_or_else(|p| p.into_inner());
-        let amz_date = format_amz_date(now_unix());
+        let amz_date = amz_date_at(crate::clock::now_unix())?;
         // Headers that are SIGNED (host, content-type, x-amz-target). x-amz-date and
         // the session token are added by the signer.
         let signed = signer.sign(
@@ -253,31 +249,32 @@ fn read_kms_response(
 /// because `AwsKmsConfig::endpoint` is public and an embedder reaches this constructor
 /// without meeting a parser.
 ///
-/// The path this used to refuse is refused there too: an endpoint is a `host[:port]`
-/// authority, and a `/v1`-style suffix is not part of one.
+/// The shared rule admits a path, but SigV4 here signs the canonical URI `/`, so a path
+/// would be sent unsigned and this adapter refuses it.
 fn endpoint_of(url: &str) -> Result<KmsEndpoint, KeyError> {
     let endpoint = KmsEndpoint::parse(url)
         .map_err(|why| KeyError::Malformed(format!("aws-kms: endpoint {why}")))?;
-    let path = url
+    let has_path = url
         .split_once("://")
         .and_then(|(_, rest)| rest.split_once('/'))
-        .map(|(_, path)| path)
-        .unwrap_or("");
-    if !path.is_empty() {
+        .is_some_and(|(_, path)| !path.is_empty());
+    if has_path {
+        let authority = endpoint.authority();
         return Err(KeyError::Malformed(format!(
-            "aws-kms: endpoint '{url}' must not include a path"
+            "aws-kms: endpoint {authority} must not include a path"
         )));
     }
     Ok(endpoint)
 }
 
-/// Current UNIX time in seconds (production-only; tests use fixed inputs to
-/// [`format_amz_date`]).
-fn now_unix() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+/// The SigV4 date for a clock reading, refusing one the clock owner marks as faulted.
+fn amz_date_at(now: i64) -> Result<String, RemoteSignerFailure> {
+    match u64::try_from(now) {
+        Ok(secs) if !crate::startup_plan::host_clock_is_faulted(now) => Ok(format_amz_date(secs)),
+        _ => Err(RemoteSignerFailure::malformed(format!(
+            "aws-kms: the host clock reads {now}, which no KMS request can be signed at"
+        ))),
+    }
 }
 
 /// Format a UNIX timestamp as SigV4's `YYYYMMDDTHHMMSSZ` (UTC). Hand-rolled via the
@@ -649,11 +646,11 @@ impl KmsEd25519Backend for AwsKmsEd25519Backend {
 /// response signing (`SigningAlgorithm = ED25519_SHA_512`, `MessageType = RAW`,
 /// PureEdDSA), so the TLS private key never leaves KMS.
 ///
-/// rustls verifies the handshake `CertificateVerify` it gets back, and the
-/// validated delegated build path (#58) both enforces the 64-byte length and fails
-/// closed when the (exportable, cached) public key here does not match the leaf TLS
-/// certificate — so verify-before-return is NOT repeated on this path (it stays on
-/// the object-signing `sign_raw_ed25519` path, which is reused unchanged).
+/// Before a handshake signature reaches rustls, `tls_sign_at` applies the same
+/// verify-before-return as `sign_raw_ed25519` (`accept_signature`), so a DIGEST/prehash
+/// or mismatched-key KMS signature is refused here. Separately, the validated delegated
+/// build path (#58) fails closed when this cached public key does not match the leaf
+/// TLS certificate.
 impl RawEd25519TlsSigner for AwsKmsEd25519Backend {
     fn sign_tls_ed25519(&self, message: &[u8]) -> Result<Vec<u8>, KeyError> {
         self.tls_sign_at(message, &std::time::Instant::now)
@@ -1177,5 +1174,147 @@ mod tests {
         .raw_point();
         let key = VerificationKey::from_bytes(&raw).unwrap();
         verify_ed25519(transcript, &b64url_encode(&sig), &key).expect("tls sig verifies");
+    }
+
+    #[test]
+    fn a_non_verifying_kms_signature_is_refused_on_the_tls_path() {
+        let backend = AwsKmsEd25519Backend::with_client(
+            Box::new(FakeKms {
+                key: SigningKey::from_seed_bytes(&[23u8; 32]),
+                prehash: true,
+            }),
+            "alias/mcp-re-tls".to_string(),
+        )
+        .expect("construct");
+        let Err(KeyError::Malformed(m)) =
+            backend.sign_tls_ed25519(b"tls handshake transcript bytes")
+        else {
+            panic!("a non-verifying signature must be refused");
+        };
+        assert!(m.contains("did NOT verify"), "{m}");
+    }
+
+    #[test]
+    fn a_kms_body_over_the_cap_is_refused_and_one_at_the_cap_is_accepted() {
+        let cap = MAX_KMS_RESPONSE_BYTES as usize;
+        let over = read_kms_response(Ok(
+            ureq::Response::new(200, "OK", &"a".repeat(cap + 1)).unwrap()
+        ));
+        assert!(format!("{over:?}").contains("exceeds"), "{over:?}");
+        let at = read_kms_response(Ok(ureq::Response::new(200, "OK", &"a".repeat(cap)).unwrap()))
+            .expect("a body of exactly the cap is accepted");
+        assert_eq!(at.len(), cap);
+    }
+
+    #[test]
+    fn a_faulted_host_clock_is_refused_rather_than_signed_as_1970() {
+        for now in [0, -1, 946_684_799] {
+            let err = amz_date_at(now).expect_err("a faulted clock must be refused");
+            assert!(format!("{err:?}").contains("host clock"), "{now}: {err:?}");
+        }
+        assert_eq!(amz_date_at(1_440_938_160).unwrap(), "20150830T123600Z");
+    }
+
+    /// Credentials that change per call: AKIDFIRST at construction, AKIDSECOND on the
+    /// next refresh, then a failing source.
+    struct SequencedCredentials(std::sync::atomic::AtomicUsize);
+    impl AwsCredentialSource for SequencedCredentials {
+        fn credentials(&self) -> Result<crate::aws_sigv4::AwsCredentials, KeyError> {
+            let akid = match self.0.fetch_add(1, Ordering::SeqCst) {
+                0 => "AKIDFIRST",
+                1 => "AKIDSECOND",
+                _ => return Err(KeyError::NotFound("source down".to_string())),
+            };
+            Ok(crate::aws_sigv4::AwsCredentials {
+                access_key_id: akid.to_string(),
+                secret_access_key: zeroize::Zeroizing::new("secret".to_string()),
+                session_token: None,
+            })
+        }
+        fn describe(&self) -> String {
+            "test-sequenced".to_string()
+        }
+    }
+
+    #[test]
+    fn a_refreshed_credential_signs_the_next_request_and_a_failed_refresh_keeps_it() {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let mut seen = Vec::new();
+            for _ in 0..2 {
+                let (mut conn, _) = listener.accept().unwrap();
+                let mut raw = Vec::new();
+                let mut chunk = [0u8; 1024];
+                loop {
+                    let n = conn.read(&mut chunk).unwrap();
+                    raw.extend_from_slice(&chunk[..n]);
+                    let text = String::from_utf8_lossy(&raw).to_string();
+                    if let Some((head, body)) = text.split_once("\r\n\r\n") {
+                        let len = head
+                            .lines()
+                            .find_map(|l| {
+                                l.to_ascii_lowercase()
+                                    .strip_prefix("content-length:")
+                                    .and_then(|v| v.trim().parse::<usize>().ok())
+                            })
+                            .unwrap_or(0);
+                        if body.len() >= len {
+                            break;
+                        }
+                    }
+                    assert!(n > 0, "connection closed before the request completed");
+                }
+                seen.push(String::from_utf8_lossy(&raw).to_string());
+                conn.write_all(
+                    b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 2\r\n\r\n{}",
+                )
+                .unwrap();
+            }
+            seen
+        });
+        let client = UreqKmsClient::new(
+            Box::new(SequencedCredentials(std::sync::atomic::AtomicUsize::new(0))),
+            &AwsKmsConfig {
+                region: "eu-north-1".to_string(),
+                key_id: "alias/mcp-re".to_string(),
+                endpoint: Some(format!("http://127.0.0.1:{port}")),
+            },
+        )
+        .expect("construct");
+        client.post_kms(TARGET_SIGN, b"{}").expect_err("400");
+        assert!(!client.refresh_failing.load(Ordering::Relaxed));
+        client.post_kms(TARGET_SIGN, b"{}").expect_err("400");
+        assert!(client.refresh_failing.load(Ordering::Relaxed));
+        let seen = server.join().unwrap();
+        assert!(seen[0].contains("Credential=AKIDSECOND/"), "{}", seen[0]);
+        assert!(seen[1].contains("Credential=AKIDSECOND/"), "{}", seen[1]);
+    }
+
+    /// LOAD-BEARING (Owner Ruling 6): `--kms-endpoint` is operator-supplied, and by the
+    /// time this refusal is reached the shared rule has already refused userinfo, a query
+    /// and a fragment — so the PATH is the one component left that can carry a token, and
+    /// it is exactly the component this message is about. The refusal therefore names the
+    /// authority the rule computed, which is derived and credential-free by construction,
+    /// never the configured text.
+    #[test]
+    fn a_path_refusal_names_the_authority_not_the_configured_endpoint() {
+        const CONFIGURED: &str = "https://kms.example.com/s3cr3t";
+        let Err(KeyError::Malformed(why)) = endpoint_of(CONFIGURED) else {
+            panic!("an endpoint carrying a path must be refused");
+        };
+        assert!(
+            !why.contains("s3cr3t"),
+            "the path segment was echoed: {why}"
+        );
+        assert!(
+            !why.contains(CONFIGURED),
+            "the complete configured endpoint was echoed: {why}"
+        );
+        assert!(
+            why.contains("kms.example.com"),
+            "an operator still learns which authority was taken: {why}"
+        );
     }
 }

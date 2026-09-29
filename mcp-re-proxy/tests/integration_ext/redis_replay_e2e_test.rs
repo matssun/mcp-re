@@ -533,9 +533,12 @@ fn async_wait_quorum_shortfall_fails_closed_against_a_replica() {
         .expect("tokio runtime");
 
     let store = rt
-        .block_on(RedisAsyncAtomicReplayStore::connect(&primary_url))
-        .expect("connect the async store to the primary")
-        .with_wait_quorum(1, WAIT_TIMEOUT_MS);
+        .block_on(RedisAsyncAtomicReplayStore::connect_with_wait_quorum(
+            &primary_url,
+            mcp_re_proxy::redis_store::system_clock(),
+            Some((1, WAIT_TIMEOUT_MS)),
+        ))
+        .expect("connect the async store to the primary");
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

@@ -153,8 +153,13 @@ pub use crate::trust_plan::TrustReloadPlan;
 /// own build refusal — and the only reason they agreed was that they read the same fields
 /// in the same way. Nothing made them.
 ///
-/// The key is DEFAULTED here, once, for the same reason: a default applied at two sites is
-/// two decisions that happen to coincide.
+/// The key arrives already defaulted by the trust-revocation classification
+/// (`config_state::trust_revocation`, the one place `DEFAULT_TRUST_EPOCH_KEY` is applied),
+/// and the plan CARRIES that single decision to both consumers: a default applied at two
+/// sites is two decisions that happen to coincide.
+///
+/// The locator is readable only through [`TrustEpochPlan::networked_source`], which asks
+/// the build question first.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TrustEpochPlan {
     /// No networked source. The trust cache runs at its declared bound, and delegated
@@ -163,11 +168,37 @@ pub enum TrustEpochPlan {
     NoNetworkChannel,
     /// A networked epoch counter at this location, under this key.
     Redis {
-        /// Where the counter lives.
-        url: String,
-        /// The key holding it, already defaulted.
-        key: String,
+        /// Where the counter lives and the key holding it.
+        locator: EpochLocator,
     },
+}
+
+/// Where a networked epoch counter lives, and the key holding it (already defaulted).
+///
+/// Readable only through `TrustEpochPlan::networked_source`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EpochLocator {
+    url: String,
+    key: String,
+}
+
+/// A networked epoch source this build can establish.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EstablishableEpochSource<'a> {
+    url: &'a str,
+    key: &'a str,
+}
+
+impl<'a> EstablishableEpochSource<'a> {
+    /// Where the counter lives.
+    pub fn url(&self) -> &'a str {
+        self.url
+    }
+
+    /// The key holding the counter.
+    pub fn key(&self) -> &'a str {
+        self.key
+    }
 }
 
 impl TrustEpochPlan {
@@ -179,10 +210,38 @@ impl TrustEpochPlan {
     pub fn from_validated(config: &ValidatedDeployment) -> TrustEpochPlan {
         match config.state().trust_revocation().epoch_source() {
             Some(source) => TrustEpochPlan::Redis {
-                url: source.url().to_string(),
-                key: source.key().to_string(),
+                locator: EpochLocator {
+                    url: source.url().to_string(),
+                    key: source.key().to_string(),
+                },
             },
             None => TrustEpochPlan::NoNetworkChannel,
+        }
+    }
+
+    /// The networked source a consumer may connect to: `Err` with the build refusal when
+    /// this build cannot establish it, `None` when the plan has no networked source.
+    pub fn networked_source(&self) -> Result<Option<EstablishableEpochSource<'_>>, String> {
+        if let Some(refusal) = self.unsupported_by_build() {
+            return Err(refusal);
+        }
+        match self {
+            TrustEpochPlan::NoNetworkChannel => Ok(None),
+            TrustEpochPlan::Redis { locator } => Ok(Some(EstablishableEpochSource {
+                url: &locator.url,
+                key: &locator.key,
+            })),
+        }
+    }
+
+    /// A networked plan for in-crate tests.
+    #[cfg(test)]
+    pub(crate) fn redis(url: &str, key: &str) -> TrustEpochPlan {
+        TrustEpochPlan::Redis {
+            locator: EpochLocator {
+                url: url.to_string(),
+                key: key.to_string(),
+            },
         }
     }
 
@@ -368,7 +427,10 @@ pub fn control_runtime_requirement(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::deployment_request::DeploymentRequest;
+    use crate::deployment_request::{
+        AttestedIngressRequest, DeploymentRequest, IngressAssertionRequest,
+        PeerIdentityEvidenceRequest, PinnedChannelAcknowledgement,
+    };
 
     /// A configuration that gets all the way through parsing AND validation, so the
     /// mutation each test applies is the only thing under test.
@@ -444,21 +506,45 @@ mod tests {
     /// capabilities (`docs/AGENT_INSTRUCTIONS.md` §9), not dead vocabulary, and the
     /// distinction is exactly that a decision gates them rather than nothing does.
     ///
+    /// The property is asserted at `ValidatedDeployment::try_from` for a request built in
+    /// code, the altitude that guards the runtime, for all three non-channel-credential
+    /// forms: the argv route is refused earlier by the CLI adapter for attested-ingress
+    /// and so never reaches the boundary.
+    ///
     /// This asserts the refusal rather than the strategy because that is what makes the
     /// classifier's shape honest: if one ever becomes selectable, this fails and the arm
     /// needs its own coverage rather than acquiring it silently.
     #[test]
     fn the_assertion_arm_is_refused_at_the_boundary() {
-        for extra in [
-            vec!["--transport-binding", "lb-assertion"],
-            vec!["--transport-binding", "attested-ingress"],
-        ] {
-            let mut argv: Vec<&str> = SHARED_REDIS.to_vec();
-            argv.extend_from_slice(&extra);
+        let key = "1i8Bah79Hk_feT60LNhEceG6nwzwTRKHtcxx9hYofLg";
+        let forms = [
+            (
+                PeerIdentityEvidenceRequest::Unbound,
+                "--transport-binding none",
+            ),
+            (
+                PeerIdentityEvidenceRequest::IngressAssertion(IngressAssertionRequest {
+                    verification_keys: vec![("lb-1".into(), key.into())],
+                }),
+                "--transport-binding lb-assertion",
+            ),
+            (
+                PeerIdentityEvidenceRequest::AttestedIngress(AttestedIngressRequest {
+                    asserted_identity_kind: crate::transport::IdentityPolicy::UriSan,
+                    attestor_keys: vec![("attestor-1".into(), key.into())],
+                    identities: vec!["ingress-1".into()],
+                    audience: "https://mcp.example.com/mcp".into(),
+                    pinned_channel: PinnedChannelAcknowledgement::acknowledged(),
+                }),
+                "--transport-binding attested-ingress",
+            ),
+        ];
+        for (form, named) in forms {
+            let refusal = refusal_for_mutated(SHARED_REDIS, |c| c.peer_identity = form);
             assert!(
-                parse(&argv).is_err(),
-                "{extra:?} must be refused at the boundary; if it now starts, \
-                 peer_identity_provenance has a reachable arm with no test"
+                refusal.contains(named),
+                "{named} must be refused at the boundary and named; if it now starts, \
+                 peer_identity_provenance has a reachable arm with no test: {refusal}"
             );
         }
     }
@@ -582,15 +668,22 @@ mod tests {
 
     /// The property that makes the whole layer worth having, asserted rather than left
     /// incidental: a complete networked tier is planned against a TEST-NET-3 host that is
-    /// never contacted, from a config whose every file path does not exist.
+    /// never contacted, from a config whose every file path does not exist. The wall-time
+    /// bound is what observes the absence of a connect.
     #[test]
     fn planning_reaches_a_networked_tier_without_contacting_anything() {
+        let started = std::time::Instant::now();
         let plan = plan_for(&[
             "--replay-durability-tier",
             "redis-wait-quorum:2:2000",
             "--replay-redis-url",
             "redis://203.0.113.1:6379",
         ]);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "TEST-NET-3 (203.0.113.1) black-holes a TCP connect for tens of seconds, so a \
+             planner that dialled the endpoint fails here instead of merely running slowly"
+        );
         assert!(matches!(plan.store(), PlannedStore::Redis { .. }));
     }
 
@@ -765,28 +858,47 @@ mod tests {
         ValidatedDeployment::try_from(config).expect("config validates")
     }
 
-    /// The epoch is planned from the CLASSIFICATION, and the key is defaulted here —
-    /// once. Both planes used to default it for themselves, which is two decisions that
-    /// happened to coincide.
+    /// The epoch is planned from the CLASSIFICATION, and the key is defaulted by the
+    /// classification once. The plan carries that decision to both planes, which used to
+    /// default it for themselves: two decisions that happened to coincide.
     #[test]
     fn the_epoch_plan_normalizes_the_key_once() {
         assert_eq!(
             TrustEpochPlan::from_validated(&validated(PUSH_NETWORKED)),
-            TrustEpochPlan::Redis {
-                url: "redis://127.0.0.1:6379".to_string(),
-                key: crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY.to_string(),
-            },
-            "an unset --trust-epoch-key is resolved in the plan, not in each consumer"
+            TrustEpochPlan::redis(
+                "redis://127.0.0.1:6379",
+                crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY
+            ),
+            "an unset --trust-epoch-key is resolved by the classification and carried by the plan"
         );
         assert_eq!(
             TrustEpochPlan::from_validated(&validated(
                 &[PUSH_NETWORKED, &["--trust-epoch-key", "mcp-re:epoch"]].concat()
             )),
-            TrustEpochPlan::Redis {
-                url: "redis://127.0.0.1:6379".to_string(),
-                key: "mcp-re:epoch".to_string(),
-            }
+            TrustEpochPlan::redis("redis://127.0.0.1:6379", "mcp-re:epoch")
         );
+    }
+
+    /// A consumer cannot connect without the build question being asked: the locator has
+    /// no accessor except the projection that refuses first.
+    #[test]
+    fn a_networked_locator_is_readable_only_through_the_build_verdict() {
+        let networked = TrustEpochPlan::from_validated(&validated(PUSH_NETWORKED));
+        if cfg!(feature = "redis_replay") {
+            let source = networked
+                .networked_source()
+                .expect("this build can establish it")
+                .expect("the plan is networked");
+            assert_eq!(source.url(), "redis://127.0.0.1:6379");
+            assert_eq!(source.key(), crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY);
+        } else {
+            let refusal = networked
+                .networked_source()
+                .expect_err("this build has no Redis client");
+            assert!(refusal.contains("redis_replay"), "{refusal}");
+        }
+        let none = TrustEpochPlan::from_validated(&validated(&[]));
+        assert_eq!(none.networked_source(), Ok(None));
     }
 
     /// Every state that is not `PushNetworked` plans no channel. Asserted across all four
@@ -890,10 +1002,7 @@ mod tests {
     fn the_signing_plan_carries_the_epoch_it_was_given_not_one_it_found() {
         let config = validated(PUSH_NETWORKED);
         let from_config = TrustEpochPlan::from_validated(&config);
-        let handed_down = TrustEpochPlan::Redis {
-            url: "redis://198.51.100.7:6379".to_string(),
-            key: "decided-above".to_string(),
-        };
+        let handed_down = TrustEpochPlan::redis("redis://198.51.100.7:6379", "decided-above");
         assert_ne!(
             from_config, handed_down,
             "the fixture must distinguish them"

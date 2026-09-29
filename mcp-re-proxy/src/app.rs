@@ -15,8 +15,7 @@ use crate::async_serve::ServedHttpRequest;
 use crate::clock::now_unix;
 use crate::config_snapshot;
 use crate::config_state::ChannelBindingState;
-use crate::config_state::CustodyState;
-use crate::config_state::{ChannelCredentialCustodyState, PrivateKeyExposure};
+use crate::config_state::PrivateKeyExposure;
 use crate::http_inner::HttpInnerPool;
 use crate::startup_posture::PostureLog;
 use crate::startup_posture::Seam;
@@ -128,114 +127,6 @@ fn faulted_clock_refusal(
          arbitrarily expired one was loaded. Fix the host clock (NTP/RTC) before starting.",
         crate::startup_plan::EPOCH_CLOCK_FAULT_THRESHOLD_SECS,
     ))
-}
-
-/// Enforce the key-file-permission posture for a sensitive key file. A group- or
-/// world-accessible key file is a HARD error returned to the caller (startup refuses).
-///
-/// The policy decides; composition supplies the `stat` results. This function does not see
-/// `--allow-group-readable-key-files` and could not re-derive the rule from it if it did —
-/// which is the point, because the rule is three conditions and a boolean is one term in
-/// it.
-///
-/// A `stat` that fails for any reason other than "there is no such file" is itself a
-/// refusal. The posture of a file the proxy is about to READ is either established or it
-/// is not, and treating an unreadable `stat` as compliance is how a world-readable signing
-/// seed on a networked or overlay mount (EIO, ESTALE, EACCES on the directory) boots
-/// silently. `NotFound` is the one error that is not a fail-open: there is no file whose
-/// permissions could be wrong, the loader resolves the same path a moment later, and it
-/// reports the absence with the diagnostic that names what was missing.
-#[cfg(unix)]
-fn check_key_file_perms(
-    path: &str,
-    policy: crate::config_state::KeyFileAccessPolicy,
-) -> Result<(), String> {
-    use std::os::unix::fs::MetadataExt;
-    use std::os::unix::fs::PermissionsExt;
-    let meta = match std::fs::metadata(path) {
-        Ok(meta) => meta,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => {
-            return Err(format!(
-                "mcp-re-proxy refuses unsafe configuration:\n  - key file {path} cannot be \
-                 stat'ed ({e}), so its permission posture cannot be established; it is read \
-                 by the proxy regardless, and starting would mean serving with a key file \
-                 that may be group- or world-readable"
-            ))
-        }
-    };
-    let mode = meta.permissions().mode();
-    if let Some(reason) = policy.violation(mode, meta.gid(), &process_gids()) {
-        return Err(format!(
-            "mcp-re-proxy refuses unsafe configuration:\n  - key file {path} \
-             is {reason} (mode {:o}); restrict to 0600",
-            mode & 0o777
-        ));
-    }
-    Ok(())
-}
-
-/// The groups this process belongs to: the effective gid plus its supplementary
-/// groups. Under Kubernetes `fsGroup` the mounted Secret is owned by a supplementary
-/// group, not the effective one, so checking only `getegid()` would refuse the very
-/// mount model the relaxation exists for.
-#[cfg(unix)]
-fn process_gids() -> Vec<u32> {
-    let mut gids = vec![unsafe { libc::getegid() } as u32];
-    // SAFETY: the two-call idiom — ask for the count, then fill a buffer of that size.
-    unsafe {
-        let count = libc::getgroups(0, std::ptr::null_mut());
-        if count > 0 {
-            let mut buf = vec![0 as libc::gid_t; count as usize];
-            if libc::getgroups(count, buf.as_mut_ptr()) >= 0 {
-                gids.extend(buf);
-            }
-        }
-    }
-    gids
-}
-/// Every private-key file this config causes the proxy to READ from disk.
-///
-/// Pure, so the decision is testable on its own — the defect this replaces was not in
-/// the permission predicate but in which files it was pointed at.
-///
-/// The rule follows the files, not the key-source name. The signing seed is read only
-/// under `file` custody; a PKCS#11/KMS source never surrenders it, and those sources
-/// thread the path only into the `FileKeySource` they use for TLS material. The TLS
-/// server private key, by contrast, is read under EVERY custody mode unless TLS signing
-/// is itself delegated — and `cli::parse_args` leaves `tls_key` empty in exactly that
-/// delegated case, which is why emptiness is the right test rather than the mode.
-///
-/// Gating the whole check on `key_source == File` therefore skipped the one private key
-/// that DOES land in the pod in precisely the modes advertised as "no key material ever
-/// lands in the pod": a Secret mounted with Kubernetes' default 0644 booted silently.
-fn key_files_read_from_disk<'a>(
-    custody: &'a CustodyState,
-    channel_credential_custody: &'a ChannelCredentialCustodyState,
-) -> Vec<&'a str> {
-    // Under `EnvSeed` NOTHING is on disk: every locator this deployment carries names an
-    // environment variable, the channel ones included — which is why custody answers that
-    // and the channel machine does not. Phrasing the projection over the state removes the
-    // case instead of adding a condition for it.
-    if !custody.locators_are_filesystem_paths() {
-        return Vec::new();
-    }
-    let mut paths = custody.disk_secret_paths();
-    // And the handshake key, only where custody EXPORTS one. Non-exporting custody keeps
-    // it on the device, and the tagged request carries no file beside it to read.
-    paths.extend(channel_credential_custody.material().exported_key_path());
-    paths
-}
-
-/// No-op off unix: the mode bits this guard reads do not exist there. Kept in step with
-/// the unix signature above — it had drifted to a second `strict` parameter no caller
-/// passes, so this arm could not have compiled.
-#[cfg(not(unix))]
-fn check_key_file_perms(
-    _path: &str,
-    _policy: crate::config_state::KeyFileAccessPolicy,
-) -> Result<(), String> {
-    Ok(())
 }
 
 /// Build every component from `config` and serve on the per-core async fleet until
@@ -393,15 +284,14 @@ fn run_validated(
              env key material is visible to the process tree. Never use in production."
         );
     }
-    // A group/world-readable key file is a HARD error (refuse startup). The other
-    // guards are parse-time and already enforced inside `cli::parse_args`; this one is
-    // filesystem-dependent so it lives here.
-    for path in key_files_read_from_disk(
+    // A group/world-readable key file is a HARD error (refuse startup). WHICH files those
+    // are, what a mode means and which groups this process is in are all the key-file
+    // custody owner's — this root names the two custody states and holds the evidence.
+    let admitted_key_files = crate::capability_materialization::admit_key_files(
         config.state().custody(),
         config.state().channel_credential_custody(),
-    ) {
-        check_key_file_perms(path, config.state().key_file_access())?;
-    }
+        config.state().key_file_access(),
+    )?;
     // A disabled (`none`/`0`) or over-ceiling `--max-client-cert-lifetime` is
     // rejected at parse time (`config_state::validation::unsafe_config_violations`), so by here it is
     // always a bounded lifetime within the ceiling — no runtime check needed.
@@ -416,8 +306,7 @@ fn run_validated(
     // never need to surrender its private key — there is deliberately no
     // `signing_key()` export call on the wiring path anymore.
     let key_source = crate::capability_materialization::build_key_source(
-        config.state().custody(),
-        config.state().channel_credential_custody(),
+        admitted_key_files,
         &values.channel_credential.credential_chain,
         &values.peer_trust_anchors,
     )
@@ -519,7 +408,9 @@ fn run_validated(
     let resolve_actor = build_actor_resolver(
         building.trust()?.signers(),
         Arc::clone(&resolver),
-        values.trust_domain.clone(),
+        // r12 R12-629: the coordinate through its OWNER, not the raw request. The server
+        // actor already took it from here; the client one took the primitive beside it.
+        config.state().server_identity().trust_domain().to_owned(),
         response_kid.clone(),
         server_identity.clone(),
         response_pub,
@@ -576,16 +467,21 @@ fn run_validated(
     // Whether it exists is decided by the PLANS, aggregated across every capability that
     // can need one — not by whichever seam reaches for it first. Deriving it from replay
     // once made admission unimplementable on the CP/linearizable tier.
-    let control_rt = crate::control_runtime::ControlRuntime::start(
+    // JOINS THE OWNER WHERE IT IS ACQUIRED (r12 R12-635). It used to stay a local until
+    // the end of the assembly, so each of the seven fallible expressions between here and
+    // there reclaimed it by reverse-declaration-order unwinding — the mechanism the doc
+    // beside it says the guarantee does NOT rest on, and which happened to be correct only
+    // because the replay tier was declared after it and therefore dropped first.
+    building.install_control(crate::control_runtime::ControlRuntime::start(
         crate::startup_plan::control_runtime_requirement(config, &replay_plan),
-    )?;
+    )?);
     // The redis store's reconnect machinery binds to the runtime it is CREATED in, so the
     // substrate must outlive every USE of the tier — discharged by draining the fleet
     // before anything is reclaimed, not by drop order. See `replay_plane`.
     let (replay_async, dispatch_cfg) = crate::replay_plane::MaterializedReplay::materialize(
         &replay_plan,
         config.state().freshness(),
-        control_rt.as_ref(),
+        building.control(),
     )?
     .into_parts();
 
@@ -625,11 +521,17 @@ fn run_validated(
     // claimed on either.
     if config.state().topology().is_fleet() {
         let trust_bound = crate::trust_plane::fleet_trust_bound(&trust_plan);
-        let crl_bound = crate::tls_plane::fleet_crl_bound(&tls_plan);
+        let crl_bound = building.tls()?.fleet_crl_bound(&tls_plan);
+        // r12 R12-628: THREE slots, three postures. The response-slot anchor is read once
+        // and held for the process lifetime — deliberately, because it is the deployment's
+        // own trust anchor and is revoked by root rotation rather than by a trust-store
+        // entry — so neither the trust-epoch kill switch nor the CRL reload reaches it. An
+        // operator reading two numbers and an omission cannot tell that from an oversight.
         eprintln!(
             "mcp-re-proxy: FLEET cross-replica revocation-lag bounds (ADR-MCPS-049 clause 3): \
-             trust-key-status={trust_bound}; client-cert-crl={crl_bound}; zero-window revocation \
-             NOT claimed"
+             trust-key-status={trust_bound}; client-cert-crl={crl_bound}; \
+             response-signer-anchor=restart-only (read once at startup; withdrawn by root \
+             rotation, not by the trust store or a CRL); zero-window revocation NOT claimed"
         );
     }
 
@@ -665,13 +567,23 @@ fn run_validated(
     let in_flight_limit = config.state().in_flight_limit();
     let mut limits = values.limits.clone();
     limits.max_in_flight_requests = in_flight_limit.per_core();
+    // BOTH halves of the relation now come from the owner (r12 R12-625). The comment below
+    // said they were one fact while only the lifetime was: the socket-level bound reached
+    // enforcement as the raw request's copy, agreeing with the adjudicated one only because
+    // layer A had read the same field. `connection_age()` is `Duration` rather than
+    // `Option` because a deployment that disabled the bound is already refused.
+    //
+    // The WEAKER of the two forms the finding names, stated so it is not mistaken for the
+    // stronger: the serving path still reads through `ServerLimits`, so this makes the
+    // value the owner's rather than making `ServerLimits` stop being the source.
+    limits.max_connection_age = Some(config.state().client_credential_window().connection_age());
     let serve_options = ServerOptions {
         identity_policy,
         peer_identity_provenance,
         limits,
         // From the owner, not the request: the lifetime and the connection age are one
-        // fact, and reading the lifetime raw here would be the relation split back into
-        // its terms one layer further on.
+        // fact, and reading either raw here would be the relation split back into its
+        // terms one layer further on.
         max_client_cert_lifetime: Some(config.state().client_credential_window().cert_lifetime()),
         client_revocation: client_revocation.clone(),
         #[cfg(feature = "online_ocsp")]
@@ -685,10 +597,10 @@ fn run_validated(
     // ADR-MCPRE-051 §3: the async inner plane — a per-core pooled hyper client to
     // the stateless Streamable-HTTP inner backends. Forwarding is AWAITED, never
     // blocking a per-core runtime worker.
-    let inner_timeout = values
-        .limits
-        .read_timeout
-        .unwrap_or_else(|| Duration::from_secs(30));
+    // Unreachable — the boundary refuses an absent read timeout — and it REFUSES rather
+    // than defaulting, so dropping that clause is an outage, not a second opinion (R12-636).
+    let configured = &values.limits;
+    let inner_timeout = configured.read_timeout.ok_or("--read-timeout-secs unset")?;
     let pool = HttpInnerPool::from_url_strs(values.inner_http_urls.clone(), inner_timeout)?;
     // Named where the pool that forwards to them is BUILT. Reporting them from the fleet
     // instead would mean carrying the URLs through serving purely to print them, and the
@@ -796,7 +708,7 @@ fn run_validated(
     let (continuation_store, continuation_state) =
         crate::serving_capabilities::mrtr_continuation_store(
             &config.state().continuation_control().continuation_plan(),
-            control_rt.as_ref(),
+            building.control(),
         )?
         .into_parts();
     if let Some(store) = continuation_store {
@@ -814,7 +726,7 @@ fn run_validated(
     let (admission, admission_state) = crate::serving_capabilities::admission_currency(
         config.state().admission(),
         config.state().freshness().verifier_skew_secs(),
-        control_rt.as_ref(),
+        building.control(),
     )?
     .into_parts();
     if let Some(gate) = admission {
@@ -853,7 +765,6 @@ fn run_validated(
     let fleet_cfg = fleet_config(values, config.state().shard_topology(), in_flight_limit)?;
 
     building.install_proxy(proxy);
-    building.install_control(control_rt);
     let (runtime, lifecycle) = building.finish()?;
 
     runtime.serve(
@@ -918,15 +829,15 @@ fn fleet_config(
 /// returned, which is the DRAIN: no request can be in flight afterwards. Everything that
 /// must then happen in a particular order — each plane's post-owner transition, and
 /// reclaiming the control runtime the proxy's networked clients are bound to — belongs to
-/// [`crate::materialized_runtime::MaterializedRuntime`], which calls this and then tears
-/// down. Keeping the drain here and the ordering there is deliberate: this function's
-/// contract is "no request is running when I return", and that is all a caller should
-/// have to know to sequence anything after it.
+/// [`crate::materialized_runtime::MaterializedRuntime`], the sole issuer of `authorized` and
+/// so the only caller, which tears down after. The drain here and the ordering there is
+/// deliberate: this function's contract is "no request is running when I return", and
+/// that is all a caller should have to know to sequence anything after it.
 pub(crate) fn serve_fleet(
     proxy: Arc<HttpProfileProxy>,
     config_snapshot: Arc<config_snapshot::ServerConfigSnapshot>,
     serve_options: Arc<crate::ServerOptions>,
-    fleet_cfg: crate::async_fleet::FleetConfig,
+    authorized: crate::materialized_runtime::fleet_serve_authorized::FleetServeAuthorized,
     shutdown: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), String> {
     // MCPRE-116: hand the fleet the SNAPSHOT, not a one-shot `load()`. The accept
@@ -952,7 +863,7 @@ pub(crate) fn serve_fleet(
     };
 
     let fleet = crate::async_fleet::serve_fleet(
-        fleet_cfg,
+        authorized.into_fleet_config(),
         server_config,
         serve_options,
         make_handler,
@@ -975,315 +886,14 @@ pub(crate) fn serve_fleet(
     Ok(())
 }
 
-#[cfg(all(test, unix))]
+// EVERY TARGET (r12 R12-627). The `unix` half was for the key-file permission controls, and
+// they left with the authority — the arm that genuinely needs unix now carries its own gate.
+// Keeping the qualifier would compile these target-independent claims to ZERO tests elsewhere.
+#[cfg(test)]
 mod tests {
-    use super::check_key_file_perms;
     use super::faulted_clock_refusal;
+    use crate::config_state::test_support::config_with;
     use crate::config_state::test_support::crl_posture;
-    use crate::config_state::KeyFileAccessPolicy;
-    use std::io::Write;
-    use std::os::unix::fs::PermissionsExt;
-
-    /// A key file at `mode`, named per-process so concurrent test binaries do not
-    /// collide. Mirrors the temp-file idiom the rest of this crate's tests use
-    /// (`std::env::temp_dir()` + pid) rather than adding a dev-dependency.
-    struct KeyFile(String);
-
-    impl KeyFile {
-        fn at(mode: u32, name: &str) -> Self {
-            let path =
-                std::env::temp_dir().join(format!("mcp_re_perm_{}_{name}", std::process::id()));
-            let mut f = std::fs::File::create(&path).expect("create");
-            f.write_all(b"key-material").expect("write");
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).expect("chmod");
-            KeyFile(path.to_string_lossy().into_owned())
-        }
-        fn path(&self) -> &str {
-            &self.0
-        }
-    }
-
-    impl Drop for KeyFile {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_file(&self.0);
-        }
-    }
-
-    /// A parsed `DeploymentRequest` for `source`, built through the REAL parser so the test cannot
-    /// drift from what the CLI actually produces. An empty `tls_key` is how the parser
-    /// represents delegated TLS, so it is passed through rather than defaulted.
-    fn config_with(
-        source: &str,
-        seed: &str,
-        tls_key: &str,
-    ) -> crate::deployment_request::DeploymentRequest {
-        let (name, mut extra): (&str, Vec<&str>) = match source {
-            "file" => ("file", vec![]),
-            "pkcs11" => (
-                "pkcs11",
-                vec![
-                    "--pkcs11-module",
-                    "/m.so",
-                    "--pkcs11-token-label",
-                    "t",
-                    "--pkcs11-key-label",
-                    "k",
-                    "--pkcs11-pin-file",
-                    "/etc/mcp-re/pin",
-                ],
-            ),
-            "aws-kms" => (
-                "aws-kms",
-                vec![
-                    "--aws-kms-region",
-                    "us-east-1",
-                    "--aws-kms-key-id",
-                    "alias/k",
-                ],
-            ),
-            "gcp-kms" => (
-                "gcp-kms",
-                vec![
-                    "--gcp-kms-key-version",
-                    "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1",
-                ],
-            ),
-            other => panic!("no fixture for --key-source {other}"),
-        };
-        let mut argv: Vec<&str> = vec![
-            "--bind",
-            "127.0.0.1:8443",
-            "--audience",
-            "did:example:server-1",
-            "--server-signer",
-            "did:example:server-1",
-            "--server-key-id",
-            "server-key-1",
-            "--tls-cert",
-            "/cert",
-            "--client-ca",
-            "/ca",
-            "--trust",
-            "/trust.json",
-            "--inner-http-url",
-            "http://127.0.0.1:8080/mcp",
-            "--target-uri",
-            "https://mcp.example.com/mcp",
-            "--delegated-trust-epoch",
-            "epoch-min",
-            "--replay-redis-url",
-            "redis://127.0.0.1:6379",
-            "--replay-durability-tier",
-            "redis-wait-quorum:1:100",
-            "--key-source",
-            name,
-            "--trust-domain",
-            "mcp.example.com",
-        ];
-        argv.append(&mut extra);
-        if !seed.is_empty() {
-            argv.extend_from_slice(&["--signing-key-seed", seed]);
-        }
-        // An empty `tls_key` means delegated TLS; the parser only leaves it empty when a
-        // delegated TLS custody is configured, so express that rather than omitting it.
-        if tls_key.is_empty() {
-            argv.extend_from_slice(&[
-                "--gcp-kms-tls-key-version",
-                "projects/p/locations/l/keyRings/r/cryptoKeys/tls/cryptoKeyVersions/1",
-            ]);
-        } else {
-            argv.extend_from_slice(&["--tls-key", tls_key]);
-        }
-        let owned: Vec<String> = argv.into_iter().map(str::to_string).collect();
-        crate::cli::parse_args(&owned)
-            .unwrap_or_else(|e| panic!("{source:?} config must parse: {e}"))
-    }
-
-    /// The two custody states the disk projection is a function of.
-    ///
-    /// Classified rather than hand-built, so these tests measure what the validation
-    /// boundary actually recognises for the fixture above.
-    fn custody_states(
-        config: &crate::deployment_request::DeploymentRequest,
-    ) -> (
-        crate::config_state::CustodyState,
-        crate::config_state::ChannelCredentialCustodyState,
-    ) {
-        let (custody, violations) = crate::config_state::custody::classify_and_validate(config);
-        assert!(violations.is_empty(), "fixture refused: {violations:?}");
-        let (channel_credential_custody, violations) =
-            crate::config_state::channel_credential_custody::classify_and_validate(config);
-        assert!(violations.is_empty(), "fixture refused: {violations:?}");
-        (
-            custody.expect("the fixture names a custody state"),
-            channel_credential_custody.expect("the fixture names a TLS custody state"),
-        )
-    }
-
-    /// C048: the PKCS#11 PIN file unlocks the token holding the signing keys, so it must
-    /// be among the files the startup permission check covers — otherwise the credential
-    /// protecting the keys sits behind a weaker floor than the keys themselves.
-    #[test]
-    fn the_pkcs11_pin_file_is_permission_checked() {
-        use crate::app::key_files_read_from_disk;
-        let config = config_with("pkcs11", "", "/tls.key");
-        let (custody, channel_credential_custody) = custody_states(&config);
-        let files = key_files_read_from_disk(&custody, &channel_credential_custody);
-        assert!(
-            files.contains(&"/etc/mcp-re/pin"),
-            "the PIN file must be checked; got {files:?}"
-        );
-        // And it is NOT claimed for a source that reads no PIN.
-        let file_config = config_with("file", "/seed", "/tls.key");
-        let (custody, channel_credential_custody) = custody_states(&file_config);
-        assert!(
-            !key_files_read_from_disk(&custody, &channel_credential_custody)
-                .iter()
-                .any(|p| p.contains("pin")),
-            "file custody reads no PIN file"
-        );
-    }
-
-    /// 0644 is world-readable, not merely group-readable — the refusal now says which,
-    /// because "restrict to 0600" is more actionable when it names the actual bit.
-    #[test]
-    fn a_world_readable_key_file_is_refused() {
-        let f = KeyFile::at(0o644, "world.key");
-        let err = check_key_file_perms(f.path(), KeyFileAccessPolicy::OwnerOnly)
-            .expect_err("0644 must be refused");
-        assert!(err.contains("world-accessible"), "got: {err}");
-    }
-
-    /// C053b: group-readable is refused by DEFAULT — the opt-in is what changes it, and
-    /// the default posture is exactly what it was.
-    #[test]
-    fn a_group_readable_key_file_is_refused_without_the_opt_in() {
-        let f = KeyFile::at(0o640, "group.key");
-        let err = check_key_file_perms(f.path(), KeyFileAccessPolicy::OwnerOnly)
-            .expect_err("0640 must be refused");
-        assert!(err.contains("group-accessible"), "got: {err}");
-        assert!(
-            err.contains("--allow-group-readable-key-files"),
-            "the refusal must name the opt-in that exists for the fsGroup mount model: {err}"
-        );
-    }
-
-    /// With the opt-in, a group-readable file whose group this process is actually in
-    /// is accepted — the file the test harness creates is owned by our own gid.
-    #[test]
-    fn a_group_readable_key_file_owned_by_our_group_is_accepted_with_the_opt_in() {
-        let f = KeyFile::at(0o640, "fsgroup.key");
-        check_key_file_perms(
-            f.path(),
-            KeyFileAccessPolicy::GroupReadableUnderProcessGroup,
-        )
-        .expect("an fsGroup-shaped mount is accepted");
-    }
-
-    /// The opt-in does not reach group-WRITE: a peer able to replace the signing key is
-    /// never a mount-model requirement.
-    #[test]
-    fn group_write_is_refused_even_with_the_opt_in() {
-        let f = KeyFile::at(0o660, "groupwrite.key");
-        let err = check_key_file_perms(
-            f.path(),
-            KeyFileAccessPolicy::GroupReadableUnderProcessGroup,
-        )
-        .expect_err("0660 must be refused");
-        assert!(err.contains("group-writable"), "got: {err}");
-    }
-
-    #[test]
-    fn an_owner_only_key_file_is_accepted() {
-        let f = KeyFile::at(0o600, "owner.key");
-        check_key_file_perms(f.path(), KeyFileAccessPolicy::OwnerOnly)
-            .expect("0600 is the required posture");
-    }
-
-    /// The load-bearing property, on the pure predicate `run` actually uses: the TLS
-    /// server key is read from disk under EVERY custody mode unless TLS signing is
-    /// itself delegated — including the KMS modes advertised as "no key material ever
-    /// lands in the pod" — so it must always be among the files checked.
-    #[test]
-    fn the_tls_key_is_checked_under_every_custody_mode() {
-        use crate::app::key_files_read_from_disk;
-
-        // `env` is omitted: it is rejected by the parser outside a
-        // `dev_env_key_source` build, so it cannot be constructed here.
-        for source in ["file", "pkcs11", "aws-kms", "gcp-kms"] {
-            let config = config_with(source, "/seed", "/tls.key");
-            let (custody, channel_credential_custody) = custody_states(&config);
-            let checked = key_files_read_from_disk(&custody, &channel_credential_custody);
-            assert!(
-                checked.contains(&"/tls.key"),
-                "{source}: the TLS key lands on disk and must be permission-checked"
-            );
-            // The SEED is read only where custody is file-based.
-            assert_eq!(
-                checked.contains(&"/seed"),
-                source == "file",
-                "{source}: the seed is checked iff it is actually read"
-            );
-        }
-    }
-
-    /// Delegated TLS leaves `tls_key` empty — that emptiness is how the wiring says "no
-    /// key file is read", so nothing must be checked for it.
-    #[test]
-    fn a_delegated_tls_key_contributes_no_file_to_check() {
-        use crate::app::key_files_read_from_disk;
-
-        let config = config_with("gcp-kms", "", "");
-        let (custody, channel_credential_custody) = custody_states(&config);
-        assert!(
-            key_files_read_from_disk(&custody, &channel_credential_custody).is_empty(),
-            "delegated TLS + KMS custody reads no private key from disk"
-        );
-    }
-
-    /// Delegated TLS leaves `tls_key` EMPTY (see `cli::parse_args`), which is how the
-    /// wiring expresses "no key file is read" — and an empty path must not be treated as
-    /// a key file to check.
-    #[test]
-    fn an_absent_key_file_is_not_an_error() {
-        check_key_file_perms("", KeyFileAccessPolicy::OwnerOnly)
-            .expect("no file configured is not a violation");
-        check_key_file_perms("/nonexistent/path/tls.key", KeyFileAccessPolicy::OwnerOnly)
-            .expect("a missing file is reported by the loader, not by this guard");
-    }
-
-    /// C077: a `stat` that fails for a reason OTHER than absence must refuse.
-    ///
-    /// The file exists and is about to be read; only its posture is unknowable. Treating
-    /// that as compliance is a fail-open — on a networked or overlay Secret mount an EIO
-    /// or ESTALE would start the proxy over a world-readable signing seed with no
-    /// diagnostic at all.
-    ///
-    /// The broken implementation this catches: `if let Ok(meta) = metadata(path)` with no
-    /// error arm, which is what this guard did.
-    #[test]
-    fn a_key_file_whose_posture_cannot_be_established_is_refused() {
-        let dir = std::env::temp_dir().join(format!("mcp_re_perm_dir_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("create dir");
-        let key = dir.join("tls.key");
-        std::fs::write(&key, b"key-material").expect("write");
-        // No search permission on the directory: the file is still there and still
-        // openable by anything holding a descriptor, but `stat` on the path fails EACCES.
-        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).expect("chmod");
-
-        let result = check_key_file_perms(&key.to_string_lossy(), KeyFileAccessPolicy::OwnerOnly);
-
-        // Restore before asserting so a failure does not leave an unremovable directory.
-        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
-        let _ = std::fs::remove_dir_all(&dir);
-
-        let err = result.expect_err("an unestablishable key-file posture must refuse startup");
-        assert!(
-            err.contains("cannot be stat'ed"),
-            "the refusal must say the posture could not be established, got: {err}"
-        );
-    }
 
     /// R8-C123 (G10's finding, this group's call site): a record handed to the audit
     /// writer immediately before teardown must still reach stderr.
@@ -1436,14 +1046,6 @@ mod tests {
     /// R10-F1. The serving path's channel-binding effects are a function of the state the
     /// `ChannelBinding` owner recognised — never of the raw selectors it classified.
     ///
-    /// The two halves of one decision are checked together: which SAN the identity is read
-    /// from, and that the request signer is compared with it at all. The negative control
-    /// is the deprecated identity source, which reaches no state — so the projection has
-    /// nothing to map and the exact-match policy cannot end up running over a CN.
-    ///
-    /// The broken implementation this catches: reading `binding` and `identity_source` off
-    /// the request at the call site, which installs `ExactMatchBinding` over
-    /// `IdentityPolicy::CnLegacy` for a request this owner refuses outright.
     /// A verified request subject, through the one producer. The composition root's own
     /// controls need an operand, not a relation.
     fn binding_subject() -> crate::communication_assurance::VerifiedRequestSubject {
@@ -1461,24 +1063,40 @@ mod tests {
         )
     }
 
+    /// The two halves of one decision are checked together: which SAN the identity is read
+    /// from, and that the request signer is compared with it at all. The negative control
+    /// is the deprecated identity source, which reaches no state — so the projection has
+    /// nothing to map and the exact-match policy cannot end up running over a CN.
+    ///
+    /// The broken implementation this catches: reading `binding` and `identity_source` off
+    /// the request at the call site, which installs `ExactMatchBinding` over
+    /// `IdentityPolicy::CnLegacy` for a request this owner refuses outright.
+    ///
+    /// The `expected_field` column is LOAD-BEARING (r11 R11-129): it used to be bound to
+    /// `_` and asserted nothing, so the control read as covering which certificate field
+    /// the seam reads while establishing nothing about it. It is now driven through the
+    /// production chain — `IdentityPolicy` -> `CertificateIdentityPolicy` -> `selects()`
+    /// -> `IdentitySource` — which is the relation r11 R11-127 worried could disagree with
+    /// the state. It cannot: it is a total function of the policy this projection installs.
     #[test]
     fn the_channel_binding_effects_are_a_function_of_the_recognised_state() {
+        use crate::communication_assurance::CertificateIdentityPolicy;
         use crate::config_state::transport::classify_and_validate_binding;
         use crate::config_state::ChannelBindingState;
-        use crate::transport::{IdentityPolicy, IdentitySource};
+        use crate::transport::IdentityPolicy;
 
-        for (source, expected_state, expected_policy, _field) in [
+        for (source, expected_state, expected_policy, expected_field) in [
             (
                 IdentityPolicy::UriSan,
                 ChannelBindingState::ExactUriSan,
                 IdentityPolicy::UriSan,
-                IdentitySource::UriSan,
+                CertificateIdentityPolicy::UriSan,
             ),
             (
                 IdentityPolicy::DnsSan,
                 ChannelBindingState::ExactDnsSan,
                 IdentityPolicy::DnsSan,
-                IdentitySource::DnsSan,
+                CertificateIdentityPolicy::DnsSan,
             ),
         ] {
             let mut config = config_with("file", "/seed", "/key");
@@ -1492,6 +1110,20 @@ mod tests {
             assert_eq!(
                 effects.identity_policy, expected_policy,
                 "{expected_state:?} must read the identity from its own SAN"
+            );
+            // R11-129/R11-127: the installed policy reaches the AUTHORITY'S vocabulary
+            // through the production conversion, so the recognised state and the policy the
+            // certificate interpreter runs under cannot disagree. Driven, not restated —
+            // this is the same `From` the serving path uses.
+            //
+            // The last hop — that policy selecting its own certificate FIELD — is
+            // `CertificateIdentityPolicy::selects`, private to its owner and controlled
+            // there. Widening it to assert the whole chain from here would be a production
+            // widening with a test-shaped justification.
+            assert_eq!(
+                CertificateIdentityPolicy::from(effects.identity_policy),
+                expected_field,
+                "{expected_state:?} must run the interpreter under its own policy"
             );
             // What the composition root owns is WHICH binding it installs and which SAN
             // the identity is read from. Since ADR-MCPRE-064 Slice 4 the relation itself

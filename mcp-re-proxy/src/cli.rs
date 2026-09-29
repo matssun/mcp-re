@@ -1650,24 +1650,57 @@ mod tests {
         let (channel_credential_custody, violations) =
             crate::config_state::channel_credential_custody::classify_and_validate(config);
         assert!(violations.is_empty(), "fixture refused: {violations:?}");
+        let custody = custody.expect("the fixture names a custody state");
+        let channel = channel_credential_custody.expect("the fixture names a TLS custody state");
+        let admitted = crate::capability_materialization::admit_key_files(
+            &custody,
+            &channel,
+            crate::config_state::KeyFileAccessPolicy::OwnerOnly,
+        )
+        .map_err(crate::key_source::KeyError::NotFound)?;
         crate::capability_materialization::build_key_source(
-            &custody.expect("the fixture names a custody state"),
-            &channel_credential_custody.expect("the fixture names a TLS custody state"),
+            admitted,
             &config.channel_credential.credential_chain,
             &config.peer_trust_anchors,
         )
         .map(crate::capability_materialization::MaterializedSigningRoles::into_key_source)
     }
 
-    // MCPS-076: the File key source is always constructible (default + dev builds).
+    // MCPS-076: the File key source is always constructible (default + dev builds) —
+    // over real, admitted key files, which is the only way it is built.
+    #[cfg(unix)]
     #[test]
     fn file_key_source_is_always_constructible() {
-        let config = parse_args(&minimal_durable()).expect("parse");
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir();
+        let seed = dir.join(format!("mcp_re_cli_seed_{}", std::process::id()));
+        let key = dir.join(format!("mcp_re_cli_tls_{}", std::process::id()));
+        std::fs::write(&seed, mcp_re_core::b64url_encode(&[7u8; 32])).expect("seed");
+        std::fs::write(
+            &key,
+            rcgen::KeyPair::generate().expect("key").serialize_pem(),
+        )
+        .expect("tls key");
+        for f in [&seed, &key] {
+            std::fs::set_permissions(f, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+        }
+        let mut a = minimal_durable();
+        for (flag, path) in [("--signing-key-seed", &seed), ("--tls-key", &key)] {
+            let at = a
+                .iter()
+                .position(|arg| arg == flag)
+                .expect("the flag is in the fixture");
+            a[at + 1] = path.to_string_lossy().into_owned();
+        }
+        let config = parse_args(&a).expect("parse");
         assert!(matches!(
             config.response_signing.source,
             SigningSourceRequest::File(_)
         ));
-        assert!(key_source_from(&config).is_ok());
+        let built = key_source_from(&config);
+        let _ = std::fs::remove_file(&seed);
+        let _ = std::fs::remove_file(&key);
+        assert!(built.is_ok(), "{:?}", built.err());
     }
 
     // ADR-MCPS-028 §B/§C: cloud-KMS key-source CLI wiring.

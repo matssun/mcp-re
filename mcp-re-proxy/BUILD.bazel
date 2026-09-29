@@ -190,7 +190,13 @@ _PROXY_LIB_SRCS = [
     "src/deployment_request/delegated_signing/mod.rs",
     "src/cli/currency_flags.rs",
     "src/deployment_request/request_signer_currency/mod.rs",
-    "src/capability_materialization/ingress.rs",
+        # ADR-MCPRE-067 §23 / r12 file 11: the environmental half of key-file custody —
+    # observe the real objects and apply the policy `config_state::key_file_access` owns.
+    "src/capability_materialization/key_file_custody/mod.rs",
+    "src/capability_materialization/key_file_custody/covered_files.rs",
+    "src/capability_materialization/key_file_custody/checked_key_file.rs",
+    "src/capability_materialization/key_file_custody/process_groups.rs",
+"src/capability_materialization/ingress.rs",
     "src/capability_materialization/key_source/aws.rs",
     "src/capability_materialization/key_source/env.rs",
     "src/capability_materialization/key_source/file.rs",
@@ -324,6 +330,7 @@ _PROXY_LIB_SRCS = [
     # from the parser that was merely their first caller.
     "src/trust_document.rs",
     "src/key_source.rs",
+    "src/key_source/file_key_source.rs",
     # The KMS/STS endpoint admission rule, owned apart from the parser that was its
     # first caller: key sources reach it without meeting a command line.
     "src/kms_endpoint_policy/mod.rs",
@@ -410,6 +417,7 @@ _PROXY_LIB_SRCS = [
     "src/http_profile_serve/request_admission.rs",
     "src/http_profile_serve/retention/mod.rs",
     "src/http_profile_serve/retention/outcome.rs",
+    "src/http_profile_serve/retention/fault_report.rs",
     "src/http_profile_serve/signing_window.rs",
     # ADR-MCPRE-061: the request pipeline, region by region — what the exchange has spent
     # by the time each one finishes.
@@ -460,6 +468,7 @@ _PROXY_LIB_SRCS = [
     # ADR-MCPRE-056 §10: the assembled runtime — owns every resource with a teardown
     # obligation and enforces drain -> transition -> reclaim. Crate-internal.
     "src/materialized_runtime.rs",
+    "src/materialized_runtime/fleet_serve_authorized.rs",
     # ADR-MCPRE-056 §9: owned background workers — structural halt, bounded
     # reclamation, named stragglers. Crate-internal.
     "src/managed_worker/mod.rs",
@@ -549,6 +558,7 @@ _PROXY_LIB_SRCS = [
     # plane.
     "src/async_fleet/mod.rs",
     "src/async_fleet/core_runtime.rs",
+    "src/async_fleet/shard_depth.rs",
     # MCPRE-117 (ADR-MCPRE-051 §4): the async authoritative replay tier (async store
     # contract + L1-never-Fresh wrapper) — the only replay path.
     "src/async_replay/mod.rs",
@@ -577,6 +587,7 @@ _PROXY_LIB_SRCS = [
     # cfg'd out of the default build; the ext flavor + the cargo redis lane link it,
     # and main.rs selects it for `--replay-cache shared` (non-linearizable tier).
     "src/async_redis_store.rs",
+    "src/async_redis_store/retention_promise.rs",
     # ADR-MCPS-047: the MRTR continuation correlation store — trait + in-memory impl
     # always compiled; the Redis backend is redis_replay-gated inside the module.
     "src/continuation_store/mod.rs",
@@ -643,6 +654,10 @@ _PROXY_LIB_DEPS = [
     # adapter (src/http_profile_dispatch.rs) wraps. Pure crate — mcp-re-core only,
     # no reverse proxy dependency.
     "//mcp-re-http-profile:mcp_re_http_profile",
+    # The ONE operator-facing projection of a configured locator: scheme, host and port,
+    # every credential-bearing component removed and its removal reported. std-only with no
+    # deps of its own, so it adds one rlib and nothing else to every flavor's closure.
+    "//mcp-re-operator-display:mcp_re_operator_display",
     # MCPS-58 (ADR-023 §A1): CRL parsing for the static --client-crl freshness gate.
     "@crates_mcp_re//:der",
     "@crates_mcp_re//:libc",

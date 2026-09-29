@@ -102,6 +102,15 @@ pub struct ArtifactBinding {
     pub reference_value: Option<String>,
 }
 
+/// The digest function `EVIDENCE_DIGEST_ALG` names; the producer and the digest
+/// length rule both go through it.
+type EvidenceDigest = Sha256;
+
+const _: () = assert!(
+    matches!(EVIDENCE_DIGEST_ALG.as_bytes(), b"sha256"),
+    "EVIDENCE_DIGEST_ALG no longer names the function EvidenceDigest applies"
+);
+
 impl ArtifactBinding {
     /// Producer side: build an `opaque-digest` binding whose digest is
     /// `base64url-no-pad(SHA-256(credential))`. This is how a client mints a
@@ -112,7 +121,7 @@ impl ArtifactBinding {
             artifact_type,
             binding_type: BindingType::OpaqueDigest,
             digest_alg: EVIDENCE_DIGEST_ALG.to_owned(),
-            digest_value: b64url_encode(&Sha256::digest(credential)),
+            digest_value: b64url_encode(&EvidenceDigest::digest(credential)),
             authorization_system_id: None,
             reference_scheme_id: None,
             reference_value: None,
@@ -130,15 +139,19 @@ impl ArtifactBinding {
         if self.digest_alg != EVIDENCE_DIGEST_ALG {
             return Err(HttpProfileError::MalformedEvidence("artifact digest_alg"));
         }
-        if self.digest_value.is_empty() || !is_b64url_no_pad(&self.digest_value) {
+        let is_digest = is_b64url_no_pad(&self.digest_value)
+            && mcp_re_core::b64url_decode(&self.digest_value)
+                .is_ok_and(|d| d.len() == <EvidenceDigest as Digest>::output_size());
+        if !is_digest {
             return Err(HttpProfileError::MalformedEvidence("artifact digest_value"));
         }
         let has_ref = self.authorization_system_id.is_some()
             || self.reference_scheme_id.is_some()
             || self.reference_value.is_some();
-        let all_ref = self.authorization_system_id.is_some()
-            && self.reference_scheme_id.is_some()
-            && self.reference_value.is_some();
+        let named = |f: &Option<String>| f.as_deref().is_some_and(|s| !s.is_empty());
+        let all_ref = named(&self.authorization_system_id)
+            && named(&self.reference_scheme_id)
+            && named(&self.reference_value);
         match self.binding_type {
             BindingType::OpaqueDigest if has_ref => Err(HttpProfileError::MalformedEvidence(
                 "opaque binding carries reference fields",
@@ -146,7 +159,116 @@ impl ArtifactBinding {
             BindingType::ReferenceDigest if !all_ref => Err(HttpProfileError::MalformedEvidence(
                 "reference binding missing reference fields",
             )),
-            _ => Ok(()),
+            BindingType::OpaqueDigest | BindingType::ReferenceDigest => Ok(()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const DIGEST_43: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
+    fn reference() -> ArtifactBinding {
+        ArtifactBinding {
+            artifact_type: ArtifactType::PdpDecision,
+            binding_type: BindingType::ReferenceDigest,
+            digest_alg: EVIDENCE_DIGEST_ALG.to_owned(),
+            digest_value: DIGEST_43.to_owned(),
+            authorization_system_id: Some("sys".into()),
+            reference_scheme_id: Some("scheme".into()),
+            reference_value: Some("handle".into()),
+        }
+    }
+
+    fn opaque() -> ArtifactBinding {
+        ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, b"x")
+    }
+
+    fn malformed(b: &ArtifactBinding, token: &'static str) {
+        assert!(matches!(
+            b.validate(),
+            Err(HttpProfileError::MalformedEvidence(t)) if t == token
+        ));
+    }
+
+    #[test]
+    fn opaque_digest_value_is_the_named_function_output() {
+        let b = opaque();
+        assert_eq!(b.digest_alg, "sha256");
+        let decoded = mcp_re_core::b64url_decode(&b.digest_value).unwrap();
+        assert_eq!(decoded.len(), 32);
+        assert_eq!(decoded.as_slice(), Sha256::digest(b"x").as_slice());
+        assert!(b.validate().is_ok());
+    }
+
+    #[test]
+    fn a_foreign_digest_alg_is_refused() {
+        let mut b = opaque();
+        b.digest_alg = "md5".into();
+        malformed(&b, "artifact digest_alg");
+    }
+
+    #[test]
+    fn a_one_character_digest_is_refused() {
+        let mut b = opaque();
+        b.digest_value = "A".into();
+        malformed(&b, "artifact digest_value");
+    }
+
+    #[test]
+    fn a_digest_one_character_short_or_long_is_refused() {
+        for len in [42, 44] {
+            let mut b = opaque();
+            b.digest_value = "A".repeat(len);
+            malformed(&b, "artifact digest_value");
+        }
+    }
+
+    #[test]
+    fn an_opaque_binding_with_a_reference_field_is_refused() {
+        for v in [Some("x".to_owned()), Some(String::new())] {
+            let mut b = opaque();
+            b.authorization_system_id = v.clone();
+            malformed(&b, "opaque binding carries reference fields");
+            let mut b = opaque();
+            b.reference_scheme_id = v.clone();
+            malformed(&b, "opaque binding carries reference fields");
+            let mut b = opaque();
+            b.reference_value = v;
+            malformed(&b, "opaque binding carries reference fields");
+        }
+    }
+
+    #[test]
+    fn a_reference_binding_missing_a_field_is_refused() {
+        let mut b = reference();
+        b.authorization_system_id = None;
+        malformed(&b, "reference binding missing reference fields");
+        let mut b = reference();
+        b.reference_scheme_id = None;
+        malformed(&b, "reference binding missing reference fields");
+        let mut b = reference();
+        b.reference_value = None;
+        malformed(&b, "reference binding missing reference fields");
+    }
+
+    #[test]
+    fn a_reference_binding_with_an_empty_field_is_refused() {
+        let mut b = reference();
+        b.authorization_system_id = Some(String::new());
+        malformed(&b, "reference binding missing reference fields");
+        let mut b = reference();
+        b.reference_scheme_id = Some(String::new());
+        malformed(&b, "reference binding missing reference fields");
+        let mut b = reference();
+        b.reference_value = Some(String::new());
+        malformed(&b, "reference binding missing reference fields");
+    }
+
+    #[test]
+    fn a_fully_named_reference_binding_validates() {
+        assert!(reference().validate().is_ok());
     }
 }

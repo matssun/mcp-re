@@ -292,6 +292,120 @@ pub(crate) mod test_support {
     use crate::cli;
     use crate::deployment_request::DeploymentRequest;
 
+    /// A parsed `DeploymentRequest` for `source`, built through the REAL parser so the test
+    /// cannot drift from what the CLI actually produces. An empty `tls_key` is how the
+    /// parser represents delegated TLS, so it is passed through rather than defaulted.
+    ///
+    /// SHARED because two owners need the same fixture and neither should carry a second
+    /// copy of it: the composition root's controls, and the key-file custody subtree's.
+    pub(crate) fn config_with(
+        source: &str,
+        seed: &str,
+        tls_key: &str,
+    ) -> crate::deployment_request::DeploymentRequest {
+        let (name, mut extra): (&str, Vec<&str>) = match source {
+            "file" => ("file", vec![]),
+            "pkcs11" => (
+                "pkcs11",
+                vec![
+                    "--pkcs11-module",
+                    "/m.so",
+                    "--pkcs11-token-label",
+                    "t",
+                    "--pkcs11-key-label",
+                    "k",
+                    "--pkcs11-pin-file",
+                    "/etc/mcp-re/pin",
+                ],
+            ),
+            "aws-kms" => (
+                "aws-kms",
+                vec![
+                    "--aws-kms-region",
+                    "us-east-1",
+                    "--aws-kms-key-id",
+                    "alias/k",
+                ],
+            ),
+            "gcp-kms" => (
+                "gcp-kms",
+                vec![
+                    "--gcp-kms-key-version",
+                    "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1",
+                ],
+            ),
+            other => panic!("no fixture for --key-source {other}"),
+        };
+        let mut argv: Vec<&str> = vec![
+            "--bind",
+            "127.0.0.1:8443",
+            "--audience",
+            "did:example:server-1",
+            "--server-signer",
+            "did:example:server-1",
+            "--server-key-id",
+            "server-key-1",
+            "--tls-cert",
+            "/cert",
+            "--client-ca",
+            "/ca",
+            "--trust",
+            "/trust.json",
+            "--inner-http-url",
+            "http://127.0.0.1:8080/mcp",
+            "--target-uri",
+            "https://mcp.example.com/mcp",
+            "--delegated-trust-epoch",
+            "epoch-min",
+            "--replay-redis-url",
+            "redis://127.0.0.1:6379",
+            "--replay-durability-tier",
+            "redis-wait-quorum:1:100",
+            "--key-source",
+            name,
+            "--trust-domain",
+            "mcp.example.com",
+        ];
+        argv.append(&mut extra);
+        if !seed.is_empty() {
+            argv.extend_from_slice(&["--signing-key-seed", seed]);
+        }
+        // An empty `tls_key` means delegated TLS; the parser only leaves it empty when a
+        // delegated TLS custody is configured, so express that rather than omitting it.
+        if tls_key.is_empty() {
+            argv.extend_from_slice(&[
+                "--gcp-kms-tls-key-version",
+                "projects/p/locations/l/keyRings/r/cryptoKeys/tls/cryptoKeyVersions/1",
+            ]);
+        } else {
+            argv.extend_from_slice(&["--tls-key", tls_key]);
+        }
+        let owned: Vec<String> = argv.into_iter().map(str::to_string).collect();
+        crate::cli::parse_args(&owned)
+            .unwrap_or_else(|e| panic!("{source:?} config must parse: {e}"))
+    }
+
+    /// The two custody states the disk projection is a function of.
+    ///
+    /// Classified rather than hand-built, so these tests measure what the validation
+    /// boundary actually recognises for the fixture above.
+    pub(crate) fn custody_states(
+        config: &crate::deployment_request::DeploymentRequest,
+    ) -> (
+        crate::config_state::CustodyState,
+        crate::config_state::ChannelCredentialCustodyState,
+    ) {
+        let (custody, violations) = crate::config_state::custody::classify_and_validate(config);
+        assert!(violations.is_empty(), "fixture refused: {violations:?}");
+        let (channel_credential_custody, violations) =
+            crate::config_state::channel_credential_custody::classify_and_validate(config);
+        assert!(violations.is_empty(), "fixture refused: {violations:?}");
+        (
+            custody.expect("the fixture names a custody state"),
+            channel_credential_custody.expect("the fixture names a TLS custody state"),
+        )
+    }
+
     /// The same configuration with the linearizable replay state requested.
     ///
     /// Built by mutating the accepted request and re-classifying, because the replay state

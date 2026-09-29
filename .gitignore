@@ -61,4 +61,7 @@ __pycache__/
 
 # ADR-MCPRE-059 attestation store — derived evidence, never source (§"Evidence attestation").
 /.verification/
+
+# The finding ledger's advisory lock (security-remediate `_persist.exclusive`).
+*.jsonl.lock
 deploy/docker/dist/

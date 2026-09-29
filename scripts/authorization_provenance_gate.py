@@ -464,6 +464,25 @@ def check_validation(text: str) -> list[str]:
     return []
 
 
+class Anchored(str):
+    """Source text whose `replace` refuses to be a no-op.
+
+    A selftest case mutates live source by replacing a literal. When the source moves and
+    the literal no longer occurs, `str.replace` returns the text unchanged and the case
+    reports a confusing "0 problem(s)" against an unmutated tree, or, for a case expecting
+    none, passes without having tested anything. Requiring the anchor makes that a named
+    failure that says which literal to re-point.
+    """
+
+    def replace(self, old, new, *args):
+        if old not in self:
+            raise SystemExit(
+                f"selftest anchor not found in the live source: {old!r}. The source moved; "
+                f"re-point this case at the text that now makes the same claim."
+            )
+        return Anchored(super().replace(old, new, *args))
+
+
 def authority_sources(directory: Path) -> dict[str, str]:
     """Every production `.rs` file of the authority, keyed by its RELATIVE PATH.
 
@@ -472,7 +491,7 @@ def authority_sources(directory: Path) -> dict[str, str]:
     less than it claims to, which is the failure mode that matters most in a gate.
     """
     return {
-        str(p.relative_to(REPO)): production_text(p.read_text(encoding="utf-8"))
+        str(p.relative_to(REPO)): Anchored(production_text(p.read_text(encoding="utf-8")))
         for p in sorted(directory.rglob("*.rs"))
     }
 
@@ -486,13 +505,13 @@ def read(repo: Path, rel: str) -> str:
     """
     target = repo / rel
     if target.is_file():
-        return code_only(production_text(target.read_text(encoding="utf-8")))
+        return Anchored(code_only(production_text(target.read_text(encoding="utf-8"))))
     members = sorted(m for m in target.rglob("*.rs") if m.is_file())
     if not members:
         raise SystemExit(f"{rel}: a serving path with no Rust source is not measurable")
-    return "\n".join(
+    return Anchored("\n".join(
         code_only(production_text(m.read_text(encoding="utf-8"))) for m in members
-    )
+    ))
 
 
 def check(repo: Path) -> tuple[list[str], int]:
@@ -628,7 +647,7 @@ def selftest() -> int:
         # of the two the next reader has to restore.
         ("the serving stage removed", check_serving,
          read(REPO, SERVING).replace(
-             ".authorization_stage(ex, decided_over.as_ref())", ".no_decision()"), 2),
+             ".authorization_stage(ex, &decided_over)", ".no_decision()"), 2),
         # The region assembly is a link of its own: an assembly that stopped entering the
         # pre-admission region would dispatch without ever reaching the decision.
         ("the pre-admission region no longer ordered", check_serving,

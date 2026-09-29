@@ -121,6 +121,16 @@ pub(super) enum JobKind {
     Rescind { marker: PathBuf },
 }
 
+impl JobKind {
+    /// The dispositions whose failure must not be reported as nothing-published.
+    pub(super) fn is_pre_dispatch(&self) -> bool {
+        matches!(
+            self,
+            JobKind::PublishOrWithdraw { .. } | JobKind::Commit { .. }
+        )
+    }
+}
+
 /// Why a durable job did not land, and — for a pre-dispatch one — what it left behind.
 ///
 /// Two cases, because a caller must answer two different questions with them. Both say the

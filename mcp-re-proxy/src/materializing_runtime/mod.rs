@@ -117,9 +117,15 @@ impl MaterializingRuntime {
         self.proxy = Some(proxy);
     }
 
-    /// Take ownership of the control runtime, when the deployment has one.
+    /// Take ownership WHERE THE RUNTIME IS STARTED — a local held to the assembly's end
+    /// unwinds by declaration order on every `?` between (r12 R12-635).
     pub(crate) fn install_control(&mut self, control: Option<ControlRuntime>) {
         self.control = control;
+    }
+
+    /// BORROWED, so a consumer built on it never becomes the thing that reclaims it.
+    pub(crate) fn control(&self) -> Option<&ControlRuntime> {
+        self.control.as_ref()
     }
 
     /// Every required resource is owned: assemble the runtime and advance the lifecycle.

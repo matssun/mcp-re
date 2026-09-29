@@ -22,6 +22,7 @@ members = [
     "mcp-re-transport",   # Client-side mTLS transport (MCPS-053 — verifying rustls client)
     "mcp-re-policy",      # Delegation/authorization profiles (Phase 5 — placeholder)
     "mcp-re-http-profile", # ADR-MCPRE-050 minimal proof path — RFC 9421 + RFC 9530 HTTP standards profile (pure: no networking/async/fs)
+    "mcp-re-operator-display", # The ONE projection of an operator-configured locator for human eyes — scheme/host/port only, every credential-bearing component removed and its removal reported (std-only, zero deps)
     "mcp-re-demo",        # demo certificate material — the DemoFixtures mTLS fixture generator
     "mcp-re-test-paths",  # Test-only: resolve binaries + data fixtures under Bazel runfiles OR Cargo
 ]

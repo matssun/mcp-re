@@ -155,9 +155,9 @@ fn audience() -> AudienceTuple {
     }
 }
 
-/// The full-profile audit inputs. The blocks under test carry an `OauthDpop` binding
-/// over `b"tok"` and no `Authorization` header, so the material function is what makes
-/// that binding checkable — a binding whose credential cannot be obtained fails closed.
+/// The full-profile audit inputs. The blocks under test carry an `OauthMtls` binding
+/// over `b"tok"`, whose credential is caller material, so the material function is what
+/// makes that binding checkable — a binding whose credential cannot be obtained fails closed.
 fn artifact_material(_: &ArtifactBinding) -> Option<Vec<u8>> {
     Some(b"tok".to_vec())
 }
@@ -186,7 +186,7 @@ fn block(continuation: Option<HttpContinuation>) -> HttpRequestEvidenceBlock {
         profile: PROFILE_TAG.into(),
         audience: audience(),
         artifact_bindings: vec![ArtifactBinding::opaque_digest(
-            ArtifactType::OauthDpop,
+            ArtifactType::OauthMtls,
             b"tok",
         )],
         continuation,

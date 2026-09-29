@@ -20,6 +20,18 @@ use crate::key_source::KeyError;
 use super::LoginSessionFactory;
 use super::SessionOpError;
 
+/// Amortizes the PKCS#11 LOGIN across operations (audit M16): instead of opening a
+/// fresh session and performing a `C_Login` on EVERY signed response — which makes
+/// signing latency/availability hostage to token login throughput and is a
+/// boundary DoS amplification — this holds ONE logged-in session behind a `Mutex`
+/// and reuses it. A fresh login happens only on first use or when the cached
+/// session has gone invalid (handle closed / token re-inserted / login lapsed), so
+/// N sequential signs perform far fewer than N logins.
+///
+/// Fail-closed is preserved: a *fatal* [`SessionOpError::Fatal`] (a real sign /
+/// lookup failure) is propagated immediately and never retried; only a
+/// [`SessionOpError::SessionInvalid`] triggers a single re-open-and-retry. If the
+/// re-open itself fails, that error is surfaced (no in-process fallback, no
 /// fabricated signature).
 pub(crate) struct AmortizedSession<S> {
     /// The cached logged-in session, lazily opened on first use and re-opened on a

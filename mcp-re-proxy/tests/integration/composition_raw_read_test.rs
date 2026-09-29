@@ -80,11 +80,6 @@ const ORDINARY: &[(&str, &str)] = &[
          peer_trust_anchors. WHICH custody holds the channel key is not read here: that is \
          ChannelCredentialCustodyState's, and the composition root consumes its projection",
     ),
-    (
-        "trust_domain",
-        "the deployment's own trust-domain coordinate; ServerIdentity owns what is built \
-         from it",
-    ),
 ];
 
 /// Every `values.<field>` the production half of `app.rs` reads.

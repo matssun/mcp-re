@@ -666,6 +666,46 @@ expect_red = [
 ]
 
 [[probe]]
+id = "M426-delegated-bound-content-digest"
+unit = "http_profile.bound_response_shared_facts"
+theorem = "THM-0021"
+conjunct = "the covered Content-Digest agreed with the body"
+path = "mcp-re-http-profile/src/verify/full/delegated/bound.rs"
+anchor = """
+    verify_content_digest_sha256(digest_header, &response.body)?;
+
+    // Signature-input parse + required components + params gate (keyid).
+"""
+weakening = """
+    let _ = verify_content_digest_sha256(digest_header, &response.body);
+
+    // Signature-input parse + required components + params gate (keyid).
+"""
+expect_red = [
+  "tests/delegation_e2e_test#body_tamper_is_caught_by_content_digest",
+]
+
+[[probe]]
+id = "M427-delegated-bound-req-components"
+unit = "http_profile.bound_response_shared_facts"
+theorem = "THM-0021"
+conjunct = "the signature verified over a base whose ;req resolved against the supplied request"
+path = "mcp-re-http-profile/src/verify/full/delegated/bound.rs"
+anchor = """
+        &REQUIRED_RESPONSE_COMPONENTS,
+        &REQUIRED_RESPONSE_REQ_COMPONENTS,
+    )?;
+"""
+weakening = """
+        &REQUIRED_RESPONSE_COMPONENTS,
+        &[],
+    )?;
+"""
+expect_red = [
+  "tests/delegation_e2e_test#a_delegated_bound_response_not_covering_a_req_component_is_refused",
+]
+
+[[probe]]
 id = "M18-delegated-unbound-req-refusal"
 unit = "http_profile.unbound_response_shared_facts"
 theorem = "THM-0022"
@@ -2424,12 +2464,12 @@ conjunct = "nbf/exp are read out of the published credential, never taken from t
 # implementation.
 path = "mcp-re-http-profile/src/custody/active_key.rs"
 anchor = """
-            delegated_kid: claims.delegated_kid,
+            jti: claims.jti,
             nbf: claims.nbf,
             exp: claims.exp,
 """
 weakening = """
-            delegated_kid: claims.delegated_kid,
+            jti: claims.jti,
             nbf: requested_claims.nbf,
             exp: requested_claims.exp,
 """
@@ -2875,15 +2915,22 @@ conjunct = "A store that does not answer the atomic admission refuses the exchan
 # nothing after it to undo. Reading a store error as freshness serves a replayed request as a
 # fresh one on exactly the deployments whose infrastructure is already in trouble.
 path = "mcp-re-http-profile/src/dispatch.rs"
+# RE-ADJUDICATED: the key is now reached through the sealed product's projection and the
+# freshness through the verified product's own accessor. The conjunct and the weakening are
+# unchanged — an unanswered store read as `Fresh`.
 anchor = """
-    match replay_key.check_and_insert(replay, verified.floor.expires)? {
+    match prepared
+        .replay_key()
+        .check_and_insert(replay, verified.expires())?
+    {
         ReplayDecision::Fresh => {}
         ReplayDecision::Replay => return Err(DispatchError::ReplayDetected),
     }
 """
 weakening = """
-    match replay_key
-        .check_and_insert(replay, verified.floor.expires)
+    match prepared
+        .replay_key()
+        .check_and_insert(replay, verified.expires())
         .unwrap_or(ReplayDecision::Fresh)
     {
         ReplayDecision::Fresh => {}
@@ -2940,18 +2987,23 @@ conjunct = "A store that self-reports the single-process reference class is refu
 # There is no async `dispatch_request` to fall through to, so deleting this arm leaves a
 # fleet-strict deployment admitting against a store that says it cannot prevent a
 # cross-node replay — and nothing beneath it refuses.
+# RE-ADJUDICATED, and the probe got STRONGER rather than merely moving. The old weakening
+# was a pure deletion of the arm; that no longer compiles, because the witness this block
+# produces is what steps 2-3 require — which is the property file 9 pass 1 added, and a
+# compile error is a better falsifier than a red test. What remains falsifiable, and what
+# this probe now applies, is a LIE about the posture: the decision is still made, still
+# reads the store's class, and still refuses — for a deployment that did not ask for
+# fleet-strict. Same shape as M323 one crate over, and the same reason.
 path = "mcp-re-proxy/src/http_profile_dispatch.rs"
 anchor = """
-    if config.fleet_strict
-        && tier.durability_class() == ReplayDurabilityClass::SingleProcessReference
-    {
-        return Err(ProxyDispatchError::Dispatch(
-            DispatchError::NonSharedReplayTier,
-        ));
-    }
+    let posture = DispatchConfig {
+        fleet_strict: config.fleet_strict,
+    };
 """
 weakening = """
-    let _ = tier.durability_class();
+    let posture = DispatchConfig {
+        fleet_strict: false,
+    };
 """
 expect_red = [
   "lib#http_profile_dispatch::tests::a_strong_declared_tier_does_not_excuse_a_single_process_async_store",
@@ -3685,17 +3737,21 @@ id = "M124-an-unreadable-eviction-policy-is-refused"
 unit = "proxy.redis_replay_adapter"
 theorem = "THM-0106"
 conjunct = "a maxmemory-policy the store could not read is refused too — an unverifiable policy is not evidence of a safe one"
-path = "mcp-re-proxy/src/async_redis_store.rs"
+# RE-ADJUDICATED, not restored. The decision moved to `retention_promise.rs` when the
+# admission source turned out to need the same question answered; the conjunct is
+# unchanged and now has one site instead of one per store, so the probe follows it there.
+path = "mcp-re-proxy/src/async_redis_store/retention_promise.rs"
 anchor = """
-        None => Err(ReplayStoreError::Unavailable {
+        None => Err(format!(
 """
 weakening = """
         None => Ok(()),
         #[expect(unreachable_patterns, reason = "probe weakening")]
-        None => Err(ReplayStoreError::Unavailable {
+        None => Err(format!(
 """
 expect_red = [
   "lib#async_redis_store::tests::every_evicting_policy_is_refused_and_so_is_an_unreadable_one",
+  "lib#async_redis_store::retention_promise::tests::only_noeviction_is_a_retention_promise",
 ]
 
 [[probe]]
@@ -4147,15 +4203,10 @@ conjunct = "a pre-dispatch retention fault earns the answer its own kind deserve
 # see it.
 path = "mcp-re-proxy/src/http_profile_serve/retention/mod.rs"
 anchor = """
-            RetentionError::StoreRetired(_) => {
-                eprintln!(
-                    "evidence retention could not {attempted}, and this replica will not \\
-                     accept the next one either: {error}"
-                );
-                unavailable(500)
-            }
+            RetentionError::StoreRetired(_) => (Fault::Retired, unavailable(500)),
 """
 weakening = """
+            RetentionError::StoreRetired(_) => (Fault::Backpressure, unavailable(503)),
 """
 expect_red = [
   "lib#http_profile_serve::retention::tests::each_pre_dispatch_fault_earns_its_own_answer",
@@ -4228,11 +4279,11 @@ conjunct = "the writer loop's timeout arm reports the drops a stopped burst alre
 # directly and stays green under it, which is the asymmetry this probe exists to show.
 path = "mcp-re-proxy/src/audit_sink/writer.rs"
 anchor = """
-        let mut stderr = std::io::stderr().lock();
+        let mut stderr = out();
         report_drops(&mut stderr, dropped, failed);
 """
 weakening = """
-        let mut stderr = std::io::stderr().lock();
+        let mut stderr = out();
         if line.is_some() {
             report_drops(&mut stderr, dropped, failed);
         }
@@ -6800,14 +6851,14 @@ theorem = "THM-0091"
 conjunct = "the validity a response may advertise is bounded by the credential it is signed under, not only by the configured TTL"
 path = "mcp-re-proxy/src/http_profile_serve/signing_window.rs"
 anchor = """
-            expires: now.saturating_add(ttl_secs).min(exp),
+        let expires = now.saturating_add(ttl_secs).min(key.exp());
 """
 weakening = """
-            expires: now.saturating_add(ttl_secs),
+        let expires = now.saturating_add(ttl_secs);
 """
 expect_red = [
   "lib#http_profile_serve::signing_window::tests::the_credential_bounds_a_ttl_that_would_outlive_it",
-  "lib#http_profile_serve::signing_window::tests::an_expired_credential_advertises_no_future_validity",
+  "lib#http_profile_serve::signing_window::tests::an_expired_credential_opens_no_window",
 ]
 note = """
 TWO BOUNDS, AND THE OTHER ONE IS THE OPERATOR'S. The configured TTL is what the deployment
@@ -7655,6 +7706,331 @@ touching any string.
 """
 
 [[probe]]
+id = "M422-proxy-the-admission-walk-observes-without-enforcing"
+unit = "proxy.key_file_custody_admission"
+conjunct = "the walk ENFORCES the policy over every covered file — the first refusal stops it — rather than observing and continuing"
+# The composition's own production property, and it has one: a walk that calls the
+# observation and discards its verdict still visits every path, still builds a product, and
+# still looks like a check. `app.rs` ran exactly this shape for its whole life — a loop
+# whose result went nowhere — which is why the earned product exists at all.
+path = "mcp-re-proxy/src/capability_materialization/key_file_custody/mod.rs"
+anchor = """
+        let material = checked_key_file::observe(path, policy)?;
+"""
+weakening = """
+        let material = checked_key_file::observe(path, policy).unwrap_or(None);
+"""
+expect_red = [
+  "lib#capability_materialization::key_file_custody::tests::one_illegal_key_file_refuses_the_whole_admission",
+]
+note = """
+`the_admitted_product_names_the_scope_it_walked` stays GREEN under this weakening, and that
+is the point of having both: the SCOPE is still right, every observation still happens, and
+the deployment starts anyway. A battery holding only the scope control would report the
+enforcement being deleted as no change.
+
+This probe was added because `verify --manifests` refused the unit without one (ADR-MCPRE-068
+N1), and the refusal was correct: the first draft argued a falsifier here would duplicate the
+three roles' probes. It does not — those attack WHAT is covered, WHAT a mode means and WHAT
+groups exist, and none of them can see a composition that asks all three and ignores the
+answer.
+"""
+
+[[probe]]
+id = "M423-proxy-an-unestablishable-posture-passes"
+unit = "proxy.key_file_posture_observation"
+conjunct = "an open or `fstat` that fails for any reason other than `no such file` REFUSES, because the posture of a file the proxy is about to read is either established or it is not"
+# The fail-open this exists to exclude, and the one that boots silently: a world-readable
+# signing seed on a networked or overlay mount (EIO, ESTALE, EACCES on the directory) is
+# unstat'able, and reading that as compliance starts the proxy over it.
+path = "mcp-re-proxy/src/capability_materialization/key_file_custody/checked_key_file.rs"
+anchor = """
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(unobservable(e)),
+"""
+weakening = """
+        Err(_) => return Ok(None),
+"""
+expect_red = [
+  "lib#capability_materialization::key_file_custody::checked_key_file::tests::a_key_file_whose_posture_cannot_be_established_is_refused",
+]
+note = """
+COLLAPSING THE TWO ABSENCES IS THE TEMPTING SIMPLIFICATION, and it is wrong in one
+direction only: `NotFound` genuinely is not a fail-open — there is no file whose permissions
+could be wrong, and the loader resolves the same path a moment later and reports the absence
+with a diagnostic that names it. Every OTHER error is the proxy not knowing about a file it
+is about to read.
+
+`an_absent_key_file_is_not_an_error` stays GREEN, correctly: the weakening makes the
+absent case Ok too, which it already was. That is what distinguishes this probe from one
+satisfied by a role that refuses everything.
+"""
+
+[[probe]]
+id = "M425-proxy-the-consumed-bytes-come-from-a-second-resolution"
+unit = "proxy.key_file_posture_observation"
+conjunct = "the key material a consumer receives is the bytes read from the checked handle, never a later read of the configured name"
+# r12 R12-630 / R12-634, the owner's same-object ruling. The weakening is the design this
+# replaced: the value remembers WHERE the checked file was and the consumer reads it there
+# when it loads — so anything that replaces or retargets the name between the check and the
+# load hands the proxy a file whose posture nobody saw.
+path = "mcp-re-proxy/src/capability_materialization/key_file_custody/checked_key_file.rs"
+anchor = """
+    pub(crate) fn into_bytes(self) -> Zeroizing<Vec<u8>> {
+        self.bytes
+    }
+"""
+weakening = """
+    pub(crate) fn into_bytes(self) -> Zeroizing<Vec<u8>> {
+        Zeroizing::new(std::fs::read(&self.path).unwrap_or_default())
+    }
+"""
+expect_red = [
+  "lib#capability_materialization::key_file_custody::checked_key_file::tests::the_checked_object_is_the_consumed_object_when_the_path_is_replaced",
+]
+note = """
+EVERY POSTURE TEST STAYS GREEN UNDER THIS WEAKENING, and that is why the probe exists: each
+file is checked and consumed while nothing touches its name, so a check-then-reread consumes
+the same bytes. Only a control that REPLACES the path between check and load tells them
+apart, and it replaces it with a world-readable file so the consumed bytes are ones whose
+posture was never admitted.
+
+WHAT NO CONTROL HERE REACHES, stated rather than implied: a re-resolution INSIDE `observe`,
+between the `fstat` and the read. That window opens and closes within one call, so a
+black-box test cannot put a replacement into it without a test-only seam in production code.
+It is held by the code — the read is from `file`, and the `verbose_file_reads` allowance
+beside it says why `fs::read(path)` is the defect — and by review, not by this lane.
+"""
+
+[[probe]]
+id = "M421-proxy-one-custodys-answer-suppresses-anothers-key-file"
+unit = "proxy.key_file_floor_scope"
+conjunct = "each custody machine answers for its own locators, and no machine's answer suppresses another machine's file"
+# The weakening is the defect verbatim: an early return on the RESPONSE-signing custody's
+# answer, before the CHANNEL machine's file is appended. It compiles, every other key-file
+# control stays green, and the TLS server private key stops being permission-checked for a
+# deployment whose response seed comes from the environment.
+path = "mcp-re-proxy/src/capability_materialization/key_file_custody/covered_files.rs"
+anchor = """
+    let mut paths = if custody.locators_are_filesystem_paths() {
+        custody.disk_secret_paths()
+    } else {
+        Vec::new()
+    };
+"""
+weakening = """
+    if !custody.locators_are_filesystem_paths() {
+        return Vec::new();
+    }
+    let mut paths = custody.disk_secret_paths();
+"""
+expect_red = [
+  "lib#capability_materialization::key_file_custody::covered_files::tests::an_env_seed_response_custody_does_not_suppress_the_channel_key_file",
+]
+note = """
+`the_pkcs11_pin_file_is_permission_checked` stays GREEN under this weakening and is in the
+battery for the opposite reason: its custody IS filesystem-backed, so the early return never
+fires for it. That is precisely why the defect survived — every fixture that exercised this
+projection used a custody whose own locators were paths, and the one state that makes the
+two machines disagree had no fixture at all.
+
+MEASURED BOTH WAYS BEFORE THIS PROBE WAS WRITTEN: the fix reverted by hand, the control red;
+restored, green.
+"""
+
+[[probe]]
+id = "M424-proxy-the-recognised-state-reaches-the-wrong-certificate-policy"
+unit = "proxy.trust_composition_root"
+conjunct = "the identity policy the recognised channel-binding state installs reaches the certificate interpreter's vocabulary unchanged, so the state and the policy the interpreter runs under cannot disagree"
+# r11 R11-127's worry, made falsifiable. The weakening CROSSES one arm of the production
+# conversion: a `ExactDnsSan` deployment would run the certificate interpreter under the
+# URI-SAN policy while the composition root reports DNS-SAN — the request signer compared
+# against one field while the deployment announces another, with no refusal anywhere.
+path = "mcp-re-proxy/src/facades/asserted_identity.rs"
+anchor = """
+            IdentityPolicy::DnsSan => CertificateIdentityPolicy::DnsSan,
+"""
+weakening = """
+            IdentityPolicy::DnsSan => CertificateIdentityPolicy::UriSan,
+"""
+expect_red = [
+  "lib#app::tests::the_channel_binding_effects_are_a_function_of_the_recognised_state",
+]
+note = """
+THE COLUMN THAT ASSERTED NOTHING IS WHY THIS PROBE CAN EXIST. The control carried a fourth
+tuple column naming the certificate field and bound it to `_` (r11 R11-129), so it read as
+covering the field the seam reads while establishing nothing about it. Driving it through
+the real `From` is what makes the crossing visible.
+
+THE LAST HOP IS DELIBERATELY NOT HERE. `CertificateIdentityPolicy::selects` — the policy
+choosing its own certificate field — is private to `communication_assurance` and controlled
+there. Asserting the whole chain from the composition root would have needed that method
+widened, which is a production widening with a test-shaped justification.
+"""
+
+[[probe]]
+id = "M420-proxy-the-unwritten-tail-of-the-group-buffer-is-a-group"
+unit = "proxy.process_group_set"
+conjunct = "only the prefix `getgroups` actually wrote is taken, so an unwritten tail cannot contribute a group this process is not in"
+# The weakening is the defect verbatim: take the whole buffer, ignoring how much the
+# kernel wrote. It compiles, `process_gids` still returns a plausible set on every machine
+# a test runs on, and the only observable difference is a buffer the kernel filled
+# PARTIALLY — which the pure function is what makes reachable at all.
+path = "mcp-re-proxy/src/capability_materialization/key_file_custody/process_groups.rs"
+anchor = """
+    let filled = usize::try_from(filled).unwrap_or(0);
+    buf.get(..filled.min(buf.len())).unwrap_or(&[])
+"""
+weakening = """
+    let _ = filled;
+    buf
+"""
+expect_red = [
+  "lib#capability_materialization::key_file_custody::process_groups::tests::the_unwritten_tail_is_not_a_group_this_process_is_in",
+  "lib#capability_materialization::key_file_custody::process_groups::tests::a_failed_call_yields_no_supplementary_groups",
+]
+note = """
+THE CONSEQUENCE, STATED SO THE SEVERITY IS NOT INFERRED FROM THE SHAPE: the tail of a
+`getgroups` buffer holds its initialiser, `0`. Taking the whole buffer therefore puts gid 0
+— root — into the set of groups this process is in, and `KeyFileAccessPolicy::violation`
+admits a group-readable key file when the file's group is in that set. Under
+`--allow-group-readable-key-files` a 0640 key file owned by group root is then accepted by
+a process that is not in group root.
+
+`a_fully_written_buffer_is_taken_whole` and `the_effective_gid_is_always_in_the_set` stay
+GREEN under this weakening, correctly and necessarily: taking too much cannot break the
+case where taking everything is right. They are in the battery for the opposite direction —
+without them, a "fix" that returned no supplementary groups at all would satisfy the two
+red controls above while refusing every fsGroup mount the relaxation exists to admit.
+"""
+
+[[probe]]
+id = "M417-client-a-provider-mints-the-header-derived-dpop-binding"
+unit = "client.binding_spec_refusal"
+conjunct = "a provider presenting `oauth-dpop` is refused in EVERY form, because that binding is header-derived and a provider-supplied one attests to a credential no covered header carries"
+# The weakening is the tree as it stood: the rule asserted in a comment, and nothing in the
+# code reading `artifact_type`. It compiles, every other provider control stays green, and
+# a request goes out with TWO `oauth-dpop` bindings — the header-derived one and the
+# provider's — attesting to different credentials, with nothing on the wire saying which
+# the caller actually presented.
+path = "mcp-re-client-core/src/binding_spec/mod.rs"
+anchor = """
+        if spec.artifact_type == ArtifactType::OauthDpop {
+            return Err(BindingSpecRefusal::DpopIsNotProviderSupplied);
+        }
+"""
+weakening = """
+"""
+expect_red = [
+  "lib#binding_spec::tests::a_provider_may_not_present_the_header_derived_dpop_binding",
+]
+note = """
+`a_provider_binding_of_another_artifact_type_is_still_accepted` is deliberately absent from
+`expect_red` and must stay GREEN: deleting a refusal cannot break the bindings that were
+never refused, and naming it would make the probe unsatisfiable for a reason unrelated to
+the conjunct. It is in the unit's battery for the opposite purpose — without it, a rule
+that refused the whole provider seam would satisfy the refusal above while deleting the
+feature it guards.
+"""
+
+[[probe]]
+id = "M418-client-a-partial-continuation-is-dropped-again"
+unit = "client.continuation_all_or_nothing"
+conjunct = "one to four of the five MRTR handles is a REFUSAL, not a silently dropped continuation"
+# The weakening is the defect verbatim — the `if let (Some, Some, Some, Some, Some)` with a
+# fall-through, which is what both published SDKs did. It compiles, every all-five and
+# all-none control stays green, and a caller that loses one handle gets a valid signed
+# request that is simply not an answer leg, with no error anywhere in the client.
+path = "mcp-re-client-core/src/continuation_handles.rs"
+anchor = """
+            // `supplied` is 1..=4 on this arm by construction: 0 and 5 are the two arms
+            // above, and the cast is over a count of a five-element array.
+            #[allow(clippy::cast_possible_truncation)]
+            _ => Err(PartialContinuation {
+                supplied: supplied as u8,
+            }),
+"""
+weakening = """
+            _ => Ok(None),
+"""
+expect_red = [
+  "lib#continuation_handles::tests::every_partial_set_is_refused_and_says_how_many_were_supplied",
+  "lib#continuation_handles::tests::the_refusal_carries_a_count_and_no_correlation_material",
+]
+note = """
+THE WEAKENING IS NOT A DELETION, it is the OLD BEHAVIOUR: `Ok(None)` is exactly what the
+`if let` produced by falling through, so this probe measures the repair against the thing it
+replaced rather than against an absence. The two positive controls stay green under it,
+which is what says the classifier's other two arms are untouched — a probe that turned those
+red would be measuring a broken classifier, not a dropped continuation.
+"""
+
+[[probe]]
+id = "M419-client-an-empty-dpop-token-is-bound-over-nothing"
+unit = "client.dpop_credential_exists"
+conjunct = "an empty OAuth credential is refused rather than minting a binding over zero bytes beside a signed `Authorization: Bearer ` header carrying none"
+path = "mcp-re-client-core/src/dpop_credential.rs"
+anchor = """
+        if token.is_empty() {
+            return Err(EmptyDpopCredential);
+        }
+"""
+weakening = """
+"""
+expect_red = [
+  "lib#dpop_credential::tests::an_empty_credential_is_refused_rather_than_bound_over_nothing",
+]
+note = """
+WHY THE OTHER THREE CONTROLS STAY GREEN, and why that is the point: the binding an ordinary
+credential mints is unchanged, the two projections still read one private field, and only
+emptiness is decided. This repair closes a hole without moving what a correctly-bound
+request looks like on the wire — and a probe whose weakening turned the positive controls
+red would be evidence of the opposite.
+
+MEASURED BEFORE THE REPAIR, so the consequence is not asserted from the shape: with the
+refusal absent, `ArtifactBinding::opaque_digest(OauthDpop, b"")` produces a binding that
+`ArtifactBinding::validate` ACCEPTS — the digest of nothing is still a well-formed
+base64url token — and no serving-side check refuses a zero-length artifact. Nothing
+downstream would have caught it.
+"""
+
+[[probe]]
+id = "M408-the-backslash-is-escaped-even-where-nothing-looks-ambiguous"
+unit = "proxy.audit_text_rendering"
+theorem = "THM-0091"
+conjunct = "The escape of the backslash is UNCONDITIONAL, so no image of the escape can be re-read as a literal — the property that makes the map injective rather than merely separator-free"
+path = "mcp-re-proxy/src/audit_record/scalar.rs"
+anchor = """
+            '\\\\' => out.push_str("\\\\\\\\"),
+"""
+weakening = """
+            '\\\\' if !value[index + 1..].starts_with(|n: char| is_escaped_char(n)) => {
+                out.push_str("\\\\\\\\")
+            }
+            '\\\\' => out.push('\\\\'),
+"""
+expect_red = [
+  "lib#audit_record::scalar::tests::every_scalar_round_trips",
+]
+note = """
+THE WEAKENING IS THE PLAUSIBLE BUG, not a contrived one: "only escape a backslash where the
+next character could be mistaken for an escape body" is the optimisation a reader reaches for
+after noticing that most backslashes are unambiguous. It is also invisible to a corpus of
+ISOLATED hazards, which is what this battery had.
+
+MEASURED, both directions. Against the corpus as it stood before the pairs were added, this
+weakening left `cargo test -p mcp-re-proxy --lib -- audit_record` at 26 passed, 0 failed:
+every seed placed its hazard between ordinary text, `"read\\nx"` has an `n` after the
+backslash and `n` is not itself escaped, and no member anywhere put two escapes next to each
+other. With the adjacency pairs present the same weakening fails on `"\\\\"` — two
+backslashes, whose image is re-read as one.
+
+That is the whole argument for the pairs. R12-736 named the gap in its own words ("two
+escapes adjacent ... not in the corpus"); this probe is what makes closing it evidence rather
+than breadth.
+"""
+
+[[probe]]
 id = "M273-proxy-one-logical-audit-record-is-one-physical-record"
 unit = "proxy.audit_text_rendering"
 theorem = "THM-0091"
@@ -8282,6 +8658,264 @@ deployment answering `None` skips every check while reporting the credential as 
 the two-state answer THM-0032 says the three states exist to prevent.
 """
 
+# ---------------------------------------------------------------------------
+# The §10 reserved-field guard and the verified-context carrier — ADR #415 rev 2 §10
+# ---------------------------------------------------------------------------
+#
+# Four units were registered with `mutation://` in their `evidence` and no probe behind it,
+# which `verify-mutations` refuses as a class: a declared evidence class nothing measures is
+# unmeasured evidence, and it blocks the WHOLE lane rather than only those units. Two of
+# these units carry the campaign's `VerifiedContext` critical, so the lane they silenced is
+# the one that would say whether that seal is load-bearing.
+#
+# One probe each, on the conjunct whose loss would be invisible to a reader: not that the
+# guard works, but that it works on the path nobody looks at — the policy that does NOT
+# carry the block, the `params` shape that cannot be walked, the deployment that is
+# `Disabled` by default, and the block a sender decorated.
+
+[[probe]]
+id = "M404-an-unwalkable-params-is-refused-not-reported-clean"
+unit = "http_profile.reserved_context_key_guard"
+conjunct = "A body shape whose reserved-key positions the guard cannot ENUMERATE is refused, rather than walked as far as it goes and reported clean"
+path = "mcp-re-http-profile/src/context/reserved_key_strip.rs"
+anchor = """
+        None | Some(Value::Object(_)) | Some(Value::Array(_)) => Ok(()),
+"""
+weakening = """
+        _ => Ok(()),
+        #[expect(unreachable_patterns, reason = "probe weakening")]
+        None | Some(Value::Object(_)) | Some(Value::Array(_)) => Ok(()),
+"""
+expect_red = [
+  "lib#context::reserved_key_strip::tests::a_params_that_is_neither_an_object_nor_an_array_is_refused",
+]
+note = """
+The weakened guard still strips every position it CAN reach, so every positive control stays
+green and a reader sees a guard that works. What it stops doing is distinguishing "no
+reserved key was present" from "the shape was one this code cannot enumerate positions in" —
+and it is the second that the inner server would be handed as clean.
+"""
+
+[[probe]]
+id = "M405-the-carrier-capability-follows-the-deployment-act"
+unit = "http_profile.verified_context_conclusion"
+conjunct = "The write capability exists only where the deployment took the `Trusted` arm: a `Disabled` deployment cannot mint the block at all, rather than relying on a caller to consult a selector"
+path = "mcp-re-http-profile/src/context/policy.rs"
+anchor = """
+            VerifiedContextPolicy::Disabled => None,
+"""
+weakening = """
+            VerifiedContextPolicy::Disabled => Some(TrustedInnerChannel(PhantomData)),
+"""
+expect_red = [
+  "lib#context::policy::tests::only_the_trusted_deployment_yields_the_carrier_capability",
+  "lib#context::policy::tests::the_default_deployment_cannot_carry_the_block",
+]
+note = """
+This is the conjunct that makes the capability a capability. With the weakening the type
+still exists, `insert_verified_context` still demands it, and every call site still reads as
+though the policy governs the write — while the default deployment now mints the PEP's
+conclusion into bodies it forwards. A `Disabled` deployment becoming a carrier is precisely
+what the witness was introduced to make unconstructible.
+"""
+
+[[probe]]
+id = "M406-a-decorated-received-block-fails-closed"
+unit = "http_profile.unauthenticated_context_claim"
+conjunct = "A block carrying a member this crate does not know fails closed as malformed, rather than being read for the members it does recognise"
+path = "mcp-re-http-profile/src/context/claim.rs"
+anchor = """
+#[serde(deny_unknown_fields)]
+"""
+weakening = """
+"""
+expect_red = [
+  "lib#context::claim::tests::a_decorated_block_is_refused",
+]
+note = """
+Removing `deny_unknown_fields` is a mechanism revert and not the removal of a decoration:
+unlike `#[serde(default)]` on an `Option`, which serde already implies, this attribute is
+the only thing that refuses an unknown member. Without it a sender can append a member the
+reader silently ignores, which is how a claim acquires a meaning the reader never agreed to.
+"""
+
+[[probe]]
+id = "M415-an-unknown-block-schema-is-read-as-the-current-one"
+unit = "http_profile.verified_context_block_schema"
+conjunct = "a block naming a schema this build does not write is REFUSED, not read as the one it does"
+# The weakening keeps the discriminator required and drops only the comparison, which is
+# the half a required field cannot enforce: every block still declares a shape, and every
+# declared shape is now accepted. It is what "add a version member" looks like when the
+# reader never checks it.
+path = "mcp-re-http-profile/src/context/block_schema.rs"
+anchor = """
+        let declared = String::deserialize(deserializer)?;
+        if declared == VERIFIED_CONTEXT_BLOCK_SCHEMA {
+            return Ok(BlockSchema);
+        }
+"""
+weakening = """
+        let declared = String::deserialize(deserializer)?;
+        if !declared.is_empty() {
+            return Ok(BlockSchema);
+        }
+"""
+expect_red = [
+  "lib#context::block_schema::tests::a_schema_this_build_does_not_write_is_refused",
+  "lib#context::claim::tests::a_block_declaring_another_schema_is_refused",
+]
+note = """
+BOTH READINGS ARE NAMED because they are different lanes of the same fact: the first drives
+the type directly, the second drives a whole verified-context block through
+`extract_verified_context`. A registry holding only the first would attest a refusal that
+could be correct in the type and unreachable through the block.
+
+`a_block_with_no_schema_discriminator_is_refused` stays GREEN, correctly: an absent field
+never reaches this function, because serde refuses the block before `Deserialize` runs. It
+is named in no `expect_red` here for that reason, and its own falsifier would be making the
+field optional — which does not compile, since the type has no meaningful default that is
+not the current schema.
+"""
+
+[[probe]]
+id = "M416-the-writer-emits-a-schema-its-own-reader-refuses"
+unit = "http_profile.verified_context_block_schema"
+conjunct = "the discriminator the writer emits is the one the reader requires, so this build cannot produce blocks its own reader refuses"
+# THE FAILURE A MANDATORY DISCRIMINATOR INTRODUCES, and the reason the unit spans both
+# halves. The weakening changes only what is written. Every refusal above stays exactly as
+# correct as it was; what breaks is the agreement, and a PEP whose blocks its own inner
+# server rejects is an outage that no test of either half alone can see.
+path = "mcp-re-http-profile/src/context/block_schema.rs"
+anchor = """
+        serializer.serialize_str(VERIFIED_CONTEXT_BLOCK_SCHEMA)
+"""
+weakening = """
+        serializer.serialize_str("se.syncom/mcp-re.verified-context/2")
+"""
+expect_red = [
+  "lib#context::block_schema::tests::the_only_inhabitant_serializes_as_the_current_schema",
+  "lib#context::block_schema::tests::what_the_writer_emits_the_reader_accepts",
+  "lib#context::verified::tests::the_written_block_declares_the_current_schema",
+  "lib#context::verified::tests::what_the_writer_emits_the_reader_accepts_with_nothing_unstated",
+]
+note = """
+THE ROUND TRIP IS NOT ENOUGH ON ITS OWN, which is why the emitted BYTES are asserted too:
+a build that changed the constant in one place would keep every round trip green while
+writing a representation nothing else in the estate reads. Two of the four controls above
+read the wire form directly for exactly that reason.
+"""
+
+[[probe]]
+id = "M407-the-pep-owned-strip-runs-under-every-policy"
+unit = "proxy.verified_context_carrier_boundary"
+conjunct = "The PEP-owned `_meta` keys are removed from every request REGARDLESS of policy, so a deployment with the carrier disabled is not one forwarded body away from delivering caller-authored context"
+path = "mcp-re-proxy/src/http_profile_serve/body_boundary.rs"
+anchor = """
+            None => stripped.bytes().to_vec(),
+"""
+weakening = """
+            None => body.to_vec(),
+"""
+expect_red = [
+  "lib#http_profile_serve::body_boundary::tests::prepare_strips_the_reserved_key_under_every_policy",
+]
+note = """
+The weakening keeps the strip — `strip_pep_owned` still runs, still reports the seeded
+positions, and the diagnostic line a caller's attempt produces is unchanged — and merely
+forwards the ORIGINAL bytes on the untrusted arm. That is the defect in its most plausible
+form: an optimisation that avoids a copy on the path where the PEP writes nothing, taken by
+someone who reasoned that a deployment which carries no context has nothing to protect.
+"""
+
+# ---------------------------------------------------------------------------
+# The admission store's retention promise — the CALL SITE, and why it needed a probe
+# ---------------------------------------------------------------------------
+#
+# M401 is the probe this campaign wrote because the mutation had already been run and
+# SURVIVED: with the check deleted from `connect`, `cargo test -p mcp-re-proxy --lib
+# --features redis_replay` reported 1554 passed, 0 failed. The decision was tested and the
+# CALLER was not, which is the shape a green battery hides best.
+
+[[probe]]
+id = "M401-admission-retention-is-asserted-at-connect"
+unit = "proxy.admission_record_retention"
+conjunct = "The instance backing the admission record is refused AT CONNECT, not merely judged by a function some caller may forget to call"
+path = "mcp-re-proxy/src/redis_admission_source/mod.rs"
+anchor = """
+        Self::retention_refusal(retention_promise::read_policy(&mut conn).await.as_deref())?;
+"""
+weakening = """
+        let _ = retention_promise::read_policy(&mut conn).await;
+"""
+expect_red = [
+  "lib#redis_admission_source::tests::an_evicting_redis_is_refused_by_the_admission_connect_itself",
+]
+note = """
+The weakening keeps the round trip and discards the verdict, so a reviewer reading `connect`
+still sees the policy being read. That is precisely the state the tree was in before this
+control existed: the decision was exercised directly and nothing established that `connect`
+consulted it.
+"""
+
+[[probe]]
+id = "M402-admission-retention-admits-the-supported-instance"
+unit = "proxy.admission_record_retention"
+conjunct = "A `noeviction` instance still connects, so the refusal is the policy and not the check"
+path = "mcp-re-proxy/src/redis_admission_source/mod.rs"
+anchor = """
+        retention_promise::retention_verdict(policy, &retention_promise::ADMISSION)
+            .map_err(|details| AdmissionSourceError::Unavailable { details })
+"""
+weakening = """
+        let _ = policy;
+        Err(AdmissionSourceError::Unavailable {
+            details: "refused".to_string(),
+        })
+"""
+expect_red = [
+  "lib#redis_admission_source::tests::a_noeviction_redis_is_accepted_by_the_admission_connect",
+  "lib#redis_admission_source::tests::an_evicting_admission_instance_is_refused_with_the_admission_consequence",
+]
+note = """
+The negative half alone is satisfied by a connect that refuses every instance, and by a
+scripted server too broken to answer — either would make the admission source unusable while
+reading as a working control. This is the conjunct that separates a gate from an outage.
+"""
+
+[[probe]]
+id = "M403-one-locator-projection-removes-the-userinfo"
+unit = "mcp-re-operator-display.locator_projection"
+theorem = "THM-0091"
+conjunct = "An operator-supplied locator reaches a diagnostic only through a projection that cannot carry its userinfo, and a shape the projection cannot decompose is NAMED rather than echoed"
+# RE-ADJUDICATED. The projection moved to its own workspace crate on the owner's
+# instruction, and was rewritten over `std` because that crate takes no dependency — so
+# the `hyper::Uri` anchor names code that no longer exists anywhere. The conjunct is
+# unchanged, and the weakening is the same one: echo what could not be decomposed.
+path = "mcp-re-operator-display/src/locator.rs"
+anchor = """
+        if raw.starts_with('/') {
+            return NO_AUTHORITY.to_string();
+        }
+        return UNPARSEABLE.to_string();
+"""
+weakening = """
+        if raw.starts_with('/') {
+            return NO_AUTHORITY.to_string();
+        }
+        return raw.to_string();
+"""
+expect_red = [
+  "lib#locator::tests::a_scheme_less_credential_bearing_locator_is_named_not_echoed",
+  "lib#locator::tests::a_shape_the_projection_cannot_decompose_is_named",
+]
+note = """
+The echo branch is the one that matters and the one an author is most likely to write: a
+locator the projection cannot parse is exactly the shape every `config_state` locator-shape
+violation fires on, because a string with no `://` is what those clauses refuse. Echoing it
+"so the operator can see what they typed" publishes the password of anyone who typed
+`user:pass@host:port`.
+"""
+
 [[probe]]
 id = "M287-admission-record-addressing"
 unit = "proxy.admission_record_addressing"
@@ -8765,10 +9399,22 @@ id = "M323-httpprofile-the-fleet-strict-store-class-gate"
 unit = "http_profile.fleet_strict_store_class"
 theorem = "THM-0092"
 conjunct = "under the fleet-strict posture, replay admission refuses BEFORE any store side effect when the deployment wires a store that self-reports the single-process reference class"
-path = "mcp-re-http-profile/src/dispatch.rs"
-anchor = "    if config.fleet_strict && replay.is_single_process_reference() {\n        return Err(DispatchError::NonSharedReplayTier);\n    }\n"
-weakening = "    if !config.fleet_strict && replay.is_single_process_reference() {\n        return Err(DispatchError::NonSharedReplayTier);\n    }\n"
-expect_red = ["tests/dispatch_test#fleet_strict_rejects_single_process_reference_cache"]
+# RE-ADJUDICATED, not restored. The gate moved out of `dispatch_request` into the sole
+# decision procedure `DispatchConfig::admit_replay_tier`, which now also PRODUCES the
+# witness `prepare_http_dispatch` requires. The conjunct is unchanged and the weakening is
+# the same inversion; what changed is that there is one site instead of one per entry point.
+path = "mcp-re-http-profile/src/dispatch/replay_posture.rs"
+anchor = """
+        if !self.fleet_strict {
+"""
+weakening = """
+        if self.fleet_strict {
+"""
+expect_red = [
+  "tests/dispatch_test#fleet_strict_rejects_single_process_reference_cache",
+  "lib#dispatch::replay_posture::tests::fleet_strict_refuses_a_single_process_reference_store_class",
+  "lib#dispatch::replay_posture::tests::outside_fleet_strict_the_reference_class_is_a_decision_and_not_an_absence",
+]
 note = """
 THE POSTURE IS INVERTED RATHER THAN DELETED, which is the smaller and the more dangerous
 weakening. The gate still exists, still reads the store's self-reported class, and still
@@ -8783,6 +9429,47 @@ process-local protection".
 `is_single_process_reference()`, so the admitting direction cannot see this arm at all. A
 battery holding only the positive control would report the inversion as no change, which is
 why both directions are declared.
+"""
+
+[[probe]]
+id = "M412-httpprofile-an-unclaimed-continuation-offer-is-not-discarded"
+unit = "http_profile.continuation_offer_agreement"
+conjunct = "retained continuation bases offered for a request whose signed block claims no continuation are REFUSED, not discarded into an ordinary first-leg admission"
+# The weakening is the defect verbatim — `(None, _) => false`, which is what the arm was
+# before r12 file 9. It compiles, every continuation test stays green, and a caller that
+# believes it is answering a correlation gets a successful first-leg dispatch with no
+# signal that its correlation was dropped. Nothing downstream can recover the difference:
+# by the time the caller sees `Ok`, the nonce is burned.
+path = "mcp-re-http-profile/src/dispatch.rs"
+anchor = """
+        (None, Some(_)) => {
+            return Err(DispatchError::Profile(
+                HttpProfileError::ContinuationBindingFailed,
+            ))
+        }
+        // Ordinary first-leg request: no continuation to bind, and none offered.
+        (None, None) => false,
+"""
+weakening = """
+        (None, _) => false,
+"""
+expect_red = [
+  "lib#dispatch::tests::retained_bases_offered_for_a_request_that_claims_no_continuation_are_refused",
+]
+note = """
+THE POSITIVE CONTROLS MUST STAY GREEN, and they do: this weakening only merges the two
+`None`-claim arms, so `a_first_leg_request_prepares_with_no_continuation` and
+`an_answer_leg_prepares_against_the_retained_bases` are untouched. That is what
+distinguishes this probe from one satisfied by a seam that has started refusing everything
+— and it is why the unit declares the two positives alongside the two refusals rather than
+the refusals alone.
+
+`a_claimed_continuation_with_no_retained_bases_is_refused` is deliberately NOT named here.
+It reads the `(Some(_), None)` arm, which this weakening does not touch, so naming it would
+make the probe unsatisfiable for a reason that has nothing to do with the conjunct. Its own
+falsifier is the deletion of that arm, which is `continuation_unbypassability`'s proof
+obligation rather than a mutation — a preparation returning `Ok` with no bases to bind
+against is exactly the state the Verus `ensures` excludes.
 """
 
 # ---------------------------------------------------------------------------
@@ -9285,19 +9972,22 @@ id = "M337-proxy-an-explicit-worker-depth-is-not-capped"
 unit = "proxy.fleet_topology_provenance"
 theorem = "THM-0077"
 conjunct = "a serving component cannot disagree with the owner about what was configured"
+# RE-ADJUDICATED at the new implementation, not restored: Owner Ruling 7 made the resolver
+# return a `ShardDepth` so the depth's provenance survives it. The conjunct is unchanged and
+# the weakening is the same clamp, now applied inside the stated arm.
 path = "mcp-re-proxy/src/async_fleet/mod.rs"
 anchor = """
     let workers = if configured_workers != 0 {
-        configured_workers
+        ShardDepth::stated(configured_workers)
     } else {
-        DEFAULT_MAX_WORKERS_PER_SHARD.min(available).max(1)
+        ShardDepth::derived(DEFAULT_MAX_WORKERS_PER_SHARD.min(available).max(1))
     };
 """
 weakening = """
     let workers = if configured_workers != 0 {
-        DEFAULT_MAX_WORKERS_PER_SHARD.min(configured_workers)
+        ShardDepth::stated(DEFAULT_MAX_WORKERS_PER_SHARD.min(configured_workers))
     } else {
-        DEFAULT_MAX_WORKERS_PER_SHARD.min(available).max(1)
+        ShardDepth::derived(DEFAULT_MAX_WORKERS_PER_SHARD.min(available).max(1))
     };
 """
 expect_red = [
@@ -9494,10 +10184,7 @@ to the owner's battery: `bind_request_to_peer` is called correctly, with two wel
 products, and answers correctly about them. Only a control that drives the INSTALLABLE policy
 with two independently obtained operands can see it, which is what this twin's battery is.
 
-`a_permissive_policy_cannot_manufacture_the_binding_fact` deliberately stays green: it builds
-its own `TransportBindingPolicy` impl and reaches the relation directly, so it is not routed
-through the weakened arm. `an_absent_channel_peer_fails_closed` stays green for the stronger
-reason — `TransportBinding::bind` cannot be weakened into admitting an absence at all,
+`an_absent_channel_peer_fails_closed` stays green because `TransportBinding::bind` cannot be weakened into admitting an absence at all,
 because the return type gives an absent peer nothing to produce. That refusal is a seal, not
 a check, and a mutation probe is the wrong instrument for it.
 """
@@ -9952,10 +10639,10 @@ conjunct = "the published snapshot yields none past the published key's expiry, 
 # transition is the thing this unit exists to hold, and it must not be deletable.
 path = "mcp-re-proxy/src/delegated_server_signer/mod.rs"
 anchor = """
-            Some(a) if now < a.exp() => Some(Arc::clone(a)),
+            Snapshot::Active(a) if a.nbf() <= now && now < a.exp() => Some(Arc::clone(a)),
 """
 weakening = """
-            Some(a) => Some(Arc::clone(a)),
+            Snapshot::Active(a) if a.nbf() <= now => Some(Arc::clone(a)),
 """
 expect_red = [
   "lib#delegated_server_signer::tests::snapshot_fails_closed_past_expiry",
@@ -10121,3 +10808,162 @@ weakening = "            Err(CurrentPeerRefusal::CredentialNotCurrent(_)) => Ok(
 expect_red = [
   "lib#communication_assurance::authenticated_channel_peer::tests::a_refused_credential_becomes_no_peer_rather_than_an_unexamined_one",
 ]
+
+# ---------------------------------------------------------------------------
+# r12 R12-647/R12-648 — the handshake bound is a function of the BUILT depth
+# ---------------------------------------------------------------------------
+
+[[probe]]
+id = "M409-the-handshake-bound-is-read-from-the-built-depth"
+unit = "proxy.core_pool_handshake_bound"
+conjunct = "The blocking-handshake bound is derived from the depth the core was ACTUALLY built with, not from a constant that never saw the depth"
+path = "mcp-re-proxy/src/async_fleet/core_runtime.rs"
+anchor = """
+                depth
+                    .saturating_sub(1)
+                    .min(DELEGATED_TLS_HANDSHAKES_PER_CORE),
+"""
+weakening = """
+                DELEGATED_TLS_HANDSHAKES_PER_CORE,
+"""
+expect_red = [
+  "lib#async_fleet::core_runtime::tests::the_bound_follows_the_built_depth_and_is_capped_by_the_ceiling",
+  "lib#async_serve::admission_bound_tests::the_handshake_bound_leaves_workers_for_the_rest_of_the_core",
+]
+note = """
+THE WEAKENING IS THE DEFECT VERBATIM, restored. It is what the tree shipped: a constant
+bound beside a resolved depth, agreeing only on the configurations nobody was running into
+trouble on. At a built depth of 2 it admits two concurrent blocking handshakes onto two
+workers, and a peer with NO client credential occupies both — TLS 1.3 signs
+`CertificateVerify` before the client's `Certificate` is seen.
+
+WHY THE OLD GUARD COULD NOT SEE IT. `the_handshake_bound_leaves_workers_for_the_rest_of_the
+_core` used to compare `DELEGATED_TLS_WORKERS_PER_CORE` with
+`DELEGATED_TLS_HANDSHAKES_PER_CORE` — two constants, neither of which the builder used on
+the failing path — and stayed green throughout. Its own doc comment said "a guard on a
+literal only looks load-bearing". It is named in `expect_red` here because it is now a
+statement over the FUNCTION across every resolvable depth, which is what makes it able to
+fail.
+"""
+
+[[probe]]
+id = "M410-the-ceiling-does-not-rise-with-the-pool"
+unit = "proxy.core_pool_handshake_bound"
+conjunct = "A wider pool does not silently raise how much blocking KMS or PKCS#11 work one core carries at once — the ceiling caps the bound from above"
+path = "mcp-re-proxy/src/async_fleet/core_runtime.rs"
+anchor = """
+                depth
+                    .saturating_sub(1)
+                    .min(DELEGATED_TLS_HANDSHAKES_PER_CORE),
+"""
+weakening = """
+                depth.saturating_sub(1),
+"""
+expect_red = [
+  "lib#async_fleet::core_runtime::tests::the_bound_follows_the_built_depth_and_is_capped_by_the_ceiling",
+]
+note = """
+A SEPARATE CONJUNCT WITH A SEPARATE CONTROL, and measured to be so: this weakening leaves
+`the_handshake_bound_leaves_workers_for_the_rest_of_the_core` GREEN, because `depth - 1` is
+still strictly below `depth` at every depth. Only the depth table sees it. Without this
+probe the ceiling would be an unfalsified clause sitting inside a unit whose other clause is
+well pinned — which is the shape this registry exists to catch.
+
+Widening the ceiling is a throughput change with its own argument to make; it is not a
+consequence of an operator choosing more workers.
+"""
+
+[[probe]]
+id = "M411-the-bound-reaches-the-semaphore"
+unit = "proxy.core_pool_handshake_bound"
+conjunct = "The bound the pool derived is the one the core's handshake semaphore is sized from — taking it and then sizing from a literal is not admitting what the pool decided"
+path = "mcp-re-proxy/src/async_serve/core_admission.rs"
+anchor = """
+            handshakes: handshake_bound
+                .permits()
+                .map(|permits| Arc::new(tokio::sync::Semaphore::new(permits))),
+"""
+weakening = """
+            handshakes: handshake_bound
+                .permits()
+                .map(|_| Arc::new(tokio::sync::Semaphore::new(2))),
+"""
+expect_red = [
+  "lib#async_serve::core_admission::tests::the_handshake_semaphore_carries_the_pools_bound",
+]
+note = """
+THE HALF A STATEMENT ABOUT THE FUNCTION CANNOT CARRY. `for_core` can accept the derived
+bound and size the semaphore from a literal anyway, and until this control existed that
+mutation was invisible: MEASURED at 1516 passed, 0 failed across the whole default lane,
+caught only by `-D warnings` as dead code on the unused projection. Lint-backed is too
+fragile for the enforcement point of a critical — any future caller of `permits()` silences
+the dead-code signal while the wiring stays broken.
+
+The control observes the PERMIT COUNT rather than the fact that a function was called, which
+is why it survives that fragility.
+"""
+
+[[probe]]
+id = "M413-an-explicit-single-thread-under-delegated-tls-is-refused"
+unit = "proxy.delegated_tls_depth_refusal"
+conjunct = "an operator-stated `--workers-per-shard 1` under delegated TLS custody is REFUSED, not silently widened to a worker pool"
+# The weakening is the defect verbatim: delete the refusal and the code below widens the
+# stated 1 to four workers exactly as it did before Owner Ruling 7. It compiles, it serves,
+# the whole serving battery stays green, and the operator is told nothing.
+path = "mcp-re-proxy/src/async_fleet/core_runtime.rs"
+anchor = """
+        if options.tls_signing_may_block && stated_single_thread {
+            return Err(DelegatedTlsDepthRefusal);
+        }
+"""
+weakening = """
+        let _ = stated_single_thread;
+"""
+expect_red = [
+  "lib#async_fleet::core_runtime::tests::delegated_custody_with_a_stated_single_thread_is_refused",
+  "lib#async_fleet::core_runtime::tests::neither_half_of_the_refused_pair_refuses_on_its_own",
+  "lib#async_fleet::refusal_order_tests::the_delegated_tls_depth_refusal_precedes_the_first_bind",
+]
+note = """
+THE THREE CONTROLS ARE THREE DIFFERENT READINGS, not one fact counted three times: the
+decision itself, the decision being about a PAIR, and the decision happening before a
+listener exists. A registry holding only the first would attest a refusal that could be
+correct and still fire after the fleet was up.
+
+`a_share_nothing_core_has_no_pool_and_no_handshake_bound` and
+`delegated_custody_over_a_derived_depth_derives_the_safe_one` are deliberately absent, and
+must stay GREEN under this weakening: deleting a refusal cannot break the configurations
+that were never refused, and naming them would make the probe unsatisfiable for a reason
+that has nothing to do with the conjunct.
+"""
+
+[[probe]]
+id = "M414-a-stated-depth-and-a-derived-one-are-one-number-again"
+unit = "proxy.delegated_tls_depth_refusal"
+conjunct = "the resolver preserves WHOSE number the depth is, so an operator's explicit 1 and a single-cpu host's derived 1 remain distinguishable where the refusal is decided"
+# THE SUBTLER WEAKENING, and the shape the defect actually had. The refusal is untouched —
+# it is still there, still two-term, still before the bind. What is removed is the fact it
+# turns on: every resolved depth comes back as the host's, so no depth is ever
+# operator-stated and the condition can never be true. A refusal that cannot fire reads as
+# a refusal in every place a reader looks except the one that matters.
+path = "mcp-re-proxy/src/async_fleet/mod.rs"
+anchor = """
+        ShardDepth::stated(configured_workers)
+"""
+weakening = """
+        ShardDepth::derived(configured_workers)
+"""
+expect_red = [
+  "lib#async_fleet::topology_tests::a_resolved_depth_says_whether_the_operator_or_the_host_chose_it",
+  "lib#async_fleet::refusal_order_tests::the_delegated_tls_depth_refusal_precedes_the_first_bind",
+]
+note = """
+WHAT THIS PROBE ESTABLISHES THAT M413 CANNOT. M413 measures the decision; this measures its
+PREMISE. Provenance travelling from the resolver to the decision is the whole reason
+`ShardDepth` exists instead of a `usize`, and a type carrying a fact nothing preserves is
+the produced-but-not-consumed shape one step worse — consumed, and always the same value.
+
+`explicit_topology_is_never_overridden` stays green under it, correctly: the NUMBER still
+survives resolution, which is that unit's claim. Only the provenance is lost, and only the
+two controls above can see it.
+"""

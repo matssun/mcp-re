@@ -231,7 +231,7 @@ The verifier's ten propositions are class **V0**: nothing above them may read as
 "a test battery passed". A passing battery is not, on its own, evidence that a production
 check is load-bearing — so every conjunct THM-0014 … THM-0022 names was probed by deleting or
 defanging exactly that check, re-running the declared battery, and observing which declared
-member goes red. **31 mutations, each turning at least one declared member red.**
+member goes red. **33 mutations, each turning at least one declared member red.**
 
 **They used to be thirty, over one unit.** ADR-MCPRE-068 Phase 1 split
 `http_profile.verifier_results` — 56 files, 73 controls, ten theorems — into one unit per

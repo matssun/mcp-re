@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Which filesystem postures a key file may be in, as one owned decision.
+//! Which filesystem postures this process accepts for the files it trusts: a key file it
+//! reads, and a shared object it maps and executes ([`executable_path_violation`]).
 //!
 //! `--allow-group-readable-key-files` is not a preference. It decides whether a signing
 //! key readable by a Unix group is a refusal or an accepted deployment, so it belongs to
@@ -113,6 +114,51 @@ pub fn mode_is_insecure(mode: u32) -> bool {
     mode & 0o077 != 0
 }
 
+/// Why `path` is unfit for this process to LOAD EXECUTABLE CODE from, or `None` when it is
+/// fit. Two named predicates rather than one with a flag, because the two floors differ.
+///
+/// [`mode_is_insecure`] governs a file that is READ: disclosure is the whole harm, so any
+/// group or world bit at all is refused and `0600` is the only posture left. This governs a
+/// file that is MAPPED AND EXECUTED, where the capability that matters is REPLACEMENT, not
+/// disclosure — a distro PKCS#11 module is root-owned `0644` under `0755` directories and is
+/// a legitimate deployment, while one anybody may overwrite is arbitrary code inside this
+/// process. So the refusal is a group or world WRITE bit, on the file and on every directory
+/// above it: a writable directory lets an attacker unlink the file and put their own in its
+/// place, which the file's own mode says nothing about.
+///
+/// The path is resolved before the modes are read, so what is examined is the file that
+/// would actually be mapped rather than a symlink standing in front of it.
+#[cfg(unix)]
+pub fn executable_path_violation(path: &str) -> Option<String> {
+    use std::os::unix::fs::PermissionsExt;
+    let resolved = match std::fs::canonicalize(path) {
+        Ok(resolved) => resolved,
+        Err(e) => return Some(format!("{path} cannot be resolved: {e}")),
+    };
+    for component in resolved.ancestors() {
+        let mode = match std::fs::symlink_metadata(component) {
+            Ok(meta) => meta.permissions().mode(),
+            Err(e) => return Some(format!("{} cannot be read: {e}", component.display())),
+        };
+        if mode & 0o022 != 0 {
+            return Some(format!(
+                "{} is group/world-writable (mode {:o}), so its contents can be replaced",
+                component.display(),
+                mode & 0o7777
+            ));
+        }
+    }
+    None
+}
+
+/// The non-Unix form. There is no mode to read, so there is no floor to apply — stated as
+/// its own arm rather than left implicit, mirroring how `read_pkcs11_pin` scopes its own
+/// permission check to `unix`.
+#[cfg(not(unix))]
+pub fn executable_path_violation(_path: &str) -> Option<String> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,6 +223,195 @@ mod tests {
         assert_eq!(
             classify(&relaxed),
             KeyFileAccessPolicy::GroupReadableUnderProcessGroup
+        );
+    }
+
+    /// The POSITIVE control for the executable floor, and the one that decides whether the
+    /// floor is usable at all: a normal `0644` file under `0755` directories — the shape of
+    /// `/usr/lib/softhsm/libsofthsm2.so` and of the in-tree mock module the PKCS#11 e2e lane
+    /// builds — must still load. A floor that refuses every real module is a capability
+    /// loss, not a fix.
+    /// `/bin/sh` is the reference case: a root-owned executable under root-owned `0755`
+    /// directories, which is the posture of `/usr/lib/softhsm/libsofthsm2.so` and of
+    /// every packaged PKCS#11 module.
+    #[cfg(unix)]
+    #[test]
+    fn a_packaged_system_library_posture_is_still_loadable() {
+        // Several candidates so a sandboxed lane that does not expose `/bin` still
+        // measures the property rather than self-skipping; `/` exists everywhere.
+        let reference = ["/bin/sh", "/bin", "/usr/lib", "/"]
+            .into_iter()
+            .find(|p| std::fs::metadata(p).is_ok())
+            .expect("a POSIX host exposes at least one of /bin/sh, /bin, /usr/lib, /");
+        assert_eq!(
+            executable_path_violation(reference),
+            None,
+            "{reference} is root-owned under 0755 system directories, which is the \
+             ordinary module posture"
+        );
+    }
+
+    /// The same control without depending on any system path: a `0644` file this test
+    /// creates inside a `0700` directory it creates is never the component refused.
+    #[cfg(unix)]
+    #[test]
+    fn a_0644_module_in_an_owner_only_directory_is_not_the_refused_component() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("mcp-re-mod-ok-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir(&dir).expect("create dir");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).expect("chmod dir");
+        let path = dir.join("libmodule.so");
+        std::fs::write(&path, b"not really a library").expect("write module");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+            .expect("chmod 0644");
+        // A shared temp root above it may itself be world-writable (`/tmp` is 1777), and
+        // that is a true refusal about `/tmp`. What must never happen is a refusal of the
+        // 0644 file or of the 0700 directory holding it.
+        if let Some(why) = executable_path_violation(path.to_str().expect("utf-8")) {
+            assert!(
+                !why.contains("mcp-re-mod-ok-"),
+                "a 0644 file in a 0700 directory must not be refused: {why}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A file anyone may overwrite is arbitrary code in this process.
+    #[cfg(unix)]
+    #[test]
+    fn a_world_writable_module_file_is_refused() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = std::env::temp_dir().join(format!("mcp-re-mod-w-{}", std::process::id()));
+        std::fs::write(&path, b"not really a library").expect("write module");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666))
+            .expect("chmod 0666");
+        let why = executable_path_violation(path.to_str().expect("utf-8"))
+            .expect("a world-writable module file is refused");
+        assert!(
+            why.contains("group/world-writable") && why.contains("mcp-re-mod-w-"),
+            "the refusal must name the offending file: {why}"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The directory clause, which is the half a mode check on the file alone cannot have:
+    /// the file is `0644` and unimpeachable, and it is still replaceable by anyone who can
+    /// unlink it out of its parent.
+    #[cfg(unix)]
+    #[test]
+    fn a_module_in_a_group_writable_directory_is_refused() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("mcp-re-mod-d-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir(&dir).expect("create dir");
+        let path = dir.join("libmodule.so");
+        std::fs::write(&path, b"not really a library").expect("write module");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+            .expect("chmod 0644");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o777)).expect("chmod dir");
+        let why = executable_path_violation(path.to_str().expect("utf-8"))
+            .expect("a module in a writable directory is refused");
+        assert!(
+            why.contains("group/world-writable") && why.contains("mcp-re-mod-d-"),
+            "the refusal must name the offending DIRECTORY, not the file: {why}"
+        );
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The GROUP-write half of the floor, on its own.
+    ///
+    /// The world-writable cases above are caught by the `0o002` bit alone, so they say
+    /// nothing about `0o020`. This is also the posture a build host with `umask 002`
+    /// produces — directories `0775`, files `0664` — which is the likeliest way a real
+    /// deployment meets this refusal, and it was the half no test reached.
+    #[cfg(unix)]
+    #[test]
+    fn group_write_alone_is_refused_on_the_directory_and_on_the_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("mcp-re-mod-g-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir(&dir).expect("create dir");
+        let path = dir.join("libmodule.so");
+        std::fs::write(&path, b"not really a library").expect("write module");
+
+        // umask 002: the file is 0664, the directory 0775. Neither carries a world-write
+        // bit, so only the 0o020 half of the mask can refuse either one.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o664))
+            .expect("chmod 0664");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).expect("chmod dir");
+        let why = executable_path_violation(path.to_str().expect("utf-8"))
+            .expect("a group-writable module file is refused");
+        assert!(
+            why.contains("libmodule.so") && why.contains("664"),
+            "the refusal must name the group-writable FILE and its mode: {why}"
+        );
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+            .expect("chmod 0644");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o775)).expect("chmod dir");
+        let why = executable_path_violation(path.to_str().expect("utf-8"))
+            .expect("a module in a group-writable directory is refused");
+        assert!(
+            why.contains("mcp-re-mod-g-") && why.contains("775"),
+            "the refusal must name the group-writable DIRECTORY and its mode: {why}"
+        );
+
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The WORLD-write half of the floor, on its own.
+    ///
+    /// Sibling of the group-only case above, and it exists for the same reason: every
+    /// other fixture here carries BOTH bits, so either one alone would catch them all and
+    /// neither half would be pinned. `0o606` and `0o757` are world-writable and NOT
+    /// group-writable, so only the `0o002` half of the mask can refuse them.
+    #[cfg(unix)]
+    #[test]
+    fn world_write_alone_is_refused_on_the_directory_and_on_the_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("mcp-re-mod-wonly-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir(&dir).expect("create dir");
+        let path = dir.join("libmodule.so");
+        std::fs::write(&path, b"not really a library").expect("write module");
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o606))
+            .expect("chmod 0606");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).expect("chmod dir");
+        let why = executable_path_violation(path.to_str().expect("utf-8"))
+            .expect("a world-writable module file is refused");
+        assert!(
+            why.contains("libmodule.so") && why.contains("606"),
+            "the refusal must name the world-writable FILE and its mode: {why}"
+        );
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+            .expect("chmod 0644");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o757)).expect("chmod dir");
+        let why = executable_path_violation(path.to_str().expect("utf-8"))
+            .expect("a module in a world-writable directory is refused");
+        assert!(
+            why.contains("mcp-re-mod-wonly-") && why.contains("757"),
+            "the refusal must name the world-writable DIRECTORY and its mode: {why}"
+        );
+
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A path that names nothing is refused rather than passed to `dlopen` to fail there.
+    #[cfg(unix)]
+    #[test]
+    fn a_module_path_that_resolves_to_nothing_is_refused() {
+        let missing = std::env::temp_dir().join(format!("mcp-re-absent-{}", std::process::id()));
+        let why = executable_path_violation(missing.to_str().expect("utf-8"))
+            .expect("an unresolvable module path is refused");
+        assert!(
+            why.contains("cannot be resolved"),
+            "expected a resolution refusal, got: {why}"
         );
     }
 

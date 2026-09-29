@@ -178,15 +178,9 @@ mod tests {
     //! not this code's, and the only thing asserted here is that the code asks for it.
 
     use super::*;
-    use std::sync::Arc;
-    use std::sync::Mutex;
-    use tokio::io::AsyncBufReadExt;
-    use tokio::io::AsyncReadExt;
-    use tokio::io::AsyncWriteExt;
-    use tokio::io::BufReader;
-
-    /// Every store command the scripted server received, in order.
-    type Commands = Arc<Mutex<Vec<Vec<String>>>>;
+    use crate::async_redis_store::retention_promise::scripted_server::serve;
+    use crate::async_redis_store::retention_promise::scripted_server::Commands;
+    use crate::async_redis_store::retention_promise::scripted_server::Script;
 
     /// The store's own commands. Anything else the client library sends is connection
     /// setup, answered with a bare `+OK` and not recorded.
@@ -201,72 +195,9 @@ mod tests {
 
     const KEY: &str = "mcp-re:cont:abc";
 
-    /// Read one RESP command (an array of bulk strings) from a client.
-    async fn read_command<R: tokio::io::AsyncBufRead + Unpin>(
-        reader: &mut R,
-    ) -> Option<Vec<String>> {
-        let mut header = String::new();
-        if reader.read_line(&mut header).await.ok()? == 0 {
-            return None;
-        }
-        let argc: usize = header.trim_end().strip_prefix('*')?.parse().ok()?;
-        let mut args = Vec::with_capacity(argc);
-        for _ in 0..argc {
-            let mut len_line = String::new();
-            if reader.read_line(&mut len_line).await.ok()? == 0 {
-                return None;
-            }
-            let len: usize = len_line.trim_end().strip_prefix('$')?.parse().ok()?;
-            // The trailing CRLF is part of the framing, so read it and drop it.
-            let mut buf = vec![0u8; len + 2];
-            reader.read_exact(&mut buf).await.ok()?;
-            buf.truncate(len);
-            args.push(String::from_utf8(buf).ok()?);
-        }
-        Some(args)
-    }
-
-    /// A server that speaks just enough RESP to complete the connect handshake,
-    /// answers every store command with the raw `reply` frame, and records those
-    /// commands. Returns its `redis://` URL and the recording.
-    async fn scripted_redis(reply: &str) -> (String, Commands) {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind");
-        let addr = listener.local_addr().expect("addr");
-        let seen: Commands = Arc::new(Mutex::new(Vec::new()));
-        let recorder = Arc::clone(&seen);
-        let reply = reply.to_string();
-        tokio::spawn(async move {
-            while let Ok((stream, _)) = listener.accept().await {
-                let recorder = Arc::clone(&recorder);
-                let reply = reply.clone();
-                tokio::spawn(async move {
-                    let (rx, mut tx) = stream.into_split();
-                    let mut reader = BufReader::new(rx);
-                    while let Some(args) = read_command(&mut reader).await {
-                        let is_store_op = args.first().is_some_and(|c| {
-                            STORE_COMMANDS.iter().any(|k| c.eq_ignore_ascii_case(k))
-                        });
-                        let frame = if is_store_op {
-                            recorder.lock().expect("commands").push(args);
-                            reply.as_str()
-                        } else {
-                            "+OK\r\n"
-                        };
-                        if tx.write_all(frame.as_bytes()).await.is_err() {
-                            return;
-                        }
-                    }
-                });
-            }
-        });
-        (format!("redis://{addr}"), seen)
-    }
-
     /// A store wired to a scripted server, plus that server's recording.
     async fn store_against(reply: &str) -> (RedisContinuationStore, Commands) {
-        let (url, seen) = scripted_redis(reply).await;
+        let (url, seen) = serve(Script::recording(&STORE_COMMANDS, reply)).await;
         let store = RedisContinuationStore::connect(&url)
             .await
             .expect("the scripted server accepts the connect handshake");

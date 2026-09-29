@@ -138,13 +138,8 @@ impl RequestHeaders {
     }
 }
 
-/// The SEP-2243 transport routing header naming the JSON-RPC method (ADR-MCPS-025).
-/// Lowercased for case-insensitive [`RequestHeaders`] lookup.
-pub const MCP_METHOD_HEADER: &str = "mcp-method";
-
-/// The SEP-2243 transport routing header naming the tool/resource (ADR-MCPS-025).
-/// Lowercased for case-insensitive [`RequestHeaders`] lookup.
-pub const MCP_NAME_HEADER: &str = "mcp-name";
+pub use mcp_re_http_profile::ids::MCP_METHOD_HEADER;
+pub use mcp_re_http_profile::ids::MCP_NAME_HEADER;
 
 /// Why a SEP-2243 routing header was rejected (ADR-MCPS-025).
 ///
@@ -305,9 +300,7 @@ mod tests {
     use mcp_re_core::McpReError;
 
     use super::AuthenticatedChannelPeer;
-    use super::RequestPeerBindingFacts;
     use super::VerifiedRequestSubject;
-    use crate::communication_assurance::bind_request_to_peer;
 
     const PRINCIPAL: &str = "spiffe://example.org/agent-1";
 
@@ -448,39 +441,6 @@ mod tests {
         assert!(installable
             .bind(
                 Some(&channel_peer(PRINCIPAL)),
-                subject("spiffe://example.org/agent-2")
-            )
-            .is_err());
-    }
-
-    /// A permissive policy is expressible, which is exactly why it must not be installable.
-    ///
-    /// The state the seal excludes: an implementation of the public
-    /// [`TransportBindingPolicy`] trait that admits every request. Nothing stops an embedder
-    /// writing it — the point is that there is no public route from one of these to the
-    /// serving path, so `TransportBinding` cannot wrap it.
-    ///
-    /// Note what the new trait costs such an implementation: to admit everything it must
-    /// PRODUCE a `RequestPeerBindingFacts`, and the only producer is the authority's own
-    /// relation. The permissive policy below can therefore only call that relation and
-    /// hand back its answer, which is not permissive at all — the seal now defeats this
-    /// shape at the type level, not merely at the composition root.
-    #[test]
-    fn a_permissive_policy_cannot_manufacture_the_binding_fact() {
-        struct AdmitEverything;
-        impl TransportBindingPolicy for AdmitEverything {
-            fn bind(
-                &self,
-                peer: AuthenticatedChannelPeer,
-                subject: VerifiedRequestSubject,
-            ) -> Result<RequestPeerBindingFacts, McpReError> {
-                // There is no other way to obtain the return value.
-                bind_request_to_peer(peer, subject).map_err(|_| McpReError::TransportBindingFailed)
-            }
-        }
-        assert!(AdmitEverything
-            .bind(
-                channel_peer(PRINCIPAL),
                 subject("spiffe://example.org/agent-2")
             )
             .is_err());

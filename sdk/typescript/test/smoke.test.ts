@@ -10,9 +10,15 @@ import { describe, it, expect } from "vitest";
 import { coreVersion, profileTag, signRequest } from "../src/index.js";
 
 describe("mcp-re-sdk smoke (built package)", () => {
-  it("exposes a non-empty core version and RFC 9421 profile tag", () => {
-    expect(typeof coreVersion()).toBe("string");
-    expect(coreVersion().length).toBeGreaterThan(0);
+  it("reports the audited core's version, not this wrapper's", () => {
+    // r12 R12-1474 — `coreVersion` used to return the N-API wrapper's own
+    // CARGO_PKG_VERSION (0.1.x), which moves independently of the audited code. A
+    // consumer asking which core they have was told the version of the shim in front
+    // of it, and "non-empty string" could not see that: 0.1.1 is non-empty too.
+    const v = coreVersion();
+    expect(typeof v).toBe("string");
+    const [major, minor] = v.split(".").map(Number);
+    expect(major > 0 || minor >= 17).toBe(true);
     expect(typeof profileTag()).toBe("string");
     expect(profileTag().length).toBeGreaterThan(0);
   });

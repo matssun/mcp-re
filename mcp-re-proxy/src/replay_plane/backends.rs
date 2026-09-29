@@ -47,17 +47,14 @@ pub(super) fn establish_etcd(
     )
 }
 
-/// The horizontally-scaled backend: async Redis `SET NX PX`, with the declared WAIT quorum
-/// applied to the store that actually serves.
+/// The horizontally-scaled backend: async Redis `SET NX PX`, connected in the tier the
+/// plan declares.
 ///
-/// Two things are ordered here and both matter. The client-side response timeout is sized
-/// for the DECLARED wait timeout BEFORE connecting: the library defaults to 500ms per
-/// command and `WAIT` is an ordinary command, so a declared `redis-wait-quorum:2:2000`
-/// could never wait 2000ms, and any replica ack slower than 500ms failed the request closed
-/// while the startup line advertised the fuller window. And the tier is applied to the
-/// store afterwards: `startup_audit_line` has already promised "WAIT timeout or
-/// insufficient acks fail closed", and without this the store would run plain `SET NX PX`
-/// and the promise would be audited but unenforced.
+/// The declared WAIT quorum is a construction parameter of the store that serves:
+/// `startup_audit_line` has already promised "WAIT timeout or insufficient acks fail
+/// closed", so a store built without it would run plain `SET NX PX` and the promise would
+/// be audited but unenforced. The same value sizes the client-side response timeout, so a
+/// declared `redis-wait-quorum:2:2000` can actually wait 2000ms.
 #[cfg_attr(not(feature = "redis_replay"), allow(unused_variables))]
 pub(super) fn establish_redis(
     url: &str,
@@ -81,19 +78,15 @@ pub(super) fn establish_redis(
                     .to_owned()
             })?
             .handle();
-        let wait_timeout_ms = tier.wait_quorum_params().map(|(_, ms)| ms);
-        let mut store = rt
+        let store = rt
             .block_on(
-                crate::RedisAsyncAtomicReplayStore::connect_with_wait_timeout(
+                crate::RedisAsyncAtomicReplayStore::connect_with_wait_quorum(
                     url,
                     crate::redis_store::system_clock(),
-                    wait_timeout_ms,
+                    tier.wait_quorum_params(),
                 ),
             )
             .map_err(|e| format!("connect redis async replay store: {e:?}"))?;
-        if let Some((quorum, timeout_ms)) = tier.wait_quorum_params() {
-            store = store.with_wait_quorum(quorum, timeout_ms);
-        }
         Ok((
             AsyncReplayTier::new(std::sync::Arc::new(store), freshness),
             ProxyDispatchConfig {

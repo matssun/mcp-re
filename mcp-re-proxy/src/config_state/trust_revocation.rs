@@ -28,7 +28,7 @@
 //! (CF-09 — a fact may have two consumers, it must not have two authorities).
 
 use crate::deployment_request::{
-    DeploymentRequest, RequestSignerCurrencyRequest, TrustEpochStoreRequest,
+    DeploymentRequest, RedactedLocator, RequestSignerCurrencyRequest, TrustEpochStoreRequest,
 };
 use crate::revocation_tier::RevocationTier;
 use std::num::NonZeroU64;
@@ -382,10 +382,11 @@ fn epoch_violations(config: &DeploymentRequest) -> Vec<String> {
     {
         if !url.contains("://") {
             out.push(format!(
-                "--trust-epoch-redis-url {url:?} is not a URL: the trust-epoch source is \
+                "--trust-epoch-redis-url {} is not a URL: the trust-epoch source is \
                  what the operator's INCR kill switch reaches, so a value that cannot name \
                  a store leaves delegated credentials unrevocable. Give a scheme-bearing \
-                 URL such as redis://host:6379"
+                 URL such as redis://host:6379",
+                RedactedLocator::of(url)
             ));
         }
     }
@@ -753,6 +754,32 @@ mod tests {
         assert!(
             violations.iter().any(|v| v.contains("is not a URL")),
             "{violations:?}"
+        );
+    }
+
+    /// The clause fires exactly when the value has no `://`, which is the shape a
+    /// credential-bearing typo takes. It names the locator rather than echoing it.
+    #[test]
+    fn the_epoch_locator_refusal_does_not_echo_a_credential() {
+        let violations = violations_of(|c| {
+            c.request_signer_currency = RequestSignerCurrencyRequest::Push {
+                t_secs: 30,
+                reload_secs: 30,
+                epoch: TrustEpochStoreRequest {
+                    source: Some(crate::deployment_request::TrustEpochSource::redis(
+                        "mats:hunter2@redis.internal:6379",
+                        None,
+                    )),
+                },
+            };
+        });
+        let refusal = violations
+            .iter()
+            .find(|v| v.contains("--trust-epoch-redis-url"))
+            .expect("a value that names no store is refused");
+        assert!(
+            !refusal.contains("hunter2"),
+            "the password reached the diagnostic: {refusal}"
         );
     }
 

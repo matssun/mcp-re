@@ -25,9 +25,10 @@ use std::sync::Arc;
 
 use crate::tls::ServerOptions;
 
+use crate::async_fleet::HandshakeBound;
+
 use super::body_budget::BodyByteBudget;
 use super::BUFFERED_BODY_BUDGET_MULTIPLE;
-use super::DELEGATED_TLS_HANDSHAKES_PER_CORE;
 use super::DRAIN_POLL_INTERVAL;
 
 /// The bounds one `serve` loop admits against, shared by every connection it accepts.
@@ -55,8 +56,15 @@ pub(super) struct CoreAdmission {
 }
 
 impl CoreAdmission {
-    /// The bounds for one core, read from the operator's limits.
-    pub(super) fn for_core(options: &ServerOptions) -> Self {
+    /// The bounds for one core: three from the operator's limits, and the handshake bound
+    /// from the pool that built this core's runtime.
+    ///
+    /// The handshake bound is the one that cannot be derived here. Whether a handshake can
+    /// block is in `options`, but HOW MANY may block at once depends on how many workers
+    /// the core got, and nothing in `options` says that. Taking it as a
+    /// [`HandshakeBound`] — which only `CorePool` produces — is what stops this from being
+    /// sized against a constant that never saw the depth.
+    pub(super) fn for_core(options: &ServerOptions, handshake_bound: HandshakeBound) -> Self {
         CoreAdmission {
             in_flight: options
                 .limits
@@ -69,11 +77,9 @@ impl CoreAdmission {
                     .max_body_bytes
                     .saturating_mul(BUFFERED_BODY_BUDGET_MULTIPLE),
             )),
-            handshakes: options.tls_signing_may_block.then(|| {
-                Arc::new(tokio::sync::Semaphore::new(
-                    DELEGATED_TLS_HANDSHAKES_PER_CORE,
-                ))
-            }),
+            handshakes: handshake_bound
+                .permits()
+                .map(|permits| Arc::new(tokio::sync::Semaphore::new(permits))),
         }
     }
 
@@ -102,6 +108,55 @@ impl CoreAdmission {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The enforcement point of the bound: the number the pool decided is the number of
+    /// permits this core's handshake semaphore actually carries.
+    ///
+    /// Every other control here is about one side of the wire. The pool's own tests say
+    /// what bound a depth deserves; this one says the serving core got THAT number. A
+    /// `for_core` that ignored its `HandshakeBound` and sized the semaphore from a literal
+    /// leaves the whole suite green, because nothing else observes the permit count — so
+    /// the wiring is a claim only if it is asserted here.
+    #[test]
+    fn the_handshake_semaphore_carries_the_pools_bound() {
+        // Depth 2 under delegated TLS is the case a constant gets wrong: two workers may
+        // admit ONE blocking signature, never two, or the core has nothing left to poll
+        // its accept loop, its established connections and its in-flight requests.
+        let delegated = ServerOptions {
+            tls_signing_may_block: true,
+            ..Default::default()
+        };
+        let pool = crate::async_fleet::CorePool::for_core(
+            crate::async_fleet::ShardDepth::stated(2),
+            &delegated,
+        )
+        .expect("a stated depth of two is a shape delegated custody has");
+        let admission = CoreAdmission::for_core(&delegated, pool.handshake_bound());
+        let handshakes = admission
+            .handshakes
+            .expect("a delegated-TLS core is bounded");
+        assert_eq!(
+            handshakes.available_permits(),
+            1,
+            "a two-worker core admits one blocking handshake"
+        );
+
+        // The companion: on the exported-key path the signature is in-memory, so the core
+        // carries NO handshake bound. A control satisfied by bounding everything would be
+        // no control, and the bound is not free — it costs a handshake round of
+        // concurrency wherever it applies.
+        let exported = ServerOptions::default();
+        let pool = crate::async_fleet::CorePool::for_core(
+            crate::async_fleet::ShardDepth::stated(2),
+            &exported,
+        )
+        .expect("an exported key admits every depth");
+        let admission = CoreAdmission::for_core(&exported, pool.handshake_bound());
+        assert!(
+            admission.handshakes.is_none(),
+            "an in-memory signature is not bounded"
+        );
+    }
 
     /// A clone is a handle on the SAME bounds. A field that copied its state would give
     /// every connection its own ceiling, which is not a ceiling at all.

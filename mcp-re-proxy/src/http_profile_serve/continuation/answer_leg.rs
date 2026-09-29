@@ -147,11 +147,11 @@ impl ContinuationPrep {
     /// stands for two kinds of fact at once.
     pub(in crate::http_profile_serve) fn binding(&self) -> Option<RetainedContinuation<'_>> {
         match (&self.retained, &self.answer_state) {
-            (Some(bases), Some(state)) => Some(RetainedContinuation {
-                previous_request_base: &bases.previous_request_base,
-                input_required_response_base: &bases.input_required_response_base,
-                request_state: state.as_bytes(),
-            }),
+            (Some(bases), Some(state)) => Some(RetainedContinuation::from_correlation(
+                &bases.previous_request_base,
+                &bases.input_required_response_base,
+                state.as_bytes(),
+            )),
             _ => None,
         }
     }

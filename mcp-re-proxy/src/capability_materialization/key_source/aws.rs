@@ -2,6 +2,7 @@
 //! The AWS KMS key source (ADR-MCPS-028 §B). The response-signing key never leaves KMS.
 
 use super::ChannelMaterial;
+use crate::capability_materialization::key_file_custody::AdmittedKeyFiles;
 #[cfg(feature = "aws_kms_keysource")]
 use crate::config_state::AwsCredentialMode;
 use crate::config_state::ChannelKeyMaterial;
@@ -10,6 +11,7 @@ use crate::key_source::{KeyError, KeySource};
 /// Open a source whose signing key is a KMS key, with channel material from files.
 #[cfg(feature = "aws_kms_keysource")]
 pub(super) fn open(
+    admitted: &mut AdmittedKeyFiles<'_>,
     region: &str,
     key_id: &str,
     endpoint: Option<&str>,
@@ -18,8 +20,9 @@ pub(super) fn open(
     material: ChannelMaterial<'_>,
 ) -> Result<Box<dyn KeySource + Send + Sync>, KeyError> {
     let signing = backend(region, key_id, endpoint, credentials)?;
+    let tls_key = super::exported_tls_key(admitted, material)?;
     let tls =
-        crate::key_source::FileKeySource::tls_only(material.cert, material.key, material.client_ca);
+        crate::key_source::FileKeySource::tls_only(material.cert, tls_key, material.client_ca)?;
     // #60: a configured channel key id custodies the channel key in a SECOND, DISTINCT KMS
     // key, independent of the object-signing one. It takes the SAME credential path as the
     // signing key, so a deployment cannot end up with one KMS principal reached through
@@ -75,6 +78,7 @@ fn backend(
 /// the pkcs11 gate). The flag still PARSES.
 #[cfg(not(feature = "aws_kms_keysource"))]
 pub(super) fn open(
+    _admitted: &mut AdmittedKeyFiles<'_>,
     _region: &str,
     _key_id: &str,
     _endpoint: Option<&str>,

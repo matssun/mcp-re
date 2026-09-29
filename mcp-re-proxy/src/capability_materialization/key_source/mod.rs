@@ -22,7 +22,8 @@ mod role_separation;
 pub use pin::read_pkcs11_pin;
 pub use role_separation::MaterializedSigningRoles;
 
-use crate::config_state::{ChannelCredentialCustodyState, CustodyMaterial, CustodyState};
+use super::key_file_custody::{AdmittedKeyFiles, CheckedKeyFile};
+use crate::config_state::{CustodyMaterial, CustodyState};
 use crate::key_source::{KeyError, KeySource};
 
 /// The channel material every custody consumes, whatever holds the response-signing key.
@@ -32,33 +33,54 @@ use crate::key_source::{KeyError, KeySource};
 /// CUSTODY STATE DECIDES: filesystem paths under every state but
 /// [`CustodyMaterial::EnvSeed`], where they name environment variables. The same is true of
 /// the exported channel-key locator carried by the exported channel-custody state.
+///
+/// `key` is a LOCATOR. The environment arm reads it as a variable name; every file-backed
+/// arm takes the key's material from the admission with [`exported_tls_key`] instead, and
+/// no arm reopens it as a path.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ChannelMaterial<'a> {
     /// The credential chain this node presents.
     pub(super) cert: &'a str,
-    /// The exported channel key, empty where custody keeps it on a device.
+    /// The exported channel-key locator, empty where custody keeps it on a device.
     pub(super) key: &'a str,
     /// The anchors peer credentials are verified against.
     pub(super) client_ca: &'a str,
 }
 
-/// Build the key source the classified custody names.
+/// The exported channel key as the custody check read it, or `None` where custody keeps
+/// it on a device.
 ///
-/// A dispatch and nothing else: the state carries every value each mechanism requires, so
-/// there is nothing to unwrap here and no arm for material that went missing.
+/// Called by each file-backed arm, AFTER the arm has established that this build has its
+/// backend: which executable this is outranks which file is missing.
+pub(super) fn exported_tls_key(
+    admitted: &mut AdmittedKeyFiles<'_>,
+    material: ChannelMaterial<'_>,
+) -> Result<Option<CheckedKeyFile>, KeyError> {
+    if material.key.is_empty() {
+        return Ok(None);
+    }
+    admitted.take(material.key).map(Some)
+}
+
+/// Build the key source the admitted custody names.
+///
+/// Takes the ADMISSION, not the custody states: it carries the states it was admitted for
+/// and the material read from every key file they cover, so a key source cannot be built
+/// over files the custody check never read, and every key byte it holds came from the
+/// object that check observed (r12 R12-630, R12-634).
 pub fn build_key_source(
-    custody: &CustodyState,
-    channel_credential_custody: &ChannelCredentialCustodyState,
+    mut admitted: AdmittedKeyFiles<'_>,
     tls_cert: &str,
     client_ca: &str,
 ) -> Result<MaterializedSigningRoles, KeyError> {
-    let channel = channel_credential_custody.material();
+    let custody = admitted.custody();
+    let channel = admitted.channel_credential_custody().material();
     let material = ChannelMaterial {
         cert: tls_cert,
         key: channel.exported_key_path().unwrap_or(""),
         client_ca,
     };
-    let source = open_source(custody, channel, material)?;
+    let source = open_source(custody, channel, material, &mut admitted)?;
     // The relation between what the two custody machines materialized. Neither can see the
     // other's key, so neither can own it; and it is asked HERE because the decisive fact —
     // which key each role actually resolved to — exists only once both are open.
@@ -74,26 +96,50 @@ fn open_source(
     custody: &CustodyState,
     channel: crate::config_state::ChannelKeyMaterial<'_>,
     material: ChannelMaterial<'_>,
+    admitted: &mut AdmittedKeyFiles<'_>,
 ) -> Result<Box<dyn KeySource + Send + Sync>, KeyError> {
     match custody.material() {
-        CustodyMaterial::FileSeed { seed_path } => file::open(seed_path, material),
+        CustodyMaterial::FileSeed { seed_path } => file::open(admitted, seed_path, material),
         CustodyMaterial::EnvSeed { env_var } => env::open(env_var, material),
         CustodyMaterial::Pkcs11 {
             module,
             pin_file,
             token_label,
             key_label,
-        } => pkcs11::open(module, pin_file, token_label, key_label, channel, material),
+        } => pkcs11::open(
+            module,
+            admitted,
+            pin_file,
+            token_label,
+            key_label,
+            channel,
+            material,
+        ),
         CustodyMaterial::AwsKms {
             region,
             key_id,
             endpoint,
             credentials,
-        } => aws::open(region, key_id, endpoint, credentials, channel, material),
+        } => aws::open(
+            admitted,
+            region,
+            key_id,
+            endpoint,
+            credentials,
+            channel,
+            material,
+        ),
         CustodyMaterial::GcpKms {
             key_version,
             endpoint,
             use_metadata,
-        } => gcp::open(key_version, endpoint, use_metadata, channel, material),
+        } => gcp::open(
+            admitted,
+            key_version,
+            endpoint,
+            use_metadata,
+            channel,
+            material,
+        ),
     }
 }

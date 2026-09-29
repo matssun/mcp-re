@@ -330,11 +330,10 @@ impl MetadataServerTokenSource {
     /// Fallible because the destination is vetted, not assumed. Production passes `None`.
     pub(crate) fn new(endpoint: Option<String>) -> Result<Self, KeyError> {
         let endpoint = endpoint.unwrap_or_else(|| DEFAULT_METADATA_ENDPOINT.to_string());
-        let destination = VettedDestination::operator_configured(&endpoint).ok_or_else(|| {
-            KeyError::Malformed(format!(
-                "gcp-kms: metadata endpoint {endpoint:?} is not fetchable"
-            ))
-        })?;
+        let locator = crate::deployment_request::RedactedLocator::of(&endpoint);
+        let unusable = format!("gcp-kms: metadata endpoint {locator} is not fetchable");
+        let destination = VettedDestination::operator_configured(&endpoint)
+            .ok_or(KeyError::Malformed(unusable))?;
         Ok(MetadataServerTokenSource {
             egress: CredentialEgress::to(&destination, NETWORK_TIMEOUT),
             state: Mutex::new(TokenState::default()),
@@ -802,9 +801,6 @@ fn read_body(resp: ureq::Response) -> Result<Vec<u8>, KeyError> {
     Ok(buf)
 }
 
-/// Read a bounded, lossy string from an HTTP *error* response body (diagnostics
-/// only). An emulator/overridden endpoint could otherwise return an arbitrarily
-/// large body; cap it rather than `into_string()`'s unbounded read.
 /// The `asymmetricSign` request body for an Ed25519 (`EC_SIGN_ED25519`) key — raw
 /// `data` (PureEdDSA), never `digest`.
 fn sign_request_body(preimage: &[u8]) -> Vec<u8> {
@@ -873,9 +869,6 @@ fn parse_sign_response(body: &[u8]) -> Result<Vec<u8>, KeyError> {
         .map_err(|e| KeyError::Malformed(format!("gcp-kms: signature base64: {e}")))
 }
 
-/// How long the delegated-TLS path stops calling Cloud KMS after Cloud KMS has
-/// reported that the project is over its cryptographic-operations quota.
-///
 /// The handshake path and the root-issuance path share one project quota, and only the
 /// handshake path can be driven by an unauthenticated peer: TLS 1.3 emits the server
 /// `CertificateVerify` — one `asymmetricSign` — before it has seen a client
@@ -2656,5 +2649,31 @@ mod tests {
         );
         verify_ed25519(preimage, &sig_v2, &trust.resolve(signer, kid2).unwrap())
             .expect("new version still verifies after the old is removed");
+    }
+
+    /// LOAD-BEARING (Owner Ruling 6): the metadata endpoint is operator-supplied, and this
+    /// refusal is a SCHEME verdict — so it fires on a perfectly well-formed URL, which is
+    /// the shape that carries a password. Neither the credential nor the complete
+    /// configured string may reach the message.
+    ///
+    /// `token_source()` above is the positive control: a legitimate loopback endpoint is
+    /// still admitted, so the redaction changed what a failure says and nothing else.
+    #[test]
+    fn a_metadata_endpoint_refusal_leaks_neither_the_credential_nor_the_configured_url() {
+        const CONFIGURED: &str = "ftp://ops:hunter2@metadata.internal/";
+        let Err(KeyError::Malformed(why)) =
+            MetadataServerTokenSource::new(Some(CONFIGURED.to_string()))
+        else {
+            panic!("a scheme no outbound fetch may use must not become a token source");
+        };
+        assert!(!why.contains("hunter2"), "the credential was echoed: {why}");
+        assert!(
+            !why.contains(CONFIGURED),
+            "the complete configured endpoint was echoed: {why}"
+        );
+        assert!(
+            why.contains("metadata.internal"),
+            "an operator still learns which endpoint was refused: {why}"
+        );
     }
 }

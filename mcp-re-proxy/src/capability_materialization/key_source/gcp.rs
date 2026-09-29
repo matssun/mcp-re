@@ -2,6 +2,7 @@
 //! The GCP Cloud KMS key source (ADR-MCPS-028 §C).
 
 use super::ChannelMaterial;
+use crate::capability_materialization::key_file_custody::AdmittedKeyFiles;
 use crate::config_state::ChannelKeyMaterial;
 use crate::key_source::{KeyError, KeySource};
 
@@ -9,6 +10,7 @@ use crate::key_source::{KeyError, KeySource};
 /// files.
 #[cfg(feature = "gcp_kms_keysource")]
 pub(super) fn open(
+    admitted: &mut AdmittedKeyFiles<'_>,
     key_version: &str,
     endpoint: Option<&str>,
     use_metadata: bool,
@@ -16,8 +18,9 @@ pub(super) fn open(
     material: ChannelMaterial<'_>,
 ) -> Result<Box<dyn KeySource + Send + Sync>, KeyError> {
     let signing = backend(key_version, endpoint, use_metadata)?;
+    let tls_key = super::exported_tls_key(admitted, material)?;
     let tls =
-        crate::key_source::FileKeySource::tls_only(material.cert, material.key, material.client_ca);
+        crate::key_source::FileKeySource::tls_only(material.cert, tls_key, material.client_ca)?;
     // #61: the GCP counterpart of #60 — a SECOND, DISTINCT key version custodies the
     // channel key, and the proxy never reads an exported key from disk.
     let Some(channel_key_version) = channel.gcp_key_version() else {
@@ -53,6 +56,7 @@ fn backend(
 /// Default build: the Cloud KMS backend is not compiled, so this FAILS CLOSED here.
 #[cfg(not(feature = "gcp_kms_keysource"))]
 pub(super) fn open(
+    _admitted: &mut AdmittedKeyFiles<'_>,
     _key_version: &str,
     _endpoint: Option<&str>,
     _use_metadata: bool,
