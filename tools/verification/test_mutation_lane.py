@@ -71,18 +71,23 @@ def test_the_registry_parses_and_every_probe_names_a_real_unit_and_theorem():
 
     probes = lane.load_probes()
     assert probes, "the registry must not be empty while V0 claims rest on it"
-    theorems = {
-        t["id"]
-        for t in tomllib.load(
-            (lane.REPO_ROOT / "verification/policy/theorems.toml").open("rb")
-        )["theorem"]
-    }
+    rows = tomllib.load(
+        (lane.REPO_ROOT / "verification/policy/theorems.toml").open("rb")
+    )["theorem"]
+    resting: dict[str, set[str]] = {}
+    for row in rows:
+        for unit in [ref.removeprefix("unit://") for ref in row.get("supported_by", [])] + [row.get("owner", "")]:
+            resting.setdefault(unit, set()).add(row["id"])
+    wrong = []
     for probe in probes:
         assert probe["unit"] in UNITS, probe["id"]
         # `theorem` is optional — a unit may have a probe before it has a registered
-        # claim — but a theorem that IS named must resolve.
-        if "theorem" in probe:
-            assert probe["theorem"] in theorems, probe["id"]
+        # claim — but a theorem that IS named must be one that rests on the probe's unit:
+        # the probe defends that theorem's conjunct, and naming another theorem states that
+        # a different proposition is protected.
+        if "theorem" in probe and probe["theorem"] not in resting.get(probe["unit"], set()):
+            wrong.append(f"{probe['id']}: {probe['theorem']} does not rest on {probe['unit']}")
+    assert not wrong, "\n".join(wrong)
 
 
 def test_every_registered_anchor_matches_exactly_one_site_today():

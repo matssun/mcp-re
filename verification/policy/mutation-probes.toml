@@ -3988,7 +3988,7 @@ expect_red = [
 [[probe]]
 id = "M136-a-dead-rotor-must-retire-the-snapshot"
 unit = "proxy.delegated_signing_credential"
-theorem = "THM-0043"
+theorem = "THM-0062"
 conjunct = "every transition out of a valid delegated key fails closed rather than continuing to sign"
 # Deleting this leaves the published key valid for the rest of its own window, so response
 # signing continues on a rotor whose state is not known good and the replica reads healthy
@@ -5645,7 +5645,6 @@ something that can be copied out of the host.
 [[probe]]
 id = "M203-typescript-the-transport-does-not-open-unchecked"
 unit = "sdk_typescript.signer_policy"
-theorem = "THM-0095"
 conjunct = "the transport does not open unless the signer satisfies the route's policy, checked before anything is signed"
 path = "sdk/typescript/src/transport.ts"
 anchor = """
@@ -5665,7 +5664,6 @@ substitution is semantic rather than a compile error.
 [[probe]]
 id = "M204-typescript-hardening-refuses-exportable-custody"
 unit = "sdk_typescript.signer_policy"
-theorem = "THM-0095"
 conjunct = "non-exporting custody is required where the hardening profile demands it"
 path = "sdk/typescript/src/custody.ts"
 anchor = """
@@ -5896,7 +5894,6 @@ nothing about the code LOOKS wrong once the keyword is gone.
 [[probe]]
 id = "M213-typescript-the-aggregate-read-is-bounded"
 unit = "sdk_typescript.bounded_read"
-theorem = "THM-0095"
 conjunct = "the response read is bounded by the aggregate wall clock rather than by socket inactivity alone"
 path = "sdk/typescript/src/mtls.ts"
 anchor = """
@@ -5921,7 +5918,6 @@ Python instance recorded the same defect from the `read1`/`read` direction.
 [[probe]]
 id = "M214-typescript-the-binding-serialization-is-canonical"
 unit = "sdk_typescript.authorization_binding"
-theorem = "THM-0095"
 conjunct = "the binding specs are serialized canonically and byte-identically to the Python twin"
 path = "sdk/typescript/src/authorization.ts"
 anchor = """
@@ -5948,7 +5944,7 @@ digest whichever way it drifts.
 [[probe]]
 id = "M215-proxy-a-host-a-parser-would-rewrite-is-refused"
 unit = "proxy.kms_endpoint_authority"
-theorem = "THM-0091"
+theorem = "THM-0089"
 conjunct = "a host whose last label is a number is admitted only when it already IS the address it resolves to"
 path = "mcp-re-proxy/src/kms_endpoint_policy/mod.rs"
 anchor = """
@@ -5976,7 +5972,7 @@ entry and `2130706433` in the next cannot tell from the text that the second is 
 [[probe]]
 id = "M216-proxy-the-host-allowlist-is-what-a-resolver-can-answer-for"
 unit = "proxy.kms_endpoint_authority"
-theorem = "THM-0091"
+theorem = "THM-0089"
 conjunct = "a host carrying percent-, IDNA- or separator-encoding is refused rather than resolved to a different host than the text reads"
 path = "mcp-re-proxy/src/kms_endpoint_policy/mod.rs"
 anchor = """
@@ -6005,7 +6001,7 @@ separator -- and admits `127.1`, which M215's check is what refuses.
 [[probe]]
 id = "M217-proxy-a-port-whose-text-and-value-differ-is-refused"
 unit = "proxy.kms_endpoint_authority"
-theorem = "THM-0091"
+theorem = "THM-0089"
 conjunct = "a port whose text and the value a URL parser reads differ is refused"
 path = "mcp-re-proxy/src/kms_endpoint_policy/mod.rs"
 anchor = """
@@ -6027,7 +6023,7 @@ whose spelling reads 0443 and whose machine interpretation is 443.
 [[probe]]
 id = "M218-proxy-two-roles-that-are-one-key-are-collapsed"
 unit = "proxy.signing_role_separation"
-theorem = "THM-0091"
+theorem = "THM-0073"
 conjunct = "the two signing roles are compared as cryptographic identities, and a deployment whose roles are one key cannot be materialized"
 path = "mcp-re-proxy/src/capability_materialization/key_source/role_separation.rs"
 anchor = """
@@ -6055,7 +6051,7 @@ probe leaves that arm's control green.
 [[probe]]
 id = "M219-proxy-a-kms-signature-is-verified-before-it-is-returned"
 unit = "proxy.aws_kms_adapter"
-theorem = "THM-0091"
+theorem = "THM-0116"
 conjunct = "every signature is verified locally against the advertised public key before it is returned, and a pre-hashed signature is refused rather than emitted"
 path = "mcp-re-proxy/src/aws_kms_keysource.rs"
 anchor = """
@@ -6088,7 +6084,7 @@ error -- a tree that does not build measures nothing.
 [[probe]]
 id = "M220-proxy-a-channel-selector-must-match-its-custody-state"
 unit = "proxy.cross_machine_legality"
-theorem = "THM-0091"
+theorem = "THM-0049"
 conjunct = "an illegal combination of two configuration machines is refused unconditionally rather than reinterpreted into a weaker posture"
 path = "mcp-re-proxy/src/config_state/cross_machine.rs"
 anchor = """
@@ -6117,7 +6113,7 @@ one they named.
 [[probe]]
 id = "M221-proxy-a-deny-list-nothing-reads-is-refused"
 unit = "proxy.cross_machine_legality"
-theorem = "THM-0091"
+theorem = "THM-0049"
 conjunct = "a deny-list no reachable authorization profile will consult is refused rather than accepted as enforcing something"
 path = "mcp-re-proxy/src/config_state/cross_machine.rs"
 anchor = """
@@ -6143,7 +6139,7 @@ consults the list.
 [[probe]]
 id = "M222-client-an-expired-manifest-fails-closed"
 unit = "client.trust_manifest_lifecycle"
-theorem = "THM-0091"
+theorem = "THM-0057"
 conjunct = "the manifest's expiry deadline outranks every root inside it — a stale trust picture is never used"
 path = "mcp-re-client-core/src/trust_manifest/mod.rs"
 anchor = """
@@ -6167,7 +6163,7 @@ resolving its anchors forever, and a retired root answers for the issuer indefin
 [[probe]]
 id = "M223-client-the-version-floor-is-monotone"
 unit = "client.trust_manifest_lifecycle"
-theorem = "THM-0091"
+theorem = "THM-0057"
 conjunct = "the manifest's monotone version floor — never accept a version below the highest already seen"
 path = "mcp-re-client-core/src/trust_manifest/mod.rs"
 anchor = """
@@ -6192,7 +6188,7 @@ window it published, and a root retired in the meantime answers again.
 [[probe]]
 id = "M224-client-a-preflight-receipt-must-commit-to-these-bytes"
 unit = "client.response_binding_disposition"
-theorem = "THM-0091"
+theorem = "THM-0059"
 conjunct = "a preflight receipt is accepted as being about this call only when it commits to the digest of the bytes this client sent"
 path = "mcp-re-client-core/src/response.rs"
 anchor = """
@@ -6220,7 +6216,7 @@ every receipt that commits correctly-shaped to somebody ELSE's bytes.
 [[probe]]
 id = "M225-client-a-success-must-be-request-bound"
 unit = "client.response_binding_disposition"
-theorem = "THM-0091"
+theorem = "THM-0059"
 conjunct = "a response verified without a request binding is reported as unbound and is never classified as a success"
 path = "mcp-re-client-core/src/response.rs"
 anchor = """
@@ -6243,7 +6239,7 @@ correct, and the defect is reaching the wrong one.
 [[probe]]
 id = "M226-client-an-unusable-continuation-state-is-malformed"
 unit = "client.verified_outcome"
-theorem = "THM-0091"
+theorem = "THM-0126"
 conjunct = "an input-required reply withholding a usable requestState is malformed rather than terminal"
 path = "mcp-re-client-proxy/src/verified_outcome.rs"
 anchor = """
@@ -6273,7 +6269,7 @@ opening sentence.
 [[probe]]
 id = "M227-client-the-route-pin-is-enforced-against-the-root-issuer"
 unit = "client.response_signer_authorization"
-theorem = "THM-0091"
+theorem = "THM-0058"
 conjunct = "where the route pins an issuer, a credential chaining to any other trusted anchor fails closed"
 path = "mcp-re-client-core/src/response.rs"
 anchor = """
@@ -6307,7 +6303,7 @@ bound rejection receipt, and a bodyless 202.
 [[probe]]
 id = "M228-http-profile-the-signer-slot-join-is-injective"
 unit = "http_profile.replay_key"
-theorem = "THM-0091"
+theorem = "THM-0079"
 conjunct = "equality of the composite replay slots holds exactly when the full five-tuple is equal"
 path = "mcp-re-http-profile/src/replay.rs"
 anchor = """
@@ -6340,7 +6336,7 @@ actor is refused because an unrelated one already occupied the key, and the refu
 [[probe]]
 id = "M229-http-profile-the-canonical-jwk-embeds-its-operand-verbatim"
 unit = "http_profile.keyid"
-theorem = "THM-0091"
+theorem = "THM-0055"
 conjunct = "the RFC 7638 canonical JWK form embeds its operand verbatim between fixed affixes, introducing no collision of its own"
 path = "mcp-re-http-profile/src/keyid.rs"
 anchor = """
@@ -6371,7 +6367,7 @@ battery for different reasons.
 [[probe]]
 id = "M230-http-profile-two-enrolled-keys-cannot-share-a-keyid"
 unit = "http_profile.keyid_selector"
-theorem = "THM-0091"
+theorem = "THM-0050"
 conjunct = "two distinct enrolled verification keys cannot be brought to the same keyid"
 path = "mcp-re-http-profile/src/keyid.rs"
 anchor = """
@@ -6400,7 +6396,7 @@ one keyid, so a signature from either verifies under a lookup for the other.
 [[probe]]
 id = "M231-http-profile-a-reply-correlates-by-value-and-by-type"
 unit = "http_profile.request_envelope"
-theorem = "THM-0091"
+theorem = "THM-0083"
 conjunct = "a reply correlates to the outstanding id by value AND by type, with no null-id correlation"
 path = "mcp-re-http-profile/src/envelope/response.rs"
 anchor = """
@@ -6432,7 +6428,7 @@ assertions were added and the probe takes it red.
 [[probe]]
 id = "M232-http-profile-a-reply-that-is-also-a-request-is-refused"
 unit = "http_profile.request_envelope"
-theorem = "THM-0091"
+theorem = "THM-0083"
 conjunct = "no reply that is also a request — a response body carrying a method member is refused"
 path = "mcp-re-http-profile/src/envelope/response.rs"
 anchor = """
@@ -6458,7 +6454,7 @@ composition across layers, not defence in depth within one.
 [[probe]]
 id = "M233-http-profile-an-assertion-older-than-the-budget-is-refused"
 unit = "http_profile.admission_assertion"
-theorem = "THM-0091"
+theorem = "THM-0053"
 conjunct = "an assertion outside the verifier's own independent staleness budget, or dated ahead of the verifier, is refused"
 path = "mcp-re-http-profile/src/admission/mod.rs"
 anchor = """
@@ -6488,7 +6484,7 @@ for the assertion's whole TTL. Two halves of one refusal, one anchor.
 [[probe]]
 id = "M234-core-the-resolver-key-is-injective"
 unit = "core.trust_resolver_seam"
-theorem = "THM-0091"
+theorem = "THM-0119"
 conjunct = "the composite (signer, key_id) lookup key is injective across pairs containing the delimiter"
 path = "mcp-re-core/src/resolver.rs"
 anchor = """
@@ -6522,7 +6518,7 @@ function ITSELF joins on, `:` and `|`, and the control now includes them.
 [[probe]]
 id = "M235-host-a-pre-epoch-clock-is-never-fabricated"
 unit = "host.request_freshness_inputs"
-theorem = "THM-0091"
+theorem = "THM-0114"
 conjunct = "a clock reports a pre-epoch reading faithfully rather than fabricating a plausible time"
 path = "mcp-re-host/src/clock.rs"
 anchor = """
@@ -6554,7 +6550,7 @@ ask whether it was fabricated.
 [[probe]]
 id = "M236-core-a-poisoned-replay-cache-refuses-rather-than-admits"
 unit = "core.replay_seam"
-theorem = "THM-0091"
+theorem = "THM-0118"
 conjunct = "every failure the reference cache owns is a value rather than a panic, and never an allow"
 path = "mcp-re-core/src/replay.rs"
 anchor = """
@@ -6586,7 +6582,7 @@ refuses when the cache is full, and says nothing about a cache whose lock is poi
 [[probe]]
 id = "M237-proxy-no-policy-deployed-is-not-a-grant"
 unit = "proxy.authorization_posture"
-theorem = "THM-0091"
+theorem = "THM-0056"
 conjunct = "the two facts a posture keeps apart — no policy is deployed, and a policy permitted this"
 path = "mcp-re-proxy/src/authorization/decide.rs"
 anchor = """
@@ -6615,7 +6611,7 @@ answer to a tree that does not build.
 [[probe]]
 id = "M238-proxy-an-unreadable-action-is-refused-before-any-policy"
 unit = "proxy.authorization_posture"
-theorem = "THM-0091"
+theorem = "THM-0056"
 conjunct = "a request with no readable action is refused before any policy is consulted"
 path = "mcp-re-proxy/src/authorization/decide.rs"
 anchor = """
@@ -6643,7 +6639,6 @@ which is exactly what the sibling control about projecting to different authorit
 [[probe]]
 id = "M239-proxy-a-configured-profile-with-no-authority-refuses-startup"
 unit = "proxy.authorization_capability"
-theorem = "THM-0091"
 conjunct = "a deployment that configures an authorization profile with no enrolled authority refuses to start rather than serving a profile that can decide nothing"
 path = "mcp-re-proxy/src/authorization/capability.rs"
 anchor = """
@@ -6666,7 +6661,7 @@ only point at which the two are distinguishable, because afterwards the evidence
 [[probe]]
 id = "M240-proxy-a-selected-store-that-cannot-be-established-refuses-startup"
 unit = "proxy.continuation_materialization_shared"
-theorem = "THM-0091"
+theorem = "THM-0096"
 conjunct = "in a build that carries the backend, a selected continuation store that cannot be established refuses startup rather than announcing OFF"
 path = "mcp-re-proxy/src/serving_capabilities/continuation.rs"
 anchor = """
@@ -6706,7 +6701,7 @@ the connect refuses rather than hanging.
 [[probe]]
 id = "M241-http-profile-the-response-carries-the-handle-over-this-request"
 unit = "http_profile.response_emission_binding"
-theorem = "THM-0091"
+theorem = "THM-0065"
 conjunct = "the response evidence block's request-evidence handle is over the request being answered"
 path = "mcp-re-http-profile/src/rejection/pre_052_direct_root.rs"
 anchor = """
@@ -6754,7 +6749,7 @@ signature base, so a wrong handle is a record that cannot be checked against any
 [[probe]]
 id = "M242-client-the-skew-is-clamped-at-construction"
 unit = "client.delegation_policy_seal"
-theorem = "THM-0091"
+theorem = "THM-0060"
 conjunct = "the clock skew is clamped to the profile bound at construction, so no inhabitant carries an unbounded tolerance"
 path = "mcp-re-client-core/src/delegation_policy.rs"
 anchor = """
@@ -6786,7 +6781,7 @@ INHABITANT rather than of the call sites somebody checked.
 [[probe]]
 id = "M243-client-an-expired-manifest-withdraws-rather-than-serves"
 unit = "client.anchor_refresh"
-theorem = "THM-0091"
+theorem = "THM-0120"
 conjunct = "an EXPIRED manifest with no newer document accepted publishes an EMPTY anchor set rather than keeping the last good one"
 path = "mcp-re-client/src/anchors/refresher.rs"
 anchor = """
@@ -6819,7 +6814,7 @@ can be loaded at all.
 [[probe]]
 id = "M244-client-a-concurrent-raise-makes-the-accepted-version-unrecordable"
 unit = "client.manifest_floor"
-theorem = "THM-0091"
+theorem = "THM-0121"
 conjunct = "a floor raised past the accepted version between the load's read and the record is reported rather than treated as success"
 path = "mcp-re-client-proxy/src/manifest_floor.rs"
 anchor = """
@@ -6847,7 +6842,7 @@ only safe answer when the two reads disagree.
 [[probe]]
 id = "M245-proxy-a-response-advertises-no-validity-past-its-credential"
 unit = "proxy.response_signing"
-theorem = "THM-0091"
+theorem = "THM-0063"
 conjunct = "the validity a response may advertise is bounded by the credential it is signed under, not only by the configured TTL"
 path = "mcp-re-proxy/src/http_profile_serve/signing_window.rs"
 anchor = """
@@ -6876,7 +6871,7 @@ and distinct, and this anchor holds only the bound.
 [[probe]]
 id = "M246-proxy-the-outstanding-id-is-not-read-a-second-time"
 unit = "proxy.outstanding_id_provenance"
-theorem = "THM-0091"
+theorem = "THM-0083"
 conjunct = "the serving path never reads the outstanding id from the body a second time, carrying the decided value to its terminal instead"
 path = "mcp-re-proxy/src/http_profile_serve/mod.rs"
 anchor = """
@@ -6904,7 +6899,7 @@ notification means the tool ran and the caller was told nothing ran.
 [[probe]]
 id = "M247-proxy-a-volatile-replay-tier-is-never-handed-over"
 unit = "proxy.replay_materialization"
-theorem = "THM-0091"
+theorem = "THM-0086"
 conjunct = "a tier that self-declares the volatile single-process posture is never handed to the serving path"
 path = "mcp-re-proxy/src/replay_plane/materialized.rs"
 anchor = """
@@ -6937,7 +6932,7 @@ and invisible to peer verifiers, under a posture that advertises replay protecti
 [[probe]]
 id = "M248-proxy-a-pkcs11-signature-is-verified-before-emission"
 unit = "proxy.pkcs11_adapter"
-theorem = "THM-0091"
+theorem = "THM-0116"
 conjunct = "a 64-byte signature that does not verify under the token's advertised public key is refused before emission"
 path = "mcp-re-proxy/src/pkcs11_keysource/mod.rs"
 anchor = """
@@ -6965,7 +6960,7 @@ implement the rule in neither.
 [[probe]]
 id = "M249-proxy-only-the-device-states-hold-the-key-off-this-process"
 unit = "proxy.custody_exposure"
-theorem = "THM-0091"
+theorem = "THM-0064"
 conjunct = "the ADR-MCPRE-067 exposure fact read off a custody state — only the device states hold the key off this process"
 path = "mcp-re-proxy/src/config_state/custody.rs"
 anchor = """
@@ -6995,7 +6990,7 @@ wrongly is worth nothing, and a posture that misreports is worse than none.
 [[probe]]
 id = "M250-client-silence-is-not-a-statement-that-nothing-ran"
 unit = "client.execution_contract"
-theorem = "THM-0091"
+theorem = "THM-0061"
 conjunct = "a receipt that says nothing about execution is distinguished from one that says nothing ran"
 path = "mcp-re-client-core/src/execution_contract.rs"
 anchor = """
@@ -7022,7 +7017,7 @@ two of them is a silent change of meaning rather than a broken mechanism.
 [[probe]]
 id = "M251-proxy-a-gcp-signature-is-verified-before-it-is-returned"
 unit = "proxy.gcp_kms_adapter"
-theorem = "THM-0091"
+theorem = "THM-0116"
 conjunct = "every signature is verified locally against the advertised public key before it is returned, and a pre-hashed signature is refused"
 path = "mcp-re-proxy/src/gcp_kms_keysource.rs"
 anchor = """
@@ -7054,7 +7049,7 @@ ADR-MCPRE-061 question 2, not a falsifier question, and it is NOT acted on here.
 [[probe]]
 id = "M252-client-the-refresher-is-started-before-the-listener-is-served"
 unit = "client.serving_lifetime"
-theorem = "THM-0091"
+theorem = "THM-0127"
 conjunct = "the anchor refresher is started unconditionally before the local listener is served and held for as long as it serves"
 path = "mcp-re-client/src/startup.rs"
 anchor = """
@@ -7086,7 +7081,7 @@ never ran and the probe was blamed. Fixed in the lane, not here.
 [[probe]]
 id = "M253-proxy-no-production-path-installs-a-node-local-continuation-tier"
 unit = "proxy.continuation_installation"
-theorem = "THM-0091"
+theorem = "THM-0096"
 conjunct = "no production path installs a node-local continuation tier — a deployment that selected nothing installs NO store"
 path = "mcp-re-proxy/src/app.rs"
 anchor = """
@@ -7115,7 +7110,7 @@ its transcript says it holds none.
 [[probe]]
 id = "M254-proxy-the-signing-plane-comes-from-the-materialized-source"
 unit = "proxy.signing_credential_provenance"
-theorem = "THM-0091"
+theorem = "THM-0082"
 conjunct = "the signing plane is installed from the key source the materializer opened, not from one the root named itself"
 path = "mcp-re-proxy/src/app.rs"
 anchor = """
@@ -7159,7 +7154,7 @@ is correct -- and the rule it was aimed at stays covered by this unit's other co
 [[probe]]
 id = "M255-client-the-expectation-comes-from-the-request-that-was-sent"
 unit = "client.proxy_request_correspondence"
-theorem = "THM-0091"
+theorem = "THM-0084"
 conjunct = "the SignedRequest handed to the transport and the ResponseExpectation handed to response verification come from ONE owner"
 path = "mcp-re-client-proxy/src/proxy.rs"
 anchor = """
@@ -7188,7 +7183,6 @@ verifier cannot see the joint at all -- which is why this unit exists beside
 [[probe]]
 id = "M256-core-a-content-address-is-parsed-only-from-its-exact-shape"
 unit = "core.content_address"
-theorem = "THM-0091"
 conjunct = "a content address is parsed back only from its exact shape — a missing prefix is refused rather than interpreted"
 path = "mcp-re-core/src/hash.rs"
 anchor = """
@@ -7216,7 +7210,7 @@ narrows nothing, so the shapes that worked still work. Only the refusal control 
 [[probe]]
 id = "M257-client-evidence-that-can-never-verify-is-refused-locally"
 unit = "client.request_construction"
-theorem = "THM-0091"
+theorem = "THM-0125"
 conjunct = "a request with no artifact binding or a structurally invalid one is refused LOCALLY rather than sent"
 path = "mcp-re-client-core/src/request.rs"
 anchor = """
@@ -7245,7 +7239,6 @@ the client's is the only one that can name the cause.
 [[probe]]
 id = "M258-http-profile-a-content-type-on-a-bodyless-message-is-refused"
 unit = "http_profile.bodyless_acknowledgement"
-theorem = "THM-0091"
 conjunct = "the named component sets are enforced as sets — a content-type on a bodyless message is a profile violation, not a harmless extra"
 path = "mcp-re-http-profile/src/bodyless/mod.rs"
 anchor = """
@@ -7273,7 +7266,6 @@ body arriving where none was signed, and says nothing about a header arriving al
 [[probe]]
 id = "M259-proxy-a-pkcs11-pin-is-not-printable"
 unit = "proxy.operator_facing_redaction"
-theorem = "THM-0091"
 conjunct = "the PKCS#11 User PIN cannot be printed as configured — not the value, and not its length"
 path = "mcp-re-proxy/src/deployment_request/secret_string.rs"
 anchor = """
@@ -7300,7 +7292,7 @@ weakening, correctly: the seal is about the rendering, not about access.
 [[probe]]
 id = "M260-proxy-a-stale-crl-produces-no-evidence-to-install"
 unit = "proxy.client_revocation_currency"
-theorem = "THM-0091"
+theorem = "THM-0131"
 conjunct = "a set of CRLs is installable only when every one of them is inside its own nextUpdate window"
 path = "mcp-re-proxy/src/tls_plane/crl_evidence.rs"
 anchor = """
@@ -7327,7 +7319,7 @@ one measurement, and only the stale one refuses.
 [[probe]]
 id = "M261-proxy-each-authority-names-its-own-token"
 unit = "proxy.refusal_provenance"
-theorem = "THM-0091"
+theorem = "THM-0046"
 conjunct = "the presentation boundary adds no vocabulary and makes no choice — it asks each authority what it says"
 path = "mcp-re-proxy/src/refusal/cause.rs"
 anchor = """
@@ -7360,7 +7352,7 @@ control that measures the arm it weakens.
 [[probe]]
 id = "M262-http-profile-the-response-status-is-inside-the-submitted-identity"
 unit = "http_profile.submitted_hop_identity"
-theorem = "THM-0091"
+theorem = "THM-0042"
 conjunct = "two retained submitted hops that differ in any retained fact are two submissions — the representation is closed"
 path = "mcp-re-http-profile/src/chain/submitted_identity.rs"
 anchor = """
@@ -7390,7 +7382,6 @@ weakening drops one.
 [[probe]]
 id = "M263-http-profile-a-chain-with-a-hole-is-not-a-complete-record"
 unit = "http_profile.retained_chain_record"
-theorem = "THM-0091"
 conjunct = "per-hop validity does not imply a complete chain — a set with a missing middle hop is Incomplete, not a complete terminal"
 path = "mcp-re-http-profile/src/chain/record.rs"
 anchor = """
@@ -7432,7 +7423,7 @@ actually reaches.
 [[probe]]
 id = "M264-http-profile-an-eddsa-pin-carrying-an-ec2-y-is-not-a-pin"
 unit = "http_profile.scitt_service_pin"
-theorem = "THM-0091"
+theorem = "THM-0068"
 conjunct = "an illegal pin document is refused rather than becoming a resolvable service"
 path = "mcp-re-http-profile/src/scitt/trust_pin/document.rs"
 anchor = """
@@ -7460,7 +7451,7 @@ the `x` coordinate either way and says nothing about the `y` beside it.
 [[probe]]
 id = "M265-proxy-an-unreadable-sts-expiry-is-already-expired"
 unit = "proxy.aws_sts_credentials"
-theorem = "THM-0091"
+theorem = "THM-0117"
 conjunct = "an expiry that cannot be read is already-expired rather than unlimited, and a far-future one is truncated to the real session ceiling"
 path = "mcp-re-proxy/src/aws_sts.rs"
 anchor = """
@@ -7491,7 +7482,6 @@ refreshes on this number alone.
 [[probe]]
 id = "M266-proxy-a-profile-missing-its-scope-is-refused-not-defaulted"
 unit = "proxy.authorization_configuration_state"
-theorem = "THM-0091"
 conjunct = "a configured profile carries its scope and its staleness bound together, and one missing either is refused rather than defaulted"
 path = "mcp-re-proxy/src/config_state/authorization.rs"
 anchor = """
@@ -7526,7 +7516,6 @@ the operator DID name, and says nothing about one they never gave.
 [[probe]]
 id = "M267-proxy-a-configuration-that-names-no-authority-is-refused"
 unit = "proxy.admission_configuration_state"
-theorem = "THM-0091"
 conjunct = "a configuration that names no admission authority is refused rather than served as OFF"
 path = "mcp-re-proxy/src/config_state/admission.rs"
 anchor = """
@@ -7560,7 +7549,7 @@ separately falsifiable, which is the correct arrangement.
 [[probe]]
 id = "M268-client-a-dpop-binding-digests-what-the-verifier-digests"
 unit = "client.deployment_config"
-theorem = "THM-0091"
+theorem = "THM-0124"
 conjunct = "a DPoP binding digests what the verifier digests — the bearer token, not the whole header value"
 path = "mcp-re-client/src/config/mod.rs"
 anchor = """
@@ -7588,7 +7577,7 @@ first into the second.
 [[probe]]
 id = "M269-proxy-the-covered-set-is-read-from-this-labels-member-only"
 unit = "proxy.retained_record_content"
-theorem = "THM-0091"
+theorem = "THM-0112"
 conjunct = "a retained exchange contains exactly the headers its own signature base names — nothing can widen the covered set"
 path = "mcp-re-proxy/src/transparency/covered_set.rs"
 anchor = """
@@ -7619,7 +7608,7 @@ signature base names", and exactly is the whole of it.
 [[probe]]
 id = "M270-policy-revoked-and-unavailable-are-distinct-tokens"
 unit = "policy.authorization_taxonomy"
-theorem = "THM-0091"
+theorem = "THM-0111"
 conjunct = "the split that keeps an unavailable revocation backend from being served as a revocation"
 path = "mcp-re-policy/src/error.rs"
 anchor = """
@@ -7648,7 +7637,7 @@ and the sole authority over the mapping onto them.
 [[probe]]
 id = "M271-core-a-label-is-never-a-wire-token"
 unit = "core.audit_vocabulary"
-theorem = "THM-0091"
+theorem = "THM-0122"
 conjunct = "the non-normative reason label is prose and never a wire token"
 path = "mcp-re-core/src/audit/reason_label.rs"
 anchor = """
@@ -7674,7 +7663,7 @@ substituted arm takes it red: the rule is about the shape of the whole mapping.
 [[probe]]
 id = "M272-client-the-narrowing-is-not-a-shape-refusal"
 unit = "client.binding_spec_refusal"
-theorem = "THM-0091"
+theorem = "THM-0111"
 conjunct = "the narrowing — an opaque provider asked to mint a pdp-decision binding — is refused as the type not being supported IN THIS FORM, not as a malformed spec"
 path = "mcp-re-client-core/src/core_projection.rs"
 anchor = """
@@ -7997,7 +7986,7 @@ downstream would have caught it.
 [[probe]]
 id = "M408-the-backslash-is-escaped-even-where-nothing-looks-ambiguous"
 unit = "proxy.audit_text_rendering"
-theorem = "THM-0091"
+theorem = "THM-0130"
 conjunct = "The escape of the backslash is UNCONDITIONAL, so no image of the escape can be re-read as a literal — the property that makes the map injective rather than merely separator-free"
 path = "mcp-re-proxy/src/audit_record/scalar.rs"
 anchor = """
@@ -8033,7 +8022,7 @@ than breadth.
 [[probe]]
 id = "M273-proxy-one-logical-audit-record-is-one-physical-record"
 unit = "proxy.audit_text_rendering"
-theorem = "THM-0091"
+theorem = "THM-0130"
 conjunct = "every scalar is escaped into an image free of the record grammar's separators, and the escape is injective"
 path = "mcp-re-proxy/src/audit_record/scalar.rs"
 anchor = """
@@ -8063,7 +8052,7 @@ verbatim. That is the sibling conjunct, and it cannot see a separator being let 
 [[probe]]
 id = "M274-proxy-a-shed-load-status-is-exhaustion-whatever-the-body-says"
 unit = "proxy.remote_signer_call_aws"
-theorem = "THM-0091"
+theorem = "THM-0115"
 conjunct = "shed-load statuses are read first, ahead of the stated error name"
 path = "mcp-re-proxy/src/remote_signer_call/quota_signals.rs"
 anchor = """
@@ -8093,7 +8082,6 @@ populations, one verdict -- composition, and the weakening drops half the status
 [[probe]]
 id = "M275-proxy-only-an-explicit-refusal-is-a-definitive-negative"
 unit = "proxy.scrapi_registration_leaf"
-theorem = "THM-0091"
 conjunct = "certainty is decided once — only an explicit client-error refusal is a definitive negative, and everything after the bytes went out is indeterminate"
 path = "mcp-re-proxy/src/transparency/auditor/registration/scrapi/fault.rs"
 anchor = """
@@ -8120,7 +8108,7 @@ definitive, because in both the service READ the submission and declined it.
 [[probe]]
 id = "M276-proxy-a-chained-cause-never-enters-the-body-a-classifier-reads"
 unit = "proxy.remote_signer_call_gcp"
-theorem = "THM-0091"
+theorem = "THM-0115"
 conjunct = "the chained cause renders for an operator and never enters the body a classifier reads"
 path = "mcp-re-proxy/src/remote_signer_call/mod.rs"
 anchor = """
@@ -8159,7 +8147,6 @@ travels ALONGSIDE, and `body` returns only what the service said.
 [[probe]]
 id = "M277-proxy-a-capsule-anchor-submission-that-never-went-out-is-indeterminate"
 unit = "proxy.capsule_anchor_registration_leaf"
-theorem = "THM-0091"
 conjunct = "what this operated service's answer MEANS — a submission that never went out is indeterminate, not a refusal"
 path = "mcp-re-proxy/src/transparency/auditor/registration/capsule_anchor/fault.rs"
 anchor = """
@@ -8187,7 +8174,7 @@ service may already hold.
 [[probe]]
 id = "M278-client-the-in-flight-ceiling-refuses-before-a-worker-is-spawned"
 unit = "client.local_serving_pipeline"
-theorem = "THM-0091"
+theorem = "THM-0123"
 conjunct = "an in-flight ceiling claimed BEFORE any worker is spawned, compared against the observed depth and nothing else"
 path = "mcp-re-client/src/serve/admission.rs"
 anchor = """
@@ -8216,7 +8203,7 @@ admits one more worker, it does not leak a slot.
 [[probe]]
 id = "M279-proxy-each-emitter-asks-the-typed-cause-for-its-projections"
 unit = "proxy.refusal_audit_emission"
-theorem = "THM-0091"
+theorem = "THM-0085"
 conjunct = "each emitter takes the typed cause and asks IT for its projections, rather than rendering one of its own"
 path = "mcp-re-proxy/src/http_profile_serve/receipt/audit_event.rs"
 anchor = """
@@ -8246,7 +8233,7 @@ authority reached it -- and an audit record's whole job is to answer that.
 [[probe]]
 id = "M280-conformance-the-committed-corpus-is-what-this-implementation-emits"
 unit = "conformance.retained_corpus"
-theorem = "THM-0091"
+theorem = "THM-0042"
 conjunct = "the committed bytes are compared against a fresh generation rather than trusted, and a tampered retained body no longer corresponds"
 path = "mcp-re-conformance/tests/vectors/scitt/retained/retained-hops.json"
 anchor = """
@@ -8273,7 +8260,7 @@ actually relying on.
 [[probe]]
 id = "M281-proxy-the-statement-is-issued-over-this-reconstruction"
 unit = "proxy.evidence_attestation"
-theorem = "THM-0091"
+theorem = "THM-0113"
 conjunct = "the statement is issued over the reconstruction that is handed back with it, so an INCOMPLETE verdict cannot be discovered by decoding what was just published"
 path = "mcp-re-proxy/src/transparency/attestation.rs"
 anchor = """
@@ -8885,7 +8872,6 @@ reading as a working control. This is the conjunct that separates a gate from an
 [[probe]]
 id = "M403-one-locator-projection-removes-the-userinfo"
 unit = "mcp-re-operator-display.locator_projection"
-theorem = "THM-0091"
 conjunct = "An operator-supplied locator reaches a diagnostic only through a projection that cannot carry its userinfo, and a shape the projection cannot decompose is NAMED rather than echoed"
 # RE-ADJUDICATED. The projection moved to its own workspace crate on the owner's
 # instruction, and was rewritten over `std` because that crate takes no dependency — so
