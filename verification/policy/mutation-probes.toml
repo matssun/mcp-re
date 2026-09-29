@@ -10604,10 +10604,10 @@ conjunct = "the published snapshot yields none past the published key's expiry, 
 # transition is the thing this unit exists to hold, and it must not be deletable.
 path = "mcp-re-proxy/src/delegated_server_signer/mod.rs"
 anchor = """
-            Some(a) if now < a.exp() => Some(Arc::clone(a)),
+            Snapshot::Active(a) if a.nbf() <= now && now < a.exp() => Some(Arc::clone(a)),
 """
 weakening = """
-            Some(a) => Some(Arc::clone(a)),
+            Snapshot::Active(a) if a.nbf() <= now => Some(Arc::clone(a)),
 """
 expect_red = [
   "lib#delegated_server_signer::tests::snapshot_fails_closed_past_expiry",
