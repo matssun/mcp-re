@@ -37,7 +37,7 @@ permissions:
   contents: read
 
 jobs:
-  bazel:
+  rust:
     name: Bazel build + test (Rust 1.97.1)
     runs-on: ubuntu-latest
     steps:
