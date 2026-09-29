@@ -79,9 +79,13 @@ rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
 rust.toolchain(
     edition = "2021",
     versions = ["1.97.1"],
-    # Cross-compile the production proxy artifact to the linux/amd64 image
-    # platform from the darwin host (OCI packaging, Phase 1).
-    extra_target_triples = ["x86_64-unknown-linux-gnu"],
+    # Cross-compile the image binaries to Linux from a darwin host: amd64 for the
+    # registry images, arm64 for the local kind fleet on Apple Silicon
+    # (scripts/stage_image_binaries.sh).
+    extra_target_triples = [
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+    ],
 )
 
 ########################################

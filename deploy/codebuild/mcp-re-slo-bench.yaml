@@ -8,7 +8,7 @@
 #     --stack-name mcp-re-slo-bench-build --capabilities CAPABILITY_IAM
 #
 # WHY BUILD IN THE CLOUD AT ALL. The bench image is a from-source Rust build carrying
-# a warmed cargo target/ so the Job runs with no recompile — it is large. Building it
+# the release bench binary so the Job runs with no compile at all. Building it
 # on a developer box and pushing it means uploading that image over a home link, and
 # it competes for local disk with a target/ that is already tens of GB. Uploading the
 # ~25 MB source context instead and letting the build and the push both happen inside
@@ -188,7 +188,15 @@ Resources:
                 - aws ecr get-login-password --region "$AWS_DEFAULT_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY"
             build:
               commands:
-                - docker build -f deploy/docker/Dockerfile.bench -t "$ECR_REGISTRY/mcp-re-slo-bench:$TAG" .
+                # The image compiles nothing: Bazel builds the bench and the proxy it spawns
+                # natively on this arm64 host, at the version .bazelversion pins, and stages
+                # them for the Dockerfile. bazelisk is pinned by version AND digest (the
+                # digest GitHub publishes for the release asset).
+                - curl -fsSL -o /usr/local/bin/bazel https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/bazelisk-linux-arm64
+                - echo "e20e8b0f4f240091b7a55bf17b9398bd4f40ee70ae0208dff95dd4c445fb4010  /usr/local/bin/bazel" | sha256sum -c -
+                - chmod +x /usr/local/bin/bazel
+                - scripts/stage_image_binaries.sh --arch arm64
+                - docker build -f deploy/docker/Dockerfile.bench --build-arg DIST=deploy/docker/dist/arm64 -t "$ECR_REGISTRY/mcp-re-slo-bench:$TAG" .
             post_build:
               commands:
                 - docker push "$ECR_REGISTRY/mcp-re-slo-bench:$TAG"

@@ -61,3 +61,4 @@ __pycache__/
 
 # ADR-MCPRE-059 attestation store — derived evidence, never source (§"Evidence attestation").
 /.verification/
+deploy/docker/dist/

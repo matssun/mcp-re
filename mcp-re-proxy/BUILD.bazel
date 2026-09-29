@@ -741,6 +741,40 @@ _PROXY_EXT_FEATURES = [
     "gcp_kms_keysource",
 ]
 
+# The SHIPPED proxy: the features the deployed image carries — registration, the shared
+# Redis replay tier and both cloud KMS signers — and nothing it does not. PKCS#11, etcd and
+# online OCSP are not deployed, so their crates are not linked. Built for Linux and copied
+# into deploy/docker/Dockerfile by scripts/stage_image_binaries.sh.
+_PROXY_DEPLOY_FEATURES = [
+    "scitt_registration",
+    "redis_replay",
+    "aws_kms_keysource",
+    "gcp_kms_keysource",
+]
+
+_PROXY_DEPLOY_DEPS = _PROXY_LIB_DEPS + [
+    c
+    for c in _PROXY_EXT_CRATES
+    if c != "@crates_mcp_re//:cryptoki-sys"
+]
+
+nt_rust_library(
+    name = "mcp_re_proxy_deploy",
+    srcs = _PROXY_LIB_SRCS,
+    crate_features = _PROXY_DEPLOY_FEATURES,
+    crate_name = "mcp_re_proxy",
+    edition = "2021",
+    deps = _PROXY_DEPLOY_DEPS,
+)
+
+nt_rust_binary(
+    name = "mcp_re_proxy_deploy_bin",
+    srcs = ["src/main.rs"],
+    crate_features = _PROXY_DEPLOY_FEATURES,
+    edition = "2021",
+    deps = [":mcp_re_proxy_deploy"] + _PROXY_DEPLOY_DEPS,  # keep
+)
+
 # MCPS-029 (folds in MCPS-018 #3807): the production sidecar CLI. Terminates TLS,
 # verifies object signatures + (optional) authz + transport binding, forwards to
 # an inner MCP server subprocess, signs responses. Blocking; no async runtime.
@@ -1325,23 +1359,24 @@ nt_rust_test(
 # ADR-MCPRE-051 §7 load/SLO harness. `manual`: it stands up a primary+2-replica
 # Redis fleet via Docker (or an external MCP_RE_LOADGEN_REDIS_URL), which the Bazel
 # test sandbox cannot provide — so it is excluded from `bazel test //...` and driven
-# by cargo / the GKE runbook. Built against the redis_replay ext flavor.
+# by scripts/local_slo_lane.sh (`bazel run -c opt`) and the GKE bench image.
 # `:tls_load_harness_bench_builds` below compiles it on every `bazel test //...`.
-# It spawns the ext binary: the harness runs a shared Redis replay tier, which only a
-# redis_replay build accepts.
+# It links the deploy flavor and spawns the deploy binary — the artifact the image ships —
+# so what it measures is what is deployed; the shared Redis replay tier it runs needs the
+# `redis_replay` build that flavor carries.
 nt_rust_test(
     name = "tls_load_harness_bench",
     srcs = ["tests/tls_load_harness_bench.rs"],
     auto_cargo_toml = False,
     bazel_build_cfg = False,
-    crate_features = _PROXY_EXT_FEATURES,
+    crate_features = _PROXY_DEPLOY_FEATURES,
     tags = ["manual"],
     data = [
-        ":mcp_re_proxy_ext_bin",
+        ":mcp_re_proxy_deploy_bin",
     ],
     edition = "2021",
     env = {
-        "MCP_RE_PROXY_CLI": "$(rlocationpath :mcp_re_proxy_ext_bin)",
+        "MCP_RE_PROXY_CLI": "$(rlocationpath :mcp_re_proxy_deploy_bin)",
     },
     env_inherit = [
         "MCP_RE_LOADGEN_CONCURRENCY",
@@ -1354,7 +1389,7 @@ nt_rust_test(
     ],
     deps = [
         "//mcp-re-test-paths:mcp_re_test_paths",  # #220 (ADR-048): source imports this crate
-        ":mcp_re_proxy_ext",
+        ":mcp_re_proxy_deploy",
         "//mcp-re-client-core:mcp_re_client_core",
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-host:mcp_re_host",

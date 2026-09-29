@@ -2,6 +2,9 @@
 # .git and local scratch never belong in an image build.
 target/
 **/target/
+# Bazel's output-tree symlinks. An image copies what scripts/stage_image_binaries.sh
+# staged under deploy/docker/dist/, never a build tree.
+bazel-*
 .git/
 **/*.rs.bk
 *.log

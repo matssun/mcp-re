@@ -263,7 +263,7 @@ elif [[ "$PROVIDER" == eks ]]; then
     --addon-name vpc-cni
 else
   # kind: create-or-reuse a local cluster and load the SAME images the GKE build
-  # produces (native arch, built from deploy/docker/Dockerfile{,.inner}). Build any
+  # produces (native arch; the proxy's binary Bazel-built and staged). Build any
   # image that isn't present locally, so a first run is self-contained.
   log "kind cluster $KIND_CLUSTER (local substrate — no cloud spend)"
   kind get clusters 2>/dev/null | grep -qx "$KIND_CLUSTER" \
@@ -276,6 +276,13 @@ else
   # where `debian:bookworm-slim` and the proxy's own runtime stage both succeeded. An
   # environmental fault in one image's base is not evidence about replay coherence,
   # freshness, audience binding or containment, and it must not be able to look like it.
+  # The proxy image copies a Bazel-built binary for the node architecture; stage it first.
+  case "$(docker info --format '{{.Architecture}}' 2>/dev/null)" in
+    aarch64|arm64) IMAGE_ARCH=arm64 ;;
+    *) IMAGE_ARCH=amd64 ;;
+  esac
+  "$REPO_ROOT/scripts/stage_image_binaries.sh" --arch "$IMAGE_ARCH" \
+    || { verdict "INFRASTRUCTURE_UNAVAILABLE"; exit 1; }
   IMAGE_SPECS=("proxy:$PROXY_IMAGE:deploy/docker/Dockerfile"
                "inner:$INNER_IMAGE:deploy/docker/Dockerfile.inner")
   [[ -n "${MCP_RE_SKIP_ROLLING:-}" ]] \
@@ -309,6 +316,7 @@ else
       fi
       if [[ "$tgt" == proxy ]]; then
         docker build -f "$dfile" --target proxy \
+          --build-arg "DIST=deploy/docker/dist/$IMAGE_ARCH" \
           --label "org.opencontainers.image.revision=$src_rev" -t "$img" "$REPO_ROOT"
       else
         docker build -f "$dfile" \

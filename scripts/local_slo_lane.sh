@@ -21,9 +21,9 @@
 #
 # WHY A SCRIPT AND NOT A DOCUMENTED COMMAND: `tls_load_harness_bench` is NOT
 # `#[ignore]` — the whole file is gated to the `redis_replay` feature lane instead,
-# so it never runs in the default battery. Several docs used to say `-- --ignored`,
-# which selects ONLY ignored tests: cargo then runs ZERO tests, exits 0, and the
-# lane looks green while having measured nothing. This script never passes
+# and its Bazel target is `manual`, so it never runs in the default battery. Several docs
+# used to say `-- --ignored`, which selects ONLY ignored tests: libtest then runs ZERO
+# tests, exits 0, and the lane looks green while having measured nothing. This script never passes
 # `--ignored` and FAILS LOUDLY if a rep did not actually execute one test.
 #
 # Requirements: Docker (the bench stands up its own primary+2-replica Redis fleet),
@@ -39,11 +39,6 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# This lane can be invoked directly (see the header), not only via local_gate.sh, so
-# it pins the toolchain itself. A benchmark built by a different compiler than CI is
-# not comparable to the committed anchor — measure with the pinned one or not at all.
-. scripts/use_pinned_toolchain.sh
-
 REPS=6
 SWEEP=0
 while [[ $# -gt 0 ]]; do
@@ -56,8 +51,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 ENVELOPE_REF=docs/bench/adr-051-baseline-local.json
-# ABSOLUTE. cargo runs the test binary with cwd = the PACKAGE root (mcp-re-proxy/),
-# so a relative MCP_RE_LOADGEN_OUT lands under mcp-re-proxy/ and the gate reads nothing.
+# ABSOLUTE. `bazel run` starts the test binary in its runfiles tree, so a relative
+# MCP_RE_LOADGEN_OUT lands there and the gate reads nothing.
 OUTDIR="$(mkdir -p "${OUTDIR:-target/slo-local}" && cd "${OUTDIR:-target/slo-local}" && pwd)"
 
 # The envelope is READ FROM the committed anchor, never restated here: a literal that
@@ -132,16 +127,16 @@ if [[ "$HW" != "$ANCHOR_HW" ]]; then
   echo "                reports UNANCHORED if none is declared — it never compares across two."
 fi
 
-FEATURES=async_serve,redis_replay
-# The harness spawns the REAL CLI as a child (MCP_RE_PROXY_CLI → target/release/mcp-re-proxy),
-# so the BIN must be built with the same features as the test, not just the test target.
-echo "=== building (release, --features $FEATURES) ==="
-# Explicit checks: the script does not run under `set -e` (the guards below need to
-# inspect a non-zero cargo run), so a failed build would otherwise measure a stale binary.
-cargo build --release -p mcp-re-proxy --features "$FEATURES" --bins \
-  || { echo "local-slo-lane: FAIL — the proxy bin did not build." >&2; exit 1; }
-cargo test --release -p mcp-re-proxy --features "$FEATURES" --test tls_load_harness_bench --no-run \
-  || { echo "local-slo-lane: FAIL — the bench did not build." >&2; exit 1; }
+# The harness spawns the REAL CLI as a child. The Bazel target carries it as data
+# (`:mcp_re_proxy_ext_bin`, named to the harness through MCP_RE_PROXY_CLI) — the flavor the
+# production image packages, so the lane measures the artifact that ships. `-c opt` is the
+# release build the anchor was taken with.
+BENCH=//mcp-re-proxy:tls_load_harness_bench
+echo "=== building (-c opt, $BENCH and the proxy it spawns) ==="
+# Explicit check: the script does not run under `set -e` (the guards below need to inspect a
+# non-zero run), so a failed build would otherwise measure a stale binary.
+bazel build -c opt "$BENCH" \
+  || { echo "local-slo-lane: FAIL — the bench or the proxy did not build." >&2; exit 1; }
 
 # One measurement. `--exact` selects the single bench fn; NEVER `--ignored` (see header).
 run_one() {
@@ -152,8 +147,8 @@ run_one() {
   MCP_RE_LOADGEN_MODE="$MODE" \
   MCP_RE_LOADGEN_HW_CLASS="$HW" \
   MCP_RE_LOADGEN_OUT="$out" \
-    cargo test --release -p mcp-re-proxy --features "$FEATURES" \
-      --test tls_load_harness_bench tls_load_harness_bench -- --exact --nocapture >"$log" 2>&1 || true
+    bazel run -c opt --noshow_progress --ui_event_filters=-info "$BENCH" \
+      -- tls_load_harness_bench --exact --nocapture >"$log" 2>&1 || true
   grep -E 'declared_cores|successes/failures|throughput|added_latency' "$log" || true
 
   # THE GUARD. A lane that selected no test exits 0 with "0 passed" and writes no

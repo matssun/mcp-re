@@ -2,24 +2,20 @@
 # SPDX-License-Identifier: Apache-2.0
 """SLO-harness invocation gate — a documented command that measures NOTHING is a bug.
 
-`mcp-re-proxy/tests/tls_load_harness_bench.rs` is the ADR-MCPRE-051 §7 load harness.
-It is deliberately NOT an `#[ignore]` test: the whole file is gated to the
-`redis_replay` feature lane, which is what keeps it out of the default battery. So
-`cargo test … -- --ignored` selects ONLY ignored tests, runs **zero** of them, exits
-**0**, and writes no report.
+`mcp-re-proxy/tests/tls_load_harness_bench.rs` is the ADR-MCPRE-051 §7 load harness. It is
+deliberately NOT an `#[ignore]` test: the whole file is gated to the `redis_replay` feature
+lane and its Bazel target is `manual`, which is what keeps it out of the default battery.
+So `-- --ignored` (or `--test_arg=--ignored`) selects ONLY ignored tests, runs **zero** of
+them, exits **0**, and writes no report.
 
-That is the worst possible failure shape — a lane that looks green while having
-measured nothing. It had propagated into four places (the GKE SLO runbook, both
-`docs/bench/` docs, and the bench image's own ENTRYPOINT) before anyone ran the
-command and noticed the report file was missing.
+That is the worst possible failure shape — a lane that looks green while having measured
+nothing. It had propagated into four places (the GKE SLO runbook, both `docs/bench/` docs,
+and the bench image's own ENTRYPOINT) before anyone ran the command and noticed the report
+file was missing.
 
-Two related silent non-measurements this also catches:
-
-* Omitting `--features …redis_replay…`: the bench needs the shared Redis tier, and
-  the same features must be on the BIN build, since the harness spawns the real
-  `mcp-re-proxy` as a child process.
-* A relative `MCP_RE_LOADGEN_OUT`: cargo runs a test binary with cwd = the PACKAGE
-  root, so the report lands under `mcp-re-proxy/` and the gate reads nothing.
+The bench is a Bazel target, `//mcp-re-proxy:tls_load_harness_bench`, built against the
+deploy flavor it measures. So the gate also refuses an invocation through Cargo, which
+builds a different binary from a different feature set than the one that ships.
 
 The fix when this fires is never to reword the prose — it is to call
 `scripts/local_slo_lane.sh`, which pins all of it and asserts a test actually ran.
@@ -53,15 +49,15 @@ SCAN_GLOBS = (
 
 BENCH = "tls_load_harness_bench"
 
-# A line that actually INVOKES the bench through cargo. A mention of the file name in
-# prose ("the harness, tls_load_harness_bench.rs, drives …") is not an invocation.
-INVOCATION = re.compile(r"cargo\s+test\b[^\n]*\b" + BENCH + r"\b")
-
-# `--features "$FEATURES"` / `--features ${F}` — the features come from a variable the
-# script owns. That indirection is the FIX (one definition, no restated literal), the
-# same shape `deploy_image_tag_gate.py` accepts for image tags, so a literal-only match
-# would fire on exactly the script that gets it right.
-FEATURES_EXPANSION = re.compile(r"--features\s+[\"']?\$\{?[A-Za-z_]")
+# A line that actually INVOKES the bench: `bazel run`/`bazel test` of its label (or of the
+# `$BENCH` variable a script binds it to), the image's binary run with its own name as the
+# filter, or Cargo. A mention of the file name in prose ("the harness,
+# tls_load_harness_bench.rs, drives …") is not an invocation.
+INVOCATION = re.compile(
+    r"bazel\s+(?:run|test)\b[^\n]*(?://mcp-re-proxy:" + BENCH + r"\b|\$\{?BENCH\b)"
+    r"|\b" + BENCH + r"\s+" + BENCH + r"\b"
+    r"|cargo\s+test\b[^\n]*\b" + BENCH + r"\b"
+)
 
 
 def _is_archive(path: Path, root: Path) -> bool:
@@ -90,13 +86,14 @@ def scan(root: Path) -> list[str]:
                     findings.append(
                         f"{rel}:{lineno}: `--ignored` selects ZERO tests here "
                         f"({BENCH} is not #[ignore]) — the run measures nothing and "
-                        f"exits 0. Use `-- --exact`, or call scripts/local_slo_lane.sh"
+                        f"exits 0. Use `--exact`, or call scripts/local_slo_lane.sh"
                     )
-                if "redis_replay" not in line and not FEATURES_EXPANSION.search(line):
+                if re.search(r"\bcargo\s+test\b", line):
                     findings.append(
-                        f"{rel}:{lineno}: bench invocation without `redis_replay` — "
-                        f"the harness needs the shared Redis tier (and the BIN it "
-                        f"spawns needs the same features)"
+                        f"{rel}:{lineno}: the bench runs through Cargo, which builds a "
+                        f"different binary from a different feature set than the one that "
+                        f"ships. Run //mcp-re-proxy:tls_load_harness_bench, or call "
+                        f"scripts/local_slo_lane.sh"
                     )
     return findings
 
@@ -107,59 +104,44 @@ def selftest() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / "docs").mkdir()
-
         bad = root / "docs" / "bad.md"
-        bad.write_text(
-            "cargo test -p mcp-re-proxy --release --features async_serve "
-            f"--test {BENCH} {BENCH} -- --ignored\n"
-        )
-        findings = scan(root)
-        # Both defects on one line: --ignored AND no redis_replay.
-        if len(findings) != 2:
-            print(f"SELFTEST FAILED: expected 2 findings, got {findings}")
-            return 1
+        lane = root / "docs" / "lane.sh"
+        label = f"//mcp-re-proxy:{BENCH}"
 
-        # Prose that NAMES the flag to warn about it is not an invocation to fix.
-        bad.write_text(
-            f"Use `-- --exact`, NEVER `cargo test --features redis_replay --test {BENCH} "
-            f"{BENCH} -- --ignored` — it selects zero tests.\n"
-        )
-        if scan(root):
-            print("SELFTEST FAILED: a warning paragraph was treated as an invocation")
-            return 1
+        def expect(name: str, text: str, path: Path, want: int) -> bool:
+            path.write_text(text)
+            got = scan(root)
+            path.write_text("")
+            if len(got) != want:
+                print(f"SELFTEST FAILED: {name}: expected {want} finding(s), got {got}")
+                return False
+            return True
 
-        # A mention of the harness in prose is not an invocation either.
-        bad.write_text(f"The load harness ({BENCH}.rs) drives the real listener.\n")
-        if scan(root):
-            print("SELFTEST FAILED: prose mentioning the harness was flagged")
-            return 1
-
-        # The correct form passes.
-        bad.write_text(
-            "cargo test -p mcp-re-proxy --release --features async_serve,redis_replay "
-            f"--test {BENCH} {BENCH} -- --exact --nocapture\n"
-        )
-        if scan(root):
-            print("SELFTEST FAILED: the correct invocation was flagged")
-            return 1
-
-        # …and so does the better form, where the features come from a variable.
-        (root / "docs" / "lane.sh").write_text(
-            'FEATURES=async_serve,redis_replay\n'
-            'cargo test --release -p mcp-re-proxy --features "$FEATURES" '
-            f'--test {BENCH} {BENCH} -- --exact --nocapture\n'
-        )
-        if scan(root):
-            print("SELFTEST FAILED: a variable-sourced feature list was flagged")
-            return 1
-
-        # But the variable must not excuse `--ignored`.
-        (root / "docs" / "lane.sh").write_text(
-            'cargo test --features "$FEATURES" '
-            f'--test {BENCH} {BENCH} -- --ignored\n'
-        )
-        if len(scan(root)) != 1:
-            print("SELFTEST FAILED: --ignored slipped through behind a feature variable")
+        cases = [
+            # The exact shape that shipped, in each spelling the tree can hold.
+            ("--ignored on bazel run", f"bazel run -c opt {label} -- --ignored\n", bad, 1),
+            ("--ignored as a test_arg", f"bazel test {label} --test_arg=--ignored\n", bad, 1),
+            ("--ignored behind the script's variable",
+             'bazel run -c opt "$' + 'BENCH" -- --ignored\n', lane, 1),
+            ("--ignored in the image's binary form", f"{BENCH} {BENCH} --ignored\n", bad, 1),
+            # Cargo builds a different binary; with --ignored it is both defects.
+            ("the bench through Cargo",
+             f"cargo test -p mcp-re-proxy --test {BENCH} {BENCH} -- --exact\n", bad, 1),
+            ("Cargo AND --ignored",
+             f"cargo test -p mcp-re-proxy --test {BENCH} {BENCH} -- --ignored\n", bad, 2),
+            # Prose that NAMES the flag to warn about it is not an invocation to fix.
+            ("a warning paragraph",
+             f"Use `--exact`, NEVER `bazel run {label} -- --ignored` — it selects zero "
+             f"tests.\n", bad, 0),
+            ("prose naming the harness", f"The load harness ({BENCH}.rs) drives it.\n", bad, 0),
+            # The correct forms pass.
+            ("the correct bazel run", f"bazel run -c opt {label} -- {BENCH} --exact --nocapture\n",
+             bad, 0),
+            ("the correct variable form",
+             'bazel run -c opt "$' + f'BENCH" -- {BENCH} --exact --nocapture\n', lane, 0),
+            ("the correct image form", f"{BENCH} {BENCH} --exact --nocapture\n", bad, 0),
+        ]
+        if not all(expect(*c) for c in cases):
             return 1
 
     print("slo invocation gate selftest: PASS")
