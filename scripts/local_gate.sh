@@ -508,7 +508,7 @@ clippy_check() {
 # The workspace tests already ran in stage 2; this is the gate that a source file's
 # `use` and tests have the BUILD targets and edges they need.
 stage_bazel() {
-  python3 scripts/bazel_gazelle_gate.py
+  python3 scripts/bazel_gazelle_gate.py && tools/verification/rust-targets --check
 }
 
 # --- shared: the heavy-lane disk preflight ---------------------------------------

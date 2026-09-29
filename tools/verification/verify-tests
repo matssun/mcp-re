@@ -23,23 +23,20 @@ measured nothing is worse than a red one — so the lane compares the symbols th
 `ok` against the symbols declared and refuses on any difference.
 
 **A symbol names its target, because a test property includes the target the test exists
-in.** `lib#path::to::test` and `tests/dispatch_test#some_test` are different claims even
-when the test names match, and a battery that spans both is run as two selections rather
-than one hopeful filter. A target whose file is feature-gated compiles to zero tests
-without its feature; that is not a quiet pass here, it is the missing-symbol failure above.
+in.** A Rust symbol names the Bazel test target that runs it —
+`//mcp-re-proxy:proxy_unit_test#cli::tests::x` and
+`//mcp-re-http-profile:dispatch_test#some_test` are different claims even when the test
+names match — and a battery that spans several targets is run as one selection per target
+rather than one hopeful filter. The target is also the build configuration: a credential-
+egress control behind `#[cfg(feature = "aws_kms_keysource")]` exists only in a target
+compiled with that feature, so a unit whose claim is about credential egress names that
+flavor's target, and the fingerprint carries the target's features. A target that compiles
+the file without its feature compiles it to zero tests; that is not a quiet pass here, it is
+the missing-symbol failure above.
 
-The unit's `features` are NOT passed to Cargo. They name the specification feature carrying
-the prover's text (`verify`), which is off in every production build and pulls in vstd;
-running the battery under it would measure a different crate than the one that ships.
-
-`test_features` is the other field and the opposite case: the SHIPPING features a unit's
-controls are compiled by. A credential-egress control behind `#[cfg(feature =
-"aws_kms_keysource")]` does not exist in the default lane, so a unit whose claim is about
-credential egress and whose battery runs without the feature is measuring the part of its
-own claim that happens to be unconditional. Declaring the features runs the battery where
-the controls exist; the fingerprint carries them, so dropping one is a change of what was
-measured rather than a quiet reduction of it. `_manifest` refuses the two fields to
-overlap.
+The unit's `features` are never a test configuration. They name the specification feature
+carrying the prover's text (`verify`), which is off in every production build and pulls in
+vstd; a battery run under it would measure a different crate than the one that ships.
 
 Like the Verus lane, the fingerprint is taken BEFORE the tests run and travels with the
 record, so the issuer can tell "these tests passed over this source" from "these tests
@@ -57,8 +54,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _ecosystems import CARGO  # noqa: E402
 from _ecosystems import RUNTIME_PROBES  # noqa: E402
+from _ecosystems import RUST  # noqa: E402
 from _ecosystems import TYPESCRIPT  # noqa: E402
 from _ecosystems import ReportUnreadable  # noqa: E402
 from _ecosystems import parse_results  # noqa: E402
@@ -75,8 +72,9 @@ from _manifest import (  # noqa: E402
     load_assumptions,
     load_toolchains,
     load_verification,
-    test_package_for,
 )
+from _ecosystems import test_project_for  # noqa: E402
+import _rust_targets  # noqa: E402
 
 EVIDENCE_STORE = evidence_store()
 
@@ -88,21 +86,22 @@ EVIDENCE_STORE = evidence_store()
 #: `test src/verified_response.rs - verified_response::VerifiedMcpResponse (line 82) - compile fail ... ok`
 DOC_RESULT_LINE = re.compile(r"^test (.+?) \.\.\. (\w+)$", re.MULTILINE)
 
-#: Separates a symbol's target from its path. `#` cannot occur in a Rust path, so the split
-#: is unambiguous and a symbol that omits the target is malformed rather than defaulted —
-#: defaulting it would let a moved test keep reporting under the target it left.
+#: Separates a symbol's target from its path. `#` occurs in neither a Rust path nor a Bazel
+#: label, so the split is unambiguous and a symbol that omits the target is malformed rather
+#: than defaulted — defaulting it would let a moved test keep reporting under the target it
+#: left.
 TARGET_SEP = "#"
 
 
 def unit_crate(unit: dict) -> str | None:
-    """The project whose targets carry this unit's tests, or None.
+    """The project a pytest or vitest battery runs in, or None.
 
-    Delegates to the manifest's `test_package_for`, which is the ONE answer: the lane runs
-    the battery in this project and the ReviewFingerprint records this project as what was
-    measured, so a second implementation here could let the two disagree. Which build system
-    a project belongs to is `_ecosystems`' answer (issue #745), not this lane's.
+    Delegates to `_ecosystems.test_project_for`, which is the ONE answer: the lane runs the
+    battery in this project and the ReviewFingerprint records it as what was measured, so a
+    second implementation here could let the two disagree. A Rust battery needs none: its
+    selectors name Bazel labels, which Bazel resolves from the workspace root.
     """
-    return test_package_for(unit)
+    return test_project_for(unit)
 
 
 def doc_matches(observed: dict[str, str], item: str) -> list[str]:
@@ -164,8 +163,7 @@ def _report(eco, target: str, runtime: str | None, stdout: str) -> str:
 
 
 def _rerun_unread(
-    eco, crate: str, target: str, names: list[str], features: list[str],
-    runtime: str | None = None,
+    eco, crate: str | None, target: str, names: list[str], runtime: str | None = None,
 ) -> set[str]:
     """Re-run `names` ONE AT A TIME and return those that reported `ok` on their own.
 
@@ -182,8 +180,8 @@ def _rerun_unread(
     for name in names:
         _clear_report(eco, target, runtime)
         again = subprocess.run(
-            test_argv(eco, crate, target, [name], features, runtime),
-            cwd=REPO_ROOT if eco is CARGO else REPO_ROOT / crate,
+            test_argv(eco, crate, target, [name], runtime),
+            cwd=_cwd(eco, crate),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -198,12 +196,17 @@ def _rerun_unread(
     return recovered
 
 
+def _cwd(eco, crate: str | None) -> Path:
+    """Bazel resolves a label from the workspace root; a pytest or vitest selection is
+    relative to its own project, which is where its configuration lives."""
+    return REPO_ROOT if eco is RUST or crate is None else REPO_ROOT / crate
+
+
 def run_selection(
     eco,
-    crate: str,
+    crate: str | None,
     target: str,
     paths: list[str],
-    features: list[str] | None = None,
     runtime: str | None = None,
 ) -> tuple[bool, str]:
     """Run exactly `paths` in one target and say whether all of them passed.
@@ -214,20 +217,18 @@ def run_selection(
     result is this lane's and is one rule — a declared symbol that did not report success
     is a failure, whether it failed, was skipped, or never ran.
     """
-    features = list(features or [])
-    argv = test_argv(eco, crate, target, paths, features, runtime)
+    argv = test_argv(eco, crate, target, paths, runtime)
     _clear_report(eco, target, runtime)
     proc = subprocess.run(
         argv,
-        # Cargo is driven from the workspace root with `-p`; a pytest or vitest selection is
-        # relative to its own project, which is where its configuration lives.
-        cwd=REPO_ROOT if eco is CARGO else REPO_ROOT / crate,
+        cwd=_cwd(eco, crate),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
         check=False,
     )
-    if eco is CARGO and target == "doc":
+    row = _rust_targets.target(target) if eco is RUST else None
+    if row is not None and row["kind"] == "rust_doc_test":
         observed = dict(DOC_RESULT_LINE.findall(proc.stdout))
         missing = []
         for item in paths:
@@ -272,7 +273,7 @@ def run_selection(
         # something about interleaved output and nothing about the property.
         unread = [name for name in missing if name not in observed]
         if unread:
-            recovered = _rerun_unread(eco, crate, target, unread, features, runtime)
+            recovered = _rerun_unread(eco, crate, target, unread, runtime)
             passed |= recovered
             observed |= {name: "ok" for name in recovered}
             missing = sorted(set(paths) - passed)
@@ -293,9 +294,10 @@ def run_selection(
 def pinned_runtimes(eco, toolchains: dict) -> tuple[list[str], str | None]:
     """The interpreter versions this ecosystem's batteries must be measured on.
 
-    `([None], None)` for an ecosystem with no runtime pin: the battery is measured once, as
-    it always was, and the returned `None` is the "no runtime named" the command builders
-    already understand.
+    `([None], None)` for an ecosystem with no runtime dimension — no `runtime_label`, as for
+    Rust, whose `[rust]` table pins the compiler rather than a runtime the battery runs on —
+    or no runtime pin: the battery is measured once, and the returned `None` is the "no
+    runtime named" the command builders already understand.
 
     An ecosystem whose pin exists but is UNRESOLVED gets a refusal rather than a run,
     because that is the whole meaning of an unresolved pin: the identity of the thing that
@@ -303,6 +305,8 @@ def pinned_runtimes(eco, toolchains: dict) -> tuple[list[str], str | None]:
     no interpreter is the same failure wearing a resolved label, so it is refused too — a
     battery measured on an empty runtime set is a battery nobody ran.
     """
+    if eco.runtime_label is None:
+        return [None], None
     entry = toolchains.get(eco.name)
     if not isinstance(entry, dict):
         return [None], None
@@ -370,7 +374,7 @@ def measure_unit(unit: dict, toolchains: dict) -> tuple[bool, str]:
     """
     eco = unit_ecosystem(unit)
     crate = unit_crate(unit)
-    if eco is None or crate is None:
+    if eco is None or (crate is None and eco is not RUST):
         return False, (
             "the unit's paths name no single project to test: they belong to no build "
             "system this platform adapts, span two of them, or sit outside every project "
@@ -389,7 +393,6 @@ def measure_unit(unit: dict, toolchains: dict) -> tuple[bool, str]:
     if refusal is not None:
         return False, refusal
 
-    features = sorted(unit.get("test_features", []))
     details: list[str] = []
     failed = False
     for runtime in runtimes:
@@ -400,10 +403,10 @@ def measure_unit(unit: dict, toolchains: dict) -> tuple[bool, str]:
                 failed = True
                 continue
         for target in sorted(grouped):
-            suffix = f" (--features {','.join(features)})" if features else ""
             where = f" on {eco.runtime_label}-{runtime}" if runtime is not None else ""
-            print(f"    {crate} {target}: {len(grouped[target])} test(s){suffix}{where}")
-            ok, detail = run_selection(eco, crate, target, grouped[target], features, runtime)
+            scope = f"{crate} " if crate is not None and eco is not RUST else ""
+            print(f"    {scope}{target}: {len(grouped[target])} test(s){where}")
+            ok, detail = run_selection(eco, crate, target, grouped[target], runtime)
             prefix = f"{eco.runtime_label}-{runtime} " if runtime is not None else ""
             details.append(f"{prefix}{detail}")
             failed = failed or not ok

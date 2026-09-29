@@ -11,11 +11,10 @@ WHAT THIS PROVES, exactly: two things about the trigger set.
   2. LIVENESS — no wildcard-free filter names a file that is neither in the tree nor a
      required fingerprint input.
 
-The second clause of (2) is not slack. `test_source_patterns` deliberately emits BOTH
-layouts a cargo test target can have — `tests/<name>.rs` and `tests/<name>/**/*.rs` — so a
-filter may name a file that does not exist TODAY because collapsing the suite back to one
-file must still re-run the lane. That is a live trigger for a shape the tree may take. A
-filter naming a path nothing depends on and nothing occupies is the different thing: dead.
+The second clause of (2) is not slack: a fingerprint input may be absent from the tree
+TODAY — a lockfile alternative, a declared path a split is about to create — and a filter
+naming it is a live trigger for a shape the tree may take. A filter naming a path nothing
+depends on and nothing occupies is the different thing: dead.
 
 The second is not implied by the first, and MCPRE-175 is why it is here. When a file
 becomes an owner subtree, the filter that named it keeps parsing, keeps matching
@@ -34,8 +33,8 @@ WHY IT MATTERS. A path-filtered workflow and a content-addressed fingerprint are
 two independent lists of "what this evidence depends on", and they drift apart
 silently — in the direction that produces a false green.
 
-`Cargo.lock` is in `_fingerprint.WORKSPACE_BUILD_INPUTS`, so a dependency bump
-dirties every declared unit. It was NOT in the workflow's trigger set, so
+The dependency lock is in `_fingerprint.WORKSPACE_BUILD_INPUTS`, so a dependency
+bump dirties every declared unit. When it was NOT in the workflow's trigger set,
 Dependabot PR #532 (nine patch bumps across three lockfiles) would have merged
 with every unit silently `DIRTY_SELF` and nothing re-running to notice. The
 attestations on `main` would have kept reading FRESH over a dependency graph no
@@ -170,10 +169,10 @@ def fingerprint_inputs(manifest: Path) -> list[str]:
         for path in unit.get("paths", []):
             required.append(str(path))
         # The dependency and configuration inputs, from the ONE function the fingerprint
-        # uses. This used to restate the Cargo answer — `{first-segment}/Cargo.toml` — which
-        # is the "one dependency set stated twice" shape this gate exists to prevent, and
-        # #745 made it wrong: a Python unit's inputs are its `pyproject.toml` and lockfile,
-        # and a project can live at `sdk/python` rather than at a top-level directory.
+        # uses. A restatement here would be the "one dependency set stated twice" shape this
+        # gate exists to prevent: a Python unit's inputs are its `pyproject.toml` and
+        # lockfile, a Rust unit's its package's BUILD file, and a project can live at
+        # `sdk/python` rather than at a top-level directory.
         # Only the ones the fingerprint actually digests, which is the TRACKED ones — the
         # same rule, from the same function. A lockfile alternative a project does not use
         # contributes nothing, and neither does one that exists on a developer's disk and

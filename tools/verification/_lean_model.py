@@ -33,7 +33,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-from _ecosystems import CARGO, unit_ecosystem, unit_projects
+from _ecosystems import RUST, unit_ecosystem, unit_projects
 from _manifest import REPO_ROOT
 
 LEAN_DIR = REPO_ROOT / "verification" / "lean"
@@ -99,7 +99,7 @@ def unit_crate(unit: dict) -> str | None:
     paths resolve to a Python or TypeScript project has no crate to start from — and
     returning that project's name would have `charon cargo` run somewhere it cannot.
     """
-    if unit_ecosystem(unit) is not CARGO:
+    if unit_ecosystem(unit) is not RUST:
         return None
     projects = unit_projects(unit)
     return projects[0] if len(projects) == 1 else None

@@ -983,6 +983,14 @@ jobs:
       - name: BUILD semantic-drift gate (gazelle as drift detector)
         run: python3 scripts/bazel_gazelle_gate.py
 
+      # The assurance platform reads the build graph through a committed table — which Rust
+      # targets exist, each one's crate root, sources and features — so the census, the
+      # manifest and the lanes can run where no Bazel server does. This is its freshness
+      # control: a table that no longer matches `bazel query` would send them to crates
+      # Bazel does not build.
+      - name: Rust target table matches the build graph
+        run: tools/verification/rust-targets --check
+
       # (2) The workspace test lane: every non-manual test target.
       - name: Bazel test parity (//...)
         run: bazel test //... --test_output=errors

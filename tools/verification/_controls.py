@@ -8,26 +8,31 @@ vocabulary the registry names its evidence in, or the join between them is a gue
 
 # Identity is the selector, not the function name
 
-A control's identity here is exactly the string a unit would have to put in
-`tested_symbols` to select it: `lib#module::path::fn`, `tests/<target>#module::fn`,
-`bin/<name>#module::fn`, `doc#item (line N)`, `pytest#file::fn`,
-`vitest#file > suite > name`. That is deliberate and it is the whole point: a census whose
-identities do not join to the registry's answers a different question than the one asked,
-and a name-only join — `fn` without its target — reports a control as claimed because an
-unrelated crate happens to have a test of the same name.
+A control's identity names the thing that exists in SOURCE, inside its project: for Rust,
+`<crate root>#module::path::fn` — `src/lib.rs#cli::tests::x`, `tests/integration/main.rs#y`,
+`src/main.rs#startup::tests::z` — with the root relative to its Bazel package; `doc#item`
+for a rustdoc example; `pytest#file::fn`; `vitest#file > suite > name`. A selector joins to
+it by resolving its test target's crate root (`_census`), so a name-only join — `fn`
+without its root — cannot report a control as claimed because an unrelated crate happens to
+have a test of the same name.
+
+The crate root, not the test target, because a crate compiled in several flavors — the
+same sources under different features — is one module tree: a test in it is ONE control,
+however many test binaries compile it, and a unit selects it through whichever flavor's
+target builds the configuration its claim is about.
 
 # The Rust module path is FOLLOWED, never derived from the file path
 
-`mcp-re-client/src/startup.rs` is not `lib#startup`; it is `bin/mcp-re-client#startup`,
-because `main.rs` declares it and `lib.rs` does not. Deriving the module path from the
-directory layout gets that wrong in both directions — it invents `lib#` controls that no
-target runs, and it misses every control a binary owns. So each crate ROOT is walked:
-`mod name;` is resolved to its file, `#[path = "..."]` is honoured, and an inline
+`mcp-re-client/src/startup.rs` is `src/main.rs#startup`, because `main.rs` declares it and
+`lib.rs` does not. Deriving the module path from the directory layout gets that wrong in
+both directions — it invents controls in a root that never compiles them, and it misses
+every control a binary owns. So each crate ROOT the build graph compiles into a test is
+walked: `mod name;` is resolved to its file, `#[path = "..."]` is honoured, and an inline
 `mod name { … }` nests in place.
 
 A file reachable from two roots yields two controls, and that is not double counting: the
-same source function compiled into the library's test target and into an integration
-target are two things libtest can run and two things a unit can select, and exactly one of
+same source function compiled into the library's module tree and into an integration
+target's are two things libtest can run and two things a unit can select, and exactly one of
 them may be the claimed one.
 
 # What counts as a control kind here
@@ -62,6 +67,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from _ecosystems import REPO_ROOT
+import _rust_targets
 
 POLICY = REPO_ROOT / "verification" / "policy"
 
@@ -69,8 +75,8 @@ POLICY = REPO_ROOT / "verification" / "policy"
 #: A census reports coverage per kind, so an ecosystem that stops being discoverable shows
 #: up as a zero rather than as an absence nobody counted.
 KINDS: dict[str, str] = {
-    "rust-test": "cargo",
-    "rust-doctest": "cargo",
+    "rust-test": "rust",
+    "rust-doctest": "rust",
     "pytest": "python",
     "vitest": "typescript",
     "structural": "structural-lane",
@@ -90,11 +96,11 @@ _SKIP = {"target", "node_modules", "dist", "build", "__pycache__", "site-package
 class Control:
     """One executable control, identified as the registry would have to name it."""
 
-    #: The project the selector is resolved in — the cargo PACKAGE name, the python or
-    #: node project directory, or "" for a control a registry carries. A selector is only
-    #: unique inside its project: `lib#error::tests::the_token_is_frozen` can exist in two
-    #: crates at once, and a census joining on the bare symbol would report one of them as
-    #: claimed on the strength of the other's registration.
+    #: The project the identity is unique inside — the Bazel package of a Rust crate root,
+    #: the python or node project directory, or "" for a control a registry carries.
+    #: `src/lib.rs#error::tests::the_token_is_frozen` can exist in two crates at once, and a
+    #: census joining on the bare identity would report one of them as claimed on the
+    #: strength of the other's registration.
     project: str
     identity: str
     kind: str
@@ -176,8 +182,8 @@ def _prune(name: str) -> bool:
 def walk(suffix: str, root: Path | None = None) -> list[Path]:
     """Every file whose suffix or whole NAME is `suffix`, pruning skipped directories.
 
-    The name form is what finds manifests — `Cargo.toml`'s suffix is `.toml`, which every
-    policy registry shares — and the suffix form is what finds source.
+    The name form is what finds manifests — `package.json`'s suffix is `.json`, which many
+    fixtures share — and the suffix form is what finds source.
 
     `rglob` then filter is the obvious spelling and it is the wrong one here: it descends
     into `target/`, which holds hundreds of thousands of build artefacts, so the census
@@ -308,78 +314,19 @@ def _walk_rust_file(
             _walk_rust_file(child, prefix + (name,), package, target, seen, out)
 
 
-def _cargo_packages() -> list[Path]:
-    return sorted(
-        manifest.parent
-        for manifest in walk("Cargo.toml")
-        if not _skipped(manifest.relative_to(REPO_ROOT))
-    )
-
-
-def _project_id(directory: Path) -> str | None:
-    """A project's identity for the join — its repository-relative directory.
-
-    The DIRECTORY and not the cargo package name, because the registry's own answer to
-    "where does this unit's battery run" is `_ecosystems.test_project_for`, which returns a
-    directory. Joining on anything else would compare two different keys and silently
-    report every control of a mismatched project as unclaimed.
-    """
-    try:
-        rel = directory.relative_to(REPO_ROOT).as_posix()
-    except ValueError:
-        return None
-    return rel or "."
-
-
-def _rust_targets(package: Path) -> list[tuple[str, Path]]:
-    """Every runnable target of one package, as `(target name, root file)`.
-
-    Read from the manifest where it declares paths, and from the conventional layout
-    otherwise — `cargo` accepts both and a census that honoured only one would miss whole
-    targets in whichever half it ignored.
-    """
-    targets: list[tuple[str, Path]] = []
-    try:
-        manifest = tomllib.loads((package / "Cargo.toml").read_text())
-    except (OSError, tomllib.TOMLDecodeError):
-        return targets
-    lib = manifest.get("lib", {})
-    lib_path = package / lib.get("path", "src/lib.rs")
-    if lib_path.is_file():
-        targets.append(("lib", lib_path))
-    declared_bins = manifest.get("bin", [])
-    for entry in declared_bins:
-        root = package / entry.get("path", f"src/bin/{entry['name']}.rs")
-        if root.is_file():
-            targets.append((f"bin/{entry['name']}", root))
-    if not declared_bins:
-        default = package / "src" / "main.rs"
-        if default.is_file():
-            name = manifest.get("package", {}).get("name")
-            if name:
-                targets.append((f"bin/{name}", default))
-        for root in sorted((package / "src" / "bin").glob("*.rs")):
-            targets.append((f"bin/{root.stem}", root))
-    tests = package / "tests"
-    if tests.is_dir():
-        for root in sorted(tests.glob("*.rs")):
-            targets.append((f"tests/{root.stem}", root))
-        for directory in sorted(p for p in tests.iterdir() if p.is_dir()):
-            root = directory / "main.rs"
-            if root.is_file():
-                targets.append((f"tests/{directory.name}", root))
-    return targets
-
-
 def rust_controls() -> list[Control]:
-    """Every `#[test]` / `#[tokio::test]` reachable from a declared target root."""
+    """Every `#[test]` / `#[tokio::test]` reachable from a crate root some test target compiles.
+
+    The roots come from the build graph (`_rust_targets`), not from a directory
+    convention: a root no `rust_test` compiles holds no test anything runs, and a module
+    only a binary declares is reached through that binary's root.
+    """
     out: list[Control] = []
-    for package in _cargo_packages():
-        name = _project_id(package)
-        if name is None:
+    for root, entry in sorted(_rust_targets.crate_roots().items()):
+        if "rust_test" not in entry["kinds"]:
             continue
-        for target, root in _rust_targets(package):
-            _walk_rust_file(root, (), name, target, set(), out)
+        identity = _rust_targets.root_identity(root, entry["package"])
+        _walk_rust_file(REPO_ROOT / root, (), entry["package"], identity, set(), out)
     return out
 
 
@@ -430,27 +377,30 @@ def _fence_mode(words: set[str]) -> str | None:
 
 
 def doctest_controls() -> list[Control]:
-    """Every rustdoc example in a library's own sources, `compile_fail` ones included.
+    """Every rustdoc example in a library a `rust_doc_test` target runs, `compile_fail` ones included.
 
     A doctest's libtest name is `src/file.rs - item::path (line N)`, which is a shape the
     registry cannot join on without the line, so identity here is the `doc#` selector the
     test lane already uses: the ITEM the example documents. `compile_fail` is carried on
     the control so a census can refuse to count a compile refusal as behavioural evidence,
     which is ADR-MCPRE-068 §4.1's rule and not this module's to relax.
+
+    Only a library some `rust_doc_test` runs: an example rustdoc never executes is prose in
+    a code font, not a control.
     """
     out: list[Control] = []
-    for package in _cargo_packages():
-        source_root = package / "src"
-        if not source_root.is_dir():
+    for label, row in sorted(_rust_targets.table().items()):
+        if row["kind"] != "rust_doc_test":
             continue
-        name = _project_id(package)
-        if name is None or not (source_root / "lib.rs").is_file():
-            continue
-        for path in walk(".rs", source_root):
+        source_root = (REPO_ROOT / row["root"]).parent
+        for rel_file in row["srcs"]:
+            path = REPO_ROOT / rel_file
+            if not path.is_file() or source_root not in path.parents:
+                continue
             rel = path.relative_to(source_root)
             if rel.parts[0] == "bin" or path.name == "main.rs" or _skipped(rel):
                 continue
-            out.extend(_doctests_in(path, name, _doc_module_path(path, source_root)))
+            out.extend(_doctests_in(path, row["package"], _doc_module_path(path, source_root)))
     return out
 
 

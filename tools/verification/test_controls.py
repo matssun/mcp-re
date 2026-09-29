@@ -45,18 +45,18 @@ REPORT = _census.census(CONTROLS)
 #: what its absence would mean. Named rather than counted: a count survives the loss of a
 #: whole discovery path as long as some other path grew.
 SCOPE: dict[str, tuple[str, str]] = {
-    "rust-test (lib target)": (
+    "rust-test (library crate root)": (
         "mcp-re-proxy",
-        "lib#runtime_state::tests::the_relation_has_exactly_ten_legal_transitions",
+        "src/lib.rs#runtime_state::tests::the_relation_has_exactly_ten_legal_transitions",
     ),
-    "rust-test (integration target)": (
+    "rust-test (integration crate root)": (
         "mcp-re-proxy",
-        "tests/integration#client_verifier_posture_test::"
+        "tests/integration/main.rs#client_verifier_posture_test::"
         "the_builder_enforces_expiration_and_admits_no_posture_argument",
     ),
-    "rust-test (binary target)": (
+    "rust-test (binary crate root)": (
         "mcp-re-client",
-        "bin/mcp-re-client#startup::tests::"
+        "src/main.rs#startup::tests::"
         "the_serving_path_starts_the_anchor_refresher_and_anchors_are_withdrawn_on_expiry",
     ),
     "rust-doctest (compile_fail)": (
@@ -271,7 +271,7 @@ def test_a_disposition_for_a_control_that_vanished_is_an_orphan():
     row = _census.Disposition(
         id="ND-GONE",
         project="mcp-re-proxy",
-        control="lib#a_module_that_does_not_exist::tests::gone",
+        control="src/lib.rs#a_module_that_does_not_exist::tests::gone",
         decision="not-evidence",
         reason_family="ND-TEST",
         recorded="2026-09-19",
@@ -549,7 +549,7 @@ def test_a_unit_owner_must_claim_every_cited_control_and_not_merely_one():
     """
     entry = {"id": "NP-TEST", "ratified_as": _CLAIMING_UNIT}
     assert _ratified(entry) == [], "a resolved proposition with no remaining row is legal"
-    orphaned = _row(None, project="mcp-re-proxy", identity="lib#nothing::claims::this")
+    orphaned = _row(None, project="mcp-re-proxy", identity="src/lib.rs#nothing::claims::this")
     problems = _ratified(entry, rows=[_row(_CLAIMED), orphaned])
     assert len(problems) == 1, problems
     assert "owns 1 of 2 cited control(s); 1 remain(s)" in problems[0], problems

@@ -336,14 +336,9 @@ on:
       # for a probe's site rather than for a unit's sources.
       - "mcp-re-proxy/src/lib.rs"
       # The merged plain-library integration binary carries this unit's DER-level
-      # controls, and encoding v4 digests those sources, not only their names. The
-      # `test_source_patterns` emits BOTH layouts a cargo test target can have, so
-      # `tests/integration.rs` is a fingerprint input even though this suite is a
-      # directory today: collapsing it back to one file must still re-run the lane. It is
-      # therefore a live filter, not a stale one, and the liveness half of
-      # `scripts/verification_trigger_gate.py` exempts exactly that case.
+      # controls, and encoding v4 digests those sources, not only their names — the
+      # sources the build graph lists for the target.
       - "mcp-re-proxy/tests/integration/**"
-      - "mcp-re-proxy/tests/integration.rs"
       # v0.17: the bounded-drain battery, `proxy.serving_drain`. Its own binary, because it
       # runs under RUST_TEST_THREADS=1 in the Bazel lane — a property of a binary.
       - "mcp-re-proxy/tests/async_drain_test.rs"
@@ -396,25 +391,32 @@ on:
       - "mcp-re-proxy/src/authorization/verified_actor.rs"
       - "mcp-re-proxy/src/authorization/verified_action.rs"
       # THM-0040 is measured through the serving path, so its battery lives in the async
-      # integration target. Same shape as the `integration` pair above.
+      # integration target. Same shape as the `integration` directory above.
       - "mcp-re-proxy/tests/integration_async/**"
-      - "mcp-re-proxy/tests/integration_async.rs"
       # ADR-MCPRE-069 NP-158. `proxy.aws_web_identity_credential_exchange`'s battery is this
       # target, and the target is `#![cfg(feature = "aws_kms_keysource")]` — so without the
-      # feature it compiles to zero tests and exits 0. The lane supplies the feature from the
-      # unit's `test_features`; what this pair supplies is the re-run, because the file's
+      # feature it compiles to zero tests and exits 0. The unit's selector names the target
+      # built with the feature; what this pair supplies is the re-run, because the file's
       # BYTES are a fingerprint component and a change to them that did not re-measure would
       # leave an attestation standing over a battery that had moved.
       - "mcp-re-proxy/tests/aws_irsa_web_identity_test/**"
       - "mcp-re-proxy/tests/aws_irsa_web_identity_test.rs"
-      # The build inputs every ReviewFingerprint reads. A dependency bump moves
-      # Cargo.lock, which dirties every declared unit — so a lane that did not
-      # re-run on it would leave `main` carrying attestations over a dependency
+      # The build inputs every Rust ReviewFingerprint reads. A dependency bump moves
+      # bazel/crates.lock, which dirties every declared Rust unit — so a lane that did
+      # not re-run on it would leave `main` carrying attestations over a dependency
       # graph nothing measured. `scripts/verification_trigger_gate.py` fails the
       # build if this set ever narrows below the fingerprint's again.
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "rust-toolchain.toml"
+      - "MODULE.bazel"
+      - "MODULE.bazel.lock"
+      - "bazel/**"
+      - ".bazelrc"
+      - ".bazelversion"
+      # Each package's BUILD file decides its targets' sources, roots and features.
+      - "**/BUILD.bazel"
+      # Integration-target sources the build graph lists beside the target's own file.
+      - "mcp-re-proxy/tests/common/**"
+      - "mcp-re-proxy/tests/serving_fixtures/**"
+      - "mcp-re-proxy/tests/startup_transcript/**"
       - "mcp-re-core/Cargo.toml"
       - "mcp-re-http-profile/Cargo.toml"
       - "mcp-re-proxy/Cargo.toml"
@@ -721,14 +723,9 @@ on:
       # for a probe's site rather than for a unit's sources.
       - "mcp-re-proxy/src/lib.rs"
       # The merged plain-library integration binary carries this unit's DER-level
-      # controls, and encoding v4 digests those sources, not only their names. The
-      # `test_source_patterns` emits BOTH layouts a cargo test target can have, so
-      # `tests/integration.rs` is a fingerprint input even though this suite is a
-      # directory today: collapsing it back to one file must still re-run the lane. It is
-      # therefore a live filter, not a stale one, and the liveness half of
-      # `scripts/verification_trigger_gate.py` exempts exactly that case.
+      # controls, and encoding v4 digests those sources, not only their names — the
+      # sources the build graph lists for the target.
       - "mcp-re-proxy/tests/integration/**"
-      - "mcp-re-proxy/tests/integration.rs"
       # v0.17: the bounded-drain battery, `proxy.serving_drain`. Its own binary, because it
       # runs under RUST_TEST_THREADS=1 in the Bazel lane — a property of a binary.
       - "mcp-re-proxy/tests/async_drain_test.rs"
@@ -781,25 +778,32 @@ on:
       - "mcp-re-proxy/src/authorization/verified_actor.rs"
       - "mcp-re-proxy/src/authorization/verified_action.rs"
       # THM-0040 is measured through the serving path, so its battery lives in the async
-      # integration target. Same shape as the `integration` pair above.
+      # integration target. Same shape as the `integration` directory above.
       - "mcp-re-proxy/tests/integration_async/**"
-      - "mcp-re-proxy/tests/integration_async.rs"
       # ADR-MCPRE-069 NP-158. `proxy.aws_web_identity_credential_exchange`'s battery is this
       # target, and the target is `#![cfg(feature = "aws_kms_keysource")]` — so without the
-      # feature it compiles to zero tests and exits 0. The lane supplies the feature from the
-      # unit's `test_features`; what this pair supplies is the re-run, because the file's
+      # feature it compiles to zero tests and exits 0. The unit's selector names the target
+      # built with the feature; what this pair supplies is the re-run, because the file's
       # BYTES are a fingerprint component and a change to them that did not re-measure would
       # leave an attestation standing over a battery that had moved.
       - "mcp-re-proxy/tests/aws_irsa_web_identity_test/**"
       - "mcp-re-proxy/tests/aws_irsa_web_identity_test.rs"
-      # The build inputs every ReviewFingerprint reads. A dependency bump moves
-      # Cargo.lock, which dirties every declared unit — so a lane that did not
-      # re-run on it would leave `main` carrying attestations over a dependency
+      # The build inputs every Rust ReviewFingerprint reads. A dependency bump moves
+      # bazel/crates.lock, which dirties every declared Rust unit — so a lane that did
+      # not re-run on it would leave `main` carrying attestations over a dependency
       # graph nothing measured. `scripts/verification_trigger_gate.py` fails the
       # build if this set ever narrows below the fingerprint's again.
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "rust-toolchain.toml"
+      - "MODULE.bazel"
+      - "MODULE.bazel.lock"
+      - "bazel/**"
+      - ".bazelrc"
+      - ".bazelversion"
+      # Each package's BUILD file decides its targets' sources, roots and features.
+      - "**/BUILD.bazel"
+      # Integration-target sources the build graph lists beside the target's own file.
+      - "mcp-re-proxy/tests/common/**"
+      - "mcp-re-proxy/tests/serving_fixtures/**"
+      - "mcp-re-proxy/tests/startup_transcript/**"
       - "mcp-re-core/Cargo.toml"
       - "mcp-re-http-profile/Cargo.toml"
       - "mcp-re-proxy/Cargo.toml"

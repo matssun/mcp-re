@@ -39,7 +39,7 @@ clothes.
 
 Verdicts follow the platform's five: NOT_REQUIRED when nothing claims and nothing is
 registered, FAIL for an open boundary or an unattributable refusal, UNAVAILABLE when the
-tree cannot be copied or cargo cannot run, PASS otherwise.
+tree cannot be copied or Bazel cannot build, PASS otherwise.
 
 Usage:
     tools/verification/verify-structural [--probe ID]... [--registry PATH] [--keep-tree]
@@ -52,7 +52,6 @@ import json
 import shutil
 import subprocess
 import sys
-import tempfile
 import tomllib
 from pathlib import Path
 
@@ -67,8 +66,14 @@ from _manifest import (  # noqa: E402
     load_toolchains,
     load_verification,
 )
-from _scratch import copy_tracked_tree  # noqa: E402
-from _structural import adjudicate, load_probes, provenance_problem  # noqa: E402
+from _scratch import copy_tracked_tree, lane_scratch, release  # noqa: E402
+from _structural import (  # noqa: E402
+    adjudicate,
+    load_probes,
+    marker_line,
+    probe_module,
+    provenance_problem,
+)
 from _unit_selection import (  # noqa: E402
     add_unit_argument,
     basis,
@@ -91,83 +96,93 @@ def claims_structural(unit: dict) -> bool:
     return any(str(e).startswith(SCHEME) for e in unit.get("evidence", []))
 
 
-def package_name(tree: Path, crate_dir: str) -> str | None:
-    """The cargo package `crate_dir` declares, or None if it declares none."""
-    manifest = tree / crate_dir / "Cargo.toml"
-    if not manifest.is_file():
-        return None
-    with manifest.open("rb") as handle:
-        return tomllib.load(handle).get("package", {}).get("name")
+#: The rustc diagnostics this lane reads are JSON. The setting is rules_rust's; it applies to
+#: every Rust action of the scratch build, so the owner's crate reports in the same form.
+ERROR_FORMAT = "--@rules_rust//rust/settings:error_format=json"
+
+_BOUNDARY_BUILD = """load("@rules_rust//rust:defs.bzl", "rust_test")
+
+rust_test(
+    name = "{name}",
+    srcs = ["{name}.rs"],
+    crate_root = "{name}.rs",
+    edition = "2021",
+    deps = ["{crate}"],
+)
+"""
 
 
-def install(tree: Path, probe: dict, where: str) -> None:
+def install(tree: Path, probe: dict, where: str) -> tuple[str, str, int]:
     """Write the hostile construction into the COPY, and make the compiler reach it.
 
-    A file dropped into `src/` that no `mod` declaration names is not compiled at all, and
-    the lane would then read "no error" — which is the finding that means the boundary is
-    OPEN — from a file rustc never opened. So the declaration is written too, and its
-    absence from the parent is checked rather than assumed.
+    Returns (the target to build, the file the construction is in, the line its marker is
+    on). A boundary probe becomes its own crate, in a package only the copy holds, whose one
+    dependency is the owner's library. An in-crate probe is written INLINE into its parent
+    module — the same place in the module tree and the same privacy as a file module, in a
+    source the owner's target already compiles — so the owner's target is what is built.
     """
-    target = tree / str(probe["insertion_path"])
-    if target.exists():
-        raise ManifestError(
-            f"{where}: {probe['insertion_path']} already exists in the tree. The probe's "
-            f"construction is supposed to be UNWRITABLE here; a file at that path means "
-            f"either the probe collides with real source or a previous run leaked."
-        )
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(str(probe["construction"]), encoding="utf-8")
+    if probe["kind"] == "crate-boundary-compile-fail":
+        source = tree / str(probe["insertion_path"])
+        build = source.parent / "BUILD.bazel"
+        if source.exists() or build.exists():
+            raise ManifestError(
+                f"{where}: {probe['insertion_path']} or its package already exists in the "
+                f"tree. The probe's construction is supposed to be UNWRITABLE here; a file "
+                f"at that path means either the probe collides with real source or a "
+                f"previous run leaked."
+            )
+        name = probe_module(probe)
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text(str(probe["construction"]), encoding="utf-8")
+        build.write_text(_BOUNDARY_BUILD.format(name=name, crate=probe["crate"]), encoding="utf-8")
+        package = source.parent.relative_to(tree).as_posix()
+        return f"//{package}:{name}", str(probe["insertion_path"]), marker_line(probe) or 0
 
-    if probe["kind"] != "in-crate-source-injection":
-        return
     parent = tree / str(probe["insertion_parent"])
     if not parent.is_file():
         raise ManifestError(f"{where}: STALE — insertion parent {probe['insertion_parent']} does not exist")
-    declaration = str(probe["insertion_declaration"])
+    module = probe_module(probe)
     text = parent.read_text(encoding="utf-8")
-    if declaration in text:
+    if f"mod {module}" in text:
         raise ManifestError(
-            f"{where}: STALE — {probe['insertion_parent']} already declares "
-            f"{declaration!r}. The probe's module is supposed to exist only inside this "
-            f"lane's copy."
+            f"{where}: STALE — {probe['insertion_parent']} already declares `mod {module}`. "
+            f"The probe's module is supposed to exist only inside this lane's copy."
         )
-    parent.write_text(f"{text}\n{declaration}\n", encoding="utf-8")
+    head = text if text.endswith("\n") else text + "\n"
+    # The construction's own lines start after the parent's, the blank line and the `mod`
+    # line — which is where the marker's line is counted from.
+    offset = head.count("\n") + 2
+    parent.write_text(f"{head}\nmod {module} {{\n{probe['construction']}\n}}\n", encoding="utf-8")
+    return str(probe["crate"]), str(probe["insertion_parent"]), offset + (marker_line(probe) or 0)
 
 
-def compile_probe(tree: Path, probe: dict, package: str, target_dir: Path) -> tuple[bool, list[dict]]:
-    """(cargo ran, diagnostics) for the injected tree.
+def compile_probe(tree: Path, target: str) -> tuple[bool, list[dict]]:
+    """(the build reached rustc, diagnostics) for the injected tree.
 
-    `cargo check` rather than `build`: the question is whether the construction TYPES, and
-    nothing here needs to be run. `--tests` is passed for a boundary probe because its
-    construction is an integration test target, which a plain check would not compile — and
-    a target nobody compiled produces no diagnostics, which this lane would otherwise read
-    as an open boundary.
+    `bazel build` rather than a test: the question is whether the construction TYPES, and
+    nothing here needs to run. A build that failed with no rustc diagnostic at all never
+    got as far as compiling — a missing toolchain, an unresolvable dependency, an analysis
+    error. That is UNAVAILABLE, not a verdict about the boundary, and it must not be read
+    as "no error".
     """
-    argv = ["cargo", "check", "-p", package, "--message-format=json"]
-    if probe["kind"] == "crate-boundary-compile-fail":
-        argv.append("--tests")
-    features = [str(f) for f in probe.get("features", [])]
-    if features:
-        argv += ["--features", ",".join(features)]
     proc = subprocess.run(
-        argv,
+        ["bazel", "build", ERROR_FORMAT, target],
         cwd=tree,
         capture_output=True,
         text=True,
-        env={**_env(), "CARGO_TARGET_DIR": str(target_dir)},
+        env=_env(),
     )
     diagnostics = []
-    for line in proc.stdout.splitlines():
+    for line in (proc.stdout + proc.stderr).splitlines():
+        if not line.startswith("{"):
+            continue
         try:
             message = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if message.get("reason") == "compiler-message":
-            diagnostics.append(message.get("message", {}))
-    if not proc.stdout.strip() and proc.returncode != 0:
-        # No JSON at all: cargo never got as far as compiling — a missing toolchain, a
-        # locked registry, an unresolvable dependency. That is UNAVAILABLE, not a verdict
-        # about the boundary, and it must not be read as "no error".
+        if message.get("$message_type") == "diagnostic" or "level" in message:
+            diagnostics.append(message)
+    if proc.returncode != 0 and not any(d.get("level") == "error" for d in diagnostics):
         return False, []
     return True, diagnostics
 
@@ -178,31 +193,22 @@ def _env() -> dict:
     return dict(os.environ)
 
 
-def run_probe(tree: Path, probe: dict, target_dir: Path) -> str | None:
+def run_probe(tree: Path, probe: dict) -> str | None:
     """Why this probe did not witness its invariant, or None when it did."""
     where = f"probe {probe['id']}"
-    crate_dir = Path(str(probe["insertion_path"])).parts[0]
-    package = package_name(tree, crate_dir)
-    if package is None:
-        return f"{crate_dir}/Cargo.toml declares no package; the insertion path names no crate"
-    if package != probe["package"]:
-        return (
-            f"`package` says {probe['package']!r} but {crate_dir}/Cargo.toml declares "
-            f"{package!r}; the probe would be compiled against a different crate than the "
-            f"one it claims to attack"
-        )
     try:
-        install(tree, probe, where)
-        ran, diagnostics = compile_probe(tree, probe, package, target_dir)
+        target, relative, line = install(tree, probe, where)
+        ran, diagnostics = compile_probe(tree, target)
     finally:
         # Removed on EVERY path, including the one where `install` raised after writing the
-        # file. A leftover construction would make the next probe's "this path already
+        # package. A leftover construction would make the next probe's "this path already
         # exists" refusal fire about a file this lane put there — a stale-anchor report
         # about the lane's own residue.
-        (tree / str(probe["insertion_path"])).unlink(missing_ok=True)
+        if probe["kind"] == "crate-boundary-compile-fail":
+            shutil.rmtree((tree / str(probe["insertion_path"])).parent, ignore_errors=True)
     if not ran:
-        raise EnvironmentError(f"{where}: cargo produced no diagnostics at all")
-    return adjudicate(probe, diagnostics, str(probe["insertion_path"]))
+        raise EnvironmentError(f"{where}: Bazel stopped before rustc reported anything")
+    return adjudicate(probe, diagnostics, relative, line)
 
 
 def revert(tree: Path, probe: dict, original: str | None) -> None:
@@ -295,9 +301,9 @@ def main() -> int:
         print("VERDICT: NOT_REQUIRED")
         return 0
 
-    scratch = Path(tempfile.mkdtemp(prefix="mcp-re-structural-"))
+    scratch = lane_scratch("structural")
+    release(scratch)
     tree = scratch / "tree"
-    target_dir = scratch / "target"
     try:
         copied = copy_tracked_tree(tree)
     except (subprocess.CalledProcessError, OSError) as exc:
@@ -322,7 +328,7 @@ def main() -> int:
                 parent = tree / str(probe["insertion_parent"])
                 original = parent.read_text(encoding="utf-8") if parent.is_file() else None
             try:
-                problem = run_probe(tree, probe, target_dir)
+                problem = run_probe(tree, probe)
             except ManifestError as exc:
                 print(f"  FAIL {probe['id']}: {exc}", file=sys.stderr)
                 failures.append(probe["id"])
@@ -342,7 +348,7 @@ def main() -> int:
         if args.keep_tree:
             print(f"  scratch tree kept at {scratch}")
         else:
-            shutil.rmtree(scratch, ignore_errors=True)
+            release(scratch)
 
     # Phase 3 of the evidence pipeline, as every other lane does it: a machine record BOUND
     # TO THE FINGERPRINT it was measured at. Written only for a complete run — a `--probe`

@@ -16,10 +16,11 @@ hostile construction COMPILES is measuring nothing:
   * **an unanswered producer path** — a witness that attacks one route while another stands
     open establishes nothing, so `producer_paths` answers for every route including the
     ones that do not apply;
-  * **a construction injected at the wrong site** — `tests/` compiles as a separate crate
-    and `src/` does not, so the placement decides which proposition was attacked;
-  * **an in-crate module nothing declares** — a file rustc never opened produces no error,
-    which this lane would otherwise read as an open boundary;
+  * **a construction injected at the wrong site** — a boundary probe is its own crate and an
+    in-crate probe is a module of the owner's, so the placement decides which proposition
+    was attacked;
+  * **an in-crate parent the owner does not compile** — a module rustc never opened produces
+    no error, which this lane would otherwise read as an open boundary;
   * **a probe whose documented case has drifted** — the doctest a reader reaches for first
     no longer states what the registry says it does.
 
@@ -58,6 +59,7 @@ UNITS = {unit["id"]: unit for unit in load_verification().get("unit", [])}
 #: below are deliberately not run against a real owner: what they test is the LANE, and a
 #: lane fixture that took a minute to compile would be one somebody eventually skips.
 FIXTURE_CRATE = "mcp-re-test-paths"
+FIXTURE_LABEL = "//mcp-re-test-paths:mcp_re_test_paths"
 FIXTURE_UNIT = "conformance.verdict_vocabulary_scope"
 
 
@@ -66,11 +68,9 @@ def _probe(**overrides) -> dict:
         "id": "F01",
         "unit": FIXTURE_UNIT,
         "kind": "in-crate-source-injection",
-        "package": FIXTURE_CRATE,
+        "crate": FIXTURE_LABEL,
         "invariant": "a fixture invariant, for testing the lane rather than a product claim",
-        "insertion_path": f"{FIXTURE_CRATE}/src/structural_probe_fixture.rs",
         "insertion_parent": f"{FIXTURE_CRATE}/src/lib.rs",
-        "insertion_declaration": "mod structural_probe_fixture;",
         "construction": "pub fn hostile() -> u8 {\n    7 // SITE\n}\n",
         "marker": "SITE",
         "error_code": "E0451",
@@ -227,7 +227,7 @@ def _diagnostic(code: str, path: str, line: int) -> dict:
 
 def test_no_error_at_all_is_the_open_boundary_finding():
     probe = _probe()
-    problem = adjudicate(probe, [], probe["insertion_path"])
+    problem = adjudicate(probe, [], probe["insertion_parent"], 2)
     assert problem is not None and "COMPILED" in problem
     assert probe["invariant"] in problem, "the finding names the invariant that is not closed"
 
@@ -237,22 +237,23 @@ def test_a_warning_is_not_a_refusal():
     otherwise let a compiling construction read as a closed boundary."""
     probe = _probe()
     warning = {"level": "warning", "code": {"code": "E0451"}, "spans": []}
-    assert "COMPILED" in (adjudicate(probe, [warning], probe["insertion_path"]) or "")
+    assert "COMPILED" in (adjudicate(probe, [warning], probe["insertion_parent"], 2) or "")
 
 
 def test_the_right_code_on_the_wrong_line_is_not_evidence():
     probe = _probe()
-    path = probe["insertion_path"]
-    assert adjudicate(probe, [_diagnostic("E0451", path, 99)], path) is not None
-    assert adjudicate(probe, [_diagnostic("E0451", path, marker_line(probe))], path) is None
+    path = probe["insertion_parent"]
+    line = 40 + (marker_line(probe) or 0)
+    assert adjudicate(probe, [_diagnostic("E0451", path, 99)], path, line) is not None
+    assert adjudicate(probe, [_diagnostic("E0451", path, line)], path, line) is None
 
 
 def test_the_right_code_in_the_wrong_file_is_not_evidence():
     """A crate that fails to build for an unrelated reason produces errors of every code.
     The span must be on the probe's own construction."""
     probe = _probe()
-    elsewhere = _diagnostic("E0451", "some/other/file.rs", marker_line(probe))
-    assert adjudicate(probe, [elsewhere], probe["insertion_path"]) is not None
+    elsewhere = _diagnostic("E0451", "some/other/file.rs", 3)
+    assert adjudicate(probe, [elsewhere], probe["insertion_parent"], 3) is not None
 
 
 def test_the_marker_must_identify_exactly_one_line():
@@ -293,23 +294,38 @@ def test_an_empty_answer_is_not_an_answer():
     _expect_manifest_error(lambda: load_probes(registry), "an empty route answer must be refused")
 
 
-def test_a_boundary_probe_may_not_inject_into_src():
-    """`tests/` compiles as a separate crate and `src/` does not. A boundary probe under
-    `src/` would claim the in-crate seal it never attacked."""
-    directory = Path(tempfile.mkdtemp())
-    registry = _write_registry(
-        directory,
-        [
-            _probe(
-                kind=KINDS[0],
-                doc_path="mcp-re-http-profile/src/verified_response/bound.rs",
-                doc_item="doc#verified_response::bound::VerifiedMcpResponse",
-                insertion_path=f"{FIXTURE_CRATE}/src/probe.rs",
-                insertion_parent=None,
-            )
-        ],
+def _boundary(**overrides) -> dict:
+    probe = _probe(
+        kind=KINDS[0],
+        crate="//mcp-re-http-profile:mcp_re_http_profile",
+        doc_path="mcp-re-http-profile/src/verified_response/bound.rs",
+        doc_item="doc#verified_response::bound::VerifiedMcpResponse",
+        insertion_path="mcp-re-http-profile/structural_probes/probe.rs",
     )
+    del probe["insertion_parent"]
+    probe.update(overrides)
+    return probe
+
+
+def test_a_boundary_probe_may_not_inject_into_src():
+    """A boundary probe is its own crate; one written into the owner's `src/` would be a
+    module of the owner and claim the in-crate seal it never attacked."""
+    directory = Path(tempfile.mkdtemp())
+    registry = _write_registry(directory, [_boundary(insertion_path="mcp-re-http-profile/src/probe.rs")])
     _expect_manifest_error(lambda: load_probes(registry), "a boundary probe under src/ must be refused")
+    registry = _write_registry(directory, [_boundary()])
+    assert load_probes(registry), "the probe package under the owner's is the legal site"
+
+
+def test_an_in_crate_parent_the_owner_does_not_compile_is_refused():
+    """A construction written into a file the owner's target never reads produces no error,
+    and the lane would report the silence as an open boundary about a module nobody built."""
+    directory = Path(tempfile.mkdtemp())
+    stray = _probe(insertion_parent="mcp-re-http-profile/src/lib.rs")
+    registry = _write_registry(directory, [stray])
+    _expect_manifest_error(lambda: load_probes(registry), "a parent outside the owner's srcs must be refused")
+    registry = _write_registry(directory, [_probe(crate="//mcp-re-test-paths:no_such_crate")])
+    _expect_manifest_error(lambda: load_probes(registry), "a crate the build graph does not hold must be refused")
 
 
 def test_a_vague_expected_refusal_is_refused():
@@ -359,13 +375,7 @@ def test_a_drifted_documented_case_is_detected():
     against the SOURCE rather than against `tested_symbols`, because a unit that has
     reclassified to `structural` no longer has a battery — a check written against that
     field would refuse exactly the units this class exists for."""
-    base = _probe(
-        kind=KINDS[0],
-        doc_path="mcp-re-http-profile/src/verified_response/bound.rs",
-        doc_item="doc#verified_response::bound::VerifiedMcpResponse",
-        insertion_path="mcp-re-http-profile/tests/probe.rs",
-    )
-    del base["insertion_parent"], base["insertion_declaration"]
+    base = _boundary()
     assert provenance_problem(base, UNITS[FIXTURE_UNIT], REPO_ROOT) is None
     gone = {**base, "doc_item": "doc#verified_response::bound::ATypeThatWasDeleted"}
     assert provenance_problem(gone, UNITS[FIXTURE_UNIT], REPO_ROOT) is not None

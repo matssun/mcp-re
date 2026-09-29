@@ -1,215 +1,81 @@
-//! Resolve child-process binaries and data fixtures for integration tests
-//! whether they run under Bazel runfiles or a plain Cargo build.
+//! Resolve child-process binaries and data fixtures for integration tests, under Bazel
+//! runfiles.
 //!
-//! Each known env-var name (Bazel injects these as `$(rlocationpath ...)`)
-//! maps to a workspace-relative cargo path. The resolver tries the Bazel env
-//! var first; if absent, it falls back to `<workspace-root>/target/<profile>/<bin>`
-//! (or, for the data fixtures we ship, a fixed source-tree path).
-//!
-//! New env keys must be added to one of the two tables — `source_fallbacks` for a FILE a
-//! guard parses, `source_trees` for a TREE a guard walks — and the resolver fails loudly on
-//! unknown keys rather than silently returning an empty path.
+//! A test names each input it reads by an env key; its Bazel target sets that key to the
+//! input's `$(rlocationpath ...)`, and lists the input in `data`, so the build refuses a
+//! missing file before any test runs. [`resolve_runfile`] finds the path under the runfiles
+//! root, and refuses — loudly — a key its target does not set or a path that is not there:
+//! a guard that resolved its input to nothing would walk nothing, find nothing and report a
+//! clean tree.
 //!
 //! [`rust_source`] is the other half of the same job: the guards that resolve a source
 //! path here then scan its text need one shared, tested definition of which lines are
 //! production.
 
-mod source_fallbacks;
-mod source_trees;
-mod traceability_sources;
-
 pub mod rust_source;
 
-use source_fallbacks::SOURCE_FALLBACKS;
-
-use std::path::Path;
 use std::path::PathBuf;
 
-/// The env keys that resolve to a built BINARY rather than a source file, and the bin
-/// name each one names. Looked up under `target/<profile>/` instead of the source tree.
+/// The file or directory the test's Bazel target names under `env_key`.
 ///
-/// A table rather than a constant because the workspace ships more than one executable:
-/// the serving proxy, and the auditor that reads what it retained. A second special case
-/// spelled out in `cargo_fallback` would be the point at which the two stop being one
-/// rule.
-const BINARY_KEYS: &[(&str, &str)] = &[
-    ("MCP_RE_PROXY_CLI", "mcp-re-proxy"),
-    ("MCP_RE_AUDITOR_CLI", "mcp-re-auditor"),
-];
-
-/// Resolve a runfile-style path. Under Bazel `env_key` is set; under Cargo we
-/// fall back to the canonical workspace layout.
-///
-/// Panics on an unresolvable lookup with a message that points at the most
-/// likely cause: missing `cargo build --workspace --bins` for a cross-crate
-/// binary, or an unknown env key that needs adding to [`SOURCE_FALLBACKS`].
+/// Panics when the target does not set `env_key`, or sets it to a path found under no
+/// runfiles root — both are wiring errors in the target, and a guard handed an empty path
+/// instead would report a clean pass over nothing.
 pub fn resolve_runfile(env_key: &str) -> PathBuf {
-    if let Ok(rel) = std::env::var(env_key) {
-        let mut candidates: Vec<PathBuf> = Vec::new();
-        for root_key in ["TEST_SRCDIR", "RUNFILES_DIR"] {
-            if let Ok(root) = std::env::var(root_key) {
-                candidates.push(PathBuf::from(&root).join(&rel));
-            }
-        }
-        if let Ok(cwd) = std::env::current_dir() {
-            candidates.push(cwd.join(&rel));
-            if let Some(parent) = cwd.parent() {
-                candidates.push(parent.join(&rel));
-            }
-        }
-        candidates.push(PathBuf::from(&rel));
-        if let Some(found) = candidates.into_iter().find(|c| c.exists()) {
-            return found;
-        }
-        // `env_key` was set but the runfile root resolution failed — fall
-        // through to the cargo fallback rather than panicking immediately.
-    }
-    cargo_fallback(env_key)
-}
-
-/// Cargo-mode fallback. Each Bazel env key maps to either a workspace-relative
-/// bin (looked up at `target/<profile>/<bin>`) or a source-tree file.
-fn cargo_fallback(env_key: &str) -> PathBuf {
-    let workspace_root = workspace_root();
-    if let Some((_, bin)) = BINARY_KEYS.iter().find(|(key, _)| *key == env_key) {
-        return find_bin(&workspace_root, bin);
-    }
-    if let Some(sentinel) = source_trees::sentinel_for(env_key) {
-        return workspace_root.join(sentinel);
-    }
-    let mut declared = SOURCE_FALLBACKS
-        .iter()
-        .chain(traceability_sources::TRACEABILITY_SOURCES.iter());
-    let Some((_, rel)) = declared.find(|(key, _)| *key == env_key) else {
+    let Ok(rel) = std::env::var(env_key) else {
         panic!(
-            "mcp_re_test_paths: unknown runfile env key '{env_key}' — add it to \
-             SOURCE_FALLBACKS (a file a guard parses), SOURCE_TREES (a tree a guard \
-             walks), or TRACEABILITY_SOURCES (a test that witnesses a claim), in \
-             mcp-re-test-paths/src/"
+            "mcp_re_test_paths: env key '{env_key}' is not set — add it to this test \
+             target's `env` as `$(rlocationpath ...)`, with the input in its `data`"
         );
     };
-    workspace_root.join(rel)
-}
-
-/// Locate the workspace root by walking up from the test crate's manifest dir
-/// until a `Cargo.toml` containing `[workspace]` is found. Each integration
-/// test compiles with `CARGO_MANIFEST_DIR` pointing at its own crate dir.
-fn workspace_root() -> PathBuf {
-    let manifest = std::env::var("CARGO_MANIFEST_DIR")
-        .expect("CARGO_MANIFEST_DIR is always set when compiling Cargo integration tests");
-    let mut dir: &Path = Path::new(&manifest);
-    loop {
-        let candidate = dir.join("Cargo.toml");
-        if candidate.is_file() {
-            if let Ok(text) = std::fs::read_to_string(&candidate) {
-                if text.contains("[workspace]") {
-                    return dir.to_path_buf();
-                }
-            }
-        }
-        match dir.parent() {
-            Some(p) => dir = p,
-            None => panic!(
-                "mcp_re_test_paths: walked past the filesystem root without finding a Cargo.toml \
-                 that contains [workspace] (started from '{manifest}')"
-            ),
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    for root_key in ["TEST_SRCDIR", "RUNFILES_DIR"] {
+        if let Ok(root) = std::env::var(root_key) {
+            candidates.push(PathBuf::from(&root).join(&rel));
         }
     }
-}
-
-/// Map a workspace-root path + bin name to the canonical `target/<profile>/<bin>`
-/// location. Tries the current profile first (debug under `cargo test`), then
-/// the opposite as a courtesy. Panics with a precise remediation message if
-/// neither exists, since Cargo does NOT auto-build cross-crate bins for
-/// integration tests.
-fn find_bin(workspace_root: &Path, bin_name: &str) -> PathBuf {
-    let exe_suffix = std::env::consts::EXE_SUFFIX;
-    let bin_file = format!("{bin_name}{exe_suffix}");
-    // CARGO_TARGET_DIR honors user overrides; default is <workspace-root>/target.
-    let target_dir = std::env::var("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| workspace_root.join("target"));
-    let primary_profile = if cfg!(debug_assertions) {
-        "debug"
-    } else {
-        "release"
-    };
-    let other_profile = if primary_profile == "debug" {
-        "release"
-    } else {
-        "debug"
-    };
-    for profile in [primary_profile, other_profile] {
-        let candidate = target_dir.join(profile).join(&bin_file);
-        if candidate.is_file() {
-            return candidate;
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.join(&rel));
+        if let Some(parent) = cwd.parent() {
+            candidates.push(parent.join(&rel));
         }
     }
-    panic!(
-        "mcp_re_test_paths: binary '{bin_name}' not found under {}/{{debug,release}}/, and \
-         its env key is not set — run the test as its Bazel target, whose `data` builds the \
-         binary and whose `env` names it.",
-        target_dir.display()
-    );
+    candidates.push(PathBuf::from(&rel));
+    candidates.into_iter().find(|c| c.exists()).unwrap_or_else(|| {
+        panic!(
+            "mcp_re_test_paths: env key '{env_key}' names '{rel}', which is under no runfiles \
+             root — list the input in this test target's `data`"
+        )
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::resolve_runfile;
 
-    /// The property the Bazel side gets from the build: a fallback that names
-    /// a file which is not there is a path no guard can read, and without this
-    /// check it surfaces at whichever test first asks for it rather than here.
+    /// The resolver's positive half: the target sets this key to its own crate root, and
+    /// the key resolves to that file.
     #[test]
-    fn the_fallback_table_names_only_files_that_exist() {
-        let root = workspace_root();
-        let missing: Vec<&str> = SOURCE_FALLBACKS
-            .iter()
-            .filter(|(_, rel)| !root.join(rel).exists())
-            .map(|(key, _)| *key)
-            .collect();
+    fn a_key_the_target_sets_resolves_to_its_file() {
+        let path = resolve_runfile("MCP_RE_TEST_PATHS_PROBE");
+        let text = std::fs::read_to_string(&path).expect("the resolved file is readable");
         assert!(
-            missing.is_empty(),
-            "SOURCE_FALLBACKS names path(s) that no longer exist — delete the entry if its \
-             fixture is gone, or repoint it if the fixture moved: {missing:?}"
+            text.contains("pub fn resolve_runfile"),
+            "{path:?} is not the file the target named"
         );
     }
 
-    /// A duplicated key would make the second entry unreachable, so the two
-    /// paths could disagree indefinitely with only one of them ever used.
+    /// A key no target sets is refused, never resolved to an empty or guessed path.
     #[test]
-    fn no_key_is_declared_twice() {
-        let mut keys: Vec<&str> = SOURCE_FALLBACKS.iter().map(|(key, _)| *key).collect();
-        keys.sort_unstable();
-        let before = keys.len();
-        keys.dedup();
-        assert_eq!(before, keys.len(), "SOURCE_FALLBACKS declares a key twice");
+    #[should_panic(expected = "is not set")]
+    fn a_key_the_target_does_not_set_is_refused() {
+        resolve_runfile("MCP_RE_NO_SUCH_KEY");
     }
 
-    /// No binary key is also in the source table: they resolve under `target/`, and a
-    /// source-tree entry would silently shadow that.
-    ///
-    /// Over the whole table rather than the one key it used to name. The workspace ships
-    /// two executables now, and a check that covered the first would have said nothing
-    /// about the second.
+    /// A key set to a path under no runfiles root is refused rather than returned.
     #[test]
-    fn no_binary_key_is_also_a_source_fallback() {
-        for (key, _) in BINARY_KEYS {
-            assert!(
-                !SOURCE_FALLBACKS.iter().any(|(other, _)| other == key),
-                "{key} resolves under target/, not the source tree"
-            );
-        }
-        let mut names: Vec<&str> = BINARY_KEYS.iter().map(|(key, _)| *key).collect();
-        let before = names.len();
-        names.sort_unstable();
-        names.dedup();
-        assert_eq!(before, names.len(), "BINARY_KEYS declares a key twice");
-    }
-
-    #[test]
-    #[should_panic(expected = "unknown runfile env key")]
-    fn an_unknown_key_is_refused_rather_than_resolved() {
-        cargo_fallback("MCP_RE_NO_SUCH_KEY");
+    #[should_panic(expected = "is under no runfiles root")]
+    fn a_key_naming_a_missing_file_is_refused() {
+        resolve_runfile("MCP_RE_TEST_PATHS_MISSING");
     }
 }

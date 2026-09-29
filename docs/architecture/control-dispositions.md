@@ -1437,41 +1437,29 @@ endpoint nobody named, or silently drops one an operator did name.
 
 ## NP-037 — a guard's inputs resolve, or the guard fails loudly
 
-**Controls:** `mcp-re-test-paths/src/lib.rs` (4),
-`src/traceability_sources.rs` (2).
-**Carrier:** `mcp-re-test-paths`'s binary/fixture resolver and the two declaration tables it
-falls back through — `SOURCE_FALLBACKS` and `TRACEABILITY_SOURCES` — beside `BINARY_KEYS`.
-**Statement.** *An unknown key is refused rather than resolved to an empty path; no key is
-declared twice; no binary key is also a source fallback; and every declared fallback and
-witness names a file that exists.*
+**Controls:** `mcp-re-test-paths/src/lib.rs` (3).
+**Carrier:** `mcp-re-test-paths`'s `resolve_runfile`: the file a test's Bazel target sets an
+env key to, resolved under the runfiles root.
+**Statement.** *A key the test's target sets resolves to the file it names; a key the target
+does not set, or one naming a path under no runfiles root, is refused rather than resolved to
+an empty or guessed path.*
 **If false.** A guard resolves its input to an empty path, walks nothing, finds nothing and
 reports a clean tree. That is the exact false-green class this repository has already
 measured twice — a `tests/` glob that silently exempted a crate from the srcs gate for a
 whole campaign, and an empty join that read as a clean tree — and the resolver is where the
 first of those enters.
-**Likely owner:** none. The resolver is in no unit's `paths`; the tables it holds decide
-what several guards see.
-**Root relationship.** Not under a product root. It is a premise of the guards.
 **Severity:** `high`.
-**Registered in part, ADR-MCPRE-069 RM-S2 — the source-TREE half only, and the record now
-describes exactly the six controls that remain.** The record was filed over nine controls and
-three tables, and ADR-069 RR-002 C5 forbids one disposition over a heterogeneous set. The
-three `src/source_trees.rs` controls are now `unit://conformance.scanned_tree_declaration`
-under **THM-0111**, whose scope states the walk they are a premise of in terms — *"The control
-walks every crate's source tree, takes each file's production half, and asserts the set of
-files holding a verdict literal is exactly the two frozen vocabularies"* — with falsifier
-`M325`, which makes an unknown key resolve to an EMPTY path and turns
-`an_unknown_key_names_no_tree` red. That is this record's own "if false" reproduced in one
-edit, and it is why the sentinel table could be separated from the rest: the walk THM-0111
-runs resolves through `SOURCE_TREES` and through nothing else here.
-**Six rows REMAIN, and they are a second proposition rather than a remainder.** `BINARY_KEYS`,
-`SOURCE_FALLBACKS` and `TRACEABILITY_SOURCES` name a built executable, a fixture FILE a guard
-parses, and a test that witnesses a claim. THM-0111's walk consults none of them, so a
-registration reaching them would have to widen a unit's `paths` past the source it measures —
-the quiet widening ADR-069 §5 holds to be strictly worse than leaving a control unregistered.
-They serve the proxy and auditor integration lanes and the traceability manifest guard, which
-are several theorems rather than one, and no theorem in this registry states that a guard's
-declared inputs resolve. The referral and the shape a ratification would take are recorded in
+**Resolved: `ratified_as = "conformance.scanned_tree_declaration"`, under THM-0111.** The
+resolver has one mode: the target's Bazel `env` names each input, its `data` carries it, and
+the build refuses a missing file before any test runs. The three controls that remain state
+the resolver's whole contract, and the unit claims them, with falsifier `M325`, which makes
+an unset key resolve to the runfiles root and turns
+`a_key_the_target_does_not_set_is_refused` red. The declaration tables this record was
+filed over — `BINARY_KEYS`, `SOURCE_FALLBACKS`, `TRACEABILITY_SOURCES` and `SOURCE_TREES` —
+served only a resolution path for tests run outside Bazel, and went with it; two of their
+properties are now the build's (a declared input that is not a file fails the build, and a
+Starlark dict cannot declare a key twice), and the rest had no remaining reader. The
+original referral is recorded in
 [`verification/reviews/packets/adr069-np-037-ratification-2026-09-19.md`](../../verification/reviews/packets/adr069-np-037-ratification-2026-09-19.md).
 
 ## The external transparency auditor — NP-039 through NP-043

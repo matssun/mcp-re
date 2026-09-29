@@ -20,9 +20,10 @@ from pathlib import Path
 from _extraction_artifact import record_problems as artifact_record_problems
 from _extraction_identity import identity_problems
 from _seams import files_with_seams
-from _ecosystems import CARGO
+from _ecosystems import RUST
 from _ecosystems import test_project_for
 from _ecosystems import valid_target
+import _rust_targets
 from _ecosystems import unit_ecosystem
 from _ecosystems import unit_projects
 from _evidence_class import MEASUREMENT_KEYS
@@ -116,8 +117,6 @@ _UNIT_KEYS = {
     "pilot",
     "proved_symbols",
     "tested_symbols",
-    "test_package",
-    "test_features",
     "extracted_symbols",
     "lean_theorems",
     # ADR-MCPRE-068 §5. `evidence_class` cannot be called `class`: that key is two lines up
@@ -128,8 +127,8 @@ _UNIT_KEYS = {
     "direct_consequence_severity",
     # ADR-MCPRE-068 Phase 1. A control that is a SCRIPT rather than a test symbol: a gate
     # that reads production source and refuses a violating pattern. It is declared here and
-    # not in `tested_symbols` because the two are resolved by different runners — a cargo or
-    # pytest selector names a symbol inside a compiled battery, and this names an executable
+    # not in `tested_symbols` because the two are resolved by different runners — a Bazel test
+    # or pytest selector names a symbol inside a compiled battery, and this names an executable
     # the lane invokes over the tree. Flattening them would make every symbol resolver have
     # to recognise a path that is not a symbol.
     "gate_controls",
@@ -141,8 +140,8 @@ def _unit_packages(unit: dict) -> list[str]:
     """The projects the unit's declared paths live in, sorted.
 
     Shared by the schema check and by `verify-tests`, because "which projects does this unit
-    name" must not have two answers. Which BUILD SYSTEM answers it is `_ecosystems`' —
-    Cargo is one adapter beneath this concept rather than the shape of it (issue #745).
+    name" must not have two answers. Which BUILD SYSTEM answers it is `_ecosystems`'
+    (issue #745).
     """
     return unit_projects(unit)
 
@@ -209,34 +208,21 @@ def claims_test_evidence(unit: dict) -> bool:
     return any(str(entry).startswith("test://") for entry in unit.get("evidence", []))
 
 
-def test_package_for(unit: dict) -> str | None:
-    """The single project this unit's battery runs in, or None if there is none.
-
-    Delegates to `_ecosystems.test_project_for`, which is where the fail-closed cases live:
-    a closure spanning two ecosystems, a source path outside every project of its own
-    ecosystem, and several projects with no `test_package` naming one of them.
-
-    The name is kept because the schema field is `test_package` and the two must read as
-    one concept; what changed is that a package is no longer necessarily a Cargo one.
-    """
-    return test_project_for(unit)
-
-
-def _module_candidates(package: str, symbol_path: str) -> list[str]:
+def _module_candidates(root_dir: str, symbol_path: str) -> list[str]:
     """The source files an IN-CRATE selector's module path could name, longest first.
 
-    `lib#rejection::tests::x` can only execute code in `<pkg>/src/rejection.rs`;
-    `doc#verified_response::bound::X` in `<pkg>/src/verified_response/bound.rs`;
-    `bin/mcp-re-client#startup::tests::x` in `<pkg>/src/startup.rs`. Every prefix is
-    offered because the selector names an item, not a file, and the file boundary can be
-    anywhere above it.
+    A selector on a test target built from a crate executes code in that crate's module
+    tree, rooted at the crate root's directory: `rejection::tests::x` on the proxy's unit
+    tests can only execute code in `mcp-re-proxy/src/rejection.rs`. Every prefix is offered
+    because the selector names an item, not a file, and the file boundary can be anywhere
+    above it.
     """
     segments = [s for s in symbol_path.split("::") if s]
     out: list[str] = []
     for depth in range(len(segments), 0, -1):
         stem = "/".join(segments[:depth])
-        out.append(f"{package}/src/{stem}.rs")
-        out.append(f"{package}/src/{stem}/mod.rs")
+        out.append(f"{root_dir}/{stem}.rs")
+        out.append(f"{root_dir}/{stem}/mod.rs")
     return out
 
 
@@ -253,7 +239,7 @@ def _validate_gate_controls(uwhere: str, unit: dict) -> None:
     a standing PASS, which is the ADR-MCPRE-069 defect these two gates were found in.
 
     That coverage is NOT `paths` membership, and trying it first is how the reason got
-    written down: a `.py` entry in a cargo unit's paths collapses `unit_ecosystem` to None,
+    written down: a `.py` entry in a Rust unit's paths collapses `unit_ecosystem` to None,
     and the test lane then reports every `tested_symbols` member as naming no runnable
     target. The unit's source closure is single-ecosystem by construction. So the scripts
     are digested as their own fingerprint component (`_fingerprint._unit_components`), and
@@ -285,112 +271,58 @@ def _validate_gate_controls(uwhere: str, unit: dict) -> None:
             )
 
 
-def _validate_test_features(uwhere: str, unit: dict) -> None:
-    """`test_features` names the build configuration the unit's battery is measured under.
-
-    Three refusals, and each is a way the field could state something it does not mean.
-
-    A unit with no `test://` evidence has no battery, so a feature set for one measures
-    nothing. A non-Cargo ecosystem has no such concept and the adapter would DROP the
-    value — a declaration nothing applies is worse than none, because the fingerprint would
-    carry it while the runner ignored it. And the specification feature is excluded by
-    construction: `features` carries the prover's text, is off in every production build,
-    and running the battery under it would measure a crate that does not ship. That
-    exclusion was a sentence in the lane's docstring; it is a check here.
-    """
-    declared = unit.get("test_features")
-    if declared is None:
-        return
-    if not isinstance(declared, list) or not all(isinstance(f, str) and f for f in declared):
-        raise ManifestError(f"{uwhere}: test_features must be a list of feature names")
-    if not claims_test_evidence(unit):
-        raise ManifestError(
-            f"{uwhere}: declares `test_features` but no test:// evidence, so the feature "
-            f"set configures a battery that does not exist."
-        )
-    if unit_ecosystem(unit) is not CARGO:
-        raise ManifestError(
-            f"{uwhere}: `test_features` is a Cargo concept and this unit's battery does "
-            f"not run under Cargo; a feature set the runner cannot apply would enter the "
-            f"fingerprint while measuring nothing."
-        )
-    overlap = sorted(set(declared) & set(unit.get("features", [])))
-    if overlap:
-        raise ManifestError(
-            f"{uwhere}: {overlap} appear in both `features` and `test_features`. The "
-            f"specification feature carries the prover's text and is off in every "
-            f"production build; a battery run under it measures a different crate than "
-            f"the one that ships."
-        )
-
-
 def _validate_in_crate_selectors(uwhere: str, unit: dict) -> None:
-    """A `lib#`/`doc#`/`bin/<name>#` selector must execute code the unit's own `paths` measure.
+    """A selector on a test target BUILT FROM A CRATE must execute code the unit's `paths` measure.
 
-    Integration-test sources enter the fingerprint as their own component; in-crate tests
-    do not, because they live inside the source files the unit already declares. That is
-    only true if it IS true, so it is checked rather than assumed: a `lib#` selector whose
+    Integration-test sources enter the fingerprint as their own component; the unit tests
+    of a crate do not, because they live inside the source files the unit already declares.
+    That is only true if it IS true, so it is checked rather than assumed: a selector whose
     module is not in `paths` would be a battery member whose body could be rewritten with
     no fingerprint moving — the same false-freshness shape as an unmeasured implementation.
 
-    A binary crate's modules live under the same `<pkg>/src` tree, so `bin/<name>#` carries
-    the identical obligation and is checked by the identical rule. Exempting it would let a
-    deployable's own controls sit outside every fingerprint component.
+    A binary crate's tests are built from the binary the same way, and carry the identical
+    obligation. Exempting them would let a deployable's own controls sit outside every
+    fingerprint component.
     """
-    package = test_package_for(unit)
-    if package is None or unit_ecosystem(unit) is not CARGO:
+    if unit_ecosystem(unit) is not RUST:
         return
     declared = set(unit["paths"])
     for symbol in unit.get("tested_symbols", []):
-        target, _, path = str(symbol).partition("#")
-        if target not in ("lib", "doc") and not target.startswith("bin/"):
+        label, _, path = str(symbol).partition("#")
+        row = _rust_targets.target(label)
+        if row is None or not row["crate"]:
             continue
-        candidates = _module_candidates(package, path)
+        root_dir = row["root"].rsplit("/", 1)[0]
+        # The crate root itself holds the modules it declares inline, `tests` among them.
+        candidates = _module_candidates(root_dir, path) + [row["root"]]
         if not any(c in declared for c in candidates):
             raise ManifestError(
-                f"{uwhere}: tested_symbol {symbol!r} executes code in {package}/src, but no "
+                f"{uwhere}: tested_symbol {symbol!r} executes code in {root_dir}, but no "
                 f"prefix of its module path is among this unit's `paths`. An in-crate test "
                 f"whose source the unit does not measure can be rewritten under the same "
                 f"name without moving the fingerprint. Declare the module's file."
             )
 
 
-def _validate_test_package(uwhere: str, unit: dict) -> None:
-    """`test_package` is required exactly when the source closure spans several packages.
+def _validate_rust_test_packages(uwhere: str, unit: dict) -> None:
+    """Every Rust selector's test target lives in a package this unit's paths name.
 
-    The test lane derives the package to run from the declared paths so that a unit whose
-    source moves cannot keep testing the package it left. A unit whose SOURCE CLOSURE
-    legitimately spans packages — the verifier's results reach `mcp-re-core`'s Ed25519
-    primitive — has no single answer, and the lane refused to run at all.
-
-    Naming the package is the fix, and it is constrained rather than free: it must be one
-    of the packages the unit already declares, so it can select a package inside the
-    measured closure and nothing else. Where the paths name ONE package the field is
-    REFUSED, not merely unnecessary — an optional restatement of a derived fact is a second
-    place for it to be wrong.
+    The battery must run inside the measured source closure: a selector naming a target in
+    a package the unit does not declare would measure code whose source no component of the
+    fingerprint digests. The label states its package, so the check is on the label itself.
     """
-    packages = _unit_packages(unit)
-    declared = unit.get("test_package")
-    if declared is None:
-        if len(packages) > 1 and unit.get("tested_symbols"):
-            raise ManifestError(
-                f"{uwhere}: paths span {len(packages)} Cargo packages "
-                f"({', '.join(packages)}) and the unit declares a test battery, so the "
-                f"lane cannot derive which package to run it in. Name it in "
-                f"`test_package`."
-            )
+    if unit_ecosystem(unit) is not RUST:
         return
-    if len(packages) <= 1:
-        raise ManifestError(
-            f"{uwhere}: `test_package` is set but the paths name a single package; the "
-            f"lane derives it, and a restatement is a second place for it to be wrong."
-        )
-    if declared not in packages:
-        raise ManifestError(
-            f"{uwhere}: test_package {declared!r} is not one of the packages this unit's "
-            f"paths name ({', '.join(packages)}). The battery must run inside the "
-            f"measured source closure."
-        )
+    packages = set(_unit_packages(unit))
+    for symbol in unit.get("tested_symbols", []):
+        label = str(symbol).partition("#")[0]
+        row = _rust_targets.target(label)
+        if row is not None and row["package"] not in packages:
+            raise ManifestError(
+                f"{uwhere}: tested_symbol {symbol!r} runs in package {row['package']!r}, "
+                f"which none of this unit's paths name ({', '.join(sorted(packages))}). The "
+                f"battery must run inside the measured source closure."
+            )
 
 
 _ASSUMPTION_KEYS = {
@@ -740,8 +672,8 @@ def load_verification() -> dict:
                 # The target is required, not defaulted: a defaulted target lets a test
                 # that moved between the lib and an integration target keep reporting under
                 # the one it left.
-                # WHICH targets exist is the ecosystem's answer (issue #745): Cargo has
-                # `lib`, `doc` and an open-ended `tests/<name>` family, while a pytest or
+                # WHICH targets exist is the ecosystem's answer (issue #745): a Rust
+                # selector names a Bazel test target in the build graph, while a pytest or
                 # vitest battery has the one target that says which runner reads the
                 # selector. A unit whose paths name no single ecosystem has no runnable
                 # target at all, which is the same refusal for a different reason.
@@ -749,8 +681,8 @@ def load_verification() -> dict:
                     raise ManifestError(
                         f"{uwhere}: tested_symbol {symbol!r} names no runnable "
                         f"{eco.name if eco else '<unresolved ecosystem>'} target; "
-                        f"cargo takes `lib#path::to::test`, `doc#module::Item` or "
-                        f"`tests/<name>#path::to::test`; python takes "
+                        f"rust takes `//pkg:test_target#path::to::test`, a Bazel "
+                        f"`rust_test` or `rust_doc_test`; python takes "
                         f"`pytest#tests/file.py::name`; typescript takes "
                         f"`vitest#test/file.test.ts > suite > name`"
                     )
@@ -762,8 +694,7 @@ def load_verification() -> dict:
                 f"claims them, so nothing consumes what the lane would measure."
             )
         _validate_gate_controls(uwhere, unit)
-        _validate_test_features(uwhere, unit)
-        _validate_test_package(uwhere, unit)
+        _validate_rust_test_packages(uwhere, unit)
         _validate_in_crate_selectors(uwhere, unit)
         # `mutation://` is a claim about a NEGATIVE battery, which only exists on top of a
         # positive one: the probes' `expect_red` names members of `tested_symbols`. A unit

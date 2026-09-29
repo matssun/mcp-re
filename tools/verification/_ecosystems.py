@@ -2,15 +2,11 @@
 """Which build system governs a unit's source — ADR-MCPRE-059 §2, issue #745.
 
 A `[[unit]]` is *the smallest semantic authority whose source, assumptions, evidence and
-review can be fingerprinted*. **That concept is not Cargo.** The implementation was: the
-project directory was the first path segment holding a `Cargo.toml`, the test package named
-a Cargo package, selectors were Rust test paths, and the build configuration was the Rust
-workspace's manifests. No unit could own `sdk/python/python/mcp_re_sdk/` or
-`sdk/typescript/src/`, and an unevidenceable root reads as coverage while being none.
-
-This module is the seam. The abstraction above it — owned source closure, dependency and
-configuration inputs, typed evidence providers, registered assumptions, review fingerprint
-— is unchanged; Rust becomes ONE adapter beneath it rather than the shape of it.
+review can be fingerprinted*. That concept belongs to no one build system: a unit may own
+Rust that Bazel builds, `sdk/python/python/mcp_re_sdk/` or `sdk/typescript/src/`, and the
+abstraction above this module — owned source closure, dependency and configuration inputs,
+typed evidence providers, registered assumptions, review fingerprint — is the same for each.
+Each ecosystem is ONE adapter beneath it rather than the shape of it.
 
 # The ecosystem is DERIVED, never declared
 
@@ -23,8 +19,9 @@ convention:
 
   1. the FILE decides the ecosystem, by suffix — `.rs` is Rust, `.py` is Python, `.ts` is
      TypeScript. This is what makes `sdk/python` answerable at all: the directory holds a
-     `Cargo.toml` AND a `pyproject.toml`, because the wheel is a Rust extension module, so
-     no directory-level rule can decide which project `.../transport.py` belongs to.
+     `BUILD.bazel` AND a `pyproject.toml`, because the wheel carries a Rust extension
+     module, so no directory-level rule can decide which project `.../transport.py`
+     belongs to.
   2. the PROJECT is the nearest ancestor directory holding that ecosystem's manifest, which
      is where every one of these tools already looks for dependency and lockfile inputs.
 
@@ -33,7 +30,7 @@ convention:
 A unit whose declared paths span two ecosystems has no single answer to "which lane
 measures this", and answering with either would name a project that does not cover its
 source. `unit_ecosystem` returns `None` there, and every caller treats that the way it
-already treats a path outside every Cargo package: no test project, so no battery, so no
+already treats a path outside every project: no test project, so no battery, so no
 evidence — never a battery run in the wrong place.
 
 # What an adapter must supply
@@ -50,9 +47,17 @@ than a preference:
   * `test_argv` — the command that runs a selected battery, and
   * `parse_results` — how that command's output reports which selected test did what.
 
-The last two are what `verify-tests` needs to stop being a cargo script; they are supplied
-here so that "where do these tests live" and "how are they run" have ONE answer per
-ecosystem rather than one per tool.
+The last two are supplied here so that "where do these tests live" and "how are they run"
+have ONE answer per ecosystem rather than one per tool.
+
+# Rust is Bazel's
+
+Bazel is the Rust build and test authority, so a Rust project is a Bazel PACKAGE — the
+nearest directory holding a `BUILD.bazel` — and a Rust selector names the Bazel test target
+that runs it: `//mcp-re-proxy:proxy_unit_test#cli::tests::x`. The label is the whole build
+configuration: which crate root, which sources, which crate features. Nothing beside it
+restates any of that, so a selector cannot name a test under a configuration its target does
+not build. `_rust_targets` holds the build graph's answer to what each label is.
 """
 
 from __future__ import annotations
@@ -64,6 +69,8 @@ import os
 from pathlib import Path
 import re
 import tempfile
+
+import _rust_targets
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -93,8 +100,8 @@ class Ecosystem:
     #: than silently measured as if it could.
     formal_source_glob: str | None = None
     #: Selector targets this ecosystem understands, as they appear before the `#` in a
-    #: `tested_symbols` entry. `None` means any target is accepted (Rust's `tests/<name>`
-    #: family is open-ended).
+    #: `tested_symbols` entry. `None` means the ecosystem decides per target (a Rust
+    #: selector's target is a Bazel label, checked against the build graph).
     selector_targets: frozenset[str] | None = field(default=None)
     #: What this ecosystem's RUNTIME is called, for the evidence record and the lane's
     #: output. `None` where the ecosystem has no runtime dimension. Named rather than
@@ -104,14 +111,25 @@ class Ecosystem:
     runtime_label: str | None = field(default=None)
 
 
-#: `lib#` and `doc#` execute code inside the crate's own sources; `tests/<name>#` names an
-#: integration-test target. Kept as data rather than as a condition in three files.
-CARGO = Ecosystem(
-    name="cargo",
+#: A Rust project is the Bazel package owning the file. Its build configuration is the
+#: module and its lock (the toolchain pin and every external crate), the workspace's build
+#: settings and house macros, and the package's own BUILD file (its targets, their sources
+#: and features).
+RUST = Ecosystem(
+    name="rust",
     source_suffixes=frozenset({".rs"}),
-    project_manifests=("Cargo.toml",),
-    workspace_inputs=("Cargo.toml", "Cargo.lock", "rust-toolchain.toml"),
-    project_inputs=("Cargo.toml", "Cargo.lock"),
+    project_manifests=("BUILD.bazel", "BUILD"),
+    workspace_inputs=(
+        "MODULE.bazel",
+        "MODULE.bazel.lock",
+        "bazel/crates.lock",
+        ".bazelrc",
+        ".bazelversion",
+        "bazel/BUILD.bazel",
+        "bazel/defs.bzl",
+        "bazel/version.bzl",
+    ),
+    project_inputs=("BUILD.bazel", "BUILD"),
     formal_source_glob="src/**/*.rs",
 )
 
@@ -146,7 +164,7 @@ TYPESCRIPT = Ecosystem(
 
 #: Ordered, and the order is not significant — the suffix sets are disjoint, which is what
 #: makes the derivation a fact rather than a precedence rule.
-ECOSYSTEMS: tuple[Ecosystem, ...] = (CARGO, PYTHON, TYPESCRIPT)
+ECOSYSTEMS: tuple[Ecosystem, ...] = (RUST, PYTHON, TYPESCRIPT)
 
 
 def ecosystem_for_path(path: str) -> Ecosystem | None:
@@ -294,22 +312,12 @@ def valid_target(eco: Ecosystem, target: str) -> bool:
     """Whether `target` is a runnable target NAME in this ecosystem.
 
     The target is the half of a `tested_symbols` entry before the `#`, and what it may say
-    is the ecosystem's business: Cargo has two open-ended families — `tests/<name>` and
-    `bin/<name>` — beside `lib` and `doc`, while a pytest or vitest battery is selected by
+    is the ecosystem's business: a Rust selector names a Bazel test target — a `rust_test`
+    or `rust_doc_test` in the build graph — while a pytest or vitest battery is selected by
     file-and-name and needs only the one target that says which runner reads the selector.
-
-    `bin/<name>` exists because a DEPLOYABLE's own crate is not its library. What running
-    means — the composition the operator's process actually performs — is decided in the
-    binary crate, and a lane that can select only `lib` can make no statement about it: the
-    controls compile, `cargo test` runs them, and no `tested_symbols` entry can name one.
     """
-    if eco is CARGO:
-        if target in ("lib", "doc"):
-            return True
-        for prefix in ("tests/", "bin/"):
-            if target.startswith(prefix):
-                return target.count("/") == 1 and bool(target[len(prefix):])
-        return False
+    if eco is RUST:
+        return _rust_targets.is_test(target)
     return eco.selector_targets is not None and target in eco.selector_targets
 
 
@@ -380,10 +388,9 @@ RUNTIME_PROBES = {
 
 def test_argv(
     eco: Ecosystem,
-    project: str,
+    project: str | None,
     target: str,
     selectors: list[str],
-    features: list[str] | None = None,
     runtime: str | None = None,
 ) -> list[str]:
     """The command that runs exactly `selectors` of `target` in `project`.
@@ -392,38 +399,19 @@ def test_argv(
     would let a battery grow silently, and one that ran the whole suite would report a pass
     for symbols nobody declared.
 
-    `features` is the BUILD CONFIGURATION the battery is measured under, and it is an
-    ecosystem concept rather than a lane one: Cargo compiles a different crate per feature
-    set, so a control behind `#[cfg(feature = ...)]` does not exist without it. Only the
-    Cargo adapter takes them; `_manifest` refuses a declaration on any other ecosystem
-    rather than accepting one this function would drop.
+    A Rust target is a Bazel test label, run from the workspace root. `--nocache_test_results`
+    because a cached result is a statement about an earlier run; `--test_output=streamed`
+    because the lane reads libtest's own result lines, which Bazel then passes through as
+    the test wrote them. A doctest target is run whole: a doctest's reported name embeds the
+    LINE it starts on, so the lane matches the declared ITEMS against what ran instead of
+    selecting by a name that breaks on any edit above it.
     """
-    features = list(features or [])
-    if eco is CARGO:
-        feature_argv = ["--features", ",".join(sorted(features))] if features else []
-        if target == "doc":
-            # Doctests are selected by substring rather than `--exact`: a doctest's reported
-            # name embeds the LINE it starts on, so an exact selector would break on any
-            # edit above it — churn that says nothing about the property. The lane's
-            # containment check is what makes this selection precise.
-            return ["cargo", "test", "-p", project, *feature_argv, "--doc", "--", *selectors]
-        if target == "lib":
-            target_argv = ["--lib"]
-        elif target.startswith("bin/"):
-            target_argv = ["--bin", target[4:]]
-        else:
-            target_argv = ["--test", target[6:]]
-        return [
-            "cargo",
-            "test",
-            "-p",
-            project,
-            *feature_argv,
-            *target_argv,
-            "--",
-            "--exact",
-            *selectors,
-        ]
+    if eco is RUST:
+        argv = ["bazel", "test", target, "--nocache_test_results", "--test_output=streamed"]
+        row = _rust_targets.target(target)
+        if row is not None and row["kind"] == "rust_doc_test":
+            return argv
+        return argv + ["--test_arg=--exact", *(f"--test_arg={s}" for s in selectors)]
     if eco is PYTHON:
         # A PREPARED environment, named by the pinned interpreter, and never `uv run`.
         # `uv run` resolves and syncs, so the lane would be building the thing it measures
@@ -488,7 +476,7 @@ def test_argv(
 
 #: The statuses libtest reports. Closed, because everything else on a result line is
 #: somebody ELSE's output — see below.
-_CARGO_STATUSES = ("ok", "FAILED", "ignored")
+_LIBTEST_STATUSES = ("ok", "FAILED", "ignored")
 
 #: libtest's per-test result line: `test block::tests::round_trips ... ok`.
 #:
@@ -505,8 +493,13 @@ _CARGO_STATUSES = ("ok", "FAILED", "ignored")
 #: matters: libtest writes the status LAST, so interleaved text containing the word `ok`
 #: cannot outrank a real `FAILED` — and if the interleave carries a newline the line does
 #: not match at all, which reads as `never ran` and fails loudly rather than quietly green.
-_CARGO_RESULT = re.compile(
-    r"^test (?P<name>\S+) \.\.\. .*?(?P<status>" + "|".join(_CARGO_STATUSES) + r")$"
+#:
+#: A `#[should_panic]` test is reported as `test <name> - should panic ... ok`: the suffix is
+#: libtest's annotation, not part of the name a selector names.
+_LIBTEST_RESULT = re.compile(
+    r"^test (?P<name>\S+)(?: - should panic)? \.\.\. .*?(?P<status>"
+    + "|".join(_LIBTEST_STATUSES)
+    + r")$"
 )
 
 #: SGR/CSI escape sequences a runner emits when it decides to colour its output. Stripped
@@ -566,9 +559,9 @@ def parse_results(eco: Ecosystem, stdout: str) -> dict[str, str]:
     out: dict[str, str] = {}
     # Before anything is matched, and for every runner: see `_ANSI`.
     stdout = _ANSI.sub("", stdout)
-    if eco is CARGO:
+    if eco is RUST:
         for line in stdout.splitlines():
-            match = _CARGO_RESULT.match(line.strip())
+            match = _LIBTEST_RESULT.match(line.strip())
             if match:
                 out[match.group("name")] = match.group("status")
         return out
