@@ -6384,9 +6384,11 @@ validate against. The JSON-RPC envelope separates them by `data.policy`, and the
 has no production producer on this tree. Left as measured rather than corrected: the tokens are
 frozen, and re-spelling one is an ADR.
 
-SCOPED TO THE RUST SOURCES OF THE CRATES BAZEL BUILDS, both SDK bindings included. The
-TypeScript SDK's `.ts` files spell tokens it receives and are not scanned; the clippy activation
-probes are excluded by name.
+SCOPED TO THE FIRST-PARTY RUST CRATE ESTATE: the Rust sources of every crate package the build
+graph compiles, both SDK Rust bindings included. It is not a claim over the repository's
+TypeScript or Python sources, which spell the tokens they receive. `config/clippy-strict`, the
+lint gate's activation-probe package, is excluded by name, and the corpus-completeness control
+requires every Bazel crate package to be scanned or named as excluded.
 
 DOES NOT ESTABLISH the correctness of either frozen taxonomy, nor that a refusal reaches the
 audit boundary — THM-0046, THM-0069 and THM-0071 are those propositions.
@@ -6425,9 +6427,10 @@ magnitudes `i64` cannot represent it reports `i64::MIN` — the most-before-the-
 rather than wrapping into a future time.
 
 The deterministic fixtures, `SeededNonceSource` and `FixedClock`, are compiled only under
-`cfg(test)` or the explicit `test-fixtures` feature; the production library target compiles no
-fixture feature, and the one target that does is `testonly`, so no production target can
-depend on it.
+`cfg(test)` or the explicit `test-fixtures` feature. The fixture flavor may be deliberately
+built as a `testonly` target, but it cannot enter the dependency closure of any non-testonly —
+production — target: the plain production library carries no fixture feature, every target
+that does carry it is `testonly`, and the graph-wide gate enforces that condition.
 """
 security_consequence = """
 A predictable nonce is strictly worse than no nonce: the request is still well-formed, still

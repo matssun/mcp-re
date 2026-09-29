@@ -32,10 +32,10 @@ Bazel packages". Each record's `notes` quotes its own lines.
 Each lane named is a non-`manual` Bazel test target, checked against
 `verification/generated/rust-targets.json` when the wording was changed.
 
-## 2. Substantive — awaiting the owner's review
+## 2. Substantive — APPROVED by the owner, 2026-09-29
 
-Not refreshed. The claim's meaning changed with the build model, so the approval is the
-owner's.
+The claim's meaning changed with the build model, so the approval was the owner's. Both were
+approved and recorded; the statements below were refined to the approved formulation first.
 
 ### THM-0114 — a signed request's freshness inputs are real, and the deterministic ones cannot reach a production build
 
@@ -55,10 +55,13 @@ does not unify features.
 What establishes it now: `fixture_boundary::tests::the_production_library_compiles_no_fixture_feature`
 and `the_fixture_flavor_is_testonly` (each mutation-checked red), Bazel's own analysis
 refusal of a non-testonly consumer (demonstrated with a probe target), and
-`scripts/fixture_feature_gate.py` over every target in the graph. The review question: is
-`testonly` the right statement of "no production build carries the fixtures"? It is
-stronger than the dev-dependency form (transitive, enforced at analysis for every
-consumer) and no longer names a Cargo mechanism.
+`scripts/fixture_feature_gate.py` over every target in the graph.
+
+**Approved.** The fixture flavor may be deliberately built as a `testonly` target, but it
+cannot enter the dependency closure of any non-testonly/production target: the plain
+production library carries no fixture feature, every target that does carry it is
+`testonly`, and the graph-wide gate enforces that condition. The statement now says exactly
+that.
 
 ### THM-0111 — two vocabularies decide what an `mcp-re.*` verdict token says
 
@@ -71,9 +74,13 @@ consumer) and no longer names a Cargo mechanism.
 
 The claim WIDENED: the scanned set is now every crate package in the build graph's target
 table, which includes `sdk/python` and `sdk/typescript` (their Rust sources mint no verdict
-token, so the measurement is unchanged at two minting files). The review question: is the
-widened scope what THM-0111 should claim, and is the named exclusion of
-`config/clippy-strict` acceptable?
+token, so the measurement is unchanged at two minting files).
+
+**Approved.** The widened corpus is the correct scope and both SDK Rust bindings belong in it.
+`config/clippy-strict` is excluded by name as an activation-probe package, and the
+corpus-completeness control requires every Bazel crate package to be scanned or explicitly
+accounted for. The theorem is scoped to the first-party Rust crate estate and claims nothing
+over TypeScript or Python sources; the scope now says so.
 
 ## 3. Mixed — the migration wording plus a change that predates the branch
 
