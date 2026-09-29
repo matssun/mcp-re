@@ -4929,7 +4929,7 @@ expect_red = [
 note = """
 A SECOND verification product in scope is the defect the gate's rule 1 exists to refuse: two
 products, and which one the pipeline holds becomes a fact about the order of two statements
-rather than about the type. The weakening compiles, so the cargo battery still runs and the
+rather than about the type. The weakening compiles, so the test battery still runs and the
 lane can tell a red control from a tree that did not build.
 """
 
@@ -5011,8 +5011,8 @@ position, which is exactly THM-0081's "no third, unclassified refusal path".
 
 # --- ADR-MCPRE-068 Phase 2 — the first two probes the SDK lane can run -------------------
 #
-# The mutation lane spoke cargo and nothing else, so the only probes THM-0094's and
-# THM-0095's leaves could carry were the gate-only ones Phase 1 added. These two are the
+# THM-0094's and THM-0095's leaves are SDK code, which no Rust target reaches, so their
+# other probes are the gate-only ones Phase 1 added. These two are the
 # lane's liveness: a registered mechanism with no probe using it is a configuration, and
 # this repository has shipped one of those before. One per runner, each attacking the
 # production property its unit's proposition is about rather than a convenient line.
@@ -6071,7 +6071,7 @@ weakening = """
         .map_err(|e: KeyError| {
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_kms_keysource::tests::prehash_signature_is_rejected_before_return",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#aws_kms_keysource::tests::prehash_signature_is_rejected_before_return",
 ]
 note = """
 THE LOCAL VERIFICATION IS THE ONLY THING THAT CATCHES A PREHASH KEY. `MessageType = RAW` is
@@ -8077,7 +8077,7 @@ fn is_load_shedding_status(status: Option<u16>) -> bool {
 }
 """
 expect_red = [
-  "//mcp-re-proxy:proxy_ext_unit_test#remote_signer_call::quota_signals::tests::a_shed_load_status_is_exhaustion_on_either_provider_whatever_the_body_says",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#remote_signer_call::quota_signals::tests::a_shed_load_status_is_exhaustion_on_either_provider_whatever_the_body_says",
 ]
 note = """
 THE STATUS IS THE ONLY FACT A SHED-LOAD ANSWER CARRIES. A 429 minted by a gateway in front of
@@ -8832,8 +8832,8 @@ someone who reasoned that a deployment which carries no context has nothing to p
 # ---------------------------------------------------------------------------
 #
 # M401 is the probe this campaign wrote because the mutation had already been run and
-# SURVIVED: with the check deleted from `connect`, `cargo test -p mcp-re-proxy --lib
-# --features redis_replay` reported 1554 passed, 0 failed. The decision was tested and the
+# SURVIVED: with the check deleted from `connect`, the whole `redis_replay` in-crate battery
+# stayed green. The decision was tested and the
 # CALLER was not, which is the shape a green battery hides best.
 
 [[probe]]
@@ -9249,8 +9249,8 @@ test code were measured as PRODUCTION by every guard built on this primitive.
 
 The weakening does not delete the scan, and that is what makes it the right falsifier. Every
 literal form is still recognised, every brace inside one is still blanked, and a file whose
-literals all fit on one line measures identically — so the tree builds, `cargo test
---workspace` is green everywhere except this crate, and the module-size ratchet and the
+literals all fit on one line measures identically — so the tree builds, `bazel test //...`
+is green everywhere except this crate's targets, and the module-size ratchet and the
 verdict-vocabulary walk both keep reporting a number. They report a DIFFERENT number, about a
 corpus neither of them says it measured.
 
@@ -10027,9 +10027,9 @@ replica starts, announces the epoch watch as ACTIVE, and mints credentials under
 transcript, and connected to nothing.
 
 This runs in the `redis_replay` lane and nowhere else. The control is
-`#[cfg(feature = "redis_replay")]`, so the default battery compiles it to zero tests and a
-default-lane run of this probe would report a green that measured nothing; the unit declares
-`test_features = ["redis_replay"]` and this probe inherits it.
+`#[cfg(feature = "redis_replay")]`, so the default-feature targets compile it to zero tests
+and a run there would report a green that measured nothing; `expect_red` names
+`//mcp-re-proxy:proxy_ext_unit_test`, which is built with `redis_replay`.
 
 `a_planned_but_unusable_epoch_url_refuses_instead_of_minting_unrevocably`, in
 `proxy.delegated_signing_credential`, stays green: it refuses a locator that cannot be turned
@@ -10079,9 +10079,9 @@ The two positive controls stay green by construction, and that asymmetry is the 
 produces, so they cannot distinguish a working check from a deleted one. Only the three
 refusals can, which is why they and not the battery are what `expect_red` names.
 
-This probe runs under `--features async_serve` and nowhere else. The carrier is
-`#![cfg(feature = "async_serve")]`, so the default battery compiles to zero tests here; the
-unit declares `test_features = ["async_serve"]` and this probe inherits it.
+This probe runs in `//mcp-re-proxy:integration_async_test`, which is built with
+`async_serve`. The carrier is `#![cfg(feature = "async_serve")]`, so a build without the
+feature compiles it to zero tests.
 """
 
 [[probe]]
@@ -10227,14 +10227,15 @@ the configured field from the answered one.
 
 # --- ADR-MCPRE-069 KMS key-source lanes (NP-114, NP-158) --------------------------------
 #
-# BOTH PROBES RUN IN A NON-DEFAULT FEATURE LANE, and that is load-bearing rather than
-# incidental. The controls below do not merely fail to run without their feature — they do
-# not EXIST: `cargo test -p mcp-re-proxy --lib -- --list` selects none of the fifteen
-# `gcp_kms_keysource::tests::` controls, and `--test aws_irsa_web_identity_test -- --list`
-# reports 0 tests and exits 0. `_battery_of` takes each unit's `test_features` with the
-# battery for exactly this reason, so the lane compiles the crate these controls live in.
-# A probe run in the default lane here would report the lane's own blindness, and this
-# campaign has already had two runs that selected nothing and read as passes.
+# BOTH PROBES RUN IN A FEATURE TARGET, and that is load-bearing rather than incidental.
+# The controls below do not merely fail to run without their feature — they do not EXIST:
+# the default-feature `//mcp-re-proxy:proxy_unit_test` compiles none of the
+# `gcp_kms_keysource::tests::` controls, and `tests/aws_irsa_web_identity_test.rs` is
+# `#![cfg(feature = "aws_kms_keysource")]`. `declared_battery` runs each member in exactly
+# the target its unit declares — `proxy_ext_unit_test` and `aws_irsa_web_identity_test` —
+# so the lane compiles the crate these controls live in. A probe run against a
+# default-feature target here would report that target's own blindness, and this campaign
+# has already had two runs that selected nothing and read as passes.
 
 [[probe]]
 id = "M344-proxy-the-reuse-floor-extends-a-stated-token-lifetime"
@@ -10309,8 +10310,9 @@ its credential states an hour, so the margin never decides its answer, and a pro
 turned it red would be weakening the cache rather than the margin. One control is red here
 and the reason it is only one is the reason it is the right one.
 
-The lane runs this with `--features aws_kms_keysource`, from the unit's `test_features`.
-Without it `tests/aws_irsa_web_identity_test` compiles to zero tests and exits 0, and the
+The lane runs this in `//mcp-re-proxy:aws_irsa_web_identity_test`, which is built with
+`aws_kms_keysource`. Without the feature `tests/aws_irsa_web_identity_test` compiles to zero
+tests and exits 0, and the
 adjudicator would report the expectation ABSENT — a measurement failure, correctly, rather
 than a pass.
 """
@@ -10318,11 +10320,8 @@ than a pass.
 # --- ADR-MCPRE-069 S-11: the per-request revocation index and the retained record at the
 # --- store (NP-062, NP-048) -------------------------------------------------------------
 #
-# All three run in the DEFAULT cargo lane and none of the three units declares
-# `test_features`. Measured on this tree: `cargo test -p mcp-re-proxy --lib -- --list`
-# selects 1498 controls, and every control named below is among them. A feature declared
-# here would enter a build configuration into the fingerprint that measures nothing, which
-# is what `_validate_test_features` exists to refuse.
+# All three units name the default-feature `//mcp-re-proxy:proxy_unit_test`, and every
+# control named below is compiled there: none of them is feature-gated.
 
 [[probe]]
 id = "M346-proxy-unknown-revocation-status-is-admitted"
@@ -10434,7 +10433,7 @@ placed on the header rule rather than on the schema token.
 #
 # Both units read SOURCE TEXT from disk, so the falsifier for each is a real drift in the
 # production carrier rather than a deleted runtime check. That is the same shape as the
-# gate probes above, one class along: the control is a cargo test rather than a script, but
+# gate probes above, one class along: the control is a Rust test rather than a script, but
 # what it reads is still the tree, so the weakening has to be a change the tree would
 # actually acquire.
 

@@ -1835,7 +1835,8 @@ recorded = "2026-09-19"
 # NOT registered against the config_state units, whose statements are about a CLASSIFIER at
 # its own API — `proxy.cross_machine_legality` says 'every relation reads classified owner
 # states rather than RAW REQUEST FIELDS'. The CLI is the authority one layer up, and it
-# refuses things no classifier ever sees: a Cargo feature, an unknown flag, a withdrawn one.
+# refuses things no classifier ever sees: a crate feature this build lacks, an unknown flag,
+# a withdrawn one.
 #
 # Eleven propositions rather than one, because 'the command line admits no illegal
 # deployment' needs an 'and' for every authority it covers. Each of the eleven has a
@@ -12152,9 +12153,10 @@ recorded = "2026-09-19"
 # ---------------------------------------------------------------------------
 #
 # Batch 18 registered these two into `client.transport_server_identity` and the registration
-# was WRONG: the target compiles only under `fault_accept_any_server` and reports zero tests
-# without it. A unit's `test_features` are one set for the whole battery, and this battery
-# cannot run under the feature that exists to break its own control.
+# was WRONG: the carrier compiles only under `fault_accept_any_server` and reports zero tests
+# without it, so the control exists only in `//mcp-re-transport:fault_injection_test`, the
+# target built with that feature — the feature that exists to break the check this unit's
+# other controls assert. It is recorded as a proposition of its own, not a battery member.
 
 [[proposition]]
 id = "NP-169"
@@ -12349,16 +12351,16 @@ recorded = "2026-09-29"
 id = "CD-20023"
 project = "mcp-re-http-profile"
 control = "doc#dispatch::outcome::DispatchOutcome"
-decision = "new-proposition"
-proposition = "NP-203"
+decision = "not-evidence"
+reason_family = "ND-010"
 recorded = "2026-09-29"
 
 [[disposition]]
 id = "CD-20024"
 project = "mcp-re-http-profile"
 control = "doc#dispatch::outcome::PreparedDispatch"
-decision = "new-proposition"
-proposition = "NP-203"
+decision = "not-evidence"
+reason_family = "ND-010"
 recorded = "2026-09-29"
 
 [[disposition]]
@@ -13564,4 +13566,138 @@ project = ""
 control = "gate#scripts/no_cargo_execution_gate.py"
 decision = "not-evidence"
 reason_family = "ND-004"
+recorded = "2026-09-29"
+
+# ---------------------------------------------------------------------------
+# Rows read strictly against their theorems — owner ruling, 2026-09-29
+# ---------------------------------------------------------------------------
+#
+# THM-0116 is the RESPONSE signer's theorem (CO-S3-4): the delegated-TLS rows its three
+# adapter units carried go to the propositions that state the TLS signer — the handshake
+# signature verifying (NP-152), the throttle's effect on a handshake (NP-122, which
+# THM-0115's scope names as `handshake_quota`'s), the token's second key (NP-164) and its
+# session pool (NP-226). The PKCS#11 retry classification and the window's `created`
+# instant are clauses of a unit's description that its theorem does not state.
+
+[[proposition]]
+id = "NP-224"
+title = "A signing window advertises the instant it was opened at"
+carrier = "mcp-re-proxy/src/http_profile_serve/signing_window.rs"
+likely_owner = "proxy.response_signing has the carrier in its paths, but THM-0063 derives only `expires`; the lower bound `created` is stated by no theorem."
+consequence = "medium"
+root_relationship = "The lower-bound twin of THM-0063's `expires` derivation, over the same window."
+record = "docs/architecture/control-dispositions.md#np-224"
+
+[[proposition]]
+id = "NP-225"
+title = "A PKCS#11 failure is retried only when a fresh session cures it"
+carrier = "mcp-re-proxy/src/pkcs11_keysource/session.rs"
+likely_owner = "proxy.pkcs11_adapter's description states the retry rule, but THM-0116 — the theorem it supports — states construction-time key establishment, verify-before-return and endpoint admission, not session recovery."
+consequence = "high"
+root_relationship = "Beside THM-0116: the session discipline beneath the PKCS#11 signer, which no theorem states."
+record = "docs/architecture/control-dispositions.md#np-225"
+
+[[proposition]]
+id = "NP-226"
+title = "The PKCS#11 delegated-TLS signer signs concurrent handshakes, one login per session"
+carrier = "mcp-re-proxy/src/pkcs11_keysource/mod.rs"
+likely_owner = "proxy.pkcs11_adapter carried both rows under THM-0116, the response signer's theorem; the TLS signer is outside it (CO-S3-4), and NP-164 states only that its key is established at `open`."
+consequence = "high"
+root_relationship = "The availability half of the delegated-TLS signer NP-164 establishes; stated by no theorem."
+record = "docs/architecture/control-dispositions.md#np-226"
+
+[[disposition]]
+id = "CD-20121"
+project = "mcp-re-proxy"
+control = "src/lib.rs#aws_kms_keysource::tests::aws_backend_tls_sign_verifies_under_reported_spki"
+decision = "new-proposition"
+proposition = "NP-152"
+recorded = "2026-09-29"
+
+[[disposition]]
+id = "CD-20122"
+project = "mcp-re-proxy"
+control = "src/lib.rs#gcp_kms_keysource::tests::gcp_backend_tls_sign_verifies_under_reported_spki"
+decision = "new-proposition"
+proposition = "NP-152"
+recorded = "2026-09-29"
+
+[[disposition]]
+id = "CD-20123"
+project = "mcp-re-proxy"
+control = "src/lib.rs#aws_kms_keysource::tests::a_throttled_tls_sign_stops_calling_kms_for_the_cooldown"
+decision = "new-proposition"
+proposition = "NP-122"
+recorded = "2026-09-29"
+
+[[disposition]]
+id = "CD-20124"
+project = "mcp-re-proxy"
+control = "src/lib.rs#gcp_kms_keysource::tests::a_throttled_tls_sign_stops_calling_kms_for_the_cooldown"
+decision = "new-proposition"
+proposition = "NP-122"
+recorded = "2026-09-29"
+
+[[disposition]]
+id = "CD-20125"
+project = "mcp-re-proxy"
+control = "src/lib.rs#pkcs11_keysource::tests::tls_spki_is_well_formed_rfc8410_and_round_trips"
+decision = "new-proposition"
+proposition = "NP-164"
+recorded = "2026-09-29"
+
+[[disposition]]
+id = "CD-20126"
+project = "mcp-re-proxy"
+control = "src/lib.rs#pkcs11_keysource::tests::the_tls_session_pool_signs_several_handshakes_at_once"
+decision = "new-proposition"
+proposition = "NP-226"
+recorded = "2026-09-29"
+
+[[disposition]]
+id = "CD-20127"
+project = "mcp-re-proxy"
+control = "src/lib.rs#pkcs11_keysource::tests::the_tls_session_pool_amortizes_one_login_per_session"
+decision = "new-proposition"
+proposition = "NP-226"
+recorded = "2026-09-29"
+
+[[disposition]]
+id = "CD-20128"
+project = "mcp-re-proxy"
+control = "src/lib.rs#pkcs11_keysource::session::tests::an_abandoned_operation_retires_the_session_rather_than_wedging_it"
+decision = "new-proposition"
+proposition = "NP-225"
+recorded = "2026-09-29"
+
+[[disposition]]
+id = "CD-20129"
+project = "mcp-re-proxy"
+control = "src/lib.rs#pkcs11_keysource::session::tests::classify_runs_the_fatal_builder_only_for_a_fatal_status"
+decision = "new-proposition"
+proposition = "NP-225"
+recorded = "2026-09-29"
+
+[[disposition]]
+id = "CD-20130"
+project = "mcp-re-proxy"
+control = "src/lib.rs#pkcs11_keysource::session::tests::genuine_operation_failures_are_still_fatal_and_never_retried"
+decision = "new-proposition"
+proposition = "NP-225"
+recorded = "2026-09-29"
+
+[[disposition]]
+id = "CD-20131"
+project = "mcp-re-proxy"
+control = "src/lib.rs#pkcs11_keysource::session::tests::wrapper_shape_errors_are_never_transient"
+decision = "new-proposition"
+proposition = "NP-225"
+recorded = "2026-09-29"
+
+[[disposition]]
+id = "CD-20132"
+project = "mcp-re-proxy"
+control = "src/lib.rs#http_profile_serve::signing_window::tests::the_window_advertises_the_instant_it_was_opened_at"
+decision = "new-proposition"
+proposition = "NP-224"
 recorded = "2026-09-29"

@@ -72,6 +72,8 @@ from _structural import (  # noqa: E402
     load_probes,
     marker_line,
     probe_module,
+    relax,
+    relaxation_verdict,
     provenance_problem,
 )
 from _unit_selection import (  # noqa: E402
@@ -199,6 +201,11 @@ def run_probe(tree: Path, probe: dict) -> str | None:
     try:
         target, relative, line = install(tree, probe, where)
         ran, diagnostics = compile_probe(tree, target)
+        if not ran:
+            raise EnvironmentError(f"{where}: Bazel stopped before rustc reported anything")
+        problem = adjudicate(probe, diagnostics, relative, line)
+        if problem is None and probe.get("relaxation"):
+            problem = run_relaxed(tree, probe, target, where)
     finally:
         # Removed on EVERY path, including the one where `install` raised after writing the
         # package. A leftover construction would make the next probe's "this path already
@@ -206,9 +213,29 @@ def run_probe(tree: Path, probe: dict) -> str | None:
         # about the lane's own residue.
         if probe["kind"] == "crate-boundary-compile-fail":
             shutil.rmtree((tree / str(probe["insertion_path"])).parent, ignore_errors=True)
+    return problem
+
+
+def run_relaxed(tree: Path, probe: dict, target: str, where: str) -> str | None:
+    """The negative control: the same construction, with the owner's boundary opened.
+
+    The owner's sources are restored whatever happens, so the next probe compiles against
+    the tree as it is.
+    """
+    edits = probe["relaxation"]
+    originals: dict[Path, str] = {}
+    try:
+        for path in sorted({str(e["path"]) for e in edits}):
+            source = tree / path
+            originals[source] = source.read_text(encoding="utf-8")
+            source.write_text(relax(originals[source], path, edits), encoding="utf-8")
+        ran, diagnostics = compile_probe(tree, target)
+    finally:
+        for source, text in originals.items():
+            source.write_text(text, encoding="utf-8")
     if not ran:
-        raise EnvironmentError(f"{where}: Bazel stopped before rustc reported anything")
-    return adjudicate(probe, diagnostics, relative, line)
+        raise EnvironmentError(f"{where}: Bazel stopped before rustc reported anything (relaxed)")
+    return relaxation_verdict(probe, diagnostics)
 
 
 def revert(tree: Path, probe: dict, original: str | None) -> None:
@@ -343,7 +370,11 @@ def main() -> int:
                 print(f"  FAIL {probe['id']}: {problem}", file=sys.stderr)
                 failures.append(probe["id"])
                 continue
-            print(f"  ok   {probe['id']}  {probe['kind']}  refused by {probe['error_code']}: {probe['invariant']}")
+            control = ", admitted when relaxed" if probe.get("relaxation") else ""
+            print(
+                f"  ok   {probe['id']}  {probe['kind']}  refused by {probe['error_code']}{control}: "
+                f"{probe['invariant']}"
+            )
     finally:
         if args.keep_tree:
             print(f"  scratch tree kept at {scratch}")

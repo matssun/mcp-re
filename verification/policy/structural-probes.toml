@@ -56,7 +56,7 @@ pub fn hostile(floor: &CryptographicFloorVerifiedBoundResponse) {
 }
 """
 [probe.producer_paths]
-module-tree-visibility = "the probe is an integration test, which cargo compiles as a separate crate linking the library, so it sees exactly the public surface a downstream consumer sees"
+module-tree-visibility = "the probe is its own test crate, compiled separately and linking the library, so it sees exactly the public surface a downstream consumer sees"
 alternate-constructors = "the substitution attacked here is a coercion, not a construction: there is no `From<CryptographicFloorVerifiedBoundResponse> for VerifiedMcpResponse` and no `Deref`, which is what makes the two products non-substitutable rather than merely differently named"
 generated-or-deserialization = "neither product derives Serialize/Deserialize; no decoder can mint one from bytes"
 test-only-construction = "a downstream crate's test code sees the same public surface as its production code, so the probe's own placement in `tests/` is the test-only route, attacked rather than exempted"
@@ -121,7 +121,7 @@ test-only-construction = "the probe itself is the downstream test-code route"
 # falsify the constructor's runtime refusal of an illegal (connection_age, cert_lifetime)
 # pair — a real `tested` proposition with a real falsifier — while the SOLE-PRODUCER fact
 # they cannot touch had nothing attacking it. This probe attacks that second proposition,
-# and only it: `cargo check` passing over the tree witnesses nothing, because nothing in the
+# and only it: a clean build of the tree witnesses nothing, because nothing in the
 # tree attempts the construction.
 
 [[probe]]
@@ -852,7 +852,7 @@ reintroduction under any visibility is the finding, and the two codes are how th
 tell which one happened.
 """
 [probe.producer_paths]
-module-tree-visibility = "the probe is an integration test, which cargo compiles as a separate crate linking the library, so it sees exactly the public surface a downstream consumer sees — the authority this seal binds"
+module-tree-visibility = "the probe is its own test crate, compiled separately and linking the library, so it sees exactly the public surface a downstream consumer sees — the authority this seal binds"
 alternate-constructors = "there is no other route to a resolver: `TrustedIssuerSet` exposes `new`, `with_current`, `with_retired`, `revoke`, `with_manifest_expiry`, `manifest_expires_at`, `is_expired` and `trusts`, none of which returns a closure, a function pointer or a resolver value. The one public resolution entry point is the `DelegatedResponseTrust::resolve_issuer` impl, which is the PAIRED answer and consults revocation itself"
 generated-or-deserialization = "`TrustedIssuerSet` derives no Serialize or Deserialize and no macro generates an accessor; a resolver cannot be decoded out of a document or synthesised by a derive"
 test-only-construction = "a downstream crate's test code sees the same public surface as its production code, so the probe's own placement in `tests/` IS the test-only route, attacked rather than exempted. The owner's own `#[cfg(test)]` modules add no test-gated resolver accessor — a `#[cfg(test)] pub fn response_resolver` would be a producer even though it never runs in production, because the compiler would admit the call"
@@ -1065,3 +1065,108 @@ module-tree-visibility = "`FleetServeAuthorized`'s field is bare-private to `mat
 alternate-constructors = "`issue` is the only associated function returning `Self`, called once, in `MaterializedRuntime::serve`. There is no `new`, `From`, `Default` or builder; `into_fleet_config` consumes the witness and returns the configuration, never the witness or a `&mut` to it"
 generated-or-deserialization = "no derives at all — no `Clone`, no `Default`, no Serialize/Deserialize — so no generated code produces one and an authorization cannot be duplicated or decoded"
 test-only-construction = "the owner's `#[cfg(test)] mod tests` reaches the witness only through `issue`, from inside the owning module. No test-gated constructor and no test-gated visibility exists"
+
+# --- http_profile.dispatch_product_seal -------------------------------------------------
+#
+# NP-203's first clause: no `PreparedDispatch` or `DispatchOutcome` exists that did not come
+# from a posture decision followed by a successful preparation. The two ```compile_fail
+# doctests in `dispatch/outcome.rs` state the same constructions; rustdoc on the pinned stable
+# toolchain checks only that they fail, never why, so these probes compile them and require
+# E0451 on the literal.
+#
+# Each literal names EVERY field, supplying the private `PostureDecision` as `todo!()` so the
+# construction never has to name a type it cannot see: the only thing left to refuse it is
+# the fields' privacy. The relaxation makes the three fields and `PostureDecision` `pub` in a
+# scratch copy, and the same literal must then compile — the negative control that attributes the refusal to the
+# seal rather than to anything else about the construction.
+
+[[probe]]
+id = "S33"
+unit = "http_profile.dispatch_product_seal"
+kind = "crate-boundary-compile-fail"
+crate = "//mcp-re-http-profile:mcp_re_http_profile"
+invariant = "no code outside `dispatch::outcome` can assemble a PreparedDispatch, so every one came from `from_admitted`, which consumes a ReplayTierAdmitted"
+doc_path = "mcp-re-http-profile/src/dispatch/outcome.rs"
+doc_item = "doc#dispatch::outcome::PreparedDispatch"
+insertion_path = "mcp-re-http-profile/structural_probes/structural_probe_s33.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+construction = """
+// ADR-MCPRE-068 structural probe S33. Injected into a scratch copy by verify-structural;
+// this file never exists in the working tree.
+use mcp_re_http_profile::dispatch::PreparedDispatch;
+use mcp_re_http_profile::HttpReplayKey;
+
+#[allow(unreachable_code)]
+pub fn hostile(replay_key: HttpReplayKey) -> PreparedDispatch {
+    PreparedDispatch { replay_key, continuation_verified: true, posture: todo!() } // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "the probe is an integration test: a separate crate linking the library, so it sees exactly the public surface a downstream consumer sees, and the three fields are private to `dispatch::outcome`"
+alternate-constructors = "the one constructor, `from_admitted`, is `pub(in crate::dispatch)` and consumes a `ReplayTierAdmitted` by value; there is no `Default`, `From` or `Clone` for `PreparedDispatch`"
+generated-or-deserialization = "`PreparedDispatch` derives only `Debug`; no serde derive, no macro-generated constructor"
+test-only-construction = "the literal in `outcome.rs`'s own `#[cfg(test)] mod tests` compiles only into the test build of the crate, never into the library a consumer links"
+[[probe.relaxation]]
+path = "mcp-re-http-profile/src/dispatch/outcome.rs"
+old = """
+pub struct PreparedDispatch {
+    replay_key: HttpReplayKey,
+    continuation_verified: bool,
+    posture: PostureDecision,
+}"""
+new = """
+pub struct PreparedDispatch {
+    pub replay_key: HttpReplayKey,
+    pub continuation_verified: bool,
+    pub posture: PostureDecision,
+}"""
+[[probe.relaxation]]
+path = "mcp-re-http-profile/src/dispatch/replay_posture.rs"
+old = "pub(in crate::dispatch) enum PostureDecision {"
+new = "pub enum PostureDecision {"
+
+[[probe]]
+id = "S34"
+unit = "http_profile.dispatch_product_seal"
+kind = "crate-boundary-compile-fail"
+crate = "//mcp-re-http-profile:mcp_re_http_profile"
+invariant = "no code outside `dispatch::outcome` can assemble a DispatchOutcome, so every one came from `PreparedDispatch::into_admitted_outcome`"
+doc_path = "mcp-re-http-profile/src/dispatch/outcome.rs"
+doc_item = "doc#dispatch::outcome::DispatchOutcome"
+insertion_path = "mcp-re-http-profile/structural_probes/structural_probe_s34.rs"
+marker = "STRUCTURAL-PROBE-SITE"
+error_code = "E0451"
+construction = """
+// ADR-MCPRE-068 structural probe S34. Injected into a scratch copy by verify-structural;
+// this file never exists in the working tree.
+use mcp_re_http_profile::{DispatchOutcome, HttpReplayKey};
+
+#[allow(unreachable_code)]
+pub fn hostile(replay_key: HttpReplayKey) -> DispatchOutcome {
+    DispatchOutcome { replay_key, continuation_verified: true, posture: todo!() } // STRUCTURAL-PROBE-SITE
+}
+"""
+[probe.producer_paths]
+module-tree-visibility = "the probe is an integration test: a separate crate linking the library, so it sees exactly the public surface a downstream consumer sees, and the three fields are private to `dispatch::outcome`"
+alternate-constructors = "the only producer is `PreparedDispatch::into_admitted_outcome`, which consumes a `PreparedDispatch`; `Clone` copies an existing inhabitant and creates no new facts; there is no `Default` or `From`"
+generated-or-deserialization = "`DispatchOutcome` derives `Debug`, `Clone`, `PartialEq` and `Eq`; no serde derive, no macro-generated constructor"
+test-only-construction = "`outcome.rs`'s own `#[cfg(test)] mod tests` builds outcomes only through `into_admitted_outcome`, and compiles only into the test build of the crate"
+[[probe.relaxation]]
+path = "mcp-re-http-profile/src/dispatch/outcome.rs"
+old = """
+pub struct DispatchOutcome {
+    replay_key: HttpReplayKey,
+    continuation_verified: bool,
+    posture: PostureDecision,
+}"""
+new = """
+pub struct DispatchOutcome {
+    pub replay_key: HttpReplayKey,
+    pub continuation_verified: bool,
+    pub posture: PostureDecision,
+}"""
+[[probe.relaxation]]
+path = "mcp-re-http-profile/src/dispatch/replay_posture.rs"
+old = "pub(in crate::dispatch) enum PostureDecision {"
+new = "pub enum PostureDecision {"

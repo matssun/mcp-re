@@ -46,10 +46,9 @@ nt_rust_library(
 )
 
 # ADR-MCPRE-052: the same sources with `pre_052_fixtures` on, so the batteries that
-# exercise the REFUSAL of direct-root response signing can construct one. Under cargo
-# the feature rides a dev-dependency edge and unifies for the whole test invocation;
-# Bazel has no dev edge, so the flavor is how a test target gets it — the identical
-# pattern as `//mcp-re-host:mcp_re_host_test_fixtures` and the proxy's feature flavors.
+# exercise the REFUSAL of direct-root response signing can construct one. A test target
+# gets the feature only by linking this `testonly` flavor — the identical pattern as
+# `//mcp-re-host:mcp_re_host_test_fixtures` and the proxy's feature flavors.
 #
 # It is a SEPARATE target rather than a feature on the base library for the reason the
 # feature exists: the shipped `:mcp_re_http_profile` must export no direct-root response
@@ -269,8 +268,9 @@ nt_rust_test(
     ],
 )
 
-# The crate's doctests. Cargo runs them in `cargo test --workspace`; the `compile_fail`
-# ones assert that a verified value cannot be built outside its owner.
+# The crate's doctests. The `compile_fail` ones document constructions a verified value
+# refuses outside its owner; rustdoc checks only that they fail, and the structural lane
+# (verification/policy/structural-probes.toml) holds the error code each must fail with.
 rust_doc_test(
     name = "mcp_re_http_profile_doc_test",
     crate = ":mcp_re_http_profile",

@@ -95,6 +95,7 @@ _COMMON_KEYS = {
     "marker",
     "error_code",
     "note",
+    "relaxation",
 }
 #: What a boundary probe adds: the documented case it corresponds to. Provenance, not
 #: execution — the lane compiles `construction`, and `doc_item` says which ```compile_fail
@@ -104,7 +105,10 @@ _BOUNDARY_KEYS = {"doc_path", "doc_item", "insertion_path"}
 #: source the owner's target compiles, or the lane would report "no error" — the finding
 #: that means the boundary is OPEN — about a module the compiler never read.
 _INCRATE_KEYS = {"insertion_parent"}
-_OPTIONAL = {"note"}
+_OPTIONAL = {"note", "relaxation"}
+
+#: The keys of one `relaxation` edit.
+_RELAXATION_KEYS = {"path", "old", "new"}
 
 
 def _keys_for(kind: str) -> set[str]:
@@ -164,6 +168,72 @@ def _validate(where: str, probe: dict, seen: set[str]) -> None:
         )
     _validate_marker(where, probe)
     _validate_site(where, probe)
+    _validate_relaxation(where, probe)
+
+
+def _validate_relaxation(where: str, probe: dict) -> None:
+    """The negative control: edits to the owner's source that OPEN the boundary.
+
+    A refusal with the declared code on the marker line says the compiler refused the
+    construction; it does not say the refusal is the boundary's. Under the relaxation the
+    same construction must compile — so a probe that would be refused for some other reason
+    (a missing field, a type it cannot name) fails its own control rather than reading as
+    evidence. Each edit replaces text that occurs exactly once in a source the owner's
+    target compiles.
+    """
+    edits = probe.get("relaxation")
+    if edits is None:
+        return
+    if not isinstance(edits, list) or not edits:
+        raise ManifestError(f"{where}: `relaxation` must be a non-empty array of edits")
+    row = _rust_targets.target(str(probe["crate"])) or {"srcs": []}
+    for index, edit in enumerate(edits, 1):
+        if not isinstance(edit, dict) or set(edit) != _RELAXATION_KEYS:
+            raise ManifestError(
+                f"{where}: `relaxation` edit #{index} must have exactly {sorted(_RELAXATION_KEYS)}"
+            )
+        if str(edit["path"]) not in row["srcs"]:
+            raise ManifestError(
+                f"{where}: `relaxation` edit #{index} names {edit['path']!r}, which "
+                f"{probe['crate']} does not compile. A relaxation that edits nothing the "
+                f"owner builds opens no boundary, and the construction would still be refused."
+            )
+        if not str(edit["old"]) or edit["old"] == edit["new"]:
+            raise ManifestError(f"{where}: `relaxation` edit #{index} changes nothing")
+
+
+def relax(text: str, path: str, edits: list[dict]) -> str:
+    """`text` of `path` with every relaxation edit naming it applied.
+
+    Each `old` must occur exactly once: an ambiguous one could open a boundary other than
+    the one the probe attacks, and an absent one has drifted from the source.
+    """
+    for edit in edits:
+        if edit["path"] != path:
+            continue
+        count = text.count(str(edit["old"]))
+        if count != 1:
+            raise ManifestError(
+                f"STALE — relaxation text occurs {count} times in {path}, expected exactly 1: "
+                f"{str(edit['old'])[:80]!r}"
+            )
+        text = text.replace(str(edit["old"]), str(edit["new"]))
+    return text
+
+
+def relaxation_verdict(probe: dict, diagnostics: list[dict]) -> str | None:
+    """Why the relaxed tree does not admit the construction, or None when it does."""
+    errors = [d for d in diagnostics if d.get("level") == "error"]
+    if not errors:
+        return None
+    seen = sorted(
+        {f"{(d.get('code') or {}).get('code') or '<none>'}: {d.get('message', '')}" for d in errors}
+    )
+    return (
+        f"the negative control failed: with the boundary relaxed the construction is still "
+        f"refused ({'; '.join(seen)}), so the declared refusal is not attributable to the "
+        f"boundary this probe attacks."
+    )
 
 
 #: Where a boundary probe's own crate lives: a package under the owner's, holding nothing

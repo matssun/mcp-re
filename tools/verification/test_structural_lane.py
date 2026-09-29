@@ -22,7 +22,9 @@ hostile construction COMPILES is measuring nothing:
   * **an in-crate parent the owner does not compile** — a module rustc never opened produces
     no error, which this lane would otherwise read as an open boundary;
   * **a probe whose documented case has drifted** — the doctest a reader reaches for first
-    no longer states what the registry says it does.
+    no longer states what the registry says it does;
+  * **a refusal the boundary is not responsible for** — a probe declaring a `relaxation` must
+    COMPILE once the owner's boundary is opened, or its refusal came from somewhere else.
 
 Run: python3 tools/verification/test_structural_lane.py
 """
@@ -48,6 +50,7 @@ from _structural import (  # noqa: E402
     load_probes,
     marker_line,
     provenance_problem,
+    relax,
 )
 
 lane = load_tool("verify-structural", "verify_structural_lane")
@@ -89,7 +92,7 @@ def _write_registry(directory: Path, probes: list[dict]) -> Path:
     for probe in probes:
         lines.append("[[probe]]\n")
         for key, value in probe.items():
-            if key == "producer_paths":
+            if key in ("producer_paths", "relaxation"):
                 continue
             if isinstance(value, list):
                 lines.append(f"{key} = {value!r}\n".replace("'", '"'))
@@ -98,6 +101,10 @@ def _write_registry(directory: Path, probes: list[dict]) -> Path:
         lines.append("[probe.producer_paths]\n")
         for route, answer in probe["producer_paths"].items():
             lines.append(f'{route} = """{answer}"""\n')
+        for edit in probe.get("relaxation", []):
+            lines.append("[[probe.relaxation]]\n")
+            for key, value in edit.items():
+                lines.append(f'{key} = """{value}"""\n')
     path = directory / "fixture-probes.toml"
     path.write_text("".join(lines), encoding="utf-8")
     return path
@@ -144,6 +151,56 @@ def test_a_refusal_by_a_DIFFERENT_error_is_not_evidence():
         status, output = _run_lane(registry)
     assert status != 0, f"an unattributable refusal must FAIL the lane\n{output}"
     assert "not by the boundary this probe attacks" in output, output
+
+
+#: A private item of the fixture crate, and the edit that makes it public.
+_PRIVATE_CALL = "pub fn hostile() -> bool {\n    crate::rust_source::opens_test_region(\"\") // SITE\n}\n"
+_OPENS_IT = {
+    "path": f"{FIXTURE_CRATE}/src/rust_source.rs",
+    "old": "\nfn opens_test_region(line: &str) -> bool {",
+    "new": "\npub fn opens_test_region(line: &str) -> bool {",
+}
+
+
+def test_a_relaxation_that_opens_the_boundary_is_the_negative_control_passing():
+    """The refusal is the boundary's: with the item made public the same call compiles."""
+    probe = _probe(construction=_PRIVATE_CALL, error_code="E0603", relaxation=[_OPENS_IT])
+    with tempfile.TemporaryDirectory() as tmp:
+        status, output = _run_lane(_write_registry(Path(tmp), [probe]))
+    assert "admitted when relaxed" in output, f"the negative control must run and pass\n{output}"
+    assert "negative control failed" not in output, output
+
+
+def test_a_relaxation_that_leaves_the_construction_refused_FAILS():
+    """Relaxing something the construction does not depend on leaves it refused, so the
+    declared refusal cannot be attributed to the boundary the probe names."""
+    unrelated = {
+        "path": f"{FIXTURE_CRATE}/src/rust_source.rs",
+        "old": "\nfn end_of_region(",
+        "new": "\npub fn end_of_region(",
+    }
+    probe = _probe(construction=_PRIVATE_CALL, error_code="E0603", relaxation=[unrelated])
+    with tempfile.TemporaryDirectory() as tmp:
+        status, output = _run_lane(_write_registry(Path(tmp), [probe]))
+    assert status != 0, f"a negative control that does not admit must FAIL the lane\n{output}"
+    assert "negative control failed" in output, output
+
+
+def test_a_relaxation_must_edit_a_source_the_owner_compiles():
+    directory = Path(tempfile.mkdtemp())
+    stray = {**_OPENS_IT, "path": "mcp-re-http-profile/src/lib.rs"}
+    registry = _write_registry(directory, [_probe(relaxation=[stray])])
+    _expect_manifest_error(lambda: load_probes(registry), "a relaxation outside the owner's srcs must be refused")
+    registry = _write_registry(directory, [_probe(relaxation=[{**_OPENS_IT, "new": _OPENS_IT["old"]}])])
+    _expect_manifest_error(lambda: load_probes(registry), "a relaxation that changes nothing must be refused")
+
+
+def test_a_relaxation_whose_text_is_absent_or_ambiguous_is_stale():
+    path = _OPENS_IT["path"]
+    _expect_manifest_error(lambda: relax("no such text", path, [_OPENS_IT]), "absent text must be STALE")
+    twice = _OPENS_IT["old"] * 2
+    _expect_manifest_error(lambda: relax(twice, path, [_OPENS_IT]), "ambiguous text must be STALE")
+    assert relax(_OPENS_IT["old"], path, [_OPENS_IT]) == _OPENS_IT["new"]
 
 
 # --- fail-close on zero execution ------------------------------------------------------

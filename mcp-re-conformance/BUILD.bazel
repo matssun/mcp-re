@@ -28,8 +28,8 @@ nt_rust_test(
 # (tools/list, tools/call, resources/list, resources/read, prompts/list,
 # prompts/get, sampling/createMessage, completion/complete) and FAILS if any is
 # added to production Core. The Core src tree is delivered as data (runfiles);
-# the guard resolves lib.rs and scans its parent dir from DISK, with the
-# mcp-re-test-paths cargo fallback — the same scheme as the drift_guard.
+# the guard resolves lib.rs through runfiles (mcp-re-test-paths) and scans its parent
+# dir from DISK — the same scheme as the drift_guard.
 nt_rust_test(
     name = "method_name_drift_guard_test",
     srcs = ["tests/method_name_drift_guard_test.rs"],
@@ -52,7 +52,7 @@ nt_rust_test(
 # frozen McpReError::wire_code() taxonomy (mcp-re-core/src/error.rs is the sole
 # authority) and that the success-event set is EXACTLY the two-item allowlist.
 # Both Core source files are delivered as data (runfiles); the guard reads them
-# from DISK (via $(rlocationpath), with the mcp-re-test-paths cargo fallback) — the
+# from DISK (via $(rlocationpath), resolved by mcp-re-test-paths from runfiles) — the
 # same scheme as the method-name drift guard — so a newly added McpReError variant
 # (new frozen wire_code) or an edited audit vocabulary is re-read from reality.
 nt_rust_test(
@@ -144,7 +144,7 @@ nt_rust_test(
 # claim" table column or a negated sentence is legitimately NAMING the non-goal
 # and is allowed. The optional add-on asserts docs/SECURITY_BOUNDARY.md is a
 # redirect stub with no live claim (ADR-MCPS-032). Docs delivered as data
-# ($(rlocationpath)), with the mcp-re-test-paths cargo fallback — the same scheme
+# ($(rlocationpath)), resolved by mcp-re-test-paths from runfiles — the same scheme
 # as the drift_guard / method-name drift guard. Proposal-facing docs ONLY: no
 # historical ADRs, no v0.3 files, no fixtures.
 nt_rust_test(
@@ -258,8 +258,8 @@ nt_rust_test(
 # ADR-MCPRE-050 (seed Work Item 4): the HTTP standards-profile conformance
 # corpus — frozen fixtures + static oracle under tests/vectors/http-profile/,
 # verified black-box against the committed bytes (writer test is #[ignore]d).
-# Same dual-mode fixture bridge as mcp-re-core's draft-02 corpus: Bazel passes
-# the manifest rlocationpath; Cargo reads the source tree.
+# Same fixture bridge as mcp-re-core's draft-02 corpus: the test reads the
+# manifest at its rlocationpath.
 nt_rust_test(
     name = "http_profile_vectors_test",
     srcs = ["tests/http_profile_vectors_test.rs"],

@@ -20,15 +20,15 @@ build:macos --extra_toolchains=@zig_sdk//toolchain:linux_arm64_gnu.2.28
 build:macos --extra_toolchains=//platforms:linux_test_on_any_exec
 
 # The Rust lint lane: clippy over every first-party target, the workspace lint policy
-# (//bazel:workspace_lints) and .clippy.toml, with warnings as errors. `bazel build
-# --config=lint //...` is what `cargo clippy --all-targets -- -D warnings` was.
+# (//bazel:workspace_lints) and .clippy.toml, with warnings as errors: `bazel build
+# --config=lint //...` runs the clippy aspect over every Rust target, tests included.
 build:lint --aspects=@rules_rust//rust:defs.bzl%rust_clippy_aspect
 build:lint --output_groups=+clippy_checks
 build:lint --@rules_rust//rust/settings:clippy_flag=-Dwarnings
 build:lint --@rules_rust//rust/settings:clippy.toml=//:.clippy.toml
 
 # The Rust format lane: rustfmt's check over every first-party target. `bazel build
-# --config=rustfmt //...` is what `cargo fmt --all -- --check` was.
+# --config=rustfmt //...` fails on any file rustfmt would change.
 build:rustfmt --aspects=@rules_rust//rust:defs.bzl%rustfmt_aspect
 build:rustfmt --output_groups=+rustfmt_checks
 

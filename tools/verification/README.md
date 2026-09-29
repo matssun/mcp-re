@@ -22,7 +22,7 @@ before any verification toolchain exists — which is exactly the state they are
 | `verify --gate` | authoritative mode: a failing lane fails the build | works |
 | `verify --manifests` | validate the policy files and stop | works |
 | `verify-tests` | runs each unit's declared test battery, by target — and once per pinned runtime where its ecosystem has one | works |
-| `verify-structural` | ADR-MCPRE-068 `structural://`: injects a hostile construction into a scratch copy and requires the compiler to REFUSE it with a declared error code | works; 5 registered probes, no unit declares the scheme before Phase 0D |
+| `verify-structural` | ADR-MCPRE-068 `structural://`: injects a hostile construction into a scratch copy and requires the compiler to REFUSE it with a declared error code; a probe declaring a `relaxation` must also COMPILE once the owner's boundary is opened, so the refusal is attributable to that boundary | works; the registry is `verification/policy/structural-probes.toml` |
 | `verify-measured` | ADR-MCPRE-068 `measured://`: executes a measurement protocol and requires its apparatus to demonstrate it can still MOVE | works; registry empty until Phase 0D, liveness in `test_measured_lane.py` |
 | `check-assumptions` | the proof escape-hatch gate | works |
 | `fingerprint` | deterministic `ReviewFingerprint` per unit | works, partial components |

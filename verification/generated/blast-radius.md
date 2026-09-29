@@ -82,6 +82,7 @@ attestations this view cannot see.
 | unit://http_profile.delegated_credential_chain | source, contracts or evidence | THM-0019, THM-0020 | _no consumer_ |
 | unit://http_profile.delegated_signing_custody | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://http_profile.delegated_unbound_result | source, contracts or evidence | THM-0020 | _no consumer_ |
+| unit://http_profile.dispatch_product_seal | source, contracts or evidence | _no theorem_ | _no consumer_ |
 | unit://http_profile.evidence_block_carriage | source, contracts or evidence | THM-0015, THM-0125 | _no consumer_ |
 | unit://http_profile.evidence_block_closure | source, contracts or evidence | THM-0015 | _no consumer_ |
 | unit://http_profile.fleet_strict_store_class | source, contracts or evidence | THM-0092 | _no consumer_ |

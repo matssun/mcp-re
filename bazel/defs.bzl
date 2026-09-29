@@ -1,18 +1,13 @@
 """
-Vendored VERBATIM from infrastructure/bazel_defs/rust/defs.bzl to keep the
-mcp-re module self-contained / publishable (ADR-MCPS-010/012).
-
-@nt_bazel_defs//rust:defs.bzl — shared Rust macros.
-
-Thin wrappers over rules_rust with house defaults for the monorepo,
-usable from any Bazel module that declares `nt_bazel_defs` as a direct
-bazel_dep (the root monorepo and the nested nautilus_trader module).
+The workspace's Rust macros: thin wrappers over rules_rust with its house
+defaults, kept in this module so it is self-contained (ADR-MCPS-010/012).
 
 Goals:
 - Policy centralization (edition, lint_config, stamp, test harness)
 - Standardized runfiles-based test fixture handling
-- Feature parity with cargo-nextest (serial_tests for process isolation)
-- Bazel-native: no Cargo path emulation, no directory-magic fixtures
+- Process isolation per test where needed (serial_tests: one single-threaded
+  rust_test per listed test)
+- Fixtures declared as labels and resolved through runfiles; no source-tree paths
 
 Deliberately does NOT include nt_rust_service_image — that macro depends
 on //platforms:linux_arm64 / //platforms:linux_x86_64 which live in the

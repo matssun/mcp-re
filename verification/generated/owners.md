@@ -78,6 +78,7 @@ not an omission to hide.
 | http_profile.delegated_credential_chain | V0 | _none_ | 2 |
 | http_profile.delegated_signing_custody | V0 | _none_ | 0 |
 | http_profile.delegated_unbound_result | V0 | THM-0020 | 1 |
+| http_profile.dispatch_product_seal | V0 | _none_ | 0 |
 | http_profile.evidence_block_carriage | V0 | _none_ | 0 |
 | http_profile.evidence_block_closure | V0 | _none_ | 0 |
 | http_profile.fleet_strict_store_class | V0 | _none_ | 0 |

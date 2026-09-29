@@ -59,8 +59,7 @@ nt_rust_binary(
 # The CLI shell's own inline tests. Separate from `:mcp_re_client_test` because that
 # one is `crate = ":mcp_re_client"` — the library — and these live in the BINARY crate,
 # where `src/main.rs` decides what the operator-facing startup posture actually says.
-# Without this target `cargo test -p mcp-re-client` runs them and `bazel test //...`
-# does not.
+# Without this target `bazel test //...` does not run them.
 nt_rust_test(
     name = "mcp_re_client_cli_test",
     crate = ":mcp_re_client_cli",

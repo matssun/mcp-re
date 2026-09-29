@@ -356,7 +356,8 @@ remote peer can drive. These three are driven by the test, not by a reply.
 
 **Covers:** `mcp-re-http-profile` `doc#verified_response::bound::VerifiedMcpResponse`,
 `doc#verified_response::bound::VerifiedDelegatedMcpResponse`,
-`doc#verified_request::VerifiedMcpRequest`; `mcp-re-client-core`
+`doc#verified_request::VerifiedMcpRequest`, `doc#dispatch::outcome::PreparedDispatch`,
+`doc#dispatch::outcome::DispatchOutcome`; `mcp-re-client-core`
 `doc#delegated_trust::DelegatedResponseTrust`.
 **Recorded:** 2026-09-19, ADR-MCPRE-069 Phase 069-B batch 8; the client-core item added by
 the S-05/CL-CLIENT slice, which built its probes first.
@@ -365,7 +366,9 @@ Six `compile_fail` examples over four items, each a hostile construction the typ
 must refuse. ADR-MCPRE-068 §12.1 called these "the best worked example of the defect in the
 repository" — they were registered as `test://` evidence for a claim only a compile refusal
 can make — and Phase 0B/0D moved the claim to `structural://` probes S01, S02, S03 and S05,
-each of which names the very `doc_item` above in `structural-probes.toml`.
+each of which names the very `doc_item` above in `structural-probes.toml`. The two
+`dispatch::outcome` items joined on 2026-09-29 with probes S33 and S34 (owner ruling on
+NP-203): each also declares a relaxation under which its construction must compile.
 
 **Why the doctest itself is not evidence.** ADR-068's own reason, in the probe registry's
 words: *rustdoc's expected-error-code annotation is checked only on nightly, so on the
@@ -2882,11 +2885,14 @@ THM-0031, falsifier `M341`.
 
 ## NP-122 — the handshake quota opens on quota failures only, and never shortens
 
-**Controls:** `mcp-re-proxy/src/handshake_quota.rs`.
+**Controls:** `mcp-re-proxy/src/handshake_quota.rs`; each KMS adapter's own wiring of it,
+`aws_kms_keysource::tests::a_throttled_tls_sign_stops_calling_kms_for_the_cooldown` and its
+`gcp_kms_keysource` twin.
 **Statement.** *ONLY quota failures open the window; a throttled signature stops calling the signer for the cooldown; a successful probe reopens the path AT ONCE and does not clear a window armed later; only one handshake probes at the cooldown boundary; a straggler cannot SHORTEN the window; a slow throttled call still opens a live window; the window is never shorter than the network timeout; and a poisoned window lock still signs.*
 **If false.** A remote signer under quota pressure is hammered by every handshake — or, in the other direction, an unrelated failure opens a cooldown and the listener stops signing for a reason that was never quota. 'A straggler cannot shorten the window' is the race: a late reply from before the window must not end it.
 **Likely owner:** none.
 **Severity:** `high`.
+**Extended 2026-09-29, owner ruling.** The two adapter rows were `tested_symbols` of `proxy.aws_kms_adapter` and `proxy.gcp_kms_adapter` under THM-0116, the response signer's theorem; the handshake path is outside it (CO-S3-4), and THM-0115's scope names the throttle's effect on a handshake as this record's.
 
 ## NP-123 — every OFF posture line tells the operator what to do about it
 
@@ -3263,7 +3269,7 @@ the merge path checks.
 
 ## NP-152 — the listener's own admission, the historical identity facade's returns, and the delegated TLS handshakes
 
-**Controls:** `mcp-re-proxy/tests/integration/tls_test.rs` (25), `mcp-re-proxy/tests/integration/mtls_transport_binding_test.rs` (3), `mcp-re-proxy/tests/fault_injection_test.rs` (2), `mcp-re-proxy/src/aws_kms_keysource.rs` (1).
+**Controls:** `mcp-re-proxy/tests/integration/tls_test.rs` (25), `mcp-re-proxy/tests/integration/mtls_transport_binding_test.rs` (3), `mcp-re-proxy/tests/fault_injection_test.rs` (2), `mcp-re-proxy/src/aws_kms_keysource.rs` (2), `mcp-re-proxy/src/gcp_kms_keysource.rs` (1).
 **Statement.** *End to end over a real listener, and over the two things that listener is built from: a client certificate that is untrusted, revoked, expired or over-long is refused during the handshake and the transport binding holds between the channel peer and the request actor, with the declared fault injector as the anti-vacuity arm; the historical `extract_identity` facade returns the configured field of a real DER leaf and returns NOTHING rather than falling back to another one; the published CRL says how close it is to falling out of force and what its own digest and dates are; and a delegated TLS listener — local, AWS-KMS-backed or GCP-KMS-backed — completes a real handshake whose CertificateVerify the delegated signer produced, and fails it when that signature is corrupted.*
 **If false.** The listener admits a peer it was configured to refuse; or a deployment that configured URI SANs is silently downgraded to a Common Name by a facade the authority's own no-fallback controls do not measure; or a handshake is signed by a key the served certificate does not present. The fault-injection controls are here because a handshake refusal nobody can make fail is a refusal nobody has measured.
 **Likely owner:** none — a composition's source is every unit under it.
@@ -3273,6 +3279,8 @@ the merge path checks.
 **The two KMS delegated-build rows are refused because THM-0027 already quantifies over them.** Both are the landed pair's test with the signer swapped for a KMS backend, and both select ZERO tests in the default lane, so they could not join that unit's battery in any case. CO-S3-4 ruled the identical shape for the PKCS#11 TLS signer one slice earlier. The analysis's justification — *"Same shape THM-0116 scope already blesses"* — names the RESPONSE signer's theorem, which CO-S3-4 measured does not reach the TLS handshake signer.
 **`crl_freshness_classifies_fresh_near_and_stale` is refused because its warn band is claimed nowhere.** `Fresh` and `NearExpiry` are both ADMITTED by `require_in_force`; folding the two together would turn the control red while THM-0131 stays true and every deployment installs the same CRLs. Its sibling landed; the two are separate propositions, so C5 forbade filing them as one.
 **Packet:** [`verification/reviews/packets/adr069-np-152-ratification-2026-09-20.md`](../../verification/reviews/packets/adr069-np-152-ratification-2026-09-20.md).
+
+**Extended 2026-09-29, owner ruling.** `aws_backend_tls_sign_verifies_under_reported_spki` and its `gcp_kms_keysource` twin were `tested_symbols` of the two KMS adapter units under THM-0116. They sign a handshake transcript with the delegated TLS signer and verify it under the SPKI it reports — this record's delegated-handshake clause — and THM-0116 is the response signer's theorem (CO-S3-4, CO-S3-5).
 
 ## NP-153 — the startup transcript is what the deployment actually did
 
@@ -3499,7 +3507,7 @@ control proves impossible is one the theorem already declines to reason about. P
 
 ## NP-164 — the file and dev key sources' own load and refusal behaviour, and the PKCS#11 token's second key
 
-**Controls:** `mcp-re-proxy/tests/key_source_test.rs` (6), `mcp-re-proxy/tests/dev_env_key_source_test.rs` (4), `mcp-re-proxy/tests/pkcs11_keysource_e2e_test.rs` (6), `mcp-re-proxy/src/key_source/file_key_source.rs` (2).
+**Controls:** `mcp-re-proxy/tests/key_source_test.rs` (6), `mcp-re-proxy/tests/dev_env_key_source_test.rs` (4), `mcp-re-proxy/tests/pkcs11_keysource_e2e_test.rs` (6), `mcp-re-proxy/src/key_source/file_key_source.rs` (2), `mcp-re-proxy/src/pkcs11_keysource/mod.rs` (1).
 **Statement.** *Each source opened DIRECTLY, not through the materializer: the file source loads the signing seed, the channel credential and the client anchors and tells a missing file from a malformed seed; the dev-only environment source does the same without mutating the process and scrubs its seed temporaries; neither source's error carries the secret; and the token's SECOND object — the delegated TLS handshake key — is established at `open` or the deployment does not start.*
 **If false.** A source reports material it did not load, or names the wrong failure, and an operator debugs the wrong half of a deployment; or a secret seed reaches a log through an error value; or the proxy serves a handshake under a token key nobody established, which is the one case where the delegated-TLS correspondence gate compares a key the signer did not actually sign with.
 **Likely owner:** none — a composition's source is every unit under it.
@@ -3509,7 +3517,7 @@ control proves impossible is one the theorem already declines to reason about. P
 **The five delegated-TLS rows are refused because THM-0116 is the RESPONSE signer's theorem.** Its statement opens *"Each non-exporting response signer — AWS KMS, GCP Cloud KMS, PKCS#11 — establishes the key it advertises BEFORE it will sign anything"*, and THM-0073 is the registry's own authority for the two roles being different things: *"the response-signing role and the channel-signing role resolve to the same cryptographic signing-key identity"* is the condition it REFUSES. `Pkcs11TlsSigner::open` proves a second, differently labelled token object exists, is Ed25519 and is UNAMBIGUOUS; no theorem states any of that, and the ambiguity rule — two objects under one label — is stated nowhere in the registry at all. Two of the five are excluded a second time by THM-0116's own scope: *"NOT A CUSTODY CLAIM. That the private key never leaves the KMS or the token is the provider's property and the trait's shape"* and *"NOT A PROTOCOL-CONFORMANCE CLAIM."*
 **Packet:** [`verification/reviews/packets/adr069-np-164-ratification-2026-09-20.md`](../../verification/reviews/packets/adr069-np-164-ratification-2026-09-20.md).
 
-**Extended 2026-09-29.** The file source now lives at `mcp-re-proxy/src/key_source/file_key_source.rs`; its in-crate controls (`the_signing_key_is_the_admitted_seed`, `malformed_material_refuses_construction_without_leaking_it`) and the e2e refusal of a TLS label equal to the response label (`pkcs11_tls_label_equal_to_response_label_is_refused`, the token's second-key clause) cite this record.
+**Extended 2026-09-29.** The file source now lives at `mcp-re-proxy/src/key_source/file_key_source.rs`; its in-crate controls (`the_signing_key_is_the_admitted_seed`, `malformed_material_refuses_construction_without_leaking_it`) and the e2e refusal of a TLS label equal to the response label (`pkcs11_tls_label_equal_to_response_label_is_refused`, the token's second-key clause) cite this record. So does `tls_spki_is_well_formed_rfc8410_and_round_trips`, the encoding guard the second key's SPKI is built through, which `proxy.pkcs11_adapter` carried under THM-0116 until the owner ruling of 2026-09-29 read that theorem as the response signer's.
 
 ## NP-166 — the verified-context carrier is attached only where the inner channel is trusted
 
@@ -4074,7 +4082,7 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Root relationship.** Extends THM-0009 from the proved function's returns to every inhabitant of the product type. Measured: the proxy serving path discards the outcome (answering_commitment.rs maps Ok(_) away) and admitting_posture has no production reader, so only prepared.replay_key() is consumed in production today.
 **Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).
 
-**Known defect in two of its controls.** `doc#dispatch::outcome::DispatchOutcome` and `doc#dispatch::outcome::PreparedDispatch` are `compile_fail` examples whose struct literals omit the `posture` field, so each fails with E0063 (missing field) whatever the fields' privacy is: neither can go red over the seal it documents. They are cited here because the proposition is what they are ABOUT; they are not yet evidence for it. Repairing them — or a structural probe requiring the privacy error — is what would make them so. Today the four unit tests carry the proposition.
+**Registered in part, owner ruling 2026-09-29.** The first clause — no product exists that did not come from a posture decision and a preparation — is `unit://http_profile.dispatch_product_seal`, `structural`, evidenced by probes S33 (`PreparedDispatch`) and S34 (`DispatchOutcome`). Each compiles a struct literal naming every field (the private `PostureDecision` supplied as `todo!()`, so the construction never names a type it cannot see) and requires E0451 on it; each also declares a relaxation making the fields and `PostureDecision` public, under which the same literal must compile. The two `compile_fail` doctests, which omitted `posture` and so failed with E0063 whatever the fields' privacy, now name every field and are documentation under ND-010. The faithfulness and posture clauses stay with this record's five unit tests.
 
 ## NP-204 — a delegated snapshot and its lifecycle audit name this issuance's own identity and credential id
 
@@ -4297,3 +4305,36 @@ was deleted to satisfy this gate — what changed is that the claim became true 
 **Severity:** `high`.
 **Root relationship.** This is the published-surface twin, for each SDK, of three client-core units. It sits under THM-0094/THM-0095 on the request side, which THM-0094's scope places outside its closure for authorization artefacts. That is the same position NP-020..NP-024 occupy.
 **Recorded:** 2026-09-29, from the r12 remediation lane's census residue (ADR-MCPRE-069 §5 step 1).
+
+## NP-224 — a signing window advertises the instant it was opened at
+
+**Control:** `mcp-re-proxy` `lib#http_profile_serve::signing_window::tests::the_window_advertises_the_instant_it_was_opened_at`.
+**Carrier:** `mcp-re-proxy/src/http_profile_serve/signing_window.rs`.
+**Statement.** *A `SigningWindow` opened at `now` advertises `created = now`.*
+**If false.** A signed response claims to have been created at an instant other than the one its window was opened at, and a verifier's freshness evaluation reads a lower bound the signer never observed.
+**Likely owner:** `proxy.response_signing` has the carrier in its paths, but THM-0063 derives only `expires` — "the earlier of the configured TTL from `now` and the credential's own `exp`" — and states nothing about the lower bound.
+**Severity:** `medium`.
+**Root relationship.** The lower-bound twin of THM-0063's `expires` derivation, over the same window.
+**Recorded:** 2026-09-29, owner ruling: THM-0063 read strictly.
+
+## NP-225 — a PKCS#11 failure is retried only when a fresh session cures it
+
+**Controls:** `mcp-re-proxy/src/pkcs11_keysource/session.rs` (4).
+**Carrier:** `mcp-re-proxy/src/pkcs11_keysource/session.rs`.
+**Statement.** *An operation abandoned on its session retires that session and runs one clean retry; a genuine operation failure — a bad key handle, mechanism or data length, or a wrong PIN — is fatal on the first try; a shape or bootstrap failure of the wrapper is never transient; and the fatal builder runs only for a fatal status.*
+**If false.** A fatal error retried drives the token toward a PIN lockout or repeats an operation that cannot succeed; an abandoned operation wedges the session every later signature queues behind.
+**Likely owner:** `proxy.pkcs11_adapter`'s description states the retry rule, but THM-0116, the theorem it supports, states construction-time key establishment, verification before return and endpoint admission, not session recovery.
+**Severity:** `high`.
+**Root relationship.** Beside THM-0116: the session discipline beneath the PKCS#11 signer, which no theorem states.
+**Recorded:** 2026-09-29, owner ruling: THM-0116 read strictly.
+
+## NP-226 — the PKCS#11 delegated-TLS signer signs concurrent handshakes, one login per session
+
+**Controls:** `mcp-re-proxy/src/pkcs11_keysource/mod.rs` (2).
+**Carrier:** `mcp-re-proxy/src/pkcs11_keysource/mod.rs`.
+**Statement.** *The delegated-TLS signer spreads handshakes across a pool of token sessions, so several sign at once, and each session logs in once rather than once per operation.*
+**If false.** Every handshake on every core queues behind one blocking `C_Sign`, and a peer opening connections denies new connections process-wide.
+**Likely owner:** `proxy.pkcs11_adapter` carried both rows under THM-0116, the response signer's theorem; the TLS signer is outside it (CO-S3-4), and NP-164 states only that its key is established at `open`.
+**Severity:** `high`.
+**Root relationship.** The availability half of the delegated-TLS signer NP-164 establishes; stated by no theorem.
+**Recorded:** 2026-09-29, owner ruling: THM-0116's TLS-path rows re-attributed.

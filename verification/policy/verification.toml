@@ -1327,7 +1327,7 @@ paths = [
   "mcp-re-http-profile/src/authoritative_admission/record/verified.rs",
 ]
 # `redis_admission_source.rs` is deliberately ABSENT. It is behind `redis_replay`, so a unit
-# naming it would be a unit whose closure the default lane compiles to nothing — and the
+# naming it would be a unit whose closure the default-feature targets compile to nothing — and the
 # decision it makes is not its own: it calls the same `AdmissionRecordVerifier` the
 # in-memory source does, which is the point of there being one owner. What belongs to the
 # Redis adapter alone is a store round trip, measured in its own feature-bearing lane.
@@ -1465,9 +1465,9 @@ tested_symbols = [
   # ADR-MCPRE-069 NP-160 — the same four facts, measured over a real serving path rather
   # than over the source in isolation. They are not a second authority: each is the
   # end-to-end instance of a row above it, and what they add is that the enforcement point
-  # acts on the state this source hands it. The unit's `test_features` select them: all
-  # four appear in `cargo test -p mcp-re-proxy --features redis_replay --test
-  # integration_async -- --list` (168 tests). What is deliberately NOT here is anything
+  # acts on the state this source hands it. None of the four is feature-gated; they select
+  # in `//mcp-re-proxy:integration_async_ext_test`, the `tests/integration_async` target that
+  # also carries `redis_replay`. What is deliberately NOT here is anything
   # about whether the CALL matches the state — THM-0129's scope assigns that to THM-0004 —
   # so the generation-comparison control beside them in the same file stays unregistered.
   "//mcp-re-proxy:integration_async_ext_test#admission_currency_serving_test::a_current_admitted_workload_is_served",
@@ -1481,9 +1481,9 @@ tested_symbols = [
 # controls establish which answer lands in which arm; the type establishes that no arm is an
 # outage, and deleting every one of them would not make one constructible.
 
-# The feature the shared arm is compiled by. Declared rather than left to another lane: the
-# statement quantifies over every source, and one of them does not exist in the default
-# crate.
+# Every selector names an ext target, where `redis_replay` compiles the shared arm, rather
+# than a default-feature one: the statement quantifies over every source, and one of them
+# does not exist in the default crate.
 
 # ---------------------------------------------------------------------------
 # WP2 — typed artifact-binding verification
@@ -1659,6 +1659,28 @@ tested_symbols = [
 # cannot leave `prepare_http_dispatch` as Ok with `continuation_verified == false`. Whether
 # the three handle comparisons inside `HttpContinuation::verify` are the RIGHT comparisons
 # is ASM-0022 and remains a separate obligation.
+
+# NP-203's first clause, and only it (owner ruling, 2026-09-29): every `PreparedDispatch`
+# came from `from_admitted`, which consumes the posture witness, and every `DispatchOutcome`
+# from a `PreparedDispatch`. THM-0009 quantifies over what `prepare_http_dispatch` RETURNS;
+# this is the seal that makes those returns the only inhabitants. The product's faithfulness
+# and posture clauses are NP-203's unit tests and are not claimed here.
+#
+# `replay_posture.rs` is in the closure because the seal is two facts: the fields are private
+# to `dispatch::outcome`, and their `PostureDecision` type is private to `dispatch`. Probes
+# S33 and S34 relax both, and a change to either file moves this unit.
+[[unit]]
+id = "http_profile.dispatch_product_seal"
+class = "V0"
+description = "No code outside `dispatch::outcome` can assemble a `PreparedDispatch` or a `DispatchOutcome`: the fields are private to that module and their posture type private to `dispatch`, the one `PreparedDispatch` constructor `from_admitted` is `pub(in crate::dispatch)` and consumes a `ReplayTierAdmitted`, and a `DispatchOutcome` is produced only by `PreparedDispatch::into_admitted_outcome`. No `Default`, `From` or serialization produces either."
+paths = [
+  "mcp-re-http-profile/src/dispatch/outcome.rs",
+  "mcp-re-http-profile/src/dispatch/replay_posture.rs",
+]
+exported_contracts = []
+evidence_class = "structural"
+direct_consequence_severity = "medium"
+evidence = ["structural://http_profile/dispatch/product_seal"]
 
 [[unit]]
 id = "http_profile.continuation_unbypassability"
@@ -3217,16 +3239,17 @@ evidence = [
   # to be the propagation itself. M358 asks.
   "mutation://proxy/app/unestablishable_capability_refusal",
 ]
-# All three drive a real startup in the default lane: two through the shipped binary and its
-# exit status, one through `app::run` in process. None of them can be `lib#`: the proposition
-# is about what leaves the composition root, and a unit test of the establishing module
-# stays green when the root swallows its error.
+# All three drive a real startup in the default-feature `//mcp-re-proxy:integration_test`:
+# two through the shipped binary and its exit status, one through `app::run` in process.
+# None of them can be an in-crate test: the proposition is about what leaves the composition
+# root, and a unit test of the establishing module stays green when the root swallows its
+# error.
 #
-# LANE NOTE, measured: `app_run_refuses_unbuildable_key_sources_and_replay_tiers` is
+# LANE NOTE: `app_run_refuses_unbuildable_key_sources_and_replay_tiers` is
 # `#[cfg(not(any(aws_kms_keysource, gcp_kms_keysource, pkcs11_keysource, cpstore_etcd)))]`,
-# so enabling any of those features REMOVES it — the KMS lanes select 146 integration tests
-# where the default lane selects 145, adding two `tls_test` names and subtracting this one.
-# A unit holds one `test_features` set, so this battery is default-lane and cannot move.
+# so enabling any of those features REMOVES it — `//mcp-re-proxy:integration_kms_test`, the
+# same crate root under the KMS features, does not compile it. So this battery names the
+# default-feature target and cannot move to the KMS one.
 tested_symbols = [
   "//mcp-re-proxy:integration_test#app_startup_characterization_test::a_configured_profile_with_no_enrolled_authority_refuses_to_start",
   "//mcp-re-proxy:integration_test#app_startup_characterization_test::an_unopenable_replay_tier_refuses_startup_and_names_why",
@@ -3957,7 +3980,7 @@ tested_symbols = [
   # `signing_window.rs`, which IS this unit's, and the three siblings above — M160/M161's
   # `expect_red` — already measure this file's integration controls red in the same lane.
   #
-  # LANE: `//mcp-re-proxy:integration_async_test`, which compiles without `async_serve`.
+  # LANE: `//mcp-re-proxy:integration_async_test`, the default-lane target.
   "//mcp-re-proxy:integration_async_test#delegated_serving_test::a_request_that_cannot_be_answered_never_reaches_the_backend",
   "//mcp-re-proxy:integration_async_test#delegated_serving_test::an_inner_plane_that_states_no_completion_bound_is_refused_before_the_backend_runs",
 ]
@@ -5975,11 +5998,12 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#signing_plane::rotation_owner_tests::an_unreadable_shared_epoch_stops_the_loop_minting",
   "//mcp-re-proxy:proxy_unit_test#signing_plane::rotation_owner_tests::a_root_outage_inside_the_overlap_window_backs_off_instead_of_re_entering",
   # `materialize_refuses_when_the_configured_shared_epoch_cannot_be_read` is deliberately NOT
-  # here. It is `#[cfg(feature = "redis_replay")]`, so the default battery this unit's
-  # evidence is issued from compiles it to ZERO tests — the lane reported it as `never ran`,
-  # which is the correct answer to a declared control that does not exist in the lane that
-  # declares it. A test property includes the build lane the test exists in, and naming it
-  # here would claim default-lane evidence for a feature-lane fact. The proposition it
+  # here. It is `#[cfg(feature = "redis_replay")]`, so `//mcp-re-proxy:proxy_unit_test`, the
+  # target this unit's in-crate selectors name, compiles it to ZERO tests — the lane reports
+  # such a selector as `never ran`, which is the correct answer to a declared control that
+  # does not exist in the target that declares it. A test property includes the build lane
+  # the test exists in, and naming it here would claim default-feature evidence for a
+  # feature-target fact. The proposition it
   # carries — a CONFIGURED kill switch whose counter cannot be read is a startup refusal — is
   # a different one from the loop refusing to mint, which the control above does cover.
   # What the shared counter SAYS, which is the input both refusals read. `a_regressed_counter`
@@ -6043,8 +6067,7 @@ tested_symbols = [
   # it. This is the same clause driven through the public rotor/signer API with a root
   # issuer that goes away after the first mint, so what it adds is that the COMPOSITION
   # fails closed rather than that the reader does. It selects in
-  # `//mcp-re-proxy:integration_async_test`, which compiles `root_key_lifecycle_test`
-  # without `async_serve`.
+  # `//mcp-re-proxy:integration_async_test`, the default-lane target.
   # ADR-MCPRE-069 NP-155, CO-S3-2. The NEVER-ISSUED transition, read on the serving path.
   # THM-0062 states the signer "yields none before the first rotation", and its
   # security_consequence states what the caller gets instead — "there is no longer-lived or
@@ -6060,8 +6083,8 @@ tested_symbols = [
   # never rotated, and no edit to this unit's paths can do that. M355's expiry bound is the
   # nearest reachable falsifier and it names the wiring row instead.
   #
-  # LANE: measured. Both names appear in `--test integration_async -- --list` at 167 tests
-  # (default) and at 197 with `--features async_serve`, so no `test_features` is declared.
+  # LANE: both select in `//mcp-re-proxy:integration_async_test`; neither file is
+  # feature-gated, so the ext target `integration_async_ext_test` compiles them too.
   "//mcp-re-proxy:integration_async_test#delegated_serving_test::missing_delegated_key_fails_closed",
   # ONE CONTROL, TWO UNITS — see the twin citation in `proxy.response_signing`. What it takes
   # HERE is the credential-lifecycle half, which is this theorem's and not that one's: past
@@ -6348,8 +6371,7 @@ tested_symbols = [
   # `signing_window.rs` opened, verified through the credential-to-root chain, and asserted
   # NOT to carry the root's kid.
   #
-  # LANE: `//mcp-re-proxy:integration_async_test`, which compiles all four without
-  # `async_serve`.
+  # LANE: `//mcp-re-proxy:integration_async_test`, the default-lane target.
   "//mcp-re-proxy:integration_async_test#delegated_serving_test::delegated_bound_rejection_verifies",
   "//mcp-re-proxy:integration_async_test#delegated_serving_test::delegated_preflight_rejection_verifies_unbound",
   "//mcp-re-proxy:integration_async_test#delegated_serving_test::delegated_success_response_verifies_and_root_touched_once",
@@ -6365,7 +6387,6 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::receipt::artifact::last_resort_receipt_tests::an_unstated_disposition_adds_no_claim",
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::signing_window::tests::a_non_positive_ttl_opens_no_window",
   "//mcp-re-proxy:proxy_unit_test#http_profile_serve::signing_window::tests::open_yields_a_window_only_while_the_signer_holds_a_live_credential",
-  "//mcp-re-proxy:proxy_unit_test#http_profile_serve::signing_window::tests::the_window_advertises_the_instant_it_was_opened_at",
 ]
 
 [[unit]]
@@ -6588,9 +6609,8 @@ tested_symbols = [
   # instance of a row above it: an authorized request carries the authorized arm, a policy
   # denial carries the policy arm and no Core reason, a refusal the profile reached is not
   # the before-policy arm, and a Core verdict keeps its frozen token while the authorization
-  # coordinate says no policy ran. They are in the DEFAULT lane — all four appear in
-  # `cargo test -p mcp-re-proxy --test integration_async -- --list` (167 tests) — so this
-  # unit declares no `test_features`.
+  # coordinate says no policy ran. `pdp_authorization_serving_test` is not feature-gated, and
+  # all four select in `//mcp-re-proxy:integration_async_test`.
   "//mcp-re-proxy:integration_async_test#pdp_authorization_serving_test::an_authorized_request_records_which_policy_permitted_what",
   "//mcp-re-proxy:integration_async_test#pdp_authorization_serving_test::a_policy_denial_is_recorded_as_a_policy_denial_and_not_merely_as_a_rejection",
   "//mcp-re-proxy:integration_async_test#pdp_authorization_serving_test::a_request_refused_before_any_policy_ran_is_not_attributed_to_one",
@@ -6805,22 +6825,21 @@ evidence = [
 # THE BATTERY IS MEASURED WHERE THE CLAIM LIVES. Half of what this unit owns is compiled
 # only behind the features that link an HTTP client: `binding.rs`, `credential_egress.rs`
 # and `resolver.rs` are `#[cfg(feature = ...)]` on `online_ocsp`, `aws_kms_keysource` and
-# `gcp_kms_keysource`. Under the default lane those controls do not fail — they do not
-# EXIST — so a battery run there measures the unconditional part of the claim and is
-# silent about the rest.
+# `gcp_kms_keysource`. In the default-feature `//mcp-re-proxy:proxy_unit_test` those
+# controls do not fail — they do not EXIST — so a battery run there measures the
+# unconditional part of the claim and is silent about the rest.
 #
-# `test_features` is therefore part of this unit's evidence definition rather than a
-# convenience: it names the build configuration the selection resolves in, it participates
-# in `test_selection`, and dropping one of these features moves the fingerprint instead of
-# quietly shrinking the battery to whatever the default crate still contains.
+# The target is therefore part of this unit's evidence definition rather than a
+# convenience: every selector names `//mcp-re-proxy:proxy_ext_unit_test`, the label is the
+# build configuration the selection resolves in, its root and features enter the
+# fingerprint, and dropping one of these features moves the fingerprint instead of quietly
+# shrinking the battery to whatever the default crate still contains.
 #
 # What that buys is that every conjunct the theorems above this unit state is inside its
 # own evidence closure: the join that no path can move (unconditional), the redirect that
 # is not followed (`binding.rs`), the capability that offers no second way to address a
 # request (`credential_egress.rs`), and the resolved-address vetting a certificate-derived
-# destination installs (`resolver.rs`). The Bazel `:mcp_re_proxy_ext` flavor still runs
-# them; it is no longer the only lane that does, and this unit no longer cites a claim it
-# did not measure.
+# destination installs (`resolver.rs`). This unit cites no claim it did not measure.
 tested_symbols = [
   # Provenance decides the guard: the certificate-derived constructor applies the scheme
   # allowlist AND the private-address protection, over the address a parser resolves to
@@ -6863,8 +6882,8 @@ tested_symbols = [
   # supplied does not become an internal address between the guard and the connection.
   "//mcp-re-proxy:proxy_ext_unit_test#outbound_fetch::resolver::tests::vetting_resolver_rejects_rebinding_to_internal_addresses",
 ]
-# The features those three modules are compiled by. Not `--all-features`: named, so the
-# fingerprint says which crate the battery measured.
+# `proxy_ext_unit_test` compiles those three modules under a named feature set, not every
+# feature, so the fingerprint says which crate the battery measured.
 
 [[unit]]
 id = "proxy.kms_endpoint_authority"
@@ -6898,9 +6917,9 @@ evidence = [
 # constructor that still builds and still reaches the endpoint.
 #
 # That structure is compiled only under the two backend features, so `endpoint.rs`'s
-# controls do not exist in the default crate. `test_features` runs this battery where they
-# do, which is what puts the single-producer fact inside this unit's evidence closure
-# instead of one lane away from it.
+# controls do not exist in the default crate. The selectors name
+# `//mcp-re-proxy:proxy_ext_unit_test`, where they do, which is what puts the single-producer
+# fact inside this unit's evidence closure instead of one target away from it.
 tested_symbols = [
   # The two readings agree, which is the whole claim.
   "//mcp-re-proxy:proxy_ext_unit_test#kms_endpoint_policy::tests::the_authority_returned_is_the_host_and_port_that_will_be_reached",
@@ -6941,14 +6960,14 @@ tested_symbols = [
   # loopback lane with and without a port, each under all three fields — are the anti-vacuity
   # half: a boundary refusing every endpoint would satisfy the positive nine.
   #
-  # LANE, measured rather than inferred: this unit's battery runs with `aws_kms_keysource`
-  # and `gcp_kms_keysource` both enabled, which selects 148 integration tests, and this
-  # control is among them and passes there. It is NOT feature-gated — it selects in the
-  # default lane too — so joining this battery costs it no coverage.
+  # LANE: the selector names `//mcp-re-proxy:integration_kms_test`, the `tests/integration`
+  # target compiled with `aws_kms_keysource` and `gcp_kms_keysource` both enabled. The
+  # control is NOT feature-gated — the default-feature `integration_test` compiles it too —
+  # so joining this battery costs it no coverage.
   "//mcp-re-proxy:integration_kms_test#app_startup_characterization_test::a_programmatic_config_cannot_point_a_root_key_endpoint_at_a_plaintext_host",
   "//mcp-re-proxy:proxy_ext_unit_test#kms_endpoint_policy::tests::a_legitimate_endpoint_is_still_admitted_after_the_substitution",
 ]
-# The features `endpoint.rs` is compiled by, named rather than taken wholesale.
+# `endpoint.rs` is compiled by `proxy_ext_unit_test`'s named feature set, not by every feature.
 
 # ADR-MCPRE-059 §28 / issue #744. Two sibling authorities, neither owning the other's
 # facts. `replay_plane` establishes the authoritative replay tier; `continuation_store`
@@ -7109,11 +7128,9 @@ tested_symbols = [
   # consequence of what it does carry rather than a separate list to keep in step.
   "//mcp-re-proxy:proxy_unit_test#transparency::reservation_marker::tests::a_marker_carries_the_commitment_and_nothing_else",
   # ADR-MCPRE-069 CO-S3-3, NP-154. The two rows of that record whose assertions are this
-  # statement's own, reached end to end rather than at the type. Both compile into the
-  # plain `tests/integration_async` binary — measured, `--test integration_async -- --list`
-  # reports all 23 `transparency_e2e_test` controls with and WITHOUT `--features
-  # async_serve` — so no `test_features` is declared and none would be true, exactly as for
-  # the two `a_post_dispatch_refusal_*` members above.
+  # statement's own, reached end to end rather than at the type. Both select in
+  # `//mcp-re-proxy:integration_async_test`, and `transparency_e2e_test` is not
+  # feature-gated, exactly as for the two `a_post_dispatch_refusal_*` members above.
   #
   # "A publication taken before the exchange may dispatch": the ordering itself, counted
   # rather than inferred from a status. A refused reservation leaves the inner dispatch
@@ -7241,13 +7258,14 @@ exported_contracts = []
 evidence_class = "tested"
 direct_consequence_severity = "high"
 evidence = ["test://proxy/continuation_materialization/selected_capability_is_installed", "mutation://proxy/continuation_materialization/selected_capability_is_installed"]
-# THE DEFAULT LANE'S HALF, and why the shared arm is a separate unit rather than a
-# `test_features` on this one. `mrtr_continuation_store` has TWO bodies selected by `cfg`,
+# THE DEFAULT-FEATURE HALF, and why the shared arm is a separate unit rather than more
+# selectors on this one. `mrtr_continuation_store` has TWO bodies selected by `cfg`,
 # and each can only have the other's defect: the `not(redis_replay)` arm can announce OFF
 # for a store it cannot carry, and the `redis_replay` arm can announce OFF for a store it
-# failed to reach. A control for one is compiled to NOTHING in the other's lane — the
-# platform's test lane caught exactly that and reported "never ran", which is the correct
-# refusal — and a unit cannot declare both, because no single lane runs both. So the claim
+# failed to reach. A control for one is compiled to NOTHING in the other's target —
+# `//mcp-re-proxy:proxy_unit_test` carries only the first arm, `proxy_ext_unit_test` only the
+# second, and the platform's test lane reports a selector naming the wrong one as "never
+# ran", which is the correct refusal — and no single target compiles both. So the claim
 # is measured by two units, one per build profile, and the theorem composes them. That
 # split is the honest statement of a property that genuinely differs by build.
 #
@@ -7279,8 +7297,8 @@ tested_symbols = [
   # The operator-facing half of the same claim. A line promising "single-replica MRTR" or an
   # in-memory tier is evidence a fallback came back.
   "//mcp-re-proxy:proxy_unit_test#serving_capabilities::continuation::tests::the_off_line_promises_no_local_fallback",
-  # A SELECTED capability this BUILD cannot carry refuses. The default lane's arm; the
-  # feature lane's arm is a separate unit, for the reason written above this one.
+  # A SELECTED capability this BUILD cannot carry refuses. The default-feature target's arm;
+  # the `redis_replay` arm is a separate unit, for the reason written above this one.
   "//mcp-re-proxy:proxy_unit_test#serving_capabilities::continuation::tests::a_selected_capability_this_build_cannot_carry_refuses_startup",
   # The input is the OWNER's projection. Without it the controls above could be satisfied by
   # a seam reading some other value, and none of them would be about the SELECTION.
@@ -7307,10 +7325,11 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#config_state::continuation_control::tests::a_locator_that_cannot_name_a_store_is_refused",
 ]
 
-# The other build profile's arm of the SAME claim. A separate unit and not a
-# `test_features` on the one above, because the two arms are mutually exclusive at compile
-# time: whichever lane runs, the other unit's control does not exist. `test_features` here
-# selects the lane this arm lives in, which is what makes its battery measurable at all.
+# The other build profile's arm of the SAME claim. A separate unit and not more selectors
+# on the one above, because the two arms are mutually exclusive at compile time: whichever
+# target compiles one, the other unit's control does not exist. Its selectors name
+# `//mcp-re-proxy:proxy_ext_unit_test`, the target this arm lives in, which is what makes its
+# battery measurable at all.
 
 # ---------------------------------------------------------------------------
 #
@@ -7368,9 +7387,9 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_ext_unit_test#serving_capabilities::continuation::tests::a_selected_capability_that_cannot_be_established_refuses_startup",
   "//mcp-re-proxy:proxy_ext_unit_test#serving_capabilities::continuation::tests::a_selected_store_that_cannot_be_reached_refuses_startup",
 ]
-# The feature this arm is compiled by. Declared rather than left to another lane: half the
-# seam does not exist in the default crate, and a lane that compiles it to zero tests would
-# report green having measured nothing.
+# `proxy_ext_unit_test` is the target this arm is compiled by, named rather than left to
+# another target: half the seam does not exist in the default crate, and a target that
+# compiles it to zero tests would report green having measured nothing.
 
 [[unit]]
 id = "proxy.continuation_installation"
@@ -7431,8 +7450,7 @@ evidence = [
 # production `HttpProfileProxy`, which is the only thing that can say the gate is CONSULTED.
 # A unit citing either alone would be evidence for half a claim.
 #
-# `tests/integration_async` compiles into two targets: six of its FILES are
-# `#![cfg(feature = "async_serve")]` and these two are not, so both targets carry them.
+# Both controls are in `//mcp-re-proxy:integration_async_test`, the default-lane target.
 tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#admission_enforcer::tests::a_new_enforcer_has_a_window_nobody_earned",
   "//mcp-re-proxy:proxy_unit_test#admission_enforcer::degraded_window::tests::a_replica_that_never_reached_the_authority_has_no_window",
@@ -7782,8 +7800,9 @@ tested_symbols = [
   # entry would complete an answer leg against bytes nobody retained.
   "//mcp-re-proxy:proxy_ext_unit_test#continuation_store::in_memory::tests::a_poisoned_correlation_map_is_unavailable_on_every_operation",
 ]
-# The feature the shared arm is compiled by. Declared rather than left to another lane:
-# the claim is about the store, and half the store does not exist in the default crate.
+# Every selector names `proxy_ext_unit_test`, where `redis_replay` compiles the shared arm,
+# rather than a default-feature target: the claim is about the store, and half the store
+# does not exist in the default crate.
 
 # ADR-MCPRE-059 §28 / issue #744. The final hop of the continuation-correlation claim, and a
 # separate unit because it is a separate authority: the store owns what a KEY separates, this
@@ -7895,9 +7914,9 @@ tested_symbols = [
   # ADR-MCPRE-069 NP-161. The same conjuncts driven through the REAL profile sign/verify
   # seam rather than through a hand-built `VerifiedMcpRequest`: `signed_and_verified` signs
   # with `sign_request_full` and verifies with `Verifier`, so the tier gate is reached by a
-  # request the profile itself admitted. Same lane as everything above — the unit declares
-  # no `test_features` and these compile into the plain `tests/integration` binary — and
-  # each one is the integration twin of a `lib#` conjunct already here, which is why this is
+  # request the profile itself admitted. Same default-feature build as everything above —
+  # these select in `//mcp-re-proxy:integration_test` — and each one is the integration
+  # twin of an in-crate conjunct already here, which is why this is
   # a battery addition and not a widening: no line below asserts anything the description
   # does not already claim.
   #
@@ -8134,7 +8153,7 @@ tested_symbols = [
   # would have broken serving outright, which every other control in this file also reports.
   # A probe naming it would be satisfied by the lane's own breakage.
   #
-  # LANE: `//mcp-re-proxy:integration_async_test`, not the `async_serve` target.
+  # LANE: `//mcp-re-proxy:integration_async_test`, the default-lane target.
   "//mcp-re-proxy:integration_async_test#delegated_client_server_e2e_test::serving_without_an_audit_sink_still_round_trips",
   "//mcp-re-proxy:proxy_unit_test#audit_sink::drain::tests::the_unknown_outcome_is_its_own_case",
   "//mcp-re-proxy:proxy_unit_test#audit_sink::writer::tests::a_failed_line_write_latches_the_failure",
@@ -8456,8 +8475,9 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#trust_plane::freshness::tests::a_terminal_staleness_survives_a_straggler_reporting_fresh",
   "//mcp-re-proxy:proxy_unit_test#trust_plane::live_trust::tests::no_positive_caching_consults_inner_every_call",
 ]
-# No `test_features`: nothing in this closure is feature-gated. The reader's controls are
-# `proxy.trust_epoch_source`'s, which names `redis_replay`.
+# Every selector names the default-feature `//mcp-re-proxy:proxy_unit_test`: nothing in this
+# closure is feature-gated. The reader's controls are `proxy.trust_epoch_source`'s, which
+# names `proxy_ext_unit_test`.
 
 [[unit]]
 id = "proxy.trust_reload_cadence"
@@ -8500,7 +8520,8 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_unit_test#trust_plane::store_cadence_tests::the_push_tier_bound_states_the_poll_interval_not_the_next_request",
   "//mcp-re-proxy:proxy_unit_test#trust_plane::store_cadence_tests::a_push_tier_without_a_source_reports_the_fallback_only",
 ]
-# No `test_features`: nothing in this closure is feature-gated.
+# Every selector names the default-feature `//mcp-re-proxy:proxy_unit_test`: nothing in this
+# closure is feature-gated.
 
 
 [[unit]]
@@ -8560,7 +8581,7 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::an_observed_advance_makes_the_next_lookup_the_stores_answer",
   "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::a_source_outage_flushes_nothing_and_the_deadline_still_governs",
   # The reader's one local rule about a foreign read's meaning. Exists only under
-  # `redis_replay`, which is why `test_features` names it.
+  # `redis_replay`, which is why the battery names `proxy_ext_unit_test`.
   "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::an_absent_epoch_key_is_a_read_failure_not_epoch_zero",  # ADR-MCPRE-069 batch 19. Two controls in this unit's own file, each a clause of this
   # statement that its other controls do not reach: a source driven DIRECTLY is not subject
   # to the poller's liveness bound — the bound is the poller's property and not the source's
@@ -8569,9 +8590,9 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::a_directly_driven_source_is_not_subject_to_the_liveness_bound",
   "//mcp-re-proxy:proxy_ext_unit_test#trust_epoch::tests::one_epoch_read_cannot_consume_the_rotation_overlap",
 ]
-# The Redis reader and its two controls exist only under this feature. Named so the
-# fingerprint says the battery measured the crate that carries the networked source, not
-# the one where `RedisEpochReader` does not exist.
+# The Redis reader and its two controls exist only under `redis_replay`. The selectors name
+# `proxy_ext_unit_test` so the fingerprint says the battery measured the crate that carries
+# the networked source, not the one where `RedisEpochReader` does not exist.
 
 # ---------------------------------------------------------------------------
 # The trust-document parser — v0.17 census gap, 2026-09-06
@@ -9124,7 +9145,8 @@ tested_symbols = [
 # blast radius, neither of which compiles in `bazel test //...`.
 #
 # So the rules moved to the crate both bindings already depend on, and these units measure
-# them THERE — in the default cargo lane, where a mutation probe can reach them. What the
+# them THERE — in `//mcp-re-client-core:mcp_re_client_core_test`, a `bazel test //...`
+# target, where a mutation probe can reach them. What the
 # SDK lanes then establish is only that the bindings CALL the owner, which is a different
 # and much smaller claim; it is carried by the pytest and vitest batteries, not here.
 
@@ -9401,9 +9423,10 @@ tested_symbols = [
 # green result under one feature is not evidence about the other, so both configurations are
 # explicitly represented before a unit is registered.
 #
-# TWO UNITS AND NOT ONE `test_features` LIST, on the precedent of
-# `proxy.continuation_materialization` / `_shared`: whichever lane runs, the other's control
-# does not exist, so a single unit would name a battery member that is absent half the time.
+# TWO UNITS AND NOT ONE, on the precedent of `proxy.continuation_materialization` /
+# `_shared`: one unit per realization. Both name `//mcp-re-proxy:proxy_ext_unit_test`, which
+# compiles `remote_signer_call/` with BOTH backend features, so the Cloud-KMS members exist
+# there; no Rust test target compiles the AWS-only realization.
 [[unit]]
 id = "proxy.remote_signer_call_aws"
 class = "V0"
@@ -9420,31 +9443,31 @@ evidence = [
   "test://proxy/remote_signer_call/quota_verdict_aws",
   "mutation://proxy/remote_signer_call/quota_verdict_aws",
 ]
-# The lane this arm is compiled by. Named rather than left to another lane: the module does
-# not exist in the default crate at all, so the default-feature targets compile it to ZERO
-# tests and would report a green that measured nothing.
+# The selectors name `proxy_aws_kms_unit_test`, the one target built with `aws_kms_keysource`
+# and without `gcp_kms_keysource`: the type this unit is about exists only in that build, and
+# the default-feature targets do not compile the module at all.
 tested_symbols = [
-  "//mcp-re-proxy:proxy_ext_unit_test#remote_signer_call::tests::a_status_failure_keeps_both_halves_and_renders_with_them",
-  "//mcp-re-proxy:proxy_ext_unit_test#remote_signer_call::tests::a_rendered_failure_passes_its_own_diagnosis_through_unchanged",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#remote_signer_call::tests::a_status_failure_keeps_both_halves_and_renders_with_them",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#remote_signer_call::tests::a_rendered_failure_passes_its_own_diagnosis_through_unchanged",
   # The composed rule, over BOTH providers' data. Until this slice the module tested only
   # its parts — `is_load_shedding_status` and `json_string_field` — and the rule that puts
   # them together had no control at all.
-  "//mcp-re-proxy:proxy_ext_unit_test#remote_signer_call::quota_signals::tests::a_shed_load_status_is_exhaustion_on_either_provider_whatever_the_body_says",
-  "//mcp-re-proxy:proxy_ext_unit_test#remote_signer_call::quota_signals::tests::a_stated_exhaustion_name_arms_the_window_at_each_providers_own_path",
-  "//mcp-re-proxy:proxy_ext_unit_test#remote_signer_call::quota_signals::tests::a_failure_that_states_no_quota_arms_nothing",
-  "//mcp-re-proxy:proxy_ext_unit_test#remote_signer_call::quota_signals::tests::one_providers_vocabulary_does_not_arm_the_others_window",
-  "//mcp-re-proxy:proxy_ext_unit_test#remote_signer_call::quota_signals::tests::a_transport_failure_arms_nothing",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#remote_signer_call::quota_signals::tests::a_shed_load_status_is_exhaustion_on_either_provider_whatever_the_body_says",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#remote_signer_call::quota_signals::tests::a_stated_exhaustion_name_arms_the_window_at_each_providers_own_path",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#remote_signer_call::quota_signals::tests::a_failure_that_states_no_quota_arms_nothing",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#remote_signer_call::quota_signals::tests::one_providers_vocabulary_does_not_arm_the_others_window",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#remote_signer_call::quota_signals::tests::a_transport_failure_arms_nothing",
   # The parts, kept: they are where an off-by-one in the status set or a lenient JSON read
   # would show up as itself rather than as a verdict.
-  "//mcp-re-proxy:proxy_ext_unit_test#remote_signer_call::quota_signals::tests::only_the_shared_load_shedding_statuses_are_load_shedding",
-  "//mcp-re-proxy:proxy_ext_unit_test#remote_signer_call::quota_signals::tests::a_nested_json_field_is_read_at_its_path",
-  "//mcp-re-proxy:proxy_ext_unit_test#remote_signer_call::quota_signals::tests::a_body_that_states_nothing_yields_nothing",
-  "//mcp-re-proxy:proxy_ext_unit_test#remote_signer_call::quota_signals::tests::a_transport_failure_states_no_status",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#remote_signer_call::quota_signals::tests::only_the_shared_load_shedding_statuses_are_load_shedding",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#remote_signer_call::quota_signals::tests::a_nested_json_field_is_read_at_its_path",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#remote_signer_call::quota_signals::tests::a_body_that_states_nothing_yields_nothing",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#remote_signer_call::quota_signals::tests::a_transport_failure_states_no_status",
   # The read bound: an error body is truncated rather than read unbounded, and the timeout
   # refuses rather than queues.
-  "//mcp-re-proxy:proxy_ext_unit_test#remote_signer_call::wire_limits::tests::an_over_long_error_body_is_truncated_to_the_cap",
-  "//mcp-re-proxy:proxy_ext_unit_test#remote_signer_call::wire_limits::tests::a_short_error_body_is_returned_intact",
-  "//mcp-re-proxy:proxy_ext_unit_test#remote_signer_call::wire_limits::tests::the_network_timeout_is_short_enough_to_refuse_rather_than_queue",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#remote_signer_call::wire_limits::tests::an_over_long_error_body_is_truncated_to_the_cap",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#remote_signer_call::wire_limits::tests::a_short_error_body_is_returned_intact",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#remote_signer_call::wire_limits::tests::the_network_timeout_is_short_enough_to_refuse_rather_than_queue",
 ]
 
 # The Cloud-KMS arm of the same claim. What it adds is the chained cause: a bearer token
@@ -9460,8 +9483,8 @@ tested_symbols = [
 # Its own unit rather than a member of either `remote_signer_call_*`: the claim spans BOTH
 # providers, and those two are per-provider by construction because each module exists only
 # under its own non-default feature. This one reads the transports as TEXT, so it needs no
-# feature and runs in the default lane — which is also the only way one control can cover
-# providers whose code never compiles together.
+# feature and names the default-feature `//mcp-re-proxy:integration_test` — one control
+# covers both providers without depending on either being compiled.
 [[unit]]
 id = "proxy.remote_signer_egress_bound"
 class = "V0"
@@ -9533,33 +9556,32 @@ evidence = [
   "mutation://proxy/aws_kms_adapter/construction_and_emission",
 ]
 tested_symbols = [
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_kms_keysource::tests::non_ed25519_key_spec_fails_closed",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_kms_keysource::tests::get_public_key_parses_ed25519_spki",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_kms_keysource::tests::aws_backend_signs_and_verifies_end_to_end",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_kms_keysource::tests::prehash_signature_is_rejected_before_return",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_kms_keysource::tests::aws_backend_tls_sign_verifies_under_reported_spki",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_kms_keysource::tests::a_poisoned_signer_lock_still_signs",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_kms_keysource::tests::amz_date_formats_known_epochs",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#aws_kms_keysource::tests::non_ed25519_key_spec_fails_closed",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#aws_kms_keysource::tests::get_public_key_parses_ed25519_spki",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#aws_kms_keysource::tests::aws_backend_signs_and_verifies_end_to_end",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#aws_kms_keysource::tests::prehash_signature_is_rejected_before_return",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#aws_kms_keysource::tests::a_poisoned_signer_lock_still_signs",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#aws_kms_keysource::tests::amz_date_formats_known_epochs",
   # The endpoint conjuncts. THM-0089 owns the ENDPOINT AUTHORITY rule; these are the
   # adapter's own wiring of it, and without them a correct rule could sit beside an adapter
   # that never consulted it.
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_kms_keysource::tests::authority_strips_scheme_and_path",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_kms_keysource::tests::an_authority_that_re_points_the_request_is_refused",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_kms_keysource::tests::the_aws_kms_endpoints_an_operator_legitimately_sets_still_yield_an_authority",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_kms_keysource::tests::a_hostile_region_stops_the_default_kms_endpoint_being_built",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_kms_keysource::tests::a_hostile_region_is_refused_even_with_an_explicit_endpoint",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#aws_kms_keysource::tests::authority_strips_scheme_and_path",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#aws_kms_keysource::tests::an_authority_that_re_points_the_request_is_refused",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#aws_kms_keysource::tests::the_aws_kms_endpoints_an_operator_legitimately_sets_still_yield_an_authority",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#aws_kms_keysource::tests::a_hostile_region_stops_the_default_kms_endpoint_being_built",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#aws_kms_keysource::tests::a_hostile_region_is_refused_even_with_an_explicit_endpoint",
   # The quota wiring: this adapter passes ITS OWN signals to the shared rule. THM-0115 owns
-  # the rule; these two establish the data reaching it is this provider's.
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_kms_keysource::tests::only_account_quota_failures_reach_the_exhausted_verdict",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_kms_keysource::tests::a_throttled_tls_sign_stops_calling_kms_for_the_cooldown",  # ADR-MCPRE-069 batch 19. This statement ends "over a MINIMAL AUDITED SigV4", and until now
+  # the rule; this establishes the data reaching it is this provider's.
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#aws_kms_keysource::tests::only_account_quota_failures_reach_the_exhausted_verdict",
+  # ADR-MCPRE-069 batch 19. This statement ends "over a MINIMAL AUDITED SigV4", and until now
   # nothing measured that clause: the adapter's controls exercise the KMS operations and the
   # SigV4 that carries them had no declared evidence at all. A canonical shape that drifts
   # makes every request unsignable; one that drifts WRONG makes them signable by the wrong
   # key. The published GET-vanilla vector is the external fixed point.
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sigv4::tests::sigv4_matches_published_get_vanilla_vector",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sigv4::tests::kms_sign_request_canonical_shape_is_stable",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sigv4::tests::empty_payload_hash_is_well_known",
-  "//mcp-re-proxy:proxy_ext_unit_test#aws_sigv4::tests::session_token_is_signed_and_returned",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#aws_sigv4::tests::sigv4_matches_published_get_vanilla_vector",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#aws_sigv4::tests::kms_sign_request_canonical_shape_is_stable",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#aws_sigv4::tests::empty_payload_hash_is_well_known",
+  "//mcp-re-proxy:proxy_aws_kms_unit_test#aws_sigv4::tests::session_token_is_signed_and_returned",
 ]
 
 [[unit]]
@@ -9580,7 +9602,6 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_ext_unit_test#gcp_kms_keysource::tests::pem_roundtrips_to_spki_der",
   "//mcp-re-proxy:proxy_ext_unit_test#gcp_kms_keysource::tests::gcp_backend_signs_and_verifies_end_to_end",
   "//mcp-re-proxy:proxy_ext_unit_test#gcp_kms_keysource::tests::prehash_signature_is_rejected_before_return",
-  "//mcp-re-proxy:proxy_ext_unit_test#gcp_kms_keysource::tests::gcp_backend_tls_sign_verifies_under_reported_spki",
   # The key-lifecycle conjuncts, and the third is the one that keeps the first two honest:
   # a KMS-side disable is not the same fact as a trust-policy revocation, and reading either
   # as the other would either serve a retired key or refuse a live one.
@@ -9595,7 +9616,6 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_ext_unit_test#gcp_kms_keysource::tests::the_operation_paths_do_not_depend_on_the_endpoint_spelling",
   # Quota wiring, this provider's data.
   "//mcp-re-proxy:proxy_ext_unit_test#gcp_kms_keysource::tests::only_project_quota_failures_reach_the_exhausted_verdict",
-  "//mcp-re-proxy:proxy_ext_unit_test#gcp_kms_keysource::tests::a_throttled_tls_sign_stops_calling_kms_for_the_cooldown",
 ]
 
 [[unit]]
@@ -9630,7 +9650,6 @@ evidence = [
   "mutation://proxy/pkcs11_adapter/token_custody_and_sessions",
 ]
 tested_symbols = [
-  "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::tests::tls_spki_is_well_formed_rfc8410_and_round_trips",
   "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::tests::unverifiable_64byte_signature_is_rejected_before_emit",
   # The session discipline. Its security content is the retry rule, not the amortization:
   # a fatal error retried would drive a token into a lockout, and a failed retry cached
@@ -9640,8 +9659,6 @@ tested_symbols = [
   "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::tests::session_invalid_reopens_once_and_retries",
   "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::tests::reopen_failure_after_invalid_fails_closed",
   "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::tests::failed_retry_does_not_cache_the_session",
-  "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::tests::the_tls_session_pool_signs_several_handshakes_at_once",
-  "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::tests::the_tls_session_pool_amortizes_one_login_per_session",
   # THE ANTI-VACUITY HALF, AND THE ONLY ONE TAKEN OVER A REAL CRYPTOKI SURFACE. Every
   # `lib#` name above drives a fake device inside the crate, and all of them are
   # REFUSALS — `unverifiable_64byte_signature_is_rejected_before_emit` is satisfied by
@@ -9653,10 +9670,6 @@ tested_symbols = [
   # declared battery states only what the adapter rejects, and an adapter that had
   # stopped reaching the token at all would keep it green.
   "//mcp-re-proxy:pkcs11_keysource_e2e_test#pkcs11_sign_verifies_against_token_public_key",
-  "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::session::tests::an_abandoned_operation_retires_the_session_rather_than_wedging_it",
-  "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::session::tests::classify_runs_the_fatal_builder_only_for_a_fatal_status",
-  "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::session::tests::genuine_operation_failures_are_still_fatal_and_never_retried",
-  "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::session::tests::wrapper_shape_errors_are_never_transient",
   "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::token::tests::a_point_that_is_not_32_bytes_is_refused",
   "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::token::tests::an_spki_is_only_built_from_an_accepted_point",
   "//mcp-re-proxy:proxy_ext_unit_test#pkcs11_keysource::token::tests::both_conformant_ec_point_encodings_yield_the_same_32_byte_point",
@@ -10568,8 +10581,9 @@ evidence = [
   "test://proxy/admission/record_retention",
   "mutation://proxy/admission/record_retention",
 ]
-# The Redis half does not exist in the default crate, and a lane that compiled it to
-# zero tests would report this battery green having measured nothing.
+# The selectors name `proxy_ext_unit_test`: the Redis half does not exist in the default
+# crate, and a target that compiled it to zero tests would report this battery green
+# having measured nothing.
 tested_symbols = [
   # THE CALL SITE, and the reason this unit exists. Deleting the check from `connect` left
   # the whole 1554-test lane green before this control: the check was reached by
@@ -10600,8 +10614,9 @@ evidence = [
   "test://proxy/admission/record_addressing",
   "mutation://proxy/admission/record_addressing",
 ]
-# The Redis half does not exist in the default crate, and a lane that compiled it to
-# zero tests would report this battery green having measured nothing.
+# The selectors name `proxy_ext_unit_test`: the Redis half does not exist in the default
+# crate, and a target that compiled it to zero tests would report this battery green
+# having measured nothing.
 tested_symbols = [
   "//mcp-re-proxy:proxy_ext_unit_test#admission_source::tests::a_key_is_readable_by_an_operator",
   "//mcp-re-proxy:proxy_ext_unit_test#redis_admission_source::tests::the_record_is_addressed_by_the_workloads_own_name",
@@ -11593,10 +11608,10 @@ evidence = [
 # THE LANE IS THE REASON THIS IS A UNIT OF ITS OWN. The control is
 # `#[cfg(feature = "redis_replay")]`, so the default-feature targets compile it to ZERO tests,
 # and `proxy.delegated_signing_credential` — which already holds `signing_plane/mod.rs` and
-# every other refusal on this path — declares no `test_features` and says in its own closure
-# note that naming this control there would claim default-lane evidence for a feature-lane
-# fact. A unit's `test_features` are ONE set for the WHOLE battery, so the choice was a
-# separate unit or a silently vacuous member; this is the separate unit.
+# every other refusal on this path — names the default-feature `proxy_unit_test` and says in
+# its own closure note that naming this control there would claim default-feature evidence
+# for a feature-target fact. So the control is measured here, in a unit of its own, under
+# `//mcp-re-proxy:proxy_ext_unit_test`, the target it exists in.
 tested_symbols = [
   "//mcp-re-proxy:proxy_ext_unit_test#signing_plane::rotation_owner_tests::materialize_refuses_when_the_configured_shared_epoch_cannot_be_read",
 ]
@@ -11605,16 +11620,12 @@ tested_symbols = [
 # The per-request revocation slice — ADR-MCPRE-069 NP-165
 # ---------------------------------------------------------------------------
 #
-# THE LANE IS THE FIRST FACT ABOUT THIS UNIT, AND IT IS MEASURED. Its carrier,
+# THE LANE IS THE FIRST FACT ABOUT THIS UNIT. Its carrier,
 # `tests/integration_async/per_request_revocation_test.rs`, is `#![cfg(feature =
-# "async_serve")]`. Measured on this tree: `cargo test -p mcp-re-proxy --test
-# integration_async -- --list` reports 167 tests and ZERO of them are
-# `per_request_revocation_test::…`; the same command with `--features async_serve`
-# reports 197 and all five. So a plain `cargo test --workspace` compiles this whole
-# battery away and exits 0 having measured nothing about it. The lanes that select it are
-# Bazel's `//mcp-re-proxy:integration_async_test`, which sets `crate_features =
-# ["async_serve"]`, and any cargo invocation carrying that feature — which is what
-# `test_features` below makes `verify-tests` and `verify-mutations` do.
+# "async_serve")]`, so a build of that crate root without the feature compiles this whole
+# battery away and exits 0 having measured nothing about it. The selectors below name
+# `//mcp-re-proxy:integration_async_test`, which sets `crate_features = ["async_serve"]`,
+# and that label is what `verify-tests` and `verify-mutations` run.
 #
 # WHY A TWIN AND NOT A `paths` WIDENING. `proxy.credential_currency` owns the PREDICATE and
 # already carries eleven `per_request_revocation_tests::…` controls over
@@ -11731,14 +11742,13 @@ tested_symbols = [
 # The KMS key-source lanes — ADR-MCPRE-069 NP-114, NP-158
 # ---------------------------------------------------------------------------
 #
-# NOTHING HERE RUNS IN THE DEFAULT LANE, and that is the first fact about these two units
-# rather than a footnote. Measured on this tree: `cargo test -p mcp-re-proxy --lib -- --list`
-# selects 1498 controls and NOT ONE of them is `gcp_kms_keysource::` or `aws_sts::`; adding
-# `--features gcp_kms_keysource` selects 1565 and brings 39; adding `--features
-# aws_kms_keysource` selects 1569 and brings 26. `cargo test -p mcp-re-proxy --test
-# aws_irsa_web_identity_test -- --list` reports **0 tests** without the feature and 12 with
-# it, and exits 0 either way. So a battery declared without `test_features` here would be a
-# green that measured nothing — the exact shape this repository's standing rule names.
+# NOTHING HERE EXISTS IN A DEFAULT-FEATURE TARGET, and that is the first fact about these two
+# units rather than a footnote. `//mcp-re-proxy:proxy_unit_test` compiles no
+# `gcp_kms_keysource::` or `aws_sts::` control — they exist only in `proxy_ext_unit_test` —
+# and `tests/aws_irsa_web_identity_test.rs` is `#![cfg(feature = "aws_kms_keysource")]`,
+# compiled with it by `//mcp-re-proxy:aws_irsa_web_identity_test`. So the selectors name
+# those two targets; a battery naming a default-feature one would be a green that measured
+# nothing — the exact shape this repository's standing rule names.
 # THM-0117's own scope already says so: "TWO LANES. The AWS acquirer exists under
 # `aws_kms_keysource` and the metadata acquirer under `gcp_kms_keysource`; neither is in the
 # default lane."
@@ -11827,11 +11837,10 @@ tested_symbols = [
 # composition. What none of the three measures is the INDEX, and
 # `proxy.per_request_revocation_serving` says so in its own description: "It states nothing
 # the predicate states: WHICH certificates the index refuses, the leaf/issuer strength
-# asymmetry and the one-snapshot-per-request rule are `proxy.credential_currency`'s". That unit could not take these controls anyway — it declares
-# `test_features = ["async_serve"]`, and all twelve of these are DEFAULT-lane `lib#` tests.
-# Measured: `cargo test -p mcp-re-proxy --lib -- --list` selects 1498 controls and all twelve
-# `client_revocation::tests::` are among them, so neither unit here declares `test_features`
-# and neither would be true if it did.
+# asymmetry and the one-snapshot-per-request rule are `proxy.credential_currency`'s". That
+# unit's battery is the `async_serve` integration target; all twelve of these are
+# `client_revocation::tests::` controls, not feature-gated, and both units here name them
+# under the default-feature `//mcp-re-proxy:proxy_unit_test`.
 #
 # TWO UNITS, NOT ONE, and the axis is not the one the plan drew. The plan split 6/6 on
 # "inside THM-0054's statement" / "index algebra"; with THM-0054 out, the honest question is
