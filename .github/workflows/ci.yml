@@ -37,8 +37,8 @@ permissions:
   contents: read
 
 jobs:
-  cargo:
-    name: cargo build + test (1.97.1)
+  bazel:
+    name: Bazel build + test (Rust 1.97.1)
     runs-on: ubuntu-latest
     steps:
       # Full history: the module-size ratchet checks DISPOSITION TRANSITIONS against
