@@ -174,7 +174,7 @@ pub fn dispatch_request(
         out matches Ok((_key, continuation_verified)) ==>
             (verified.request_block.continuation is Some ==> continuation_verified),
 ))]
-#[allow(clippy::redundant_closure)]
+#[allow(clippy::redundant_closure)] // Verus `verify` lane needs the explicit closure form
 fn prepare_http_dispatch(
     verified: &VerifiedMcpRequest,
     continuation_ctx: Option<RetainedContinuation<'_>>,

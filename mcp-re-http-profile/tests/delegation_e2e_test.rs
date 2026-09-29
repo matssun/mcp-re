@@ -3,7 +3,7 @@
 //!
 //! A full request → delegated-key response round trip: the root mints a compact
 //! JWS delegation credential, the DELEGATED key signs the RFC 9421 response, and
-//! `verify_delegated_response_full` verifies the credential chain to the root and
+//! `Verifier::verify_delegated_bound_response` verifies the credential chain to the root and
 //! the response signature under `cnf.jwk`. Covers the response-path rulings:
 //! required delegation mode (§3 step 1) and the `keyid == delegated_kid` /
 //! sign-under-`cnf.jwk` check (§3 step 8). Credential-scope checks (aud, profile,
@@ -589,15 +589,8 @@ fn an_unbound_receipt_without_a_credential_is_refused() {
 
 // --- the delegated conjuncts that had no control of their own ---------------
 
-/// The delegated BOUND path makes the same explicit `request_evidence` comparison the
-/// direct full path makes, and it is load-bearing there too. The `;req` floor cannot
-/// substitute for it: here the `;req` binding is to `req_a` and verifies, while the block
-/// advertises a different exchange's handle.
-#[test]
-fn a_delegated_response_advertising_another_requests_evidence_is_refused() {
-    let (req_a, _ev_a, verified_a) = signed_request();
-
-    // A second, genuinely different request → a different evidence handle.
+/// A second, genuinely different request and its evidence handle.
+fn another_request() -> (HttpRequest, RequestEvidence) {
     let mut req_b = base_request();
     let block_b = HttpRequestEvidenceBlock {
         profile: PROFILE_TAG.into(),
@@ -621,6 +614,19 @@ fn a_delegated_response_advertising_another_requests_evidence_is_refused() {
         "nonce-DIFFERENT",
     )
     .expect("sign b");
+    (req_b, ev_b)
+}
+
+/// The delegated BOUND path makes the same explicit `request_evidence` comparison the
+/// direct full path makes, and it is load-bearing there too. The `;req` floor cannot
+/// substitute for it: here the `;req` binding is to `req_a` and verifies, while the block
+/// advertises a different exchange's handle.
+#[test]
+fn a_delegated_response_advertising_another_requests_evidence_is_refused() {
+    let (req_a, _ev_a, verified_a) = signed_request();
+
+    // A second, genuinely different request → a different evidence handle.
+    let (_req_b, ev_b) = another_request();
     assert_ne!(ev_b.digest_value, verified_a.evidence().digest_value);
 
     let mut rsp = HttpResponse {
@@ -928,4 +934,188 @@ fn an_unbound_receipt_whose_wire_keyid_is_not_the_delegated_kid_is_key_mismatch(
         .verify_delegated_unbound_response(&rsp, &expectations(&[EPOCH]), &|_| false, NOW)
         .unwrap_err();
     assert_eq!(err, HttpProfileError::DelegationKeyMismatch);
+}
+
+// --- the delegated preamble gates, on both delegated paths -------------------
+
+fn signed_delegated_bound() -> (HttpRequest, HttpResponse) {
+    let (req, ev, _verified_req) = signed_request();
+    let mut rsp = HttpResponse {
+        status: 200,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: response_body(),
+    };
+    sign_delegated_response_full(
+        &mut rsp,
+        &req,
+        &ev,
+        &server_signer(),
+        &valid_credential(),
+        &delegated_key(),
+        DELEGATED_KID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("sign delegated response");
+    (req, rsp)
+}
+
+fn signed_delegated_unbound() -> HttpResponse {
+    let (_req, ev, _verified_req) = signed_request();
+    let mut rsp = HttpResponse {
+        status: 400,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: response_body(),
+    };
+    sign_delegated_response_unbound(
+        &mut rsp,
+        &server_signer(),
+        &valid_credential(),
+        &ev,
+        &delegated_key(),
+        DELEGATED_KID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("sign unbound delegated receipt");
+    rsp
+}
+
+fn set_header(rsp: &mut HttpResponse, name: &str, value: &str) {
+    let slot = rsp
+        .headers
+        .iter_mut()
+        .find(|(n, _)| n.eq_ignore_ascii_case(name))
+        .expect("header present");
+    slot.1 = value.into();
+}
+
+fn verify_bound_at(
+    rsp: &HttpResponse,
+    req: &HttpRequest,
+    now: i64,
+) -> Result<(), HttpProfileError> {
+    Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_delegated_bound_response(rsp, req, &expectations(&[EPOCH]), &|_| false, now)
+        .map(|_| ())
+}
+
+fn verify_unbound_at(rsp: &HttpResponse, now: i64) -> Result<(), HttpProfileError> {
+    Verifier::new(&VerifierPolicy::default(), &resolver())
+        .verify_delegated_unbound_response(rsp, &expectations(&[EPOCH]), &|_| false, now)
+        .map(|_| ())
+}
+
+fn past_the_window() -> i64 {
+    EXPIRES + VerifierPolicy::default().max_clock_skew() + 1
+}
+
+#[test]
+fn a_delegated_bound_response_with_a_content_encoding_is_refused() {
+    let (req, mut rsp) = signed_delegated_bound();
+    rsp.headers.push(("Content-Encoding".into(), "gzip".into()));
+    assert_eq!(
+        verify_bound_at(&rsp, &req, NOW).unwrap_err(),
+        HttpProfileError::ContentEncodingPresent
+    );
+}
+
+#[test]
+fn a_delegated_bound_response_that_is_not_json_is_refused() {
+    let (req, mut rsp) = signed_delegated_bound();
+    set_header(&mut rsp, "Content-Type", "text/event-stream");
+    assert_eq!(
+        verify_bound_at(&rsp, &req, NOW).unwrap_err(),
+        HttpProfileError::NonJsonMediaType
+    );
+}
+
+#[test]
+fn a_delegated_bound_response_outside_its_signature_window_is_refused() {
+    let (req, rsp) = signed_delegated_bound();
+    assert_eq!(
+        verify_bound_at(&rsp, &req, past_the_window()).unwrap_err(),
+        HttpProfileError::StaleWindow
+    );
+}
+
+#[test]
+fn a_delegated_bound_response_not_covering_a_req_component_is_refused() {
+    let (req, mut rsp) = signed_delegated_bound();
+    let (_, input) = rsp
+        .headers
+        .iter()
+        .find(|(n, _)| n.eq_ignore_ascii_case("signature-input"))
+        .expect("signature-input present")
+        .clone();
+    let stripped = input.replacen(" \"@method\";req", "", 1);
+    assert_ne!(
+        stripped, input,
+        "the covered `@method;req` item was removed"
+    );
+    set_header(&mut rsp, "Signature-Input", &stripped);
+    assert_eq!(
+        verify_bound_at(&rsp, &req, NOW).unwrap_err(),
+        HttpProfileError::MissingCoveredComponent("@method")
+    );
+}
+
+#[test]
+fn a_delegated_bound_response_whose_req_binding_is_to_another_request_is_refused() {
+    let (req_a, _ev_a, _verified_a) = signed_request();
+    let (mut req_b, ev_b) = another_request();
+    // A covered request component that differs from req_a's, so ;req cannot resolve alike.
+    req_b.target_uri = "https://mcp.example.com/mcp?route=b".into();
+    let mut rsp = HttpResponse {
+        status: 200,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: response_body(),
+    };
+    // ;req resolves over req_a while the block carries req_b's handle, and the response is
+    // verified against req_b: the block-handle comparison agrees, only ;req can refuse.
+    sign_delegated_response_full(
+        &mut rsp,
+        &req_a,
+        &ev_b,
+        &server_signer(),
+        &valid_credential(),
+        &delegated_key(),
+        DELEGATED_KID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("sign");
+    assert_eq!(
+        verify_bound_at(&rsp, &req_b, NOW).unwrap_err(),
+        HttpProfileError::DelegationKeyMismatch
+    );
+}
+
+#[test]
+fn an_unbound_receipt_with_a_content_encoding_is_refused() {
+    let mut rsp = signed_delegated_unbound();
+    rsp.headers.push(("Content-Encoding".into(), "gzip".into()));
+    assert_eq!(
+        verify_unbound_at(&rsp, NOW).unwrap_err(),
+        HttpProfileError::ContentEncodingPresent
+    );
+}
+
+#[test]
+fn an_unbound_receipt_that_is_not_json_is_refused() {
+    let mut rsp = signed_delegated_unbound();
+    set_header(&mut rsp, "Content-Type", "text/event-stream");
+    assert_eq!(
+        verify_unbound_at(&rsp, NOW).unwrap_err(),
+        HttpProfileError::NonJsonMediaType
+    );
+}
+
+#[test]
+fn an_unbound_receipt_outside_its_signature_window_is_refused() {
+    let rsp = signed_delegated_unbound();
+    assert_eq!(
+        verify_unbound_at(&rsp, past_the_window()).unwrap_err(),
+        HttpProfileError::StaleWindow
+    );
 }

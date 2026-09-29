@@ -29,7 +29,7 @@ use crate::verified_response::VerifiedMcpResponse;
 use crate::verify::bound_request::request_evidence_of;
 use crate::verify::floor::floor_bound_response;
 
-/// [`verify_response_bound_full`] under an explicit verifier-local [`VerifierPolicy`].
+/// Body of [`crate::Verifier::verify_bound_response`] under a verifier-local [`VerifierPolicy`].
 pub(crate) fn full_bound_response<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
     request: &HttpRequest,

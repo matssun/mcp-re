@@ -395,6 +395,7 @@ paths = [
   "mcp-re-http-profile/src/verified_response/bound.rs",
   "mcp-re-http-profile/src/rejection/mod.rs",
   "mcp-re-http-profile/src/rejection/retry_contract.rs",
+  "mcp-re-http-profile/src/verify/full/delegated/bound.rs",
 ]
 exported_contracts = []
 test_package = "mcp-re-http-profile"
@@ -410,6 +411,11 @@ tested_symbols = [
   "lib#rejection::pre_052_direct_root::tests::tampered_message_does_not_change_the_trusted_wire_code",
   "lib#rejection::pre_052_direct_root::tests::spliced_rejection_onto_a_different_request_fails",
   "tests/delegation_e2e_test#body_tamper_is_caught_by_content_digest",
+  "tests/delegation_e2e_test#a_delegated_bound_response_with_a_content_encoding_is_refused",
+  "tests/delegation_e2e_test#a_delegated_bound_response_that_is_not_json_is_refused",
+  "tests/delegation_e2e_test#a_delegated_bound_response_outside_its_signature_window_is_refused",
+  "tests/delegation_e2e_test#a_delegated_bound_response_not_covering_a_req_component_is_refused",
+  "tests/delegation_e2e_test#a_delegated_bound_response_whose_req_binding_is_to_another_request_is_refused",
 ]
 
 # THM-0016's owner.
@@ -514,6 +520,9 @@ tested_symbols = [
   "lib#rejection::pre_052_direct_root::tests::unbound_rejection_verifies_without_request_context",
   "tests/delegation_e2e_test#a_req_component_is_refused_on_the_delegated_unbound_path",
   "tests/delegation_e2e_test#an_unbound_receipt_body_tamper_is_caught_by_content_digest",
+  "tests/delegation_e2e_test#an_unbound_receipt_with_a_content_encoding_is_refused",
+  "tests/delegation_e2e_test#an_unbound_receipt_that_is_not_json_is_refused",
+  "tests/delegation_e2e_test#an_unbound_receipt_outside_its_signature_window_is_refused",
 ]
 
 # THE ONE LEAF THIS SPLIT LEAVES OWING, and making it visible is half the point of the

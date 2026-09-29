@@ -137,7 +137,7 @@ fn request_id(request: &HttpRequest) -> Value {
 /// inline delegation credential, and is bound via `;req` to `request` — used when
 /// the request verified far enough to trust its hash but failed a later gate
 /// (replay / revocation / policy / transport binding). It verifies through the
-/// delegated chain (`verify_delegated_response_full`), never as a directly
+/// delegated chain (`Verifier::verify_delegated_bound_response`), never as a directly
 /// root-signed response.
 #[allow(clippy::too_many_arguments)]
 pub fn build_delegated_rejection(

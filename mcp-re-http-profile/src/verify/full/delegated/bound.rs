@@ -52,14 +52,18 @@ use crate::verified_response::BoundResponseSignatureFacts;
 use crate::verified_response::VerifiedDelegatedMcpResponse;
 
 /// Delegated-response verification bound to a concrete request — the CLIENT-side entry
-/// point (the delegated analogue of [`verify_response_bound_full`]).
+/// point (the delegated analogue of [`crate::Verifier::verify_bound_response`]).
 ///
-/// Semantics are identical to [`verify_delegated_response_full`]: delegation is
+/// This is the body of [`crate::Verifier::verify_delegated_bound_response`]: delegation is
 /// REQUIRED (a response with no inline credential — including a directly root-signed
 /// one — is rejected `delegation_credential_missing`), the credential chain to the
 /// root is verified, and the `;req`-bound response signature is verified under
 /// `cnf.jwk`. The request-evidence binding is compared against the handle of the request
 /// supplied here, derived from it rather than accepted beside it.
+// Body of `Verifier::verify_delegated_bound_response`: the verifier's two seams
+// (`resolve_actor`, `policy`) plus that method's five per-call inputs (`response`,
+// `request`, `expect`, `is_revoked`, `now`), each independently supplied, so no parameter
+// object exists that a single owner produces.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn delegated_bound_response<R: Into<ResolverOutcome>>(
     response: &HttpResponse,

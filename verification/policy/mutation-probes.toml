@@ -666,6 +666,46 @@ expect_red = [
 ]
 
 [[probe]]
+id = "M426-delegated-bound-content-digest"
+unit = "http_profile.bound_response_shared_facts"
+theorem = "THM-0021"
+conjunct = "the covered Content-Digest agreed with the body"
+path = "mcp-re-http-profile/src/verify/full/delegated/bound.rs"
+anchor = """
+    verify_content_digest_sha256(digest_header, &response.body)?;
+
+    // Signature-input parse + required components + params gate (keyid).
+"""
+weakening = """
+    let _ = verify_content_digest_sha256(digest_header, &response.body);
+
+    // Signature-input parse + required components + params gate (keyid).
+"""
+expect_red = [
+  "tests/delegation_e2e_test#body_tamper_is_caught_by_content_digest",
+]
+
+[[probe]]
+id = "M427-delegated-bound-req-components"
+unit = "http_profile.bound_response_shared_facts"
+theorem = "THM-0021"
+conjunct = "the signature verified over a base whose ;req resolved against the supplied request"
+path = "mcp-re-http-profile/src/verify/full/delegated/bound.rs"
+anchor = """
+        &REQUIRED_RESPONSE_COMPONENTS,
+        &REQUIRED_RESPONSE_REQ_COMPONENTS,
+    )?;
+"""
+weakening = """
+        &REQUIRED_RESPONSE_COMPONENTS,
+        &[],
+    )?;
+"""
+expect_red = [
+  "tests/delegation_e2e_test#a_delegated_bound_response_not_covering_a_req_component_is_refused",
+]
+
+[[probe]]
 id = "M18-delegated-unbound-req-refusal"
 unit = "http_profile.unbound_response_shared_facts"
 theorem = "THM-0022"
