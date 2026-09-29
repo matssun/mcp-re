@@ -92,7 +92,18 @@ now.
 
 `finalize.py` commits each accepted file on its own (bisectable), reverts anything
 review did not accept (the patch is kept in `$R/work`), marks exactly the accepted
-findings `fixed`, and commits the batch's ledger changes. A red `batch_gate.py`
+findings `fixed`, and commits the batch's ledger changes.
+
+**Every test a fix adds is a control ADR-MCPRE-069 must disposition, in the same change.**
+The census is held at its closure state — no control that nothing claims and no row
+covers — and the lane is where new controls come from. The evaluator's package carries a
+disposition item for each test it orders (step 8 of its procedure: register into the unit
+whose statement the test falsifies and whose `paths` already hold the file, or cite a
+proposition, or a not-evidence family), the reviewer rejects a test that landed without
+one, and `finalize.py` measures the census once per batch and reverts, patch kept, any
+accepted file whose touched files still carry an undispositioned control, naming them.
+Without this the lane adds controls faster than anyone dispositions them: the r12 run
+left 157 before the census gate caught it. A red `batch_gate.py`
 stops the run: bisect over the batch's per-file commits, revert the culprit, and
 return its findings to `open`.
 
@@ -106,7 +117,7 @@ clock. The gate is therefore split by what can be attributed to one writer:
 | when | what | why there |
 |---|---|---|
 | per file (`check.py post` → `cargo_gate.py`) | clippy `-D warnings` in every lane that compiles the file (default + the `local_gate.sh` `FEATURES` lane when the crate has them; plus the related files' crates above `local`), the module-size ratchet, the file's own unit tests (`--lib -- <module>::`), each `--it` target the package named | attributable, and seconds-to-a-minute on a warm cache |
-| per batch (`batch_gate.py`) | clippy ratchet, module-size, bazel-srcs, unit-closure, verification-trigger, mutation-lane self-test; `cargo test -p` of every touched crate in both lanes | minutes, and the same answer after one fix or six |
+| per batch (`batch_gate.py`) | clippy ratchet, module-size, bazel-srcs, unit-closure, verification-trigger, mutation-lane self-test, the ADR-MCPRE-069 control-census ratchet and `control-census --gate`; `cargo test -p` of every touched crate in both lanes | minutes, and the same answer after one fix or six |
 | pre-handover (`scripts/local_gate.sh`) | `bazel test //...` (the only lane that runs the `async_serve` drain tests), the SLO lane | not claimed by this skill |
 
 A red per-file gate saves the change as a patch and reverts it, so the next writer

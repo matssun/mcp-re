@@ -197,6 +197,58 @@ def test_finalize_commits_only_accepted_work() -> None:
     print("  finalize: commit accept / harmless partial, revert everything else; fixed = accepted ids  OK")
 
 
+def _finalize_once(td: str, residue: dict) -> list:
+    """Run finalize.main over one accepted file, with the census replaced by `residue`."""
+    pkg = os.path.join(td, "pkg.json")
+    with open(pkg, "w") as fh:
+        json.dump({"work": [{"id": "w1", "finding_ids": ["F1"]}]}, fh)
+    results = os.path.join(td, "results.json")
+    with open(results, "w") as fh:
+        json.dump([{"file": "f.rs", "verdict": "accept", "files_touched": ["f.rs"],
+                    "accepted": ["w1"], "unordered_changes": [], "package": pkg}], fh)
+    ledger_path = os.path.join(td, "ledger.jsonl")
+    with open(ledger_path, "w") as fh:
+        fh.write(json.dumps({"id": "F1", "status": "open", "path": "f.rs"}) + "\n")
+    real, argv, cwd = finalize.residue_by_carrier, sys.argv, os.getcwd()
+    finalize.residue_by_carrier = lambda: residue
+    sys.argv = ["finalize.py", "--results", results, "--ledger", ledger_path,
+                "--work-dir", td]
+    os.chdir(td)
+    out = []
+    try:
+        import contextlib
+        import io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            finalize.main()
+        out = json.loads(buf.getvalue())
+    finally:
+        finalize.residue_by_carrier, sys.argv = real, argv
+        os.chdir(cwd)
+    return out
+
+
+def test_finalize_holds_a_file_whose_new_control_is_undispositioned() -> None:
+    """An accepted diff that adds a control nobody claims is not committed (ADR-MCPRE-069)."""
+    for residue, want in (({"f.rs": ["lib#f::tests::new_one"]}, "revert"), ({}, "commit")):
+        with tempfile.TemporaryDirectory() as td:
+            _write(td, "f.rs", "fn a() {}\n")
+            _git_repo(td)
+            _write(td, "f.rs", "fn a() {}\n#[test]\nfn new_one() {}\n")
+            report = _finalize_once(td, residue)
+            row = report[0]
+            assert row["action"] == want, row
+            status = ledger._load(os.path.join(td, "ledger.jsonl"))["F1"]["status"]
+            body = open(os.path.join(td, "f.rs")).read()
+            if want == "revert":
+                assert row["undispositioned"] == ["lib#f::tests::new_one"], row
+                assert "new_one" not in body and os.path.isfile(row["patch"]), row
+                assert status == "open", status
+            else:
+                assert "new_one" in body and status == "fixed", (body, status)
+    print("  finalize: an undispositioned control holds the file; with none, the same diff commits  OK")
+
+
 def test_next_file_rounds_and_order() -> None:
     with tempfile.TemporaryDirectory() as td:
         rows = [{"id": "1", "path": "a.rs", "severity": "low", "status": "open", "rounds": ["r12"]},

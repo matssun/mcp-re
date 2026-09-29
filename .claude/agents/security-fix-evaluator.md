@@ -233,6 +233,27 @@ judgment — that is where the turns belong.
 7. **Order the items** so a change that subsumes others comes first, and note any
    item that must NOT be applied independently of another.
 
+8. **Disposition every test an item adds (ADR-MCPRE-069).** A new `#[test]`, doctest,
+   pytest or vitest case is a CONTROL, and the census is held at its closure state:
+   `finalize.py` reverts an accepted file whose touched files carry a control nobody
+   claims, and `batch_gate.py` fails the batch. So for each test you order, add a `work[]`
+   item that dispositions it, in the same package, with one of the four ADR-069 decisions:
+   - **register** — append its selector to the `tested_symbols` of the `[[unit]]` in
+     `verification/policy/verification.toml` whose statement (and theorem) the test
+     FALSIFIES. Only when the test's file is already in that unit's `paths` (never widen
+     `paths` to reach a control) and the unit's `test_features` cover the test's
+     `cfg(feature)` lane. "Same file" is not a reason.
+   - **new-proposition** — a `[[disposition]]` row in
+     `verification/policy/control-dispositions.toml` citing an existing `[[proposition]]`
+     whose statement the test establishes; only if none fits, a new proposition with its
+     `## NP-nnn` record in `docs/architecture/control-dispositions.md`. Group tests by the
+     statement they establish, not one proposition per test.
+   - **not-evidence** — a row citing an `ND-nnn` family whose stated scope genuinely fits.
+     Not for a real security test.
+   Its `accept` is `tools/verification/control-census --residue` naming no control in the
+   touched files, and `tools/verification/control-census --gate` passing. That criterion is
+   what puts the registry files in `required_scope` under the invariant above.
+
 ### Output (EVALUATE)
 
 Write the package JSON to the path given in the dispatch prompt:
@@ -286,6 +307,11 @@ structured result with the counts it printed. No prose.
 4. Confirm the worker's gate verdict against the attempt's `gate` event in the
    journal — `check.py` writes it, the worker does not. **A claim is not a
    measurement:** a verdict with no matching event is a FAIL, not a pass.
+5. Run `tools/verification/control-census --residue`. A control carried by a touched
+   file that is still listed means a test landed without its ADR-069 disposition: reject
+   the item that added it (`cause: evidence`). A registration must name a unit whose
+   `paths` hold the test's file and whose statement the test falsifies; one that only
+   shares the file is also `evidence`.
 
 ### Output (REVIEW)
 

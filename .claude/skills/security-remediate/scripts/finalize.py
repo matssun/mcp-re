@@ -14,6 +14,13 @@ Per file in the workflow's `results`:
   gate-failed, no-code-change, dry-run
       nothing to do: `check.py` already reverted a red change, and a file with no
       work has no diff.
+  accepted, but a touched file carries an undispositioned control
+      a test the change added that no unit claims and no ADR-MCPRE-069 row covers.
+      The census is held at its closure state (`scripts/control_census_gate.py`), so
+      committing it would move the debt to whoever runs the next gate: revert with the
+      patch kept, name the controls, record nothing. The evaluator's next package
+      carries the disposition (a registration or a `control-dispositions.toml` row)
+      with the change that needs it.
 
 A finding is `fixed` only through this path — the reviewer's acceptance of a
 landed diff — never through an evaluator's or worker's own claim.
@@ -40,6 +47,23 @@ NOTHING_TO_DO = {"gate-failed", "no-code-change", "dry-run", "blocked-platform",
 
 def _git(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], capture_output=True, text=True)
+
+
+def residue_by_carrier() -> dict[str, list[str]]:
+    """The census's undispositioned controls, keyed by the file that carries each."""
+    root = _git("rev-parse", "--show-toplevel").stdout.strip()
+    sys.path.insert(0, os.path.join(root, "tools", "verification"))
+    from _census import census  # noqa: PLC0415 — the tool path is set up above
+
+    out: dict[str, list[str]] = {}
+    for control in census().residue:
+        out.setdefault(control.carrier, []).append(control.identity)
+    return out
+
+
+def undispositioned(paths: list[str], residue: dict[str, list[str]]) -> list[str]:
+    """The controls in `paths` that ADR-MCPRE-069 has not yet dispositioned."""
+    return sorted(c for p in paths for c in residue.get(p, []))
 
 
 def decide(row: dict) -> str:
@@ -87,6 +111,9 @@ def main() -> int:
     a = ap.parse_args()
     doc = json.load(open(a.results, encoding="utf-8"))
     rows = doc.get("results", doc) if isinstance(doc, dict) else doc
+    # Measured once, over the tree holding every diff the batch landed: a carrier's
+    # residue is attributable to the file whose change touched it.
+    residue = residue_by_carrier() if any(decide(r) == "commit" for r in rows) else {}
     report = []
     for row in rows:
         action = decide(row)
@@ -95,6 +122,11 @@ def main() -> int:
         if action == "commit" and not paths:
             entry["action"] = action = "skip"
             entry["why"] = "accepted but no files_touched — nothing to commit"
+        held = undispositioned(paths, residue) if action == "commit" else []
+        if held:
+            entry.update(action="revert", why="undispositioned controls (ADR-MCPRE-069)",
+                         undispositioned=held)
+            action = "revert"
         if a.dry_run or action == "skip":
             report.append(entry)
             continue

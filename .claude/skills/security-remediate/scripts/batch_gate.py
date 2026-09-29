@@ -46,6 +46,12 @@ STRUCTURAL = [
     ["scripts/unit_closure_gate.py"],
     ["scripts/verification_trigger_gate.py"],
     ["tools/verification/test_mutation_lane.py"],
+    # ADR-MCPRE-069: every test a fix adds is a control the census must see claimed or
+    # dispositioned. `finalize.py` holds a file whose own controls are not; these two are
+    # the batch's whole-tree answer — the residue ratchet at its closure state, and the
+    # registry's own consistency (orphan rows, missing records, stale selectors).
+    ["scripts/control_census_gate.py"],
+    ["tools/verification/control-census", "--gate"],
 ]
 
 
