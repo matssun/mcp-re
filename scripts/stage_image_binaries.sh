@@ -11,6 +11,8 @@
 #   mcp-re-proxy            //mcp-re-proxy:mcp_re_proxy_deploy_bin — the shipped proxy
 #   tls_load_harness_bench  //mcp-re-proxy:tls_load_harness_bench — the §7 SLO bench, which
 #                           spawns the proxy above (MCP_RE_PROXY_CLI in Dockerfile.bench)
+#   wheels/<wheel>          //sdk/python:wheel — the Python SDK the loadgen image installs,
+#                           under the name pip requires of a wheel
 #
 # The images compile nothing. A Dockerfile that built its own binary did so with whatever
 # toolchain its base image carried, which is not the one MODULE.bazel pins and the one every
@@ -56,4 +58,9 @@ for a in "${ARTIFACTS[@]}"; do
   [[ -f "$file" ]] || { echo "stage-image-binaries: $label produced no file" >&2; exit 1; }
   install -m 0755 "$file" "$OUT/$name"
 done
-echo "stage-image-binaries: staged $(ls "$OUT" | tr '\n' ' ')in $OUT"
+mkdir -p "$OUT/wheels"
+bazel build "${FLAGS[@]}" //sdk/python:wheel
+wheel="$(bazel cquery "${FLAGS[@]}" --output=files //sdk/python:wheel 2>/dev/null | head -1)"
+[[ -f "$wheel" ]] || { echo "stage-image-binaries: //sdk/python:wheel produced no file" >&2; exit 1; }
+install -m 0644 "$wheel" "$OUT/wheels/"
+echo "stage-image-binaries: staged $(cd "$OUT" && find . -type f | sort | tr '\n' ' ')in $OUT"

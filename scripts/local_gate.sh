@@ -447,27 +447,27 @@ sdk_typescript() {
   git diff --exit-code -- sdk/typescript/native/binding.js sdk/typescript/native/binding.d.ts
 }
 
-# Mirrors the "downloader — Python maturin wheel" job: build the wheel, reinstall it,
-# run the coverage-gated suite, then regenerate the cross-language parity oracle from
-# the freshly built core. The regeneration is the part that matters — a binding that
+# Mirrors the "downloader — Python SDK wheel (Bazel)" job: build the wheel, install it,
+# run the suite, then regenerate the cross-language parity oracle from the freshly built
+# core. The regeneration is the part that matters — a binding that
 # drifts from the core shows up as a diff in a committed fixture, not as a test that
 # forgot to assert.
 sdk_python() {
-  local venv=sdk/python/.venv
-  if [[ ! -x "$venv/bin/python" ]]; then
-    python3 -m venv "$venv" || return 1
-    "$venv/bin/pip" install --quiet -e "sdk/python[dev]" || return 1
-  fi
-  ( cd sdk/python \
-      && ./.venv/bin/maturin build --release --out dist \
-      && ./.venv/bin/pip install --quiet --force-reinstall dist/*.whl \
-      && ./.venv/bin/python -m pytest -q ) || return 1
+  local wheel venv oracle
+  bazel build //sdk/python:wheel >/dev/null || return 1
+  wheel="$(bazel cquery --output=files //sdk/python:wheel 2>/dev/null | head -1)"
+  venv="$(mktemp -d)/venv"
+  python3 -m venv "$venv" \
+    && "$venv/bin/pip" install --quiet "${wheel}[mcp]" "pytest>=8" "pytest-cov>=5" \
+    && "$venv/bin/python" -m pytest sdk/python/tests -q \
+      --cov --cov-config=sdk/python/pyproject.toml --cov-report=term-missing \
+    || return 1
 
   # A throwaway interpreter, exactly as CI does it: the oracle must come from the
   # INSTALLED wheel alone, never from anything else already on a developer's venv.
-  local oracle; oracle="$(mktemp -d)/oracle"
+  oracle="$(mktemp -d)/oracle"
   python3 -m venv "$oracle" \
-    && "$oracle/bin/pip" install --quiet sdk/python/dist/*.whl \
+    && "$oracle/bin/pip" install --quiet "$wheel" \
     && "$oracle/bin/python" tools/gen_sdk_parity_fixture.py \
     && git diff --exit-code -- sdk/fixtures/parity_vectors.json
 }

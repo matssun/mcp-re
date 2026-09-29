@@ -1,6 +1,9 @@
+# The wheel is built by Bazel (`bazel build //sdk/python:wheel`); a source build is
+# refused by build_backend/bazel_only.py, which says so.
 [build-system]
-requires = ["maturin>=1.14.1,<2.0"]
-build-backend = "maturin"
+requires = []
+build-backend = "bazel_only"
+backend-path = ["build_backend"]
 
 [project]
 name = "mcp-re-sdk"
@@ -40,7 +43,7 @@ dependencies = []
 # bump can move that seam, so the range is capped rather than open-ended (#413).
 mcp = ["mcp>=2.0,<3.0"]
 # dev pulls in `mcp` (and its `anyio`) so the transport-adapter tests run.
-dev = ["pytest>=9.1.1", "pytest-cov>=7.1.0", "maturin>=1.5,<2.0", "anyio>=4", "mcp>=2.0,<3.0"]
+dev = ["pytest>=9.1.1", "pytest-cov>=7.1.0", "anyio>=4", "mcp>=2.0,<3.0"]
 
 [tool.coverage.run]
 # Only the hand-written Python layer is measured. The native `_core` extension is
@@ -58,10 +61,3 @@ exclude_also = [
     "raise NotImplementedError",
     "@overload",
 ]
-
-[tool.maturin]
-# Mixed Rust/Python layout: Python sources under python/, native ext built from
-# the Cargo crate and installed as `mcp_re_sdk._core`.
-python-source = "python"
-module-name = "mcp_re_sdk._core"
-features = ["pyo3/extension-module"]

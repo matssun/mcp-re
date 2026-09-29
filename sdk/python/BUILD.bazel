@@ -1,0 +1,63 @@
+load("@rules_python//python:packaging.bzl", "py_wheel")
+load("//bazel/pyo3:defs.bzl", "nt_pyo3_extension")
+
+package(default_visibility = ["//visibility:public"])
+
+# The Python SDK's native module, `mcp_re_sdk._core`: the PyO3 binding to
+# mcp-re-client-core. abi3 (cp39+), so one build loads on every supported CPython.
+nt_pyo3_extension(
+    name = "_core",
+    srcs = glob(["src/**/*.rs"]),
+    crate_root = "src/lib.rs",
+    module_name = "mcp_re_sdk._core",
+    deps = [
+        "//mcp-re-client-core:mcp_re_client_core",
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:serde",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
+filegroup(
+    name = "python_sources",
+    srcs = glob(["python/mcp_re_sdk/**/*.py"]),
+)
+
+# The SDK wheel: the Python package and its native module. Its metadata states what
+# pyproject.toml states — scripts/python_runtime_gate.py fails when the two disagree on
+# the name, version, supported range or extras, so neither can move alone.
+py_wheel(
+    name = "wheel",
+    abi = "abi3",
+    author = "Mats Sundvall",
+    deps = [
+        ":_core",
+        ":python_sources",
+    ],
+    description_content_type = "text/markdown; charset=UTF-8; variant=GFM",
+    description_file = "README.md",
+    distribution = "mcp-re-sdk",
+    extra_requires = {
+        "dev": [
+            "pytest>=9.1.1",
+            "pytest-cov>=7.1.0",
+            "anyio>=4",
+            "mcp>=2.0,<3.0",
+        ],
+        "mcp": ["mcp>=2.0,<3.0"],
+    },
+    license = "Apache-2.0",
+    platform = select({
+        "//platforms:is_macos_arm64": "macosx_11_0_arm64",
+        "//platforms:is_linux_x86_64": "manylinux_2_28_x86_64",
+        "//platforms:is_linux_arm64": "manylinux_2_28_aarch64",
+    }),
+    python_requires = ">=3.14.5,<3.15",
+    python_tag = "cp39",
+    strip_path_prefixes = [
+        "sdk/python/python",
+        "sdk/python",
+    ],
+    summary = "MCP-RE Python SDK — runtime-evidence security (signed requests, verified responses) for the MCP Python SDK, via a transport adapter over the audited mcp-re-client-core.",
+    version = "0.1.0",
+)

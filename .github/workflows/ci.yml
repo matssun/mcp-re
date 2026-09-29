@@ -1115,83 +1115,38 @@ jobs:
           key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'bazel/crates.lock') }}-${{ github.sha }}
 
   sdk-python:
-    name: downloader — Python maturin wheel (no Bazel)
+    name: downloader — Python SDK wheel (Bazel)
     runs-on: ubuntu-latest
-    # ADR-MCPS-048 / MCPS-71 — the pip downloader path. sdk/python is its OWN
-    # Cargo workspace (empty [workspace] table) linking the audited
-    # mcp-re-client-core / mcp-re-core via path deps; the pyo3 layer is abi3-py39, so
-    # ONE wheel serves any CPython >= 3.9. No cryptoki/openssl in the SDK closure,
-    # so no libclang is needed. Bazel is neither installed nor invoked.
-    defaults:
-      run:
-        working-directory: sdk/python
     steps:
       - uses: actions/checkout@v7
 
-      # Inside the package's declared range, and it has to be: this job INSTALLS the built
-      # wheel, so an interpreter outside `requires-python` is refused by pip rather than
-      # producing a weaker result. It was "3.12" until the 2026-09-05 narrowing to
-      # `>=3.14.5,<3.15`, and the failure was the correct one —
-      # `Package 'mcp-re-sdk' requires a different Python: 3.12.14 not in '<3.15,>=3.14.5'`.
-      #
-      # This job stays INDEPENDENT evidence over the installed artifact on a second OS, and
-      # that independence is unaffected: what makes it independent is the OS, the installed
-      # wheel and the directory-based selection, never the interpreter differing from the
-      # one the authoritative matrix pins.
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
           python-version: "3.14"
 
-      # The pinned Rust toolchain (rust-toolchain.toml at the repo root) applies
-      # here too — rustup walks up to it — so the wheel is built with the same
-      # compiler as the cargo/bazel gates.
-      - name: Select pinned toolchain (from rust-toolchain.toml)
-        run: rustup show && rustc --version && cargo --version
-
-      - name: Install maturin
-        run: pip install "maturin>=1.5,<2.0"
-
-      - name: Build the release wheel
-        run: maturin build --release --out dist
+      # The wheel is Bazel's: the PyO3 binding is built by the same Rust toolchain and crate
+      # universe as every other target, and packaged by rules_python's py_wheel.
+      - name: Build the SDK wheel (bazel build //sdk/python:wheel)
+        run: |
+          bazel build //sdk/python:wheel
+          echo "WHEEL=$PWD/$(bazel cquery --output=files //sdk/python:wheel 2>/dev/null | head -1)" >> "$GITHUB_ENV"
 
       - name: Regenerated parity oracle must match the committed one
-        # The frozen cross-language oracle (sdk/fixtures/parity_vectors.json) is what
-        # pins the Python and TypeScript bindings to the same bytes. If regenerating it
-        # changes anything, a binding drifted from the core — fail rather than ship.
-        working-directory: ${{ github.workspace }}
         run: |
           python -m venv /tmp/oracle
-          /tmp/oracle/bin/pip install --quiet sdk/python/dist/*.whl 2>/dev/null \
-            || /tmp/oracle/bin/pip install --quiet sdk/python/dist/*.whl
+          /tmp/oracle/bin/pip install --quiet "$WHEEL"
           /tmp/oracle/bin/python tools/gen_sdk_parity_fixture.py
           git diff --exit-code -- sdk/fixtures/parity_vectors.json
 
-      # Clean-env smoke install: a fresh venv gets ONLY the built wheel plus the
-      # upstream MCP SDK + pytest — never an editable install and never the
-      # source python/ tree on sys.path, so `import mcp_re_sdk` resolves to the
-      # INSTALLED wheel (its native mcp_re_sdk._core), proving the downloader
-      # artifact stands on its own.
-      # The upstream SDK is installed as the WHEEL'S OWN `mcp` extra, never as a
-      # restated `"mcp>=…"` on this line. pyproject declares `mcp>=1.16,<2.0`; naming
-      # the package here independently bypassed that cap, and when upstream published
-      # mcp 2.0.0 — where `JSONRPCMessage` stopped being a RootModel and became a
-      # plain union alias, so it is neither callable nor carries `.root` — this job
-      # installed it and 33 SDK tests failed on a branch that had not touched the SDK.
-      # One source for the constraint, the same rule VERSION and config/ports.toml get.
       - name: Clean-env install (wheel only) + smoke import
         run: |
           python -m venv /tmp/venv
           /tmp/venv/bin/pip install --upgrade pip
-          WHEEL="$(ls dist/*.whl)"
           /tmp/venv/bin/pip install "${WHEEL}[mcp]" "pytest>=8" "pytest-cov>=5"
           /tmp/venv/bin/python -c "import mcp_re_sdk, mcp_re_sdk._core; print('wheel import OK')"
 
-      # Run the SDK suite against the installed wheel from the repo root so the
-      # source package cannot shadow it. Coverage is gated at the repo-wide 90% bar
-      # by [tool.coverage.report] fail_under in sdk/python/pyproject.toml.
       - name: pytest + coverage gate (installed wheel)
-        working-directory: ${{ github.workspace }}
         run: |
           /tmp/venv/bin/python -m pytest sdk/python/tests -q \
             --cov --cov-config=sdk/python/pyproject.toml --cov-report=term-missing

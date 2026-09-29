@@ -320,6 +320,7 @@ else
           --label "org.opencontainers.image.revision=$src_rev" -t "$img" "$REPO_ROOT"
       else
         docker build -f "$dfile" \
+          --build-arg "DIST=deploy/docker/dist/$IMAGE_ARCH" \
           --label "org.opencontainers.image.revision=$src_rev" -t "$img" "$REPO_ROOT"
       fi
     else

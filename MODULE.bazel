@@ -33,6 +33,21 @@ module(
 
 bazel_dep(name = "rules_rust", version = "0.70.0")
 bazel_dep(name = "rules_python", version = "1.7.0")
+# The Python SDK's native module (`mcp_re_sdk._core`) is a PyO3 extension.
+bazel_dep(name = "rules_rust_pyo3", version = "0.70.0")
+
+# The interpreter the PyO3 toolchain configures the SDK's native module against. The
+# module is abi3, so this names the build interpreter, not the set it runs on.
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(
+    is_default = True,
+    python_version = "3.12",
+)
+
+register_toolchains(
+    "//bazel/pyo3:rust_pyo3_toolchain",
+    "//bazel/pyo3:pyo3_toolchain",
+)
 bazel_dep(name = "rules_shell", version = "0.6.1")
 bazel_dep(name = "platforms", version = "1.0.0")
 # `build_test`: compiles a `manual` target on every `bazel test //...` without running it.
@@ -315,6 +330,45 @@ crate.spec(
     version = "1",
     repositories = ["crates_mcp_re"],
 )
+# The Python SDK's native module (sdk/python). `abi3-py39` builds ONE extension every
+# CPython from 3.9 loads. The build scripts of pyo3-build-config and pyo3-ffi read the
+# interpreter configuration from the PyO3 toolchain (//bazel/pyo3), never from whatever
+# `python` a build host happens to have. The toolchain is named by its CANONICAL repository
+# (`@@rules_rust_pyo3+`): the crate repositories cannot see the apparent name, and
+# MODULE.bazel has no `Label()` to resolve it.
+crate.spec(
+    package = "pyo3",
+    version = "0.29",
+    features = [
+        "abi3-py39",
+        "extension-module",
+    ],
+    repositories = ["crates_mcp_re"],
+)
+crate.spec(
+    package = "pyo3-introspection",
+    version = "0.29",
+    repositories = ["crates_mcp_re"],
+)
+
+[
+    crate.annotation(
+        build_script_data = ["@@rules_rust_pyo3+//:current_pyo3_toolchain"],
+        build_script_env = {
+            "PYO3_CROSS": "$(PYO3_CROSS)",
+            "PYO3_CROSS_LIB_DIR": "$(PYO3_CROSS_LIB_DIR)",
+            "PYO3_CROSS_PYTHON_IMPLEMENTATION": "$(PYO3_CROSS_PYTHON_IMPLEMENTATION)",
+            "PYO3_CROSS_PYTHON_VERSION": "$(PYO3_CROSS_PYTHON_VERSION)",
+            "PYO3_NO_PYTHON": "$(PYO3_NO_PYTHON)",
+            "PYO3_PYTHON": "$(PYO3_PYTHON)",
+        },
+        build_script_toolchains = ["@@rules_rust_pyo3+//:current_pyo3_toolchain"],
+        crate = name,
+        repositories = ["crates_mcp_re"],
+    )
+    for name in ("pyo3-build-config", "pyo3-ffi")
+]
+
 crate.from_specs(
     name = "crates_mcp_re",
     cargo_lockfile = "//bazel:crates.lock",

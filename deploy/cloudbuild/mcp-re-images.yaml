@@ -36,7 +36,8 @@ steps:
   # Proof 4 cannot run on GKE.
   - name: gcr.io/cloud-builders/docker
     id: loadgen
-    args: [build, -f, deploy/docker/Dockerfile.loadgen, -t, "${_AR}/mcp-re-loadgen:0.17.0", .]
+    waitFor: [binaries]
+    args: [build, -f, deploy/docker/Dockerfile.loadgen, --build-arg, DIST=deploy/docker/dist/amd64, -t, "${_AR}/mcp-re-loadgen:0.17.0", .]
   # The ADR-051 §7 SLO baseline runner, run as K8s Jobs by tools/slo/run_slo_job.sh.
   # It is measured on the SAME cluster as the proofs, so it is built by the SAME submit.
   - name: gcr.io/cloud-builders/docker
