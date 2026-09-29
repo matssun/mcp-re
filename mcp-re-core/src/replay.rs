@@ -303,11 +303,11 @@ impl InMemoryReplayCache {
         }
     }
 
-    /// Override the fail-closed entry ceiling. Lets a bounded embedder pick a limit
-    /// that fits its memory budget, and lets a test exercise the ceiling without
-    /// inserting [`MAX_ENTRIES`] real entries.
+    /// Lower the fail-closed entry ceiling to fit a memory budget. The ceiling can
+    /// only be lowered, never raised, so the zero-ceiling clone of a poisoned cache
+    /// keeps refusing.
     pub fn with_max_entries(mut self, max_entries: usize) -> Self {
-        self.max_entries = max_entries;
+        self.max_entries = self.max_entries.min(max_entries);
         self
     }
 
@@ -587,9 +587,33 @@ mod tests {
         // An already-recorded triple is refused too — never admitted off an
         // unreadable seen-set.
         assert!(cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES).is_err());
-        // The inspection aids stay total.
+        // A poisoned prune evicts nothing.
         cache.prune(EXPIRES + SKEW + 1);
-        assert_eq!(cache.len(), 0);
+        cache.seen.clear_poison();
+        assert_eq!(
+            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            Ok(ReplayDecision::Replay),
+            "an evicting prune would have readmitted the triple"
+        );
+        assert_eq!(cache.len(), 1);
+    }
+
+    #[test]
+    fn a_poisoned_clone_cannot_be_reconfigured_into_admitting() {
+        let cache = InMemoryReplayCache::new(SKEW);
+        assert_eq!(
+            cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
+            Ok(ReplayDecision::Fresh)
+        );
+        poison(&cache);
+        let copy = cache.clone().with_max_entries(1_000);
+        for nonce in [NONCE, "fresh-nonce"] {
+            let refused = copy.check_and_insert(SIGNER, AUD, nonce, EXPIRES);
+            assert!(
+                matches!(refused, Err(ReplayCacheError::Unavailable { .. })),
+                "{nonce} must refuse as Unavailable, got {refused:?}"
+            );
+        }
     }
 
     #[test]
