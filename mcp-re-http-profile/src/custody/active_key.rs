@@ -96,13 +96,18 @@ impl ActiveDelegatedKey {
             return Err(HttpProfileError::DelegationCredentialInvalid);
         }
 
-        // The identity the response block will carry is the one the root signed.
-        if claims.mcp_re_server_signer != server_signer.actor_id() {
+        // The identity the response block will carry is the one the root signed, and its
+        // `keyid` is the delegated key's own id, not merely whatever the join spells.
+        if claims.mcp_re_server_signer != server_signer.actor_id()
+            || server_signer.keyid != claims.delegated_kid
+        {
             return Err(HttpProfileError::DelegationCredentialInvalid);
         }
 
         // The static delegation context: issuer, audience, profile, scope, epoch, key use,
-        // `jti`, `cnf`. Everything except the window, which the root owns.
+        // `jti`, `cnf`. Exempt are the window (`nbf`/`exp`), which the root owns, and `iat`,
+        // the root's own issuance stamp: no verifier stores or consumes it, so it is taken as
+        // the root states it.
         let mut as_requested = requested_claims.clone();
         as_requested.iat = claims.iat;
         as_requested.nbf = claims.nbf;
@@ -181,6 +186,7 @@ mod tests {
     use crate::delegation::JWK_KTY_OKP;
     use crate::delegation::KEY_USE_RESPONSE_SIGNING;
     use crate::keyid::jwk_thumbprint_ed25519;
+    use mcp_re_core::b64url_encode;
 
     const ROOT_KID: &str = "root-kid";
     const NBF: i64 = 1_000;
@@ -237,15 +243,15 @@ mod tests {
 
     /// Mint `returned` over the root and offer it as the answer to `requested`.
     fn offer(
-        key: &SigningKey,
         requested_claims: &DelegationClaims,
         header: &DelegationHeader,
         returned: &DelegationClaims,
     ) -> Result<ActiveDelegatedKey, HttpProfileError> {
-        let (_, _, server_signer) = requested(key);
+        let key = delegated();
+        let (_, _, server_signer) = requested(&key);
         let credential = issue_delegation_credential(&root(), header, returned);
         ActiveDelegatedKey::issued(
-            Arc::new(SigningKey::from_seed_bytes(&[101u8; 32])),
+            Arc::new(key),
             server_signer,
             (header, requested_claims),
             credential,
@@ -263,7 +269,7 @@ mod tests {
         let (header, request, _) = requested(&key);
         let mut clamped = request.clone();
         clamped.exp = EXP - 100;
-        let active = offer(&key, &request, &header, &clamped).expect("a clamp is legitimate");
+        let active = offer(&request, &header, &clamped).expect("a clamp is legitimate");
         assert_eq!(active.exp(), EXP - 100, "the credential decides the window");
         assert_eq!(active.nbf(), NBF);
     }
@@ -273,7 +279,7 @@ mod tests {
     fn a_credential_attesting_this_issuance_is_accepted_and_read_for_its_window() {
         let key = delegated();
         let (header, request, _) = requested(&key);
-        let active = offer(&key, &request, &header, &request).expect("the exact request");
+        let active = offer(&request, &header, &request).expect("the exact request");
         assert_eq!((active.nbf(), active.exp()), (NBF, EXP));
         assert_eq!(active.delegated_kid(), request.delegated_kid);
     }
@@ -283,7 +289,7 @@ mod tests {
     fn the_credential_id_is_read_out_of_the_credential() {
         let key = delegated();
         let (header, request, _) = requested(&key);
-        let active = offer(&key, &request, &header, &request).expect("the exact request");
+        let active = offer(&request, &header, &request).expect("the exact request");
         assert_eq!(
             active.jti(),
             format!("{ROOT_KID}#{}#0", request.delegated_kid)
@@ -339,10 +345,27 @@ mod tests {
             let mut returned = request.clone();
             mutate(&mut returned);
             assert!(
-                offer(&key, &request, &header, &returned).is_err(),
+                offer(&request, &header, &returned).is_err(),
                 "a credential differing in `{name}` was accepted"
             );
         }
+    }
+
+    /// Requested and returned claims agree, so only the comparison of the identity's join
+    /// against the credential's can refuse an identity the request did not name.
+    #[test]
+    fn an_identity_the_request_did_not_name_is_refused() {
+        let key = delegated();
+        let (header, mut request, signer) = requested(&key);
+        request.mcp_re_server_signer = "server:elsewhere".into();
+        let credential = issue_delegation_credential(&root(), &header, &request);
+        assert!(ActiveDelegatedKey::issued(
+            Arc::new(delegated()),
+            signer,
+            (&header, &request),
+            credential,
+        )
+        .is_err());
     }
 
     /// The header is part of what was asked for: a credential minted under another
@@ -373,10 +396,59 @@ mod tests {
             let mut returned = request.clone();
             returned.exp = exp;
             assert!(
-                offer(&key, &request, &header, &returned).is_err(),
+                offer(&request, &header, &returned).is_err(),
                 "nbf={NBF} exp={exp} was accepted as a window"
             );
         }
+    }
+
+    /// The whole-claim-set comparison rests on `DelegationClaims` being closed: a claim the
+    /// request never made is refused, and the hand-built JWS is well formed without it.
+    #[test]
+    fn a_credential_carrying_a_claim_the_request_did_not_is_refused() {
+        let key = delegated();
+        let (header, request, signer) = requested(&key);
+        let compact = |value: &serde_json::Value| {
+            let h = b64url_encode(&serde_json::to_vec(&header).expect("header"));
+            let p = b64url_encode(&serde_json::to_vec(value).expect("claims"));
+            let sig = root().sign(format!("{h}.{p}").as_bytes());
+            format!("{h}.{p}.{sig}")
+        };
+        let plain = serde_json::to_value(&request).expect("claims");
+        let mut extra = plain.clone();
+        extra
+            .as_object_mut()
+            .expect("claims are an object")
+            .insert("x_extra".into(), "1".into());
+        let offer_jws = |jws: String| {
+            ActiveDelegatedKey::issued(
+                Arc::new(delegated()),
+                signer.clone(),
+                (&header, &request),
+                jws,
+            )
+        };
+        assert!(offer_jws(compact(&plain)).is_ok(), "positive control");
+        assert!(offer_jws(compact(&extra)).is_err());
+    }
+
+    /// An identity naming a `keyid` other than the credential's `delegated_kid` is refused
+    /// although the credential attests that very identity, so only the `keyid` comparison
+    /// can refuse it.
+    #[test]
+    fn an_identity_naming_another_keyid_is_refused() {
+        let key = delegated();
+        let (header, mut request, mut signer) = requested(&key);
+        signer.keyid = "another-kid".into();
+        request.mcp_re_server_signer = signer.actor_id();
+        let credential = issue_delegation_credential(&root(), &header, &request);
+        assert!(ActiveDelegatedKey::issued(
+            Arc::new(delegated()),
+            signer,
+            (&header, &request),
+            credential,
+        )
+        .is_err());
     }
 
     /// Bytes that are not a credential at all.
