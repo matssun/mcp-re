@@ -3,7 +3,8 @@
 # Clippy debt registry — ADR-MCPRE-061 §6.4, §6.5 (C-4, C-5).
 #
 # Enforced by `scripts/clippy_ratchet_gate.py`, which switches the adopted lints on over
-# PRODUCTION targets only (`--lib --bins`) and compares per-crate counts against this file.
+# every PRODUCTION library and binary flavor under Bazel and compares per-crate counts against
+# this file.
 # Baselined at 4dc4dac.
 #
 # A count may only fall. Lowering one is the point; the gate FAILS if a count drops below
@@ -172,32 +173,42 @@ crate = "mcp-re-http-profile"
 lint = "too_many_lines"
 count = 0
 
+# MEASUREMENT CORRECTION (2026-09-29), not growth. The five mcp-re-proxy entries below were
+# measured by `cargo clippy --workspace --lib --bins`, which compiles DEFAULT features only,
+# so no site behind `async_serve`, `redis_replay`, `cpstore_etcd`, `online_ocsp`,
+# `pkcs11_keysource`, `aws_kms_keysource` or `gcp_kms_keysource` was ever linted. The gate
+# now lints every library and binary flavor that ships, and the entries equal that
+# measurement. The zeros MCPRE-176 recorded were true of the default-feature build and are
+# not true of the feature-gated modules, which that audit never compiled: the KMS signers,
+# SigV4 and STS, OCSP, PKCS#11, the Redis and etcd stores, the handshake quota and the
+# serving capability set. Those sites are unaudited debt, and each entry may only fall.
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "arithmetic_side_effects"
-count = 0
+count = 35
 
 # 72 -> 71: R11-014 replaced the enforcer's `.map(|_| ())` tail, which discarded the
 # verdict, with a match on its two arms. The nesting site went with the discarded value.
+# 70 -> 98 by the measurement correction above: 28 sites in feature-gated modules.
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "excessive_nesting"
-count = 70
+count = 98
 
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "expect_used"
-count = 0
+count = 4
 
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "indexing_slicing"
-count = 0
+count = 21
 
 [[debt]]
 crate = "mcp-re-proxy"
 lint = "too_many_lines"
-count = 0
+count = 2
 
 [[debt]]
 crate = "mcp-re-test-paths"

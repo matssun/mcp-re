@@ -176,12 +176,6 @@ EXEMPT: dict[str, str] = {
         "a kind-cluster Job-spec rehearsal; its wiring is policed by rehearsal_claim_gate.py"
     ),
     "scripts/demo-local.sh": "a demo runner, not a control",
-    # Linting was moved out of CI deliberately (pre-commit and local_gate.sh own it), so the
-    # ADR-MCPRE-061 §6 ratchet has no workflow step. The exemption records that decision; it
-    # does not claim the ratchet is enforced on the merge path.
-    "scripts/clippy_ratchet_gate.py": (
-        "lint ratchet, run by pre-commit and local_gate.sh; linting was moved out of CI"
-    ),
     # An environment shim consumed by `.` before anything runs. CI pins its toolchain in
     # the workflow instead, so there is nothing here for a job to invoke.
     "scripts/use_pinned_toolchain.sh": "sourced toolchain shim; CI pins its own",
