@@ -101,6 +101,21 @@ impl DelegatedRotationMetrics {
     }
 }
 
+/// What a [`DelegatedServerSigner`] holds, moved only under its write guard.
+///
+/// [`Empty`](Self::Empty) is the rotor's own fail-closed step ([`retire`]
+/// (DelegatedServerSigner::retire)): a later publish is the recovery it exists to allow.
+/// [`Terminal`](Self::Terminal) says the authority to mint is gone
+/// ([`retire_permanently`](DelegatedServerSigner::retire_permanently)) and is absorbing:
+/// no transition leaves it, so a key beside a terminal retirement is unrepresentable.
+#[derive(Default)]
+enum Snapshot {
+    #[default]
+    Empty,
+    Active(Arc<ActiveDelegatedKey>),
+    Terminal,
+}
+
 /// The shared hot-path signer: an atomically-swappable delegated-key snapshot.
 ///
 /// One instance is shared across every per-core runtime. `sign`-side callers read
@@ -113,19 +128,12 @@ impl DelegatedRotationMetrics {
 /// [`retire_permanently`](Self::retire_permanently) during an unwind — would otherwise
 /// turn every later [`current`](Self::current) on the replica into a panic inside the
 /// request future, replacing the designed fail-closed 503 with a connection reset and no
-/// audit reason. The state behind the lock is a single `Option<Arc<..>>` swapped whole, so
+/// audit reason. The state behind the lock is a single [`Snapshot`] replaced whole, so
 /// there is no half-written value to inherit; the fail-closed decision is made from what
 /// the guard holds, exactly as on the healthy path.
 #[derive(Default)]
 pub struct DelegatedServerSigner {
-    active: RwLock<Option<Arc<ActiveDelegatedKey>>>,
-    /// Set by [`retire_permanently`](Self::retire_permanently). Separate from an empty
-    /// `active` because the two retirements differ in whether they may be undone:
-    /// [`retire`](Self::retire) is the rotor's own fail-closed step and a later
-    /// [`publish`](Self::publish) is the recovery it exists to allow, while this one says
-    /// the authority to mint is gone. Without the distinction the difference is not
-    /// representable — both are `active = None`, and the next publish reverses either.
-    terminal: std::sync::atomic::AtomicBool,
+    active: RwLock<Snapshot>,
     metrics: DelegatedRotationMetrics,
 }
 
@@ -134,8 +142,7 @@ impl DelegatedServerSigner {
     /// until the rotor publishes the first key.
     pub fn new() -> Self {
         DelegatedServerSigner {
-            active: RwLock::new(None),
-            terminal: std::sync::atomic::AtomicBool::new(false),
+            active: RwLock::new(Snapshot::Empty),
             metrics: DelegatedRotationMetrics::default(),
         }
     }
@@ -168,7 +175,10 @@ impl DelegatedServerSigner {
         // `None` means NO KEY IS PUBLISHED and must not come to mean anything else, so an
         // unrepresentable difference saturates instead. `i64::MIN` reads as "long
         // expired", the fail-closed end the caller's `<= 0` test already handles.
-        guard.as_ref().map(|a| a.exp().saturating_sub(now))
+        match &*guard {
+            Snapshot::Active(a) => Some(a.exp().saturating_sub(now)),
+            Snapshot::Empty | Snapshot::Terminal => None,
+        }
     }
 
     /// Publish a freshly-issued/rotated delegated key snapshot for the hot path.
@@ -178,22 +188,25 @@ impl DelegatedServerSigner {
     /// flight when the owner retired would otherwise land afterwards and restore signing
     /// authority the owner had withdrawn.
     pub fn publish(&self, active: ActiveDelegatedKey) {
-        if self.is_terminal() {
-            return;
-        }
-        *self
+        let mut guard = self
             .active
             .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Arc::new(active));
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !matches!(*guard, Snapshot::Terminal) {
+            *guard = Snapshot::Active(Arc::new(active));
+        }
     }
 
     /// Retire the current snapshot — the hot path then fails closed until a new key
     /// is published. Used on fail-closed issuance (ADR-MCPRE-052 §6).
     pub fn retire(&self) {
-        *self
+        let mut guard = self
             .active
             .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !matches!(*guard, Snapshot::Terminal) {
+            *guard = Snapshot::Empty;
+        }
     }
 
     /// Retire, permanently: no later [`publish`](Self::publish) can restore signing.
@@ -203,17 +216,15 @@ impl DelegatedServerSigner {
     /// rotation thread dying — both of which state exactly that, and neither of which
     /// could enforce it while the flag they set was one a live rotor could overwrite.
     pub fn retire_permanently(&self) {
-        self.terminal
-            .store(true, std::sync::atomic::Ordering::SeqCst);
-        self.retire();
-    }
-
-    fn is_terminal(&self) -> bool {
-        self.terminal.load(std::sync::atomic::Ordering::SeqCst)
+        *self
+            .active
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Snapshot::Terminal;
     }
 
     /// The current delegated key snapshot IFF it is still valid at `now`. Returns
-    /// `None` before the first issuance, after retirement, or once `now >= exp` —
+    /// `None` before the first issuance, after retirement, before the credential's `nbf`,
+    /// or once `now >= exp` — the window is `[nbf, exp)` as the credential states it, and
     /// the fail-closed expiry bound (the credential is never honored past its
     /// window, matching the verifier, ADR-MCPRE-052 §6).
     ///
@@ -232,15 +243,12 @@ impl DelegatedServerSigner {
     /// outstanding authority is therefore an exchange's lifetime, and the credential's own
     /// `exp` above that — never longer than either.
     pub fn current(&self, now: i64) -> Option<Arc<ActiveDelegatedKey>> {
-        if self.is_terminal() {
-            return None;
-        }
         let guard = self
             .active
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        match guard.as_ref() {
-            Some(a) if now < a.exp() => Some(Arc::clone(a)),
+        match &*guard {
+            Snapshot::Active(a) if a.nbf() <= now && now < a.exp() => Some(Arc::clone(a)),
             _ => None,
         }
     }
@@ -726,6 +734,30 @@ mod terminal_retirement_tests {
              would keep being signed off a key nothing rotates and no trust-epoch \
              advance can revoke"
         );
+        assert_eq!(signer.seconds_to_expiry(NOW), None);
+    }
+
+    /// Terminal retirement is absorbing: the rotor's `retire` must not overwrite it.
+    #[test]
+    fn a_rotor_retire_after_permanent_retirement_cannot_reopen_publish() {
+        let signer = DelegatedServerSigner::new();
+        signer.publish(key(NOW + 300));
+        signer.retire_permanently();
+        signer.retire();
+        signer.publish(key(NOW + 300));
+        assert!(signer.current(NOW).is_none());
+        assert_eq!(signer.seconds_to_expiry(NOW), None);
+    }
+
+    /// The window is `[nbf, exp)`: nothing is served before the credential's `nbf`.
+    #[test]
+    fn a_snapshot_is_not_served_before_its_nbf() {
+        let signer = DelegatedServerSigner::new();
+        let k = key(NOW + 300);
+        let nbf = k.nbf();
+        signer.publish(k);
+        assert!(signer.current(nbf - 1).is_none());
+        assert!(signer.current(nbf).is_some());
     }
 
     /// Negative control: the ROTOR's own fail-closed retirement is still recoverable.
