@@ -140,6 +140,8 @@ stage_static() {
     && python3 scripts/node_runtime_gate.py \
     && python3 scripts/test_target_gate.py --selftest \
     && python3 scripts/test_target_gate.py \
+    && python3 scripts/test_inventory_gate.py --selftest \
+    && python3 scripts/test_inventory_gate.py \
     && python3 scripts/lifecycle_purity_gate.py --selftest \
     && python3 scripts/lifecycle_purity_gate.py \
     && python3 scripts/registry_approval_gate.py --selftest \

@@ -300,7 +300,9 @@ def _walk_rust_file(
                         project=package,
                         identity=f"{target}#{'::'.join(segments)}",
                         kind="rust-test",
-                        carrier=path.relative_to(REPO_ROOT).as_posix(),
+                        # Normalized: a `#[path = "../x/mod.rs"]` module is reached through
+                        # `..`, and the file is one carrier however it is reached.
+                        carrier=path.resolve().relative_to(REPO_ROOT.resolve()).as_posix(),
                         line=number,
                     )
                 )

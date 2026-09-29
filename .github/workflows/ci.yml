@@ -252,6 +252,15 @@ jobs:
           python3 scripts/test_target_gate.py --selftest
           python3 scripts/test_target_gate.py
 
+      # Every `#[test]` in the tree is reachable from a crate root some Bazel `rust_test`
+      # compiles: a `tests/*.rs` with no target, or a module no root declares, holds tests
+      # nothing ever runs while every lane stays green. The compiled half — a test a
+      # `cfg(feature)` compiles out of every flavor — is test-inventory.yml, weekly.
+      - name: Test-inventory gate (static)
+        run: |
+          python3 scripts/test_inventory_gate.py --selftest
+          python3 scripts/test_inventory_gate.py
+
       # Lifecycle purity (ADR-MCPRE-056/057): `runtime_state.rs` and `exchange_state.rs`
       # are values, not behaviour. A `use` of a production module would let "is this
       # transition legal?" answer two ways on the same arguments, which is what SL-04

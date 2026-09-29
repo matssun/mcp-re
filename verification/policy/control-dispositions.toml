@@ -12216,7 +12216,7 @@ recorded = "2026-09-26"
 [[disposition]]
 id = "CD-20006"
 project = ""
-control = "gate#scripts/test_inventory_parity.py"
+control = "gate#scripts/test_inventory_gate.py"
 decision = "not-evidence"
 reason_family = "ND-004"
 recorded = "2026-09-26"
