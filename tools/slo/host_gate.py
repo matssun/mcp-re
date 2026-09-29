@@ -556,6 +556,48 @@ def admit_job(p: dict[str, Path], ident: JobIdentity, watch_pid: int,
     return proc
 
 
+#: How often a waiting local lease repeats what it is waiting for.
+LEASE_POLL_S = float(os.environ.get("MCP_RE_ARBITER_LEASE_POLL_S", 30))
+
+
+def local_lease_key(pid: int | None = None) -> str:
+    """A holder key for a command run by hand on this host, unique per lease process.
+
+    `JobIdentity.from_env()` outside a runner yields the same key for every caller, so two
+    concurrent leases would share one holder record; the pid makes each its own.
+    """
+    user = os.environ.get("USER") or "user"
+    raw = f"local-{user}-{pid or os.getpid()}"
+    return "".join(c if c.isalnum() or c in "-_." else "_" for c in raw)
+
+
+def admit_local(p: dict[str, Path], key: str, watch_pid: int, record: dict,
+                bounds: dict | None = None, on_wait=None, poll_s: float = LEASE_POLL_S):
+    """Take the HEAVY lock set for a command started by hand, not by a runner.
+
+    The same plan a dev1 CI job takes -- heavy EX -> gate SH -> host SH -- under the same
+    holder, so a local run and a CI job exclude each other exactly as two CI jobs do, and
+    an SLO reservation drains it like any other admitted job. `watch_pid` is the lease
+    process: when it exits, by any cause, the holder exits and the kernel frees the locks.
+    Returns the holder process; raises ArbiterError when refused.
+    """
+    repair_stale_gate(p)
+    b = {**lock_bounds(), **(bounds or {})}
+    proc, r = host_locks.spawn_holder(p["root"], p["mirror"], key, "heavy", watch_pid, b,
+                                      record)
+    total = sum(int(b[step[3]]) for step in host_locks.PLANS["heavy"] if step[0] == "take") + 60
+    try:
+        answer = host_locks.await_answer(proc, r, total, on_idle=on_wait, poll_s=poll_s)
+    except BaseException:
+        proc.terminate()
+        raise
+    if answer != "ADMITTED":
+        log(p, "lease.refused", key=key, answer=answer)
+        raise ArbiterError(answer)
+    log(p, "lease.admitted", key=key, holder=proc.pid, watch=watch_pid)
+    return proc
+
+
 def job_completed(p: dict[str, Path], ident: JobIdentity) -> dict:
     """Release whatever this job held: success, failure and cancellation alike.
 

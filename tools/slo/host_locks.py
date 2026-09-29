@@ -33,6 +33,7 @@ a different inode, and a lock on the old one silently stops excluding the new on
     gate   SLO: EXCLUSIVE for its whole run    everyone else: SHARED, only while admitted
     host   SLO: EXCLUSIVE (= the drain)        every admitted job: SHARED for its lifetime
     heavy  dev1 / dev1-mcp-re jobs: EXCLUSIVE  fast lane and SLO: not taken
+           a local lease (`runner-arbiter local-lease -- <cmd>`): EXCLUSIVE, the heavy plan
 
     ordinary:  gate SH -> host SH -> release gate
     heavy:     heavy EX -> gate SH -> host SH -> release gate
@@ -138,12 +139,15 @@ def spawn_holder(root: Path, mirror: Path, key: str, plan: str, watch_pid: int,
 
 
 def await_answer(proc: subprocess.Popen, r: int, timeout_s: float,
-                 on_gate: Optional[Callable[[], None]] = None) -> str:
+                 on_gate: Optional[Callable[[], None]] = None,
+                 on_idle: Optional[Callable[[], None]] = None,
+                 poll_s: float = 60) -> str:
     """The holder's final answer: "ADMITTED" or "REFUSED: <why>".
 
     An SLO holder first reports "GATE" -- it holds the gate exclusively and is draining --
     and `on_gate` runs then. A holder that exits without a final answer has refused: its
-    locks are already gone with it.
+    locks are already gone with it. `on_idle` runs every `poll_s` seconds the holder stays
+    silent, so an interactive waiter can say what it is still waiting for.
     """
     buf = b""
     deadline = time.monotonic() + timeout_s
@@ -161,8 +165,10 @@ def await_answer(proc: subprocess.Popen, r: int, timeout_s: float,
             if left <= 0:
                 proc.kill()
                 return f"REFUSED: the lock holder did not answer within {int(timeout_s)}s"
-            ready, _, _ = select.select([r], [], [], min(left, 60))
+            ready, _, _ = select.select([r], [], [], min(left, poll_s))
             if not ready:
+                if on_idle is not None:
+                    on_idle()
                 continue
             chunk = os.read(r, 4096)
             if not chunk:

@@ -856,6 +856,89 @@ def test_the_hook_returns_while_the_holder_lives() -> None:
     check("until the worker exits", within(lambda: locks(paths)["host"] == "free") is not None)
 
 
+ARBITER = Path(__file__).resolve().parent / "runner_arbiter.py"
+
+
+def lease(paths: dict, *command: str, **env: str) -> subprocess.Popen:
+    """`runner-arbiter local-lease -- command...` against this test's temp root."""
+    return subprocess.Popen(
+        [sys.executable, str(ARBITER), "--root", str(paths["root"]),
+         "--mirror", str(paths["mirror"]), "local-lease", "--", *command],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        env={**os.environ, "MCP_RE_ARBITER_LEASE_POLL_S": "0.3", **env})
+
+
+def test_local_lease() -> None:
+    print("\na command run by hand takes the heavy slot, waits for CI, and lets go on exit")
+    saved = host_gate.HEAVY_RUNNERS
+    host_gate.HEAVY_RUNNERS = frozenset({"dev1"})
+    try:
+        paths = fresh()
+        tmp = Path(tempfile.mkdtemp())
+        seen = tmp / "seen"
+
+        # Held while the command runs, as the heavy plan: heavy EX, host SH.
+        proc = lease(paths, "sh", "-c", f'echo "$RUNNER_ARBITER_LEASE" > {seen}; sleep 2')
+        held = within(lambda: seen.exists() and locks(paths)["heavy"] == "exclusive")
+        check("the lease holds the heavy lock exclusively while its command runs",
+              held is not None, str(locks(paths)))
+        check("and the host lock shared, like an admitted job",
+              locks(paths)["host"] == "shared", str(locks(paths)))
+        keys = [h.get("key") for h in host_locks.holders(paths["root"])]
+        check("its holder record is a local key, not a runner job's",
+              any(str(k).startswith("local-") for k in keys), str(keys))
+        check("the command is told it is inside a lease",
+              within(lambda: seen.read_text().strip().startswith("local-")) is not None)
+        proc.wait(10)
+        check("the lock is released when the command ends",
+              within(lambda: all(v == "free" for v in locks(paths).values())) is not None,
+              str(locks(paths)))
+
+        # The exit status is the command's.
+        proc = lease(paths, "sh", "-c", "exit 7")
+        check("the command's exit status is returned", proc.wait(10) == 7, str(proc.returncode))
+
+        # Behind a heavy CI job: waits, says for whom, and starts only after it ends.
+        ci = admitted(paths, ordinary(40, "dev1"))
+        marker = tmp / "started"
+        proc = lease(paths, "touch", str(marker))
+        time.sleep(1.5)
+        check("a lease behind a heavy CI job does not start its command",
+              not marker.exists() and proc.poll() is None)
+        ci.end()
+        out, err = proc.communicate(timeout=10)
+        check("it names the CI job it is waiting for", ci.ident.key in err, err)
+        check("and runs once that job ends", proc.returncode == 0 and marker.exists(),
+              f"{proc.returncode} {err}")
+
+        # A CI job arriving during a lease waits for it: the exclusion is mutual.
+        proc = lease(paths, "sleep", "3")
+        within(lambda: locks(paths)["heavy"] == "exclusive")
+        check("a heavy CI job is refused at its bound while a lease holds the slot",
+              refusal(paths, ordinary(41, "dev1")) is not None)
+        proc.wait(10)
+
+        # SIGTERM to the lease reaches the command and ends the lease.
+        proc = lease(paths, "sleep", "60")
+        within(lambda: locks(paths)["heavy"] == "exclusive")
+        time.sleep(0.3)
+        proc.terminate()
+        code = proc.wait(10)
+        check("SIGTERM is forwarded to the command", code == 128 + 15, str(code))
+        check("and the lock is released",
+              within(lambda: locks(paths)["heavy"] == "free") is not None, str(locks(paths)))
+
+        # A lease killed outright cannot leave the lock behind.
+        proc = lease(paths, "sleep", "60")
+        within(lambda: locks(paths)["heavy"] == "exclusive")
+        proc.kill()
+        proc.wait()
+        check("a SIGKILLed lease leaves no lock behind",
+              within(lambda: locks(paths)["heavy"] == "free") is not None, str(locks(paths)))
+    finally:
+        host_gate.HEAVY_RUNNERS = saved
+
+
 def main() -> int:
     print("host-gate controls — temp directories only, no /opt, no runner")
     # The heavy slot serializes dev1 jobs; the older tests admit several at once, so they run
@@ -872,7 +955,8 @@ def main() -> int:
                test_capacity_refusal, test_the_hook_consults_the_guard,
                test_heavy_slot, test_stopped_participants_are_quiet,
                test_the_holder_needs_something_to_watch,
-               test_the_hook_returns_while_the_holder_lives):
+               test_the_hook_returns_while_the_holder_lives,
+               test_local_lease):
         fn()
     for worker in STARTED_WORKERS:
         if worker.poll() is None:
