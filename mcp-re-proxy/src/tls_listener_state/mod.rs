@@ -450,11 +450,25 @@ mod tests {
     #[test]
     fn no_config_this_owner_builds_can_resume_outside_the_store() {
         let (chain, key) = credential();
+        let (delegated_chain, signer) = delegated_credential();
         let state = TlsListenerSecurityState::new(vec![ca()]);
-        let config = state
-            .build_exported_key_config(chain, key, Vec::new())
-            .expect("build");
-        assert!(!config.ticketer.enabled());
-        assert_eq!(config.max_early_data_size, 0);
+        let configs = [
+            state
+                .build_exported_key_config(chain, key, Vec::new())
+                .expect("exported-key build"),
+            state
+                .build_delegated_config(delegated_chain, signer, Vec::new())
+                .expect("delegated build"),
+        ];
+        for (n, config) in configs.iter().enumerate() {
+            assert!(
+                !config.ticketer.enabled(),
+                "builder {n} enabled stateless tickets"
+            );
+            assert_eq!(
+                config.max_early_data_size, 0,
+                "builder {n} enabled early data"
+            );
+        }
     }
 }
