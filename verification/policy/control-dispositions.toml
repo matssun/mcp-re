@@ -13701,3 +13701,11 @@ control = "src/lib.rs#http_profile_serve::signing_window::tests::the_window_adve
 decision = "new-proposition"
 proposition = "NP-224"
 recorded = "2026-09-29"
+
+[[disposition]]
+id = "CD-20133"
+project = ""
+control = "gate#scripts/extraction_image_gate.py"
+decision = "not-evidence"
+reason_family = "ND-004"
+recorded = "2026-09-29"

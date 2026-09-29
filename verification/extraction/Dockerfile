@@ -2,124 +2,108 @@
 #
 # ADR-MCPRE-059 §19 — the extraction container.
 #
-# The Charon -> LLBC -> Aeneas -> Lean pipeline runs here and nowhere else. Charon is a
-# rustc driver linking the private compiler crates; on aarch64-apple-darwin the `rustc-dev`
-# component ships those crates as .rmeta only, with no .rlib for the crates Charon names,
-# so it cannot link on the macOS host. On aarch64-unknown-linux-gnu the same component
-# ships the .rlib files and Charon builds unmodified. We change the host, not the tool.
+# The Charon -> LLBC -> Aeneas -> Lean pipeline runs here and nowhere else. Charon's driver
+# links the private compiler crates of one exact nightly, which is why the pipeline has a
+# host of its own rather than running on a developer machine.
+#
+# THIS IMAGE BUILDS NEITHER TOOL. Aeneas and Charon enter it as upstream release binaries,
+# each downloaded from the URL `verification/policy/toolchains.lock.toml` pins and refused
+# unless its SHA-256 is the pinned one. The pair is the one Aeneas itself declares: the
+# Aeneas commit's own `charon-pin` names the Charon commit, and the build checks that three
+# ways below. `scripts/extraction_image_gate.py` holds this definition to that — every
+# Aeneas/Charon artifact it installs is a pinned, digest-checked download, and it clones and
+# builds neither.
 #
 # Built and identified by `tools/verification/extraction-image`, which records the image's
 # own content digest in `verification/policy/toolchains.lock.toml [extraction_container]`.
 # Until an identity is recorded the Lean lane refuses to run, which is the mechanism, not
 # an unfinished step. There is no registry in that path: see
 # verification/reviews/rulings/extraction-artifact-storage-2026-09-09.md.
-
-# Pinned by DIGEST, not by tag: `bookworm-slim` is a moving pointer and Debian rebuilds it,
-# so a tag would let the base change under an unchanged definition digest.
+#
 # WHAT THIS DEFINITION STILL RESOLVES AT BUILD TIME, and therefore what the recorded
 # ARTIFACT identity — not the declared inputs — is what pins:
 #
 #   * `apt-get install` package versions, from whatever the archive holds that day;
 #   * the rustup installer at https://sh.rustup.rs, which moves;
-#   * `opam install` library versions — and these BUILD THE AENEAS BINARY, so a different
-#     `visitors` or `zarith` can produce a different extracted model from identical Rust.
+#   * the mathlib cache `lake exe cache get` fetches for the pinned mathlib revision.
 #
 # That is why `[extraction_container].artifact_digest` records the image that was actually
-# built rather than deriving one from the pins: this definition is not reproducible, and
-# saying so is the honest form. See
-# verification/reviews/rulings/extraction-artifact-storage-2026-09-09.md.
+# built rather than deriving one from the pins.
 
+# Pinned by DIGEST, not by tag: `bookworm-slim` is a moving pointer and Debian rebuilds it,
+# so a tag would let the base change under an unchanged definition digest.
 FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
 
-# Charon's rust-toolchain and the Aeneas charon-pin. These are build arguments so the
-# image records which pins it was built for; they must agree with the lock file.
-ARG CHARON_COMMIT=340b1af4df92608d0911fc2ba26eef3fd3a30ab4
-ARG AENEAS_COMMIT=daa85d7e89400fa978be83fedbc7e475a83f0889
-ARG RUST_NIGHTLY=nightly-2026-06-01
-ARG OCAML_VERSION=5.3.0
+# The pinned release artifacts. Build arguments so the image records which pins it was built
+# for; `scripts/extraction_image_gate.py` requires each default to equal the lock.
+ARG CHARON_COMMIT=b82d2748c1e5bfd9519cd9401f9186d33b44a7f1
+ARG CHARON_URL=https://github.com/AeneasVerif/charon/releases/download/nightly-2026.09.04/charon-linux-aarch64.tar.gz
+ARG CHARON_SHA256=ef0fc8a0c40e0b57e36ccca035f22a78ce2ad97acabc1bde8134b2314a3b0516
+ARG CHARON_BIN_SHA256=3b718a8c223aaa5a09a610acf1b7b7d218c5775c5d4a8118b78a49ba13104cc0
+ARG CHARON_DRIVER_SHA256=e1471969ab794c8b6676a8dc1dd836e55ff060cf40561b3ced13fe0c019ce1f9
+ARG AENEAS_COMMIT=8d58d14ad655b3d871af1038c203c3f524ab4df9
+ARG AENEAS_URL=https://github.com/AeneasVerif/aeneas/releases/download/nightly-2026.09.07-8d58d14/aeneas-linux-aarch64.tar.gz
+ARG AENEAS_SHA256=d170dde7f25cb32604b376f6f74ae442c2e407d20353ce331a2fc269522f7967
+ARG AENEAS_BIN_SHA256=493fbc8bba182a9d5386e220aef35577a3c3919526919c02a9629ca97e15f16e
+ARG RUST_NIGHTLY=nightly-2026-08-18
 
 ENV DEBIAN_FRONTEND=noninteractive \
     RUSTUP_HOME=/opt/rustup \
-    CARGO_HOME=/opt/cargo \
-    OPAMROOT=/opt/opam \
-    PATH=/opt/cargo/bin:/opt/opam/default/bin:$PATH
+    CARGO_HOME=/opt/rust-home \
+    PATH=/opt/rust-home/bin:$PATH
 
 # `python3` is here because the lane's own entry points are Python and they run INSIDE this
-# image: `regenerate-lean` drives Charon and Aeneas, `verify-lean` drives lake and reads
-# `#print axioms`. Without it the container answers `/usr/bin/env: 'python3': No such file
-# or directory` — measured, on the first real run of the pipeline. It parses the toolchain
-# lock with the standard library, so the requirement is `tomllib`, which is 3.11+; bookworm
-# ships 3.11. It is an interpreter for the harness and never a prover: nothing it does
-# decides a proof obligation.
+# image: `regenerate-lean` drives the Bazel extraction and Aeneas, `verify-lean` drives lake
+# and reads `#print axioms`. It parses the toolchain lock with the standard library, so the
+# requirement is `tomllib`, which is 3.11+; bookworm ships 3.11. `git` is lake's: it clones
+# the Lean packages the Aeneas backend's manifest pins. `build-essential` is the C toolchain
+# Bazel's Rust rules configure at analysis and link the dependencies' build scripts with.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential ca-certificates curl git make m4 unzip \
-        libgmp-dev pkg-config bubblewrap rsync opam python3 \
+        build-essential ca-certificates curl git python3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Rust: the nightly Charon pins, with the compiler-internal components it links against.
+# The rustc Charon's driver was built against. Nothing is compiled with it here: the driver
+# loads `librustc_driver` from this exact nightly at run time, and the crates Charon reads are
+# built on the same nightly by Bazel. Minimal profile, with the components Charon's own
+# `rust-toolchain` names.
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --no-modify-path --default-toolchain "${RUST_NIGHTLY}" \
-          --component rustc-dev,llvm-tools-preview,rust-src \
-    && rustc --version && cargo --version
+        | sh -s -- -y --no-modify-path --profile minimal --default-toolchain "${RUST_NIGHTLY}" \
+          --component rustc-dev,llvm-tools,rust-src,miri \
+    && rustc --version
 
-# OCaml for Aeneas. opam comes from apt; the pinned identity is the COMPILER version,
-# which opam builds from source into the switch, not the opam client itself.
-RUN opam init --bare --disable-sandboxing -y \
-    && opam switch create default "${OCAML_VERSION}" \
-    && eval "$(opam env)" \
-    && opam install -y \
-        calendar core_unix domainslib easy_logging menhir ocamlformat.0.27.0 \
-        ocamlgraph odoc ppx_deriving ppx_deriving_yojson progress unionFind \
-        visitors yojson zarith
+# Charon: the pinned release, checked by archive digest and by the digest of each binary.
+RUN curl -fsSL -o /tmp/charon.tar.gz "${CHARON_URL}" \
+    && echo "${CHARON_SHA256}  /tmp/charon.tar.gz" | sha256sum -c - \
+    && mkdir -p /opt/charon/bin \
+    && tar -xzf /tmp/charon.tar.gz -C /opt/charon/bin charon charon-driver rust-toolchain \
+    && rm /tmp/charon.tar.gz \
+    && echo "${CHARON_BIN_SHA256}  /opt/charon/bin/charon" | sha256sum -c - \
+    && echo "${CHARON_DRIVER_SHA256}  /opt/charon/bin/charon-driver" | sha256sum -c - \
+    && grep -q "channel = \"${RUST_NIGHTLY}\"" /opt/charon/bin/rust-toolchain
 
-# Aeneas, and Charon at the commit Aeneas' charon-pin names. The pair moves together: a
-# Charon whose LLBC the pinned Aeneas does not claim to accept is not a valid combination.
-# Charon must live at ./charon inside the Aeneas tree — that is where Aeneas' own
-# check-charon-install.sh looks, and it verifies the commit matches charon-pin.
-RUN git clone https://github.com/AeneasVerif/aeneas /opt/aeneas \
-    && git -C /opt/aeneas checkout "${AENEAS_COMMIT}" \
-    && test "$(tail -1 /opt/aeneas/charon-pin)" = "${CHARON_COMMIT}" \
-    && git clone https://github.com/AeneasVerif/charon /opt/aeneas/charon \
-    && git -C /opt/aeneas/charon checkout "${CHARON_COMMIT}"
+# Aeneas: the pinned release — the static `aeneas` binary and its Lean backend.
+RUN curl -fsSL -o /tmp/aeneas.tar.gz "${AENEAS_URL}" \
+    && echo "${AENEAS_SHA256}  /tmp/aeneas.tar.gz" | sha256sum -c - \
+    && mkdir -p /opt/aeneas/bin \
+    && tar -xzf /tmp/aeneas.tar.gz -C /opt/aeneas \
+    && rm /tmp/aeneas.tar.gz \
+    && mv /opt/aeneas/aeneas /opt/aeneas/bin/aeneas \
+    && echo "${AENEAS_BIN_SHA256}  /opt/aeneas/bin/aeneas" | sha256sum -c -
 
-# Charon's OCaml half (charon-ml) is what Aeneas links against, so its opam dependencies
-# belong in the switch alongside the Aeneas ones. Both local package definitions must be
-# named together: charon.opam depends on name_matcher_parser, which is a sibling package
-# in this same repository rather than something opam can resolve from the registry.
-RUN cd /opt/aeneas/charon && eval "$(opam env)" \
-    && opam install -y --deps-only ./charon.opam ./name_matcher_parser.opam
+# THE PAIR IS AENEAS'S OWN, checked three ways, each able to fail the build:
+#   1. the Aeneas commit's `charon-pin` names the pinned Charon commit;
+#   2. the Charon binary states that commit itself;
+#   3. the Charon binaries Aeneas ships in its own release are byte-identical to the pinned
+#      Charon release's.
+RUN test "$(curl -fsSL "https://raw.githubusercontent.com/AeneasVerif/aeneas/${AENEAS_COMMIT}/charon-pin" | tail -1)" = "${CHARON_COMMIT}" \
+    && grep -qaF "${CHARON_COMMIT}" /opt/charon/bin/charon \
+    && cmp /opt/aeneas/charon /opt/charon/bin/charon \
+    && cmp /opt/aeneas/charon-driver /opt/charon/bin/charon-driver \
+    && rm /opt/aeneas/charon /opt/aeneas/charon-driver
 
-# `make build` builds BOTH halves — the Rust driver (release) and charon-ml — and installs
-# them into charon/bin, which is where Aeneas expects them. A bare `cargo build` produces
-# only the Rust half and leaves the Aeneas build failing its charon check.
-#
-# Status is checked directly rather than through a pipeline: a pipeline reports its last
-# stage, so a failed build can exit 0 and be baked into the image as a successful one.
-#
-# The cargo target directory for a rustc driver is many gigabytes and is dead weight once
-# the binaries are in bin/. It is removed in the SAME layer as the build: deleting it in a
-# later layer would leave the bytes in this one, and every layer is extracted on pull.
-RUN cd /opt/aeneas/charon && eval "$(opam env)" && make build \
-    && test -x /opt/aeneas/charon/bin/charon \
-    && test -x /opt/aeneas/charon/bin/charon-driver \
-    && rm -rf /opt/aeneas/charon/charon/target \
-    && rm -rf "${CARGO_HOME}/registry" "${CARGO_HOME}/git"
-
-RUN cd /opt/aeneas && eval "$(opam env)" && make \
-    && test -x /opt/aeneas/bin/aeneas \
-    && rm -rf /opt/aeneas/src/_build /opt/aeneas/tests/test_runner/_build \
-    && opam clean -a -c -r --logs
-
-# Lean, via elan. Step 6 of the authoritative loop (the Lean build/proofs) runs in this
-# image too, so the toolchain must live here rather than on the host.
-#
-# `--default-toolchain none` is deliberate. elan's own default is whatever stable Lean it
-# resolves at build time, and the 2026-08-30 measurement found exactly that: the image held
-# v4.33.0 while [lean] pins v4.31.0, so the Lean half of the pipeline could not run at all
-# and the lane was pinned to an image that could not honour the pin. The toolchain this
-# image installs is the one the pinned Aeneas backend DECLARES, read out of the backend's
-# own lean-toolchain and cross-checked against the build argument — if the two disagree the
-# build fails here rather than producing an image whose Lean is not the pinned Lean.
+# Lean, via elan. The Lean build and proofs run in this image too, so the toolchain must
+# live here rather than on the host. `--default-toolchain none`, and the toolchain installed
+# is the one the pinned Aeneas backend DECLARES, cross-checked against the build argument.
 ARG LEAN_TOOLCHAIN=leanprover/lean4:v4.31.0
 # Pinned by COMMIT. `master` is a moving ref, so the installer could change between two
 # builds of the same declared toolchain.
@@ -130,12 +114,10 @@ RUN curl -fsSL https://raw.githubusercontent.com/leanprover/elan/0e36a07b9bbcc53
     && /root/.elan/bin/elan default "${LEAN_TOOLCHAIN}" \
     && /root/.elan/bin/lean --version
 
-# The Aeneas Lean backend, BUILT. A generated model is proved against this library, so an
-# image carrying its sources and no `.lake` build is an image in which nothing elaborates —
-# the second half of what the 2026-08-30 measurement found. Its mathlib dependency is
-# fetched from the cache where one exists for this toolchain; building it from source is
-# the fallback rather than the plan, and either way the `.lake/build` directory must exist
-# afterwards or the image is not usable and the build stops here.
+# The Aeneas Lean backend, BUILT. The release ships the backend's own `.lake/build`; its
+# packages — mathlib and the rest the manifest pins — are fetched here, mathlib from its
+# cache. A backend with no `.lake/build` is one nothing elaborates against, so the build
+# stops here without it.
 ENV PATH=/root/.elan/bin:$PATH
 RUN cd /opt/aeneas/backends/lean \
     && (lake exe cache get || echo "no mathlib cache for this package; building from source") \
@@ -143,7 +125,7 @@ RUN cd /opt/aeneas/backends/lean \
     && test -d /opt/aeneas/backends/lean/.lake/build
 
 ENV \
-    CHARON_EXE=/opt/aeneas/charon/bin/charon \
+    CHARON_EXE=/opt/charon/bin/charon \
     AENEAS_EXE=/opt/aeneas/bin/aeneas
 
 WORKDIR /workspace

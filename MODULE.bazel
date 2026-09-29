@@ -114,7 +114,7 @@ rust.toolchain(
     # that lane sets.
     versions = [
         "1.97.1",
-        "nightly/2026-06-01",
+        "nightly/2026-08-18",
     ],
     # Cross-compile the image binaries to Linux from a darwin host: amd64 for the
     # registry images, arm64 for the local kind fleet on Apple Silicon
