@@ -85,7 +85,9 @@ else
 fi
 
 # --- 3. Two proxy replicas on the SHARED redis tier -----------------------------
-cargo build -q -p mcp-re-proxy --features redis_replay --example http_profile_proxy --example http_profile_client
+bazel build //mcp-re-proxy:http_profile_proxy //mcp-re-proxy:http_profile_client
+HPP_PROXY="$(bazel cquery --output=files //mcp-re-proxy:http_profile_proxy 2>/dev/null)"
+HPP_CLIENT="$(bazel cquery --output=files //mcp-re-proxy:http_profile_client 2>/dev/null)"
 
 # Both replicas verify against the SAME canonical @target-uri (the logical service
 # URI a load balancer fronts), so one signed request is valid at either.
@@ -95,9 +97,9 @@ export HPP_REDIS_URL="redis://127.0.0.1:${REDIS}"
 export HPP_REPLAY_TIER="${TIER}"
 
 echo "proxy: starting replica A (${A}) and replica B (${B}) on shared redis"
-HPP_BIND="127.0.0.1:${A}" ./target/debug/examples/http_profile_proxy >/tmp/hpp_proxy_a.log 2>&1 &
+HPP_BIND="127.0.0.1:${A}" "$HPP_PROXY" >/tmp/hpp_proxy_a.log 2>&1 &
 pids+=($!)
-HPP_BIND="127.0.0.1:${B}" ./target/debug/examples/http_profile_proxy >/tmp/hpp_proxy_b.log 2>&1 &
+HPP_BIND="127.0.0.1:${B}" "$HPP_PROXY" >/tmp/hpp_proxy_b.log 2>&1 &
 pids+=($!)
 wait_port "${A}" || { echo "ERROR: replica A did not bind"; cat /tmp/hpp_proxy_a.log; exit 1; }
 wait_port "${B}" || { echo "ERROR: replica B did not bind"; cat /tmp/hpp_proxy_b.log; exit 1; }
@@ -106,4 +108,4 @@ echo "  A: $(grep -m1 replay-store /tmp/hpp_proxy_a.log || true)"
 # --- 4. Drive: accept on A, replay-reject on B ----------------------------------
 echo "----- client (leg 1 -> A, leg 2 -> B) -----"
 HPP_POST_A="http://127.0.0.1:${A}/mcp" HPP_POST_B="http://127.0.0.1:${B}/mcp" \
-  ./target/debug/examples/http_profile_client
+  "$HPP_CLIENT"

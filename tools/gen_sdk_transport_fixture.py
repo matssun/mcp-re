@@ -27,7 +27,7 @@ Re-record when the wire format changes; a stale fixture fails the replay test, w
 point. From the repo root, with the harness up (see sdk/python/tests/test_transport_e2e.py
 for how it is started):
 
-    cargo build -p mcp-re-proxy --example http_profile_proxy
+    bazel build //mcp-re-proxy:http_profile_proxy
     python tools/gen_sdk_transport_fixture.py [target]
 """
 import base64

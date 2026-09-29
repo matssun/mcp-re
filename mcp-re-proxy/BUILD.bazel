@@ -1819,6 +1819,61 @@ nt_rust_binary(
     ],
 )
 
+# The HTTP-profile proof front: an RFC 9421 client and proxy pair that drive a real external
+# FastMCP Streamable-HTTP backend over the wire (tools/http_profile_proof.sh,
+# tools/http_profile_multireplica_proof.sh, tools/gen_sdk_transport_fixture.py). Not tests:
+# they need the external backend and a bound port. Built on the deploy flavor, whose
+# redis_replay the multi-replica proof's shared tier needs.
+nt_rust_binary(
+    name = "http_profile_proxy",
+    srcs = [
+        "examples/hpp_common/mod.rs",
+        "examples/http_profile_proxy.rs",
+    ],
+    crate_features = _PROXY_DEPLOY_FEATURES,
+    crate_root = "examples/http_profile_proxy.rs",
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy_deploy",
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+        "@crates_mcp_re//:http-body-util",
+        "@crates_mcp_re//:hyper",
+        "@crates_mcp_re//:hyper-util",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:tokio",
+    ],
+)
+
+nt_rust_binary(
+    name = "http_profile_client",
+    srcs = [
+        "examples/hpp_common/mod.rs",
+        "examples/http_profile_client.rs",
+    ],
+    crate_root = "examples/http_profile_client.rs",
+    edition = "2021",
+    deps = [
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:ureq",
+    ],
+)
+
+# The Redis replay-store microbench (docs/dev/proxy-performance-pathways.md): the SAME store
+# code the proxy serves through, with no proxy in front. Needs a Redis at runtime.
+nt_rust_binary(
+    name = "replay_store_bench",
+    srcs = ["examples/replay_store_bench.rs"],
+    crate_features = _PROXY_DEPLOY_FEATURES,
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy_deploy",
+        "@crates_mcp_re//:tokio",
+    ],
+)
+
 # ===========================================================================
 # Phase 1 OCI packaging of the PRODUCTION proxy artifact (mcp_re_proxy_ext).
 #

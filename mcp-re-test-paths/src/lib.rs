@@ -146,9 +146,9 @@ fn find_bin(workspace_root: &Path, bin_name: &str) -> PathBuf {
         }
     }
     panic!(
-        "mcp_re_test_paths: cargo binary '{bin_name}' not found under {}/{{debug,release}}/ \
-         — run `cargo build --workspace --bins` first (cargo does not auto-build cross-crate \
-         binaries for integration tests).",
+        "mcp_re_test_paths: binary '{bin_name}' not found under {}/{{debug,release}}/, and \
+         its env key is not set — run the test as its Bazel target, whose `data` builds the \
+         binary and whose `env` names it.",
         target_dir.display()
     );
 }
